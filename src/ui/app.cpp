@@ -926,7 +926,7 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
 
 // The conversions of `repo` kept under `root` (names, sizes, times), and the separate drafters
 // their manifests attach (another repository's, removed or replaced apart from them): a plan that
-// depends on what a conversion carries (convert::cached_conversion_has_drafters) is kept per this
+// depends on what a conversion carries (convert::cached_conversion_with_drafters) is kept per this
 // stamp.
 std::string conversions_stamp(const fs::path& root, const std::string& repo) {
     std::string out;
@@ -1029,61 +1029,38 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // The exact preset also pins BF16 KV (launch_options resolves it, the launch passes it).
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.exact};
-    // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
-    // attached, its MTP layers are, unless the quantization was converted here with them (an
-    // earlier --with-drafters): the start reuses that conversion and serves them.
-    const auto cached = [&](const std::string& label) {
-        return gguf ? convert::cached_conversion_with_drafters(hub_root(), repo, "", label)
-                    : std::nullopt;
-    };
-    const auto with_drafters = [&](const std::string& label) { return cached(label).has_value(); };
+    // ninferno-ui's launch passes no --with-drafters: the server attaches a GGUF model's separate
+    // drafters when the choice drafts with one (choice/DECISIONS 45) and starts a quantization
+    // converted here with its drafters from that conversion; product::PlannedSubjects plans both as
+    // the server's plan does.
     // The commit the listing was read at: a sibling quantization's measurement counts from it.
     const std::string commit = list.empty() || !list.front().is_object()
                                    ? std::string()
                                    : list.front().value("commit", std::string());
-    const product::SpeculationSubject subject = product::hub_quant_subject(
+    product::PlannedSubjects::ConversionOf conversion_of;
+    if (gguf) {
+        conversion_of = [root = hub_root(), repo](const std::string& label) {
+            return convert::cached_conversion_with_drafters(root, repo, "", label);
+        };
+    }
+    product::PlannedSubjects subjects(
         product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
-        inputs.gpu, cached(quant));
-    inputs.subject = &subject;
-    // Each quantization resolves its own speculation (the lab's pairs are of its weights).
-    std::map<std::string, product::SpeculationSubject> per_quant;
-    inputs.subject_of = [&](const product::QuantListing& q) -> const product::SpeculationSubject* {
-        if (q.drafter) { return nullptr; }
-        auto it = per_quant.find(q.quant);
-        if (it == per_quant.end()) {
-            it = per_quant
-                     .emplace(q.quant, product::hub_quant_subject(
-                                           product::PlannedTarget{.repo    = repo,
-                                                                  .facts   = *facts,
-                                                                  .gguf    = gguf,
-                                                                  .weights = q.weights,
-                                                                  .quant   = q.quant,
-                                                                  .commit  = commit},
-                                           inputs.gpu, cached(q.quant)))
-                     .first;
-        }
-        return &it->second;
-    };
+        inputs.gpu, std::move(conversion_of));
+    std::string weights; // the named quantization's (none for the table: each row its own)
+    for (const auto& q : listing) {
+        if (!q.drafter && q.quant == quant) { weights = q.weights; }
+    }
+    const product::SpeculationSubject& subject = subjects.of(quant, weights);
+    inputs.subject    = &subject;
+    inputs.subject_of = subjects.lookup(); // each quantization's own (the lab's pairs are of weights)
     // The drafters a start attaches beside the target, their weights and a DFlash drafter's
     // state: the server's plan reads the same (product::attached_drafter_memory).
     {
         convert::FetchOptions fetch;
         fetch.hub = hub;
         if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-        // A quantization started with its kept drafters counts them though the one read has none.
-        const bool any_with_drafters =
-            std::any_of(listing.begin(), listing.end(),
-                        [&](const auto& q) { return !q.drafter && with_drafters(q.quant); });
-        const product::SpeculationSubject attaching =
-            subject.attached_drafters.empty() && any_with_drafters
-                ? product::planned_subject(product::PlannedTarget{.repo          = repo,
-                                                                  .facts         = *facts,
-                                                                  .gguf          = gguf,
-                                                                  .with_drafters = true},
-                                           inputs.gpu)
-                : subject;
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            attaching, listing, facts->model.model_type, facts->model.hidden,
+            subject, listing, facts->model.model_type, facts->model.hidden,
             options_.offline ? nullptr : &fetch);
         inputs.drafter_bytes = drafter.bytes;
         inputs.drafter_state = drafter.state;

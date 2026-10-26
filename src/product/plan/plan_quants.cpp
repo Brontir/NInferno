@@ -2,6 +2,7 @@
 
 #include "product/plan/plan_choice.h"
 
+#include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "core/ascii.h"
@@ -16,6 +17,7 @@
 #include <cstdio>
 #include <iomanip>
 #include <sstream>
+#include <variant>
 
 namespace ninferno::product {
 
@@ -265,6 +267,22 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
         }
         out.bytes = std::max(out.bytes, bytes);
+    }
+    return out;
+}
+
+AttachedDrafterMemory supplied_drafter_memory(const std::filesystem::path& artifact,
+                                              std::uint32_t target_hidden) {
+    const artifact::Reader reader(artifact);
+    const auto& dir = reader.directory();
+    AttachedDrafterMemory out;
+    for (const auto& object : dir.objects) {
+        if (const auto* tensor = std::get_if<artifact::TensorObject>(&object)) {
+            out.bytes += tensor->bytes;
+        }
+    }
+    for (const auto& [name, component] : dir.components) {
+        if (!out.state) { out.state = plan_drafter_state_of_config(component.config, target_hidden); }
     }
     return out;
 }

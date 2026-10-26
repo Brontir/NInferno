@@ -108,17 +108,6 @@ std::filesystem::path separate_drafter(const spec::Choice& choice,
     return it->second;
 }
 
-// The speculation backend a manifest drafter kind drafts for (NemotronH's MTP head is a separate
-// drafter artifact that drafts through the Mtp backend, like Gemma 4's assistant).
-SpeculativeBackend backend_of_kind(std::string_view kind) noexcept {
-    if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
-        return SpeculativeBackend::Mtp;
-    }
-    if (kind == "dflash") { return SpeculativeBackend::DFlash; }
-    if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
-    return SpeculativeBackend::None;
-}
-
 // A model whose drafter is built in but which has no profile for this GPU (none tuned here, none
 // published along its similarity chain, no manifest at all): its drafter's default rather than
 // plain decode, with the watchdog floors raised to the registry's (raise_foreign_floors, as for a
@@ -213,6 +202,15 @@ spec::Profile engine_choices(const spec::Profile& profile, std::vector<std::stri
 }
 
 } // namespace
+
+SpeculativeBackend backend_of_drafter_kind(std::string_view kind) noexcept {
+    if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
+        return SpeculativeBackend::Mtp;
+    }
+    if (kind == "dflash") { return SpeculativeBackend::DFlash; }
+    if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
+    return SpeculativeBackend::None;
+}
 
 spec::EngineSupport engine_support(const std::filesystem::path& artifact) {
     try {
@@ -651,7 +649,7 @@ std::filesystem::path model_drafter(const std::filesystem::path& artifact,
     if (!manifest || backend == SpeculativeBackend::None) { return {}; }
     for (const auto& drafter : manifest->drafters) {
         if (drafter.usable() && !drafter.artifact.empty() && drafter.component.empty() &&
-            backend_of_kind(drafter.kind) == backend) {
+            backend_of_drafter_kind(drafter.kind) == backend) {
             return drafter.artifact;
         }
     }

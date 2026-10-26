@@ -365,8 +365,8 @@ product::ChoicePins pins_of(const ServeOptions& options) {
 struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
-    // Each quantization's own subject (inputs.subject_of), made when first asked.
-    std::shared_ptr<std::map<std::string, product::SpeculationSubject>> per_quant;
+    // A hub model's quantizations' subjects (inputs.subject_of), each made when first asked.
+    std::shared_ptr<product::PlannedSubjects> subjects;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -387,83 +387,46 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                  .depth_from_profile = options.draft_tokens_from_model};
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
-    } else {
-        // A GGUF quantization converted here with its drafters (an earlier --with-drafters) is
-        // started from that conversion, flag or not: planned as the start resolves it.
-        const auto cached = [gguf = model.gguf, repo = model.repo, revision = model.revision,
-                             recipe = options.recipe,
-                             vision = options.enable_vision](const std::string& quant) {
-            return gguf ? convert::cached_conversion_with_drafters(convert::default_hub_cache(),
-                                                                   repo, revision, quant, recipe,
-                                                                   vision)
-                        : std::nullopt;
-        };
-        const auto with_drafters = [asked = options.with_drafters,
-                                    cached](const std::string& quant) {
-            return asked || cached(quant).has_value();
-        };
-        out.subject = product::hub_quant_subject(
-            product::PlannedTarget{.repo          = model.repo,
-                                   .facts         = model.facts,
-                                   .gguf          = model.gguf,
-                                   .with_drafters = options.with_drafters,
-                                   .weights       = model.weights,
-                                   .quant         = quant_label_of(model),
-                                   .commit        = model.commit},
-            gpu, cached(quant_label_of(model)), options.spec_profile);
-        // A separate drafter attached (--with-drafters, or kept with a cached conversion) is
-        // uploaded beside the target: its memory counts for each quantization started with it.
-        const bool any_with_drafters =
-            std::any_of(model.listing.begin(), model.listing.end(), [&](const auto& q) {
-                return !q.drafter && with_drafters(q.quant);
-            });
-        const product::SpeculationSubject attaching =
-            out.subject->attached_drafters.empty() && any_with_drafters
-                ? product::planned_subject(
-                      product::PlannedTarget{.repo          = model.repo,
-                                             .facts         = model.facts,
-                                             .gguf          = model.gguf,
-                                             .with_drafters = true,
-                                             .weights       = model.weights,
-                                             .quant         = quant_label_of(model),
-                                             .commit        = model.commit},
-                      gpu)
-                : *out.subject;
-        const convert::FetchOptions fetch = fetch_options();
-        const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            attaching, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
-        out.inputs.drafter_bytes = drafter.bytes;
-        out.inputs.drafter_state = drafter.state;
-        // A repository's quantizations each have their weights, and the lab's pairs are of
-        // weights: every row of the table resolves its own (the subject above is the one read).
-        if (model.listing.size() > 1) {
-            out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
-            out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
-                                     commit = model.commit, facts = model.facts, gguf = model.gguf,
-                                     asked = options.with_drafters, cached,
-                                     profile = options.spec_profile,
-                                     gpu](const product::QuantListing& q)
-                -> const product::SpeculationSubject* {
-                if (q.drafter) { return nullptr; }
-                auto it = per_quant->find(q.quant);
-                if (it == per_quant->end()) {
-                    it = per_quant
-                             ->emplace(q.quant,
-                                       product::hub_quant_subject(
-                                           product::PlannedTarget{.repo          = repo,
-                                                                  .facts         = facts,
-                                                                  .gguf          = gguf,
-                                                                  .with_drafters = asked,
-                                                                  .weights       = q.weights,
-                                                                  .quant         = q.quant,
-                                                                  .commit        = commit},
-                                           gpu, cached(q.quant), profile))
-                             .first;
-                }
-                return &it->second;
-            };
+        // A drafter file given (--drafter) is uploaded beside the artifact.
+        if (!options.speculative.drafter.empty()) {
+            const product::AttachedDrafterMemory drafter = product::supplied_drafter_memory(
+                options.speculative.drafter, model.facts.model.hidden);
+            out.inputs.drafter_bytes = drafter.bytes;
+            out.inputs.drafter_state = drafter.state;
         }
+        return out;
     }
+    // A quantization converted here with its drafters is started from that conversion, the
+    // --with-drafters flag or not (convert::cached_conversion_with_drafters).
+    product::PlannedSubjects::ConversionOf conversion_of;
+    if (model.gguf) {
+        conversion_of = [repo = model.repo, revision = model.revision, recipe = options.recipe,
+                         vision = options.enable_vision](const std::string& quant) {
+            return convert::cached_conversion_with_drafters(convert::default_hub_cache(), repo,
+                                                            revision, quant, recipe, vision);
+        };
+    }
+    out.subjects = std::make_shared<product::PlannedSubjects>(
+        product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
+                               .commit = model.commit},
+        gpu, std::move(conversion_of), options.spec_profile);
+    out.subject = out.subjects->of(quant_label_of(model), model.weights);
+    // The separate drafters' weights and a DFlash drafter's state, uploaded beside the target
+    // where the speculation served drafts with one: a drafter file given (--drafter), which
+    // drafts in place of the model's own, else the model's.
+    const convert::FetchOptions fetch = fetch_options();
+    const product::AttachedDrafterMemory drafter =
+        options.speculative.drafter.empty()
+            ? product::attached_drafter_memory(*out.subject, model.listing,
+                                               model.facts.model.model_type,
+                                               model.facts.model.hidden, &fetch)
+            : product::supplied_drafter_memory(options.speculative.drafter,
+                                               model.facts.model.hidden);
+    out.inputs.drafter_bytes = drafter.bytes;
+    out.inputs.drafter_state = drafter.state;
+    // A repository's quantizations each have their weights, and the lab's pairs are of weights:
+    // every row of the table resolves its own (the subject above is the one read).
+    if (model.listing.size() > 1) { out.inputs.subject_of = out.subjects->lookup(); }
     return out;
 }
 
@@ -572,11 +535,29 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
 
 namespace {
 
+// Whether a start at these weights serves a speculation drafting with a separate drafter of the
+// subject: the choice's drafter at these weights (product::choose_at_weights, the drafter
+// StartAxes serves), else the planned one.
+bool attaches_at(const product::PlanSourceFacts& facts, const product::DryRunInputs& at,
+                 const ServeOptions& options, const std::string& label,
+                 const product::PlannedSpeculation& planned) {
+    // A drafter file given (--drafter) drafts in place of the model's own.
+    if (at.subject == nullptr || !options.speculative.drafter.empty()) { return false; }
+    const auto served = product::choose_at_weights(facts, at, pins_of(options), label);
+    const product::PlannedSpeculation chosen =
+        served ? product::plan_at_choice(facts, at, *served, pins_of(options), planned) : planned;
+    return product::uses_attached_drafter(*at.subject, chosen.speculation);
+}
+
 // What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
 HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan& plan,
-                         const ServeOptions& options,
+                         const ServeOptions& options, const Planning& planning,
+                         const product::PlanSourceFacts& facts,
                          const std::function<void(const std::string&)>& log) {
     HubQuantChoice out{.quant = row.listing.quant};
+    const product::DryRunInputs at = product::inputs_for(planning.inputs, row.listing);
+    out.drafters = attaches_at(product::with_weights(facts, row.weight_bytes, row.basis), at,
+                               options, row.listing.quant, row.planned);
     // An automatic context with several streams: the launch keeps the own context it was chosen
     // for (as ninferno-ui's does), never a pool the streams silently share.
     if (options.max_context == 0 && options.max_concurrency > 1 && row.launch_context != 0) {
@@ -667,7 +648,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
                             std::string(e.what()) + "); the cached " + row.listing.quant +
                             " fits: " + plan.rule + " (--quant LABEL takes another)");
                     }
-                    return choice_of(row, plan, options, log);
+                    return choice_of(row, plan, options, planning, local.facts, log);
                 }
                 throw std::runtime_error(repo + ": can't reach the hub to choose a quant (" +
                                          e.what() + "), and no cached one fits: " + plan.rule +
@@ -732,10 +713,31 @@ largest_fitting_hub_quant(const ServeOptions& options,
                     " would be larger (--quant " + row.listing.quant + " downloads it)");
             }
         }
-        return choice_of(*kept, plan, options, log);
+        return choice_of(*kept, plan, options, planning, model.facts, log);
     }
     if (log) { log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)"); }
-    return choice_of(row, plan, options, log);
+    return choice_of(row, plan, options, planning, model.facts, log);
+}
+
+bool hub_start_attaches_drafters(const ServeOptions& options,
+                                 const std::function<void(const std::string&)>& log) {
+    if (options.with_drafters) { return true; }
+    if (options.quant.empty() || !convert::is_repository_spec(options.model_source)) {
+        return false;
+    }
+    try {
+        const runtime::PlanDeviceFacts device = product::plan_device_of_cuda(options.device, false);
+        const spec::GpuKey gpu                = spec::gpu_identity(options.device).key;
+        const ModelRead model                 = read_model(options);
+        if (!model.gguf || !model.facts.model.known()) { return false; }
+        Planning planning       = planning_of(options, model, device, gpu);
+        planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+        const product::PlannedSpeculation planned = product::plan_model(model.facts, planning.inputs);
+        return attaches_at(model.facts, planning.inputs, options, model.quant, planned);
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("drafters | not planned before the download: ") + e.what()); }
+        return false;
+    }
 }
 
 std::optional<product::StartAxes>
