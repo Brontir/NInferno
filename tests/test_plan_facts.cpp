@@ -133,7 +133,7 @@ int gguf_qwen35() {
     const double elements = 2.0 * 5120 * 248320 + 5120.0 * 10240 + 5120;
     failures += check(f.model.weight_elements == elements,
                       "qwen35 gguf elements " + std::to_string(f.model.weight_elements));
-    failures += check(std::abs(pr::bits_per_weight(f.model, 2520) - 2520 * 8 / elements) < 1e-12,
+    failures += check(std::abs(f.model.bits_per_weight(2520) - 2520 * 8 / elements) < 1e-12,
                       "bits per weight over the elements");
 
     // A split GGUF's head lists its own part's tensors: the listed file sizes stand.
@@ -144,7 +144,7 @@ int gguf_qwen35() {
     failures += same(s.model.weight_bytes, 17000000000ULL, "split gguf bytes");
     failures += same(s.model.full_layers, 16, "split gguf shape kept");
     failures += check(s.model.weight_elements == 0 &&
-                          pr::bits_per_weight(s.model, 8) == (s.model.params > 0 ? 64 / s.model.params : 0),
+                          s.model.bits_per_weight(8) == (s.model.params > 0 ? 64 / s.model.params : 0),
                       "a split part's elements unknown: the parameter count");
 
     // The metadata alone (ninferno-ui): FileSize.

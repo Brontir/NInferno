@@ -748,9 +748,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     double elements = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
-        double count = 1;
-        for (const auto n : t.ne) { count *= static_cast<double>(n); }
-        elements += count;
+        elements += static_cast<double>(t.elements());
         if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
             mtp_bytes += t.bytes;
         }
@@ -778,11 +776,6 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.weight_elements = whole ? elements : 0;
     if (!whole && !has_output) { out.model.params = 0; }
     return out;
-}
-
-double bits_per_weight(const runtime::PlanModelFacts& model, double bytes) {
-    const double of = model.weight_elements > 0 ? model.weight_elements : model.params;
-    return of > 0 ? bytes * 8 / of : 0;
 }
 
 PlanSourceFacts plan_facts_of_config(const json& config, std::uint64_t weight_bytes,

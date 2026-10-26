@@ -65,11 +65,6 @@ struct PlanTargetShape {
     std::vector<std::string> base_models;
 };
 
-// `bytes` of weights over the model's weights: its tensor table's elements where counted, else
-// its parameter count; 0 when neither is known. What the quantization rule's floors and the
-// accuracy curve read (choice::QuantOption::bits_per_weight).
-[[nodiscard]] double bits_per_weight(const runtime::PlanModelFacts& model, double bytes);
-
 struct PlanSourceFacts {
     runtime::PlanModelFacts model;
     PlanTargetShape shape;

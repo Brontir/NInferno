@@ -233,8 +233,8 @@ struct QuantKldPoint {
 inline constexpr std::string_view kQuantKldSource =
     "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean";
 inline constexpr int kQuantKldCards = 2;
-// Bits per weight as the plan counts them (the weight bytes over the GGUF tensor table's elements,
-// 8 953 803 264; first recorded over the geometry's 8 815 378 432 parameters, rescaled); the two cards'
+// Bits per weight as the plan counts them: the weight bytes over the GGUF tensor table's
+// elements (8 953 803 264 for Qwen3.5-9B); the two cards'
 // KLD (within 2 % at every point: the exact route's bytes do not depend on the card), perplexity
 // and top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD
 // 0.068 above 0.028).
