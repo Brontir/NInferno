@@ -126,37 +126,6 @@ void reproduces_the_measurements(const json& fixture) {
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
 }
 
-// Attention over the prompt: a full layer's grows with the prompt, a sliding one's stops at its window;
-// a generation without prefill rows takes those of one with its BF16 tensor path.
-void prices_attention(const json& fixture) {
-    const Bench b = nine_b(fixture, "RTX 4090");
-    ch::Candidate c;
-    const auto per_token = [&](const ch::ModelFacts& m, std::uint32_t n) {
-        return 1 / ch::speed_of(m, b.card, b.quants[0], c, 1, n, n).prefill;
-    };
-    ch::ModelFacts none = b.model, full = b.model, sliding = b.model;
-    none.full_attention_width    = 0;
-    full.full_attention_width    = 65536;
-    sliding.full_attention_width = 0;
-    sliding.sliding_attention_width = 65536;
-    sliding.window                  = 1024;
-    const double base = per_token(none, 4096);
-    check(per_token(full, 8192) - base > 1.9 * (per_token(full, 4096) - base),
-          "a full layer's attention a token doubles with the prompt");
-    check(std::abs((per_token(sliding, 65536) - base) / (per_token(sliding, 32768) - base) - 1) < 0.02,
-          "a sliding layer's attention a token stops growing past its window");
-    ch::CardFacts volta = b.card;
-    volta.major = 7;
-    volta.minor = 0;
-    ch::CardFacts turing = volta;
-    turing.minor         = 5;
-    // Linears only: Volta's int8 route runs at its BF16 rate (no int8 MMA), 1536 against Turing's 2048.
-    const ch::Speed v = ch::speed_of(none, volta, b.quants[0], c, 1, 4096, 4096);
-    const ch::Speed t = ch::speed_of(none, turing, b.quants[0], c, 1, 4096, 4096);
-    check(v.transferred && std::abs(v.prefill / t.prefill - 1536.0 / 2048.0) < 1e-9,
-          "Volta's prefill takes Turing's rows (the same BF16 tensor rate a SM)");
-}
-
 struct Bench {
     ch::ModelFacts model;
     ch::CardFacts card;
@@ -191,6 +160,37 @@ ch::OwnContextFn oracle(const Bench& b, double budget, std::size_t quant = 0) {
 }
 
 const ch::Scored& chosen(const ch::Choice& c) { return c.scored[*c.chosen]; }
+
+// Attention over the prompt: a full layer's grows with the prompt, a sliding one's stops at its window;
+// a generation without prefill rows takes those of one with its BF16 tensor path.
+void prices_attention(const json& fixture) {
+    const Bench b = nine_b(fixture, "RTX 4090");
+    ch::Candidate c;
+    const auto per_token = [&](const ch::ModelFacts& m, std::uint32_t n) {
+        return 1 / ch::speed_of(m, b.card, b.quants[0], c, 1, n, n).prefill;
+    };
+    ch::ModelFacts none = b.model, full = b.model, sliding = b.model;
+    none.full_attention_width    = 0;
+    full.full_attention_width    = 65536;
+    sliding.full_attention_width = 0;
+    sliding.sliding_attention_width = 65536;
+    sliding.window                  = 1024;
+    const double base = per_token(none, 4096);
+    check(per_token(full, 8192) - base > 1.9 * (per_token(full, 4096) - base),
+          "a full layer's attention a token doubles with the prompt");
+    check(std::abs((per_token(sliding, 65536) - base) / (per_token(sliding, 32768) - base) - 1) < 0.02,
+          "a sliding layer's attention a token stops growing past its window");
+    ch::CardFacts volta = b.card;
+    volta.major = 7;
+    volta.minor = 0;
+    ch::CardFacts turing = volta;
+    turing.minor         = 5;
+    // Linears only: Volta's int8 route runs at its BF16 rate (no int8 MMA), 1536 against Turing's 2048.
+    const ch::Speed v = ch::speed_of(none, volta, b.quants[0], c, 1, 4096, 4096);
+    const ch::Speed t = ch::speed_of(none, turing, b.quants[0], c, 1, 4096, 4096);
+    check(v.transferred && std::abs(v.prefill / t.prefill - 1536.0 / 2048.0) < 1e-9,
+          "Volta's prefill takes Turing's rows (the same BF16 tensor rate a SM)");
+}
 
 void chooses(const json& fixture) {
     ch::Task task;
