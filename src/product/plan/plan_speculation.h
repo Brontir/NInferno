@@ -115,6 +115,16 @@ struct SpeculationReport {
     bool per_request = false;
 };
 
+// The backend a drafter of `kind` drafts with (mtp, gemma4_assistant and nemotron_h_mtp: MTP;
+// dflash; dflash2), None for another kind.
+[[nodiscard]] SpeculativeBackend backend_of_drafter_kind(std::string_view kind);
+
+// Whether the speculation `report` serves drafts with one of `subject`'s separate drafters
+// (attached_drafters): its backend, or, each request its own, either thinking flag's. What decides
+// whether a start attaches a GGUF hub model's separate drafter when --with-drafters does not.
+[[nodiscard]] bool uses_attached_drafter(const SpeculationSubject& subject,
+                                         const SpeculationReport& report);
+
 // The plan of a model with the speculation a start ends on, and the report of how it got there.
 struct PlannedSpeculation {
     runtime::DryRunPlan plan; // the plan with the served speculation (plain when none)

@@ -396,16 +396,20 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
     } else {
+        // A GGUF model's separate drafters are an axis of the choice like the others (choice/
+        // DECISIONS 45): planned as attached, their memory counted only where the speculation
+        // served drafts with one; a start without --with-drafters attaches them when it does
+        // (hub_start_attaches_drafters).
         out.subject =
             product::planned_subject(product::PlannedTarget{.repo          = model.repo,
                                                             .facts         = model.facts,
                                                             .gguf          = model.gguf,
-                                                            .with_drafters = options.with_drafters,
+                                                            .with_drafters = true,
                                                             .weights       = model.weights,
                                                             .quant         = quant_label_of(model),
                                                             .commit        = model.commit},
                                      gpu);
-        // A separate drafter attached with --with-drafters is uploaded beside the target.
+        // A separate drafter the speculation drafts with is uploaded beside the target.
         const convert::FetchOptions fetch = fetch_options();
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
             *out.subject, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
@@ -417,7 +421,6 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
             out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
             out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
                                      commit = model.commit, facts = model.facts, gguf = model.gguf,
-                                     with_drafters = options.with_drafters,
                                      gpu](const product::QuantListing& q)
                 -> const product::SpeculationSubject* {
                 if (q.drafter) { return nullptr; }
@@ -429,7 +432,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                            product::PlannedTarget{.repo          = repo,
                                                                   .facts         = facts,
                                                                   .gguf          = gguf,
-                                                                  .with_drafters = with_drafters,
+                                                                  .with_drafters = true,
                                                                   .weights       = q.weights,
                                                                   .quant         = q.quant,
                                                                   .commit        = commit},
@@ -549,10 +552,27 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
 namespace {
 
 // What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
+// Whether a start at these weights serves a speculation drafting with a separate drafter of the
+// subject: the choice's drafter at these weights (product::choose_at_weights, the drafter
+// StartAxes serves), else the planned one.
+bool attaches_at(const product::PlanSourceFacts& facts, const product::DryRunInputs& at,
+                 const ServeOptions& options, const std::string& label,
+                 const product::PlannedSpeculation& planned) {
+    if (at.subject == nullptr) { return false; }
+    const auto served = product::choose_at_weights(facts, at, pins_of(options), label);
+    const product::PlannedSpeculation chosen =
+        served ? product::plan_at_choice(facts, at, *served, pins_of(options), planned) : planned;
+    return product::uses_attached_drafter(*at.subject, chosen.speculation);
+}
+
 HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan& plan,
-                         const ServeOptions& options,
+                         const ServeOptions& options, const Planning& planning,
+                         const product::PlanSourceFacts& facts,
                          const std::function<void(const std::string&)>& log) {
     HubQuantChoice out{.quant = row.listing.quant};
+    const product::DryRunInputs at = product::inputs_for(planning.inputs, row.listing);
+    out.drafters = attaches_at(product::with_weights(facts, row.weight_bytes, row.basis), at,
+                               options, row.listing.quant, row.planned);
     // An automatic context with several streams: the launch keeps the own context it was chosen
     // for (as ninferno-ui's does), never a pool the streams silently share.
     if (options.max_context == 0 && options.max_concurrency > 1 && row.launch_context != 0) {
@@ -642,7 +662,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
                             std::string(e.what()) + "); the cached " + row.listing.quant +
                             " fits: " + plan.rule + " (--quant LABEL takes another)");
                     }
-                    return choice_of(row, plan, options, log);
+                    return choice_of(row, plan, options, planning, local.facts, log);
                 }
                 throw std::runtime_error(repo + ": can't reach the hub to choose a quant (" +
                                          e.what() + "), and no cached one fits: " + plan.rule +
@@ -707,10 +727,31 @@ largest_fitting_hub_quant(const ServeOptions& options,
                     " would be larger (--quant " + row.listing.quant + " downloads it)");
             }
         }
-        return choice_of(*kept, plan, options, log);
+        return choice_of(*kept, plan, options, planning, model.facts, log);
     }
     if (log) { log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)"); }
-    return choice_of(row, plan, options, log);
+    return choice_of(row, plan, options, planning, model.facts, log);
+}
+
+bool hub_start_attaches_drafters(const ServeOptions& options,
+                                 const std::function<void(const std::string&)>& log) {
+    if (options.with_drafters) { return true; }
+    if (options.quant.empty() || !convert::is_repository_spec(options.model_source)) {
+        return false;
+    }
+    try {
+        const runtime::PlanDeviceFacts device = product::plan_device_of_cuda(options.device, false);
+        const spec::GpuKey gpu                = spec::gpu_identity(options.device).key;
+        const ModelRead model                 = read_model(options);
+        if (!model.gguf || !model.facts.model.known()) { return false; }
+        Planning planning       = planning_of(options, model, device, gpu);
+        planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+        const product::PlannedSpeculation planned = product::plan_model(model.facts, planning.inputs);
+        return attaches_at(model.facts, planning.inputs, options, model.quant, planned);
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("drafters | not planned before the download: ") + e.what()); }
+        return false;
+    }
 }
 
 std::optional<product::StartAxes>

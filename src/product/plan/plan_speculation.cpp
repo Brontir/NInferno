@@ -197,6 +197,33 @@ bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject
     return ask.per_request;
 }
 
+SpeculativeBackend backend_of_drafter_kind(std::string_view kind) {
+    if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
+        return SpeculativeBackend::Mtp;
+    }
+    if (kind == "dflash") { return SpeculativeBackend::DFlash; }
+    if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
+    return SpeculativeBackend::None;
+}
+
+bool uses_attached_drafter(const SpeculationSubject& subject, const SpeculationReport& report) {
+    std::set<SpeculativeBackend> served = {report.engine.backend};
+    if (report.per_request) {
+        for (const auto* variant : {&report.with_thinking, &report.without_thinking}) {
+            if (!*variant) { continue; }
+            const std::string& label = (*variant)->label;
+            try {
+                served.insert(parse_speculative_backend(label.substr(0, label.find(':'))));
+            } catch (const std::invalid_argument&) {} // "plain"
+        }
+    }
+    served.erase(SpeculativeBackend::None);
+    return std::any_of(subject.attached_drafters.begin(), subject.attached_drafters.end(),
+                       [&](const spec::DrafterDecl& d) {
+                           return served.contains(backend_of_drafter_kind(d.kind));
+                       });
+}
+
 PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                          const runtime::PlanDeviceFacts& device,
                                          const EngineOptions& options,
@@ -216,19 +243,11 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         // uploaded beside the target: one named by the options, or, before a conversion names its
         // path (an explicit --spec with --with-drafters), one the drafter plan takes from its own
         // repository for this backend (attached, or embedded as a component).
-        const auto drafts_for = [](const std::string& kind) {
-            if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
-                return SpeculativeBackend::Mtp;
-            }
-            if (kind == "dflash") { return SpeculativeBackend::DFlash; }
-            if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
-            return SpeculativeBackend::None;
-        };
         const bool attached =
             subject != nullptr &&
             std::any_of(subject->attached_drafters.begin(), subject->attached_drafters.end(),
                         [&](const spec::DrafterDecl& d) {
-                            return drafts_for(d.kind) == speculative.backend;
+                            return backend_of_drafter_kind(d.kind) == speculative.backend;
                         });
         if (speculative.backend != SpeculativeBackend::None &&
             (!speculative.drafter.empty() || attached)) {

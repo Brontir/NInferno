@@ -1006,6 +1006,30 @@ void test_speculation_order() {
         const auto memory = pr::attached_drafter_memory(attached, listing, "qwen3_5_text", 5120, nullptr);
         check(memory.bytes == 600ULL << 20 && !memory.state,
               "the GGUF drafter file's size; the repository's not read offline");
+        // Whether a start attaches them (choice/DECISIONS 45): the speculation served drafts with
+        // one, by its backend or, each request its own, either thinking flag's.
+        pr::SpeculationReport report;
+        report.engine.backend = ninferno::SpeculativeBackend::None;
+        check(!pr::uses_attached_drafter(attached, report), "plain decode: none attached");
+        report.engine.backend = ninferno::SpeculativeBackend::DFlash;
+        check(pr::uses_attached_drafter(attached, report), "DFlash with a separate DFlash drafter");
+        pr::SpeculationSubject mtp_only;
+        mtp_only.attached_drafters = {dflash};
+        report.engine.backend      = ninferno::SpeculativeBackend::Mtp;
+        check(!pr::uses_attached_drafter(mtp_only, report),
+              "the model's own MTP layers: the DFlash drafter not attached");
+        report.per_request      = true;
+        report.with_thinking    = pr::SpeculationReport::ThinkingVariant{.label = "mtp:5"};
+        report.without_thinking = pr::SpeculationReport::ThinkingVariant{.label = "dflash:7"};
+        check(pr::uses_attached_drafter(mtp_only, report),
+              "each request its own: one flag's DFlash attaches it");
+        report.per_request = false;
+        check(!pr::uses_attached_drafter(mtp_only, report),
+              "one speculation for every request: only the served one counts");
+        check(pr::backend_of_drafter_kind("gemma4_assistant") == ninferno::SpeculativeBackend::Mtp &&
+                  pr::backend_of_drafter_kind("dflash2") == ninferno::SpeculativeBackend::DFlash2 &&
+                  pr::backend_of_drafter_kind("eagle") == ninferno::SpeculativeBackend::None,
+              "a drafter kind's backend");
         // A Qwen DFlash companion is stored with its projections at Q8 (the recipe's
         // companion_drafter_q8): z-lab/Qwen3.5-9B-DFlash's 2.41 GiB of BF16 take 1.28 GiB; a
         // Gemma drafter stays as published.

@@ -983,14 +983,16 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // The exact preset also pins BF16 KV (launch_options resolves it, the launch passes it).
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.exact};
-    // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
-    // attached, its MTP layers are.
+    // ninferno-ui's launch passes no --with-drafters: the server attaches a GGUF model's separate
+    // drafters when the choice drafts with one (choice/DECISIONS 45), so they are planned as
+    // candidates here too, their memory counted where the speculation served uses them.
     // The commit the listing was read at: a sibling quantization's measurement counts from it.
     const std::string commit = list.empty() || !list.front().is_object()
                                    ? std::string()
                                    : list.front().value("commit", std::string());
     const product::SpeculationSubject subject = product::planned_subject(
-        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
+        product::PlannedTarget{
+            .repo = repo, .facts = *facts, .gguf = gguf, .with_drafters = true, .commit = commit},
         inputs.gpu);
     inputs.subject = &subject;
     // Each quantization resolves its own speculation (the lab's pairs are of its weights).
@@ -1001,9 +1003,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         if (it == per_quant.end()) {
             it = per_quant
                      .emplace(q.quant, product::planned_subject(
-                                           product::PlannedTarget{.repo    = repo,
-                                                                  .facts   = *facts,
-                                                                  .gguf    = gguf,
+                                           product::PlannedTarget{.repo          = repo,
+                                                                  .facts         = *facts,
+                                                                  .gguf          = gguf,
+                                                                  .with_drafters = true,
                                                                   .weights = q.weights,
                                                                   .quant   = q.quant,
                                                                   .commit  = commit},
