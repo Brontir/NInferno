@@ -407,8 +407,9 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         };
     }
     // Each GGUF quantization's own MTP layers: the facts are the one file's read (model.quant).
+    // Only for the table (no --quant): a named quantization plans its own file alone.
     product::PlannedSubjects::MtpOf mtp_of;
-    if (model.gguf && !model.repo.empty()) {
+    if (model.gguf && !model.repo.empty() && options.quant.empty()) {
         // Every other GGUF quantization's, read together (a table plans them all).
         std::vector<std::string> others;
         for (const auto& q : model.listing) {
