@@ -80,16 +80,37 @@ struct MeasuredPair {
 // disabled with the reason.
 [[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options = {});
 
+// What a round of each configuration (by its label) costs on generation `to` over `from`: the
+// median, over the targets the lab measured on both, of the one's round cost over the other's (a
+// round's seconds over plain decode's seconds per token, over the corpus sections both measured).
+// A drafter's acceptance is the pair's: its tokens per round match from card to card (Ada and
+// Ampere within 1 %); what a round costs is the card's, the more so the more rows it verifies
+// (choice/DECISIONS 51). A configuration has one only where two cards of each generation measured
+// it on a target in common (a generation constant rests on two of its cards, AGENTS.md).
+// The relative spread the ratios of a configuration may have over its cards (the two Ada cards'
+// agree within 1.5 % on the 9B MTP pair); wider, it has none (deterministic-decisions.md).
+inline constexpr double kRoundCostAgreement = 0.05;
+struct RoundCostRatios {
+    std::map<std::string, double> ratio; // by configuration label
+    // Two cards of each generation measured a target in common: a configuration without a ratio
+    // (none measured, or its cards disagree) then has no estimate.
+    bool known = false;
+};
+[[nodiscard]] RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
+                                                     std::string_view from, std::string_view to);
+
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
 // on a card of a generation two distinct lab cards (their tunes' GPU class) measured and chose
 // alike for (each default's
 // configuration), their profile with every measured depth, and their load bounds when they are
 // equal (else one request at a time); otherwise the portable one (profile_for_pair away from home)
-// from a measurement of this generation if there is one, else the first. Pairs another engine
-// version measured are left out; none left: plain decode, disabled with the reason.
+// from a measurement of this generation if there is one, else the first, its rounds costed as on
+// this generation where `lab` measured a target on both (generation_round_costs). Pairs another
+// engine version measured are left out; none left: plain decode, disabled with the reason.
 [[nodiscard]] Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                                          std::string_view generation,
-                                         const SelectOptions& options = {});
+                                         const SelectOptions& options = {},
+                                         const std::vector<MeasuredPair>* lab = nullptr);
 
 // The group of a target nobody measured: the current pairs (pair_current) of `engine` drafting with
 // `kind` (a drafter of that kind, not only of its mode), each target once per card, of the target's

@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -103,6 +104,76 @@ int main() {
                "another generation speculates for one request only");
         expect(away.thinking.floor_tokens_per_round > 1.0,
                "a choice carries its break-even for the watchdog");
+    }
+    // Another generation's measurement, its rounds costed as on the card's generation: what a
+    // round of each configuration costs there over here, from a target measured on both (its
+    // tokens per round are the pair's; Ampere's rounds cost more, the deeper the more).
+    {
+        auto ampere         = ada_q4; // the same weights measured on a card of another generation
+        ampere.generation   = "sm86";
+        ampere.tune.key.gpu = "ga106:28sm";
+        for (auto& m : ampere.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 1.10; }
+        }
+        const auto on   = [](sp::MeasuredPair p, const char* gpu) { p.tune.key.gpu = gpu; return p; };
+        const std::vector<sp::MeasuredPair> lab = {ada_q4, on(ada_q4, "ad102:128sm"), ampere,
+                                                   on(ampere, "ga104:48sm")};
+        const std::vector<sp::MeasuredPair> one_ampere = {ada_q4, on(ada_q4, "ad102:128sm"), ampere};
+        const auto costs = sp::generation_round_costs(lab, "sm89", "sm86");
+        expect(costs.known && costs.ratio.contains("dflash:7") &&
+                   std::abs(costs.ratio.at("dflash:7") - 1.10) < 1e-9 &&
+                   !sp::generation_round_costs(lab, "sm89", "sm120").known &&
+                   !sp::generation_round_costs(one_ampere, "sm89", "sm86").known,
+               "a round's cost on another generation, from a target two cards of each measured");
+        // Two cards in all, but one of them never measured dflash:7: that ratio rests on one card.
+        auto no_df7 = on(ampere, "ga104:48sm");
+        std::erase_if(no_df7.tune.measurements,
+                      [](const auto& m) { return m.config.label() == "dflash:7"; });
+        const std::vector<sp::MeasuredPair> split = {ada_q4, on(ada_q4, "ad102:128sm"), ampere, no_df7};
+        expect(!sp::generation_round_costs(split, "sm89", "sm86").ratio.contains("dflash:7"),
+               "a configuration's ratio rests on two cards of each generation that measured it");
+        // Two Ampere cards that disagree (x1.10 and x1.30): no ratio.
+        auto slow = on(ampere, "ga104:48sm");
+        for (auto& m : slow.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 1.30 / 1.10; }
+        }
+        const std::vector<sp::MeasuredPair> apart = {ada_q4, on(ada_q4, "ad102:128sm"), ampere, slow};
+        const auto disagree = sp::generation_round_costs(apart, "sm89", "sm86");
+        auto lone           = ada_q4; // a target measured on Ada only
+        lone.target         = "other-weights";
+        expect(disagree.known && disagree.ratio.empty() &&
+                   !sp::profile_for_target({&lone}, "sm86", {}, &apart).non_thinking.config.enabled(),
+               "cards that disagree on a round's cost give no ratio: no estimate, plain decode");
+        // Another revision of the drafter on one side is another pair: no common target.
+        auto other_drafter = ampere;
+        other_drafter.drafters["dflash"] = "z-lab/other@0";
+        const std::vector<sp::MeasuredPair> revised = {ada_q4, on(ada_q4, "ad102:128sm"), other_drafter,
+                                                       on(other_drafter, "ga104:48sm")};
+        expect(!sp::generation_round_costs(revised, "sm89", "sm86").known,
+               "a round's cost ratio pairs records of the same drafters only");
+        auto other   = ada_q4; // a target measured on Ada only
+        other.target = "other-weights";
+        const auto as_ada    = sp::profile_for_target({&other}, "sm86");
+        const auto costed    = sp::profile_for_target({&other}, "sm86", {}, &lab);
+        const auto blackwell = sp::profile_for_target({&other}, "sm120", {}, &lab);
+        expect(as_ada.non_thinking.config == costed.non_thinking.config &&
+                   std::abs(costed.non_thinking.speedup() * 1.10 -
+                            as_ada.non_thinking.speedup()) < 1e-6 &&
+                   blackwell.non_thinking.speedup() == as_ada.non_thinking.speedup(),
+               "an Ada pair on Ampere at Ampere's round costs; on Blackwell (none measured on "
+               "both) as measured");
+        // A configuration Ampere never measured has no cost there: left out, not chosen at Ada's.
+        const auto best = as_ada.non_thinking.config.label();
+        auto partial    = ampere;
+        std::erase_if(partial.tune.measurements,
+                      [&](const auto& m) { return m.config.label() == best; });
+        const std::vector<sp::MeasuredPair> lab2 = {ada_q4, on(ada_q4, "ad102:128sm"), partial,
+                                                    on(partial, "ga104:48sm")};
+        const auto uncosted = sp::profile_for_target({&other}, "sm86", {}, &lab2);
+        expect(uncosted.non_thinking.config.label() != best &&
+                   std::none_of(uncosted.measurements.begin(), uncosted.measurements.end(),
+                                [&](const auto& m) { return m.config.label() == best; }),
+               "a configuration without its round's cost on this generation is left out");
     }
     // The identity of weights: sorted digests, so the listing's order does not matter.
     expect(sp::weights_identity({"bb", "aa"}) == "aa,bb", "weights identity is order-free");
