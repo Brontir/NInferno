@@ -298,8 +298,9 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
         if (a.generation != from || !pair_current(a)) { continue; }
         const auto at_from = round_costs(a.tune);
         for (const auto& b : lab) {
+            // The same weights with the same drafters (their revisions), else another pair.
             if (b.generation != to || b.target != a.target || b.engine != a.engine ||
-                !pair_current(b)) {
+                b.drafters != a.drafters || !pair_current(b)) {
                 continue;
             }
             for (const auto& [label, cost] : round_costs(b.tune)) {

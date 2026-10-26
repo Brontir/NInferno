@@ -144,6 +144,13 @@ int main() {
         expect(disagree.known && disagree.ratio.empty() &&
                    !sp::profile_for_target({&lone}, "sm86", {}, &apart).non_thinking.config.enabled(),
                "cards that disagree on a round's cost give no ratio: no estimate, plain decode");
+        // Another revision of the drafter on one side is another pair: no common target.
+        auto other_drafter = ampere;
+        other_drafter.drafters["dflash"] = "z-lab/other@0";
+        const std::vector<sp::MeasuredPair> revised = {ada_q4, on(ada_q4, "ad102:128sm"), other_drafter,
+                                                       on(other_drafter, "ga104:48sm")};
+        expect(!sp::generation_round_costs(revised, "sm89", "sm86").known,
+               "a round's cost ratio pairs records of the same drafters only");
         auto other   = ada_q4; // a target measured on Ada only
         other.target = "other-weights";
         const auto as_ada    = sp::profile_for_target({&other}, "sm86");
