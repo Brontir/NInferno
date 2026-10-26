@@ -1320,7 +1320,8 @@ int check_mmq_code_sums(const Format& f) {
 }
 
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
-// the generic W4A8 from 17 tokens on every build, decode and verify widths unchanged; the same
+// the generic W4A8 from 17 tokens on every device with its int8 MMA (Volta has none: A16 there),
+// decode and verify widths unchanged; the same
 // weight under AllowA4 (it carries its activation divisor) keeps W4A4 where the build has it and
 // is never W4A8's there, nor is it without a divisor (A16 then, as before). Through the public
 // entry points the shapes the native NVFP4 plans own (sm_120a: linear 1024x2816, linear_add
@@ -1343,7 +1344,7 @@ int check_nvfp4_a8_routes() {
         const generic::Route r8 = generic::select_route(p8, dw.weight, t, false);
         const generic::Route r4 = generic::select_route(p4, dw.weight, t, false);
         const generic::Route r0 = generic::select_route(p4, no_divisor, t, false);
-        const bool wide         = t >= 17;
+        const bool wide = t >= 17 && device_class().features.mma_bf16;
         const ops::ScopedPrefillRoutes prefill(true);
         if ((r8.family == generic::Family::W4a8Mma) != wide ||
             generic::owned_prefill_w4a8(dw.weight, a8, t) != wide) {
