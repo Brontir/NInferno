@@ -81,7 +81,8 @@ void table_well_formed() {
 
 // The driver values of the lab cards (tests/ops/linear/test_selector_golden.cpp: boost SM clock,
 // memory clock = data rate / 2, bus width; the RTX 4070 Ti and 3060, not golden boards, spelled the
-// same way from their datasheets) against the table's facts.
+// same way from their datasheets; the Quadro GV100 as its driver reports on the lab's stand) against
+// the table's facts.
 struct LabCard {
     const char* name;
     std::uint32_t id;
@@ -104,6 +105,7 @@ constexpr LabCard kLab[] = {
     {"a100", 0x20B0, 8, 0, 108, 1410, 1215, 5120},
     {"rtx2080ti", 0x1E07, 7, 5, 68, 1545, 7000, 352},
     {"v100", 0x1DB5, 7, 0, 80, 1530, 877, 4096},
+    {"quadro-gv100", 0x1DBA, 7, 0, 80, 1627, 850, 4096},
     {"h100-sxm", 0x2330, 9, 0, 132, 1980, 2619, 5120},
 };
 
