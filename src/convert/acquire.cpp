@@ -389,6 +389,10 @@ std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
         } catch (const std::exception&) {}
         return false;
     };
+    // A conversion of an older revision is converted again where its download is still there
+    // (acquire_model: cache_current), text only without --with-drafters; kept where it is gone.
+    std::error_code gone;
+    const bool download = fs::exists(root / "snapshots" / commit, gone);
     // <gguf stem>[.vision].<recipe>.ninferno, complete, of exactly this label (converted_artifact's
     // names), the recipe and the --vision kind the start converts: [0] text, [1] --vision.
     std::vector<std::pair<fs::path, bool>> found[2];
@@ -405,7 +409,7 @@ std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
         const bool vision_stem = stem.ends_with(".vision");
         if (vision_stem) { stem.resize(stem.size() - std::string_view(".vision").size()); }
         if (ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) { continue; }
-        found[vision_stem].emplace_back(path, carries(path));
+        found[vision_stem].emplace_back(path, (!download || cache_served(path)) && carries(path));
     }
     auto& kept = found[vision && !found[1].empty() ? 1 : 0];
     if (kept.empty() ||

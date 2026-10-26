@@ -42,6 +42,8 @@ inline constexpr int kCacheRevision = 5;
 // conversion of many minutes is not repeated for a change that did not touch it. Such an older
 // artifact is stamped kCacheRevision (stamp_revision), so its report is read once.
 [[nodiscard]] bool cache_current(const std::filesystem::path& artifact);
+// cache_current's answer without its stamp: for a plan, which only reads the cache.
+[[nodiscard]] bool cache_served(const std::filesystem::path& artifact);
 
 // The revision recorded beside `artifact` (<artifact>.revision); 1 where none is: converted before
 // revisions were kept.

@@ -808,8 +808,14 @@ void test_catalog() {
         fs::create_directories(repo / "snapshots/c0ffee");
         check(!kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", ""),
               "with its download still there, the usual path asks the hub");
+        // Its download there, an older conversion revision is converted again (text only without
+        // --with-drafters): no drafters; one of the current revision keeps them.
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
+              "an older revision with its download there is converted again");
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.revision") << "5
+";
         check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
-              "a conversion's drafters, its download there or not");
+              "a current conversion's drafters, its download there");
         fs::remove_all(root);
     }
     // A prepare that downloads a moved branch's new commit and removes the old conversion; only a
