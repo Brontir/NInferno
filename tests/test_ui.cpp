@@ -786,6 +786,25 @@ void test_catalog() {
         fs::remove(assistant);
         check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
               "a manifest whose drafter artifact is gone");
+        // What the rule reads, stamped: an attached drafter, the commits downloaded, a ref.
+        {
+            using ninferno::convert::conversions_stamp;
+            const auto before = conversions_stamp(root, "org/m-GGUF");
+            check(conversions_stamp(root, "org/m-GGUF") == before, "a stamp of the same cache");
+            std::ofstream(assistant) << "x";
+            const auto attached = conversions_stamp(root, "org/m-GGUF");
+            fs::create_directories(repo / "snapshots/c0ffee");
+            const auto downloaded = conversions_stamp(root, "org/m-GGUF");
+            std::ofstream(repo / "refs/dev") << "c0ffee
+";
+            const auto moved = conversions_stamp(root, "org/m-GGUF");
+            check(attached != before && downloaded != attached && moved != downloaded,
+                  "a drafter, a download and a ref each change the stamp");
+            fs::remove_all(repo / "snapshots");
+            fs::remove(repo / "refs/dev");
+            fs::remove(assistant);
+            check(conversions_stamp(root, "org/m-GGUF") == before, "and back");
+        }
         // The conversion the start takes: its --vision kind, its recipe.
         const auto write = [&](const std::string& name, const char* components) {
             std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
