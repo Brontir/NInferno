@@ -419,6 +419,52 @@ bool cached_conversion_has_drafters(const fs::path& cache, const std::string& re
         .has_value();
 }
 
+std::string conversions_stamp(const fs::path& cache, const std::string& repo) {
+    const fs::path root = cache / hub_repo_directory(repo);
+    std::string out;
+    std::error_code ec;
+    // The refs: a ref that moves to another kept commit selects another conversion.
+    for (auto it = fs::recursive_directory_iterator(root / "refs", ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        std::ifstream in(it->path());
+        std::string commit;
+        in >> commit;
+        out += it->path().lexically_relative(root / "refs").generic_string() + "=" + commit + ";";
+    }
+    // The commits downloaded: a conversion whose download is gone is kept as it is, one whose
+    // download is there serves only at its own revision (cache_serves).
+    ec.clear();
+    for (auto it = fs::directory_iterator(root / "snapshots", ec);
+         !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        out += "snapshot " + it->path().filename().string() + ";";
+    }
+    ec.clear();
+    for (auto it = fs::recursive_directory_iterator(root / "ninferno", ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        out += it->path().filename().string() + ":" + std::to_string(it->file_size(e)) + ":" +
+               std::to_string(it->last_write_time(e).time_since_epoch().count()) + ";";
+        if (!it->path().filename().string().ends_with(".speculation.json")) { continue; }
+        const auto manifest = spec::read_manifest(it->path());
+        if (!manifest) { continue; }
+        for (const auto& d : manifest->drafters) {
+            if (d.artifact.empty()) { continue; }
+            std::error_code gone;
+            const auto size = fs::file_size(d.artifact, gone);
+            out += d.artifact + (gone ? std::string(":gone")
+                                      : ":" + std::to_string(size) + ":" +
+                                            std::to_string(fs::last_write_time(d.artifact, gone)
+                                                               .time_since_epoch()
+                                                               .count())) +
+                   ";";
+        }
+    }
+    return std::to_string(std::hash<std::string>{}(out));
+}
+
 void accept_converted(const fs::path& commit_dir, const std::string& ref,
                       const std::string& hub_commit) {
     const OJson record = {{"ref", ref}, {"hub_commit", hub_commit}};
