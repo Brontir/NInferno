@@ -1890,7 +1890,7 @@ std::string native_quant_label(const std::string& path) {
 
 std::string gguf_quant_label(const std::string& file_name) {
     static const std::regex label(
-        R"(.*?[-_.]((?:UD-)?(?:I?Q[0-9][A-Z0-9_]*|BF16|F16|F32|MXFP4[A-Z0-9_]*|NVFP4[A-Z0-9_]*))(?:[-_.]MTP)?)",
+        R"(.*?[-_.]((?:UD-)?(?:[IT]?Q[0-9][A-Z0-9_]*|BF16|F16|F32|MXFP4[A-Z0-9_]*|NVFP4[A-Z0-9_]*))(?:[-_.]MTP)?)",
         std::regex::icase);
     const auto stem  = gguf_group(fs::path(file_name).filename().string());
     std::string base = stem;
