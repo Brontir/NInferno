@@ -275,6 +275,9 @@ private:
     // (convert::gguf_carries_mtp), read once; nullopt when it cannot be read.
     std::optional<bool> gguf_mtp(const std::string& repo, const std::string& hub,
                                  const std::string& commit, const std::string& quant);
+    // The same for each of `quants` not read yet, read together.
+    void gguf_mtps(const std::string& repo, const std::string& hub, const std::string& commit,
+                   const std::vector<std::string>& quants);
     // Bytes freed; throws std::invalid_argument for what may not be deleted.
     std::uint64_t delete_artifact(const std::filesystem::path& artifact);
     std::uint64_t delete_original(const std::string& repo);

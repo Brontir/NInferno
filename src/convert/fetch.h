@@ -174,6 +174,11 @@ struct GgufHead {
 // it cannot be read.
 [[nodiscard]] std::optional<bool> gguf_carries_mtp(const std::string& spec,
                                                    const FetchOptions& options);
+// The same for each of `quants` (FetchOptions::quant each), read together (a few at a time): a
+// repository's table plans every one.
+[[nodiscard]] std::map<std::string, std::optional<bool>>
+gguf_quants_carry_mtp(const std::string& spec, const FetchOptions& options,
+                      const std::vector<std::string>& quants);
 
 // One file: `url` (resolved through redirects) into `target`, `size` bytes (0: unknown),
 // checked against `sha256` (lowercase hex) or `git_sha1` when given. Exposed for tests.

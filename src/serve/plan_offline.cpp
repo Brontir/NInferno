@@ -409,12 +409,18 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
     // Each GGUF quantization's own MTP layers: the facts are the one file's read (model.quant).
     product::PlannedSubjects::MtpOf mtp_of;
     if (model.gguf && !model.repo.empty()) {
-        mtp_of = [spec = model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
-                  read = model.quant](const std::string& quant) -> std::optional<bool> {
-            if (quant == read) { return std::nullopt; }
-            convert::FetchOptions fetch = fetch_options();
-            fetch.quant                 = quant;
-            return convert::gguf_carries_mtp(spec, fetch);
+        // Every other GGUF quantization's, read together (a table plans them all).
+        std::vector<std::string> others;
+        for (const auto& q : model.listing) {
+            if (!q.drafter && q.format == "gguf" && q.quant != model.quant) { others.push_back(q.quant); }
+        }
+        auto read = std::make_shared<const std::map<std::string, std::optional<bool>>>(
+            convert::gguf_quants_carry_mtp(
+                model.commit.empty() ? model.repo : model.repo + "@" + model.commit, fetch_options(),
+                others));
+        mtp_of = [read](const std::string& quant) -> std::optional<bool> {
+            const auto it = read->find(quant);
+            return it == read->end() ? std::nullopt : it->second;
         };
     }
     out.subjects = std::make_shared<product::PlannedSubjects>(

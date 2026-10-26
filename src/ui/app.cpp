@@ -1046,6 +1046,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.
     product::PlannedSubjects::MtpOf mtp_of;
     if (gguf && !options_.offline) {
+        std::vector<std::string> quants;
+        for (const auto& q : listing) {
+            if (!q.drafter && q.format == "gguf") { quants.push_back(q.quant); }
+        }
+        gguf_mtps(repo, hub, commit, quants); // read together, once
         mtp_of = [this, repo, hub, commit](const std::string& label) {
             return gguf_mtp(repo, hub, commit, label);
         };
@@ -1976,6 +1981,30 @@ Json App::search_json(const std::string& query, const std::string& sort,
 // The KV cache per token of the repository's models, from the GGUF metadata of its smallest
 // quantization (an 8 MiB head by an HTTP range; 32 MiB when the metadata runs longer), else from
 // its config.json (safetensors weights).
+void App::gguf_mtps(const std::string& repo, const std::string& hub, const std::string& commit,
+                    const std::vector<std::string>& quants) {
+    const auto key_of = [&](const std::string& quant) {
+        return hub_key(repo, hub) + "@" + commit + "|" + quant;
+    };
+    std::vector<std::string> missing;
+    {
+        std::lock_guard lock(sizes_mutex_);
+        for (const auto& quant : quants) {
+            if (!mtp_.contains(key_of(quant))) { missing.push_back(quant); }
+        }
+    }
+    if (missing.empty()) { return; }
+    convert::FetchOptions fetch;
+    fetch.hub = hub;
+    if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+    const auto read =
+        convert::gguf_quants_carry_mtp(commit.empty() ? repo : repo + "@" + commit, fetch, missing);
+    std::lock_guard lock(sizes_mutex_);
+    for (const auto& [quant, carries] : read) {
+        if (carries) { mtp_[key_of(quant)] = carries; } // a read that failed is tried again
+    }
+}
+
 std::optional<bool> App::gguf_mtp(const std::string& repo, const std::string& hub,
                                   const std::string& commit, const std::string& quant) {
     const std::string key = hub_key(repo, hub) + "@" + commit + "|" + quant;
