@@ -363,7 +363,8 @@ inline constexpr std::int32_t kR8VerifyTokens = 4;
 
 // A call of 17 tokens or more (T >= kQ8PrefillA8Tokens) inside a prefill (prefill_routes_active)
 // of an NVFP4 weight that the generic W4A8 takes: its policy allows A8 and, where the build has
-// the W4A4 kernels, not A4 (nvfp4_prefill_a8_policy). The native NVFP4 plans of sm_120a compute A16
+// the W4A4 kernels, not A4 (nvfp4_prefill_a8_policy); without tensor mma.sync the tiled route owns
+// the call (volta_tiled_route). The native NVFP4 plans of sm_120a compute A16
 // and A4 only, so the wrappers hand such a call of a registered shape to the generic path, as
 // q8_prefill_a8 hands a Q8 one: a W4A16 checkpoint under --activations int8 prefills on int8
 // activations on every card. Outside a prefill (decode, speculative verify of any width, the
