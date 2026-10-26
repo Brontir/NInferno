@@ -332,6 +332,14 @@ int main(int argc, char** argv) {
         const auto* q8 = cv::listed_quant_for(listing, "q8_0", "r");
         expect(q4 == &listing[0] && q8 == &listing[1],
                "the listing's quantization for --quant, a drafter beside them not one");
+        // A whole file's group is its file name (gguf_group): a width reads its label from it.
+        listing[0].files = {"m-UD-Q4_K_M.gguf"};
+        expect(cv::listed_quant_for(listing, "4bit", "r") == &listing[0],
+               "a width over whole files");
+        const std::map<std::string, std::uint64_t> files = {{"m-UD-Q4_K_M.gguf", 10},
+                                                             {"m-Q8_0.gguf", 20}};
+        expect(cv::gguf_group_for_quant(files, "4bit", "r") == "m-UD-Q4_K_M.gguf",
+               "a width over the fetch's whole-file groups");
     }
     std::cout << (failures == 0 ? "model support: ok\n" : "model support: FAILED\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

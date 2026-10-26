@@ -1166,7 +1166,9 @@ std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& gro
         std::string chosen;
         std::uint64_t largest = 0;
         for (const auto& [group, bytes] : groups) {
-            if (quant_label_bits(gguf_quant_label(group + ".gguf")) != width) { continue; }
+            // A split model's stem names no file; a whole one's is its file name.
+            const auto file = ascii_lower(group).ends_with(".gguf") ? group : group + ".gguf";
+            if (quant_label_bits(gguf_quant_label(file)) != width) { continue; }
             if (bytes > largest) {
                 largest = bytes;
                 chosen  = group;
