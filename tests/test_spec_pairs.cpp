@@ -11,6 +11,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -103,6 +104,33 @@ int main() {
                "another generation speculates for one request only");
         expect(away.thinking.floor_tokens_per_round > 1.0,
                "a choice carries its break-even for the watchdog");
+    }
+    // Another generation's measurement, its rounds costed as on the card's generation: what a
+    // round of each configuration costs there over here, from a target measured on both (its
+    // tokens per round are the pair's; Ampere's rounds cost more, the deeper the more).
+    {
+        auto ampere         = ada_q4; // the same weights measured on a card of another generation
+        ampere.generation   = "sm86";
+        ampere.tune.key.gpu = "ga106:28sm";
+        for (auto& m : ampere.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 1.10; }
+        }
+        const std::vector<sp::MeasuredPair> lab = {ada_q4, ampere};
+        const auto costs = sp::generation_round_costs(lab, "sm89", "sm86");
+        expect(costs.contains("dflash:7") && std::abs(costs.at("dflash:7") - 1.10) < 1e-9 &&
+                   sp::generation_round_costs(lab, "sm89", "sm120").empty(),
+               "a round's cost on another generation, from a target measured on both");
+        auto other   = ada_q4; // a target measured on Ada only
+        other.target = "other-weights";
+        const auto as_ada    = sp::profile_for_target({&other}, "sm86");
+        const auto costed    = sp::profile_for_target({&other}, "sm86", {}, &lab);
+        const auto blackwell = sp::profile_for_target({&other}, "sm120", {}, &lab);
+        expect(as_ada.non_thinking.config == costed.non_thinking.config &&
+                   std::abs(costed.non_thinking.speedup() * 1.10 -
+                            as_ada.non_thinking.speedup()) < 1e-6 &&
+                   blackwell.non_thinking.speedup() == as_ada.non_thinking.speedup(),
+               "an Ada pair on Ampere at Ampere's round costs; on Blackwell (none measured on "
+               "both) as measured");
     }
     // The identity of weights: sorted digests, so the listing's order does not matter.
     expect(sp::weights_identity({"bb", "aa"}) == "aa,bb", "weights identity is order-free");

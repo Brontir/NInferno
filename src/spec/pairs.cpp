@@ -177,9 +177,16 @@ Profile not_current(const MeasuredPair& pair) {
 }
 
 // select() over the pair's measurements: every depth and its load bounds at home, else the
-// portable ones.
-Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options) {
+// portable ones, each round's seconds scaled by `round_costs` (by configuration label: what a round
+// costs on the card asked for over the measuring one).
+Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options,
+                 const RoundCostRatios& round_costs = {}) {
     Profile p = pair.tune;
+    for (auto& m : p.measurements) {
+        if (const auto r = round_costs.find(m.config.label()); r != round_costs.end()) {
+            m.seconds *= r->second;
+        }
+    }
     if (!home) {
         std::erase_if(p.measurements,
                       [](const Measurement& m) { return m.config.k > kPortableDepth; });
@@ -232,8 +239,68 @@ Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options)
     return pair_current(pair) ? selected(pair, false, options) : not_current(pair);
 }
 
+namespace {
+
+// A round's cost per configuration label in one tune: its seconds per round over plain decode's
+// seconds per token, the mean over the sections it measured (those plain decode measured too).
+std::map<std::string, double> round_costs(const Profile& tune) {
+    std::map<std::string, double> plain; // seconds per token, by section
+    for (const auto& m : tune.measurements) {
+        if (!m.config.enabled() && m.tokens > 0) { plain[m.family] = m.seconds / m.tokens; }
+    }
+    struct Sum {
+        double seconds = 0, rounds = 0, plain = 0;
+        int sections   = 0;
+    };
+    std::map<std::string, Sum> sums;
+    for (const auto& m : tune.measurements) {
+        const auto p = plain.find(m.family);
+        if (!m.config.enabled() || m.rounds <= 0 || p == plain.end()) { continue; }
+        auto& s = sums[m.config.label()];
+        s.seconds += m.seconds;
+        s.rounds += static_cast<double>(m.rounds);
+        s.plain += p->second;
+        ++s.sections;
+    }
+    std::map<std::string, double> out;
+    for (const auto& [label, s] : sums) {
+        if (s.plain > 0) { out[label] = (s.seconds / s.rounds) / (s.plain / s.sections); }
+    }
+    return out;
+}
+
+} // namespace
+
+RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
+                                       std::string_view from, std::string_view to) {
+    std::map<std::string, std::vector<double>> ratios;
+    for (const auto& a : lab) {
+        if (a.generation != from || !pair_current(a)) { continue; }
+        const auto at_from = round_costs(a.tune);
+        for (const auto& b : lab) {
+            if (b.generation != to || b.target != a.target || b.engine != a.engine ||
+                !pair_current(b)) {
+                continue;
+            }
+            for (const auto& [label, cost] : round_costs(b.tune)) {
+                if (const auto f = at_from.find(label); f != at_from.end() && f->second > 0) {
+                    ratios[label].push_back(cost / f->second);
+                }
+            }
+        }
+    }
+    RoundCostRatios out;
+    for (auto& [label, each] : ratios) {
+        std::sort(each.begin(), each.end());
+        const std::size_t n = each.size();
+        out[label]          = n % 2 ? each[n / 2] : (each[n / 2 - 1] + each[n / 2]) / 2;
+    }
+    return out;
+}
+
 Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
-                           std::string_view generation, const SelectOptions& options) {
+                           std::string_view generation, const SelectOptions& options,
+                           const std::vector<MeasuredPair>* lab) {
     std::vector<const MeasuredPair*> current, home;
     std::set<std::string> home_cards; // two cards, not two records of one card
     for (const auto* pair : measured) {
@@ -272,7 +339,14 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             return out;
         }
     }
-    return selected(home.empty() ? *current.front() : *home.front(), false, options);
+    if (!home.empty()) { return selected(*home.front(), false, options); }
+    // Another generation's measurement: its rounds costed as on this one where the lab measured
+    // a target on both.
+    const MeasuredPair& away = *current.front();
+    return selected(away, false, options,
+                    lab != nullptr && !generation.empty()
+                        ? generation_round_costs(*lab, away.generation, generation)
+                        : RoundCostRatios{});
 }
 
 std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,
@@ -583,7 +657,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
 
     // 1. Its own measurements.
     if (const auto own = own_cards(pairs, query); !own.empty()) {
-        return PairChoice{.profile = profile_for_target(pointers(own), generation, served),
+        return PairChoice{.profile = profile_for_target(pointers(own), generation, served, &pairs),
                           .basis   = "measured",
                           .source  = "registry pair " + own.front().target_repo + " (" +
                                     std::to_string(own.size()) + " lab card(s))"};
@@ -596,7 +670,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
         if (const auto siblings = nearest_siblings(pairs, query, repo); !siblings.cards.empty()) {
             std::string named;
             for (const auto& q : siblings.quants) { named += (named.empty() ? "" : ", ") + q; }
-            return PairChoice{.profile = profile_for_target(pointers(siblings.cards), generation, served),
+            return PairChoice{.profile = profile_for_target(pointers(siblings.cards), generation,
+                                                            served, &pairs),
                               .basis   = "preliminary",
                               .source  = "registry sibling " + std::string(repo.substr(0, at)) +
                                         " " + named + " (" + std::to_string(siblings.cards.size()) +
