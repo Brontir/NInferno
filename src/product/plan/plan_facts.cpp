@@ -726,8 +726,10 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         }
         return block;
     };
+    double elements = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
+        elements += static_cast<double>(t.elements());
         if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
             mtp_bytes += t.bytes;
         }
@@ -751,6 +753,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         out.shape.base_models = {std::move(*base)};
     }
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
+    // A split part's table lists its own tensors only: the elements of the whole are not known.
+    out.model.weight_elements = whole ? elements : 0;
     if (!whole && !has_output) { out.model.params = 0; }
     return out;
 }

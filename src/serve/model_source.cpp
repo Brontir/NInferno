@@ -145,11 +145,20 @@ ModelSource resolve_model_source(const ServeOptions& options,
     // A GGUF repository without --quant: the largest quantization that fits the asked context x
     // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
     // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
+    // A GGUF model's separate drafters (choice/DECISIONS 45): attached when the choice drafts with
+    // one, as with --with-drafters; --prepare-only, without a GPU to choose for, only with it.
+    bool drafters = options.with_drafters;
     if (options.quant.empty() && !options.prepare_only) {
         if (const auto choice = largest_fitting_hub_quant(options, log)) {
             acquire.fetch.quant = choice->quant;
             out.planned_context = choice->launch_context;
+            drafters            = drafters || choice->drafters;
         }
+    } else if (!options.quant.empty() && !options.prepare_only && !drafters) {
+        drafters = hub_start_attaches_drafters(options, log);
+    }
+    if (drafters && !options.with_drafters && log) {
+        log("drafters | the choice drafts with a separate drafter: attached (a separate download)");
     }
     acquire.fetch.log      = log;
     acquire.convert.recipe            = options.recipe;
@@ -162,7 +171,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();
     acquire.log            = log;
-    if (options.with_drafters) { acquire.with_drafters = true; }
+    if (drafters) { acquire.with_drafters = true; }
     acquire.keep_replaced = options.keep_replaced;
     // Also for the quantization chosen above: that choice is for an idle card of this class,
     // this check for the memory free now.

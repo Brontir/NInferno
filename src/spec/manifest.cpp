@@ -178,6 +178,11 @@ const ManifestDrafter* SpeculationManifest::drafter(std::string_view name) const
     return nullptr;
 }
 
+bool ManifestDrafter::present() const {
+    std::error_code ec;
+    return usable() && (artifact.empty() ? !component.empty() : std::filesystem::exists(artifact, ec));
+}
+
 std::filesystem::path manifest_path(const std::filesystem::path& artifact) {
     return std::filesystem::path(artifact.string() + ".speculation.json");
 }
