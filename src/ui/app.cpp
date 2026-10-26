@@ -794,7 +794,8 @@ Json App::listing_of(const std::string& repo, const std::string& hub) {
                         {"bits", q.bits},
                         {"drafter", q.drafter},
                         {"mtp_bytes", q.mtp_bytes},
-                        {"weights", spec::weights_identity(q.sha256)}});
+                        {"weights", spec::weights_identity(q.sha256)},
+                        {"commit", q.commit}});
         if (!q.drafter && hub != "modelscope") { sizes_[size_key(repo, q.quant)] = q.bytes; }
     }
     if (generation == hub_generation_) { listings_[hub_key(repo, hub)] = list; }
@@ -984,8 +985,13 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                                       .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
     // attached, its MTP layers are.
+    // The commit the listing was read at: a sibling quantization's measurement counts from it.
+    const std::string commit = list.empty() || !list.front().is_object()
+                                   ? std::string()
+                                   : list.front().value("commit", std::string());
     const product::SpeculationSubject subject = product::planned_subject(
-        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu);
+        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
+        inputs.gpu);
     inputs.subject = &subject;
     // Each quantization resolves its own speculation (the lab's pairs are of its weights).
     std::map<std::string, product::SpeculationSubject> per_quant;
@@ -999,7 +1005,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                                                                   .facts   = *facts,
                                                                   .gguf    = gguf,
                                                                   .weights = q.weights,
-                                                                  .quant   = q.quant},
+                                                                  .quant   = q.quant,
+                                                                  .commit  = commit},
                                            inputs.gpu))
                      .first;
         }

@@ -47,6 +47,9 @@ struct PlannedTarget {
     // quantization label: the key of the lab's speculation pairs and the target's bit class.
     std::string weights;
     std::string quant;
+    // The commit the listing was read at ("" unknown): a sibling quantization's measurement counts
+    // only from the same commit (spec::pair_choice).
+    std::string commit;
 };
 
 // The subject of a planned target: the manifest convert::plan_drafters would give it (each

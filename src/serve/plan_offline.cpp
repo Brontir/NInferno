@@ -43,6 +43,7 @@ struct ModelRead {
     // The weights the facts were read at (spec::weights_identity of their files' digests): the key
     // of the lab's speculation pairs. "" when the listing gives no digest for one of them.
     std::string weights;
+    std::string commit; // the commit the hub listing was read at ("" unknown)
 };
 
 std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.sha256); }
@@ -206,6 +207,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
     }
     const auto quants                 = convert::list_quants(spec, fetch);
     out.repo                          = convert::split_spec(spec, fetch).first;
+    out.commit                        = quants.empty() ? std::string() : quants.front().commit;
     std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
     const convert::RepoQuant* weights = nullptr;
@@ -400,7 +402,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                             .gguf          = model.gguf,
                                                             .with_drafters = options.with_drafters,
                                                             .weights       = model.weights,
-                                                            .quant         = quant_label_of(model)},
+                                                            .quant         = quant_label_of(model),
+                                                            .commit        = model.commit},
                                      gpu);
         // A separate drafter attached with --with-drafters is uploaded beside the target.
         const convert::FetchOptions fetch = fetch_options();
@@ -413,7 +416,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         if (model.listing.size() > 1) {
             out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
             out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
-                                     facts = model.facts, gguf = model.gguf,
+                                     commit = model.commit, facts = model.facts, gguf = model.gguf,
                                      with_drafters = options.with_drafters,
                                      gpu](const product::QuantListing& q)
                 -> const product::SpeculationSubject* {
@@ -428,7 +431,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                                   .gguf          = gguf,
                                                                   .with_drafters = with_drafters,
                                                                   .weights       = q.weights,
-                                                                  .quant         = q.quant},
+                                                                  .quant         = q.quant,
+                                                                  .commit        = commit},
                                            gpu))
                              .first;
                 }
