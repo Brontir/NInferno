@@ -173,6 +173,16 @@ struct PlanModelFacts {
     std::uint32_t ffn_active = 0;
     std::uint32_t vocab      = 0;
     double params            = 0; // every weight (0: unknown)
+    // The weights' elements as a whole GGUF tensor table counts them (0: unknown): the
+    // denominator of bits_per_weight, exact where the geometry's parameter count above is an
+    // estimate (Gemma 4's runs 18 % over its tensors).
+    double weight_elements = 0;
+    // `bytes` of weights over the weights: weight_elements where counted, else params; 0 when
+    // neither is known. What the quantization rule's floors and the accuracy curve read.
+    [[nodiscard]] double bits_per_weight(double bytes) const noexcept {
+        const double of = weight_elements > 0 ? weight_elements : params;
+        return of > 0 ? bytes * 8 / of : 0;
+    }
     // The weights the Device holds (the target's; a separate drafter's apart).
     std::uint64_t weight_bytes  = 0;
     WeightBasis weight_basis    = WeightBasis::Unknown;

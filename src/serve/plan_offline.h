@@ -41,11 +41,21 @@ struct OfflinePlan {
 struct HubQuantChoice {
     std::string quant;
     std::uint32_t launch_context = 0;
+    // The choice at it drafts with a separate drafter of the model (choice/DECISIONS 45): the
+    // start attaches the GGUF model's drafters (a separate download), as --with-drafters does.
+    bool drafters = false;
 };
 
 [[nodiscard]] std::optional<HubQuantChoice>
 largest_fitting_hub_quant(const ServeOptions& options,
                           const std::function<void(const std::string&)>& log);
+
+// Whether a start of a GGUF hub model with --quant attaches its separate drafters: with
+// --with-drafters; else when the choice at that quantization drafts with one (the plan without
+// weights on this GPU, as largest_fitting_hub_quant's HubQuantChoice::drafters). False when it
+// cannot be planned (logged).
+[[nodiscard]] bool hub_start_attaches_drafters(const ServeOptions& options,
+                                               const std::function<void(const std::string&)>& log);
 
 // The axes a start leaves to the engine (--kv-dtype auto, no --activations, no --state-dtype, no
 // --sliding-kv-dtype), chosen for the artifact at `options.artifact_path` on this GPU by the
