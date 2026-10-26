@@ -124,8 +124,8 @@ cached_conversion_with_drafters(const std::filesystem::path& cache, const std::s
                                                   bool vision                = false);
 // A stamp of everything under `cache` that cached_conversion_with_drafters reads for `repo`: its
 // refs, which commits' downloads are there, its conversions (names, sizes, times) and the separate
-// drafters their manifests attach (another repository's, removed or replaced apart from them). A
-// plan that depends on what a conversion carries is kept per this stamp (ninferno-ui).
+// drafters their manifests attach (another repository's, removed or replaced apart from them): a
+// plan that depends on what a conversion carries is kept until the stamp changes.
 [[nodiscard]] std::string conversions_stamp(const std::filesystem::path& cache,
                                             const std::string& repo);
 

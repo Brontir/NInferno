@@ -795,8 +795,7 @@ void test_catalog() {
             const auto attached = conversions_stamp(root, "org/m-GGUF");
             fs::create_directories(repo / "snapshots/c0ffee");
             const auto downloaded = conversions_stamp(root, "org/m-GGUF");
-            std::ofstream(repo / "refs/dev") << "c0ffee
-";
+            std::ofstream(repo / "refs/dev") << "c0ffee\n";
             const auto moved = conversions_stamp(root, "org/m-GGUF");
             check(attached != before && downloaded != attached && moved != downloaded,
                   "a drafter, a download and a ref each change the stamp");

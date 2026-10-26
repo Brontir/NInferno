@@ -431,7 +431,7 @@ std::string conversions_stamp(const fs::path& cache, const std::string& repo) {
         std::ifstream in(it->path());
         std::string commit;
         in >> commit;
-        out += it->path().filename().string() + "=" + commit + ";";
+        out += it->path().lexically_relative(root / "refs").generic_string() + "=" + commit + ";";
     }
     // The commits downloaded: a conversion whose download is gone is kept as it is, one whose
     // download is there serves only at its own revision (cache_serves).
