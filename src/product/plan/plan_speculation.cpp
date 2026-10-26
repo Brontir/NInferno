@@ -94,72 +94,108 @@ std::string basis_of(const ServedSpeculation& served) {
     return served.basis.empty() ? std::string("own") : served.basis;
 }
 
-} // namespace
+// The components a planned target's artifact carries before its drafters: the text, and its own MTP
+// layers where it has them.
+std::set<std::string> own_components(const PlanSourceFacts& facts) {
+    std::set<std::string> out{"text"};
+    if (facts.shape.builtin_mtp) { out.insert("mtp"); }
+    return out;
+}
 
-SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuKey& gpu) {
+// The shape the registry matches a target by.
+spec::Geometry geometry_of(const PlanSourceFacts& facts) {
+    return {facts.shape.hidden_size, facts.shape.num_hidden_layers, facts.shape.vocab_size};
+}
+
+// The target as the converter's drafter plan sees it (convert::describe_checkpoint and
+// describe_gguf_artifact): repository, lineage (the target's, then the base models its facts
+// name), engine, shape, built-in MTP and components.
+convert::DrafterTarget drafter_target(const PlannedTarget& target) {
     const PlanSourceFacts& facts = target.facts;
-    SpeculationSubject out;
-    out.components = {"text"};
-    if (facts.shape.builtin_mtp) { out.components.insert("mtp"); }
-    out.support = spec::engine_support(facts.model.model_type);
-    // A GGUF conversion carries no proposal head; a checkpoint's recipe may (Qwen's +head): the
-    // conservative side, the full head.
-    out.proposal_head = false;
-
     convert::DrafterTarget t;
     t.repo    = target.repo;
     t.lineage = facts.shape.base_models; // a GGUF's general.base_model, a model card's entries
     t.engine       = engine_of(facts.model.model_type);
     t.architecture = facts.model.architecture;
-    t.geometry     = spec::Geometry{facts.shape.hidden_size, facts.shape.num_hidden_layers,
-                                facts.shape.vocab_size};
+    t.geometry     = geometry_of(facts);
     t.builtin_mtp  = facts.shape.builtin_mtp;
-    t.components.assign(out.components.begin(), out.components.end());
+    const auto components = own_components(facts);
+    t.components.assign(components.begin(), components.end());
     t.gguf_source = target.gguf;
     // A conversion by this build records its mapping's version (never a stale target).
     t.gguf_mapper = target.gguf ? "planned" : "";
+    return t;
+}
 
+// The drafters the converter declares for a target (convert/acquire.cpp: a checkpoint's by default,
+// a GGUF's with --with-drafters): the manifest it writes, each drafter the target's engine runs
+// attached, a component one embedded in the artifact.
+struct DeclaredDrafters {
+    spec::SpeculationManifest manifest;
+    std::set<std::string> components; // embedded beside the text (a DFlash component)
+    // The drafters whose weights are not the target's listing: attached ones, and embedded ones
+    // from a repository of their own (a DFlash drafter of Qwen 3.5), counted as attached ones are.
+    std::vector<spec::DrafterDecl> attached;
+};
+
+DeclaredDrafters declared_drafters(const PlannedTarget& target) {
+    const convert::DrafterPlan plan = convert::plan_drafters(drafter_target(target));
+    Json doc                        = plan.to_json();
+    DeclaredDrafters out;
+    for (std::size_t i = 0; i < plan.drafters.size() && i < doc["drafters"].size(); ++i) {
+        const convert::PlannedDrafter& d = plan.drafters[i];
+        Json& item                       = doc["drafters"][i];
+        if (!d.supported || !d.reason.empty()) { continue; }
+        if (d.decl.kind == "mtp") {
+            if (target.facts.shape.builtin_mtp) { item["status"] = "embedded"; }
+        } else if (!d.decl.component.empty()) {
+            item["status"] = "embedded";
+            out.components.insert(d.decl.component);
+            if (!d.decl.repo.empty()) { out.attached.push_back(d.decl); }
+        } else {
+            item["status"] = "attached";
+            out.attached.push_back(d.decl);
+        }
+    }
+    out.manifest = spec::manifest_from_json(doc);
+    return out;
+}
+
+} // namespace
+
+SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuKey& gpu) {
+    const PlanSourceFacts& facts = target.facts;
+    SpeculationSubject out;
+    out.components = own_components(facts);
+    out.support    = spec::engine_support(facts.model.model_type);
+    // A GGUF conversion carries no proposal head; a checkpoint's recipe may (Qwen's +head): the
+    // conservative side, the full head.
+    out.proposal_head = false;
+
+    const std::string engine = engine_of(facts.model.model_type);
     std::optional<spec::SpeculationManifest> manifest;
     const spec::ModelEntry* entry = nullptr;
     const std::string label       = target.repo.empty() ? facts.model.architecture : target.repo;
     try {
         if (!target.gguf || target.with_drafters) {
-            // The manifest the converter writes (convert/acquire.cpp: a checkpoint's drafters by
-            // default, a GGUF's with --with-drafters): each drafter the target's engine runs is
-            // attached, a component one embedded in the artifact.
-            convert::DrafterPlan plan = convert::plan_drafters(t);
-            Json doc                  = plan.to_json();
-            for (std::size_t i = 0; i < plan.drafters.size() && i < doc["drafters"].size(); ++i) {
-                const convert::PlannedDrafter& d = plan.drafters[i];
-                Json& item                       = doc["drafters"][i];
-                if (!d.supported || !d.reason.empty()) { continue; }
-                if (d.decl.kind == "mtp") {
-                    if (facts.shape.builtin_mtp) { item["status"] = "embedded"; }
-                } else if (!d.decl.component.empty()) {
-                    item["status"] = "embedded";
-                    out.components.insert(d.decl.component);
-                    // Embedded from a repository of its own (a DFlash drafter of Qwen 3.5): its
-                    // weights are not the target's listing, and are counted as an attached one's.
-                    if (!d.decl.repo.empty()) { out.attached_drafters.push_back(d.decl); }
-                } else {
-                    item["status"] = "attached";
-                    out.attached_drafters.push_back(d.decl);
-                }
-            }
-            manifest = spec::manifest_from_json(doc);
+            DeclaredDrafters declared = declared_drafters(target);
+            out.components.insert(declared.components.begin(), declared.components.end());
+            out.attached_drafters = std::move(declared.attached);
+            manifest              = std::move(declared.manifest);
         } else {
             // No manifest (a GGUF hub model without --with-drafters): the registry entry of its
             // shape (spec::resolve_speculation's third source), its vocabulary unread.
-            entry = spec::Registry::builtin().nearest(t.engine, t.geometry, "", t.builtin_mtp);
+            const spec::Geometry geometry = geometry_of(facts);
+            entry = spec::Registry::builtin().nearest(engine, geometry, "", facts.shape.builtin_mtp);
             if (entry != nullptr &&
-                (t.geometry.hidden_size == 0 || t.geometry.num_hidden_layers == 0 ||
-                 spec::shape_distance(entry->geometry, t.geometry) != 0.0)) {
+                (geometry.hidden_size == 0 || geometry.num_hidden_layers == 0 ||
+                 spec::shape_distance(entry->geometry, geometry) != 0.0)) {
                 entry = nullptr;
             }
         }
         out.resolved = spec::resolve_planned_speculation(manifest, entry, out.components, gpu,
                                                          label, target.weights, target.quant,
-                                                         t.engine,
+                                                         engine,
                                                          target.repo.empty() || target.commit.empty()
                                                              ? std::string()
                                                              : target.repo + "@" + target.commit);
@@ -175,10 +211,10 @@ SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::Gp
                                      const std::optional<std::filesystem::path>& cached,
                                      const std::filesystem::path& spec_profile) {
     if (!cached) { return planned_subject(target, gpu); }
-    PlannedTarget attached  = target;
-    attached.with_drafters  = true;
-    SpeculationSubject out  = speculation_subject(*cached, gpu, spec_profile);
-    out.attached_drafters   = planned_subject(attached, gpu).attached_drafters;
+    SpeculationSubject out = speculation_subject(*cached, gpu, spec_profile);
+    try {
+        out.attached_drafters = declared_drafters(target).attached;
+    } catch (const std::exception&) {} // the drafters not planned: none counted
     return out;
 }
 
