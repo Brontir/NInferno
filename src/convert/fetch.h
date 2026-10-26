@@ -215,8 +215,6 @@ struct RepoQuant {
 [[nodiscard]] std::optional<std::string> current_commit(const std::string& spec,
                                                         const FetchOptions& options);
 
-// The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
-// is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.
 // The GGUF model `quant` names among `groups` (each model's split stem and its bytes), as the
 // fetch picks it: a width ("4bit") the largest model of that width; else the models whose stem
 // holds the label, "Q4_K_M" matching "UD-Q4_K_M", an exact label when several do. Throws naming
@@ -230,6 +228,8 @@ struct RepoQuant {
 [[nodiscard]] RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants,
                                          const std::string& quant, const std::string& repo);
 
+// The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
+// is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.
 [[nodiscard]] std::vector<RepoQuant> list_quants(const std::string& spec,
                                                  const FetchOptions& options);
 

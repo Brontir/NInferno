@@ -409,7 +409,7 @@ std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
         const bool vision_stem = stem.ends_with(".vision");
         if (vision_stem) { stem.resize(stem.size() - std::string_view(".vision").size()); }
         if (ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) { continue; }
-        found[vision_stem].emplace_back(path, (!download || cache_served(path)) && carries(path));
+        found[vision_stem].emplace_back(path, (!download || cache_serves(path)) && carries(path));
     }
     auto& kept = found[vision && !found[1].empty() ? 1 : 0];
     if (kept.empty() ||
