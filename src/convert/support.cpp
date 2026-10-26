@@ -329,7 +329,7 @@ void read_gguf_facts(const fs::path& path, SupportFacts& out) {
                     arch && arch->is_string() ? arch->get<std::string>() : std::string();
                 count_gguf_matrices(file, out);
                 out.chat_template = file.has("tokenizer.chat_template");
-                // A base repository named (the one base_tokenizer reads): its template, not known yet.
+                // A base repository named (base_tokenizer's): its template, not known yet.
                 if (!*out.chat_template && gguf_metadata_base_repository(file.metadata)) {
                     out.chat_template.reset();
                 }
