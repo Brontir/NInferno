@@ -304,6 +304,13 @@ void test_base_repository() {
     check(of(J{{"general.source.url", "https://huggingface.co/org/s"}}) ==
               std::optional<std::string>("org/s"),
           "the source address");
+    check(of(J{{"general.base_model.0.repo_url", "http://hf.co/org/m?library=gguf#top"}}) ==
+              std::optional<std::string>("org/m"),
+          "a query or an anchor is no part of it");
+    check(!of(J{{"general.base_model.0.repo_url", "https://huggingface.co/datasets/org/d"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "https://huggingface.co/spaces/org/s"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "github.com/org/m"}}),
+          "a dataset, a Space, another host: no model repository");
     check(!of(J{{"general.base_model.0.repo_url", "org"}}) && !of(J{{"general.base_model.0.repo_url", 3}}) &&
               !of(J::object()),
           "none named");

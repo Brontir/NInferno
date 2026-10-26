@@ -265,18 +265,28 @@ std::optional<std::string> gguf_metadata_base_repository(const nlohmann::json& m
         const auto it = metadata.find(key);
         if (it == metadata.end() || !it->is_string()) { continue; }
         std::string_view text = it->get_ref<const std::string&>();
-        for (const std::string_view prefix : {"https://huggingface.co/", "http://huggingface.co/",
-                                              "https://hf.co/", "huggingface.co/", "hf.co/"}) {
+        bool hub_address      = false;
+        for (const std::string_view prefix :
+             {"https://huggingface.co/", "http://huggingface.co/", "https://hf.co/", "http://hf.co/",
+              "huggingface.co/", "hf.co/"}) {
             if (text.starts_with(prefix)) {
                 text.remove_prefix(prefix.size());
+                hub_address = true;
                 break;
             }
         }
-        // org/name only: a /tree/<rev> or /resolve/... tail is not the repository; another site's
-        // address (a scheme left) names none.
+        text = text.substr(0, text.find_first_of("?#")); // a query or an anchor is no part of it
+        // org/name only: a /tree/<rev> or /resolve/... tail is not the repository. Another site's
+        // address names none (a scheme left, or a host where no hub prefix was), nor a dataset's,
+        // a Space's or a collection's.
         const auto slash = text.find('/');
         if (slash == 0 || slash == std::string_view::npos || slash + 1 == text.size() ||
             text[slash + 1] == '/' || text.find(':') != std::string_view::npos) {
+            continue;
+        }
+        const std::string_view org = text.substr(0, slash);
+        if ((!hub_address && org.find('.') != std::string_view::npos) || org == "datasets" ||
+            org == "spaces" || org == "collections") {
             continue;
         }
         return std::string(text.substr(0, text.find('/', slash + 1)));
