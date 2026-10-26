@@ -233,6 +233,17 @@ int main() {
         expect((!q2 || q2->source.find("sibling") == std::string::npos) &&
                    (!other || other->source.find("sibling") == std::string::npos),
                "no sibling of its bit class, or of another repository: the group");
+        // The nearest sibling measured with another drafter than the one attached gives way to
+        // the next one measured with it, not to the group.
+        auto old_q5      = q5xl;
+        old_q5.drafters  = {{"mtp", "org/m-GGUF@0ld"}};
+        auto with_q8     = q8;
+        with_q8.drafters = {{"mtp", "org/m-GGUF@c0ffee"}};
+        const std::vector<sp::MeasuredPair> drafted = {old_q5, with_q8};
+        const auto q6x = sp::pair_choice(drafted, "sha:q6x", "qwen3_5", {"mtp"}, 6, "sm120", {},
+                                         {{"mtp", "org/m-GGUF@c0ffee"}}, "org/m-GGUF");
+        expect(q6x && q6x->source.find("sibling org/m-GGUF Q8_0 (") != std::string::npos,
+               "a nearer sibling of another drafter: the next one of the attached drafter");
     }
     // One card's tunes of one target, a drafter each (MTP, then DFlash): one measurement of the
     // pair over both drafters, in either order.

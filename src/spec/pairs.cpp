@@ -435,35 +435,40 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
         served.served = engine_family_support(engine);
     }
     const EngineSupport* support = served.served ? &*served.served : nullptr;
-    // The measurements of the pairs `pick` takes, over the drafters the target carries only, of
-    // the current engine version (pair_current) before any card's runs are pooled: a stale record
-    // never mixes in.
+    // A pair's measurements over the drafters the target carries only, of the current engine
+    // version (pair_current): none where it is stale or measured other drafters only.
+    const auto carried_of = [&](const MeasuredPair& pair) -> std::optional<MeasuredPair> {
+        if (!pair_current(pair)) { return std::nullopt; }
+        MeasuredPair p = pair;
+        // A kind measured with another drafter than the one attached: not measured for it.
+        std::set<Mode> carried = modes;
+        for (const auto& [kind, id] : attached) {
+            const auto measured = p.drafters.find(kind);
+            if (measured != p.drafters.end() && !same_drafter(measured->second, id)) {
+                try {
+                    carried.erase(mode_of_kind(kind));
+                } catch (const std::invalid_argument&) {}
+            }
+        }
+        std::erase_if(p.tune.measurements, [&](const Measurement& m) {
+            return m.config.enabled() && !carried.contains(m.config.mode);
+        });
+        std::erase_if(p.tune.drafters, [&](const DrafterRecord& d) {
+            return std::find(kinds.begin(), kinds.end(), d.kind) == kinds.end();
+        });
+        if (std::none_of(p.tune.measurements.begin(), p.tune.measurements.end(),
+                         [](const Measurement& m) { return m.config.enabled(); })) {
+            return std::nullopt;
+        }
+        return p;
+    };
+    // The measurements of the pairs `pick` takes (carried_of each) before any card's runs are
+    // pooled: a stale record never mixes in.
     const auto measured_of = [&](const auto& pick) {
         std::vector<MeasuredPair> own;
         for (const auto& pair : pairs) {
-            if (!pick(pair) || !pair_current(pair)) { continue; }
-            MeasuredPair p = pair;
-            // A kind measured with another drafter than the one attached: not measured for it.
-            std::set<Mode> carried = modes;
-            for (const auto& [kind, id] : attached) {
-                const auto measured = p.drafters.find(kind);
-                if (measured != p.drafters.end() && !same_drafter(measured->second, id)) {
-                    try {
-                        carried.erase(mode_of_kind(kind));
-                    } catch (const std::invalid_argument&) {}
-                }
-            }
-            std::erase_if(p.tune.measurements, [&](const Measurement& m) {
-                return m.config.enabled() && !carried.contains(m.config.mode);
-            });
-            std::erase_if(p.tune.drafters, [&](const DrafterRecord& d) {
-                return std::find(kinds.begin(), kinds.end(), d.kind) == kinds.end();
-            });
-            // Measured with other drafters only: not measured for the ones it carries.
-            if (std::any_of(p.tune.measurements.begin(), p.tune.measurements.end(),
-                            [](const Measurement& m) { return m.config.enabled(); })) {
-                own.push_back(std::move(p));
-            }
+            if (!pick(pair)) { continue; }
+            if (auto p = carried_of(pair)) { own.push_back(std::move(*p)); }
         }
         // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the
         // pair: their runs pooled, so its choice weighs every drafter the card measured. A load
@@ -517,14 +522,11 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
                    (pair.target_bits < 4) == (target_bits < 4);
         };
         // Each sibling's own bits, before one card's records are pooled (a pooled record keeps
-        // its first pair's); one that measured a kind the target carries.
+        // its first pair's); one measured with a drafter the target carries (carried_of), so a
+        // nearer one measured with another drafter gives way to the next.
         double nearest = std::numeric_limits<double>::infinity();
         for (const auto& pair : pairs) {
-            if (sibling_repo(pair) && pair_current(pair) &&
-                std::any_of(pair.tune.measurements.begin(), pair.tune.measurements.end(),
-                            [&](const Measurement& m) {
-                                return m.config.enabled() && modes.contains(m.config.mode);
-                            })) {
+            if (sibling_repo(pair) && carried_of(pair)) {
                 nearest = std::min(nearest, std::abs(pair.target_bits - target_bits));
             }
         }
@@ -538,7 +540,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
             // Named before one card's records are pooled.
             std::set<std::string> quants;
             for (const auto& p : pairs) {
-                if (!nearest_sibling(p) || !pair_current(p)) { continue; }
+                if (!nearest_sibling(p) || !carried_of(p)) { continue; }
                 const auto space = p.target_repo.rfind(' ');
                 quants.insert(space == std::string::npos ? p.target_repo
                                                          : p.target_repo.substr(space + 1));
