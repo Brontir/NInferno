@@ -1132,52 +1132,12 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
     std::map<std::string, std::vector<const RemoteFile*>> groups;
     for (const auto* file : ggufs) { groups[gguf_group(file->path)].push_back(file); }
     std::string chosen;
-    if (const int width = quant_width_tag(options.quant); width > 0) {
-        // A width ("4bit"): the largest GGUF model of that width, the most faithful of them.
-        std::uint64_t largest = 0;
+    if (!options.quant.empty()) {
+        std::map<std::string, std::uint64_t> sizes;
         for (const auto& [group, files] : groups) {
-            const auto name = std::filesystem::path(files.front()->path).filename().string();
-            if (quant_label_bits(gguf_quant_label(name)) != width) { continue; }
-            std::uint64_t bytes = 0;
-            for (const auto* file : files) { bytes += file->size; }
-            if (bytes > largest) {
-                largest = bytes;
-                chosen  = group;
-            }
+            for (const auto* file : files) { sizes[group] += file->size; }
         }
-        if (chosen.empty()) {
-            std::string names;
-            for (const auto& [group, files] : groups) { names += "\n  " + group; }
-            throw std::runtime_error(repo + ": --quant " + options.quant + " matches no " +
-                                     std::to_string(width) + "-bit GGUF model; available:" + names);
-        }
-    } else if (!options.quant.empty()) {
-        std::vector<std::string> matches;
-        const auto want = ascii_lower(options.quant);
-        for (const auto& [group, files] : groups) {
-            if (ascii_lower(group).find(want) != std::string::npos) { matches.push_back(group); }
-        }
-        // "Q4_K" also matches "Q4_K_M" and "UD-Q4_K_XL"; an exact label wins.
-        if (matches.size() > 1) {
-            std::vector<std::string> exact;
-            for (const auto& group : matches) {
-                const auto text = ascii_lower(group);
-                const auto at   = text.find(want);
-                const auto next = at + want.size();
-                if (next == text.size() || text.compare(next, 5, ".gguf") == 0) {
-                    exact.push_back(group);
-                }
-            }
-            if (exact.size() == 1) { matches = exact; }
-        }
-        if (matches.size() != 1) {
-            std::string names;
-            for (const auto& [group, files] : groups) { names += "\n  " + group; }
-            throw std::runtime_error(repo + ": --quant " + options.quant + " matches " +
-                                     std::to_string(matches.size()) + " GGUF models; available:" +
-                                     names);
-        }
-        chosen = matches.front();
+        chosen = gguf_group_for_quant(sizes, options.quant, repo);
     } else {
         int best = 1 << 30;
         for (const auto& [group, files] : groups) {
@@ -1191,6 +1151,73 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
     for (const auto* file : groups[chosen]) { out.push_back(*file); }
     return out;
 }
+
+} // namespace
+
+std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& groups,
+                                 const std::string& quant, const std::string& repo) {
+    const auto available = [&] {
+        std::string names;
+        for (const auto& [group, _] : groups) { names += "\n  " + group; }
+        return names;
+    };
+    if (const int width = quant_width_tag(quant); width > 0) {
+        // A width ("4bit"): the largest GGUF model of that width, the most faithful of them.
+        std::string chosen;
+        std::uint64_t largest = 0;
+        for (const auto& [group, bytes] : groups) {
+            if (quant_label_bits(gguf_quant_label(group + ".gguf")) != width) { continue; }
+            if (bytes > largest) {
+                largest = bytes;
+                chosen  = group;
+            }
+        }
+        if (chosen.empty()) {
+            throw std::runtime_error(repo + ": --quant " + quant + " matches no " +
+                                     std::to_string(width) + "-bit GGUF model; available:" +
+                                     available());
+        }
+        return chosen;
+    }
+    std::vector<std::string> matches;
+    const auto want = ascii_lower(quant);
+    for (const auto& [group, _] : groups) {
+        if (ascii_lower(group).find(want) != std::string::npos) { matches.push_back(group); }
+    }
+    // "Q4_K" also matches "Q4_K_M" and "UD-Q4_K_XL"; an exact label wins.
+    if (matches.size() > 1) {
+        std::vector<std::string> exact;
+        for (const auto& group : matches) {
+            const auto text = ascii_lower(group);
+            const auto at   = text.find(want);
+            const auto next = at + want.size();
+            if (next == text.size() || text.compare(next, 5, ".gguf") == 0) { exact.push_back(group); }
+        }
+        if (exact.size() == 1) { matches = exact; }
+    }
+    if (matches.size() != 1) {
+        throw std::runtime_error(repo + ": --quant " + quant + " matches " +
+                                 std::to_string(matches.size()) + " GGUF models; available:" +
+                                 available());
+    }
+    return matches.front();
+}
+
+const RepoQuant* listed_quant_for(const std::vector<RepoQuant>& quants, const std::string& quant,
+                                  const std::string& repo) {
+    std::map<std::string, std::uint64_t> groups;
+    std::map<std::string, const RepoQuant*> of;
+    for (const auto& q : quants) {
+        if (q.drafter || q.format != "gguf" || q.files.empty()) { continue; }
+        // Keyed as the fetch keys its files (gguf_group of the path, a folder's name with it).
+        const auto group = gguf_group(q.files.front());
+        groups[group] += q.bytes;
+        of[group] = &q;
+    }
+    return of.at(gguf_group_for_quant(groups, quant, repo));
+}
+
+namespace {
 
 // A relative symlink from snapshots/<commit>/<path> to blobs/<digest>.
 void link_snapshot(const fs::path& repo_dir, const std::string& commit, const std::string& path,

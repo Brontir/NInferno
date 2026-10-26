@@ -13,7 +13,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cv = ninferno::convert;
 using Json   = nlohmann::json;
@@ -296,6 +299,39 @@ int main(int argc, char** argv) {
             "safetensors": {"parameters": {"BF16": 1}}})"));
         expect(!mixed.gguf && of(mixed).verdict == Verdict::Supported,
                "a mixed search result is judged by its safetensors");
+    }
+    // --quant picks one GGUF model as the fetch does, for the plan without weights too
+    // (convert::gguf_group_for_quant, convert::listed_quant_for): "Q4_K_M" takes UD-Q4_K_M where
+    // that is the only one, an exact label wins, "4bit" the largest 4-bit model.
+    {
+        const std::map<std::string, std::uint64_t> groups = {
+            {"m-UD-Q4_K_M", 10}, {"m-Q4_K_S", 9}, {"m-UD-Q4_K_XL", 11}, {"m-Q8_0", 20}};
+        expect(cv::gguf_group_for_quant(groups, "Q4_K_M", "r") == "m-UD-Q4_K_M",
+               "a label inside a longer one takes it");
+        expect(cv::gguf_group_for_quant(groups, "4bit", "r") == "m-UD-Q4_K_XL",
+               "a width takes the largest of that width");
+        bool threw = false;
+        try {
+            (void)cv::gguf_group_for_quant(groups, "Q4_K", "r");
+        } catch (const std::runtime_error&) { threw = true; }
+        expect(threw, "a label several models hold, none exactly, names them");
+        std::vector<cv::RepoQuant> listing(3);
+        listing[0].quant  = "UD-Q4_K_M";
+        listing[0].format = "gguf";
+        listing[0].bytes  = 10;
+        listing[0].files  = {"m-UD-Q4_K_M.gguf"};
+        listing[1].quant  = "Q8_0";
+        listing[1].format = "gguf";
+        listing[1].bytes  = 20;
+        listing[1].files  = {"Q8_0/m-Q8_0-00001-of-00002.gguf", "Q8_0/m-Q8_0-00002-of-00002.gguf"};
+        listing[2].quant   = "mtp-m";
+        listing[2].format  = "gguf";
+        listing[2].drafter = true;
+        listing[2].files   = {"mtp-m-Q4_K_M.gguf"};
+        const auto* q4 = cv::listed_quant_for(listing, "Q4_K_M", "r");
+        const auto* q8 = cv::listed_quant_for(listing, "q8_0", "r");
+        expect(q4 == &listing[0] && q8 == &listing[1],
+               "the listing's quantization for --quant, a drafter beside them not one");
     }
     std::cout << (failures == 0 ? "model support: ok\n" : "model support: FAILED\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
