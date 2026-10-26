@@ -663,7 +663,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
                 local.listing.push_back({.quant  = label,
                                          .format = "gguf",
                                          .bytes  = bytes,
-                                         .bits   = convert::quant_label_bits(label)});
+                                         .bits   = quant_label_bits(label).value_or(0)});
             }
             if (shaped) {
                 Planning planning       = planning_of(options, local, device, *gpu);

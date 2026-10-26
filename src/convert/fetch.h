@@ -298,10 +298,6 @@ struct HubModel {
 [[nodiscard]] nlohmann::json fetch_repo_json(const std::string& spec, const FetchOptions& options,
                                              const std::string& file);
 
-// The bits per weight a quantization label names: "UD-Q4_K_XL" -> 4, "IQ2_XXS" -> 2,
-// "MXFP4_MOE" -> 4, "BF16" -> 16, "Q8_0" -> 8; 0 when it names none.
-[[nodiscard]] int quant_label_bits(const std::string& label);
-
 // A width tag in place of a quantization name: "4bit", "4-bit", "8bits" -> 4, 4, 8 (1 to 16); 0
 // when `quant` is a name. --quant 4bit takes the largest GGUF model of that width.
 [[nodiscard]] int quant_width_tag(const std::string& quant);

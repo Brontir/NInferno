@@ -4,6 +4,7 @@
 
 #include "core/ascii.h"
 #include "core/hex.h"
+#include "core/quant_label.h"
 #include "core/sha256.h"
 
 #include "convert/gguf.h"
@@ -1237,7 +1238,7 @@ RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::stri
     out.quant = chosen; // a whole file's ends .gguf
     if (ascii_lower(out.quant).ends_with(".gguf")) { out.quant.resize(out.quant.size() - 5); }
     out.format = "gguf";
-    out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf"));
+    out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf")).value_or(0);
     out.bytes  = groups.at(chosen);
     out.commit = of.front().entry->commit;
     for (const auto& m : of) {
@@ -2130,18 +2131,6 @@ int quant_width_tag(const std::string& quant) {
     return bits >= 1 && bits <= 16 ? bits : 0;
 }
 
-int quant_label_bits(const std::string& label) {
-    const auto text = ascii_lower(label);
-    if (text.find("bf16") != std::string::npos || text.find("f16") != std::string::npos) {
-        return 16;
-    }
-    if (text.find("f32") != std::string::npos) { return 32; }
-    if (text.find("fp4") != std::string::npos) { return 4; }
-    static const std::regex bits(R"((?:^|[-_])i?q([0-9]))");
-    std::smatch match;
-    return std::regex_search(text, match, bits) ? std::stoi(match[1].str()) : 0;
-}
-
 std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& options) {
     auto [repo, revision] = split_spec(spec, options);
     const auto hub        = make_hub(options, revision);
@@ -2180,7 +2169,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
                 RepoQuant quant;
                 quant.quant   = label;
                 quant.format  = "gguf";
-                quant.bits    = quant_label_bits(label);
+                quant.bits    = quant_label_bits(label).value_or(0);
                 quant.drafter = sidecar;
                 out.push_back(std::move(quant));
             }
@@ -2192,7 +2181,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
             RepoQuant quant;
             quant.quant  = native_quant_label(file.path);
             quant.format = "ninferno";
-            quant.bits   = quant_label_bits(quant.quant);
+            quant.bits   = quant_label_bits(quant.quant).value_or(0);
             quant.bytes  = file.size;
             quant.files.push_back(file.path);
             quant.sha256.push_back(file.sha256);
