@@ -861,14 +861,6 @@ private:
 
 } // namespace
 
-std::string hub_repo_directory(std::string_view repo) {
-    std::string name = "models--" + std::string(repo);
-    if (const auto slash = name.find('/'); slash != std::string::npos) {
-        name.replace(slash, 1, "--");
-    }
-    return name;
-}
-
 std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
                                         const std::string& revision) {
     const std::string rev = revision.empty() ? std::string("main") : revision;
@@ -881,15 +873,6 @@ std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
         return std::nullopt;
     }
     return commit;
-}
-
-std::string hub_repo_of_directory(std::string_view directory) {
-    if (!directory.starts_with("models--")) { return {}; }
-    std::string repo(directory.substr(8));
-    if (const auto separator = repo.find("--"); separator != std::string::npos) {
-        repo.replace(separator, 2, "/");
-    }
-    return repo;
 }
 
 fs::path default_hub_cache() {
