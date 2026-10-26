@@ -22,6 +22,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstddef>
 #include <filesystem>
 #include <map>
 #include <optional>
@@ -100,10 +101,12 @@ struct MeasuredPair {
                                                           double target_bits);
 
 // The choice for a target nobody measured, from its group: per default (overall, thinking,
-// non-thinking) the configuration of that kind up to kPortableDepth, measured on every pair, with
-// the highest mean speed relative to each pair's best; its floor the highest any pair measured for
-// it. Plain decode where a pair's tokens per round scaled down by kFineTuneAcceptance would make it
-// gain less than kPreliminaryGain on any pair. One request speculates (load: plain from two rows).
+// non-thinking) the configuration of that kind up to kPortableDepth, measured on two cards or
+// more, whose gain at a fine-tune's acceptance (each pair's drafted tokens accepted at
+// kFineTuneAcceptance of its measured rate) is highest on average over the pairs that measured it;
+// that gain its tok_s, its floor the highest any of them measured. Plain decode only where no
+// configuration gains kPreliminaryGain so (choice/DECISIONS 49). One request speculates (load:
+// plain from two rows).
 // nullopt for an empty group. With `support`, only the depths the serving Engine runs.
 [[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
                                                        std::string_view kind,
@@ -136,14 +139,16 @@ struct PairChoice {
                                                     const std::map<std::string, std::string>&
                                                         attached          = {},
                                                     std::string_view repo = {});
-// Whether two drafter identities (repo@revision) name one drafter: the same repository, and the
-// same revision where both say one (either may be a prefix of the other). True when either is
-// unknown ("").
-[[nodiscard]] bool same_drafter(std::string_view a, std::string_view b);
+// Whether two hub identities (repo@revision: a drafter's, a measured target's repository) name one
+// revision: the same repository (case aside), and the same revision where both say one (either may
+// be a prefix of the other). True when either is unknown ("").
+[[nodiscard]] bool same_repo_revision(std::string_view a, std::string_view b);
 
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
 // 0.535 of the drafts past the first. A group's choice must still pay at that acceptance.
+// A group's choice is a lab constant for targets nobody measured: fitted on this many cards or more.
+inline constexpr std::size_t kGroupCards = 2;
 inline constexpr double kFineTuneAcceptance = 0.535;
 inline constexpr double kPreliminaryGain    = 1.05;
 
