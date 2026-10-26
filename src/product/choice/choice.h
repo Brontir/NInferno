@@ -83,6 +83,9 @@ struct ModelFacts {
     std::function<std::uint64_t(KvCacheStorage)> ring_bytes_per_token; // unset: no sliding layers
     std::function<std::uint64_t(RecurrentStateStorage)> state_bytes;    // unset: no recurrent layers
     std::uint32_t window = 0;         // the sliding window (0: none)
+    // A token's attention: heads x (key + value) summed over the full layers (over every earlier
+    // token) and the sliding ones (over at most the window); 2 flops each per position.
+    double full_attention_width = 0, sliding_attention_width = 0;
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     // The drafters it carries, beside plain decode (Candidate::drafter 0); and the one the server

@@ -444,7 +444,8 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             const std::uint32_t context =
                 ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
             row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
-            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth);
+            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth,
+                                            task.prompt);
             row.request_seconds = choice::request_seconds(model, card, q, c, task);
         }
         candidates.push_back(row.candidate);
@@ -787,6 +788,10 @@ Json model_json(const PlanSourceFacts& facts, const std::string& source, const s
               {"nvfp4", runtime::plan_kv_bytes_per_token(m, KvCacheStorage::Nvfp4Group16)},
               {"k8v4", runtime::plan_kv_bytes_per_token(m, KvCacheStorage::Fp8KeyNvfp4Value)}}},
             {"window", m.window},
+            {"active_params", facts.shape.active_params},
+            {"attention_width",
+             {{"full", facts.shape.full_attention_width},
+              {"sliding", facts.shape.sliding_attention_width}}},
             {"builtin_mtp", facts.shape.builtin_mtp}};
 }
 

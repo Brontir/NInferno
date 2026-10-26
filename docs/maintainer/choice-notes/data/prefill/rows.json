@@ -1,0 +1,732 @@
+{
+ "cards": {
+  "l4090": {
+   "generation": "ada",
+   "sms": 128,
+   "boost_mhz": 2520,
+   "bf16": 512,
+   "s8": 2048
+  },
+  "l4070": {
+   "generation": "ada",
+   "sms": 60,
+   "boost_mhz": 2610,
+   "bf16": 512,
+   "s8": 2048
+  },
+  "l5070": {
+   "generation": "gb20x",
+   "sms": 70,
+   "boost_mhz": 2452,
+   "bf16": 512,
+   "s8": 2048
+  },
+  "l5090": {
+   "generation": "gb20x",
+   "sms": 170,
+   "boost_mhz": 2407,
+   "bf16": 512,
+   "s8": 2048
+  },
+  "l3060": {
+   "generation": "ga10x",
+   "sms": 28,
+   "boost_mhz": 1777,
+   "bf16": 512,
+   "s8": 2048
+  },
+  "l2080": {
+   "generation": "turing",
+   "sms": 68,
+   "boost_mhz": 1545,
+   "bf16": 1536,
+   "s8": 2048
+  },
+  "l4060": {
+   "generation": "ada",
+   "sms": 34,
+   "boost_mhz": 2535,
+   "bf16": 512,
+   "s8": 2048
+  },
+  "lgv100": {
+   "generation": "volta",
+   "sms": 80,
+   "boost_mhz": 1627,
+   "bf16": 1536,
+   "s8": 1536
+  }
+ },
+ "models": {
+  "gemma-4-12b-it-GGUF_Q4_K_M": {
+   "active_params": 11922309120.0,
+   "full_width": 131072.0,
+   "sliding_width": 327680.0,
+   "window": 1024,
+   "moe": false,
+   "experts_per_token": 0,
+   "experts": 0
+  },
+  "Qwen3.5-9B-GGUF_Q4_K_M": {
+   "active_params": 7798259712.0,
+   "full_width": 65536.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": false,
+   "experts_per_token": 0,
+   "experts": 0
+  },
+  "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL": {
+   "active_params": 3825434624.0,
+   "full_width": 81920.0,
+   "sliding_width": 204800.0,
+   "window": 1024,
+   "moe": true,
+   "experts_per_token": 8,
+   "experts": 128
+  },
+  "Qwen3.8-27B-GGUF_UD-Q4_K_XL": {
+   "active_params": 25106841600.0,
+   "full_width": 196608.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": false,
+   "experts_per_token": 0,
+   "experts": 0
+  },
+  "gemma-4-31B-it-GGUF_Q4_K_M": {
+   "active_params": 30806114304.0,
+   "full_width": 327680.0,
+   "sliding_width": 819200.0,
+   "window": 1024,
+   "moe": false,
+   "experts_per_token": 0,
+   "experts": 0
+  },
+  "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS": {
+   "active_params": 3825434624.0,
+   "full_width": 81920.0,
+   "sliding_width": 204800.0,
+   "window": 1024,
+   "moe": true,
+   "experts_per_token": 8,
+   "experts": 128
+  },
+  "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M": {
+   "active_params": 2838364160.0,
+   "full_width": 81920.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": true,
+   "experts_per_token": 8,
+   "experts": 256
+  },
+  "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS": {
+   "active_params": 2838364160.0,
+   "full_width": 81920.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": true,
+   "experts_per_token": 8,
+   "experts": 256
+  },
+  "Qwen3.8-27B-GGUF_UD-IQ3_XXS": {
+   "active_params": 25106841600.0,
+   "full_width": 196608.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": false,
+   "experts_per_token": 0,
+   "experts": 0
+  }
+ },
+ "rows": [
+  {
+   "card": "l4090",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 6984.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 7284.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 6420.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 11687.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 12772.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 12187.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
+   "n": 1851,
+   "prefill": 15909.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
+   "n": 7118,
+   "prefill": 16303.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
+   "n": 21158,
+   "prefill": 14277.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
+   "n": 1888,
+   "prefill": 3503.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
+   "n": 7205,
+   "prefill": 3639.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
+   "n": 21405,
+   "prefill": 3487.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-31B-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 2759.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-31B-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 2847.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-31B-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 2595.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4070",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 3617.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4070",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 3689.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4070",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 3211.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 5734.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 6049.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5794.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 4425.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 4430.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 3894.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 6766.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 7013.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 6789.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 1846,
+   "prefill": 7671.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 7163,
+   "prefill": 7957.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 21363,
+   "prefill": 7555.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 1851,
+   "prefill": 7579.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 7118,
+   "prefill": 7645.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 21158,
+   "prefill": 6738.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l3060",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 1247.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l3060",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 1231.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l3060",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 1056.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l3060",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 2006.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l3060",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 2073.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l3060",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 1981.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 1473.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 1406.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 1155.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 2545.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 2622.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2447.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 9021.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 9120.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 8135.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 14297.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 14888.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 14329.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
+   "n": 1851,
+   "prefill": 20146.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
+   "n": 7118,
+   "prefill": 20182.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l5090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL",
+   "n": 21158,
+   "prefill": 17486.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 1851,
+   "prefill": 4069.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 7118,
+   "prefill": 4015.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 21158,
+   "prefill": 3519.0,
+   "chunk": 2048
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 1992.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 2017.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 1760.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4060",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 3280.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4060",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 3442.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l4060",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 3305.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 1848,
+   "prefill": 2950.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 7165,
+   "prefill": 3081.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2864.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 1851,
+   "prefill": 1476.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 7118,
+   "prefill": 1171.0,
+   "chunk": 1024
+  },
+  {
+   "card": "lgv100",
+   "model": "gemma-4-12b-it-GGUF_Q4_K_M",
+   "n": 21158,
+   "prefill": 738.0,
+   "chunk": 1024
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2418.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 default)"
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2373.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_f32)"
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2365.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_bf16)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5707.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 default)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5688.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_f32)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5695.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_sw.sh 2026-10-23 state_bf16)"
+  },
+  {
+   "card": "l2080",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 2420.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 5703.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.5-9B-GGUF_Q4_K_M",
+   "n": 21365,
+   "prefill": 6697.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.8-27B-GGUF_UD-IQ3_XXS",
+   "n": 21365,
+   "prefill": 2064.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 21365,
+   "prefill": 7334.0,
+   "chunk": 1024,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.8-27B-GGUF_UD-Q4_K_XL",
+   "n": 21365,
+   "prefill": 3376.0,
+   "chunk": 0,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 21365,
+   "prefill": 13777.0,
+   "chunk": 1024,
+   "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  }
+ ]
+}

@@ -6,18 +6,28 @@
 // Speed. A decode step of C rows at context n takes
 //   t0 + (W(C) + C n b_kv k_kv + 2 C s + C min(n, window) b_ring) / (eta_dram BW)
 //      + C 2 P / (eta_compute peak_s8) f_route
-// and a prefill runs eta_prefill peak_route / (2 P) tokens a second: W(C) the weights C rows read
+// and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) / (eta_attention
+// peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the weights C rows read
 // (an MoE's routed experts as rows routed apart add them, kMoeRoutedShare of independent routing),
 // b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and written), b_ring a
 // sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the layers a token runs
 // and the output head), BW the board's DRAM rate, peak the generation row's tensor rate times SMs
-// times the reference clock (core/generation.h). k_kv and f_route are what a KV codec's read and
-// the exact route cost on a generation beyond their bytes and flops.
+// times the reference clock (core/generation.h), F_att(n) the attention flops of the prompt over
+// itself (full layers over every earlier token, sliding ones over the window), share an MoE chunk's
+// share of the saturated rate (kMoeChunkShare; 1 for a dense model). k_kv and f_route are what a KV
+// codec's read and the exact route cost on a generation beyond their bytes and flops.
 //
 // Fitted (scratchpad fit_choice.py, 2026-10-23) on 49 decode and 15 prefill points of Qwen3.5-9B
 // Q4_K_M, Qwen3.8-27B UD-IQ3_XXS / UD-Q4_K_XL and Qwen3.6-35B-A3B UD-IQ3_XXS / UD-Q4_K_M on the
 // RTX 2080 Ti, 4070 Ti, 4090 and 5070 Ti (run_calib.sh, run_sw.sh, docs/performance/runs):
-// decode 5.2 % rms (worst 15.5 %), prefill 2.0 % rms (worst 5.4 %), in sample.
+// decode 5.2 % rms (worst 15.5 %). The prefill: refitted 2026-10-27 with its attention term
+// (choice-notes/lab/scripts/fit_prefill.py on choice-notes/data/prefill/rows.json: 82 points, Qwen3.5
+// 9B, Qwen3.8 27B, Gemma 4 12B / 26B-A4B / 31B, Qwen3.6 35B-A3B at ~2K / 7K / 21K-token prompts on the
+// RTX 2080 Ti, 3060, 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, and the 22K points of
+// tests/fixtures/choice/speed_measured.json): from 7K tokens on, dense 6.4 % rms (worst 18.7 %), MoE
+// 8.3 % (18.9 %); a request's fixed time (10-190 ms: HTTP, a decode step) is not modeled, so at 2K the
+// estimate runs up to 30 % above a measured prompt rate. The Quadro GV100 (Volta) is left out: its
+// Gemma 4 attention (heads of 512) runs 4 times slower than its Qwen one, the two disagree.
 //
 // Accuracy. KLD against the exact reference (--activations exact, BF16 KV, FP32 state) on the
 // fixed corpus (ninferno-perplexity --quick, eval/corpora/perplexity-1m), one term per switch;
@@ -67,7 +77,8 @@ inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 inline constexpr double kMoeRoutedShare = 0.30;
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
-// takes kTransferGeneration's, marked as a transfer.
+// takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16
+// tensor rate per SM where one has rows, choice.cpp prefill_stand_in).
 inline constexpr std::string_view kTransferGeneration = "ada";
 
 struct PrefillEta {
@@ -77,15 +88,29 @@ struct PrefillEta {
     double eta;
 };
 
+// The linears' share of the route's peak (fit_prefill.py). The exact rows (BF16) were fitted on 9B
+// at a 22K prompt without the attention term; they keep that fit's time with attention now apart.
 inline constexpr PrefillEta kPrefillEta[] = {
-    {false, "turing", Route::Int8, 0.175}, // RTX 2080 Ti, 9B Q4_K_M, 22K prompt
-    {false, "turing", Route::Bf16, 0.067}, // RTX 2080 Ti, 9B exact
-    {false, "ada", Route::Int8, 0.270},    // RTX 4070 Ti 9B, RTX 4090 27B
-    {false, "ada", Route::Bf16, 0.305},    // RTX 4070 Ti, 9B exact
-    {false, "gb20x", Route::Int8, 0.296},  // RTX 5070 Ti 9B, 27B
-    {true, "ada", Route::Int8, 0.118},     // RTX 4090, 35B-A3B
-    {true, "gb20x", Route::Int8, 0.118},   // RTX 5070 Ti, 35B-A3B
+    {false, "turing", Route::Int8, 0.241}, // RTX 2080 Ti: 9B, Gemma 12B (one card)
+    {false, "turing", Route::Bf16, 0.073}, // RTX 2080 Ti, 9B exact
+    {false, "ada", Route::Int8, 0.306},    // RTX 4060 Ti, 4070 Ti, 4090: 9B, 27B, Gemma 12B, 31B
+    {false, "ada", Route::Bf16, 0.317},    // RTX 4070 Ti, 9B exact
+    {false, "gb20x", Route::Int8, 0.324},  // RTX 5070 Ti, 5090: 9B, 27B, Gemma 12B
+    {false, "ga10x", Route::Int8, 0.363},  // RTX 3060: 9B, Gemma 12B (one card)
+    {true, "ada", Route::Int8, 0.210},     // RTX 4060 Ti, 4090: Gemma 26B-A4B, 35B-A3B
+    {true, "gb20x", Route::Int8, 0.205},   // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
+
+// The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
+// every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak
+// (fit_prefill.py, the same points; Turing's BF16 row is the composed aggregate, core/generation.h).
+struct GenerationEta {
+    std::string_view generation;
+    double eta;
+};
+
+inline constexpr GenerationEta kPrefillAttentionEta[] = {
+    {"ada", 0.742}, {"gb20x", 0.740}, {"turing", 0.069}, {"ga10x", 0.497}};
 
 // What the exact route's compute costs a decode step over the int8 route's flops at the int8 peak,
 // its FP32 state's bytes apart (run_sw.sh, 9B at a 22K prompt: exact decode 61.7 against 85.3
@@ -121,8 +146,7 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 //   Gemma 4 26B, 4070 Ti    -      0.617  0.788  0.939  0.999   (4314 ... 6994 tok/s)
 //   Gemma 4 26B, 4090       -      0.664  0.848  0.984  1.0     (8645 ... 13026)
 //   Qwen3.6 35B, 4090       0.409  0.625  0.802  0.932  1.0     (6287 ... 15389)
-// The mean below; the three within 6 % of it. The prefill efficiencies above were fitted at
-// kDefaultChunk. A dense model's prefill moves under 5 % from 512 tokens on (Gemma 4 12B, Qwen3.8
+// The mean below; the three within 6 % of it. kPrefillEta's MoE rows are the saturated rate's. A dense model's prefill moves under 5 % from 512 tokens on (Gemma 4 12B, Qwen3.8
 // 27B): its chunk stays the default.
 struct ChunkShare {
     double tokens_per_expert;
