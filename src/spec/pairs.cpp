@@ -71,10 +71,15 @@ struct Over {
     double tokens_per_round = 1;
     double acceptance       = 0;
     double floor            = 0; // a round's seconds over plain's seconds per token
+    // The speed were each section's drafted tokens accepted at kFineTuneAcceptance of its rate:
+    // a section's rounds cost as measured and yield 1 + kFineTuneAcceptance x (its tokens per
+    // round - 1), then the sections weigh as above.
+    double fine_tune_speed = 0;
 };
 std::optional<Over> over(const Sums& table, const std::string& label,
                          const std::vector<std::string>& families) {
     double cost = 0, plain_cost = 0, seconds = 0, rounds = 0, drafted = 0, accepted = 0;
+    double fine_tune_cost = 0;
     for (const auto& f : families) {
         const auto m = table.find({label, f});
         const auto p = table.find({"plain", f});
@@ -82,7 +87,12 @@ std::optional<Over> over(const Sums& table, const std::string& label,
             p->second.tokens <= 0) {
             return std::nullopt;
         }
-        cost += m->second.seconds / m->second.tokens;
+        const double section_cost = m->second.seconds / m->second.tokens;
+        const double section_tokens =
+            m->second.rounds > 0 ? (m->second.accepted + m->second.rounds) / m->second.rounds : 1.0;
+        cost += section_cost;
+        fine_tune_cost +=
+            section_cost * section_tokens / (1.0 + kFineTuneAcceptance * (section_tokens - 1.0));
         plain_cost += p->second.seconds / p->second.tokens;
         seconds += m->second.seconds;
         rounds += m->second.rounds;
@@ -95,6 +105,7 @@ std::optional<Over> over(const Sums& table, const std::string& label,
     out.tokens_per_round = (accepted + rounds) / rounds;
     out.acceptance       = drafted > 0 ? accepted / drafted : 0.0;
     out.floor            = (seconds / rounds) / (plain_cost / double(families.size()));
+    out.fine_tune_speed  = plain_cost / fine_tune_cost;
     return out;
 }
 
@@ -319,15 +330,9 @@ struct GroupMember {
     Sums table;
 };
 
-// A label's gain over plain decode were its drafted tokens accepted at kFineTuneAcceptance of the
-// measured rate (a round's price in plain steps unchanged).
-double gain_at_fine_tune_acceptance(const Over& o) {
-    const double price = o.tokens_per_round / o.speed;
-    return (1.0 + kFineTuneAcceptance * (o.tokens_per_round - 1.0)) / price;
-}
-
 // How a label does over a group: the pairs that measured it over these sections and the mean of
-// their gains at a fine-tune's acceptance; nullopt when fewer than kGroupCards cards measured it.
+// their gains at a fine-tune's acceptance (Over::fine_tune_speed); nullopt when fewer than
+// kGroupCards cards measured it.
 struct LabelGain {
     double gain = 0;
     std::vector<Over> each;
@@ -339,7 +344,7 @@ std::optional<LabelGain> label_gain(const std::vector<GroupMember>& members, con
     for (const auto& m : members) {
         if (const auto o = over(m.table, label, families)) {
             out.each.push_back(*o);
-            out.gain += gain_at_fine_tune_acceptance(*o);
+            out.gain += o->fine_tune_speed;
             cards.insert(m.pair->tune.key.gpu);
         }
     }
