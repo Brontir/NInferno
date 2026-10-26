@@ -76,8 +76,8 @@ struct GgufFile {
                                        std::uint64_t file_size, const std::string& label);
 
 // The Hugging Face repository (org/name) a GGUF's metadata names as the model's source: the first
-// of general.base_model.0.repo_url, general.source.url, general.source.repo_url and
-// general.source.huggingface.repository
+// of general.base_model.0.repo_url, general.source.repo_url, general.source.huggingface.repository
+// and general.source.url
 // that is a Hugging Face address or an org/name ("https://huggingface.co/Qwen/Qwen3.5-9B/tree/main"
 // -> "Qwen/Qwen3.5-9B"); nullopt when none is. The model's lineage, one reading for the plan and the
 // converter's drafter lookup alike.

@@ -316,6 +316,10 @@ void test_base_repository() {
     check(of(J{{"general.base_model.0.repo_url", "acme.ai/model"}}) ==
               std::optional<std::string>("acme.ai/model"),
           "a bare id whose organization has a dot");
+    check(of(J{{"general.source.url", "https://huggingface.co/blog/foo"},
+               {"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+              std::optional<std::string>("org/r"),
+          "the source repository before the homepage");
     check(!of(J{{"general.base_model.0.repo_url", "org"}}) && !of(J{{"general.base_model.0.repo_url", 3}}) &&
               !of(J::object()),
           "none named");
