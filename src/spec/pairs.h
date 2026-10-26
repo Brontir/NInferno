@@ -87,6 +87,9 @@ struct MeasuredPair {
 // Ampere within 1 %); what a round costs is the card's, the more so the more rows it verifies
 // (choice/DECISIONS 51). A configuration has one only where two cards of each generation measured
 // it on a target in common (a generation constant rests on two of its cards, AGENTS.md).
+// The relative spread the ratios of a configuration may have over its cards (the two Ada cards'
+// agree within 1.5 % on the 9B MTP pair); wider, it has none (deterministic-decisions.md).
+inline constexpr double kRoundCostAgreement = 0.05;
 using RoundCostRatios = std::map<std::string, double>;
 [[nodiscard]] RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
                                                      std::string_view from, std::string_view to);

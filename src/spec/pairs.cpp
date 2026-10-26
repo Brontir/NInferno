@@ -315,6 +315,8 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
     for (auto& [label, each] : ratios) {
         if (cards[label].first.size() < 2 || cards[label].second.size() < 2) { continue; }
         std::sort(each.begin(), each.end());
+        // Cards that disagree make it the hardware's, not the generation's: no estimate.
+        if (each.back() > each.front() * (1 + kRoundCostAgreement)) { continue; }
         const std::size_t n = each.size();
         out[label]          = n % 2 ? each[n / 2] : (each[n / 2 - 1] + each[n / 2]) / 2;
     }

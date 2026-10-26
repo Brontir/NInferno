@@ -131,6 +131,14 @@ int main() {
         const std::vector<sp::MeasuredPair> split = {ada_q4, on(ada_q4, "ad102:128sm"), ampere, no_df7};
         expect(!sp::generation_round_costs(split, "sm89", "sm86").contains("dflash:7"),
                "a configuration's ratio rests on two cards of each generation that measured it");
+        // Two Ampere cards that disagree (x1.10 and x1.30): no ratio.
+        auto slow = on(ampere, "ga104:48sm");
+        for (auto& m : slow.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 1.30 / 1.10; }
+        }
+        const std::vector<sp::MeasuredPair> apart = {ada_q4, on(ada_q4, "ad102:128sm"), ampere, slow};
+        expect(sp::generation_round_costs(apart, "sm89", "sm86").empty(),
+               "cards that disagree on a round's cost give no ratio");
         auto other   = ada_q4; // a target measured on Ada only
         other.target = "other-weights";
         const auto as_ada    = sp::profile_for_target({&other}, "sm86");
