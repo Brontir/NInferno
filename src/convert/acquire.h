@@ -101,6 +101,27 @@ kept_artifact(const std::filesystem::path& cache, const std::string& repo,
 converted_artifact(const std::filesystem::path& commit_dir, const std::string& quant,
                    const std::string& recipe);
 
+// Whether the conversion of `repo`'s GGUF quantization `quant` at the commit `revision` names (a
+// commit, or a ref: "" for main) under `cache` carries drafters: a component from a repository of
+// its own (a Qwen DFlash companion), or a speculation manifest of this artifact beside it with a
+// drafter still usable (not failed, its artifact there), as an earlier --with-drafters wrote them. A start reuses that conversion, flag or not, and serves them: a plan
+// of these weights counts them (product::PlannedTarget::with_drafters). The conversion is the one
+// the start takes: of `recipe` (any when empty), a --vision one with `vision` (the text one when
+// none is: a GGUF model without a projector converts without it); several left (two recipes, none
+// named) answer what all of them carry.
+// That conversion (the first by path when several recipes all carry them), for a plan to
+// resolve as the start does; nullopt where cached_conversion_has_drafters is false.
+[[nodiscard]] std::optional<std::filesystem::path>
+cached_conversion_with_drafters(const std::filesystem::path& cache, const std::string& repo,
+                                const std::string& revision, const std::string& quant,
+                                const std::string& recipe = {}, bool vision = false);
+[[nodiscard]] bool cached_conversion_has_drafters(const std::filesystem::path& cache,
+                                                  const std::string& repo,
+                                                  const std::string& revision,
+                                                  const std::string& quant,
+                                                  const std::string& recipe = {},
+                                                  bool vision                = false);
+
 // The record that the user keeps the conversion in `commit_dir` (<cache>/models--org--name/
 // ninferno/<commit>) for the ref `ref` while the hub names `hub_commit` (accepted.json there), and
 // whether it is there: a start then serves it without a notice, until the ref moves again.

@@ -923,6 +923,34 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
     return out;
 }
 
+// The conversions of `repo` kept under `root` (names, sizes, times): a plan that depends on what a
+// conversion carries (convert::cached_conversion_has_drafters) is kept per this stamp.
+std::string conversions_stamp(const fs::path& root, const std::string& repo) {
+    std::string out;
+    std::error_code ec;
+    // The refs too: a ref that moves to another kept commit selects another conversion.
+    const fs::path refs = root / convert::hub_repo_directory(repo) / "refs";
+    for (auto it = fs::recursive_directory_iterator(refs, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        std::ifstream in(it->path());
+        std::string commit;
+        in >> commit;
+        out += it->path().filename().string() + "=" + commit + ";";
+    }
+    ec.clear();
+    const fs::path dir = root / convert::hub_repo_directory(repo) / "ninferno";
+    for (auto it = fs::recursive_directory_iterator(dir, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        out += it->path().filename().string() + ":" + std::to_string(it->file_size(e)) + ":" +
+               std::to_string(it->last_write_time(e).time_since_epoch().count()) + ";";
+    }
+    return std::to_string(std::hash<std::string>{}(out));
+}
+
 std::string launch_key(const product::LaunchAsk& launch) {
     return std::to_string(launch.max_context) + "|" + std::to_string(launch.max_concurrency) + "|" +
            launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "");
@@ -947,7 +975,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
     const std::string key =
-        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch);
+        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
+        "|" + conversions_stamp(hub_root(), repo);
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
@@ -983,9 +1012,16 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: a GGUF model's separate drafters are not
-    // attached, its MTP layers are.
-    const product::SpeculationSubject subject = product::planned_subject(
-        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu);
+    // attached, its MTP layers are, unless the quantization was converted here with them (an
+    // earlier --with-drafters): the start reuses that conversion and serves them.
+    const auto cached = [&](const std::string& label) {
+        return gguf ? convert::cached_conversion_with_drafters(hub_root(), repo, "", label)
+                    : std::nullopt;
+    };
+    const auto with_drafters = [&](const std::string& label) { return cached(label).has_value(); };
+    const product::SpeculationSubject subject = product::hub_quant_subject(
+        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf}, inputs.gpu,
+        cached(quant));
     inputs.subject = &subject;
     // Each quantization resolves its own speculation (the lab's pairs are of its weights).
     std::map<std::string, product::SpeculationSubject> per_quant;
@@ -994,13 +1030,13 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         auto it = per_quant.find(q.quant);
         if (it == per_quant.end()) {
             it = per_quant
-                     .emplace(q.quant, product::planned_subject(
+                     .emplace(q.quant, product::hub_quant_subject(
                                            product::PlannedTarget{.repo    = repo,
                                                                   .facts   = *facts,
                                                                   .gguf    = gguf,
                                                                   .weights = q.weights,
                                                                   .quant   = q.quant},
-                                           inputs.gpu))
+                                           inputs.gpu, cached(q.quant)))
                      .first;
         }
         return &it->second;
@@ -1011,8 +1047,20 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         convert::FetchOptions fetch;
         fetch.hub = hub;
         if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        // A quantization started with its kept drafters counts them though the one read has none.
+        const bool any_with_drafters =
+            std::any_of(listing.begin(), listing.end(),
+                        [&](const auto& q) { return !q.drafter && with_drafters(q.quant); });
+        const product::SpeculationSubject attaching =
+            subject.attached_drafters.empty() && any_with_drafters
+                ? product::planned_subject(product::PlannedTarget{.repo          = repo,
+                                                                  .facts         = *facts,
+                                                                  .gguf          = gguf,
+                                                                  .with_drafters = true},
+                                           inputs.gpu)
+                : subject;
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            subject, listing, facts->model.model_type, facts->model.hidden,
+            attaching, listing, facts->model.model_type, facts->model.hidden,
             options_.offline ? nullptr : &fetch);
         inputs.drafter_bytes = drafter.bytes;
         inputs.drafter_state = drafter.state;
