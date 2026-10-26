@@ -165,7 +165,7 @@ struct GgufHead {
                                        std::uint64_t bytes, std::size_t part = 0);
 
 // The Hugging Face repository a GGUF file names as its base model
-// (general.base_model.0.repo_url / general.source.huggingface.repository), if any.
+// (gguf_metadata_base_repository of its metadata), if any.
 [[nodiscard]] std::optional<std::string> gguf_base_repository(const std::filesystem::path& gguf);
 
 // Whether the GGUF model a fetch takes for `options.quant` carries MTP (NextN) layers, by its
@@ -315,10 +315,6 @@ struct HubModel {
 // artifact-manifest.json).
 [[nodiscard]] nlohmann::json fetch_repo_json(const std::string& spec, const FetchOptions& options,
                                              const std::string& file);
-
-// The bits per weight a quantization label names: "UD-Q4_K_XL" -> 4, "IQ2_XXS" -> 2,
-// "MXFP4_MOE" -> 4, "BF16" -> 16, "Q8_0" -> 8; 0 when it names none.
-[[nodiscard]] int quant_label_bits(const std::string& label);
 
 // A width tag in place of a quantization name: "4bit", "4-bit", "8bits" -> 4, 4, 8 (1 to 16); 0
 // when `quant` is a name. --quant 4bit takes the largest GGUF model of that width.
