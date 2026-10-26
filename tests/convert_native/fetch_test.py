@@ -5,7 +5,7 @@
 Checks the Hugging Face flow (listing, 302 + X-Linked-Etag, cache layout and reuse, file
 choice), parallel range transfers, resume from another downloader's prefix and from this
 downloader's own progress record, stall abort and resume, a digest mismatch (nothing published),
-an expired signed URL, a server without ranges, gated repositories ($HF_TOKEN sent to the hub
+an expired signed URL, a server without ranges, a rate limit waited out, gated repositories ($HF_TOKEN sent to the hub
 only and never printed), GGUF quantization choice, ModelScope, plain URLs, a fetched GGUF
 converted without --out, its tokenizer files taken from the base model it names, an unsupported
 architecture refused from config.json before any weight moves, and $HF_HUB_OFFLINE.
@@ -73,6 +73,9 @@ def main() -> int:
     hub.behavior[hub.sha(dropped)] = {"drop_once"}
     hub.add_repo("org/busy", {"config.json": b"{}", "model.safetensors": blob(2 * MIB, 61)})
     hub.repos["org/busy"]["busy_once"] = True
+    # A rate limit whose window outlasts the short retries (1, 2 and 4 s).
+    hub.add_repo("org/limited", {"config.json": b"{}", "model.safetensors": blob(2 * MIB, 62)})
+    hub.repos["org/limited"]["rate_limit_window"] = 9
     ggufs = {name: blob(1536 + i, 10 + i) for i, name in enumerate(
         ["m-Q4_K_M.gguf", "m-Q8_0.gguf", "m-UD-Q4_K_XL.gguf", "mmproj-F16.gguf",
          "m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf", "m-MTP-ONLY-Q8_0.gguf",
@@ -145,6 +148,12 @@ def main() -> int:
 
         # 2a. A hub that answers 503 once per file is asked again.
         case("busy hub retried", fetch("org/busy", check=False).returncode == 0)
+
+        # 2a'. A rate-limited hub (429) is asked again when the window it names resets.
+        started = time.monotonic()
+        limited = fetch("org/limited", check=False)
+        case("rate limit waited out",
+             limited.returncode == 0 and time.monotonic() - started >= 9)
 
         # 2b. Two processes fetching one repository into one cache at once take turns on the
         # file's lock: both succeed and the blob is transferred once.

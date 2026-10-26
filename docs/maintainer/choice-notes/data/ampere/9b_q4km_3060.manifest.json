@@ -1,0 +1,180 @@
+{
+ "created": "2026-10-26T18:16:04Z",
+ "drafters": [
+  {
+   "checks": [
+    "FAIL declared MTP layers are absent from the checkpoint"
+   ],
+   "compatible": false,
+   "component": "mtp",
+   "kind": "mtp",
+   "name": "mtp",
+   "reason": "declared MTP layers are absent from the checkpoint",
+   "status": "unsupported: declared MTP layers are absent from the checkpoint",
+   "supported": true
+  },
+  {
+   "checks": [
+    "ok architecture DFlashDraftModel (dflash)",
+    "ok vocab size 248320 (no tokenizer.json: fingerprint not compared)",
+    "ok hidden_size 4096",
+    "ok num_target_layers 32",
+    "ok target_layer_ids [1,5,9,13,17,21,25,29]",
+    "ok block_size 16",
+    "note component dflash built into the artifact (geometry pinned at conversion)"
+   ],
+   "compatible": true,
+   "component": "dflash",
+   "kind": "dflash",
+   "license": "apache-2.0",
+   "name": "dflash",
+   "repo": "z-lab/Qwen3.5-9B-DFlash",
+   "revision": "5fc3b3d474760f18c516db87d84c37edbfd3ede6",
+   "status": "embedded",
+   "supported": true
+  }
+ ],
+ "entry": "qwen3.5-9b",
+ "fallback": "none",
+ "matched_by": "lineage",
+ "notes": [
+  "matched through the declared base model Qwen/Qwen3.5-9B"
+ ],
+ "profiles": [
+  {
+   "applies_to": [
+    "AxionML/Qwen3.5-9B-NVFP4"
+   ],
+   "default": {
+    "acceptance": 0.5531413612565445,
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.5114935863881944,
+    "plain_tok_s": 212.50309570682435,
+    "speedup": 2.430821056646415,
+    "tok_s": 516.556999646697,
+    "tokens_per_round": 3.7335058214747736
+   },
+   "gpu": "NVIDIA GeForce RTX 5090",
+   "gpu_class": "gb202",
+   "measured_at": "2026-09-25",
+   "measured_on": "qwen3_5_9b_nvfp4.ninferno (AxionML/Qwen3.5-9B-NVFP4@97aef92393f1, the checkpoint's NVFP4 recipe, text + MTP, proposal head 131072 rows), INT8 KV, context 4096, chunk 1024, RTX 5090 (native Linux driver 580.95.05, 575 W), greedy, built-in corpus (8 prompts x 4 families)",
+   "non_thinking": {
+    "acceptance": 0.50292839599471,
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.5115383327111667,
+    "plain_tok_s": 212.51763721714002,
+    "speedup": 2.3176899512887315,
+    "tok_s": 492.54999224978957,
+    "tokens_per_round": 3.4832089552238807
+   },
+   "requires": [
+    "mtp"
+   ],
+   "revision": "2aa540db9d84",
+   "source": "spec-tune 2026-09-25T02:19:03Z (ninferno-spec-1, 167 s)",
+   "thinking": {
+    "acceptance": 0.6663826161056668,
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.5113160634713625,
+    "plain_tok_s": 212.45948311345356,
+    "speedup": 2.8477150295544265,
+    "tok_s": 605.0240632335466,
+    "tokens_per_round": 4.29957805907173
+   }
+  },
+  {
+   "applies_to": [
+    "Qwen/Qwen3.5-9B"
+   ],
+   "default": {
+    "acceptance": 0.5523721908266527,
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.3730769879617681,
+    "plain_tok_s": 147.31907553271566,
+    "speedup": 2.6626566025210647,
+    "tok_s": 392.2601091444848,
+    "tokens_per_round": 3.729220779220779
+   },
+   "gpu": "NVIDIA GeForce RTX 5090",
+   "gpu_class": "gb202",
+   "measured_at": "2026-09-25",
+   "measured_on": "qwen3_5_9b_q8.ninferno (Qwen/Qwen3.5-9B@c20223623576, recipe qwen3_5_q8, text + MTP, proposal head 131072 rows), INT8 KV, context 4096, chunk 1024, RTX 5090 (native Linux driver 580.95.05, 575 W), greedy, built-in corpus (8 prompts x 4 families)",
+   "non_thinking": {
+    "acceptance": 0.4919385076865392,
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.375456073027305,
+    "plain_tok_s": 147.35269129103528,
+    "speedup": 2.5139625457427375,
+    "tok_s": 370.4391469200548,
+    "tokens_per_round": 3.431881371640408
+   },
+   "requires": [
+    "mtp"
+   ],
+   "revision": "3f103bb9cca2",
+   "source": "spec-tune 2026-09-25T02:24:51Z (ninferno-spec-1, 224 s)",
+   "thinking": {
+    "acceptance": 0.6940659340659341,
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.367307243298267,
+    "plain_tok_s": 147.2183202204904,
+    "speedup": 3.2364069681443643,
+    "tok_s": 476.4583974001035,
+    "tokens_per_round": 4.425162689804773
+   }
+  },
+  {
+   "applies_to": [],
+   "default": {
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.3730769879617681
+   },
+   "gpu_class": "*",
+   "measured_at": "2026-09-25",
+   "measured_on": "fallback for unmeasured GPUs: the choices measured on NVIDIA GeForce RTX 5090 (gb202), qwen3_5_9b_q8.ninferno (Qwen/Qwen3.5-9B@c20223623576, recipe qwen3_5_q8, text + MTP, proposal head 131072 rows), INT8 KV, context 4096, chunk 1024, RTX 5090 (native Linux driver 580.95.05, 575 W), greedy, built-in corpus (8 prompts x 4 families)",
+   "non_thinking": {
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.375456073027305
+   },
+   "requires": [
+    "mtp"
+   ],
+   "revision": "152927830bee",
+   "source": "spec-tune 2026-09-25T02:24:51Z (ninferno-spec-1, 224 s)",
+   "thinking": {
+    "config": "mtp:5+head",
+    "drafter": "mtp",
+    "floor_tokens_per_round": 1.367307243298267
+   }
+  }
+ ],
+ "registry_sha256": "188fa51026ee39dc55a8cea3a601b304f14f93595a9acb6f8f4c058a683e9562",
+ "schema": 1,
+ "source": "registry",
+ "stale_target": "",
+ "target": {
+  "architecture": "Qwen3_5ForCausalLM",
+  "artifact": "/root/.cache/huggingface/hub/models--unsloth--Qwen3.5-9B-GGUF/ninferno/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q4_K_M.qwen3_5_bf16.ninferno",
+  "artifact_id": "8742fa473b7c4a83aa4d2b848da0730e",
+  "builtin_mtp": false,
+  "engine": "qwen3_5",
+  "gguf_mapper": "",
+  "gguf_source": true,
+  "hidden_size": 4096,
+  "lineage": [
+   "Qwen/Qwen3.5-9B"
+  ],
+  "num_hidden_layers": 32,
+  "repo": "unsloth/Qwen3.5-9B-GGUF",
+  "vocab_fingerprint": "v1:3536ec490f66109a",
+  "vocab_size": 248320
+ }
+}

@@ -26,13 +26,13 @@ int main(int argc, char** argv) {
         options.cache = argv[4];
         if (std::string(argv[2]) == "--list") {
             nlohmann::json rows = nlohmann::json::array();
-            for (const auto& q : ninferno::convert::list_quants(argv[1], options)) {
+            for (const auto& q : ninferno::convert::list_quants(argv[1], options).quants) {
                 rows.push_back({{"quant", q.quant},
                                 {"format", q.format},
                                 {"bytes", q.bytes},
                                 {"mtp_bytes", q.mtp_bytes},
                                 {"drafter", q.drafter},
-                                {"files", q.files}});
+                                {"files", q.paths()}});
             }
             std::printf("%s\n", rows.dump().c_str());
             return 0;
