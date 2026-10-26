@@ -272,6 +272,15 @@ int main(int argc, char** argv) {
         ::unsetenv("HF_TOKEN_PATH");
         std::filesystem::remove_all(dir);
     }
+    // A rate-limited answer's wait: the hub's RateLimit t= (the largest of several), else
+    // Retry-After in seconds, else none.
+    expect(cv::rate_limit_reset_seconds({{"ratelimit", "\"api\";r=0;t=89"}}) == 89 &&
+               cv::rate_limit_reset_seconds(
+                   {{"ratelimit", "\"api\";r=0;t=12, \"pages\";r=0;t=40"}}) == 40 &&
+               cv::rate_limit_reset_seconds({{"retry-after", "30"}}) == 30 &&
+               !cv::rate_limit_reset_seconds({{"retry-after", "Wed, 21 Oct 2026 07:28:00 GMT"}}) &&
+               !cv::rate_limit_reset_seconds({}),
+           "a rate limit's reset from its headers");
     // The hub search's answer for one model: its facts.
     {
         const auto facts = cv::search_support_facts(Json::parse(R"({

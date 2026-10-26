@@ -196,12 +196,19 @@ bool transient(const Response& response) {
     }
 }
 
-// request_once, tried again after 1, 2 and 4 s while it fails transiently.
+// The longest a rate limit is waited out at once: the hub's window (5 minutes).
+constexpr int kRateLimitWindowSeconds = 300;
+
+// request_once, tried again while it fails transiently: after 1, 2 and 4 s, or, rate limited,
+// when the limit's window resets (a few seconds would meet the same limit again).
 Response request(const std::string& url, const std::vector<std::string>& headers, bool head,
                  bool follow) {
     auto response = request_once(url, headers, head, follow);
     for (int retry = 0; retry < 3 && transient(response); ++retry) {
-        std::this_thread::sleep_for(std::chrono::seconds(1 << retry));
+        const auto reset =
+            response.status == 429 ? rate_limit_reset_seconds(response.headers) : std::nullopt;
+        std::this_thread::sleep_for(std::chrono::seconds(
+            reset ? std::min(*reset, kRateLimitWindowSeconds) + 1 : 1 << retry));
         response = request_once(url, headers, head, follow);
     }
     return response;
@@ -1352,6 +1359,30 @@ FetchedFile download_file(const DownloadRequest& request, const FetchOptions& op
     }
     Transfer transfer(request, options);
     return transfer.run();
+}
+
+std::optional<int> rate_limit_reset_seconds(const std::map<std::string, std::string>& headers) {
+    const auto seconds = [](std::string_view text) -> std::optional<int> {
+        int value       = 0;
+        const auto end  = text.data() + text.size();
+        const auto read = std::from_chars(text.data(), end, value);
+        if (read.ec != std::errc() || read.ptr == text.data() || value < 0) { return std::nullopt; }
+        return value;
+    };
+    std::optional<int> out;
+    if (const auto it = headers.find("ratelimit"); it != headers.end()) {
+        const std::string_view value = it->second;
+        for (auto at = value.find(";t="); at != std::string_view::npos;
+             at      = value.find(";t=", at + 3)) {
+            if (const auto t = seconds(value.substr(at + 3))) {
+                out = std::max(out.value_or(0), *t);
+            }
+        }
+    }
+    if (const auto it = headers.find("retry-after"); !out && it != headers.end()) {
+        out = seconds(it->second);
+    }
+    return out;
 }
 
 std::optional<bool> gguf_carries_mtp(const std::string& spec, const FetchOptions& options) {
