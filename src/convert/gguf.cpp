@@ -10,6 +10,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <string_view>
 
 namespace ninferno::convert {
 namespace {
@@ -257,6 +258,31 @@ GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
 }
 
 } // namespace
+
+std::optional<std::string> gguf_metadata_base_repository(const nlohmann::json& metadata) {
+    for (const char* key : {"general.base_model.0.repo_url", "general.source.url",
+                            "general.source.huggingface.repository"}) {
+        const auto it = metadata.find(key);
+        if (it == metadata.end() || !it->is_string()) { continue; }
+        std::string_view text = it->get_ref<const std::string&>();
+        for (const std::string_view prefix : {"https://huggingface.co/", "http://huggingface.co/",
+                                              "https://hf.co/", "huggingface.co/", "hf.co/"}) {
+            if (text.starts_with(prefix)) {
+                text.remove_prefix(prefix.size());
+                break;
+            }
+        }
+        // org/name only: a /tree/<rev> or /resolve/... tail is not the repository; another site's
+        // address (a scheme left) names none.
+        const auto slash = text.find('/');
+        if (slash == 0 || slash == std::string_view::npos || slash + 1 == text.size() ||
+            text[slash + 1] == '/' || text.find(':') != std::string_view::npos) {
+            continue;
+        }
+        return std::string(text.substr(0, text.find('/', slash + 1)));
+    }
+    return std::nullopt;
+}
 
 GgufFile parse_gguf(const std::byte* data, std::size_t size, const std::string& label) {
     return parse(data, size, size, label);

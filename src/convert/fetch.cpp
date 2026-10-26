@@ -1348,21 +1348,8 @@ std::optional<std::string> gguf_base_repository(const fs::path& gguf) {
     if (base == nullptr) { return std::nullopt; }
     std::optional<std::string> out;
     try {
-        const auto file = parse_gguf(static_cast<const std::byte*>(base), size, gguf.string());
-        for (const char* key : {"general.base_model.0.repo_url", "general.source.url",
-                                "general.source.huggingface.repository"}) {
-            const auto* value = file.find(key);
-            if (!value || !value->is_string()) { continue; }
-            auto text = value->get<std::string>();
-            for (const char* prefix : {"https://huggingface.co/", "http://huggingface.co/"}) {
-                if (text.starts_with(prefix)) { text = text.substr(std::strlen(prefix)); }
-            }
-            if (std::count(text.begin(), text.end(), '/') == 1 &&
-                text.find(':') == std::string::npos) {
-                out = text;
-                break;
-            }
-        }
+        out = gguf_metadata_base_repository(
+            parse_gguf(static_cast<const std::byte*>(base), size, gguf.string()).metadata);
     } catch (const std::exception&) {}
     sys::unmap(base, size);
     return out;
