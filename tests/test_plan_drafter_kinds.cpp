@@ -5,7 +5,7 @@
 // chosen one serves from its own resolution. CPU.
 
 #include "product/plan/plan_choice.h"
-#include "product/plan/plan_device.h"
+#include "product/plan/plan_facts.h"
 #include "product/plan/plan_speculation.h"
 #include "product/speculation/speculation.h"
 #include "spec/profile.h"
