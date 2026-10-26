@@ -272,8 +272,8 @@ int main(int argc, char** argv) {
         ::unsetenv("HF_TOKEN_PATH");
         std::filesystem::remove_all(dir);
     }
-    // A rate-limited answer's wait: the hub's RateLimit t= (the largest of several), else
-    // Retry-After in seconds, else none.
+    // A rate-limited answer's wait: the hub's RateLimit t= of an exhausted quota (the largest of
+    // several), else Retry-After in seconds, else none.
     expect(cv::rate_limit_reset_seconds({{"ratelimit", "\"api\";r=0;t=89"}}) == 89 &&
                cv::rate_limit_reset_seconds(
                    {{"ratelimit", "\"api\";r=0;t=12, \"pages\";r=0;t=40"}}) == 40 &&
@@ -281,6 +281,12 @@ int main(int argc, char** argv) {
                !cv::rate_limit_reset_seconds({{"retry-after", "Wed, 21 Oct 2026 07:28:00 GMT"}}) &&
                !cv::rate_limit_reset_seconds({}),
            "a rate limit's reset from its headers");
+    expect(cv::rate_limit_reset_seconds(
+               {{"ratelimit", "\"api\";r=10;t=299"}, {"retry-after", "2"}}) == 2 &&
+               cv::rate_limit_reset_seconds(
+                   {{"ratelimit", "\"api\";r=10;t=299, \"resolvers\";r=0;t=7"}}) == 7 &&
+               !cv::rate_limit_reset_seconds({{"ratelimit", "\"api\";r=3;t=120"}}),
+           "a quota with requests left is not what refused");
     // The hub search's answer for one model: its facts.
     {
         const auto facts = cv::search_support_facts(Json::parse(R"({

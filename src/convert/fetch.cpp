@@ -1369,14 +1369,24 @@ std::optional<int> rate_limit_reset_seconds(const std::map<std::string, std::str
         if (read.ec != std::errc() || read.ptr == text.data() || value < 0) { return std::nullopt; }
         return value;
     };
+    // A parameter of one RateLimit item ("api";r=0;t=89): its value, nullopt when absent.
+    const auto parameter = [&](std::string_view item, std::string_view name) {
+        const std::string key = ";" + std::string(name) + "=";
+        const auto at         = item.find(key);
+        return at == std::string_view::npos ? std::nullopt : seconds(item.substr(at + key.size()));
+    };
     std::optional<int> out;
     if (const auto it = headers.find("ratelimit"); it != headers.end()) {
-        const std::string_view value = it->second;
-        for (auto at = value.find(";t="); at != std::string_view::npos;
-             at      = value.find(";t=", at + 3)) {
-            if (const auto t = seconds(value.substr(at + 3))) {
-                out = std::max(out.value_or(0), *t);
+        // Only an exhausted quota (r=0) is what refused: another, with requests left, resets on
+        // its own schedule.
+        std::string_view rest = it->second;
+        while (!rest.empty()) {
+            const auto comma = rest.find(',');
+            const auto item  = rest.substr(0, comma);
+            if (parameter(item, "r") == 0) {
+                if (const auto t = parameter(item, "t")) { out = std::max(out.value_or(0), *t); }
             }
+            rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
         }
     }
     if (const auto it = headers.find("retry-after"); !out && it != headers.end()) {
