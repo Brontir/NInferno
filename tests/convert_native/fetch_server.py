@@ -149,6 +149,15 @@ def make_handler(hub: Hub):
                     return self.reply(404, b'{"error":"Repository not found"}', head=head)
                 if repo["gated"] and not self.authorized():
                     return self.reply(401, b'{"error":"Access to model is restricted"}', head=head)
+                window = repo.get("rate_limit_window")
+                if window:  # a rate limit hit at the first listing, its window `window` seconds
+                    with hub.lock:
+                        reset = repo.setdefault("rate_limit_reset", time.monotonic() + window)
+                    left = reset - time.monotonic()
+                    if left > 0:
+                        return self.reply(429, b'{"error":"rate limited"}', {
+                            "RateLimit": f'"api";r=0;t={int(left) + 1}',
+                            "RateLimit-Policy": f'"fixed window";"api";q=500;w={window}'}, head)
                 siblings = []
                 for name, data in repo["files"].items():
                     item = {"rfilename": name, "size": len(data), "blobId": git_sha1(data)}
