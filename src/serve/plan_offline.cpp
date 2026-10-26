@@ -6,6 +6,7 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "convert/support.h"
+#include "core/quant_label.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -634,7 +635,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
                 local.listing.push_back({.quant  = label,
                                          .format = "gguf",
                                          .bytes  = bytes,
-                                         .bits   = convert::quant_label_bits(label)});
+                                         .bits   = quant_label_bits(label).value_or(0)});
             }
             if (shaped) {
                 Planning planning       = planning_of(options, local, device, *gpu);

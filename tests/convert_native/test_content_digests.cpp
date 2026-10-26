@@ -204,6 +204,11 @@ int gguf_rename_test() {
                           cv::gguf_quant_label("renamed-copy-UD-IQ3_XXS.gguf") == "UD-IQ3_XXS" &&
                           cv::gguf_quant_label("model.gguf").empty(),
                       "the quant label comes from the GGUF's file name");
+    // A ternary model's label, and the width it names: --quant 1bit takes it.
+    failures += check(cv::gguf_quant_label("m-TQ1_0.gguf") == "TQ1_0" &&
+                          cv::gguf_group_for_quant({{"m-TQ1_0.gguf", 100}, {"m-Q4_K_M.gguf", 500}},
+                                                   "1bit", "org/m") == "m-TQ1_0.gguf",
+                      "a ternary GGUF's label and width");
     art::Directory d;
     d.objects.push_back(art::TensorObject{"w", {4, 256}, "ggml_q4_k", "ggml_blocks_v1", 0, 576, 1});
     d.provenance  = art::Json::parse(R"({"converter": "ninferno-v3", "recipe": "qwen3_5_bf16",

@@ -2,6 +2,7 @@
 // (tests/fixtures/spec_pairs: Qwen3.5-9B with DFlash and MTP, gpt-oss-20b with DFlash, on an RTX
 // 4070 Ti / 4090 (sm89) and an RTX 5070 Ti (sm120)).
 
+#include "core/quant_label.h"
 #include "spec/manifest.h"
 #include "spec/pairs.h"
 #include "spec/registry.h"
@@ -374,8 +375,13 @@ int main() {
     // Bits per weight from a quantization label.
     expect(sp::label_bits("Q4_K_M") == 4 && sp::label_bits("UD-IQ2_M") == 2 &&
                sp::label_bits("MXFP4") == 4 && sp::label_bits("") == 16 &&
-               sp::label_bits("TQ1_0") == 1 && sp::label_bits("UD-TQ2_0") == 2,
+               sp::label_bits("TQ1_0") == 1 && sp::label_bits("UD-TQ2_0") == 2 &&
+               sp::label_bits("F32") == 32 && sp::label_bits("model") == 16,
            "quantization labels' bits");
+    expect(ninferno::quant_label_bits("UD-Q4_K_XL") == 4 && ninferno::quant_label_bits("bf16") == 16 &&
+               ninferno::quant_label_bits("Q8_0") == 8 && !ninferno::quant_label_bits("") &&
+               !ninferno::quant_label_bits("model") && !ninferno::quant_label_bits("aq4"),
+           "a label's width, none where it names none");
     // The generation of a device: its chain's architecture key.
     {
         sp::GpuKey gpu;

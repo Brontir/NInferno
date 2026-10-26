@@ -112,8 +112,8 @@ struct MeasuredPair {
                                                        std::string_view kind,
                                                        const EngineSupport* support = nullptr);
 
-// The bits per weight a quantization label names ("Q4_K_M" 4, "UD-IQ2_M" 2, "MXFP4" 4, "BF16" 16):
-// enough to tell the bit classes apart. 16 for "" (a checkpoint's own weights).
+// A target's bits per weight by its quantization label (quant_label_bits): enough to tell the bit
+// classes apart. 16 for "" (a checkpoint's own weights) and a label that names none.
 [[nodiscard]] double label_bits(std::string_view label);
 // A converted target's quantization label (its provenance's "quant"; "" for a checkpoint).
 [[nodiscard]] std::string artifact_quant(const std::filesystem::path& artifact);

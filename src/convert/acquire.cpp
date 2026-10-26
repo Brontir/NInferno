@@ -1,6 +1,7 @@
 #include "convert/acquire.h"
 
 #include "core/ascii.h"
+#include "core/quant_label.h"
 #include "convert/files.h"
 
 #include "convert/cache.h"
