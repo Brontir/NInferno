@@ -720,7 +720,9 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
 
 PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t file_bytes) {
     auto out = finish(geometry_of_gguf(metadata), file_bytes, runtime::WeightBasis::FileSize);
-    out.shape.base_model = base_model_of(metadata);
+    if (auto base = base_model_of(metadata); !base.empty()) {
+        out.shape.base_models = {std::move(base)};
+    }
     return out;
 }
 
@@ -764,7 +766,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     auto out                 = finish(g, whole ? tensor_bytes : file_bytes,
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
-    out.shape.base_model     = base_model_of(head.metadata);
+    if (auto base = base_model_of(head.metadata); !base.empty()) {
+        out.shape.base_models = {std::move(base)};
+    }
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
     if (!whole && !has_output) { out.model.params = 0; }
     return out;

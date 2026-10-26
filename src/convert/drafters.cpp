@@ -91,45 +91,6 @@ std::string repo_name(const std::string& repo) {
     return slash == std::string::npos ? repo : repo.substr(slash + 1);
 }
 
-// base_model entries of a README's YAML front matter (a string or a "- item" list).
-std::vector<std::string> readme_base_models(const fs::path& readme) {
-    std::vector<std::string> out;
-    std::ifstream stream(readme);
-    std::string line;
-    if (!std::getline(stream, line) || line.rfind("---", 0) != 0) { return out; }
-    const auto trim = [](std::string s) {
-        while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '"' ||
-                              s.back() == '\'')) {
-            s.pop_back();
-        }
-        while (!s.empty() && (s.front() == ' ' || s.front() == '"' || s.front() == '\'')) {
-            s.erase(0, 1);
-        }
-        return s;
-    };
-    bool in_list = false;
-    while (std::getline(stream, line)) {
-        if (line.rfind("---", 0) == 0) { break; }
-        if (line.rfind("base_model:", 0) == 0) {
-            const auto value = trim(line.substr(11));
-            if (!value.empty()) {
-                out.push_back(value);
-            } else {
-                in_list = true;
-            }
-            continue;
-        }
-        if (in_list) {
-            const auto t = trim(line);
-            if (t.rfind("- ", 0) == 0) {
-                out.push_back(trim(t.substr(2)));
-            } else {
-                in_list = false;
-            }
-        }
-    }
-    return out;
-}
 
 // The config of a converted drafter artifact's text component (the converter keeps the HF keys
 // the checks read).
@@ -270,6 +231,45 @@ void check_remote(const DrafterTarget& target, PlannedDrafter& d, const AttachOp
 }
 
 } // namespace
+
+std::vector<std::string> readme_base_models(const fs::path& readme) {
+    std::vector<std::string> out;
+    std::ifstream stream(readme);
+    std::string line;
+    if (!std::getline(stream, line) || line.rfind("---", 0) != 0) { return out; }
+    const auto trim = [](std::string s) {
+        while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '"' ||
+                              s.back() == '\'')) {
+            s.pop_back();
+        }
+        while (!s.empty() && (s.front() == ' ' || s.front() == '"' || s.front() == '\'')) {
+            s.erase(0, 1);
+        }
+        return s;
+    };
+    bool in_list = false;
+    while (std::getline(stream, line)) {
+        if (line.rfind("---", 0) == 0) { break; }
+        if (line.rfind("base_model:", 0) == 0) {
+            const auto value = trim(line.substr(11));
+            if (!value.empty()) {
+                out.push_back(value);
+            } else {
+                in_list = true;
+            }
+            continue;
+        }
+        if (in_list) {
+            const auto t = trim(line);
+            if (t.rfind("- ", 0) == 0) {
+                out.push_back(trim(t.substr(2)));
+            } else {
+                in_list = false;
+            }
+        }
+    }
+    return out;
+}
 
 nlohmann::json DrafterPlan::to_json() const {
     Json drafters_json = Json::array();

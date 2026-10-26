@@ -188,6 +188,10 @@ resolve_ranking(const std::string& name, const std::filesystem::path& repository
 //   candidate selector keeping BF16 (10.1 % of z-lab/Qwen3.8-27B-DFlash2's bytes: 0.362 of 3.584
 //   GiB, its safetensors header);
 // - any other: as published.
+// The base_model entries of a README's YAML front matter (a string or a "- item" list): a
+// checkpoint's lineage, as describe_checkpoint reads it.
+[[nodiscard]] std::vector<std::string> readme_base_models(const std::filesystem::path& readme);
+
 [[nodiscard]] std::uint64_t companion_drafter_bytes(std::string_view target_model_type,
                                                     std::string_view kind,
                                                     std::string_view declared_quant,

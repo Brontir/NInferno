@@ -125,7 +125,8 @@ int gguf_qwen35() {
                           has(f.shape.weight_formats, "ggml_q6_k") &&
                           has(f.shape.weight_formats, "fp32") && f.shape.weight_formats.size() == 3,
                       "qwen35 gguf weight formats");
-    failures += same(f.shape.base_model, std::string("Qwen/Qwen3.6-27B"), "qwen35 base model");
+    failures += same(f.shape.base_models.empty() ? std::string() : f.shape.base_models.front(),
+                     std::string("Qwen/Qwen3.6-27B"), "qwen35 base model");
     failures += same(f.model.architecture, std::string("qwen35"), "qwen35 architecture");
 
     // A split GGUF's head lists its own part's tensors: the listed file sizes stand.

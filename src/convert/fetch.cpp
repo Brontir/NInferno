@@ -2022,7 +2022,7 @@ std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions
     if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
     std::string url = endpoint + "/api/models/" + repo + "/revision/" + url_path(revision) + "?";
     for (const char* field : {"pipeline_tag", "library_name", "gated", "config", "gguf",
-                              "safetensors", "siblings", "sha"}) {
+                              "safetensors", "siblings", "sha", "cardData"}) {
         url += std::string("expand%5B%5D=") + field + "&";
     }
     url.pop_back();
@@ -2162,6 +2162,27 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }
+    return out;
+}
+
+} // namespace ninferno::convert
+
+namespace ninferno::convert {
+
+std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
+    std::vector<std::string> out;
+    try {
+        const auto card = fetch_model_card(spec, options);
+        if (!card) { return out; }
+        const Json data = card->value("cardData", Json::object());
+        const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
+        if (base.is_string()) { out.push_back(base.get<std::string>()); }
+        if (base.is_array()) {
+            for (const auto& item : base) {
+                if (item.is_string()) { out.push_back(item.get<std::string>()); }
+            }
+        }
+    } catch (const std::exception&) {}
     return out;
 }
 
