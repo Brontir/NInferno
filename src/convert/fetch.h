@@ -168,6 +168,13 @@ struct GgufHead {
 // (general.base_model.0.repo_url / general.source.huggingface.repository), if any.
 [[nodiscard]] std::optional<std::string> gguf_base_repository(const std::filesystem::path& gguf);
 
+// Whether the GGUF model a fetch takes for `options.quant` carries MTP (NextN) layers, by its
+// metadata (gguf_metadata_carries_mtp of the first MiB of its file, then of 8 MiB where that ended
+// first): a repository's quantizations differ (unsloth drops them from its smallest). nullopt when
+// it cannot be read.
+[[nodiscard]] std::optional<bool> gguf_carries_mtp(const std::string& spec,
+                                                   const FetchOptions& options);
+
 // One file: `url` (resolved through redirects) into `target`, `size` bytes (0: unknown),
 // checked against `sha256` (lowercase hex) or `git_sha1` when given. Exposed for tests.
 struct DownloadRequest {

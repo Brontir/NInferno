@@ -406,10 +406,21 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                             revision, quant, recipe, vision);
         };
     }
+    // Each GGUF quantization's own MTP layers: the facts are the one file's read (model.quant).
+    product::PlannedSubjects::MtpOf mtp_of;
+    if (model.gguf && !model.repo.empty()) {
+        mtp_of = [spec = model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
+                  read = model.quant](const std::string& quant) -> std::optional<bool> {
+            if (quant == read) { return std::nullopt; }
+            convert::FetchOptions fetch = fetch_options();
+            fetch.quant                 = quant;
+            return convert::gguf_carries_mtp(spec, fetch);
+        };
+    }
     out.subjects = std::make_shared<product::PlannedSubjects>(
         product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
                                .commit = model.commit},
-        gpu, std::move(conversion_of), options.spec_profile);
+        gpu, std::move(conversion_of), options.spec_profile, std::move(mtp_of));
     out.subject = out.subjects->of(quant_label_of(model), model.weights);
     // The separate drafters' weights and a DFlash drafter's state, uploaded beside the target
     // where the speculation served drafts with one: a drafter file given (--drafter), which

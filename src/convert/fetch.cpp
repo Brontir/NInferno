@@ -1353,6 +1353,19 @@ FetchedFile download_file(const DownloadRequest& request, const FetchOptions& op
     return transfer.run();
 }
 
+std::optional<bool> gguf_carries_mtp(const std::string& spec, const FetchOptions& options) {
+    for (const std::uint64_t bytes : {1ULL << 20, 8ULL << 20}) {
+        try {
+            const auto head   = fetch_gguf_head(spec, options, bytes);
+            const auto prefix = parse_gguf_metadata_prefix(
+                reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(), head.path);
+            if (const auto carries = gguf_metadata_carries_mtp(prefix)) { return carries; }
+            if (head.bytes.size() >= head.size) { return std::nullopt; } // the whole file read
+        } catch (const std::exception&) { return std::nullopt; }
+    }
+    return std::nullopt;
+}
+
 std::optional<std::string> gguf_base_repository(const fs::path& gguf) {
     const int fd = sys::open(gguf, O_RDONLY | O_CLOEXEC);
     if (fd < 0) { return std::nullopt; }

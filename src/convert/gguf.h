@@ -74,6 +74,22 @@ struct GgufFile {
 [[nodiscard]] GgufFile parse_gguf_head(const std::byte* data, std::size_t size,
                                        std::uint64_t file_size, const std::string& label);
 
+// The metadata key/value pairs the first `size` bytes of a GGUF file hold, in order, up to the
+// first one they end inside (no tensor infos); `complete` when every pair was read. Throws where
+// the header is no GGUF one, as parse_gguf does.
+struct GgufMetadataPrefix {
+    nlohmann::json metadata = nlohmann::json::object();
+    bool complete           = false;
+};
+[[nodiscard]] GgufMetadataPrefix parse_gguf_metadata_prefix(const std::byte* data, std::size_t size,
+                                                            const std::string& label);
+
+// Whether a GGUF model carries MTP (NextN) layers by its metadata (<arch>.nextn_predict_layers,
+// as plan_facts and gguf_model.cpp read it): nullopt when the metadata read ends before the
+// architecture's keys could hold it (neither all of it nor a tokenizer key, written after them,
+// was read).
+[[nodiscard]] std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix);
+
 struct GgufTruncated : std::runtime_error {
     using std::runtime_error::runtime_error;
 };

@@ -9,6 +9,7 @@
 #include <charconv>
 #include <cstdlib>
 #include <cstring>
+#include <limits>
 #include <stdexcept>
 
 namespace ninferno::convert {
@@ -151,12 +152,15 @@ bool gguf_auxiliary_file(const std::string& file_name) {
 
 namespace {
 
-// The file's first `size` bytes of `file_size`: the header, the metadata and the tensor infos read
-// from them, the tensors checked against the whole file.
-GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
-               const std::string& label) {
-    Reader in(data, size, label);
-    GgufFile out;
+// The header: its version, and the counts of tensors and of metadata pairs it announces.
+struct Header {
+    std::uint32_t version     = 0;
+    std::uint64_t tensor_count = 0;
+    std::uint64_t kv_count     = 0;
+};
+
+Header read_header(Reader& in, std::uint64_t file_size) {
+    Header out;
     if (in.read<std::uint32_t>() != kMagic) { in.fail("not a GGUF file"); }
     out.version = in.read<std::uint32_t>();
     if (out.version == 0x03000000 || out.version == 0x02000000) {
@@ -165,36 +169,52 @@ GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
     if (out.version != 2 && out.version != 3) {
         in.fail("unsupported GGUF version " + std::to_string(out.version));
     }
-    const auto tensor_count = in.read<std::uint64_t>();
-    const auto kv_count     = in.read<std::uint64_t>();
-    if (tensor_count > file_size / 24 || kv_count > file_size / 12) {
+    out.tensor_count = in.read<std::uint64_t>();
+    out.kv_count     = in.read<std::uint64_t>();
+    if (out.tensor_count > file_size / 24 || out.kv_count > file_size / 12) {
         in.fail("implausible GGUF counts");
     }
-    for (std::uint64_t i = 0; i < kv_count; ++i) {
-        auto key        = in.string();
-        const auto type = in.read<std::uint32_t>();
-        if (!valid_type(type)) { in.fail(key + ": invalid metadata type " + std::to_string(type)); }
-        if (out.metadata.contains(key)) { in.fail("duplicate metadata key " + key); }
-        if (static_cast<GgufValueType>(type) == GgufValueType::ARRAY) {
-            const auto element = in.read<std::uint32_t>();
-            const auto count   = in.read<std::uint64_t>();
-            if (!valid_type(element) || static_cast<GgufValueType>(element) == GgufValueType::ARRAY) {
-                in.fail(key + ": unsupported array element type " + std::to_string(element));
-            }
-            if (count > file_size) { in.fail(key + ": implausible array length"); }
-            in.need_items(count, min_bytes(static_cast<GgufValueType>(element)));
-            auto values = nlohmann::json::array();
-            values.get_ref<nlohmann::json::array_t&>().reserve(count);
-            for (std::uint64_t j = 0; j < count; ++j) {
-                values.push_back(scalar(in, static_cast<GgufValueType>(element)));
-            }
-            out.types[key]    = {static_cast<GgufValueType>(element), true};
-            out.metadata[key] = std::move(values);
-        } else {
-            out.types[key]    = {static_cast<GgufValueType>(type), false};
-            out.metadata[key] = scalar(in, static_cast<GgufValueType>(type));
+    return out;
+}
+
+// One metadata key/value pair into `out` (its value as JSON, its type).
+void read_pair(Reader& in, std::uint64_t file_size, GgufFile& out) {
+    auto key        = in.string();
+    const auto type = in.read<std::uint32_t>();
+    if (!valid_type(type)) { in.fail(key + ": invalid metadata type " + std::to_string(type)); }
+    if (out.metadata.contains(key)) { in.fail("duplicate metadata key " + key); }
+    if (static_cast<GgufValueType>(type) == GgufValueType::ARRAY) {
+        const auto element = in.read<std::uint32_t>();
+        const auto count   = in.read<std::uint64_t>();
+        if (!valid_type(element) || static_cast<GgufValueType>(element) == GgufValueType::ARRAY) {
+            in.fail(key + ": unsupported array element type " + std::to_string(element));
         }
+        if (count > file_size) { in.fail(key + ": implausible array length"); }
+        in.need_items(count, min_bytes(static_cast<GgufValueType>(element)));
+        auto values = nlohmann::json::array();
+        values.get_ref<nlohmann::json::array_t&>().reserve(count);
+        for (std::uint64_t j = 0; j < count; ++j) {
+            values.push_back(scalar(in, static_cast<GgufValueType>(element)));
+        }
+        out.types[key]    = {static_cast<GgufValueType>(element), true};
+        out.metadata[key] = std::move(values);
+    } else {
+        out.types[key]    = {static_cast<GgufValueType>(type), false};
+        out.metadata[key] = scalar(in, static_cast<GgufValueType>(type));
     }
+}
+
+// The file's first `size` bytes of `file_size`: the header, the metadata and the tensor infos read
+// from them, the tensors checked against the whole file.
+GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
+               const std::string& label) {
+    Reader in(data, size, label);
+    GgufFile out;
+    const Header header     = read_header(in, file_size);
+    out.version             = header.version;
+    const auto tensor_count = header.tensor_count;
+    const auto kv_count     = header.kv_count;
+    for (std::uint64_t i = 0; i < kv_count; ++i) { read_pair(in, file_size, out); }
     if (const auto* alignment = out.find("general.alignment")) {
         if (!alignment->is_number_unsigned() || alignment->get<std::uint64_t>() == 0 ||
             (alignment->get<std::uint64_t>() & (alignment->get<std::uint64_t>() - 1))) {
@@ -266,6 +286,40 @@ GgufFile parse_gguf_head(const std::byte* data, std::size_t size, std::uint64_t 
                          const std::string& label) {
     if (size > file_size) { throw std::invalid_argument(label + ": a head longer than its file"); }
     return parse(data, size, file_size, label);
+}
+
+GgufMetadataPrefix parse_gguf_metadata_prefix(const std::byte* data, std::size_t size,
+                                              const std::string& label) {
+    Reader in(data, size, label);
+    // The file's size is not known here: the counts and the array lengths are bounded by the
+    // largest file a 64-bit offset names.
+    constexpr std::uint64_t kAnySize = std::numeric_limits<std::uint64_t>::max() / 2;
+    const Header header              = read_header(in, kAnySize);
+    GgufFile file;
+    GgufMetadataPrefix out;
+    try {
+        for (std::uint64_t i = 0; i < header.kv_count; ++i) { read_pair(in, kAnySize, file); }
+        out.complete = true;
+    } catch (const GgufTruncated&) {} // the pairs read whole before the bytes ended
+    out.metadata = std::move(file.metadata);
+    return out;
+}
+
+std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix) {
+    const auto& md   = prefix.metadata;
+    const auto arch  = md.find("general.architecture");
+    if (arch == md.end() || !arch->is_string()) {
+        return prefix.complete ? std::optional<bool>(false) : std::nullopt;
+    }
+    if (const auto nextn = md.find(arch->get<std::string>() + ".nextn_predict_layers");
+        nextn != md.end()) {
+        return nextn->is_number() && nextn->get<double>() > 0;
+    }
+    bool past_the_architecture = prefix.complete;
+    for (const auto& [key, _] : md.items()) {
+        past_the_architecture = past_the_architecture || key.starts_with("tokenizer.");
+    }
+    return past_the_architecture ? std::optional<bool>(false) : std::nullopt;
 }
 
 } // namespace ninferno::convert

@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -906,6 +907,22 @@ void test_speculation_order() {
         pr::plan_with_speculation(facts, device, none.options, &subject, none.ask);
     check(plain.speculation.label == "plain" && plain.speculation.fallbacks.size() == 1,
           "--spec none is plain");
+
+    // Each quantization's own MTP layers (PlannedSubjects::MtpOf): the facts are one file's, and
+    // unsloth's smallest quantizations drop the layers its larger ones carry.
+    {
+        auto one_file              = facts;
+        one_file.shape.builtin_mtp = false;
+        pr::PlannedSubjects subjects(
+            pr::PlannedTarget{.repo = "unsloth/Qwen3.8-27B-GGUF", .facts = one_file, .gguf = true},
+            gpu, {}, {}, [](const std::string& quant) -> std::optional<bool> {
+                if (quant == "UD-Q4_K_M") { return true; }
+                return std::nullopt;
+            });
+        check(subjects.of("UD-Q4_K_M", "").components.contains("mtp") &&
+                  !subjects.of("UD-IQ1_S", "").components.contains("mtp"),
+              "a quantization's own MTP layers, else the facts'");
+    }
 
     // The start's order itself (product::fit_fallbacks), one code for the server, the CLI and this
     // plan: shallower drafts with the same drafter (deepest first, then depth 1), then the model's

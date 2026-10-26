@@ -85,9 +85,13 @@ public:
     // GGUF files.
     using ConversionOf =
         std::function<std::optional<std::filesystem::path>(const std::string& quant)>;
+    // Whether a quantization's own file carries MTP layers (convert::gguf_carries_mtp), nullopt
+    // when not read: then the model's facts say. A repository's quantizations differ (unsloth's
+    // smallest drop them), and the facts are one file's.
+    using MtpOf = std::function<std::optional<bool>(const std::string& quant)>;
 
     PlannedSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
-                std::filesystem::path spec_profile = {});
+                    std::filesystem::path spec_profile = {}, MtpOf mtp_of = {});
 
     // The subject of quantization `quant` ("" for the model read without one) whose files are
     // `weights` (spec::weights_identity of the listing's digests).
@@ -102,6 +106,7 @@ private:
     spec::GpuKey gpu_;
     ConversionOf conversion_of_;
     std::filesystem::path spec_profile_;
+    MtpOf mtp_of_;
     std::map<std::string, SpeculationSubject> made_;
 };
 

@@ -183,11 +183,12 @@ SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::Gp
 }
 
 PlannedSubjects::PlannedSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
-                         std::filesystem::path spec_profile)
+                                 std::filesystem::path spec_profile, MtpOf mtp_of)
     : model_(std::move(model)),
       gpu_(std::move(gpu)),
       conversion_of_(std::move(conversion_of)),
-      spec_profile_(std::move(spec_profile)) {
+      spec_profile_(std::move(spec_profile)),
+      mtp_of_(std::move(mtp_of)) {
     model_.with_drafters = !model_.repo.empty(); // a hub model's start attaches them, a local one's not
 }
 
@@ -196,6 +197,9 @@ const SpeculationSubject& PlannedSubjects::of(const std::string& quant, const st
     PlannedTarget target = model_;
     target.weights       = weights;
     target.quant         = quant;
+    if (mtp_of_ && !quant.empty()) {
+        if (const auto mtp = mtp_of_(quant)) { target.facts.shape.builtin_mtp = *mtp; }
+    }
     const std::optional<std::filesystem::path> converted =
         conversion_of_ && !quant.empty() ? conversion_of_(quant) : std::nullopt;
     return made_.emplace(quant, hub_quant_subject(target, gpu_, converted, spec_profile_))
