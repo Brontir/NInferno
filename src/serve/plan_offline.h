@@ -50,11 +50,6 @@ struct HubQuantChoice {
 largest_fitting_hub_quant(const ServeOptions& options,
                           const std::function<void(const std::string&)>& log);
 
-// The axes a start leaves to the engine (--kv-dtype auto, no --activations, no --state-dtype, no
-// --sliding-kv-dtype), chosen for the artifact at `options.artifact_path` on this GPU by the
-// configuration choice (product/plan/plan_choice.h). Its line goes to `log`. nullopt: every axis
-// pinned, no GPU facts, the shape unknown, or nothing fits (the start then plans as before and
-// says why).
 // Whether a start of a GGUF hub model with --quant attaches its separate drafters: with
 // --with-drafters; else when the choice at that quantization drafts with one (the plan without
 // weights on this GPU, as largest_fitting_hub_quant's HubQuantChoice::drafters). False when it
@@ -62,6 +57,11 @@ largest_fitting_hub_quant(const ServeOptions& options,
 [[nodiscard]] bool hub_start_attaches_drafters(const ServeOptions& options,
                                                const std::function<void(const std::string&)>& log);
 
+// The axes a start leaves to the engine (--kv-dtype auto, no --activations, no --state-dtype, no
+// --sliding-kv-dtype), chosen for the artifact at `options.artifact_path` on this GPU by the
+// configuration choice (product/plan/plan_choice.h). Its line goes to `log`. nullopt: every axis
+// pinned, no GPU facts, the shape unknown, or nothing fits (the start then plans as before and
+// says why).
 [[nodiscard]] std::optional<product::StartAxes>
 choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log);
 

@@ -924,6 +924,51 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
     return out;
 }
 
+// The conversions of `repo` kept under `root` (names, sizes, times), and the separate drafters
+// their manifests attach (another repository's, removed or replaced apart from them): a plan that
+// depends on what a conversion carries (convert::cached_conversion_with_drafters) is kept per this
+// stamp.
+std::string conversions_stamp(const fs::path& root, const std::string& repo) {
+    std::string out;
+    std::error_code ec;
+    // The refs too: a ref that moves to another kept commit selects another conversion.
+    const fs::path refs = root / convert::hub_repo_directory(repo) / "refs";
+    for (auto it = fs::recursive_directory_iterator(refs, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        std::ifstream in(it->path());
+        std::string commit;
+        in >> commit;
+        out += it->path().filename().string() + "=" + commit + ";";
+    }
+    ec.clear();
+    const fs::path dir = root / convert::hub_repo_directory(repo) / "ninferno";
+    for (auto it = fs::recursive_directory_iterator(dir, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        std::error_code e;
+        if (!it->is_regular_file(e)) { continue; }
+        out += it->path().filename().string() + ":" + std::to_string(it->file_size(e)) + ":" +
+               std::to_string(it->last_write_time(e).time_since_epoch().count()) + ";";
+        const auto name = it->path().filename().string();
+        if (!name.ends_with(".speculation.json")) { continue; }
+        const auto manifest = spec::read_manifest(it->path());
+        if (!manifest) { continue; }
+        for (const auto& d : manifest->drafters) {
+            if (d.artifact.empty()) { continue; }
+            std::error_code gone;
+            const auto size = fs::file_size(d.artifact, gone);
+            out += d.artifact + (gone ? std::string(":gone") :
+                                        ":" + std::to_string(size) + ":" +
+                                            std::to_string(fs::last_write_time(d.artifact, gone)
+                                                               .time_since_epoch()
+                                                               .count())) +
+                   ";";
+        }
+    }
+    return std::to_string(std::hash<std::string>{}(out));
+}
+
 std::string launch_key(const product::LaunchAsk& launch) {
     return std::to_string(launch.max_context) + "|" + std::to_string(launch.max_concurrency) + "|" +
            launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "");
@@ -948,7 +993,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
     const std::string key =
-        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch);
+        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
+        "|" + conversions_stamp(hub_root(), repo);
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
@@ -984,37 +1030,29 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.exact};
     // ninferno-ui's launch passes no --with-drafters: the server attaches a GGUF model's separate
-    // drafters when the choice drafts with one (choice/DECISIONS 45), so they are planned as
-    // candidates here too, their memory counted where the speculation served uses them.
+    // drafters when the choice drafts with one (choice/DECISIONS 45) and starts a quantization
+    // converted here with its drafters from that conversion; product::HubSubjects plans both as
+    // the server's plan does.
     // The commit the listing was read at: a sibling quantization's measurement counts from it.
     const std::string commit = list.empty() || !list.front().is_object()
                                    ? std::string()
                                    : list.front().value("commit", std::string());
-    const product::SpeculationSubject subject = product::planned_subject(
-        product::PlannedTarget{
-            .repo = repo, .facts = *facts, .gguf = gguf, .with_drafters = true, .commit = commit},
-        inputs.gpu);
-    inputs.subject = &subject;
-    // Each quantization resolves its own speculation (the lab's pairs are of its weights).
-    std::map<std::string, product::SpeculationSubject> per_quant;
-    inputs.subject_of = [&](const product::QuantListing& q) -> const product::SpeculationSubject* {
-        if (q.drafter) { return nullptr; }
-        auto it = per_quant.find(q.quant);
-        if (it == per_quant.end()) {
-            it = per_quant
-                     .emplace(q.quant, product::planned_subject(
-                                           product::PlannedTarget{.repo          = repo,
-                                                                  .facts         = *facts,
-                                                                  .gguf          = gguf,
-                                                                  .with_drafters = true,
-                                                                  .weights = q.weights,
-                                                                  .quant   = q.quant,
-                                                                  .commit  = commit},
-                                           inputs.gpu))
-                     .first;
-        }
-        return &it->second;
-    };
+    product::HubSubjects::ConversionOf conversion_of;
+    if (gguf) {
+        conversion_of = [root = hub_root(), repo](const std::string& label) {
+            return convert::cached_conversion_with_drafters(root, repo, "", label);
+        };
+    }
+    product::HubSubjects subjects(
+        product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
+        inputs.gpu, std::move(conversion_of));
+    std::string weights; // the named quantization's (none for the table: each row its own)
+    for (const auto& q : listing) {
+        if (!q.drafter && q.quant == quant) { weights = q.weights; }
+    }
+    const product::SpeculationSubject& subject = subjects.of(quant, weights);
+    inputs.subject    = &subject;
+    inputs.subject_of = subjects.lookup(); // each quantization's own (the lab's pairs are of weights)
     // The drafters a start attaches beside the target, their weights and a DFlash drafter's
     // state: the server's plan reads the same (product::attached_drafter_memory).
     {

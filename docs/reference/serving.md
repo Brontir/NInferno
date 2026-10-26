@@ -54,7 +54,8 @@ searched.
 - A GGUF hub model's separate drafters (a separate download: Gemma 4's assistant, a Qwen DFlash
   drafter) are an axis of the configuration choice: a start attaches them when the choice on this
   GPU drafts with one (the plan before the download), and not otherwise. `--with-drafters` always
-  attaches them. A checkpoint's drafters are attached either way.
+  attaches them. A checkpoint's drafters are attached either way. A quantization once converted
+  with them keeps them: a later start reuses that conversion and serves them.
 
 Refusals come before any weight is downloaded. Each says what to do instead:
 
@@ -2090,7 +2091,10 @@ the same options (`tests/test_plan_dry_run.cpp`).
 (`product/speculation/speculation.h`, `SpeculationSubject`). For an artifact, the resolution is the
 artifact's own. A model not yet converted gets the drafter manifest the converter would write. A
 GGUF hub model gets it with its separate drafters planned as attached (a start attaches them
-when the speculation it serves drafts with one); their memory counts only for that speculation. The start's fallback order is then judged by the dry run
+when the speculation it serves drafts with one), or, for a quantization converted here with its
+drafters, from that conversion (`convert::cached_conversion_with_drafters`: the start reuses it);
+their memory counts only for the speculation that drafts with them (`product::HubSubjects`, the
+same for ninferno-ui's plan). The start's fallback order is then judged by the dry run
 instead of an Engine build:
 
 1. the profile's choice;

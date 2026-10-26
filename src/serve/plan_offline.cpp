@@ -22,6 +22,7 @@
 #include <regex>
 #include <set>
 #include <stdexcept>
+#include <tuple>
 
 namespace ninferno::serve {
 
@@ -37,6 +38,7 @@ struct ModelRead {
     std::vector<product::QuantListing> listing; // empty for a single file or artifact
     std::string source, kind;                   // kind: hub | gguf | checkpoint | artifact
     std::string repo;                           // a hub id
+    std::string revision;                       // its revision asked for ("": main)
     bool gguf = false;
     fs::path artifact; // a .ninferno file
     std::string quant; // the quantization the facts were read at ("" for a single model)
@@ -206,7 +208,7 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
         }
     }
     const auto quants                 = convert::list_quants(spec, fetch);
-    out.repo                          = convert::split_spec(spec, fetch).first;
+    std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
     out.commit                        = quants.empty() ? std::string() : quants.front().commit;
     std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
     const convert::RepoQuant* header  = nullptr;
@@ -373,8 +375,8 @@ product::ChoicePins pins_of(const ServeOptions& options) {
 struct Planning {
     product::DryRunInputs inputs;
     std::optional<product::SpeculationSubject> subject;
-    // Each quantization's own subject (inputs.subject_of), made when first asked.
-    std::shared_ptr<std::map<std::string, product::SpeculationSubject>> per_quant;
+    // A hub model's quantizations' subjects (inputs.subject_of), each made when first asked.
+    std::shared_ptr<product::HubSubjects> subjects;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -395,54 +397,33 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                  .depth_from_profile = options.draft_tokens_from_model};
     if (!model.artifact.empty()) {
         out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
-    } else {
-        // A GGUF model's separate drafters are an axis of the choice like the others (choice/
-        // DECISIONS 45): planned as attached, their memory counted only where the speculation
-        // served drafts with one; a start without --with-drafters attaches them when it does
-        // (hub_start_attaches_drafters).
-        out.subject =
-            product::planned_subject(product::PlannedTarget{.repo          = model.repo,
-                                                            .facts         = model.facts,
-                                                            .gguf          = model.gguf,
-                                                            .with_drafters = true,
-                                                            .weights       = model.weights,
-                                                            .quant         = quant_label_of(model),
-                                                            .commit        = model.commit},
-                                     gpu);
-        // A separate drafter the speculation drafts with is uploaded beside the target.
-        const convert::FetchOptions fetch = fetch_options();
-        const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
-            *out.subject, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
-        out.inputs.drafter_bytes = drafter.bytes;
-        out.inputs.drafter_state = drafter.state;
-        // A repository's quantizations each have their weights, and the lab's pairs are of
-        // weights: every row of the table resolves its own (the subject above is the one read).
-        if (model.listing.size() > 1) {
-            out.per_quant = std::make_shared<std::map<std::string, product::SpeculationSubject>>();
-            out.inputs.subject_of = [per_quant = out.per_quant, repo = model.repo,
-                                     commit = model.commit, facts = model.facts, gguf = model.gguf,
-                                     gpu](const product::QuantListing& q)
-                -> const product::SpeculationSubject* {
-                if (q.drafter) { return nullptr; }
-                auto it = per_quant->find(q.quant);
-                if (it == per_quant->end()) {
-                    it = per_quant
-                             ->emplace(q.quant,
-                                       product::planned_subject(
-                                           product::PlannedTarget{.repo          = repo,
-                                                                  .facts         = facts,
-                                                                  .gguf          = gguf,
-                                                                  .with_drafters = true,
-                                                                  .weights       = q.weights,
-                                                                  .quant         = q.quant,
-                                                                  .commit        = commit},
-                                           gpu))
-                             .first;
-                }
-                return &it->second;
-            };
-        }
+        return out;
     }
+    // A quantization converted here with its drafters is started from that conversion, the
+    // --with-drafters flag or not (convert::cached_conversion_with_drafters).
+    product::HubSubjects::ConversionOf conversion_of;
+    if (model.gguf) {
+        conversion_of = [repo = model.repo, revision = model.revision, recipe = options.recipe,
+                         vision = options.enable_vision](const std::string& quant) {
+            return convert::cached_conversion_with_drafters(convert::default_hub_cache(), repo,
+                                                            revision, quant, recipe, vision);
+        };
+    }
+    out.subjects = std::make_shared<product::HubSubjects>(
+        product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
+                               .commit = model.commit},
+        gpu, std::move(conversion_of), options.spec_profile);
+    out.subject = out.subjects->of(quant_label_of(model), model.weights);
+    // The separate drafters' weights and a DFlash drafter's state, uploaded beside the target
+    // where the speculation served drafts with one.
+    const convert::FetchOptions fetch = fetch_options();
+    const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
+        *out.subject, model.listing, model.facts.model.model_type, model.facts.model.hidden, &fetch);
+    out.inputs.drafter_bytes = drafter.bytes;
+    out.inputs.drafter_state = drafter.state;
+    // A repository's quantizations each have their weights, and the lab's pairs are of weights:
+    // every row of the table resolves its own (the subject above is the one read).
+    if (model.listing.size() > 1) { out.inputs.subject_of = out.subjects->lookup(); }
     return out;
 }
 
@@ -551,7 +532,6 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
 
 namespace {
 
-// What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
 // Whether a start at these weights serves a speculation drafting with a separate drafter of the
 // subject: the choice's drafter at these weights (product::choose_at_weights, the drafter
 // StartAxes serves), else the planned one.
@@ -565,6 +545,7 @@ bool attaches_at(const product::PlanSourceFacts& facts, const product::DryRunInp
     return product::uses_attached_drafter(*at.subject, chosen.speculation);
 }
 
+// What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
 HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan& plan,
                          const ServeOptions& options, const Planning& planning,
                          const product::PlanSourceFacts& facts,
@@ -623,8 +604,9 @@ largest_fitting_hub_quant(const ServeOptions& options,
         // default that ignores the card.
         if (!cached.empty() && gpu) {
             ModelRead local;
-            local.kind  = "hub";
-            local.repo  = repo;
+            local.kind     = "hub";
+            local.repo     = repo;
+            local.revision = convert::split_spec(options.model_source, fetch_options()).second;
             local.gguf  = true;
             bool shaped = false;
             for (const auto& [label, path] : cached) {

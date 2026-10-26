@@ -746,9 +746,75 @@ void test_catalog() {
                   !converted_accepted(commit_dir, "main", "beef") &&
                   !converted_accepted(commit_dir, "dev", "d00d"),
               "kept for that ref and hub commit only");
+        // A conversion that carries drafters (a companion component, or a manifest beside it, as
+        // --with-drafters wrote them) is started with them: the plan counts them.
+        using ninferno::convert::cached_conversion_has_drafters;
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"components": {"text": {}, "mtp": {}, "dflash": {}}})";
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"components": {"text": {}, "mtp": {}, "vision": {}}})";
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "UD-Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "IQ2_XXS") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "dev", "Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", ""),
+              "a conversion with a companion drafter; its own MTP and vision are no drafters");
+        // A manifest of this artifact with a drafter still there (the start serves it); a failed
+        // one, one whose artifact is gone, or another artifact's manifest: none.
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"artifact_id": "a8", "components": {"text": {}, "mtp": {}}})";
+        const auto assistant = repo / "ninferno/c0ffee/assistant.ninferno";
+        const auto manifest  = [&](const std::string& id, const std::string& status) {
+            std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.speculation.json")
+                << R"({"schema": 1, "target": {"artifact_id": ")" << id
+                << R"("}, "drafters": [{"name": "mtp", "kind": "mtp", "component": "mtp", "status": "embedded"},
+                   {"name": "assistant", "kind": "gemma4_assistant", "status": ")"
+                << status << R"(", "artifact": ")" << assistant.generic_string() << R"("}]})";
+        };
+        std::ofstream(assistant) << "x";
+        manifest("a8", "attached");
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a conversion with a usable drafter attached beside it");
+        manifest("a8", "failed: no network");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a manifest whose separate drafter failed (its MTP layers are no drafter)");
+        manifest("other", "attached");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "another artifact's manifest");
+        manifest("a8", "attached");
+        fs::remove(assistant);
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a manifest whose drafter artifact is gone");
+        // The conversion the start takes: its --vision kind, its recipe.
+        const auto write = [&](const std::string& name, const char* components) {
+            std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
+            std::ofstream(repo / "ninferno/c0ffee" / (name + ".conversion.json"))
+                << "{\"components\": {" << components << "}}";
+        };
+        write("m-Q6_K.qwen3_5_bf16.ninferno", R"("text": {}, "mtp": {})");
+        write("m-Q6_K.vision.qwen3_5_bf16.ninferno", R"("text": {}, "vision": {}, "dflash": {})");
+        write("m-Q5_K_M.qwen3_5_bf16.ninferno", R"("text": {}, "dflash": {})");
+        write("m-Q5_K_M.qwen3_5_q8.ninferno", R"("text": {})");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K") &&
+                  cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K", "", true),
+              "the text conversion without --vision, the --vision one with it");
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M", "", true),
+              "--vision without a --vision conversion: the text one (no projector)");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M") &&
+                  cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_bf16") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_q8"),
+              "the named recipe's conversion; two recipes unnamed: what both carry");
         fs::create_directories(repo / "snapshots/c0ffee");
         check(!kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", ""),
               "with its download still there, the usual path asks the hub");
+        // Its download there, an older conversion revision is converted again (text only without
+        // --with-drafters): no drafters; one of the current revision keeps them.
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
+              "an older revision with its download there is converted again");
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.revision") << "5\n";
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
+              "a current conversion's drafters, its download there");
         fs::remove_all(root);
     }
     // A prepare that downloads a moved branch's new commit and removes the old conversion; only a

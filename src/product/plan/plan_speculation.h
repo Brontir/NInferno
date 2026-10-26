@@ -30,11 +30,15 @@
 #include <array>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace ninferno::product {
+
+struct QuantListing; // plan_quants.h
 
 // A model not converted yet, as the dry run sees it.
 struct PlannedTarget {
@@ -56,8 +60,50 @@ struct PlannedTarget {
 // drafter a start would attach counted as attached, a component one as embedded), resolved for
 // `gpu` with spec::resolve_planned_speculation, its built-in drafter's default when nothing is
 // found.
+// A hub quantization's subject: with `cached`, the conversion kept here that carries drafters
+// (convert::cached_conversion_with_drafters), resolved as the start resolves it (its manifest, its
+// components, speculation_subject), the drafters the target declares with --with-drafters beside it
+// for their memory; without, planned_subject.
+[[nodiscard]] SpeculationSubject
+hub_quant_subject(const PlannedTarget& target, const spec::GpuKey& gpu,
+                  const std::optional<std::filesystem::path>& cached,
+                  const std::filesystem::path& spec_profile = {});
+
 [[nodiscard]] SpeculationSubject planned_subject(const PlannedTarget& target,
                                                  const spec::GpuKey& gpu);
+
+// The speculation subjects of one hub model's quantizations, as a start resolves each, made once
+// per quantization (the lab's pairs are of weights, so every row resolves its own): its separate
+// drafters planned as attached, an axis of the choice (a start attaches them when the choice
+// drafts with one: choice/DECISIONS 45); a quantization converted here with its drafters planned
+// from that conversion, which the start serves (hub_quant_subject). The server's plan without
+// weights and ninferno-ui's plan both plan a hub model through it.
+class HubSubjects {
+public:
+    // The conversion kept here with its drafters of a quantization (convert::
+    // cached_conversion_with_drafters), nullopt when none; empty for a model not converted from
+    // GGUF files.
+    using ConversionOf =
+        std::function<std::optional<std::filesystem::path>(const std::string& quant)>;
+
+    HubSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
+                std::filesystem::path spec_profile = {});
+
+    // The subject of quantization `quant` ("" for the model read without one) whose files are
+    // `weights` (spec::weights_identity of the listing's digests).
+    [[nodiscard]] const SpeculationSubject& of(const std::string& quant, const std::string& weights);
+
+    // DryRunInputs::subject_of over these subjects (none for a drafter's row); valid while this
+    // object lives.
+    [[nodiscard]] std::function<const SpeculationSubject*(const QuantListing&)> lookup();
+
+private:
+    PlannedTarget model_;
+    spec::GpuKey gpu_;
+    ConversionOf conversion_of_;
+    std::filesystem::path spec_profile_;
+    std::map<std::string, SpeculationSubject> made_;
+};
 
 // What was asked for: --spec auto (`automatic`), else the explicit settings (backend None: --spec
 // none). `thinking` the server's thinking default, `per_request` --spec-select per request.
@@ -114,10 +160,6 @@ struct SpeculationReport {
     std::optional<ThinkingVariant> with_thinking, without_thinking;
     bool per_request = false;
 };
-
-// The backend a drafter of `kind` drafts with (mtp, gemma4_assistant and nemotron_h_mtp: MTP;
-// dflash; dflash2), None for another kind.
-[[nodiscard]] SpeculativeBackend backend_of_drafter_kind(std::string_view kind);
 
 // Whether the speculation `report` serves drafts with one of `subject`'s separate drafters
 // (attached_drafters): its backend, or, each request its own, either thinking flag's. What decides

@@ -2,6 +2,7 @@
 
 #include "convert/drafters.h"
 #include "core/device_class.h"
+#include "product/plan/plan_quants.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
 #include "spec/manifest.h"
@@ -175,6 +176,43 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
     return out;
 }
 
+SpeculationSubject hub_quant_subject(const PlannedTarget& target, const spec::GpuKey& gpu,
+                                     const std::optional<std::filesystem::path>& cached,
+                                     const std::filesystem::path& spec_profile) {
+    if (!cached) { return planned_subject(target, gpu); }
+    PlannedTarget attached  = target;
+    attached.with_drafters  = true;
+    SpeculationSubject out  = speculation_subject(*cached, gpu, spec_profile);
+    out.attached_drafters   = planned_subject(attached, gpu).attached_drafters;
+    return out;
+}
+
+HubSubjects::HubSubjects(PlannedTarget model, spec::GpuKey gpu, ConversionOf conversion_of,
+                         std::filesystem::path spec_profile)
+    : model_(std::move(model)),
+      gpu_(std::move(gpu)),
+      conversion_of_(std::move(conversion_of)),
+      spec_profile_(std::move(spec_profile)) {
+    model_.with_drafters = true;
+}
+
+const SpeculationSubject& HubSubjects::of(const std::string& quant, const std::string& weights) {
+    if (const auto it = made_.find(quant); it != made_.end()) { return it->second; }
+    PlannedTarget target = model_;
+    target.weights       = weights;
+    target.quant         = quant;
+    const std::optional<std::filesystem::path> converted =
+        conversion_of_ && !quant.empty() ? conversion_of_(quant) : std::nullopt;
+    return made_.emplace(quant, hub_quant_subject(target, gpu_, converted, spec_profile_))
+        .first->second;
+}
+
+std::function<const SpeculationSubject*(const QuantListing&)> HubSubjects::lookup() {
+    return [this](const QuantListing& q) -> const SpeculationSubject* {
+        return q.drafter ? nullptr : &of(q.quant, q.weights);
+    };
+}
+
 spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
     DeviceClass d =
         synthetic_device_class(device.pci_device_id, device.compute_capability / 10,
@@ -197,24 +235,21 @@ bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject
     return ask.per_request;
 }
 
-SpeculativeBackend backend_of_drafter_kind(std::string_view kind) {
-    if (kind == "mtp" || kind == "gemma4_assistant" || kind == "nemotron_h_mtp") {
-        return SpeculativeBackend::Mtp;
-    }
-    if (kind == "dflash") { return SpeculativeBackend::DFlash; }
-    if (kind == "dflash2") { return SpeculativeBackend::DFlash2; }
-    return SpeculativeBackend::None;
+namespace {
+
+// The backend of a configuration label ("dflash:7", "mtp:5+head"), None for "plain".
+SpeculativeBackend backend_of_label(std::string_view label) {
+    const std::string_view mode = label.substr(0, label.find(':'));
+    return mode == "plain" ? SpeculativeBackend::None : parse_speculative_backend(mode);
 }
+
+} // namespace
 
 bool uses_attached_drafter(const SpeculationSubject& subject, const SpeculationReport& report) {
     std::set<SpeculativeBackend> served = {report.engine.backend};
     if (report.per_request) {
         for (const auto* variant : {&report.with_thinking, &report.without_thinking}) {
-            if (!*variant) { continue; }
-            const std::string& label = (*variant)->label;
-            try {
-                served.insert(parse_speculative_backend(label.substr(0, label.find(':'))));
-            } catch (const std::invalid_argument&) {} // "plain"
+            if (*variant) { served.insert(backend_of_label((*variant)->label)); }
         }
     }
     served.erase(SpeculativeBackend::None);
