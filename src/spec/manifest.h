@@ -84,6 +84,12 @@ struct ResolvedSpeculation {
     // serves or none was named. What resolves is then the published profile, which an entry point
     // must not run in its place (require_named_tune).
     std::string named_tune_refused;
+    // The drafters the target carries that the profile above does not draft with (a lab pair
+    // measured with another drafter): each kind resolved alone, its lab measurement (its pair,
+    // a sibling's, its group's) else the published profile where that drafts with it, for the
+    // configuration choice to weigh every drafter (product::subject_of_mode). Empty for a local
+    // tune and where the profile drafts with every kind carried.
+    std::vector<ResolvedSpeculation> other_kinds;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };

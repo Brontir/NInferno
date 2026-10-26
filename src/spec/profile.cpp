@@ -17,6 +17,22 @@
 #include <system_error>
 
 namespace ninferno::spec {
+
+std::set<Mode> drafting_modes(const Profile& profile) {
+    std::set<Mode> out;
+    for (const Measurement& m : profile.measurements) {
+        if (m.config.enabled()) { out.insert(m.config.mode); }
+    }
+    if (profile.measurements.empty()) {
+        for (const Choice* c : {&profile.overall, &profile.thinking, &profile.non_thinking}) {
+            if (c->config.enabled()) { out.insert(c->config.mode); }
+        }
+        if (profile.fit_fallback && profile.fit_fallback->config.enabled()) {
+            out.insert(profile.fit_fallback->config.mode);
+        }
+    }
+    return out;
+}
 namespace {
 
 using Json = nlohmann::json;
