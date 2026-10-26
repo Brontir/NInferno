@@ -2439,6 +2439,10 @@ function renderBody() {
       <span class="num">${t("decodeCol")}<small>${parallel > 1 ? t("decodeOne") : ""}</small>${info(fill(t("genTip2"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxNow)}) + "\n" + t("estBasis"))}</span>
       ${parallel > 1 ? `<span class="num">${t("decodeTot")}<small>${nReq(parallel)}</small>${info(t("decodeAllTip") + "\n" + t("estBasis"))}</span>` : ""}</div>`;
     html += `<div class="note">${fill(t("depthNote"), {depth: ctxLabel(depth), ctx: ctxLabel(ctxNow)})}</div>`;
+    // A row that decodes plainly where others speculate (its drafter does not fit beside it) says so:
+    // its decode is plain decode's.
+    const servedOf = x => { const p = rowPlan(x); return p && p.plan && p.plan.speculation ? p.plan.speculation.served || "plain" : ""; };
+    const anySpec = sel.quants.some(x => !x.drafter && servedOf(x) && servedOf(x) !== "plain");
     html += `<div class="qwrap"><div class="quants ${parallel > 1 ? "multi" : ""} ${stale ? "stale" : ""}">${head}${sel.quants.map((x, i) => {
       const st = x.drafter ? null : rowStateOf(x);
       const name = `${st && st.star ? '<span class="star">★</span> ' : ""}${esc(quantLabel(x, sel.repo))}${localFor(sel.repo, x.quant) ? " ✓" : ""}`;
@@ -2450,7 +2454,8 @@ function renderBody() {
       const dotTip = stale ? t("planning") : st.label + "\n" + st.tip;
       const instead = !stale && st.instead.length ? `<div class="fitalt">${t("fitsInstead")}: ${st.instead.map(f => `<button data-fitctx="${f.ctx}" data-fitpar="${f.par}" data-tip="${esc(t("fitsInsteadTip"))}">${esc(f.text)}</button>`).join("")}</div>` : "";
       const why = stale ? "" : (st.why ? `<div class="why">${esc(st.why)}</div>` : "") + (st.lowq ? `<div class="why lowq">${esc(st.lowTip)}</div>` : "") +
-                  (st.state === "desktop" ? `<div class="why lowq">${esc(st.label)}</div>` : "");
+                  (st.state === "desktop" ? `<div class="why lowq">${esc(st.label)}</div>` : "") +
+                  (anySpec && servedOf(x) === "plain" && st.cls !== "no" ? `<div class="why">${esc(t("noSpec"))}</div>` : "");
       return `<div class="q ${x === quantSel ? "sel" : ""} ${stale ? "" : st.cls === "no" ? "no" : st.cls === "desk" ? "desk" : st.cls === "unknown" ? "unknown" : ""}" data-qi="${i}">
         <span><span class="dot d-${st.cls}" data-tip="${esc(dotTip)}"></span></span>
         <span><span class="mono qn">${name}</span>${why}${instead}</span>
