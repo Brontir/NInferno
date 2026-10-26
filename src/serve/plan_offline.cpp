@@ -117,7 +117,7 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
     std::error_code error;
     // The requested revision's snapshot alone (a commit, or the commit its ref names: "main" when
     // none was asked), never another revision's files.
-    const fs::path repo_dir = convert::default_hub_cache() / convert::hub_repo_directory(repo);
+    const fs::path repo_dir = convert::default_hub_cache() / hub_repo_directory(repo);
     const auto commit       = convert::local_commit(repo_dir, revision);
     if (!commit) { return out; }
     const fs::path root = repo_dir / "snapshots" / *commit;
