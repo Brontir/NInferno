@@ -39,7 +39,6 @@ namespace ninferno::product {
 // A model not converted yet, as the dry run sees it.
 struct PlannedTarget {
     std::string repo;                 // hub id ("" for a local GGUF or checkpoint)
-    std::vector<std::string> lineage; // base models (a GGUF's general.base_model)
     PlanSourceFacts facts;
     bool gguf          = true;  // converted from a GGUF
     bool with_drafters = false; // --with-drafters (a GGUF's separate drafters are attached)

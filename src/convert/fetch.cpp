@@ -2239,10 +2239,6 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     return out;
 }
 
-} // namespace ninferno::convert
-
-namespace ninferno::convert {
-
 std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
     std::vector<std::string> out;
     try {

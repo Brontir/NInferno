@@ -401,7 +401,7 @@ std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
             continue;
         }
         found[name->vision].emplace_back(
-            path, (!download || cache_served(path)) && conversion_carries_drafters(path));
+            path, (!download || cache_serves(path)) && conversion_carries_drafters(path));
     }
     auto& kept = found[vision && !found[1].empty() ? 1 : 0];
     if (kept.empty() ||
