@@ -40,6 +40,9 @@ struct ManifestDrafter {
         return status == "embedded" || status == "converted" || status == "cached" ||
                status == "attached";
     }
+    // Usable and its weights here: a component of the target's artifact, or its own artifact on
+    // disk.
+    [[nodiscard]] bool present() const;
 };
 
 struct SpeculationManifest {

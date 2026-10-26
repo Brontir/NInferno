@@ -294,60 +294,87 @@ DrafterPlan plan_checkpoint_drafters(const std::filesystem::path& checkpoint,
     return plan;
 }
 
+std::optional<ConvertedName> converted_name(const fs::path& artifact) {
+    if (artifact.extension() != ".ninferno") { return std::nullopt; }
+    const auto base = artifact.stem().string(); // <stem>[.vision].<recipe>
+    const auto dot  = base.rfind('.');
+    if (dot == std::string::npos) { return std::nullopt; }
+    ConvertedName out;
+    out.stem   = base.substr(0, dot);
+    out.recipe = base.substr(dot + 1);
+    out.vision = out.stem.ends_with(".vision");
+    if (out.vision) { out.stem.resize(out.stem.size() - std::string_view(".vision").size()); }
+    out.label = gguf_quant_label(out.stem + ".gguf");
+    return out;
+}
+
 std::optional<fs::path> converted_artifact(const fs::path& commit_dir, const std::string& quant,
                                            const std::string& recipe) {
     const int width = quant_width_tag(quant);
-    // The GGUF's label of a conversion's stem; a --vision conversion is <gguf-stem>.vision.
-    const auto label = [](std::string stem) {
-        if (stem.ends_with(".vision")) { stem.resize(stem.size() - std::string_view(".vision").size()); }
-        return gguf_quant_label(stem + ".gguf");
-    };
-    std::vector<fs::path> found;
+    std::vector<std::pair<fs::path, ConvertedName>> found;
     std::error_code ec;
     for (const auto& entry : fs::directory_iterator(commit_dir, ec)) {
         const auto path = entry.path();
-        if (path.extension() != ".ninferno" || !complete(path, false)) { continue; }
-        const auto base = path.stem().string(); // <stem>.<recipe>
-        const auto dot  = base.rfind('.');
-        if (dot == std::string::npos) { continue; }
-        const auto stem = base.substr(0, dot);
-        if (!recipe.empty() && base.substr(dot + 1) != recipe) { continue; }
+        const auto name = converted_name(path);
+        if (!name || !complete(path, false) || (!recipe.empty() && name->recipe != recipe)) {
+            continue;
+        }
         const bool matches =
             quant.empty() ||
-            (width > 0 ? quant_label_bits(label(stem)) == width
-                       : ascii_lower(stem).find(ascii_lower(quant)) != std::string::npos);
-        if (matches) { found.push_back(path); }
+            (width > 0 ? quant_label_bits(name->label) == width
+                       : ascii_lower(name->stem).find(ascii_lower(quant)) != std::string::npos);
+        if (matches) { found.emplace_back(path, *name); }
     }
     // A label that is part of another ("Q4_K_M" of "UD-Q4_K_M") picks the conversion whose own
     // label it is, as the fetch picks the GGUF model (select_files: an exact label wins).
     if (found.size() > 1 && width == 0 && !quant.empty()) {
-        std::vector<fs::path> exact;
-        for (const auto& path : found) {
-            const auto base = path.stem().string();
-            const auto stem = base.substr(0, base.rfind('.'));
-            if (ascii_lower(label(stem)) == ascii_lower(quant)) {
-                exact.push_back(path);
-            }
+        decltype(found) exact;
+        for (const auto& f : found) {
+            if (ascii_lower(f.second.label) == ascii_lower(quant)) { exact.push_back(f); }
         }
         if (exact.size() == 1) { found = exact; }
     }
     if (found.size() != 1) { return std::nullopt; }
-    return found.front();
+    return found.front().first;
 }
 
 std::optional<fs::path> kept_artifact(const fs::path& cache, const std::string& repo,
                                       const std::string& revision, const std::string& quant,
                                       const std::string& recipe) {
-    const auto root = cache / hub_repo_directory(repo);
-    std::ifstream ref(root / "refs" / (revision.empty() ? std::string("main") : revision));
-    std::string commit;
-    if (!(ref >> commit) || commit.find_first_of("/\\.") != std::string::npos) {
-        return std::nullopt;
-    }
+    const auto root   = cache / hub_repo_directory(repo);
+    const auto commit = local_commit(root, revision);
+    if (!commit) { return std::nullopt; }
     std::error_code ec;
-    if (fs::exists(root / "snapshots" / commit, ec)) { return std::nullopt; } // the usual path
-    return converted_artifact(root / "ninferno" / commit, quant, recipe);
+    if (fs::exists(root / "snapshots" / *commit, ec)) { return std::nullopt; } // the usual path
+    return converted_artifact(root / "ninferno" / *commit, quant, recipe);
 }
+
+namespace {
+
+// Whether a conversion carries drafters a start serves: its manifest (of this artifact) names one
+// other than its own MTP layers that is present (spec::ManifestDrafter::present), or its report
+// lists a component beside the text, MTP and vision ones.
+bool conversion_carries_drafters(const fs::path& artifact) {
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    try {
+        const OJson record = OJson::parse(stream);
+        if (const auto manifest = spec::read_manifest(spec::manifest_path(artifact));
+            manifest && manifest->target_artifact_id == record.value("artifact_id", std::string())) {
+            for (const auto& d : manifest->drafters) {
+                if (d.kind != "mtp" && d.present()) { return true; }
+            }
+        }
+        const OJson components = record.value("components", OJson::object());
+        for (const auto& [component, _] : components.items()) {
+            if (component != "text" && component != "mtp" && component != "vision") {
+                return true;
+            }
+        }
+    } catch (const std::exception&) {}
+    return false;
+}
+
+} // namespace
 
 std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
                                                         const std::string& repo,
@@ -355,61 +382,26 @@ std::optional<fs::path> cached_conversion_with_drafters(const fs::path& cache,
                                                         const std::string& quant,
                                                         const std::string& recipe, bool vision) {
     if (quant.empty()) { return std::nullopt; }
-    const auto root     = cache / hub_repo_directory(repo);
-    const std::string rev = revision.empty() ? std::string("main") : revision;
-    std::string commit;
-    if (rev.size() == 40 && rev.find_first_not_of("0123456789abcdef") == std::string::npos) {
-        commit = rev;
-    } else if (std::ifstream ref(root / "refs" / rev); !(ref >> commit)) {
-        return std::nullopt;
-    }
-    if (commit.find_first_of("/\\.") != std::string::npos) { return std::nullopt; }
-    const auto carries = [](const fs::path& artifact) {
-        std::ifstream stream(artifact.string() + ".conversion.json");
-        try {
-            const OJson record = OJson::parse(stream);
-            // A manifest the start serves (resolve_speculation): of this artifact, with a drafter
-            // other than its own MTP layers still there (usable, its artifact present).
-            if (const auto manifest = spec::read_manifest(spec::manifest_path(artifact));
-                manifest && manifest->target_artifact_id == record.value("artifact_id", std::string())) {
-                for (const auto& d : manifest->drafters) {
-                    std::error_code ec;
-                    if (d.usable() && d.kind != "mtp" &&
-                        (d.artifact.empty() ? !d.component.empty() : fs::exists(d.artifact, ec))) {
-                        return true;
-                    }
-                }
-            }
-            const OJson components = record.value("components", OJson::object());
-            for (const auto& [component, _] : components.items()) {
-                if (component != "text" && component != "mtp" && component != "vision") {
-                    return true;
-                }
-            }
-        } catch (const std::exception&) {}
-        return false;
-    };
+    const auto root   = cache / hub_repo_directory(repo);
+    const auto commit = local_commit(root, revision);
+    if (!commit) { return std::nullopt; }
     // A conversion of an older revision is converted again where its download is still there
     // (acquire_model: cache_current), text only without --with-drafters; kept where it is gone.
     std::error_code gone;
-    const bool download = fs::exists(root / "snapshots" / commit, gone);
-    // <gguf stem>[.vision].<recipe>.ninferno, complete, of exactly this label (converted_artifact's
-    // names), the recipe and the --vision kind the start converts: [0] text, [1] --vision.
+    const bool download = fs::exists(root / "snapshots" / *commit, gone);
+    // Complete conversions of exactly this label, the recipe and the --vision kind the start
+    // converts ([0] text, [1] --vision), each with whether the start serves it with drafters.
     std::vector<std::pair<fs::path, bool>> found[2];
     std::error_code ec;
-    for (const auto& entry : fs::directory_iterator(root / "ninferno" / commit, ec)) {
+    for (const auto& entry : fs::directory_iterator(root / "ninferno" / *commit, ec)) {
         const auto path = entry.path();
-        if (path.extension() != ".ninferno" || !complete(path, false)) { continue; }
-        const auto base = path.stem().string(); // <stem>.<recipe>
-        const auto dot  = base.rfind('.');
-        if (dot == std::string::npos || (!recipe.empty() && base.substr(dot + 1) != recipe)) {
+        const auto name = converted_name(path);
+        if (!name || !complete(path, false) || (!recipe.empty() && name->recipe != recipe) ||
+            ascii_lower(name->label) != ascii_lower(quant)) {
             continue;
         }
-        std::string stem       = base.substr(0, dot);
-        const bool vision_stem = stem.ends_with(".vision");
-        if (vision_stem) { stem.resize(stem.size() - std::string_view(".vision").size()); }
-        if (ascii_lower(gguf_quant_label(stem + ".gguf")) != ascii_lower(quant)) { continue; }
-        found[vision_stem].emplace_back(path, (!download || cache_served(path)) && carries(path));
+        found[name->vision].emplace_back(
+            path, (!download || cache_serves(path)) && conversion_carries_drafters(path));
     }
     auto& kept = found[vision && !found[1].empty() ? 1 : 0];
     if (kept.empty() ||
@@ -555,15 +547,13 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             std::string held_commit; // the commit of the weights here, when the ref names one
             if (kept) {
                 held_commit = kept->parent_path().filename().string();
-            } else if (std::ifstream ref_file(repo_dir / "refs" / ref); ref_file) {
-                std::string commit;
+            } else if (const auto commit = local_commit(repo_dir, revision)) {
                 // Only a snapshot holding the model this start asks for (its quantization, every
                 // shard, the projector a --vision start takes): another quantization of the old
                 // commit is no reason to pin to it.
-                if (ref_file >> commit && commit.find_first_of("/\\.") == std::string::npos &&
-                    snapshot_holds_model(repo_dir / "snapshots" / commit, options.fetch, repo,
+                if (snapshot_holds_model(repo_dir / "snapshots" / *commit, options.fetch, repo,
                                          options.vision)) {
-                    held_commit = commit;
+                    held_commit = *commit;
                 }
             }
             if (!held_commit.empty() && revision != held_commit) {

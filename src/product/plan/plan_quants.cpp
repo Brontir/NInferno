@@ -366,9 +366,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.candidate.bytes      = row.weight_bytes;
         row.candidate.label_bits = q.bits;
         row.candidate.bits_per_weight =
-            shape.model.params > 0
-                ? static_cast<double>(row.weight_bytes) * 8.0 / shape.model.params
-                : 0.0;
+            shape.model.bits_per_weight(static_cast<double>(row.weight_bytes));
         const Unsupported why   = unsupported(q, row.candidate.bits_per_weight, inputs.device);
         row.unsupported_code    = why.code;
         row.why_unsupported     = why.text;

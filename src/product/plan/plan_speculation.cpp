@@ -114,12 +114,7 @@ convert::DrafterTarget drafter_target(const PlannedTarget& target) {
     const PlanSourceFacts& facts = target.facts;
     convert::DrafterTarget t;
     t.repo    = target.repo;
-    t.lineage = target.lineage;
-    for (const auto& base : facts.shape.base_models) {
-        if (std::find(t.lineage.begin(), t.lineage.end(), base) == t.lineage.end()) {
-            t.lineage.push_back(base);
-        }
-    }
+    t.lineage = facts.shape.base_models; // a GGUF's general.base_model, a model card's entries
     t.engine       = engine_of(facts.model.model_type);
     t.architecture = facts.model.architecture;
     t.geometry     = geometry_of(facts);

@@ -117,19 +117,9 @@ std::map<std::string, fs::path> cached_quants(const std::string& repo,
     // The requested revision's snapshot alone (a commit, or the commit its ref names: "main" when
     // none was asked), never another revision's files.
     const fs::path repo_dir = convert::default_hub_cache() / convert::hub_repo_directory(repo);
-    const std::string rev   = revision.empty() ? std::string("main") : revision;
-    std::string commit;
-    const bool hex = rev.size() == 40 && std::all_of(rev.begin(), rev.end(), [](char c) {
-                         return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-                     });
-    if (hex) {
-        commit = rev;
-    } else {
-        std::ifstream ref(repo_dir / "refs" / rev);
-        std::getline(ref, commit);
-    }
-    if (commit.empty()) { return out; }
-    const fs::path root = repo_dir / "snapshots" / commit;
+    const auto commit       = convert::local_commit(repo_dir, revision);
+    if (!commit) { return out; }
+    const fs::path root = repo_dir / "snapshots" / *commit;
     if (!fs::is_directory(root, error)) { return out; }
     for (auto it = fs::recursive_directory_iterator(root, error);
          !error && it != fs::recursive_directory_iterator(); it.increment(error)) {
