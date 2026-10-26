@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -286,7 +287,102 @@ void test_auxiliary_files() {
     }
 }
 
+// The repository a GGUF's metadata names as its source: the first key that names one, org/name.
+void test_base_repository() {
+    using J = nlohmann::json;
+    const auto of = [](const J& md) { return gguf_metadata_base_repository(md); };
+    check(of(J{{"general.base_model.0.repo_url", "https://huggingface.co/Qwen/Qwen3.5-9B"}}) ==
+              std::optional<std::string>("Qwen/Qwen3.5-9B"),
+          "a base model's address");
+    check(of(J{{"general.base_model.0.repo_url", "https://hf.co/org/m/tree/main/"}}) ==
+              std::optional<std::string>("org/m"),
+          "a /tree tail is not the repository");
+    check(of(J{{"general.base_model.0.repo_url", "https://github.com/org/m"},
+               {"general.source.huggingface.repository", "org/src"}}) ==
+              std::optional<std::string>("org/src"),
+          "another site's address names none: the next key");
+    check(of(J{{"general.source.url", "https://huggingface.co/org/s"}}) ==
+              std::optional<std::string>("org/s") &&
+              of(J{{"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+                  std::optional<std::string>("org/r"),
+          "the source address, the specification's source repository");
+    check(of(J{{"general.base_model.0.repo_url", "http://hf.co/org/m?library=gguf#top"}}) ==
+              std::optional<std::string>("org/m"),
+          "a query or an anchor is no part of it");
+    check(!of(J{{"general.base_model.0.repo_url", "https://huggingface.co/datasets/org/d"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "https://huggingface.co/spaces/org/s"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "github.com/org/m"}}),
+          "a dataset, a Space, another host: no model repository");
+    check(of(J{{"general.base_model.0.repo_url", "acme.ai/model"}}) ==
+              std::optional<std::string>("acme.ai/model"),
+          "a bare id whose organization has a dot");
+    check(of(J{{"general.source.url", "https://huggingface.co/blog/foo"},
+               {"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+              std::optional<std::string>("org/r"),
+          "the source repository before the homepage");
+    check(!of(J{{"general.base_model.0.repo_url", "org"}}) && !of(J{{"general.base_model.0.repo_url", 3}}) &&
+              !of(J::object()),
+          "none named");
+}
+
+// The metadata a head holds before it ends, and the MTP layers it names: the architecture's
+// nextn_predict_layers, none where a tokenizer key (written after the architecture's) came without
+// it, unknown where the head ends before.
+void test_metadata_prefix() {
+    GgufWriter w;
+    w.kv_str("general.architecture", "qwen35");
+    w.kv_u32("qwen35.block_count", 65);
+    w.kv_u32("qwen35.nextn_predict_layers", 1);
+    w.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    w.tensor("t", {32}, ggml::Q8_0, q8_block(true));
+    const auto bytes = w.finish();
+    const auto prefix_of = [&](std::size_t n) {
+        return parse_gguf_metadata_prefix(reinterpret_cast<const std::byte*>(bytes.data()),
+                                          std::min(n, bytes.size()), "test.gguf");
+    };
+    const auto whole = prefix_of(bytes.size());
+    const auto head  = prefix_of(200);
+    check(whole.complete && whole.metadata.size() == 4 && !head.complete &&
+              head.metadata.contains("qwen35.nextn_predict_layers") &&
+              !head.metadata.contains("tokenizer.ggml.tokens"),
+          "a head's metadata: the pairs read whole");
+    check(gguf_metadata_carries_mtp(head) == std::optional<bool>(true), "MTP layers named");
+    check(!gguf_metadata_carries_mtp(prefix_of(40)), "a head ending before them: unknown");
+    GgufWriter none;
+    none.kv_str("general.architecture", "qwen35");
+    none.kv_u32("qwen35.block_count", 64);
+    none.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(8, "token"));
+    const auto plain = none.finish();
+    check(gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(plain.data()), plain.size(), "plain.gguf")) ==
+              std::optional<bool>(false),
+          "all the metadata read, none named: no MTP layers");
+    // A head that ends within the tokenizer: the architecture's block closed before it says none;
+    // a tokenizer written before the architecture's keys leaves it unknown.
+    GgufWriter cut;
+    cut.kv_str("general.architecture", "qwen35");
+    cut.kv_u32("qwen35.block_count", 64);
+    cut.kv_str("tokenizer.ggml.model", "gpt2");
+    cut.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    const auto closed = cut.finish();
+    check(gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(closed.data()), 200, "cut.gguf")) ==
+              std::optional<bool>(false),
+          "the architecture's block closed before the head ends: no MTP layers");
+    GgufWriter early;
+    early.kv_str("general.architecture", "qwen35");
+    early.kv_str("tokenizer.ggml.model", "gpt2");
+    early.kv_u32("qwen35.block_count", 64);
+    early.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    const auto mixed = early.finish();
+    check(!gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(mixed.data()), 200, "early.gguf")),
+          "a tokenizer key before the architecture's: unknown");
+}
+
 int main() {
+    test_base_repository();
+    test_metadata_prefix();
     test_auxiliary_files();
     test_resources_beside();
     test_metadata_and_tensors();

@@ -416,14 +416,13 @@ std::string artifact_quant(const std::filesystem::path& artifact) {
     return reader.directory().provenance.value("quant", std::string());
 }
 
-namespace {
-
-// A drafter kind's mode; nullopt for a kind no pair drafts with.
-std::optional<Mode> try_mode_of_kind(std::string_view kind) {
+std::optional<Mode> drafter_kind_mode(std::string_view kind) {
     try {
         return mode_of_kind(kind);
     } catch (const std::invalid_argument&) { return std::nullopt; }
 }
+
+namespace {
 
 // Drafts pay alike within a bit class: below 4 bits, or 4 and above.
 bool same_bit_class(double a, double b) { return (a < 4) == (b < 4); }
@@ -460,7 +459,7 @@ std::optional<MeasuredPair> carried_of(const MeasuredPair& pair, const PairQuery
             HubRevision::parse(measured->second).same_as(HubRevision::parse(id))) {
             continue;
         }
-        if (const auto mode = try_mode_of_kind(kind)) { carried.erase(*mode); }
+        if (const auto mode = drafter_kind_mode(kind)) { carried.erase(*mode); }
     }
     std::erase_if(p.tune.measurements, [&](const Measurement& m) {
         return m.config.enabled() && !carried.contains(m.config.mode);
@@ -571,7 +570,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
     PairQuery query{.target = target, .engine = engine, .kinds = kinds,
                     .target_bits = target_bits, .attached = attached, .modes = {}};
     for (const auto& kind : kinds) {
-        if (const auto mode = try_mode_of_kind(kind)) { query.modes.insert(*mode); }
+        if (const auto mode = drafter_kind_mode(kind)) { query.modes.insert(*mode); }
     }
     // What the serving Engine of the family runs: the choices are selected over it (a pair's
     // fastest configuration may be one it does not run, its served choice then stands).
@@ -607,7 +606,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
     // 3. Nobody measured it: the group of each kind it carries, the fastest overall.
     std::optional<PairChoice> best;
     for (const auto& kind : kinds) {
-        if (!try_mode_of_kind(kind)) { continue; }
+        if (!drafter_kind_mode(kind)) { continue; }
         const auto group = pair_group(pairs, engine, kind, target_bits);
         auto profile     = profile_for_group(group, kind, support);
         if (!profile) { continue; }

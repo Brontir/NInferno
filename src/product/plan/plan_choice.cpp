@@ -68,7 +68,12 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
     for (const spec::Measurement& m : profile.measurements) {
         if (m.config.enabled()) { modes.insert(m.config.mode); }
     }
-    if (modes.empty() && base && base->engine.backend != SpeculativeBackend::None) {
+    // Every drafter the target carries, the profile's or not (each kind resolved alone).
+    for (const spec::ResolvedSpeculation& other : subject.resolved->other_kinds) {
+        const auto drafts = spec::drafting_modes(other.profile);
+        modes.insert(drafts.begin(), drafts.end());
+    }
+    if (profile.measurements.empty() && base && base->engine.backend != SpeculativeBackend::None) {
         modes.insert(base->menu.mode);
         // A published profile's fit fallback drafts with another drafter where the default does
         // not fit (the 27B on GB203: DFlash2, MTP to fit): an option of its own.
@@ -96,7 +101,7 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         option.drafter = c.drafter;
         option.speedup = std::max(1.0, c.speedup());
         option.measured = !split && c.tok_s > 0 && c.plain_tok_s > 0;
-        option.basis   = subject.resolved->basis;
+        option.basis   = one.resolved->basis;
         for (const spec::LoadBound& bound : p.load) {
             if (bound.depth == 0) {
                 option.plain_from_streams = static_cast<std::uint32_t>(bound.lanes);

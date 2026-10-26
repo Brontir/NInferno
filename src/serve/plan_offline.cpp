@@ -407,10 +407,28 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                             revision, quant, recipe, vision);
         };
     }
+    // Each GGUF quantization's own MTP layers: the facts are the one file's read (model.quant).
+    // Only for the table (no --quant): a named quantization plans its own file alone.
+    product::PlannedSubjects::MtpOf mtp_of;
+    if (model.gguf && !model.repo.empty() && options.quant.empty()) {
+        // Every other GGUF quantization's, read together (a table plans them all).
+        std::vector<std::string> others;
+        for (const auto& q : model.listing) {
+            if (!q.drafter && q.format == "gguf" && q.quant != model.quant) { others.push_back(q.quant); }
+        }
+        auto read = std::make_shared<const std::map<std::string, std::optional<bool>>>(
+            convert::gguf_quants_carry_mtp(
+                model.commit.empty() ? model.repo : model.repo + "@" + model.commit, fetch_options(),
+                others));
+        mtp_of = [read](const std::string& quant) -> std::optional<bool> {
+            const auto it = read->find(quant);
+            return it == read->end() ? std::nullopt : it->second;
+        };
+    }
     out.subjects = std::make_shared<product::PlannedSubjects>(
         product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
                                .commit = model.commit},
-        gpu, std::move(conversion_of), options.spec_profile);
+        gpu, std::move(conversion_of), options.spec_profile, std::move(mtp_of));
     out.subject = out.subjects->of(quant_label_of(model), model.weights);
     // The separate drafters' weights and a DFlash drafter's state, uploaded beside the target
     // where the speculation served drafts with one: a drafter file given (--drafter), which

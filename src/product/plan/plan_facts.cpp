@@ -421,25 +421,6 @@ std::string format_of_ggml(std::uint32_t type) {
     }
 }
 
-std::string base_model_of(const json& md) {
-    const auto it = md.find("general.base_model.0.repo_url");
-    if (it == md.end() || !it->is_string()) { return {}; }
-    std::string url = it->get<std::string>();
-    for (const std::string_view prefix : {"https://huggingface.co/", "http://huggingface.co/",
-                                          "https://hf.co/", "huggingface.co/"}) {
-        if (starts_with(url, prefix)) {
-            url = url.substr(prefix.size());
-            break;
-        }
-    }
-    while (!url.empty() && url.back() == '/') { url.pop_back(); }
-    // org/name only: a /tree/<rev> or /resolve/... tail is not the repository.
-    const auto slash = url.find('/');
-    if (slash == std::string::npos) { return {}; }
-    const auto second = url.find('/', slash + 1);
-    return second == std::string::npos ? url : url.substr(0, second);
-}
-
 // ---- config.json and the artifact's text config.
 
 Geometry geometry_of_config(const json& config) {
@@ -720,8 +701,8 @@ std::optional<models::DrafterStateShape> plan_drafter_state_of_config(const json
 
 PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t file_bytes) {
     auto out = finish(geometry_of_gguf(metadata), file_bytes, runtime::WeightBasis::FileSize);
-    if (auto base = base_model_of(metadata); !base.empty()) {
-        out.shape.base_models = {std::move(base)};
+    if (auto base = convert::gguf_metadata_base_repository(metadata)) {
+        out.shape.base_models = {std::move(*base)};
     }
     return out;
 }
@@ -768,8 +749,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     auto out                 = finish(g, whole ? tensor_bytes : file_bytes,
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
-    if (auto base = base_model_of(head.metadata); !base.empty()) {
-        out.shape.base_models = {std::move(base)};
+    if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
+        out.shape.base_models = {std::move(*base)};
     }
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
     // A split part's table lists its own tensors only: the elements of the whole are not known.

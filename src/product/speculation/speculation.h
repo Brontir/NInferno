@@ -97,8 +97,9 @@ speculation_subject(const std::filesystem::path& artifact, const spec::GpuKey& g
 void apply_builtin_default(SpeculationSubject& subject);
 
 // The subject with its profile chosen again for one speculation mode (the configuration choice's
-// drafter axis, product/choice/choice.h): over the profile's measurements of that mode alone (a lab
-// pair's, a local tune's), the Engine's served choices again, portable ones dropped. A profile
+// drafter axis, product/choice/choice.h): a mode the profile does not draft with takes its own
+// resolution (ResolvedSpeculation::other_kinds); then over the profile's measurements of that mode
+// alone (a lab pair's, a local tune's), the Engine's served choices again, portable ones dropped. A profile
 // without measurements offers its fit fallback when that drafts with the mode, else is kept as it
 // is. A load table measured with another drafter kind gives way to one request at a time.
 [[nodiscard]] SpeculationSubject subject_of_mode(SpeculationSubject subject, spec::Mode mode);

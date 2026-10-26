@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -190,6 +191,10 @@ struct Profile {
     std::vector<std::string> skipped; // configurations the time budget left out
     std::optional<RuntimeDisable> disabled;
 };
+
+// The modes a profile drafts with: its measurements', else (a published profile) its choices' and
+// its fit fallback's.
+[[nodiscard]] std::set<Mode> drafting_modes(const Profile& profile);
 
 struct SelectOptions {
     double min_gain = 0.03;

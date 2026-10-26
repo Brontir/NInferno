@@ -442,10 +442,57 @@ std::map<std::string, std::string> attached_identities(const SpeculationManifest
     return out;
 }
 
-// 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
-//    weights it was converted from), else its group's preliminary choice. False when the registry
-//    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
-//    the published profiles answer.
+// 3. The published profile for this GPU (below).
+void resolve_manifest_profile(const SpeculationManifest& manifest,
+                              const std::filesystem::path& artifact, const GpuKey& gpu,
+                              ResolvedSpeculation& out);
+
+// The kinds `manifest` carries that `out.profile` does not draft with, each resolved alone into
+// out.other_kinds (ResolvedSpeculation::other_kinds): its lab measurement (pair_choice over that
+// kind: its pair, a sibling's, its group's), else the published profile for this GPU where that
+// drafts with it. `label`, `weights`, `quant` and `repo` as for the profile itself.
+void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesystem::path& label,
+                         const GpuKey& gpu, std::string_view weights, std::string_view quant,
+                         std::string_view repo, ResolvedSpeculation& out) {
+    const auto& registry = Registry::builtin();
+    const auto covered   = [&](Mode mode) {
+        if (drafting_modes(out.profile).contains(mode)) { return true; }
+        return std::any_of(out.other_kinds.begin(), out.other_kinds.end(), [&](const auto& other) {
+            return drafting_modes(other.profile).contains(mode);
+        });
+    };
+    std::optional<ResolvedSpeculation> published; // read once, where a kind needs it
+    for (const auto& d : manifest.drafters) {
+        const auto mode = drafter_kind_mode(d.kind);
+        if (!d.usable() || !mode || covered(*mode)) { continue; }
+        ResolvedSpeculation alone;
+        alone.fallback = out.fallback;
+        if (!registry.pairs().empty() && manifest.source != "bundle") {
+            if (auto choice = pair_choice(registry.pairs(), weights, manifest.engine, {d.kind},
+                                          label_bits(quant), gpu_generation(gpu), {},
+                                          attached_identities(manifest), repo)) {
+                attach_drafters(manifest, choice->profile, alone);
+                std::string origin;
+                alone.floor_sources = manifest_profiles(manifest, label, origin);
+                alone.source        = std::move(choice->source);
+                alone.basis         = std::move(choice->basis);
+                alone.sha256        = registry.source_sha256();
+                alone.profile       = std::move(choice->profile);
+                out.other_kinds.push_back(std::move(alone));
+                continue;
+            }
+        }
+        if (!published) {
+            published.emplace();
+            published->fallback = out.fallback;
+            resolve_manifest_profile(manifest, label, gpu, *published);
+        }
+        if (published->found() && drafting_modes(published->profile).contains(*mode)) {
+            out.other_kinds.push_back(*published);
+        }
+    }
+}
+
 bool resolve_pair_profile(const SpeculationManifest& manifest,
                           const std::filesystem::path& artifact, const GpuKey& gpu,
                           ResolvedSpeculation& out) {
@@ -479,6 +526,8 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     out.basis   = std::move(choice->basis);
     out.sha256  = registry.source_sha256();
     out.profile = std::move(choice->profile);
+    resolve_other_kinds(manifest, artifact, gpu, weights.value_or(""), quant,
+                        hub_repo_of_artifact(artifact), out);
     return true;
 }
 
@@ -733,6 +782,7 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
             out.basis   = std::move(choice->basis);
             out.sha256  = registry.source_sha256();
             out.profile = std::move(choice->profile);
+            if (manifest) { resolve_other_kinds(*manifest, label, gpu, weights, quant, repo, out); }
             return out;
         }
     }

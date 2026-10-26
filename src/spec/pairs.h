@@ -115,6 +115,9 @@ struct MeasuredPair {
 // A target's bits per weight by its quantization label (quant_label_bits): enough to tell the bit
 // classes apart. 16 for "" (a checkpoint's own weights) and a label that names none.
 [[nodiscard]] double label_bits(std::string_view label);
+// A drafter kind's speculation mode ("mtp", "gemma4_assistant", "nemotron_h_mtp" MTP; "dflash",
+// "dflash2"); nullopt for a kind no pair drafts with.
+[[nodiscard]] std::optional<Mode> drafter_kind_mode(std::string_view kind);
 // A converted target's quantization label (its provenance's "quant"; "" for a checkpoint).
 [[nodiscard]] std::string artifact_quant(const std::filesystem::path& artifact);
 

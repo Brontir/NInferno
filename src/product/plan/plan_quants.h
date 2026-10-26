@@ -209,11 +209,16 @@ struct QuantPlan {
 // quantization's plan); fills plan.rule_code and plan.rule_params with the same as data.
 [[nodiscard]] std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs);
 
+// A plan of a model at given inputs: plan_model, or at a configuration choice's drafter.
+using PlanAt = std::function<PlannedSpeculation(const DryRunInputs&)>;
+
 // The longest context each of the inputs' streams holds on its own for a model at its weights
 // (0: none): the served plan's when private, else the longest of the declared probe contexts
-// (8K .. the model's own) whose plan at that pinned context keeps every stream's own.
+// (8K .. the model's own) whose plan at that pinned context (`plan_at`, plan_model when empty)
+// keeps every stream's own.
 [[nodiscard]] std::uint32_t own_context_of(const PlanSourceFacts& facts, const DryRunInputs& inputs,
-                                           const PlannedSpeculation& served);
+                                           const PlannedSpeculation& served,
+                                           const PlanAt& plan_at = {});
 
 // Whether every stream of `inputs` holds `context` of its own (the plan at that pinned context).
 [[nodiscard]] bool holds_own_context(const PlanSourceFacts& facts, const DryRunInputs& inputs,
