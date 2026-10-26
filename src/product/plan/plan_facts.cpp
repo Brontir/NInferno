@@ -90,7 +90,9 @@ std::uint32_t u32(double value) { return value > 0 ? static_cast<std::uint32_t>(
 struct Geometry {
     std::string architecture, model_type;
     std::uint32_t context = 0, layers = 0, hidden = 0, vocab = 0;
-    double heads = 0, kv_heads = 0, head_dim = 0; // the parameter count's attention widths
+    // The attention layers' projections, each at its own widths (add_attention): Gemma 4's
+    // full layers are twice as wide as its sliding ones.
+    double attention_params = 0;
     std::uint32_t full_layers = 0, full_kv_total = 0, full_key = 0, full_value = 0;
     std::uint32_t sliding_layers = 0, sliding_kv_total = 0, sliding_key = 0, sliding_value = 0;
     std::uint32_t window = 0;
@@ -104,10 +106,14 @@ struct Geometry {
     bool tied = false, mtp = false;
 };
 
-void add_attention(Geometry& g, bool sliding, bool own_kv, double kv_heads, double key,
-                   double value) {
+// One attention layer: its projections (queries and output at heads x key and heads x value; keys
+// and values, one projection when the keys are the values, where it keeps its own) and its KV.
+void add_attention(Geometry& g, bool sliding, bool own_kv, double heads, double kv_heads,
+                   double key, double value, bool keys_are_values = false) {
     ++g.attention_layers;
+    g.attention_params += g.hidden * heads * (key + value);
     if (!own_kv || kv_heads <= 0) { return; } // reads an earlier layer's keys and values
+    g.attention_params += g.hidden * kv_heads * (keys_are_values ? key : key + value);
     if (sliding) {
         ++g.sliding_layers;
         g.sliding_kv_total += u32(kv_heads);
@@ -250,8 +256,6 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
 
     if (g.layers != 0 && g.hidden != 0) {
         const double hidden    = g.hidden;
-        const double head_dim  = g.head_dim > 0 ? g.head_dim : (g.heads > 0 ? hidden / g.heads : 0);
-        const double attention = hidden * head_dim * (2 * g.heads + 2 * g.kv_heads);
         const double mixer =
             hidden * (2 * g.ssm_inner + 2 * g.ssm_groups * g.ssm_state + g.ssm_heads) +
             g.ssm_inner * hidden;
@@ -262,12 +266,11 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
         const double dense  = gated * dense_width;
         const double vocab  = g.vocab > 0 ? g.vocab : 152064; // catalog.cpp's default
         const double table  = vocab * hidden;
-        const double a      = g.attention_layers;
         const double r      = g.recurrent_layers;
         const double f      = g.ffn_layers;
-        m.params =
-            a * attention + r * mixer + f * (dense + shared + routed) + table * (g.tied ? 1 : 2);
-        s.active_params        = a * attention + r * mixer + f * (dense + shared + taken) + table;
+        const double a      = g.attention_params;
+        m.params = a + r * mixer + f * (dense + shared + routed) + table * (g.tied ? 1 : 2);
+        s.active_params        = a + r * mixer + f * (dense + shared + taken) + table;
         s.routed_expert_params = f * routed;
     }
     return out;
@@ -375,12 +378,9 @@ Geometry geometry_of_gguf(const json& md) {
             continue;
         }
         if (kv[i] <= 0) { continue; } // a feed-forward-only layer (NemotronH MoE)
-        add_attention(g, sliding[i], i < first_shared, kv[i], sliding[i] ? key_swa : key,
-                      sliding[i] ? value_swa : value);
+        add_attention(g, sliding[i], i < first_shared, heads[i], kv[i],
+                      sliding[i] ? key_swa : key, sliding[i] ? value_swa : value);
     }
-    g.heads        = heads.empty() ? 0 : *std::max_element(heads.begin(), heads.end());
-    g.kv_heads     = kv.empty() ? 0 : *std::max_element(kv.begin(), kv.end());
-    g.head_dim     = key;
     g.ssm_inner    = number(md, p + "ssm.inner_size");
     g.ssm_state    = number(md, p + "ssm.state_size");
     g.ssm_groups   = number(md, p + "ssm.group_count");
@@ -441,9 +441,6 @@ Geometry geometry_of_config(const json& config) {
     const double head_dim = number(c, "head_dim", heads > 0 && g.hidden > 0 ? g.hidden / heads : 0);
     g.context             = u32(number(c, "max_position_embeddings"));
     g.vocab               = u32(number(c, "vocab_size"));
-    g.heads               = heads;
-    g.kv_heads            = kv_heads;
-    g.head_dim            = head_dim;
     double layers         = number(c, "num_hidden_layers");
     {
         const json* tied = c.contains("tie_word_embeddings")        ? &c["tie_word_embeddings"]
@@ -508,10 +505,11 @@ Geometry geometry_of_config(const json& config) {
     // text_config); the artifact spells both in attention_geometry.
     double sliding_dim = head_dim, sliding_kv = kv_heads;
     double full_dim = number(c, "global_head_dim", head_dim);
+    // attention_k_eq_v: the full layers' keys are their values, one projection for both.
+    const bool k_eq_v = c.contains("attention_k_eq_v") && truthy(c["attention_k_eq_v"]);
     double full_kv =
         c.contains("attention_k_eq_v")
-            ? (truthy(c["attention_k_eq_v"]) ? number(c, "num_global_key_value_heads", kv_heads)
-                                             : kv_heads)
+            ? (k_eq_v ? number(c, "num_global_key_value_heads", kv_heads) : kv_heads)
             : number(c, "num_global_key_value_heads", kv_heads);
     if (const auto geo = c.find("attention_geometry"); geo != c.end() && geo->is_object()) {
         if (const auto s = geo->find("sliding_attention"); s != geo->end() && s->is_object()) {
@@ -542,9 +540,9 @@ Geometry geometry_of_config(const json& config) {
     for (std::size_t i = 0; i < kinds.size(); ++i) {
         const auto& kind = kinds[i];
         if (kind == "sliding_attention" && g.window > 0) {
-            add_attention(g, true, own_kv[i], sliding_kv, sliding_dim, sliding_dim);
+            add_attention(g, true, own_kv[i], heads, sliding_kv, sliding_dim, sliding_dim);
         } else if (kind == "full_attention" || kind == "attention" || kind == "sliding_attention") {
-            add_attention(g, false, own_kv[i], full_kv, full_dim, full_dim);
+            add_attention(g, false, own_kv[i], heads, full_kv, full_dim, full_dim, k_eq_v);
         } else if (kind == "linear_attention" || kind == "mamba") {
             ++g.recurrent_layers;
         } else if (kind == "moe" || kind == "mlp") {
