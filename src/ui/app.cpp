@@ -923,8 +923,10 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
     return out;
 }
 
-// The conversions of `repo` kept under `root` (names, sizes, times): a plan that depends on what a
-// conversion carries (convert::cached_conversion_has_drafters) is kept per this stamp.
+// The conversions of `repo` kept under `root` (names, sizes, times), and the separate drafters
+// their manifests attach (another repository's, removed or replaced apart from them): a plan that
+// depends on what a conversion carries (convert::cached_conversion_has_drafters) is kept per this
+// stamp.
 std::string conversions_stamp(const fs::path& root, const std::string& repo) {
     std::string out;
     std::error_code ec;
@@ -947,6 +949,21 @@ std::string conversions_stamp(const fs::path& root, const std::string& repo) {
         if (!it->is_regular_file(e)) { continue; }
         out += it->path().filename().string() + ":" + std::to_string(it->file_size(e)) + ":" +
                std::to_string(it->last_write_time(e).time_since_epoch().count()) + ";";
+        const auto name = it->path().filename().string();
+        if (!name.ends_with(".speculation.json")) { continue; }
+        const auto manifest = spec::read_manifest(it->path());
+        if (!manifest) { continue; }
+        for (const auto& d : manifest->drafters) {
+            if (d.artifact.empty()) { continue; }
+            std::error_code gone;
+            const auto size = fs::file_size(d.artifact, gone);
+            out += d.artifact + (gone ? std::string(":gone") :
+                                        ":" + std::to_string(size) + ":" +
+                                            std::to_string(fs::last_write_time(d.artifact, gone)
+                                                               .time_since_epoch()
+                                                               .count())) +
+                   ";";
+        }
     }
     return std::to_string(std::hash<std::string>{}(out));
 }
