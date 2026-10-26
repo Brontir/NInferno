@@ -513,13 +513,19 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
     // Not measured, but another quantization of the same model was: the sibling nearest in bits
     // per weight within its bit class (below 4 bits, or 4 and above), the weights the same and
     // quantized otherwise, so its drafters are accepted alike (no fine-tune's guard).
-    if (!repo.empty()) {
+    // Of the same repository revision only: another commit may hold other weights (a new version
+    // of the model, not another quantization of it).
+    const auto repo_at = repo.find('@');
+    if (repo_at != std::string_view::npos && repo_at + 1 < repo.size()) {
         const auto sibling_repo = [&](const MeasuredPair& pair) {
-            const auto at = pair.target_repo.find('@');
-            return at != std::string::npos &&
-                   std::string_view(pair.target_repo).substr(0, at) == repo &&
-                   pair.engine == engine && pair.target != target &&
-                   (pair.target_bits < 4) == (target_bits < 4);
+            const auto space = pair.target_repo.find(' ');
+            const std::string_view measured =
+                std::string_view(pair.target_repo).substr(0, space);
+            const auto at = measured.find('@');
+            // The same repository (case aside) at the same commit (a prefix of it).
+            return at != std::string_view::npos && at + 1 < measured.size() &&
+                   same_drafter(measured, repo) && pair.engine == engine &&
+                   pair.target != target && (pair.target_bits < 4) == (target_bits < 4);
         };
         // Each sibling's own bits, before one card's records are pooled (a pooled record keeps
         // its first pair's); one measured with a drafter the target carries (carried_of), so a
@@ -549,7 +555,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
             for (const auto& q : quants) { named += (named.empty() ? "" : ", ") + q; }
             return PairChoice{.profile = profile_for_target(measured, generation, served),
                               .basis   = "preliminary",
-                              .source  = "registry sibling " + std::string(repo) + " " + named +
+                              .source  = "registry sibling " + std::string(repo.substr(0, repo_at)) +
+                                        " " + named +
                                         " (" + std::to_string(siblings.size()) +
                                         " lab card(s); this quantization not measured)"};
         }

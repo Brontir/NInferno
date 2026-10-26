@@ -103,7 +103,7 @@ struct ResolvedSpeculation {
 struct ModelEntry;
 // The lab's pairs answer first (spec/pairs.h): by `weights` (the planned files' identity, "":
 // unknown), the drafters the manifest attaches or the components carry, `quant`'s bit class and
-// the `engine` family, and `repo` (org/name: its sibling quantizations, spec::pair_choice); then
+// the `engine` family, and `repo` (org/name@commit: its sibling quantizations, spec::pair_choice); then
 // the published profiles as above.
 [[nodiscard]] ResolvedSpeculation
 resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,

@@ -117,9 +117,10 @@ struct MeasuredPair {
 
 // What the lab's pairs give a target carrying drafters of `kinds` (the kinds attached or built in):
 // its own measurements over those drafters (profile_for_target) with basis "measured"; else, for a
-// target of `repo` (org/name, its quantizations' repository), the measurements of the sibling
-// quantization of that repository nearest in bits per weight within its bit class (choice/
-// DECISIONS 48) with basis "preliminary"; else the best of its groups' choices (one per kind, the
+// target of `repo` (org/name@commit, the repository revision its quantization was listed at), the
+// measurements of the sibling quantization of that revision nearest in bits per weight within its
+// bit class (choice/DECISIONS 48) with basis "preliminary" (another commit may hold other weights:
+// no sibling, nor without a commit); else the best of its groups' choices (one per kind, the
 // fastest overall) with basis "preliminary"; else nullopt. `source` names where it came from.
 struct PairChoice {
     Profile profile;

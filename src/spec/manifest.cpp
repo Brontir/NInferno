@@ -453,7 +453,7 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
                               label_bits(quant), gpu_generation(gpu), {},
-                              attached_identities(manifest), manifest.repo);
+                              attached_identities(manifest), hub_repo_of_artifact(artifact));
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
     // The model's own floors bound a fallback the pair does not cover (the head fallback).
@@ -470,9 +470,9 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
 //    carries as components (its built-in MTP layers, a DFlash drafter built in), else its group's,
 //    as a planned target resolves (resolve_planned_speculation). False when the registry has
 //    neither.
-// The hub repository (org/name) of an artifact converted into the hub cache
-// (<cache>/models--org--name/ninferno/<commit>/<file>), "" elsewhere: without a manifest naming it,
-// the repository whose sibling quantizations the lab measured (pair_choice).
+// The hub repository and commit (org/name@commit) of an artifact converted into the hub cache
+// (<cache>/models--org--name/ninferno/<commit>/<file>), "" elsewhere: the repository revision
+// whose sibling quantizations the lab measured (pair_choice).
 std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
     const auto commit_dir = artifact.parent_path();
     if (commit_dir.parent_path().filename() != "ninferno") { return {}; }
@@ -482,7 +482,7 @@ std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
     const auto separator = repo.find("--");
     if (separator == std::string::npos) { return {}; }
     repo.replace(separator, 2, "/");
-    return repo;
+    return repo + "@" + commit_dir.filename().string();
 }
 
 bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& components,
@@ -711,10 +711,8 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
         const std::string family = manifest ? manifest->engine : std::string(engine);
         const auto attached = manifest ? attached_identities(*manifest)
                                        : std::map<std::string, std::string>{};
-        const std::string_view of =
-            manifest && !manifest->repo.empty() ? std::string_view(manifest->repo) : repo;
         if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
-                                      gpu_generation(gpu), {}, attached, of)) {
+                                      gpu_generation(gpu), {}, attached, repo)) {
             // The model's own floors bound a fallback the pair does not cover (the head
             // fallback), as for a published profile.
             if (manifest) {

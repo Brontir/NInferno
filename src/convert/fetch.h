@@ -205,6 +205,7 @@ struct RepoQuant {
     // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
     // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
     std::uint64_t mtp_bytes = 0;
+    std::string commit; // the commit the listing was read at ("" unknown)
 };
 
 // The commit `spec`'s revision names on the hub now (one listing request); nullopt under

@@ -2162,6 +2162,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }
+    for (auto& q : out) { q.commit = listing.commit; }
     return out;
 }
 

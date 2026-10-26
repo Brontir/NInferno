@@ -208,14 +208,14 @@ int main() {
         // The nearest of one card's siblings, not its first (one card's records are pooled).
         const std::vector<sp::MeasuredPair> three = {q4, q5xl, q8};
         const auto q5m = sp::pair_choice(three, "sha:q5m", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
-                                         "org/m-GGUF");
+                                         "org/m-GGUF@c0ffee");
         const auto q8x = sp::pair_choice(three, "sha:q8x", "qwen3_5", {"mtp"}, 8, "sm120", {}, {},
-                                         "org/m-GGUF");
+                                         "org/m-GGUF@c0ffee");
         expect(q5m && q5m->source.find("sibling org/m-GGUF UD-Q5_K_XL (") != std::string::npos &&
                    q8x && q8x->source.find("sibling org/m-GGUF Q8_0 (") != std::string::npos,
                "the sibling of the same bits among one card's siblings");
         const auto q5 = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
-                                        "org/m-GGUF");
+                                        "org/m-GGUF@c0ffee");
         expect(q5 && q5->basis == "preliminary" &&
                    q5->source.find("registry sibling org/m-GGUF Q4_K_M (") == 0 &&
                    q5->profile.overall.config.label() ==
@@ -223,13 +223,13 @@ int main() {
                            ->profile.overall.config.label(),
                "an unmeasured quantization takes its nearest measured sibling's choice");
         const auto q6 = sp::pair_choice(all, "sha:q6", "qwen3_5", {"mtp"}, 6, "sm120", {}, {},
-                                        "org/m-GGUF");
+                                        "org/m-GGUF@c0ffee");
         expect(q6 && q6->source.find("Q4_K_M, Q8_0") != std::string::npos,
                "two siblings equally near: both");
         const auto q2 = sp::pair_choice(all, "sha:q2", "qwen3_5", {"mtp"}, 2, "sm120", {}, {},
-                                        "org/m-GGUF");
+                                        "org/m-GGUF@c0ffee");
         const auto other = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
-                                           "org/other-GGUF");
+                                           "org/other-GGUF@c0ffee");
         expect((!q2 || q2->source.find("sibling") == std::string::npos) &&
                    (!other || other->source.find("sibling") == std::string::npos),
                "no sibling of its bit class, or of another repository: the group");
@@ -241,9 +241,22 @@ int main() {
         with_q8.drafters = {{"mtp", "org/m-GGUF@c0ffee"}};
         const std::vector<sp::MeasuredPair> drafted = {old_q5, with_q8};
         const auto q6x = sp::pair_choice(drafted, "sha:q6x", "qwen3_5", {"mtp"}, 6, "sm120", {},
-                                         {{"mtp", "org/m-GGUF@c0ffee"}}, "org/m-GGUF");
+                                         {{"mtp", "org/m-GGUF@c0ffee"}}, "org/m-GGUF@c0ffee");
         expect(q6x && q6x->source.find("sibling org/m-GGUF Q8_0 (") != std::string::npos,
                "a nearer sibling of another drafter: the next one of the attached drafter");
+        // Another commit of the repository may hold other weights (a new version of the model):
+        // no sibling from it, nor where the target's commit is not known.
+        const auto moved = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
+                                           "org/m-GGUF@beef");
+        const auto unknown_commit = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120",
+                                                    {}, {}, "org/m-GGUF");
+        const auto prefix = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
+                                            "Org/M-GGUF@c0ffee0123");
+        expect((!moved || moved->source.find("sibling") == std::string::npos) &&
+                   (!unknown_commit || unknown_commit->source.find("sibling") == std::string::npos),
+               "a sibling of the same commit only");
+        expect(prefix && prefix->source.find("sibling Org/M-GGUF Q4_K_M (") != std::string::npos,
+               "the same commit spelled in full, the repository's case aside");
     }
     // One card's tunes of one target, a drafter each (MTP, then DFlash): one measurement of the
     // pair over both drafters, in either order.
