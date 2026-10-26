@@ -258,31 +258,35 @@ Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options)
 
 namespace {
 
-// A round's cost per configuration label in one tune: its seconds per round over plain decode's
-// seconds per token, the mean over the sections it measured (those plain decode measured too).
+// A round's cost per configuration label in one tune: in each section plain decode measured too,
+// its seconds per round over plain decode's seconds per token (repeats pooled); the mean over the
+// sections.
 std::map<std::string, double> round_costs(const Profile& tune) {
-    std::map<std::string, double> plain; // seconds per token, by section
+    using Pooled = std::pair<double, double>;           // seconds, and tokens or rounds
+    std::map<std::string, Pooled> plain;                // by section
+    std::map<std::pair<std::string, std::string>, Pooled> rounds; // by label and section
     for (const auto& m : tune.measurements) {
-        if (!m.config.enabled() && m.tokens > 0) { plain[m.family] = m.seconds / m.tokens; }
+        if (!m.config.enabled()) {
+            if (m.tokens > 0) {
+                plain[m.family].first += m.seconds;
+                plain[m.family].second += static_cast<double>(m.tokens);
+            }
+        } else if (m.rounds > 0) {
+            auto& r = rounds[{m.config.label(), m.family}];
+            r.first += m.seconds;
+            r.second += static_cast<double>(m.rounds);
+        }
     }
-    struct Sum {
-        double seconds = 0, rounds = 0, plain = 0;
-        int sections   = 0;
-    };
-    std::map<std::string, Sum> sums;
-    for (const auto& m : tune.measurements) {
-        const auto p = plain.find(m.family);
-        if (!m.config.enabled() || m.rounds <= 0 || p == plain.end()) { continue; }
-        auto& s = sums[m.config.label()];
-        s.seconds += m.seconds;
-        s.rounds += static_cast<double>(m.rounds);
-        s.plain += p->second;
-        ++s.sections;
+    std::map<std::string, Pooled> sums; // by label: the sections' costs, and their count
+    for (const auto& [key, r] : rounds) {
+        const auto p = plain.find(key.second);
+        if (p == plain.end() || p->second.first <= 0) { continue; }
+        auto& s = sums[key.first];
+        s.first += (r.first / r.second) / (p->second.first / p->second.second);
+        s.second += 1;
     }
     std::map<std::string, double> out;
-    for (const auto& [label, s] : sums) {
-        if (s.plain > 0) { out[label] = (s.seconds / s.rounds) / (s.plain / s.sections); }
-    }
+    for (const auto& [label, s] : sums) { out[label] = s.first / s.second; }
     return out;
 }
 
