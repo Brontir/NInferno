@@ -131,7 +131,9 @@ pr::PlanSourceFacts facts_of(const Json& j) {
     t.routed_expert_params     = s.at("routed_expert_params").get<double>();
     t.builtin_mtp              = s.at("builtin_mtp").get<bool>();
     t.weight_formats           = s.at("weight_formats").get<std::vector<std::string>>();
-    t.base_model               = s.at("base_model").get<std::string>();
+    if (const auto base = s.at("base_model").get<std::string>(); !base.empty()) {
+        t.base_models = {base};
+    }
     return f;
 }
 

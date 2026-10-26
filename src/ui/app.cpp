@@ -2047,7 +2047,8 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 }
                 auto facts =
                     product::plan_facts_of_config(config, weights, runtime::WeightBasis::FileSize);
-                facts.model.mtp_bytes = mtp;
+                facts.model.mtp_bytes   = mtp;
+                facts.shape.base_models = convert::hub_base_models(repo, fetch);
                 std::lock_guard lock(sizes_mutex_);
                 if (generation == hub_generation_) {
                     plan_facts_[hub_key(repo, hub)] = std::move(facts);

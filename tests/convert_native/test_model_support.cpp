@@ -13,7 +13,10 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace cv = ninferno::convert;
 using Json   = nlohmann::json;
@@ -296,6 +299,97 @@ int main(int argc, char** argv) {
             "safetensors": {"parameters": {"BF16": 1}}})"));
         expect(!mixed.gguf && of(mixed).verdict == Verdict::Supported,
                "a mixed search result is judged by its safetensors");
+    }
+    // --quant picks one GGUF model as the fetch does, for the plan without weights too
+    // (convert::gguf_group_for_quant, convert::listed_quant_for): "Q4_K_M" takes UD-Q4_K_M where
+    // that is the only one, an exact label wins, "4bit" the largest 4-bit model.
+    {
+        const std::map<std::string, std::uint64_t> groups = {
+            {"m-UD-Q4_K_M", 10}, {"m-Q4_K_S", 9}, {"m-UD-Q4_K_XL", 11}, {"m-Q8_0", 20}};
+        expect(cv::gguf_group_for_quant(groups, "Q4_K_M", "r") == "m-UD-Q4_K_M",
+               "a label inside a longer one takes it");
+        expect(cv::gguf_group_for_quant(groups, "4bit", "r") == "m-UD-Q4_K_XL",
+               "a width takes the largest of that width");
+        bool threw = false;
+        try {
+            (void)cv::gguf_group_for_quant(groups, "Q4_K", "r");
+        } catch (const std::runtime_error&) { threw = true; }
+        expect(threw, "a label several models hold, none exactly, names them");
+        std::vector<cv::RepoQuant> listing(3);
+        listing[0].quant  = "UD-Q4_K_M";
+        listing[0].format = "gguf";
+        listing[0].bytes  = 10;
+        listing[0].files  = {"m-UD-Q4_K_M.gguf"};
+        listing[1].quant  = "Q8_0";
+        listing[1].format = "gguf";
+        listing[1].bytes  = 20;
+        listing[1].files  = {"Q8_0/m-Q8_0-00001-of-00002.gguf", "Q8_0/m-Q8_0-00002-of-00002.gguf"};
+        listing[2].quant   = "mtp-m";
+        listing[2].format  = "gguf";
+        listing[2].drafter = true;
+        listing[2].files   = {"mtp-m-Q4_K_M.gguf"};
+        const auto q4 = cv::listed_quant_for(listing, "Q4_K_M", "r");
+        const auto q8 = cv::listed_quant_for(listing, "q8_0", "r");
+        expect(q4.quant == "UD-Q4_K_M" && q8.quant == "Q8_0" && q8.files.size() == 2,
+               "the listing's quantization for --quant, a drafter beside them not one");
+        // A whole file's group is its file name (gguf_group): a width reads its label from it.
+        listing[0].files = {"m-UD-Q4_K_M.gguf"};
+        expect(cv::listed_quant_for(listing, "4bit", "r").quant == "UD-Q4_K_M",
+               "a width over whole files");
+        // A split model without a label in its names, listed a part at a time: one entry of both
+        // parts, named by its group, as the fetch matches --quant.
+        std::vector<cv::RepoQuant> parts(2);
+        for (int i = 0; i < 2; ++i) {
+            parts[i].quant  = "model-0000" + std::to_string(i + 1) + "-of-00002";
+            parts[i].format = "gguf";
+            parts[i].bytes  = 7;
+            parts[i].files  = {parts[i].quant + ".gguf"};
+            parts[i].sha256 = {std::string(64, char('a' + i))};
+        }
+        const auto whole = cv::listed_quant_for(parts, "model", "r");
+        expect(whole.quant == "model" && whole.bytes == 14 && whole.files.size() == 2 &&
+                   whole.sha256.size() == 2,
+               "an unlabelled split model is one entry of its parts");
+        // Two models one label's entry holds (A-Q4_K_M, B-Q4_K_M): each addressable by its own
+        // name, a width comparing each model's own bytes.
+        std::vector<cv::RepoQuant> two(2);
+        two[0].quant  = "Q4_K_M";
+        two[0].format = "gguf";
+        two[0].files  = {"A-Q4_K_M.gguf", "B-Q4_K_M.gguf"};
+        two[0].sha256 = {std::string(64, 'a'), std::string(64, 'b')};
+        two[0].sizes  = {5, 9};
+        two[0].bytes  = 14;
+        two[1].quant  = "Q4_0";
+        two[1].format = "gguf";
+        two[1].files  = {"A-Q4_0.gguf"};
+        two[1].sizes  = {12};
+        two[1].bytes  = 12;
+        const auto b = cv::listed_quant_for(two, "B-Q4_K_M", "r");
+        expect(b.quant == "B-Q4_K_M" && b.bits == 4 &&
+                   b.files == std::vector<std::string>{"B-Q4_K_M.gguf"} && b.bytes == 9 &&
+                   b.sha256 == std::vector<std::string>{std::string(64, 'b')},
+               "a second model of one label's entry, by its name");
+        expect(cv::listed_quant_for(two, "4bit", "r").files ==
+                   std::vector<std::string>{"A-Q4_0.gguf"},
+               "a width compares each model's own bytes (12 over B's 9, not the label's 14)");
+        // One name in two folders: the entry keeps the folder, the fetch's second selection (its
+        // header read) takes the same group again.
+        std::vector<cv::RepoQuant> dirs(1);
+        dirs[0].quant  = "Q4_K_M";
+        dirs[0].format = "gguf";
+        dirs[0].files  = {"A/model-Q4_K_M.gguf", "B/model-Q4_K_M.gguf"};
+        dirs[0].sizes  = {5, 9};
+        dirs[0].bytes  = 14;
+        const auto wide = cv::listed_quant_for(dirs, "4bit", "r");
+        const std::map<std::string, std::uint64_t> fetch_groups = {{"A/model-Q4_K_M.gguf", 5},
+                                                                   {"B/model-Q4_K_M.gguf", 9}};
+        expect(wide.quant == "B/model-Q4_K_M" &&
+                   cv::gguf_group_for_quant(fetch_groups, wide.quant, "r") == "B/model-Q4_K_M.gguf",
+               "a folder's model keeps its folder in the name the fetch selects again");
+        const std::map<std::string, std::uint64_t> files = {{"m-UD-Q4_K_M.gguf", 10},
+                                                             {"m-Q8_0.gguf", 20}};
+        expect(cv::gguf_group_for_quant(files, "4bit", "r") == "m-UD-Q4_K_M.gguf",
+               "a width over the fetch's whole-file groups");
     }
     std::cout << (failures == 0 ? "model support: ok\n" : "model support: FAILED\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
