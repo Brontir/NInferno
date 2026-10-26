@@ -72,8 +72,8 @@ struct Over {
     double acceptance       = 0;
     double floor            = 0; // a round's seconds over plain's seconds per token
     // The speed were each section's drafted tokens accepted at kFineTuneAcceptance of its rate:
-    // a section's rounds cost as measured and yield 1 + kFineTuneAcceptance x (its tokens per
-    // round - 1), then the sections weigh as above.
+    // a section's rounds cost the seconds measured and yield rounds + kFineTuneAcceptance x
+    // accepted tokens, then the sections weigh as above.
     double fine_tune_speed = 0;
 };
 std::optional<Over> over(const Sums& table, const std::string& label,
@@ -88,11 +88,13 @@ std::optional<Over> over(const Sums& table, const std::string& label,
             return std::nullopt;
         }
         const double section_cost = m->second.seconds / m->second.tokens;
-        const double section_tokens =
-            m->second.rounds > 0 ? (m->second.accepted + m->second.rounds) / m->second.rounds : 1.0;
         cost += section_cost;
+        // The section's rounds cost the seconds measured and yield, a draft accepted at
+        // kFineTuneAcceptance of its rate, rounds + kFineTuneAcceptance x accepted tokens.
         fine_tune_cost +=
-            section_cost * section_tokens / (1.0 + kFineTuneAcceptance * (section_tokens - 1.0));
+            m->second.rounds > 0
+                ? m->second.seconds / (m->second.rounds + kFineTuneAcceptance * m->second.accepted)
+                : section_cost;
         plain_cost += p->second.seconds / p->second.tokens;
         seconds += m->second.seconds;
         rounds += m->second.rounds;
