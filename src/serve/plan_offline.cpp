@@ -6,6 +6,7 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "convert/support.h"
+#include "core/quant_label.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
