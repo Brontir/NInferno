@@ -90,7 +90,12 @@ struct MeasuredPair {
 // The relative spread the ratios of a configuration may have over its cards (the two Ada cards'
 // agree within 1.5 % on the 9B MTP pair); wider, it has none (deterministic-decisions.md).
 inline constexpr double kRoundCostAgreement = 0.05;
-using RoundCostRatios = std::map<std::string, double>;
+struct RoundCostRatios {
+    std::map<std::string, double> ratio; // by configuration label
+    // Two cards of each generation measured a target in common: a configuration without a ratio
+    // (none measured, or its cards disagree) then has no estimate.
+    bool known = false;
+};
 [[nodiscard]] RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
                                                      std::string_view from, std::string_view to);
 
