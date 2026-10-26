@@ -302,8 +302,10 @@ void test_base_repository() {
               std::optional<std::string>("org/src"),
           "another site's address names none: the next key");
     check(of(J{{"general.source.url", "https://huggingface.co/org/s"}}) ==
-              std::optional<std::string>("org/s"),
-          "the source address");
+              std::optional<std::string>("org/s") &&
+              of(J{{"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+                  std::optional<std::string>("org/r"),
+          "the source address, the specification's source repository");
     check(of(J{{"general.base_model.0.repo_url", "http://hf.co/org/m?library=gguf#top"}}) ==
               std::optional<std::string>("org/m"),
           "a query or an anchor is no part of it");

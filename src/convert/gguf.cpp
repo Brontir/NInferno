@@ -260,8 +260,10 @@ GgufFile parse(const std::byte* data, std::size_t size, std::uint64_t file_size,
 } // namespace
 
 std::optional<std::string> gguf_metadata_base_repository(const nlohmann::json& metadata) {
+    // general.source.repo_url is the GGUF specification's (docs/gguf.md, "Source metadata"),
+    // general.source.huggingface.repository the older writers'.
     for (const char* key : {"general.base_model.0.repo_url", "general.source.url",
-                            "general.source.huggingface.repository"}) {
+                            "general.source.repo_url", "general.source.huggingface.repository"}) {
         const auto it = metadata.find(key);
         if (it == metadata.end() || !it->is_string()) { continue; }
         std::string_view text = it->get_ref<const std::string&>();
