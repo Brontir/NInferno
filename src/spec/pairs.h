@@ -139,10 +139,10 @@ struct PairChoice {
                                                     const std::map<std::string, std::string>&
                                                         attached          = {},
                                                     std::string_view repo = {});
-// Whether two drafter identities (repo@revision) name one drafter: the same repository, and the
-// same revision where both say one (either may be a prefix of the other). True when either is
-// unknown ("").
-[[nodiscard]] bool same_drafter(std::string_view a, std::string_view b);
+// Whether two hub identities (repo@revision: a drafter's, a measured target's repository) name one
+// revision: the same repository (case aside), and the same revision where both say one (either may
+// be a prefix of the other). True when either is unknown ("").
+[[nodiscard]] bool same_repo_revision(std::string_view a, std::string_view b);
 
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,
