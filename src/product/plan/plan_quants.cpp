@@ -377,6 +377,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             row.planned                 = plan_model(facts, own);
             row.fit                     = runtime::quant_fit_of(row.planned.plan,
                                                                 own_context_of(facts, own, row.planned), ask);
+            DryRunInputs served_at = own; // the inputs the row's plan is of
             if (!ask.automatic) {
                 row.launch_context = ask.context;
             } else if (ask.concurrency > 1 && row.fit.state == runtime::QuantFitState::Own &&
@@ -384,7 +385,19 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 row.launch_context = row.fit.own_context;
                 // The plan the launch serves under that cap (the one the row shows: the ladder,
                 // the speculation, fits_now), not the uncapped pool the streams would share.
-                row.planned = plan_model(facts, under_context_cap(own, row.launch_context));
+                served_at   = under_context_cap(own, row.launch_context);
+                row.planned = plan_model(facts, served_at);
+            }
+            // The speculation a --spec auto start of this quantization serves: its configuration
+            // choice's drafter (plan_at_choice), as the plan of that quantization named shows it.
+            if (served_at.subject != nullptr && served_at.ask.automatic) {
+                if (const auto served = choose_at_weights(facts, served_at, inputs.pins, q.quant)) {
+                    row.planned = plan_at_choice(facts, served_at, *served, inputs.pins,
+                                                 std::move(row.planned));
+                    // Its fit with that drafter's memory (a separate drafter takes room).
+                    row.fit = runtime::quant_fit_of(
+                        row.planned.plan, own_context_of(facts, served_at, row.planned), ask);
+                }
             }
         } else {
             row.fit.state = why.code == "converted_size_unknown"
