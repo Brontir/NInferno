@@ -279,7 +279,7 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 namespace {
 
 // The linears' prefill rate (tokens a second) with chunks of `filled` tokens: an MoE's chunk fills
-// its experts only as far as its tokens reach.
+// its experts only as far as its tokens reach (its share of the saturated rate).
 double linear_prefill(const ModelFacts& model, const CardFacts& card, Route route,
                       std::uint32_t filled, bool& transferred) noexcept {
     const double params = model.active_params > 0 ? model.active_params : model.params;
@@ -287,7 +287,7 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, Route rout
     double rate = prefill_eta(model.moe(), generation_of(card), route, transferred) *
                   peak(card, route) / (2 * params);
     if (model.moe() && model.experts_per_token > 0) {
-        rate *= chunk_share(model, filled) / chunk_share(model, kDefaultChunk);
+        rate *= chunk_share(model, filled);
     }
     return rate;
 }
