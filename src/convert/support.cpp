@@ -329,8 +329,8 @@ void read_gguf_facts(const fs::path& path, SupportFacts& out) {
                     arch && arch->is_string() ? arch->get<std::string>() : std::string();
                 count_gguf_matrices(file, out);
                 out.chat_template = file.has("tokenizer.chat_template");
-                if (!*out.chat_template && (file.has("general.base_model.0.repo_url") ||
-                                            file.has("general.source.huggingface.repository"))) {
+                // A base repository named (the one base_tokenizer reads): its template, not known yet.
+                if (!*out.chat_template && gguf_metadata_base_repository(file.metadata)) {
                     out.chat_template.reset();
                 }
                 return;
@@ -456,8 +456,7 @@ std::optional<SupportFacts> hub_support_facts(const std::string& spec,
                     // tokenizer files (acquire.cpp, base_tokenizer): not known before.
                     // The fetch takes a chat_template.jinja beside it as the template.
                     out.chat_template = file.has("tokenizer.chat_template") || has_template;
-                    if (!*out.chat_template && (file.has("general.base_model.0.repo_url") ||
-                                                file.has("general.source.huggingface.repository"))) {
+                    if (!*out.chat_template && gguf_metadata_base_repository(file.metadata)) {
                         out.chat_template.reset();
                     }
                     // A split model's other parts: their matrices count too.
