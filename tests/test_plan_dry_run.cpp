@@ -946,14 +946,23 @@ void test_speculation_order() {
                             return ninferno::spec::drafting_modes(other.profile)
                                 .contains(ninferno::spec::Mode::DFlash2);
                         });
-        check(sibling && dflash2, "the sibling's MTP pair, the DFlash2 drafter resolved alone");
+        check(sibling && dflash2,
+              "the sibling's MTP pair, the DFlash2 drafter resolved alone (" +
+                  (both.resolved ? both.resolved->source + "; " +
+                                       std::to_string(both.resolved->other_kinds.size()) +
+                                       " other kind(s)"
+                                 : std::string("unresolved")) +
+                  ")");
         const pr::DrafterAxis axis = pr::drafter_axis(both, pr::SpeculationAsk{});
         const auto offers = [&](const char* label) {
             return std::any_of(axis.options.begin(), axis.options.end(), [&](const auto& o) {
                 return o.label.rfind(label, 0) == 0;
             });
         };
-        check(offers("mtp:") && offers("dflash2:"), "the drafter axis offers MTP and DFlash2");
+        std::string offered;
+        for (const auto& o : axis.options) { offered += " " + o.label; }
+        check(offers("mtp:") && offers("dflash2:"),
+              "the drafter axis offers MTP and DFlash2 (offers:" + offered + ")");
         const pr::SpeculationSubject d2 =
             pr::subject_of_mode(both, ninferno::spec::Mode::DFlash2);
         check(d2.resolved && d2.resolved->basis != "preliminary" &&
