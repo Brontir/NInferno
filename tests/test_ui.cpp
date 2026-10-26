@@ -812,8 +812,7 @@ void test_catalog() {
         // --with-drafters): no drafters; one of the current revision keeps them.
         check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
               "an older revision with its download there is converted again");
-        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.revision") << "5
-";
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.revision") << "5\n";
         check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
               "a current conversion's drafters, its download there");
         fs::remove_all(root);
