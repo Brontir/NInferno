@@ -642,13 +642,6 @@ private:
 // ---------------------------------------------------------------------------------------------
 // Hubs.
 
-struct RemoteFile {
-    std::string path;
-    std::uint64_t size = 0;
-    std::string sha256;   // LFS files
-    std::string git_sha1; // small files kept in git
-};
-
 struct Listing {
     std::string commit;
     std::vector<RemoteFile> files;
@@ -1203,6 +1196,18 @@ std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& gro
     return matches.front();
 }
 
+std::vector<std::string> RepoQuant::paths() const {
+    std::vector<std::string> out;
+    for (const auto& file : files) { out.push_back(file.path); }
+    return out;
+}
+
+std::vector<std::string> RepoQuant::digests() const {
+    std::vector<std::string> out;
+    for (const auto& file : files) { out.push_back(file.sha256); }
+    return out;
+}
+
 RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::string& quant,
                            const std::string& repo) {
     // Every file in the fetch's own group (gguf_group of its path, a folder's name with it): one
@@ -1210,16 +1215,16 @@ RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::stri
     // be listed a part at a time.
     struct Member {
         const RepoQuant* entry;
-        std::size_t file;
+        const RemoteFile* file;
     };
     std::map<std::string, std::uint64_t> groups;
     std::map<std::string, std::vector<Member>> members;
     for (const auto& q : quants) {
         if (q.drafter || q.format != "gguf") { continue; }
-        for (std::size_t i = 0; i < q.files.size(); ++i) {
-            const auto group = gguf_group(q.files[i]);
-            groups[group] += i < q.sizes.size() ? q.sizes[i] : q.bytes / q.files.size();
-            members[group].push_back({&q, i});
+        for (const auto& file : q.files) {
+            const auto group = gguf_group(file.path);
+            groups[group] += file.size;
+            members[group].push_back({&q, &file});
         }
     }
     const auto chosen   = gguf_group_for_quant(groups, quant, repo);
@@ -1237,12 +1242,7 @@ RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::stri
     out.format = "gguf";
     out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf")).value_or(0);
     out.bytes  = groups.at(chosen);
-    out.commit = of.front().entry->commit;
-    for (const auto& m : of) {
-        out.files.push_back(m.entry->files[m.file]);
-        if (m.file < m.entry->sha256.size()) { out.sha256.push_back(m.entry->sha256[m.file]); }
-        if (m.file < m.entry->sizes.size()) { out.sizes.push_back(m.entry->sizes[m.file]); }
-    }
+    for (const auto& m : of) { out.files.push_back(*m.file); }
     return out;
 }
 
@@ -2151,7 +2151,7 @@ int quant_width_tag(const std::string& quant) {
     return bits >= 1 && bits <= 16 ? bits : 0;
 }
 
-std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& options) {
+RepoListing list_quants(const std::string& spec, const FetchOptions& options) {
     auto [repo, revision] = split_spec(spec, options);
     const auto hub        = make_hub(options, revision);
     const auto listing    = hub->list(repo, revision);
@@ -2194,17 +2194,14 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
                 out.push_back(std::move(quant));
             }
             out[it->second].bytes += file.size;
-            out[it->second].files.push_back(file.path);
-            out[it->second].sha256.push_back(file.sha256);
-            out[it->second].sizes.push_back(file.size);
+            out[it->second].files.push_back(file);
         } else if (name.ends_with(".ninferno") && file.path.find('/') == std::string::npos) {
             RepoQuant quant;
             quant.quant  = native_quant_label(file.path);
             quant.format = "ninferno";
             quant.bits   = quant_label_bits(quant.quant).value_or(0);
             quant.bytes  = file.size;
-            quant.files.push_back(file.path);
-            quant.sha256.push_back(file.sha256);
+            quant.files.push_back(file);
             out.push_back(std::move(quant));
         } else if (name.ends_with(".safetensors") && name.find("visual") == std::string::npos &&
                    file.path.find('/') == std::string::npos) {
@@ -2220,8 +2217,7 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     for (const auto* file : top_level) {
         if (!named || transformers_weight_file(file->path)) {
             weights.bytes += file->size;
-            weights.files.push_back(file->path);
-            weights.sha256.push_back(file->sha256);
+            weights.files.push_back(*file);
             // A part of its own for the MTP layers (model_mtp.safetensors): fetched and converted
             // with the model, loaded only under MTP.
             if (ascii_lower(file->path).find("mtp") != std::string::npos) {
@@ -2230,25 +2226,27 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }
-    for (auto& q : out) { q.commit = listing.commit; }
+    return {listing.commit, std::move(out)};
+}
+
+std::vector<std::string> card_base_models(const Json& card) {
+    std::vector<std::string> out;
+    const Json data = card.value("cardData", Json::object());
+    const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
+    if (base.is_string()) { out.push_back(base.get<std::string>()); }
+    if (base.is_array()) {
+        for (const auto& item : base) {
+            if (item.is_string()) { out.push_back(item.get<std::string>()); }
+        }
+    }
     return out;
 }
 
 std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
-    std::vector<std::string> out;
     try {
-        const auto card = fetch_model_card(spec, options);
-        if (!card) { return out; }
-        const Json data = card->value("cardData", Json::object());
-        const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
-        if (base.is_string()) { out.push_back(base.get<std::string>()); }
-        if (base.is_array()) {
-            for (const auto& item : base) {
-                if (item.is_string()) { out.push_back(item.get<std::string>()); }
-            }
-        }
+        if (const auto card = fetch_model_card(spec, options)) { return card_base_models(*card); }
     } catch (const std::exception&) {}
-    return out;
+    return {};
 }
 
 } // namespace ninferno::convert
