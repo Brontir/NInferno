@@ -311,7 +311,8 @@ Notes that often matter:
   is admitted to the queue, so its queue timeout arrives as the dialect's error event
   (the same code and message) and the stream ends.
 - **Speculation without a profile.** `--spec auto` speculates with the profile measured for the
-  model and GPU (the lab's measured pair for these weights, its group's, or a published profile).
+  model and GPU (the lab's measured pair for these weights, that of the repository's nearest
+  measured quantization, its group's, or a published profile).
   A model without one for this GPU drafts with the drafter it carries at its default (MTP 3, with
   the proposal head when it has one; else DFlash2 or DFlash 7), its watchdog floors raised so a
   configuration that does not pay stops, and the startup log says so; a model without a drafter

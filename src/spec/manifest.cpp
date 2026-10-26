@@ -453,7 +453,7 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
                               label_bits(quant), gpu_generation(gpu), {},
-                              attached_identities(manifest));
+                              attached_identities(manifest), manifest.repo);
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
     // The model's own floors bound a fallback the pair does not cover (the head fallback).
@@ -470,6 +470,21 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
 //    carries as components (its built-in MTP layers, a DFlash drafter built in), else its group's,
 //    as a planned target resolves (resolve_planned_speculation). False when the registry has
 //    neither.
+// The hub repository (org/name) of an artifact converted into the hub cache
+// (<cache>/models--org--name/ninferno/<commit>/<file>), "" elsewhere: without a manifest naming it,
+// the repository whose sibling quantizations the lab measured (pair_choice).
+std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
+    const auto commit_dir = artifact.parent_path();
+    if (commit_dir.parent_path().filename() != "ninferno") { return {}; }
+    const std::string dir = commit_dir.parent_path().parent_path().filename().string();
+    if (!dir.starts_with("models--")) { return {}; }
+    std::string repo = dir.substr(8);
+    const auto separator = repo.find("--");
+    if (separator == std::string::npos) { return {}; }
+    repo.replace(separator, 2, "/");
+    return repo;
+}
+
 bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& components,
                         const std::filesystem::path& artifact, const GpuKey& gpu,
                         ResolvedSpeculation& out) {
@@ -488,7 +503,8 @@ bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& co
         if (components.contains(kind)) { kinds.emplace_back(kind); }
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu));
+                              label_bits(quant), gpu_generation(gpu), {}, {},
+                              hub_repo_of_artifact(artifact));
     if (!choice) { return false; }
     for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
         for (const auto& name : names) {
@@ -677,7 +693,7 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
                                                 const GpuKey& gpu,
                                                 const std::filesystem::path& label,
                                                 std::string_view weights, std::string_view quant,
-                                                std::string_view engine) {
+                                                std::string_view engine, std::string_view repo) {
     ResolvedSpeculation out;
     const auto& registry = Registry::builtin();
     // A checkpoint's own declaration (a bundle) overrides the registry, its pairs too.
@@ -695,8 +711,10 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
         const std::string family = manifest ? manifest->engine : std::string(engine);
         const auto attached = manifest ? attached_identities(*manifest)
                                        : std::map<std::string, std::string>{};
+        const std::string_view of =
+            manifest && !manifest->repo.empty() ? std::string_view(manifest->repo) : repo;
         if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
-                                      gpu_generation(gpu), {}, attached)) {
+                                      gpu_generation(gpu), {}, attached, of)) {
             // The model's own floors bound a fallback the pair does not cover (the head
             // fallback), as for a published profile.
             if (manifest) {

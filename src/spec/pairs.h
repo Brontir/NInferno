@@ -116,9 +116,11 @@ struct MeasuredPair {
 [[nodiscard]] std::string artifact_quant(const std::filesystem::path& artifact);
 
 // What the lab's pairs give a target carrying drafters of `kinds` (the kinds attached or built in):
-// its own measurements over those drafters (profile_for_target) with basis "measured", else the
-// best of its groups' choices (one per kind, the fastest overall) with basis "preliminary", else
-// nullopt. `source` names where it came from.
+// its own measurements over those drafters (profile_for_target) with basis "measured"; else, for a
+// target of `repo` (org/name, its quantizations' repository), the measurements of the sibling
+// quantization of that repository nearest in bits per weight within its bit class (choice/
+// DECISIONS 48) with basis "preliminary"; else the best of its groups' choices (one per kind, the
+// fastest overall) with basis "preliminary"; else nullopt. `source` names where it came from.
 struct PairChoice {
     Profile profile;
     std::string basis;
@@ -130,7 +132,9 @@ struct PairChoice {
                                                     const std::vector<std::string>& kinds,
                                                     double target_bits, std::string_view generation,
                                                     const SelectOptions& options = {},
-                                                    const std::map<std::string, std::string>& attached = {});
+                                                    const std::map<std::string, std::string>&
+                                                        attached          = {},
+                                                    std::string_view repo = {});
 // Whether two drafter identities (repo@revision) name one drafter: the same repository, and the
 // same revision where both say one (either may be a prefix of the other). True when either is
 // unknown ("").

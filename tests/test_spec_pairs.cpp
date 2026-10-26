@@ -189,6 +189,51 @@ int main() {
         expect(!sp::pair_choice(all, "sha:x", "gemma4", {"gemma4_assistant"}, 4.5, "sm120"),
                "no measurement and no group: nothing");
     }
+    // Not measured, but a sibling quantization of its repository was (choice/DECISIONS 48): the
+    // sibling nearest in bits within its bit class, not the group's fine-tune guard.
+    {
+        auto q4        = mtp_q4;
+        q4.target      = "sha:q4";
+        q4.target_repo = "org/m-GGUF@c0ffee Q4_K_M";
+        q4.target_bits = 4;
+        auto q8        = q4;
+        q8.target      = "sha:q8";
+        q8.target_repo = "org/m-GGUF@c0ffee Q8_0";
+        q8.target_bits = 8;
+        auto q5xl        = q4;
+        q5xl.target      = "sha:q5xl";
+        q5xl.target_repo = "org/m-GGUF@c0ffee UD-Q5_K_XL";
+        q5xl.target_bits = 5;
+        const std::vector<sp::MeasuredPair> all = {q4, q8, bw_iq2, mtp_iq2};
+        // The nearest of one card's siblings, not its first (one card's records are pooled).
+        const std::vector<sp::MeasuredPair> three = {q4, q5xl, q8};
+        const auto q5m = sp::pair_choice(three, "sha:q5m", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
+                                         "org/m-GGUF");
+        const auto q8x = sp::pair_choice(three, "sha:q8x", "qwen3_5", {"mtp"}, 8, "sm120", {}, {},
+                                         "org/m-GGUF");
+        expect(q5m && q5m->source.find("sibling org/m-GGUF UD-Q5_K_XL (") != std::string::npos &&
+                   q8x && q8x->source.find("sibling org/m-GGUF Q8_0 (") != std::string::npos,
+               "the sibling of the same bits among one card's siblings");
+        const auto q5 = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
+                                        "org/m-GGUF");
+        expect(q5 && q5->basis == "preliminary" &&
+                   q5->source.find("registry sibling org/m-GGUF Q4_K_M (") == 0 &&
+                   q5->profile.overall.config.label() ==
+                       sp::pair_choice(all, "sha:q4", "qwen3_5", {"mtp"}, 4, "sm120")
+                           ->profile.overall.config.label(),
+               "an unmeasured quantization takes its nearest measured sibling's choice");
+        const auto q6 = sp::pair_choice(all, "sha:q6", "qwen3_5", {"mtp"}, 6, "sm120", {}, {},
+                                        "org/m-GGUF");
+        expect(q6 && q6->source.find("Q4_K_M, Q8_0") != std::string::npos,
+               "two siblings equally near: both");
+        const auto q2 = sp::pair_choice(all, "sha:q2", "qwen3_5", {"mtp"}, 2, "sm120", {}, {},
+                                        "org/m-GGUF");
+        const auto other = sp::pair_choice(all, "sha:q5", "qwen3_5", {"mtp"}, 5, "sm120", {}, {},
+                                           "org/other-GGUF");
+        expect((!q2 || q2->source.find("sibling") == std::string::npos) &&
+                   (!other || other->source.find("sibling") == std::string::npos),
+               "no sibling of its bit class, or of another repository: the group");
+    }
     // One card's tunes of one target, a drafter each (MTP, then DFlash): one measurement of the
     // pair over both drafters, in either order.
     {
