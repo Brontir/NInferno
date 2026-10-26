@@ -812,12 +812,20 @@ void test_speculation_order() {
     // without its drafters has no manifest: the start and the plan both take the entry by shape.
     {
         pr::PlanSourceFacts tuned = facts;
-        tuned.shape.base_model    = "Qwen/Qwen3.6-27B";
+        tuned.shape.base_models   = {"Qwen/Qwen3.6-27B"};
         const pr::SpeculationSubject descendant = pr::planned_subject(
             pr::PlannedTarget{.repo = "someone/Qwen3.6-27B-finetune", .facts = tuned, .gguf = false}, gpu);
         check(descendant.resolved && descendant.resolved->source.find("qwen3.6-27b") != std::string::npos,
               "a checkpoint's model-card lineage finds its base's entry: " +
                   (descendant.resolved ? descendant.resolved->source : std::string("none")));
+        // A merge naming a parent no entry knows first: a later parent still matches, as the
+        // converter checks every README base model in order.
+        tuned.shape.base_models = {"someone/unregistered-27B", "Qwen/Qwen3.6-27B"};
+        const pr::SpeculationSubject merge = pr::planned_subject(
+            pr::PlannedTarget{.repo = "someone/Qwen3.6-27B-merge", .facts = tuned, .gguf = false}, gpu);
+        check(merge.resolved && merge.resolved->source.find("qwen3.6-27b") != std::string::npos,
+              "a later base model of a merge finds its entry: " +
+                  (merge.resolved ? merge.resolved->source : std::string("none")));
     }
     for (const std::uint32_t context : {0U, 32768U, 262144U}) {
         for (const std::uint32_t streams : {1U, 4U, 8U}) {

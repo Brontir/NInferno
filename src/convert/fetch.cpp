@@ -2169,16 +2169,21 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
 
 namespace ninferno::convert {
 
-std::string hub_base_model(const std::string& spec, const FetchOptions& options) {
+std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
+    std::vector<std::string> out;
     try {
         const auto card = fetch_model_card(spec, options);
-        if (!card) { return ""; }
+        if (!card) { return out; }
         const Json data = card->value("cardData", Json::object());
         const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
-        if (base.is_string()) { return base.get<std::string>(); }
-        if (base.is_array() && !base.empty() && base[0].is_string()) { return base[0].get<std::string>(); }
+        if (base.is_string()) { out.push_back(base.get<std::string>()); }
+        if (base.is_array()) {
+            for (const auto& item : base) {
+                if (item.is_string()) { out.push_back(item.get<std::string>()); }
+            }
+        }
     } catch (const std::exception&) {}
-    return "";
+    return out;
 }
 
 } // namespace ninferno::convert

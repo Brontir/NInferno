@@ -108,9 +108,10 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
     convert::DrafterTarget t;
     t.repo    = target.repo;
     t.lineage = target.lineage;
-    if (!facts.shape.base_model.empty() &&
-        std::find(t.lineage.begin(), t.lineage.end(), facts.shape.base_model) == t.lineage.end()) {
-        t.lineage.push_back(facts.shape.base_model);
+    for (const auto& base : facts.shape.base_models) {
+        if (std::find(t.lineage.begin(), t.lineage.end(), base) == t.lineage.end()) {
+            t.lineage.push_back(base);
+        }
     }
     t.engine       = engine_of(facts.model.model_type);
     t.architecture = facts.model.architecture;
