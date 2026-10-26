@@ -365,8 +365,8 @@ int main() {
                                            {{"dflash", "z-lab/Qwen3.5-9B-DFlash@0123abcd"}});
         expect(same && same->basis == "measured", "the drafter measured: measured");
         expect(!other || other->basis != "measured", "another revision of the drafter: not measured");
-        expect(sp::same_drafter("Org/D@abc", "org/d@abcdef") && !sp::same_drafter("org/d@abc", "org/d@abd") &&
-                   !sp::same_drafter("org/d", "org/e") && sp::same_drafter("", "org/d@x"),
+        expect(sp::same_repo_revision("Org/D@abc", "org/d@abcdef") && !sp::same_repo_revision("org/d@abc", "org/d@abd") &&
+                   !sp::same_repo_revision("org/d", "org/e") && sp::same_repo_revision("", "org/d@x"),
                "drafter identities");
         const auto back = sp::parse_pair(sp::pair_json(with));
         expect(back.drafters == with.drafters, "the measured drafters round-trip through the JSON");
