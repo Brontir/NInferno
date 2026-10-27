@@ -27,6 +27,7 @@ normalization misses counts as wrong in both, so the difference stays honest.
 """
 import argparse
 import json
+import os
 import re
 import sys
 import time
@@ -132,6 +133,7 @@ def main():
     args = ap.parse_args()
 
     items = json.load(open(args.set, encoding="utf-8"))
+    os.makedirs(os.path.dirname(os.path.abspath(args.out)), exist_ok=True)
     rows = []
     for item in items:
         try:
