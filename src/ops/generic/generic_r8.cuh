@@ -351,6 +351,7 @@ void r8_launch_schedule(const GemmArgs& args, cudaStream_t stream, W4a8Activatio
         if constexpr (kVerify) {
             if (args.tokens <= 2) return r8_launch_tokens<C, S, 2, E, true>(args, stream, pre);
             if (args.tokens <= 4) return r8_launch_tokens<C, S, 4, E, true>(args, stream, pre);
+            if (args.tokens <= 8) return r8_launch_tokens<C, S, 8, E, true>(args, stream, pre);
         }
         throw std::invalid_argument("generic R8: no verify-width form for this call");
     }

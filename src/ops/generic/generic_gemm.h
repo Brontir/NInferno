@@ -310,7 +310,7 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // with and without it, Gemma 4 31B QAT (all Q4_0) on the RTX 4090 135 -> 161 tok/s, Gemma 4
 // 26B-A4B Q4_0 on the RTX 5090 710 -> 728 (its attention projections; MTP C = 1 unchanged); Muse
 // 30B Q4_K_M (Q4_K/Q5_K/Q6_K) on the RTX 4090 lost 3 % with the K-quants taking it.
-inline constexpr std::int32_t kR8VerifyTokens = 4;
+inline constexpr std::int32_t kR8VerifyTokens = 8;
 [[nodiscard]] bool r8_verify_supports(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
