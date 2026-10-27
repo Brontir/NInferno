@@ -712,6 +712,32 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                      "delete " +
                                      kept->string() + " or fetch the model again");
                 }
+                // Its separate drafters planned from another registry, or one failed: planned
+                // again from the artifact (a checkpoint's by default, a GGUF's when asked for), as
+                // when its download was there. A companion it lacks stays reported missing: the
+                // artifact cannot be converted again without that download.
+                if (options.with_drafters != false && drafters_incomplete(*kept)) {
+                    try {
+                        const auto target = describe_artifact(
+                            *kept, options.model_id.empty() ? repo : options.model_id);
+                        if (!target.gguf_source || options.with_drafters == true) {
+                            AttachOptions attach;
+                            attach.fetch                 = options.fetch;
+                            attach.fetch.before_download = [](const FetchPlan& plan) {
+                                check_space(plan);
+                            };
+                            attach.log               = options.log;
+                            attach.repository        = options.repository;
+                            attach.drafter_artifacts = options.drafter_artifacts;
+                            attach.conversion        = convert_options;
+                            out.drafters = attach_drafters(plan_drafters(target), *kept, attach);
+                            require_drafters(*out.drafters, options);
+                        }
+                    } catch (const std::exception& error) {
+                        if (options.with_drafters == true) { throw; }
+                        say(options, std::string("drafters not attached: ") + error.what());
+                    }
+                }
                 return out;
             }
         }
