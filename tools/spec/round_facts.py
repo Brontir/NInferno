@@ -34,21 +34,9 @@ import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from registry_add import write_registry  # noqa: E402
+from registry_add import LAB_BOARDS, write_registry  # noqa: E402
 
 REGISTRY = Path(__file__).resolve().parents[2] / "src/spec/data/drafter_registry.json"
-# The lab's boards by GPU class (the tunes' key.gpu): their PCI product ids in
-# src/core/data/gpu_facts.json.
-LAB_BOARDS = {
-    "ad104:60sm": "0x2782",   # GeForce RTX 4070 Ti
-    "ad102:128sm": "0x2684",  # GeForce RTX 4090
-    "ad106:34sm": "0x2805",   # GeForce RTX 4060 Ti 16GB
-    "gb203:70sm": "0x2C05",   # GeForce RTX 5070 Ti
-    "gb202:170sm": "0x2B85",  # GeForce RTX 5090
-    "ga106:28sm": "0x2503",   # GeForce RTX 3060
-    "tu102:68sm": "0x1E04",   # GeForce RTX 2080 Ti
-    "gv100:80sm": "0x1DBA",   # Quadro GV100
-}
 DFLASH_BLOCK = 16
 GEMMA_ASSISTANT_HEAD_ROWS = 98304
 NOT_TEXT = re.compile(r"(^v\.|^mm\.|visual|vision|audio|^a\.|embed_vision|embed_audio)")

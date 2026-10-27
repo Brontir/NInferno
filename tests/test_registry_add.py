@@ -15,6 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "spec"))
 import registry_add  # noqa: E402
+import round_facts  # noqa: E402
 
 
 def choice(config: str, drafter: str = "assistant") -> dict:
@@ -242,6 +243,53 @@ class PairTest(unittest.TestCase):
         pairs = registry_add.put_pair(registry_add.put_pair([pair], other), again)
         self.assertEqual(len(pairs), 2)
         self.assertIn("org/m@def Q4_K_M", [p["target_repo"] for p in pairs])
+
+
+class RoundFactsTest(unittest.TestCase):
+    """tools/spec/round_facts.py: what each pass of a round reads, from a tensor table."""
+
+    @staticmethod
+    def table(names: dict, meta: dict | None = None) -> dict:
+        return {"meta": meta or {}, "tensors": {n: b for n, (b, e) in names.items()},
+                "elems": {n: e for n, (b, e) in names.items()}}
+
+    def pair(self, configs: list[str], drafters: dict | None = None, kinds: tuple = ()) -> dict:
+        return {"target_repo": "org/t@1 Q4_K_M", "drafters": drafters or {},
+                "tune": {"key": {"gpu": "ad104:60sm"}, "drafters": [{"kind": k} for k in kinds],
+                         "measurements": [{"config": c} for c in configs + ["plain"]]}}
+
+    def test_mtp_layers_and_dflash(self):
+        meta = {"general.architecture": "qwen35", "qwen35.block_count": 3, "qwen35.nextn_predict_layers": 1}
+        target = self.table({"token_embd.weight": (100, 400), "output.weight": (100, 400),
+                             "blk.0.attn_q.weight": (50, 200), "blk.1.ffn_up.weight": (50, 200),
+                             "blk.2.nextn.eh_proj.weight": (10, 40), "v.blk.0.w": (999, 999)}, meta)
+        drafter = self.table({"model.layers.0.mlp.up_proj.weight": (30, 15)})
+        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d": drafter}
+        facts = round_facts.round_facts(self.pair(["mtp:3", "dflash:7"], {"dflash": "z/d@2"}), tables, {})
+        self.assertEqual(facts["target"], {"bytes": 200, "params": 800})
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 110, "params": 440, "rows": 1, "per_draft": True})
+        self.assertEqual(facts["drafters"]["dflash"],
+                         {"bytes": 130, "params": 415, "rows": 16, "per_draft": False})
+
+    def test_moe_experts_apart_and_missing_tables(self):
+        meta = {"general.architecture": "x", "x.expert_count": 8, "x.expert_used_count": 2}
+        target = self.table({"output.weight": (10, 40), "blk.0.ffn_up_exps.weight": (80, 320),
+                             "blk.0.attn_q.weight": (5, 20)}, meta)
+        facts = round_facts.round_facts(self.pair(["dflash:3"], {"dflash": "z/none@1"}),
+                                        {"org/t@1 Q4_K_M": target}, {})
+        self.assertIsNone(facts)  # the drafter's table is missing: no facts at all
+        facts = round_facts.round_facts(self.pair(["dflash:3"], {"dflash": "z/d@1"}),
+                                        {"org/t@1 Q4_K_M": target, "drafter:z/d": self.table({"l.w": (1, 4)})}, {})
+        self.assertEqual(facts["target"], {"bytes": 15, "params": 60, "expert_bytes": 80, "expert_params": 320,
+                                           "experts": 8, "experts_used": 2})
+
+    def test_a_new_tune_keeps_the_facts_and_board(self):
+        old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"x": 1}, "lab_board": "0x2782"}
+        new = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}}
+        out = registry_add.put_pair([old], new)
+        self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
 
 
 if __name__ == "__main__":
