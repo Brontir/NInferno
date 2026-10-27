@@ -539,11 +539,6 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
             PlannedDrafter d;
             d.decl      = decl;
             d.taps_only = plan.source == "bundle";
-            if (d.decl.recipe.empty() && d.decl.component.empty()) {
-                for (const auto& k : registry.kinds()) {
-                    if (k.name == decl.kind) { d.decl.recipe = k.recipe; }
-                }
-            }
             d.entry_geometry = entry->geometry;
             d.supported      = registry.supported(decl.kind, t.engine);
 
@@ -566,6 +561,7 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
             const auto variants = std::exchange(d.decl.variants, {});
             plan.drafters.push_back(d);
             for (const auto& variant : variants) {
+                if (variant == d.decl.quant) { continue; } // the drafter itself
                 auto v       = d;
                 v.decl.name  = decl.name + "." + variant;
                 v.decl.quant = variant;
@@ -979,7 +975,9 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             // A GGUF-only drafter by its file (its repository holds other models too).
             const std::string stem = d.decl.gguf.empty() ? repo_name(d.decl.repo)
                                                          : fetched.model.stem().string();
-            const std::string quant = d.decl.quant.empty() ? "" : "." + d.decl.quant;
+            // Named by what it holds: --drafter-quant replaces the declared quantization.
+            const std::string quant =
+                convert_options.drafter_quant.empty() ? "" : "." + convert_options.drafter_quant;
             convert_options.out = dir / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
             if (fs::exists(convert_options.out) &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {

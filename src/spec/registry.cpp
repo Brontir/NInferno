@@ -123,9 +123,27 @@ Registry Registry::parse(const std::string& text) {
         kind.name          = name;
         kind.architectures = strings(info, "architectures");
         kind.recipe        = json_text(info, "recipe");
+        kind.quant         = json_text(info, "quant");
+        kind.proposal_rows = info.value("proposal_rows", std::uint64_t{0});
+        kind.ranking       = json_text(info, "ranking");
         out.kinds_.push_back(std::move(kind));
     }
     for (const auto& item : doc.at("models")) { out.models_.push_back(parse_model_entry(item)); }
+    // A separately packaged drafter takes its kind's rule where it names none (KindInfo).
+    for (auto& entry : out.models_) {
+        for (auto& d : entry.drafters) {
+            if (!d.component.empty()) { continue; }
+            for (const auto& k : out.kinds_) {
+                if (k.name != d.kind) { continue; }
+                if (d.recipe.empty()) { d.recipe = k.recipe; }
+                if (d.quant.empty()) { d.quant = k.quant; }
+                if (d.proposal_rows == 0 && d.ranking.empty()) {
+                    d.proposal_rows = k.proposal_rows;
+                    d.ranking       = k.ranking;
+                }
+            }
+        }
+    }
     for (const auto& item : doc.value("pairs", Json::array())) {
         out.pairs_.push_back(parse_pair(item));
     }

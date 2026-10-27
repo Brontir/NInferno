@@ -1407,7 +1407,7 @@ void apply_recipe(std::string_view name, Model& model, Recipe& recipe, const Che
             throw std::runtime_error("it requires a Gemma 4 assistant");
         }
     } else if (name == "gemma4_assistant_q8") {
-        // NInferno's own Q8 of the drafter: only when named (--recipe), never the default.
+        // NInferno's own Q8 of the drafter (the registry attaches its drafters so: kinds' "quant").
         drafter_q8(model, recipe, "gemma4_assistant", "assistant");
     } else if (name == "gemma4_dflash_published") {
         // The DFlash drafter as published (BF16 as is): nothing quantized here.
@@ -1415,7 +1415,7 @@ void apply_recipe(std::string_view name, Model& model, Recipe& recipe, const Che
             throw std::runtime_error("it requires a Gemma 4 DFlash drafter");
         }
     } else if (name == "gemma4_dflash_q8") {
-        // NInferno's own Q8 of the DFlash drafter: only when named (--recipe), never the default.
+        // NInferno's own Q8 of the DFlash drafter (as the registry attaches it).
         drafter_q8(model, recipe, "gemma4_dflash", "DFlash drafter");
     } else if (name == "dflash_published") {
         // Every weight as published: BF16 as BF16, a GGUF's K-quants as their own words.
@@ -1436,11 +1436,11 @@ std::string default_recipe(const OJson& config) {
         (void)text_config(config); // validates the text model before anything is fetched
         return "gemma4_published";
     case Architecture::Gemma4Assistant:
-        // As published (BF16 as is); gemma4_assistant_q8 only when asked for.
+        // As published (BF16 as is); the registry attaches it with its kind's quant (q8).
         return "gemma4_assistant_published";
     case Architecture::Gemma4DFlash:
         // As published (BF16 as is); a block-mask drafter (Muse Glimmer's) takes the generic
-        // dflash_published; gemma4_dflash_q8 only when asked for.
+        // dflash_published; the registry attaches it with its kind's quant (q8).
         return block_dflash(config) ? "dflash_published" : "gemma4_dflash_published";
     }
     throw std::logic_error("unreachable");
