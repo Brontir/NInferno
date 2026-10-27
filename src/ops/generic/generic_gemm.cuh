@@ -2135,9 +2135,10 @@ template <class D>
 struct StageActsOf<D, std::void_t<decltype(D::kStageActs)>> : std::bool_constant<D::kStageActs> {};
 
 // A decoder with finish() (kFinish: the wide Q6_K) loads its runs in a raw form that finish()
-// completes with the whole warp once the loads have landed: mma_step finishes a copy of the step's
-// runs after issuing the step's activation loads (finished in the fetch, the swap waited for the
-// loads there; ahead of the activation loads, it held them back by the weights' latency).
+// completes with the whole warp once the loads have landed: mma_step finishes the step's runs in
+// place after issuing the step's activation loads (finished in the fetch, the swap waited for the
+// loads there; ahead of the activation loads, it held them back by the weights' latency; on a
+// copy, both forms live, the 128-register tiles spilled).
 template <class D, class = void>
 struct FinishOf : std::false_type {};
 template <class D>
@@ -2251,27 +2252,23 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
         constexpr bool kFinish = FinishOf<Decoder>::value;
         static_assert(!kFinish || (!Staged && !GroupTailOf<Decoder>::value),
                       "a finish decoder loads its activations here, for whole steps");
-        // kFinish: every group's activations, issued before the finish waits for the weights.
+        // kFinish: every group's activations, issued before the finish waits for the weights
+        // (issued after it, RTX 4090 Q6_K add 3840x15360 w1x4 at T = 6: 58.9 -> 66.5 us). The
+        // runs are the kernel's ring (rmma_kernel's compute passes it as loaded), finished in place.
         unsigned early[kFinish ? S : 1][NT][2 * G];
-        Run done[kFinish ? Sets : 1][kFinish ? MT : 1][2];
         if constexpr (kFinish) {
 #pragma unroll
             for (int g = 0; g < S; ++g)
                 load_act<Decoder, NT, G>(early[g], col, step_k0 + 16 * G * g, quad);
+            auto& ring = const_cast<Run(&)[Sets][MT][2]>(runs);
 #pragma unroll
             for (int s = 0; s < Sets; ++s)
 #pragma unroll
                 for (int m = 0; m < MT; ++m)
 #pragma unroll
-                    for (int h = 0; h < 2; ++h) done[s][m][h] = Decoder::finish(runs[s][m][h]);
+                    for (int h = 0; h < 2; ++h) ring[s][m][h] = Decoder::finish(ring[s][m][h]);
         }
-        const Run(&ready)[Sets][MT][2] = [&]() -> const Run(&)[Sets][MT][2] {
-            if constexpr (kFinish) {
-                return done;
-            } else {
-                return runs;
-            }
-        }();
+        const Run(&ready)[Sets][MT][2] = runs;
 #pragma unroll
         for (int g = 0; g < S; ++g) {
             if constexpr (GroupTailOf<Decoder>::value) {
@@ -2959,8 +2956,20 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // Latency (the K-quant decoders of a one-tile schedule, UnpackOf or StageActsOf; the launch picks
 // it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes, and under SwiGLU
 // the activations staged ahead with cp.async. Every other instantiation is the plain kernel.
+// The CTAs per SM the kernel is built for: the schedule's, and for a finish decoder (the wide
+// Q6_K) on one m16 tile of one row set at least as many as 128 registers a thread allow, the
+// plain kernels' size there (ptxas for sm_89 gave the wide w1x4 159 registers against 124: three
+// CTAs per SM against four).
+template <class Decoder, class Schedule, Epilogue E>
+inline constexpr int kRmmaMinBlocks =
+    FinishOf<Decoder>::value && E != Epilogue::SwiGlu && Schedule::kMTiles == 1 &&
+            65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
+        ? 65536 / (Schedule::kThreads * 128)
+        : Schedule::kMinBlocks;
+
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
-__global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma_kernel(
+__global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E>)) void
+    rmma_kernel(
     GemmArgs a) {
     constexpr int R        = Decoder::kRun;
     constexpr int KStep    = 4 * R;
