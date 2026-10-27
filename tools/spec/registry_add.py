@@ -312,6 +312,14 @@ def put_pair(pairs: list[dict], pair: dict) -> list[dict]:
     same = lambda p: (p.get("target") == pair["target"] and p.get("generation") == pair["generation"]
                       and (p.get("tune") or {}).get("key", {}).get("gpu") == pair["tune"]["key"]["gpu"])
     kept = [p for p in pairs if not same(p)]
+    # The weights' round facts are the target's and its drafters' (tools/spec/round_facts.py): a
+    # new tune of the same pair keeps them; the lab board stays with its GPU class.
+    for p in pairs:
+        if (p.get("target") == pair["target"] and p.get("drafters") == pair.get("drafters")
+                and "round_facts" in p and "round_facts" not in pair):
+            pair["round_facts"] = p["round_facts"]
+        if same(p) and "lab_board" in p and "lab_board" not in pair:
+            pair["lab_board"] = p["lab_board"]
     return kept + [pair]
 
 

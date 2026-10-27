@@ -7,11 +7,14 @@
 //
 // What carries from the lab card to another (measured on four cards, four families):
 //   - tokens per round (E): the pair's own, on any card (within 2.6 %);
-//   - a round's price in plain decode steps (R): on any card while a round verifies at most
-//     kPortableDepth drafts of one request; deeper drafts and rounds of several requests are the
-//     generation's (Ada and Blackwell part at k >= 8 and under load), so they are taken only where
-//     two lab cards of the card's generation measured the pair and chose alike (a lab constant
-//     holds on two cards of a generation: docs/maintainer/deterministic-decisions.md).
+//   - a round's price in plain decode steps (R): computed for the card from the pair's facts
+//     (spec/round_cost.h: the bytes each pass reads, the card's memory and tensor rates) while a
+//     round verifies at most kPortableDepth drafts of one request, never below what the lab card
+//     measured over its own facts (round_cost_estimate); deeper drafts and rounds of several
+//     requests are measured only, taken where two lab cards of the card's generation measured the
+//     pair and chose alike (a lab constant holds on two cards of a generation:
+//     docs/maintainer/deterministic-decisions.md). A pair without facts, or a card whose rates are
+//     unknown, keeps the generation's measured ratio (generation_round_costs).
 //
 // A target nobody measured takes its group's choice (profile_for_group): the pairs of the same
 // engine and drafter kind, of the same bit class (below 4 bits drafts pay less), measured on two
@@ -19,6 +22,7 @@
 // one request at a time.
 
 #include "spec/profile.h"
+#include "spec/round_cost.h"
 
 #include <nlohmann/json.hpp>
 
@@ -53,6 +57,11 @@ struct MeasuredPair {
     // into the target, or not recorded). A target carrying another drafter of a kind is not
     // measured for it (pair_choice).
     std::map<std::string, std::string> drafters;
+    // The weights' facts a round's cost is computed from (spec/round_cost.h; absent: none recorded,
+    // the measured ratios stand) and the lab board's PCI product id ("lab_board": "0x2782"; 0:
+    // not recorded), whose rates price the lab's own rounds by those facts.
+    std::optional<RoundFacts> round_facts;
+    std::uint32_t lab_board = 0;
 };
 
 [[nodiscard]] nlohmann::json pair_json(const MeasuredPair& pair);
@@ -99,18 +108,35 @@ struct RoundCostRatios {
 [[nodiscard]] RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
                                                      std::string_view from, std::string_view to);
 
+// A round's cost on a card from the pair's facts (round_cost on card_rates), by configuration label,
+// for the measured configurations of at most kPortableDepth drafts: R(k) in plain decode steps,
+// raised to the lab card's measured R(k) x R_facts(card) / R_facts(lab card) where the lab card
+// measured rounds more than kRoundCostAgreement dearer than their facts (a cost the bytes do not
+// show: Gemma 4's verify, Q8_0's; conservative, said in `note`). `known` false when the pair has no
+// facts, the card's or the lab board's rates are unknown, or no configuration is priced.
+struct RoundCostEstimate {
+    std::map<std::string, double> cost; // by configuration label, plain decode steps a round
+    bool known = false;
+    std::string note; // how it was priced, for the choice's source
+};
+[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu);
+
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
 // on a card of a generation two distinct lab cards (their tunes' GPU class) measured and chose
 // alike for (each default's
 // configuration), their profile with every measured depth, and their load bounds when they are
 // equal (else one request at a time); otherwise the portable one (profile_for_pair away from home)
 // from a measurement of this generation if there is one, else the first, its rounds costed as on
-// this generation where `lab` measured a target on both (generation_round_costs). Pairs another
-// engine version measured are left out; none left: plain decode, disabled with the reason.
+// this generation where `lab` measured a target on both (generation_round_costs). With `gpu`, a
+// card other than the measuring one prices its rounds by the facts instead (round_cost_estimate)
+// where they are known: rather than a home measurement of another card, and rather than the
+// generation's ratio; `note` (when given) then says so. Pairs another engine version measured are
+// left out; none left: plain decode, disabled with the reason.
 [[nodiscard]] Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                                          std::string_view generation,
                                          const SelectOptions& options = {},
-                                         const std::vector<MeasuredPair>* lab = nullptr);
+                                         const std::vector<MeasuredPair>* lab = nullptr,
+                                         const GpuKey* gpu = nullptr, std::string* note = nullptr);
 
 // The group of a target nobody measured: the current pairs (pair_current) of `engine` drafting with
 // `kind` (a drafter of that kind, not only of its mode), each target once per card, of the target's
@@ -148,7 +174,8 @@ struct RoundCostRatios {
 // measurements of the sibling quantization of that revision nearest in bits per weight within its
 // bit class (choice/DECISIONS 48) with basis "preliminary" (another commit may hold other weights:
 // no sibling, nor without a commit); else the best of its groups' choices (one per kind, the
-// fastest overall) with basis "preliminary"; else nullopt. `source` names where it came from.
+// fastest overall) with basis "preliminary"; else nullopt. `source` names where it came from (and,
+// with `gpu`, how its rounds were priced on that card: profile_for_target).
 struct PairChoice {
     Profile profile;
     std::string basis;
@@ -162,7 +189,8 @@ struct PairChoice {
                                                     const SelectOptions& options = {},
                                                     const std::map<std::string, std::string>&
                                                         attached          = {},
-                                                    std::string_view repo = {});
+                                                    std::string_view repo = {},
+                                                    const GpuKey* gpu     = nullptr);
 
 // A fine-tune's drafts may be accepted less than its base model's: WaveCut's uncensored Qwen3.8-27B
 // fine-tune took 2.90 tokens a round with the base's DFlash2 drafter against the base's 4.5-4.6,

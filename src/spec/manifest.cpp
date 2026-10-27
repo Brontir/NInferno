@@ -470,7 +470,7 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
         if (!registry.pairs().empty() && manifest.source != "bundle") {
             if (auto choice = pair_choice(registry.pairs(), weights, manifest.engine, {d.kind},
                                           label_bits(quant), gpu_generation(gpu), {},
-                                          attached_identities(manifest), repo)) {
+                                          attached_identities(manifest), repo, &gpu)) {
                 attach_drafters(manifest, choice->profile, alone);
                 std::string origin;
                 alone.floor_sources = manifest_profiles(manifest, label, origin);
@@ -520,7 +520,7 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
                               label_bits(quant), gpu_generation(gpu), {},
-                              attached_identities(manifest), hub_repo_of_artifact(artifact));
+                              attached_identities(manifest), hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
     // The model's own floors bound a fallback the pair does not cover (the head fallback).
@@ -558,7 +558,7 @@ bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& co
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
                               label_bits(quant), gpu_generation(gpu), {}, {},
-                              hub_repo_of_artifact(artifact));
+                              hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
         for (const auto& name : names) {
@@ -766,7 +766,7 @@ ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationM
         const auto attached = manifest ? attached_identities(*manifest)
                                        : std::map<std::string, std::string>{};
         if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
-                                      gpu_generation(gpu), {}, attached, repo)) {
+                                      gpu_generation(gpu), {}, attached, repo, &gpu)) {
             // The model's own floors bound a fallback the pair does not cover (the head
             // fallback), as for a published profile.
             if (manifest) {
