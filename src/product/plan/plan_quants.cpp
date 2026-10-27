@@ -279,9 +279,10 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
-            } else if (!d.quant.empty()) {
+            } else if (!d.quant.empty() && (!dflash || config)) {
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
-                // (convert.cpp quantize_drafter); the rest takes the kind's quantization.
+                // (convert.cpp quantize_drafter); the rest takes the kind's quantization. Without
+                // its config the projection's size is unknown: the published size stands.
                 std::uint64_t kept = 0;
                 if (dflash && config) {
                     const auto hidden = config->value("hidden_size", std::uint64_t{0});
