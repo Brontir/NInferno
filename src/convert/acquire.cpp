@@ -246,7 +246,8 @@ bool complete(const fs::path& artifact, bool drafters) {
 void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
     if (options.with_drafters != true) { return; }
     for (const auto& d : plan.drafters) {
-        if (d.status.starts_with("failed") || d.status.starts_with("incompatible")) {
+        if (d.status.starts_with("failed") || d.status.starts_with("incompatible") ||
+            d.status.starts_with("not in the artifact")) {
             throw std::runtime_error("drafter " + d.decl.name + " " + d.status +
                                      " (--with-drafters requires every drafter; without the "
                                      "flag the model is served without it)");
@@ -716,7 +717,17 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // again from the artifact (a checkpoint's by default, a GGUF's when asked for), as
                 // when its download was there. A companion it lacks stays reported missing: the
                 // artifact cannot be converted again without that download.
-                if (options.with_drafters != false && drafters_incomplete(*kept)) {
+                // A plan the checkpoint's own declaration (ninferno_speculation.json) made cannot
+                // be made again without that download: kept as it is.
+                const auto bundle_planned = [&] {
+                    try {
+                        std::ifstream stream(spec::manifest_path(*kept));
+                        return stream && OJson::parse(stream).value("matched_by", std::string()) ==
+                                             "declaration";
+                    } catch (const std::exception&) { return false; }
+                };
+                if (options.with_drafters != false && drafters_incomplete(*kept) &&
+                    !bundle_planned()) {
                     try {
                         const auto target = describe_artifact(
                             *kept, options.model_id.empty() ? repo : options.model_id);

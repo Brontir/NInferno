@@ -1037,11 +1037,16 @@ bool drafters_incomplete(const fs::path& target_artifact) {
             return true;
         }
         const auto& drafters = manifest.at("drafters");
-        return std::any_of(drafters.begin(), drafters.end(), [](const Json& d) {
+        const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
+        return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
-            // quantization its kind gives it.
+            // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
+            // (the target is converted again with it while its download is there; a GGUF's never
+            // holds one).
+            const auto status = d.value("status", std::string());
             return d.value("name", std::string()).find('.') == std::string::npos &&
-                   d.value("status", "").starts_with("failed");
+                   (status.starts_with("failed") ||
+                    (!gguf && status.starts_with("not in the artifact")));
         });
     } catch (const std::exception&) { return true; }
 }
