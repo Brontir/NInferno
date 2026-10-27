@@ -41,6 +41,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace ninferno::ops::detail::generic {
 
@@ -767,6 +768,11 @@ __device__ __forceinline__ float byte_of(unsigned w, int i) {
 // 176-byte blocks: the same head, 32 high-bit bytes, 128 nibble bytes). Sub-block b (32 values)
 // is the low (even b) or high (odd b) nibbles of bytes 32*(b/2) .. + 31, plus bit b of high-bit
 // bytes 0 .. 31 (Q5_K); w = d*sc*q - dmin*m with ggml's packed 6-bit scales and mins.
+// load() only loads: the scale and min bytes and the high bits are cut out by unpack() when the
+// step computes (UnpackOf). Unpacking them in load() made each row's fetch wait for its own head
+// before the next row's loads issued, so a warp's prefetch of the next step ran as serial DRAM
+// round trips (ncu, RTX 3060, Q4_K SwiGLU 12288x4096 T = 8, rmma.m1.n1.w1x8: 60 % of stalls long
+// scoreboard on the scale LOP3 right after each row's loads, DRAM at 63 % of peak).
 template <int Bits>
 struct GgmlQ45KDecoder {
     static constexpr bool kF16 = kF16Operands;
@@ -778,10 +784,12 @@ struct GgmlQ45KDecoder {
     static constexpr int kBlockBytes  = Bits == 4 ? 144 : 176;
     static constexpr int kNibbleStart = Bits == 4 ? 16 : 48;
     struct Run {
-        uint4 nib;       // word 2c + u: word u of the step's nibble bytes 32c .. 32c + 31
-        uint2 hbits;     // Q5_K: word u of the high-bit bytes, shifted so bit g is group g
-        unsigned sc, mn; // the step's four 6-bit scales and mins (sub-blocks 4h .. 4h + 3), bytes
-        unsigned dd;     // binary16 d (low half) and dmin (high half)
+        uint4 nib;   // word 2c + u: word u of the step's nibble bytes 32c .. 32c + 31
+        uint2 hbits; // Q5_K: word u of the high-bit bytes; unpacked, shifted so bit g is group g
+        // Loaded: scale bytes 0..3, 4..7 and 8..11 (head.y, z, w). Unpacked: sc and mn are the
+        // step's four 6-bit scales and mins (sub-blocks 4h .. 4h + 3), bytes; hi is unused.
+        unsigned sc, mn, hi;
+        unsigned dd; // binary16 d (low half) and dmin (high half)
     };
     // Group g of step h is sub-block 4h + g: nibble g % 2 of nibble span g / 2.
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
@@ -797,19 +805,26 @@ struct GgmlQ45KDecoder {
         r.hbits = make_uint2(0, 0);
         if constexpr (Bits == 5) {
             const auto* hb = reinterpret_cast<const unsigned*>(b + 16 + 4 * qd);
-            r.hbits        = make_uint2(hb[0] >> (4 * h), hb[4] >> (4 * h));
+            r.hbits        = make_uint2(hb[0], hb[4]);
         }
-        // Scale bytes 0..11 are head.y, head.z, head.w. Sub-blocks 0..3: six bits of bytes j and
-        // j + 4; 4..7: the nibbles of byte j + 4 under the top two bits of bytes j - 4 and j.
-        r.sc = h == 0 ? head.y & 0x3f3f3f3fU
-                      : (head.w & 0x0f0f0f0fU) | ((head.y >> 2) & 0x30303030U);
-        r.mn = h == 0 ? head.z & 0x3f3f3f3fU
-                      : ((head.w >> 4) & 0x0f0f0f0fU) | ((head.z >> 2) & 0x30303030U);
+        r.sc = head.y;
+        r.mn = head.z;
+        r.hi = head.w;
         r.dd = head.x;
         return r;
     }
+    // A loaded run of step base step_k0 (half h of its superblock) into the form pair() and the
+    // factors read. Sub-blocks 0..3: six bits of scale bytes j and j + 4; 4..7: the nibbles of
+    // byte j + 4 under the top two bits of bytes j - 4 and j.
+    __device__ static __forceinline__ void unpack(Run& r, int step_k0) {
+        const int h      = (step_k0 >> 7) & 1;
+        const unsigned y = r.sc, z = r.mn, w = r.hi;
+        r.sc = h == 0 ? y & 0x3f3f3f3fU : (w & 0x0f0f0f0fU) | ((y >> 2) & 0x30303030U);
+        r.mn = h == 0 ? z & 0x3f3f3f3fU : ((w >> 4) & 0x0f0f0f0fU) | ((z >> 2) & 0x30303030U);
+        if constexpr (Bits == 5) r.hbits = make_uint2(r.hbits.x >> (4 * h), r.hbits.y >> (4 * h));
+    }
     __device__ static __forceinline__ Run zero() {
-        return {make_uint4(0, 0, 0, 0), make_uint2(0, 0), 0, 0, 0};
+        return {make_uint4(0, 0, 0, 0), make_uint2(0, 0), 0, 0, 0, 0};
     }
     // K is whole superblocks, so no lane of a step is past K.
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
@@ -888,16 +903,18 @@ struct GgmlQ6KDecoder {
 // l = v % 32: bits 2*jj of qs[32h + l] minus 4 unless bit 4h + jj of hmask[l] is set; scale
 // s = 8h + 2*jj + l/16 (low 4 bits from byte s%8 >> 4*(s/8), high 2 from byte 8 + s%4 >> 2*(s/4));
 // w = d*(sc - 32)*q, q in [-4, 3]. MMA j is quarter j / 2, word j % 2; its scale is s = 8h + j.
+// As with Q4_K, load() only loads and unpack() cuts out the half's scales and hmask bits.
 struct GgmlQ3KDecoder {
     static constexpr bool kF16       = kF16Operands;
     static constexpr int kRun        = 32;
     static constexpr bool kStepScale = true;
     static constexpr int kSplits     = 8;
     struct Run {
-        uint2 qs;   // word u of qs bytes 32h .. 32h + 31
-        uint2 hm;   // word u of the hmask bytes, shifted so bit jj is quarter jj of half h
-        uint2 sc;   // 6-bit scales 8h .. 8h + 7 (value sc - 32), bytes
-        unsigned d; // binary16 d
+        uint2 qs;    // word u of qs bytes 32h .. 32h + 31
+        uint2 hm;    // word u of the hmask bytes; unpacked, shifted so bit jj is quarter jj
+        uint2 sc;    // loaded: scale words 0 and 1; unpacked: 6-bit scales 8h .. 8h + 7 (sc - 32)
+        unsigned s2; // loaded: scale word 2 (the scales' top bits); unused once unpacked
+        unsigned d;  // binary16 d
     };
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         const int p            = k0 & 255;
@@ -908,20 +925,27 @@ struct GgmlQ3KDecoder {
         const auto* qs         = reinterpret_cast<const unsigned*>(cb + 32 + 32 * h + 4 * qd);
         const auto* hm         = reinterpret_cast<const unsigned*>(cb + 4 * qd);
         const auto* sw         = reinterpret_cast<const unsigned*>(a.high + blk * 12);
-        const unsigned s0 = sw[0], s1 = sw[1], s2 = sw[2];
         Run r;
         r.qs = make_uint2(qs[0], qs[4]);
-        r.hm = make_uint2(hm[0] >> (4 * h), hm[4] >> (4 * h));
-        r.sc = make_uint2(((s0 >> (4 * h)) & 0x0f0f0f0fU) | (((s2 >> (4 * h)) & 0x03030303U) << 4),
-                          ((s1 >> (4 * h)) & 0x0f0f0f0fU) |
-                              (((s2 >> (4 * h + 2)) & 0x03030303U) << 4));
+        r.hm = make_uint2(hm[0], hm[4]);
+        r.sc = make_uint2(sw[0], sw[1]);
+        r.s2 = sw[2];
         r.d  = reinterpret_cast<const unsigned short*>(a.scales)[blk];
         return r;
     }
-    // Codes q + 4 = 4 (hmask bits set): value 0.
+    __device__ static __forceinline__ void unpack(Run& r, int step_k0) {
+        const int h       = (step_k0 >> 7) & 1;
+        const unsigned s0 = r.sc.x, s1 = r.sc.y, s2 = r.s2;
+        r.hm = make_uint2(r.hm.x >> (4 * h), r.hm.y >> (4 * h));
+        r.sc = make_uint2(((s0 >> (4 * h)) & 0x0f0f0f0fU) | (((s2 >> (4 * h)) & 0x03030303U) << 4),
+                          ((s1 >> (4 * h)) & 0x0f0f0f0fU) |
+                              (((s2 >> (4 * h + 2)) & 0x03030303U) << 4));
+    }
+    // Codes q + 4 = 4 (hmask bits set): value 0. Scale words whose unpacked scales are 32 (value
+    // 0) in either half: low nibbles 0, top bits 10.
     __device__ static __forceinline__ Run zero() {
-        return {make_uint2(0, 0), make_uint2(0xffffffffU, 0xffffffffU),
-                make_uint2(0x20202020U, 0x20202020U), 0};
+        return {make_uint2(0, 0), make_uint2(0xffffffffU, 0xffffffffU), make_uint2(0, 0),
+                0xaaaaaaaaU, 0};
     }
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
     __device__ static __forceinline__ void pair(const Run& r, int j, unsigned& lo, unsigned& hi) {
@@ -1914,10 +1938,9 @@ struct GgmlQ4KFragDecoder : GgmlQ4KDecoder {
         Run r;
         r.nib   = *reinterpret_cast<const uint4*>(b + 16 + 64 * h + 16 * qd);
         r.hbits = make_uint2(0, 0);
-        r.sc    = h == 0 ? head.y & 0x3f3f3f3fU
-                         : (head.w & 0x0f0f0f0fU) | ((head.y >> 2) & 0x30303030U);
-        r.mn    = h == 0 ? head.z & 0x3f3f3f3fU
-                         : ((head.w >> 4) & 0x0f0f0f0fU) | ((head.z >> 2) & 0x30303030U);
+        r.sc    = head.y;
+        r.mn    = head.z;
+        r.hi    = head.w;
         r.dd    = head.x;
         return r;
     }
@@ -1996,6 +2019,15 @@ template <class D, class = void>
 struct GroupTailOf : std::false_type {};
 template <class D>
 struct GroupTailOf<D, std::void_t<decltype(D::kGroupTail)>> : std::bool_constant<D::kGroupTail> {};
+// A decoder whose load() leaves part of a run as loaded (the K-quant heads) finishes it with
+// unpack(run, step_k0) when the step computes, so no instruction of a fetch waits for its loads
+// and the next step's loads stay in flight while this step computes.
+template <class D, class = void>
+struct UnpackOf : std::false_type {};
+template <class D>
+struct UnpackOf<D, std::void_t<decltype(D::unpack(std::declval<typename D::Run&>(), 0))>>
+    : std::true_type {};
+
 template <class D, class = void>
 struct QuadRunsOf : std::false_type {};
 template <class D>
@@ -2078,10 +2110,10 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 // accumulates straight into acc). Every accumulator takes its terms in the same order whatever
 // MT and the set count are.
 template <class Decoder, int NT, int J, int Sets, int MT>
-__device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
-                                         const typename Decoder::Run (&runs)[Sets][MT][2],
-                                         const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k) {
+__device__ __forceinline__ void mma_step_runs(float (&acc)[Sets][MT][NT][4],
+                                              const typename Decoder::Run (&runs)[Sets][MT][2],
+                                              const __nv_bfloat16* const (&col)[NT], int step_k0,
+                                              int quad, int k) {
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2207,6 +2239,36 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
     }
 }
 
+// A step's runs as pair() and the factors read them: as loaded, or (UnpackOf) unpacked copies.
+template <class Decoder, int Sets, int MT>
+__device__ __forceinline__ void unpack_runs(typename Decoder::Run (&dst)[Sets][MT][2],
+                                            const typename Decoder::Run (&src)[Sets][MT][2],
+                                            int step_k0) {
+#pragma unroll
+    for (int s = 0; s < Sets; ++s)
+#pragma unroll
+        for (int m = 0; m < MT; ++m)
+#pragma unroll
+            for (int h = 0; h < 2; ++h) {
+                dst[s][m][h] = src[s][m][h];
+                Decoder::unpack(dst[s][m][h], step_k0);
+            }
+}
+
+template <class Decoder, int NT, int J, int Sets, int MT>
+__device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
+                                         const typename Decoder::Run (&loaded)[Sets][MT][2],
+                                         const __nv_bfloat16* const (&col)[NT], int step_k0,
+                                         int quad, int k) {
+    if constexpr (UnpackOf<Decoder>::value) {
+        typename Decoder::Run runs[Sets][MT][2];
+        unpack_runs<Decoder, Sets, MT>(runs, loaded, step_k0);
+        mma_step_runs<Decoder, NT, J, Sets, MT>(acc, runs, col, step_k0, quad, k);
+    } else {
+        mma_step_runs<Decoder, NT, J, Sets, MT>(acc, loaded, col, step_k0, quad, k);
+    }
+}
+
 #if NINFERNO_FMA_MMA
 // NINFERNO-SPECIAL(arch:sm70): without tensor mma.sync every MMA of mma_step is FP32 FMAs over 32
 // warp shuffles of the operands for all eight columns of the tile (ops/common/mma.cuh), whatever
@@ -2219,10 +2281,15 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
 // acc[s][m][h][n]: row g + 8h, token n of the tile; col[n]: token n's activations (null: none).
 template <class Decoder, int J, int Sets, int MT>
 __device__ __forceinline__ void mma_step_local(float (&acc)[Sets][MT][2][8],
-                                               const typename Decoder::Run (&runs)[Sets][MT][2],
+                                               const typename Decoder::Run (&loaded)[Sets][MT][2],
                                                const __nv_bfloat16* const (&col)[8], int tokens,
                                                int step_k0, int quad, int k) {
     static_assert(!F16Of<Decoder>::value, "the sm_70 build keeps BF16 codes");
+    typename Decoder::Run unpacked[Sets][MT][2];
+    if constexpr (UnpackOf<Decoder>::value) {
+        unpack_runs<Decoder, Sets, MT>(unpacked, loaded, step_k0);
+    }
+    const auto& runs = UnpackOf<Decoder>::value ? unpacked : loaded;
     // Two products of a code register and an activation register, added to `sum`.
     const auto dot2 = [](float sum, unsigned a, unsigned b) {
         const float2 w = bf16x2_pair(a);
