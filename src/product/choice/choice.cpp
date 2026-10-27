@@ -357,7 +357,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double window_rows = model.window > 0 ? std::min<double>(context, model.window) : 0;
     const double bytes = weights + rows * context * kv * kkv + 2 * rows * state + rows * window_rows * ring;
 
-    double compute = rows * 2 * params / (k.eta_compute * decode_int8_peak(card));
+    // The int8 route decodes on the int8 MMA or dp4a; the exact one (BF16) on the tensor path, its
+    // factor fitted against the int8 MMA's rate.
+    double compute = rows * 2 * params /
+                     (k.eta_compute * (route == Route::Int8 ? decode_int8_peak(card) : peak(card, Route::Int8)));
     if (route == Route::Bf16) {
         compute *= exact_factor(gen, transferred);
     } else if (route == Route::Fp4) {
