@@ -2914,16 +2914,35 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
     const auto compute = [&](auto slot_tag, int step, bool ahead) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = (GroupTailOf<Decoder>::value ? 0 : quad * R) + step * KStep;
-        // Unpacked in place: a copy (mma_step's) kept both forms live and spilled the 128-register
-        // SwiGLU decode tile (Q5_K w1x8: 80 local loads and stores, 303 -> 435 us at T = 8).
+        // The step's runs unpacked. SwiGLU unpacks the ring in place: an unpacked copy kept both
+        // forms live and spilled its 128-register decode tile (Q5_K w1x8: 80 local loads and
+        // stores, 303 -> 435 us at T = 8, RTX 3060). One row set unpacks a copy, which ptxas
+        // schedules better there (Q5_K store 8192x4096 w1x4 at T = 8: 81.9 us against 92.9 in
+        // place; Q4_K even).
+        constexpr bool kCopy = UnpackOf<Decoder>::value && !kSwiGlu;
+        Run unpacked[kCopy ? kSets : 1][kCopy ? MT : 1][2];
         if constexpr (UnpackOf<Decoder>::value) {
 #pragma unroll
             for (int s = 0; s < kSets; ++s)
 #pragma unroll
                 for (int m = 0; m < MT; ++m)
 #pragma unroll
-                    for (int h = 0; h < 2; ++h) Decoder::unpack(ring[slot][s][m][h], step * KStep);
+                    for (int h = 0; h < 2; ++h) {
+                        if constexpr (kCopy) {
+                            unpacked[s][m][h] = ring[slot][s][m][h];
+                            Decoder::unpack(unpacked[s][m][h], step * KStep);
+                        } else {
+                            Decoder::unpack(ring[slot][s][m][h], step * KStep);
+                        }
+                    }
         }
+        const Run(&runs)[kSets][MT][2] = [&]() -> const Run(&)[kSets][MT][2] {
+            if constexpr (kCopy) {
+                return unpacked;
+            } else {
+                return ring[slot];
+            }
+        }();
 #if NINFERNO_FMA_MMA
         if constexpr (kLocal) {
             if (local) {
@@ -2934,7 +2953,7 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
                               ? x + static_cast<std::int64_t>(token0 + n) * a.ldx
                               : nullptr;
             }
-            mma_step_local<Decoder, J, kSets, MT>(local_acc, ring[slot], tcol, local_tokens,
+            mma_step_local<Decoder, J, kSets, MT>(local_acc, runs, tcol, local_tokens,
                                                   step * KStep, quad, a.k);
             return;
             }
@@ -2953,11 +2972,11 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
             } else {
                 cp_wait<0>();
             }
-            mma_step<Decoder, NT, J, kSets, MT, true>(acc, ring[slot], col, step * KStep, quad, a.k,
+            mma_step<Decoder, NT, J, kSets, MT, true>(acc, runs, col, step * KStep, quad, a.k,
                                                       &act_stage[slot][warp][0][lane]);
         } else {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
+            mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k);
         }
     };
 
