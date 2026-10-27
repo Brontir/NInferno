@@ -37,23 +37,51 @@ const PrefillEta* prefill_row(bool moe, std::string_view generation, Route route
     return nullptr;
 }
 
+bool has_prefill_rows(std::string_view generation) noexcept {
+    return std::any_of(std::begin(kPrefillEta), std::end(kPrefillEta),
+                       [&](const PrefillEta& row) { return row.generation == generation; });
+}
+
+// The generation whose prefill rows one without its own takes: kTransferGeneration, unless another
+// generation with rows runs the same BF16 tensor rate per SM (the same tensor path: Volta's composed
+// one is Turing's) and the transfer generation does not.
+std::string_view prefill_stand_in(std::string_view generation) noexcept {
+    const auto row_of = [](std::string_view name) -> const GenerationRow* {
+        for (const GenerationRow& row : kGenerations) {
+            if (row.name == name) { return &row; }
+        }
+        return nullptr;
+    };
+    const GenerationRow* own      = row_of(generation);
+    const GenerationRow* transfer = row_of(kTransferGeneration);
+    if (own != nullptr && (transfer == nullptr || transfer->bf16 != own->bf16)) {
+        for (const GenerationRow& row : kGenerations) {
+            if (row.name != generation && row.bf16 == own->bf16 && has_prefill_rows(row.name)) {
+                return row.name;
+            }
+        }
+    }
+    return kTransferGeneration;
+}
+
 // The prefill efficiency of (kind, generation, route): its own row, else its kind's on the
 // transfer generation; a route its kind has no row for takes its kind's int8 row times the dense
 // rows' ratio of the two routes (the route's cost is the kernels', not the model kind's); else the
-// dense row. `transferred` when not its own.
+// dense row; another generation's: prefill_stand_in's. `transferred` when not its own.
 double prefill_eta(bool moe, std::string_view generation, Route route, bool& transferred) noexcept {
-    const Route base = route == Route::Fp4 ? Route::Int8 : route;
-    transferred      = route == Route::Fp4;
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    const Route base            = route == Route::Fp4 ? Route::Int8 : route;
+    const std::string_view away = prefill_stand_in(generation);
+    transferred                 = transferred || route == Route::Fp4;
+    for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(moe, gen, base)) {
             transferred = transferred || gen != generation;
             return row->eta;
         }
     }
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    for (const std::string_view gen : {generation, away}) {
         const PrefillEta* own_int8 = prefill_row(moe, gen, Route::Int8);
         if (own_int8 == nullptr) { continue; }
-        for (const std::string_view dense_gen : {gen, generation, kTransferGeneration}) {
+        for (const std::string_view dense_gen : {gen, generation, away}) {
             const PrefillEta* dense_route = prefill_row(false, dense_gen, base);
             const PrefillEta* dense_int8  = prefill_row(false, dense_gen, Route::Int8);
             if (dense_route != nullptr && dense_int8 != nullptr) {
@@ -62,7 +90,7 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
             }
         }
     }
-    for (const std::string_view gen : {generation, kTransferGeneration}) {
+    for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(false, gen, base)) {
             transferred = true;
             return row->eta;
@@ -124,6 +152,32 @@ double worst_term(Axis axis) noexcept {
         if (term.axis == axis) { worst = std::max(worst, term.kld); }
     }
     return worst;
+}
+
+double attention_eta(std::string_view generation, bool& transferred) noexcept {
+    for (const std::string_view gen : {generation, prefill_stand_in(generation)}) {
+        for (const GenerationEta& row : kPrefillAttentionEta) {
+            if (row.generation == gen) {
+                transferred = transferred || gen != generation;
+                return row.eta;
+            }
+        }
+    }
+    transferred = true;
+    return kPrefillAttentionEta[0].eta;
+}
+
+// The seconds a prompt of n tokens spends in attention over itself: a token at position t attends
+// over t positions on the full layers and min(t, window) on the sliding ones, 2 flops each per
+// width, at the BF16 tensor rate.
+double attention_seconds(const ModelFacts& model, const CardFacts& card, double n,
+                         bool& transferred) noexcept {
+    if (n <= 0) { return 0; }
+    const double w       = model.window;
+    const double full    = n * n / 2;
+    const double sliding = w <= 0 || n <= w ? n * n / 2 : n * w - w * w / 2;
+    const double flops   = 2 * (model.full_attention_width * full + model.sliding_attention_width * sliding);
+    return flops / (attention_eta(generation_of(card), transferred) * peak(card, Route::Bf16));
 }
 
 // An MoE's prefill share at a chunk (kMoeChunkShare, linear in log2 of the tokens each expert takes).
@@ -250,6 +304,24 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
     return quant.int8_route ? Route::Int8 : Route::Bf16;
 }
 
+namespace {
+
+// The linears' prefill rate (tokens a second) with chunks of `filled` tokens: an MoE's chunk fills
+// its experts only as far as its tokens reach (its share of the saturated rate).
+double linear_prefill(const ModelFacts& model, const CardFacts& card, Route route,
+                      std::uint32_t filled, bool& transferred) noexcept {
+    const double params = model.active_params > 0 ? model.active_params : model.params;
+    if (params <= 0) { return 0; }
+    double rate = prefill_eta(model.moe(), generation_of(card), route, transferred) *
+                  peak(card, route) / (2 * params);
+    if (model.moe() && model.experts_per_token > 0) {
+        rate *= chunk_share(model, filled);
+    }
+    return rate;
+}
+
+} // namespace
+
 Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                const Candidate& candidate, std::uint32_t concurrency, double context,
                std::uint32_t prompt) {
@@ -296,14 +368,13 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     }
 
     bool prefill_transferred = false;
-    const double eta = prefill_eta(model.moe(), gen, route, prefill_transferred);
-    out.prefill      = eta * peak(card, route) / (2 * params);
-    if (model.moe() && model.experts_per_token > 0) {
-        // A prompt shorter than the chunk fills only its own tokens.
-        const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
-        out.prefill *= chunk_share(model, filled) / chunk_share(model, kDefaultChunk);
+    const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
+    out.prefill = linear_prefill(model, card, route, filled, prefill_transferred);
+    if (prompt > 0 && out.prefill > 0) {
+        const double attention = attention_seconds(model, card, prompt, prefill_transferred);
+        out.prefill            = prompt / (prompt / out.prefill + attention);
     }
-    out.transferred  = transferred || prefill_transferred;
+    out.transferred = transferred || prefill_transferred;
     return out;
 }
 
@@ -312,18 +383,16 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const double middle = task.prompt + task.answer / 2.0;
     const Speed speed   = speed_of(model, card, quant, candidate, task.concurrency, middle, task.prompt);
     if (speed.prefill <= 0 || speed.decode_per_stream <= 0) { return INFINITY; }
-    // The prompt runs as whole chunks and a final partial one, each at its own rate (an MoE's
-    // prefill depends on how full a chunk is).
+    // The prompt's linears run as whole chunks and a final partial one, each at its own rate (an
+    // MoE's prefill depends on how full a chunk is); its attention runs over the whole prompt.
+    const Route route         = route_of(quant, candidate.activations, card);
     const std::uint32_t chunk = std::max<std::uint32_t>(candidate.chunk, 1);
     const std::uint32_t whole = task.prompt / chunk * chunk;
     const std::uint32_t rest  = task.prompt - whole;
-    double prefill_seconds    = 0;
-    if (whole > 0) {
-        prefill_seconds += whole / speed_of(model, card, quant, candidate, task.concurrency, middle, chunk).prefill;
-    }
-    if (rest > 0) {
-        prefill_seconds += rest / speed_of(model, card, quant, candidate, task.concurrency, middle, rest).prefill;
-    }
+    bool transferred          = false;
+    double prefill_seconds    = attention_seconds(model, card, task.prompt, transferred);
+    if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, route, chunk, transferred); }
+    if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, route, rest, transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 

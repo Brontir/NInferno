@@ -10,6 +10,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -177,9 +178,32 @@ Profile not_current(const MeasuredPair& pair) {
 }
 
 // select() over the pair's measurements: every depth and its load bounds at home, else the
-// portable ones.
-Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options) {
+// portable ones, each round's seconds scaled by `round_costs` (by configuration label: what a round
+// costs on the card asked for over the measuring one). With costs given, a configuration without
+// one is left out: its round's cost here is unknown, and at the measuring card's price it would
+// look cheaper than the ones costed.
+Profile selected(const MeasuredPair& pair, bool home, const SelectOptions& options,
+                 const RoundCostRatios& round_costs = {}) {
     Profile p = pair.tune;
+    if (round_costs.known) {
+        const auto cost = [&](const SpecConfig& c) {
+            const auto r = round_costs.ratio.find(c.label());
+            return r != round_costs.ratio.end() ? std::optional<double>{r->second} : std::nullopt;
+        };
+        std::erase_if(p.measurements,
+                      [&](const Measurement& m) { return m.config.enabled() && !cost(m.config); });
+        for (auto& m : p.measurements) {
+            if (m.config.enabled()) { m.seconds *= *cost(m.config); }
+        }
+        if (p.fit_fallback && p.fit_fallback->config.enabled()) {
+            if (const auto r = cost(p.fit_fallback->config)) {
+                p.fit_fallback->tok_s /= *r;
+                p.fit_fallback->floor_tokens_per_round *= *r;
+            } else {
+                p.fit_fallback.reset();
+            }
+        }
+    }
     if (!home) {
         std::erase_if(p.measurements,
                       [](const Measurement& m) { return m.config.k > kPortableDepth; });
@@ -232,8 +256,82 @@ Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options)
     return pair_current(pair) ? selected(pair, false, options) : not_current(pair);
 }
 
+namespace {
+
+// A round's cost per configuration label in one tune: in each section plain decode measured too,
+// its seconds per round over plain decode's seconds per token (repeats pooled); the mean over the
+// sections.
+std::map<std::string, double> round_costs(const Profile& tune) {
+    using Pooled = std::pair<double, double>;           // seconds, and tokens or rounds
+    std::map<std::string, Pooled> plain;                // by section
+    std::map<std::pair<std::string, std::string>, Pooled> rounds; // by label and section
+    for (const auto& m : tune.measurements) {
+        if (!m.config.enabled()) {
+            if (m.tokens > 0) {
+                plain[m.family].first += m.seconds;
+                plain[m.family].second += static_cast<double>(m.tokens);
+            }
+        } else if (m.rounds > 0) {
+            auto& r = rounds[{m.config.label(), m.family}];
+            r.first += m.seconds;
+            r.second += static_cast<double>(m.rounds);
+        }
+    }
+    std::map<std::string, Pooled> sums; // by label: the sections' costs, and their count
+    for (const auto& [key, r] : rounds) {
+        const auto p = plain.find(key.second);
+        if (p == plain.end() || p->second.first <= 0) { continue; }
+        auto& s = sums[key.first];
+        s.first += (r.first / r.second) / (p->second.first / p->second.second);
+        s.second += 1;
+    }
+    std::map<std::string, double> out;
+    for (const auto& [label, s] : sums) { out[label] = s.first / s.second; }
+    return out;
+}
+
+} // namespace
+
+RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
+                                       std::string_view from, std::string_view to) {
+    std::map<std::string, std::vector<double>> ratios;
+    // A generation's constant rests on two of its cards: per configuration, the cards each side
+    // measured it on.
+    std::map<std::string, std::pair<std::set<std::string>, std::set<std::string>>> cards;
+    for (const auto& a : lab) {
+        if (a.generation != from || !pair_current(a)) { continue; }
+        const auto at_from = round_costs(a.tune);
+        for (const auto& b : lab) {
+            // The same weights with the same drafters (their revisions), else another pair.
+            if (b.generation != to || b.target != a.target || b.engine != a.engine ||
+                b.drafters != a.drafters || !pair_current(b)) {
+                continue;
+            }
+            for (const auto& [label, cost] : round_costs(b.tune)) {
+                if (const auto f = at_from.find(label); f != at_from.end() && f->second > 0) {
+                    ratios[label].push_back(cost / f->second);
+                    cards[label].first.insert(a.tune.key.gpu);
+                    cards[label].second.insert(b.tune.key.gpu);
+                }
+            }
+        }
+    }
+    RoundCostRatios out;
+    for (auto& [label, each] : ratios) {
+        if (cards[label].first.size() < 2 || cards[label].second.size() < 2) { continue; }
+        out.known = true;
+        std::sort(each.begin(), each.end());
+        // Cards that disagree make it the hardware's, not the generation's: no estimate.
+        if (each.back() > each.front() * (1 + kRoundCostAgreement)) { continue; }
+        const std::size_t n = each.size();
+        out.ratio[label]          = n % 2 ? each[n / 2] : (each[n / 2 - 1] + each[n / 2]) / 2;
+    }
+    return out;
+}
+
 Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
-                           std::string_view generation, const SelectOptions& options) {
+                           std::string_view generation, const SelectOptions& options,
+                           const std::vector<MeasuredPair>* lab) {
     std::vector<const MeasuredPair*> current, home;
     std::set<std::string> home_cards; // two cards, not two records of one card
     for (const auto* pair : measured) {
@@ -272,7 +370,14 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             return out;
         }
     }
-    return selected(home.empty() ? *current.front() : *home.front(), false, options);
+    if (!home.empty()) { return selected(*home.front(), false, options); }
+    // Another generation's measurement: its rounds costed as on this one where the lab measured
+    // a target on both.
+    const MeasuredPair& away = *current.front();
+    return selected(away, false, options,
+                    lab != nullptr && !generation.empty()
+                        ? generation_round_costs(*lab, away.generation, generation)
+                        : RoundCostRatios{});
 }
 
 std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,
@@ -583,7 +688,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
 
     // 1. Its own measurements.
     if (const auto own = own_cards(pairs, query); !own.empty()) {
-        return PairChoice{.profile = profile_for_target(pointers(own), generation, served),
+        return PairChoice{.profile = profile_for_target(pointers(own), generation, served, &pairs),
                           .basis   = "measured",
                           .source  = "registry pair " + own.front().target_repo + " (" +
                                     std::to_string(own.size()) + " lab card(s))"};
@@ -596,7 +701,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
         if (const auto siblings = nearest_siblings(pairs, query, repo); !siblings.cards.empty()) {
             std::string named;
             for (const auto& q : siblings.quants) { named += (named.empty() ? "" : ", ") + q; }
-            return PairChoice{.profile = profile_for_target(pointers(siblings.cards), generation, served),
+            return PairChoice{.profile = profile_for_target(pointers(siblings.cards), generation,
+                                                            served, &pairs),
                               .basis   = "preliminary",
                               .source  = "registry sibling " + std::string(repo.substr(0, at)) +
                                         " " + named + " (" + std::to_string(siblings.cards.size()) +

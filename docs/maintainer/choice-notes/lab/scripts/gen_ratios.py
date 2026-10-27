@@ -4,15 +4,22 @@ from collections import defaultdict
 
 
 def costs(tune):
-    plain = {m["family"]: m["seconds"] / m["tokens"] for m in tune["measurements"]
-             if m["config"] == "plain" and m["tokens"] > 0}
-    sums = defaultdict(lambda: [0.0, 0.0, 0.0, 0])
+    """As src/spec/pairs.cpp round_costs: per section (repeats pooled) a round's seconds over plain
+    decode's seconds per token, then the mean over the sections."""
+    plain = defaultdict(lambda: [0.0, 0.0])
+    rounds = defaultdict(lambda: [0.0, 0.0])
     for m in tune["measurements"]:
-        if m["config"] == "plain" or m.get("rounds", 0) <= 0 or m["family"] not in plain:
-            continue
-        s = sums[m["config"]]
-        s[0] += m["seconds"]; s[1] += m["rounds"]; s[2] += plain[m["family"]]; s[3] += 1
-    return {c: (s[0] / s[1]) / (s[2] / s[3]) for c, s in sums.items() if s[2] > 0}
+        if m["config"] == "plain":
+            if m["tokens"] > 0:
+                plain[m["family"]][0] += m["seconds"]; plain[m["family"]][1] += m["tokens"]
+        elif m.get("rounds", 0) > 0:
+            r = rounds[(m["config"], m["family"])]
+            r[0] += m["seconds"]; r[1] += m["rounds"]
+    each = defaultdict(list)
+    for (c, f), r in rounds.items():
+        if f in plain and plain[f][0] > 0:
+            each[c].append((r[0] / r[1]) / (plain[f][0] / plain[f][1]))
+    return {c: sum(v) / len(v) for c, v in each.items()}
 
 
 r = json.load(open(sys.argv[1], encoding="utf-8"))["pairs"]

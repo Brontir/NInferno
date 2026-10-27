@@ -25,7 +25,9 @@
      "bits_per_weight": 5.08,
      "weight_bytes": 5680522464
     }
-   }
+   },
+   "full_attention_width": 65536.0,
+   "sliding_attention_width": 0.0
   },
   "Qwen3.8-27B": {
    "family": "qwen3_5_text",
@@ -55,7 +57,9 @@
      "bits_per_weight": 5.14,
      "weight_bytes": 17559178144
     }
-   }
+   },
+   "full_attention_width": 196608.0,
+   "sliding_attention_width": 0.0
   },
   "Qwen3.6-35B-A3B": {
    "family": "qwen3_5_moe_text",
@@ -85,7 +89,9 @@
      "bits_per_weight": 5.11,
      "weight_bytes": 22134528992
     }
-   }
+   },
+   "full_attention_width": 81920.0,
+   "sliding_attention_width": 0.0
   }
  },
  "cards": {
@@ -134,7 +140,8 @@
    "context": 22184,
    "decode": 85.34,
    "prefill": 2418,
-   "source": "run_sw.sh 2026-10-23 default"
+   "source": "run_sw.sh 2026-10-23 default",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -147,7 +154,8 @@
    "context": 22184,
    "decode": 61.68,
    "prefill": 693,
-   "source": "run_sw.sh 2026-10-23 exact"
+   "source": "run_sw.sh 2026-10-23 exact",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -160,7 +168,8 @@
    "context": 22184,
    "decode": 64.65,
    "prefill": 1843,
-   "source": "run_sw.sh 2026-10-23 kv_bf16"
+   "source": "run_sw.sh 2026-10-23 kv_bf16",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -173,7 +182,8 @@
    "context": 22184,
    "decode": 79.76,
    "prefill": 2323,
-   "source": "run_sw.sh 2026-10-23 kv_fp8"
+   "source": "run_sw.sh 2026-10-23 kv_fp8",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -186,7 +196,8 @@
    "context": 22184,
    "decode": 79.05,
    "prefill": 2427,
-   "source": "run_sw.sh 2026-10-23 kv_k8v4"
+   "source": "run_sw.sh 2026-10-23 kv_k8v4",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -199,7 +210,8 @@
    "context": 22184,
    "decode": 80.49,
    "prefill": 2018,
-   "source": "run_sw.sh 2026-10-23 kv_nvfp4"
+   "source": "run_sw.sh 2026-10-23 kv_nvfp4",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -212,7 +224,8 @@
    "context": 22184,
    "decode": 84.13,
    "prefill": 2373,
-   "source": "run_sw.sh 2026-10-23 state_f32"
+   "source": "run_sw.sh 2026-10-23 state_f32",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -225,7 +238,8 @@
    "context": 22184,
    "decode": 84.83,
    "prefill": 2365,
-   "source": "run_sw.sh 2026-10-23 state_bf16"
+   "source": "run_sw.sh 2026-10-23 state_bf16",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -238,7 +252,8 @@
    "context": 22184,
    "decode": 80.64,
    "prefill": 5707,
-   "source": "run_sw.sh 2026-10-23 default"
+   "source": "run_sw.sh 2026-10-23 default",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -251,7 +266,8 @@
    "context": 22184,
    "decode": 69.91,
    "prefill": 1567,
-   "source": "run_sw.sh 2026-10-23 exact"
+   "source": "run_sw.sh 2026-10-23 exact",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -264,7 +280,8 @@
    "context": 22184,
    "decode": 75.62,
    "prefill": 5506,
-   "source": "run_sw.sh 2026-10-23 kv_bf16"
+   "source": "run_sw.sh 2026-10-23 kv_bf16",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -277,7 +294,8 @@
    "context": 22184,
    "decode": 80.59,
    "prefill": 5720,
-   "source": "run_sw.sh 2026-10-23 kv_fp8"
+   "source": "run_sw.sh 2026-10-23 kv_fp8",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -290,7 +308,8 @@
    "context": 22184,
    "decode": 81.88,
    "prefill": 5694,
-   "source": "run_sw.sh 2026-10-23 kv_k8v4"
+   "source": "run_sw.sh 2026-10-23 kv_k8v4",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -303,7 +322,8 @@
    "context": 22184,
    "decode": 82.38,
    "prefill": 4938,
-   "source": "run_sw.sh 2026-10-23 kv_nvfp4"
+   "source": "run_sw.sh 2026-10-23 kv_nvfp4",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -316,7 +336,8 @@
    "context": 22184,
    "decode": 79.94,
    "prefill": 5688,
-   "source": "run_sw.sh 2026-10-23 state_f32"
+   "source": "run_sw.sh 2026-10-23 state_f32",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -329,7 +350,8 @@
    "context": 22184,
    "decode": 80.65,
    "prefill": 5695,
-   "source": "run_sw.sh 2026-10-23 state_bf16"
+   "source": "run_sw.sh 2026-10-23 state_bf16",
+   "prompt": 21365
   },
   {
    "card": "RTX 2080 Ti",
@@ -394,7 +416,8 @@
    "context": 22184,
    "decode": 85.4,
    "prefill": 2420,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   },
   {
    "card": "RTX 4070 Ti",
@@ -459,7 +482,8 @@
    "context": 22184,
    "decode": 80.6,
    "prefill": 5703,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   },
   {
    "card": "RTX 5070 Ti",
@@ -524,7 +548,8 @@
    "context": 22184,
    "decode": 137.8,
    "prefill": 6697,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   },
   {
    "card": "RTX 5070 Ti",
@@ -589,7 +614,8 @@
    "context": 22184,
    "decode": 60.7,
    "prefill": 2064,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   },
   {
    "card": "RTX 5070 Ti",
@@ -654,7 +680,8 @@
    "context": 22184,
    "decode": 247.9,
    "prefill": 7334,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   },
   {
    "card": "RTX 4090",
@@ -706,7 +733,8 @@
    "context": 22184,
    "decode": 48.7,
    "prefill": 3376,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   },
   {
    "card": "RTX 4090",
@@ -758,7 +786,8 @@
    "context": 22184,
    "decode": 235,
    "prefill": 13777,
-   "source": "run_calib.sh 2026-10-23 long24k"
+   "source": "run_calib.sh 2026-10-23 long24k",
+   "prompt": 21365
   }
  ]
 }

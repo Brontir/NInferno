@@ -55,6 +55,9 @@ struct PlanTargetShape {
     int experts = 0, experts_per_token = 0;
     double active_params        = 0;
     double routed_expert_params = 0;
+    // A token's attention over the context: heads x (key + value) summed over the full layers
+    // (they attend over every earlier token) and over the sliding ones (over at most the window).
+    double full_attention_width = 0, sliding_attention_width = 0;
     bool builtin_mtp = false; // MTP / NextN layers in the model (GGUF nextn_predict_layers)
     bool tied_embeddings = false; // the output head shares the input table (no separate rows to read)
     // The quantized weight formats, as artifact::format_name spells them where known
