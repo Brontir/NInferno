@@ -285,7 +285,8 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 convert::resolve_ranking(d.ranking, {})) {
                 // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
                 // published [vocab, H] embedding table the assistant's head is read from, also
-                // when the other matrices stay as published.
+                // when the other matrices stay as published. The gathered rows are decoded to
+                // BF16 (an encoding is not kept through the gather).
                 const nlohmann::json& text =
                     config->contains("text_config") && (*config)["text_config"].is_object()
                         ? (*config)["text_config"]
@@ -293,7 +294,8 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 const auto vocab  = text.value("vocab_size", std::uint64_t{0});
                 const auto hidden = text.value("hidden_size", std::uint64_t{0});
                 if (vocab > d.proposal_rows) {
-                    bytes -= std::min(bytes, (vocab - d.proposal_rows) * hidden * head_bits / 8);
+                    bytes -= std::min(bytes, vocab * hidden * head_bits / 8);
+                    bytes += d.proposal_rows * hidden * 2;
                 }
             }
             if (!d.component.empty()) {
