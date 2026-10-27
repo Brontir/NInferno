@@ -94,8 +94,11 @@ inline constexpr double kRmmaWideBytes = 5.5;
 
 // rmma_wide_pays' rule on its inputs: below kRmmaWideBytes (0: unknown, no), not before sm_75
 // (Volta's register MMA is FMA-emulated, compute-bound), and only where the wide kernel holds as
-// many CTAs per SM as the plain one and spills no more (the swap's registers: SwiGLU on the
-// 128-register schedules spilled, RTX 4090 w1x16 94 -> 106 us).
+// many CTAs per SM as the plain one and spills at most kRmmaWideSpillSlack bytes a thread more
+// (sm_89's one-row-set tiles, held to 128 registers, keep 8 bytes of loop-invariant state in
+// local memory; SwiGLU's 128-register tiles spill 160 bytes in the loop, RTX 4090 w1x16 at
+// T = 6 100.3 -> 103.9 us).
+inline constexpr std::size_t kRmmaWideSpillSlack = 16;
 [[nodiscard]] bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, int wide_ctas,
                                   int plain_ctas, std::size_t wide_local_bytes,
                                   std::size_t plain_local_bytes);

@@ -1276,7 +1276,7 @@ bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, int wide_
                     int plain_ctas, std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
     return bytes_per_sm_cycle > 0.0 && bytes_per_sm_cycle < kRmmaWideBytes &&
            compute_capability >= 75 && wide_ctas >= plain_ctas &&
-           wide_local_bytes <= plain_local_bytes;
+           wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
 }
 
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }

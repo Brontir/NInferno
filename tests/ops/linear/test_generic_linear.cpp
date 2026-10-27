@@ -1491,8 +1491,9 @@ int main() {
             std::cerr << "rmma_wide_rule: took the wide kernel at lower occupancy or a spill\n";
             ++failures;
         }
-        if (!g::rmma_wide_rule(3.1, 89, 2, 2, 16, 16)) {
-            std::cerr << "rmma_wide_rule: refused a wide kernel spilling no more than the plain\n";
+        if (!g::rmma_wide_rule(3.1, 89, 2, 2, 16, 16) || !g::rmma_wide_rule(3.1, 89, 4, 4, 8, 0) ||
+            g::rmma_wide_rule(3.1, 89, 1, 1, 160, 0)) {
+            std::cerr << "rmma_wide_rule: refused a spill within the slack or took a large one\n";
             ++failures;
         }
     }
