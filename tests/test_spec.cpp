@@ -1640,6 +1640,31 @@ int test_resolve() {
     return failures;
 }
 
+// A drafter kind's rule (the registry's "kinds"): every separately packaged drafter of the kind that
+// names none takes it, so no model entry of a family can miss it; a companion is left alone.
+int test_kind_rule() {
+    int failures = 0;
+    const auto& registry = Registry::builtin();
+    for (const char* repo : {"google/gemma-4-12B-it", "google/gemma-4-26B-A4B-it", "google/gemma-4-31B-it"}) {
+        const auto* entry = registry.by_repo(repo);
+        const bool ok     = entry != nullptr && !entry->drafters.empty() &&
+                        entry->drafters[0].kind == "gemma4_assistant" &&
+                        entry->drafters[0].quant == "q8" && entry->drafters[0].proposal_rows == 98304 &&
+                        entry->drafters[0].ranking == "gemma4_ranking2.i64";
+        failures += check(ok, std::string("the Gemma 4 assistant of ") + repo + " takes its kind's rule");
+    }
+    const std::vector<KindInfo> kinds{{.name = "dflash", .recipe = "r", .quant = "q8"}};
+    auto own = parse_drafter(Json::parse(R"({"name": "dflash", "kind": "dflash", "quant": "q4"})"));
+    apply_kind_rule(own, kinds);
+    auto companion =
+        parse_drafter(Json::parse(R"({"name": "dflash", "kind": "dflash", "component": "dflash"})"));
+    apply_kind_rule(companion, kinds);
+    failures += check(own.quant == "q4" && own.recipe == "r" && companion.quant.empty() &&
+                          companion.recipe.empty(),
+                      "a drafter's own quant wins; a companion takes no kind rule");
+    return failures;
+}
+
 // Drafter variants: NInferno's own quantizations of a drafter, built beside it by the converter and
 // chosen per GPU class by the profiles that require them.
 int test_variants() {
@@ -1729,6 +1754,7 @@ int main() {
     failures += test_registry_and_corpus();
     failures += test_source_identity();
     failures += test_variants();
+    failures += test_kind_rule();
     failures += test_resolve();
     if (failures == 0) { std::cout << "spec: all checks passed\n"; }
     return failures == 0 ? 0 : 1;
