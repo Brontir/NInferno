@@ -237,7 +237,7 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         const generic::Route r = routes[i];
         const bool same_decode = std::equal(decoded.begin(), decoded.end(), outputs[i].begin());
         // FNV-1a of the whole output: one route's bytes compared across builds.
-        std::uint64_t hash = 1469598103934665603ULL;
+        std::uint64_t hash = 14695981039346656037ULL;
         for (const std::uint8_t c : outputs[i]) hash = (hash ^ c) * 1099511628211ULL;
         std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s h=%016llx\n",
                     fmt, epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
