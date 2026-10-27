@@ -950,9 +950,10 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 // them otherwise), or one failed: attached again; its companions are its own.
                 if (drafters_on && !gguf && drafters_incomplete(out.artifact)) {
                     try {
+                        // Planned from the checkpoint (its declaration and lineage), as at first.
                         out.drafters = attach_drafters(
-                            plan_drafters(describe_artifact(out.artifact, model_id)), out.artifact,
-                            attach);
+                            plan_drafters(describe_checkpoint(fetched.model, model_id)),
+                            out.artifact, attach);
                         require_drafters(*out.drafters, options);
                     } catch (const std::exception& error) {
                         if (options.with_drafters == true) { throw; }

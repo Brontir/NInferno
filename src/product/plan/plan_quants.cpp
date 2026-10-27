@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <iomanip>
 #include <cstdio>
 #include <iomanip>
@@ -256,16 +257,32 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                     if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
                 }
             } catch (const std::exception&) {}
-            // A separate Gemma 4 assistant takes its quantization whole; a DFlash drafter keeps its
-            // feature projection BF16 (convert.cpp quantize_drafter), so its published size stands.
-            if (!d.component.empty() || (!d.quant.empty() && d.kind == "gemma4_assistant")) {
-                bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
-            }
-            if (!out.state && (d.kind == "dflash" || d.kind == "dflash2")) {
+            std::optional<nlohmann::json> config;
+            if (d.kind == "dflash" || d.kind == "dflash2") {
                 try {
-                    out.state = plan_drafter_state_of_config(convert::fetch_config(spec, *fetch),
-                                                             target_hidden);
+                    config = convert::fetch_config(spec, *fetch);
                 } catch (const std::exception&) {}
+            }
+            if (!d.component.empty()) {
+                bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
+            } else if (!d.quant.empty()) {
+                // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
+                // (convert.cpp quantize_drafter); the rest takes the kind's quantization.
+                std::uint64_t kept = 0;
+                if (config) {
+                    const auto hidden = config->value("hidden_size", std::uint64_t{0});
+                    const auto taps   = config->contains("dflash_config")
+                                            ? (*config)["dflash_config"]
+                                                  .value("target_layer_ids", nlohmann::json::array())
+                                                  .size()
+                                            : 0;
+                    kept = std::min<std::uint64_t>(bytes, 2 * hidden * hidden * taps);
+                }
+                bytes = kept + convert::companion_drafter_bytes(target_model_type, d.kind, d.quant,
+                                                                bytes - kept);
+            }
+            if (!out.state && config) {
+                out.state = plan_drafter_state_of_config(*config, target_hidden);
             }
         }
         out.bytes = std::max(out.bytes, bytes);
