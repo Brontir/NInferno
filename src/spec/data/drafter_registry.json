@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 133,
+  "version": 135,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -6336,71 +6336,71 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.3746889441877,
+            "acceptance": 0.3745777777777778,
             "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.452538594645619,
-            "plain_tok_s": 191.95205521661086,
-            "speedup": 1.4247020393021268,
-            "tok_s": 273.47448451533995,
-            "tokens_per_round": 3.584917228694053
+            "floor_tokens_per_round": 2.304178412303714,
+            "plain_tok_s": 191.67423480762966,
+            "speedup": 1.5193725549273256,
+            "tok_s": 291.2245718534084,
+            "tokens_per_round": 3.580526638089406
           },
           "gpu": "NVIDIA GeForce RTX 5070 Ti",
           "gpu_class": "gb203:70sm",
-          "measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
-          "measured_at": "2026-10-20",
+          "measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5070 Ti, greedy, built-in corpus, q8 DFlash drafter",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.4291168658698539,
+            "acceptance": 0.43087672600232907,
             "config": "dflash:5",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.325338832163244,
-            "plain_tok_s": 192.03872940471373,
-            "speedup": 1.3418243378555121,
-            "tok_s": 257.68224092609387,
-            "tokens_per_round": 3.1136549468520034
+            "floor_tokens_per_round": 2.1775936807142946,
+            "plain_tok_s": 191.77546617719597,
+            "speedup": 1.4399285418185803,
+            "tok_s": 276.14296736910825,
+            "tokens_per_round": 3.1281840591618733
           },
           "portable": {
             "default": {
-              "acceptance": 0.47140880793175005,
+              "acceptance": 0.4759911638181607,
               "config": "dflash:5",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.3286601986793145,
-              "plain_tok_s": 191.95205521661086,
-              "speedup": 1.4050200536771797,
-              "tok_s": 269.69648692388756,
-              "tokens_per_round": 3.327262379055208
+              "floor_tokens_per_round": 2.1777450456454477,
+              "plain_tok_s": 191.67423480762966,
+              "speedup": 1.5133511738977987,
+              "tok_s": 290.0704282520887,
+              "tokens_per_round": 3.3555811277330263
             },
             "non_thinking": {
-              "acceptance": 0.4291168658698539,
+              "acceptance": 0.43087672600232907,
               "config": "dflash:5",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.325338832163244,
-              "plain_tok_s": 192.03872940471373,
-              "speedup": 1.3418243378555121,
-              "tok_s": 257.68224092609387,
-              "tokens_per_round": 3.1136549468520034
+              "floor_tokens_per_round": 2.1775936807142946,
+              "plain_tok_s": 191.77546617719597,
+              "speedup": 1.4399285418185803,
+              "tok_s": 276.14296736910825,
+              "tokens_per_round": 3.1281840591618733
             },
             "thinking": {
-              "acceptance": 0.4900559353635799,
+              "acceptance": 0.47655298416565167,
               "config": "dflash:7",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.4568164410629296,
-              "plain_tok_s": 191.69250144878515,
-              "speedup": 1.793397114475695,
-              "tok_s": 343.7807789648793,
-              "tokens_per_round": 4.406047516198704
+              "floor_tokens_per_round": 2.31619429045962,
+              "plain_tok_s": 191.3711809218577,
+              "speedup": 1.8581331825580125,
+              "tok_s": 355.59314145621664,
+              "tokens_per_round": 4.301687763713081
             }
           },
-          "source": "spec-tune 2026-10-20T14:49:53Z (ninferno-spec-1, 116 s)",
+          "source": "spec-tune 2026-10-27T18:13:05Z (ninferno-spec-1, 114 s)",
           "thinking": {
-            "acceptance": 0.4900559353635799,
+            "acceptance": 0.47655298416565167,
             "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.4568164410629296,
-            "plain_tok_s": 191.69250144878515,
-            "speedup": 1.793397114475695,
-            "tok_s": 343.7807789648793,
-            "tokens_per_round": 4.406047516198704
+            "floor_tokens_per_round": 2.31619429045962,
+            "plain_tok_s": 191.3711809218577,
+            "speedup": 1.8581331825580125,
+            "tok_s": 355.59314145621664,
+            "tokens_per_round": 4.301687763713081
           },
           "load": [
             {
@@ -6408,8 +6408,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "gpt-oss-20b (openai/gpt-oss-20b --with-drafters artifact), context 8192, kv fp8, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T14:59:10Z",
-          "revision": "439ce0c2b6da"
+          "load_measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5070 Ti, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:19:22Z",
+          "revision": "70c1ecbde4a2"
         },
         {
           "applies_to": [
