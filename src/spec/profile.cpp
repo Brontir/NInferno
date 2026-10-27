@@ -182,8 +182,8 @@ void select(Profile& profile, const SelectOptions& options) {
     const double gain = 1.0 + options.min_gain;
 
     // Drafters first: a mode whose drafter was rejected offers no configuration. A drafter is
-    // judged on the whole mix: its best configuration's speed over every section (each by its
-    // section_weight), never on the one section it suits.
+    // judged on every section at once, each weighing the same (a wrong drafter loses on all of
+    // them; one that loses only on prose still serves thinking), never on the one section it suits.
     std::set<std::string> rejected_modes;
     for (auto& d : profile.drafters) {
         double best = 0, drafted = 0, accepted = 0;
@@ -203,8 +203,8 @@ void select(Profile& profile, const SelectOptions& options) {
                 measured = true;
                 drafted += double(m->drafted);
                 accepted += double(m->accepted);
-                cost += weighted_cost(*m);
-                plain_cost += weighted_cost(*get("plain", f));
+                cost += seconds_per_token(*m);
+                plain_cost += seconds_per_token(*get("plain", f));
             }
             if (complete && cost > 0) { best = std::max(best, plain_cost / cost); }
         }
