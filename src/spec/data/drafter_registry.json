@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 148,
+  "version": 150,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -2352,6 +2352,88 @@
           ],
           "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 4060 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 4060 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:47:25Z",
           "revision": "80029555dc28"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.5875554360972988,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.6231589208612047,
+            "plain_tok_s": 43.01439499670274,
+            "speedup": 2.478618087149199,
+            "tok_s": 106.61625744660742,
+            "tokens_per_round": 4.083215796897038
+          },
+          "gpu": "NVIDIA GeForce RTX 3060",
+          "gpu_class": "ga106",
+          "measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 3060, built-in corpus",
+          "measured_at": "2026-10-27",
+          "non_thinking": {
+            "acceptance": 0.5306513409961686,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.6274812293509306,
+            "plain_tok_s": 43.056191616536765,
+            "speedup": 2.361754197130574,
+            "tok_s": 101.68814126281393,
+            "tokens_per_round": 3.817904374364191
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.5875554360972988,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.6231589208612047,
+              "plain_tok_s": 43.01439499670274,
+              "speedup": 2.478618087149199,
+              "tok_s": 106.61625744660742,
+              "tokens_per_round": 4.083215796897038
+            },
+            "non_thinking": {
+              "acceptance": 0.5306513409961686,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.6274812293509306,
+              "plain_tok_s": 43.056191616536765,
+              "speedup": 2.361754197130574,
+              "tok_s": 101.68814126281393,
+              "tokens_per_round": 3.817904374364191
+            },
+            "thinking": {
+              "acceptance": 0.7212967131922557,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.6122663392001986,
+              "plain_tok_s": 42.889490610137024,
+              "speedup": 2.908734778113772,
+              "tok_s": 124.75415295328963,
+              "tokens_per_round": 4.682758620689655
+            }
+          },
+          "source": "spec-tune 2026-10-27T18:29:50Z (ninferno-spec-1, 418 s)",
+          "thinking": {
+            "acceptance": 0.7212967131922557,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.6122663392001986,
+            "plain_tok_s": 42.889490610137024,
+            "speedup": 2.908734778113772,
+            "tok_s": 124.75415295328963,
+            "tokens_per_round": 4.682758620689655
+          },
+          "load": [
+            {
+              "depth": 3,
+              "lanes": 2
+            },
+            {
+              "depth": 1,
+              "lanes": 5
+            }
+          ],
+          "load_measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 3060, built-in corpus, context 8192, NVIDIA GeForce RTX 3060, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:49:58Z",
+          "revision": "aedfb09511e8"
         },
         {
           "gpu_class": "*",
