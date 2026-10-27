@@ -157,7 +157,7 @@ int check_case(const Case& c, cudaStream_t stream) {
         // ggml's matrix kernel may replace an A16 schedule at verify widths where A8 is allowed
         // (its workspace is the problem's capacity, workspace_capacity_bytes).
         if (tuned[t]->family == generic::Family::GgmlMmq) {
-            if (r8 || c.policy == ops::LinearPolicy::A16Only || t <= generic::kR8VerifyTokens) {
+            if (r8 || c.policy == ops::LinearPolicy::A16Only || t < generic::kMmqMinTokens) {
                 std::cerr << c.name << " T=" << t << ": ggml_mmq against the heuristic "
                           << generic::route_name(heuristic) << "\n";
                 ++failures;

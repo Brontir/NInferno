@@ -297,7 +297,7 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // The multiple of K an R8 weight needs: a lane loads w4a8_span * w4a8_stride 32-value blocks
 // together (generic_w4a8.cuh: two for Q4_K and Q5_K, four for Q6_K and Q3_K, one otherwise).
 [[nodiscard]] std::int32_t r8_k_values(QType qtype);
-// Speculative verify (2 <= T <= kR8VerifyTokens) takes R8 too for the formats where it is not
+// Speculative verify (2 <= T <= r8_verify_widest) takes R8 too for the formats where it is not
 // slower than the register MMA there, with the activation quantized once per call into the
 // workspace (the W4A8 quantizer: the same codes, scales and sums the CTA makes at T = 1) and read
 // from L2 by every CTA, so a token's bytes are those of plain decode and greedy speculation
@@ -313,6 +313,9 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // The verify form is compiled for up to eight tokens (kR8VerifyTokens); r8_verify_widest is the
 // widest call a format takes it for by rule.
 inline constexpr std::int32_t kR8VerifyTokens = 8;
+// The narrowest call on the ggml matrix kernel's route (generic_gemm.cpp, kMmqMaxTokens): five
+// tokens, past the four R8 verifies for every format but Q8.
+inline constexpr std::int32_t kMmqMinTokens = 5;
 [[nodiscard]] bool r8_verify_supports(QType qtype);
 // Eight tokens for Q8 (GGUF Q8_0), four for the other formats: Q8 at T = 2..8 on the RTX 5090
 // (Qwen3.5-9B shapes, ninferno_r8_schedule_bench --tokens) took 0.96-1.15 of its T = 1 time on
@@ -323,7 +326,7 @@ inline constexpr std::int32_t kR8VerifyTokens = 8;
 [[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
-// Whether a call of 2..kR8VerifyTokens tokens takes R8 on this device: the formats measured faster
+// Whether a call of 2..r8_verify_widest tokens takes R8 on this device: the formats measured faster
 // there (r8_verify_supports) where the MMA takes BF16 operands itself; every compiled format where
 // it does not (Turing: each operand rounded to f16 and two k8 MMAs per k16 make the A16 register
 // MMA the costlier path; RTX 2080 Ti).

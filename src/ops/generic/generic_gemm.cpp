@@ -442,13 +442,12 @@ MmqPlaneBytes mmq_plane_bytes(QType q) {
     return {static_cast<int>(p.code), static_cast<int>(p.high), static_cast<int>(p.scale)};
 }
 
-// The token band of the ggml matrix kernel's route: the verify widths between R8's
-// (kR8VerifyTokens) and the W4A8 tiles' (17 tokens and up), which ran the A16 register MMA.
+// The token band of the ggml matrix kernel's route: the verify widths from kMmqMinTokens
+// (generic_gemm.h) to the W4A8 tiles' (17 tokens and up), which ran the A16 register MMA.
 // The dense tuner times it there against the register MMA on the card and the model's own weight
 // (generic_tune.cpp): no fixed rule holds across chips and formats. Against the heuristic's tile,
 // serve C4: RTX 5090 ISTA IQ3_S +10 % at 16 tokens; Muse Q4_K_M -7..14 %, RTX 4080 SUPER ISTA
 // -12 % at 8; RTX 5080 IQ3_S even. Below the band it loses to R8 (5090 C1 -11 %).
-constexpr std::int32_t kMmqMinTokens = 5;
 constexpr std::int32_t kMmqMaxTokens = 16;
 // A prefill call on ggml's matrix kernel (mmq_prefill_wins) runs this many tokens at a time: its
 // FP32 plane (a 27B SwiGLU's gate and up rows: 2 x 17408 x 512 x 4 bytes = 71 MB) instead of the

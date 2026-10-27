@@ -1551,7 +1551,7 @@ int main() {
     // 2b. W4A8 through the public entry points (AllowA8, T >= 17 takes it; K w4a8_k_admits: whole
     // tiles, or whole 32-value blocks for those formats, 2112 and 2880 among them), and R8
     // for the formats with an R8 codec at decode widths (kR8DecodeTokens) when the activation
-    // fits the CTA, and at verify widths (kR8VerifyTokens) for r8_verify_takes formats. R8 needs
+    // fits the CTA, and at verify widths (r8_verify_widest) for r8_verify_takes formats. R8 needs
     // K only in whole load groups (r8_k_values): 2112 (Gemma 4 26B's dense down projection) and
     // 2880 (gpt-oss's hidden) take it where the layout allows them.
     // A format with an R8 codec alone (Q3_K) stays A16 from 17 tokens.
@@ -1570,7 +1570,7 @@ int main() {
                     // The verify widths ask about the matrix itself (a gated op's weight holds
                     // both halves): a small Q4_0 one keeps A16 where the BF16 MMA is native.
                     const std::int64_t weight_rows = gated(op) ? 2 * n : n;
-                    const bool verify              = t >= 2 && t <= generic::kR8VerifyTokens &&
+                    const bool verify              = t >= 2 && t <= generic::r8_verify_widest(f.qtype) &&
                                         generic::r8_verify_takes_shape(f.qtype, weight_rows, k);
                     const bool a8 =
                         (w4a8_k && t >= 17) ||

@@ -376,7 +376,7 @@ void r8_launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream,
     }
 }
 
-// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..4);
+// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..kR8VerifyTokens);
 // r8_verify_compiled lists the same formats.
 template <class C, bool kVerify = false>
 void r8_launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream,
