@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 137,
+  "version": 139,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -5940,8 +5940,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4090, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4090, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T15:09:03Z",
-          "revision": "570831f239ab"
+          "load_measured_on": "gpt-oss-20b-MXFP4.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4090, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4090, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T15:02:44Z",
+          "revision": "64122b540221"
         },
         {
           "applies_to": [],
@@ -6489,16 +6489,12 @@
           },
           "load": [
             {
-              "depth": 3,
-              "lanes": 2
-            },
-            {
               "depth": 2,
-              "lanes": 3
+              "lanes": 2
             }
           ],
-          "load_measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:26:49Z",
-          "revision": "ebc630d77b1c"
+          "load_measured_on": "gpt-oss-20b-MXFP4.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T15:28:11Z",
+          "revision": "ae14073507da"
         }
       ]
     },
