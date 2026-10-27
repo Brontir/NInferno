@@ -13,8 +13,8 @@ reference, the answer, the decode tokens and milliseconds, and the drafts; the s
 share answered right, the decode rate and, under speculation at a fixed depth k (serve --spec MODE
 --draft-tokens k), tokens per round: the server reports drafts, not rounds, and a round of depth k
 drafts k, so rounds = drafts / k and tokens per round = (accepted + rounds) / rounds. A run whose
-window stepped down, or whose configuration changed between questions, has rounds of other depths
-and gives none; rounds capped short at an answer's end (capped_rounds) count as full, a slight
+window stepped down, that took prompt-lookup copy rounds (their window is the copy's, not k), or
+whose configuration changed between questions has rounds of other depths and gives none; rounds capped short at an answer's end (capped_rounds) count as full, a slight
 overstatement. A failed request counts as a wrong answer and is kept with its error; the output is
 rewritten after every question.
 
@@ -121,6 +121,7 @@ def ask(url, item, timeout):
             "plain_steps": spec.get("plain_steps", 0),
             "step_downs": spec.get("step_downs", 0),
             "capped_rounds": spec.get("capped_rounds", 0),
+            "copy_rounds": spec.get("copy_rounds", 0),
             "watchdog_tripped": spec.get("watchdog_tripped", False),
             "wall_s": wall}
 
@@ -149,10 +150,12 @@ def main():
               f"{r['decode_ms']:8.0f} ms drafts {r['drafted']} {r.get('error', '')}",
               file=sys.stderr)
     tokens = sum(r["tokens"] for r in rows)
+    # The server times decode from the first token to the last: the first is not in decode_ms.
+    timed = sum(max(r["tokens"] - 1, 0) for r in rows)
     decode_ms = sum(r["decode_ms"] for r in rows)
     accepted = sum(r["accepted"] for r in rows)
     configs = {r["config"] for r in rows if "error" not in r}
-    even = len(configs) == 1 and not any(r.get("step_downs") for r in rows)
+    even = len(configs) == 1 and not any(r.get("step_downs") or r.get("copy_rounds") for r in rows)
     depth = depth_of(next(iter(configs))) if even else 0
     rounds = sum(r["drafted"] for r in rows) / depth if depth else 0
     summary = {"tag": args.tag, "questions": len(rows),
@@ -160,10 +163,11 @@ def main():
                "by_dataset": {d: sum(r["correct"] for r in rows if r["dataset"] == d)
                               for d in sorted({r["dataset"] for r in rows})},
                "tokens": tokens, "decode_ms": decode_ms,
-               "tok_s": 1000.0 * tokens / decode_ms if decode_ms else 0.0,
+               "tok_s": 1000.0 * timed / decode_ms if decode_ms else 0.0,
                "rounds": rounds,
                "accepted": accepted,
                "capped_rounds": sum(r.get("capped_rounds", 0) for r in rows),
+               "copy_rounds": sum(r.get("copy_rounds", 0) for r in rows),
                "errors": sum("error" in r for r in rows),
                "tokens_per_round": (accepted + rounds) / rounds if rounds else None}
     json.dump({"summary": summary, "rows": rows}, open(args.out, "w"), indent=1)
