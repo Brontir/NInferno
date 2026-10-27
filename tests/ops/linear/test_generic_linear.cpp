@@ -1545,6 +1545,23 @@ int main() {
             }
         }
     }
+    // 1c. A drafter's A16Only projection takes A8 exactly where R8 verifies an eight-token block
+    // of its format (Q8 on every chip); another recorded policy stays.
+    for (const Format& f : kFormats) {
+        if (!on_build(f)) continue;
+        const Weight w   = cached_weight(f.qtype, 333, 2560, 29U).device->weight;
+        const bool block = generic::r8_verify_widest(f.qtype) >= generic::kR8VerifyTokens &&
+                           generic::r8_takes_block(w);
+        const ops::LinearPolicy want = block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != want ||
+            ops::drafter_linear_policy(w, ops::LinearPolicy::AllowA4) != ops::LinearPolicy::AllowA4 ||
+            (f.qtype == QType::Q8_G32_FP16 && !block)) {
+            std::cout << "FAIL " << f.name << " drafter_linear_policy
+";
+            ++failures;
+        }
+    }
+
     // 2a. NVFP4 with A8 allowed and A4 not: W4A8 from 17 tokens, W4A4 kept under AllowA4.
     if (on_build(nvfp4)) failures += check_nvfp4_a8_routes();
 
