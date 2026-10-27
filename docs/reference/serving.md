@@ -374,7 +374,10 @@ The configuration each request ran is in its request-log record (`speculative.co
 `selection`, `reason`, `note`, `floor`, `fallback`, `context_plain`, `plain_steps`, `wide_rounds`,
 `capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`,
 `constraint_fallback_steps`)
-and in the OpenAI Chat `timings.speculation` object. Anthropic messages and OpenAI Responses carry
+and in the OpenAI Chat `timings.speculation` object, which also counts the request's `rounds` (each
+verified a draft) and `fallback_steps` (target-only steps beside drafting rows after its watchdog
+tripped): a request that ran to its limit generated 1 + `rounds` + `draft_n_accepted` +
+`fallback_steps` + `plain_steps` tokens. Anthropic messages and OpenAI Responses carry
 `config`, `selection`, `reason`, `fallback` and `note` as `usage.ninferno.speculation`, an
 extension key strict clients ignore. Every request carries them, also under an explicit `--spec`
 and on a server plain since startup:
