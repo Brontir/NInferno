@@ -10,13 +10,13 @@ those runs sent it and the reference answer. Each question is asked once, greedy
 time, thinking off; the server's own timings give the decode time and, under speculation, the
 drafts it verified and accepted. Per question the output keeps whether the answer matched the
 reference, the answer, the decode tokens and milliseconds, and the drafts; the summary gives the
-share answered right, the decode rate and, under speculation at a fixed depth k (serve --spec MODE
---draft-tokens k), tokens per round: the server reports drafts, not rounds, and a round of depth k
-drafts k, so rounds = drafts / k and tokens per round = (accepted + rounds) / rounds. A run whose
-window stepped down, that took prompt-lookup copy rounds (their window is the copy's, not k), or
-whose configuration changed between questions has rounds of other depths and gives none; rounds capped short at an answer's end (capped_rounds) count as full, a slight
-overstatement. A failed request counts as a wrong answer and is kept with its error; the output is
-rewritten after every question.
+share answered right, the decode rate and, under speculation, tokens per round. Every round
+yields its accepted drafts and one token of the target's own, and the first token comes from the
+prefill, so a request's rounds are tokens - 1 - accepted - plain_steps (steps the watchdog ran
+plain), whatever each round drafted: a fixed depth, a stepped-down window or a prompt-lookup copy
+round (copy_rounds; its accepted tokens are among the request's). Tokens per round =
+(accepted + rounds) / rounds (1 for plain decode). A failed request counts as a wrong answer and
+is kept with its error; the output is rewritten after every question.
 
 Grading: GSM8K and MATH-500 compare the last \\boxed{...} with the reference after a light
 normalization (spaces, $, %, \\text{}, \\left/\\right, a trailing ".0", thousands commas, a
@@ -92,12 +92,6 @@ def grade(item, answer):
     return normalize(boxed) == normalize(item["target"])
 
 
-def depth_of(config):
-    """The depth k of a fixed speculative configuration ("mtp:3" -> 3), else 0."""
-    _, _, k = config.partition(":")
-    return int(k) if k.isdigit() else 0
-
-
 def ask(url, item, timeout):
     body = {"model": "m", "messages": [{"role": "user", "content": item["prompt"]}],
             "max_tokens": item["max_tokens"], "temperature": 0.0, "seed": 42, "stream": False,
@@ -154,10 +148,7 @@ def main():
     timed = sum(max(r["tokens"] - 1, 0) for r in rows)
     decode_ms = sum(r["decode_ms"] for r in rows)
     accepted = sum(r["accepted"] for r in rows)
-    configs = {r["config"] for r in rows if "error" not in r}
-    even = len(configs) == 1 and not any(r.get("step_downs") or r.get("copy_rounds") for r in rows)
-    depth = depth_of(next(iter(configs))) if even else 0
-    rounds = sum(r["drafted"] for r in rows) / depth if depth else 0
+    rounds = sum(max(r["tokens"] - 1 - r["accepted"] - r.get("plain_steps", 0), 0) for r in rows)
     summary = {"tag": args.tag, "questions": len(rows),
                "correct": sum(r["correct"] for r in rows),
                "by_dataset": {d: sum(r["correct"] for r in rows if r["dataset"] == d)
