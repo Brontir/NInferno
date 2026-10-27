@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 143,
+  "version": 146,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -5787,71 +5787,71 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.36823612087139845,
+            "acceptance": 0.37917343439812307,
             "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.4866881531902427,
-            "plain_tok_s": 335.0510005852645,
-            "speedup": 1.3965416804101585,
-            "tok_s": 467.9126873804502,
-            "tokens_per_round": 3.5329305135951663
+            "floor_tokens_per_round": 2.2981731557332226,
+            "plain_tok_s": 348.03791509518607,
+            "speedup": 1.5430036744346494,
+            "tok_s": 537.0237818344466,
+            "tokens_per_round": 3.6115599751398384
           },
           "gpu": "NVIDIA GeForce RTX 5090",
           "gpu_class": "gb202",
-          "measured_on": "gpt-oss-20b-MXFP4.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5090, greedy, built-in corpus",
-          "measured_at": "2026-10-11",
+          "measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5090, greedy, built-in corpus, q8 DFlash drafter",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.3366261398176292,
+            "acceptance": 0.34269590868282673,
             "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.4784334992097143,
-            "plain_tok_s": 335.10924718914055,
-            "speedup": 1.3353705317892166,
-            "tok_s": 447.4950136264467,
-            "tokens_per_round": 3.305290546400694
+            "floor_tokens_per_round": 2.2917734325403356,
+            "plain_tok_s": 347.9435543940578,
+            "speedup": 1.4670361780562966,
+            "tok_s": 510.4457822175817,
+            "tokens_per_round": 3.3541850220264315
           },
           "portable": {
             "default": {
-              "acceptance": 0.4692917001492366,
+              "acceptance": 0.4795355928227982,
               "config": "dflash:5",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.3742469548085294,
-              "plain_tok_s": 335.0510005852645,
-              "speedup": 1.3778512746043972,
-              "tok_s": 461.6504482138853,
-              "tokens_per_round": 3.3227272727272728
+              "floor_tokens_per_round": 2.1911816879512624,
+              "plain_tok_s": 348.03791509518607,
+              "speedup": 1.5169308213518418,
+              "tok_s": 527.9494404069231,
+              "tokens_per_round": 3.3745644599303137
             },
             "non_thinking": {
-              "acceptance": 0.4302557289936898,
+              "acceptance": 0.4397031539888683,
               "config": "dflash:5",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.369420105003602,
-              "plain_tok_s": 335.10924718914055,
-              "speedup": 1.3211818267254625,
-              "tok_s": 442.74024735394323,
-              "tokens_per_round": 3.125512715340443
+              "floor_tokens_per_round": 2.1876688224252696,
+              "plain_tok_s": 347.9435543940578,
+              "speedup": 1.4536021025680765,
+              "tok_s": 505.7714822422123,
+              "tokens_per_round": 3.1725
             },
             "thinking": {
-              "acceptance": 0.43979357798165136,
+              "acceptance": 0.4657534246575342,
               "config": "dflash:7",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.505330599288109,
-              "plain_tok_s": 334.8763821990665,
-              "speedup": 1.618858961600808,
-              "tok_s": 542.1176323514161,
-              "tokens_per_round": 4.055776892430279
+              "floor_tokens_per_round": 2.313891702809712,
+              "plain_tok_s": 348.32130453090076,
+              "speedup": 1.8271590222360152,
+              "tok_s": 636.438414210654,
+              "tokens_per_round": 4.227848101265823
             }
           },
-          "source": "spec-tune 2026-10-11T22:35:03Z (ninferno-spec-1, 100 s)",
+          "source": "spec-tune 2026-10-27T18:44:05Z (ninferno-spec-1, 68 s)",
           "thinking": {
-            "acceptance": 0.43979357798165136,
+            "acceptance": 0.4657534246575342,
             "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.505330599288109,
-            "plain_tok_s": 334.8763821990665,
-            "speedup": 1.618858961600808,
-            "tok_s": 542.1176323514161,
-            "tokens_per_round": 4.055776892430279
+            "floor_tokens_per_round": 2.313891702809712,
+            "plain_tok_s": 348.32130453090076,
+            "speedup": 1.8271590222360152,
+            "tok_s": 636.438414210654,
+            "tokens_per_round": 4.227848101265823
           },
           "load": [
             {
@@ -5859,8 +5859,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "gpt-oss-20b-MXFP4.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5090, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 5090, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T22:56:29Z",
-          "revision": "3ccc00a94f7c"
+          "load_measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 5090, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 5090, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:47:47Z",
+          "revision": "6101906e4ba4"
         },
         {
           "applies_to": [],
