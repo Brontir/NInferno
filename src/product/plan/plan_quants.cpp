@@ -278,7 +278,11 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 (*config)["quantization_config"].is_object()) {
                 head_bits = (*config)["quantization_config"].value("bits", std::uint64_t{0});
             }
-            if (d.proposal_rows && config && head_bits) {
+            // Only when the conversion finds the ranking (resolve_ranking, as attach_drafters):
+            // without it the full head is converted. The repository the start names is not known
+            // here; the installed and built-in rankings are what a start finds without one.
+            if (d.proposal_rows && config && head_bits &&
+                convert::resolve_ranking(d.ranking, {})) {
                 // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
                 // published [vocab, H] embedding table the assistant's head is read from, also
                 // when the other matrices stay as published.
