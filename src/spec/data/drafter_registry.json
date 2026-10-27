@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 150,
+  "version": 152,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -490,71 +490,71 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.7306724199928083,
+            "acceptance": 0.708083303918108,
             "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.8652950611318833,
-            "plain_tok_s": 90.34610301359398,
-            "speedup": 1.6582153983491281,
-            "tok_s": 149.8132991979781,
-            "tokens_per_round": 3.192017259978425
+            "floor_tokens_per_round": 1.7106239073227623,
+            "plain_tok_s": 93.59026235795311,
+            "speedup": 1.9481988557268868,
+            "tok_s": 182.33244203294336,
+            "tokens_per_round": 3.3271461716937356
           },
           "gpu": "NVIDIA GeForce RTX 4060 Ti",
           "gpu_class": "ad106",
-          "measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus",
-          "measured_at": "2026-10-25",
+          "measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 4060 Ti, built-in corpus",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.6816508937960042,
+            "acceptance": 0.6653655997918293,
             "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.8606193202070553,
-            "plain_tok_s": 90.39635036330259,
-            "speedup": 1.5991324210592028,
-            "tok_s": 144.55573461138403,
-            "tokens_per_round": 3.0449526813880126
+            "floor_tokens_per_round": 1.71285205329916,
+            "plain_tok_s": 93.709999649114,
+            "speedup": 1.9142759787891568,
+            "tok_s": 179.38680130063923,
+            "tokens_per_round": 3.2390542907180384
           },
           "portable": {
             "default": {
-              "acceptance": 0.7306724199928083,
+              "acceptance": 0.708083303918108,
               "config": "mtp:3",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.8652950611318833,
-              "plain_tok_s": 90.34610301359398,
-              "speedup": 1.6582153983491281,
-              "tok_s": 149.8132991979781,
-              "tokens_per_round": 3.192017259978425
+              "floor_tokens_per_round": 1.7106239073227623,
+              "plain_tok_s": 93.59026235795311,
+              "speedup": 1.9481988557268868,
+              "tok_s": 182.33244203294336,
+              "tokens_per_round": 3.3271461716937356
             },
             "non_thinking": {
-              "acceptance": 0.6816508937960042,
+              "acceptance": 0.6653655997918293,
               "config": "mtp:3",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.8606193202070553,
-              "plain_tok_s": 90.39635036330259,
-              "speedup": 1.5991324210592028,
-              "tok_s": 144.55573461138403,
-              "tokens_per_round": 3.0449526813880126
+              "floor_tokens_per_round": 1.71285205329916,
+              "plain_tok_s": 93.709999649114,
+              "speedup": 1.9142759787891568,
+              "tok_s": 179.38680130063923,
+              "tokens_per_round": 3.2390542907180384
             },
             "thinking": {
-              "acceptance": 0.7893939393939394,
-              "config": "mtp:4",
+              "acceptance": 0.798134942402633,
+              "config": "mtp:3",
               "drafter": "assistant",
-              "floor_tokens_per_round": 2.1869588905571407,
-              "plain_tok_s": 90.19569556995376,
-              "speedup": 1.8918388247891198,
-              "tok_s": 170.63571870809852,
-              "tokens_per_round": 4.157575757575757
+              "floor_tokens_per_round": 1.7040144029211386,
+              "plain_tok_s": 93.2328793955876,
+              "speedup": 2.056998246708761,
+              "tok_s": 191.77986945233306,
+              "tokens_per_round": 3.5
             }
           },
-          "source": "spec-tune 2026-10-11T20:26:44Z (ninferno-spec-1, 905 s)",
+          "source": "spec-tune 2026-10-27T18:50:22Z (ninferno-spec-1, 230 s)",
           "thinking": {
-            "acceptance": 0.7442922374429224,
+            "acceptance": 0.6828953037483844,
             "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.4344162631561432,
-            "plain_tok_s": 90.19569556995376,
-            "speedup": 1.9207064779858007,
-            "tok_s": 173.23945676764538,
-            "tokens_per_round": 4.7214611872146115
+            "floor_tokens_per_round": 2.178816249902865,
+            "plain_tok_s": 93.2328793955876,
+            "speedup": 2.057776319465382,
+            "tok_s": 191.85241141581213,
+            "tokens_per_round": 4.483516483516484
           },
           "load": [
             {
@@ -562,20 +562,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "gemma-4-26B-A4B-it-IQ3.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-11T19:34:04Z",
-          "session": {
-            "thinking": {
-              "acceptance": 0.5735140771637122,
-              "config": "dflash:7",
-              "drafter": "dflash",
-              "floor_tokens_per_round": 2.2480456381677594,
-              "plain_tok_s": 90.19569556995376,
-              "speedup": 2.216577940068418,
-              "tok_s": 199.92578908948622,
-              "tokens_per_round": 5.014598540145985
-            }
-          },
-          "revision": "ebac9bd0bbb9"
+          "load_measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 4060 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 4060 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T19:02:28Z",
+          "revision": "e57916301a0f"
         },
         {
           "applies_to": [],
