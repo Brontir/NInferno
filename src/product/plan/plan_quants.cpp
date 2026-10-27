@@ -257,11 +257,25 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                     if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
                 }
             } catch (const std::exception&) {}
+            const bool dflash = d.kind == "dflash" || d.kind == "dflash2";
             std::optional<nlohmann::json> config;
-            if (d.kind == "dflash" || d.kind == "dflash2") {
+            if (dflash || d.proposal_rows) {
                 try {
                     config = convert::fetch_config(spec, *fetch);
                 } catch (const std::exception&) {}
+            }
+            if (d.proposal_rows && config) {
+                // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
+                // published [vocab, H] BF16 embedding table the assistant's head is read from.
+                const nlohmann::json& text =
+                    config->contains("text_config") && (*config)["text_config"].is_object()
+                        ? (*config)["text_config"]
+                        : *config;
+                const auto vocab  = text.value("vocab_size", std::uint64_t{0});
+                const auto hidden = text.value("hidden_size", std::uint64_t{0});
+                if (vocab > d.proposal_rows) {
+                    bytes -= std::min(bytes, 2 * (vocab - d.proposal_rows) * hidden);
+                }
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
@@ -269,7 +283,7 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
                 // (convert.cpp quantize_drafter); the rest takes the kind's quantization.
                 std::uint64_t kept = 0;
-                if (config) {
+                if (dflash && config) {
                     const auto hidden = config->value("hidden_size", std::uint64_t{0});
                     const auto taps   = config->contains("dflash_config")
                                             ? (*config)["dflash_config"]
@@ -281,7 +295,7 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 bytes = kept + convert::companion_drafter_bytes(target_model_type, d.kind, d.quant,
                                                                 bytes - kept);
             }
-            if (!out.state && config) {
+            if (!out.state && dflash && config) {
                 out.state = plan_drafter_state_of_config(*config, target_hidden);
             }
         }
