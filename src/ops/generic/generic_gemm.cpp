@@ -611,9 +611,8 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // register MMA at every width (ops::round_lanes): a C1 MTP round of 5..8 tokens and a C1 copy
     // round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds:
     // with them off, 116.5 both ways), while the C4 verify gains (233.5 -> 249.3).
-    return mmq_call(w, policy, rows, tokens) &&
-           (!bf16_mma_native() || (tokens >= kMmqVerifyMinTokens && ops::round_lanes() != 1 &&
-                                   mmq_verify_format(w.qtype)));
+    return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens &&
+           (!bf16_mma_native() || (ops::round_lanes() != 1 && mmq_verify_format(w.qtype)));
 }
 
 std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
