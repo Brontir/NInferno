@@ -48,17 +48,37 @@ inline constexpr bool kRmmaLatencyVariant =
     Schedule::kNTiles == 1 &&
     (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu));
 
-// Whether this device launches the latency variant: on a latency-bound board
-// (rmma_latency_board), where SwiGLU's staging copies asynchronously (cp.async, sm_80+: without
-// it the variant left SwiGLU 8-28 % slower on the RTX 2080 Ti), and only where the variant holds
-// as many CTAs per SM as the plain kernel (its registers: Q5_K's w1x4 at 129 against 127 on
+// The DRAM bytes per SM cycle (dram_bytes_per_sm_cycle: the board's facts) from which the plain
+// K-quant kernel of one token tile is latency-bound. It cuts a row's scales out as it loads them,
+// so a warp's prefetch issues row after row, each waiting for its own head; the latency variant
+// issues them back to back. A/B on five boards, T = 5..8, Qwen3.5-9B shapes (bytes per SM cycle:
+// RTX 4090 3.1, 4070 Ti 3.2, 5070 Ti 5.2, 2080 Ti 5.9, 3060 7.2):
+// - SwiGLU (two row sets, the activations staged): the 4090 and 4070 Ti, whose plain kernel
+//   streamed at 86-91 % of DRAM, lost 8-34 % to the variant (ncu, Q4_K 12288x4096 on the 4090:
+//   lg_throttle 0.02 -> 6.9 stalls per issue, the queued loads); the 5070 Ti and 3060, at
+//   64-74 %, gained 2-15 % and 11-25 %.
+// - One row set (store, add; nothing staged): the 3060 gained 8-21 %, the 2080 Ti 0-4 %, and
+//   the 5070 Ti between +14 % (Q3_K) and -3 % (Q4_K add 4096x12288 w1x4, 40.7 -> 41.7 us), so
+//   its threshold lies above that board.
+// Both thresholds lie between the boards measured on either side of them, not on one.
+inline constexpr double kRmmaLatencySwiGluBytes = 4.5;
+inline constexpr double kRmmaLatencyOneSetBytes = 5.5;
+
+// Whether this device launches the latency variant: where the board is latency-bound for the
+// epilogue (above), where SwiGLU's staging copies asynchronously (cp.async, sm_80+: on the RTX
+// 2080 Ti the variant without it left Q4_K SwiGLU 7-8 % slower), and only where the variant
+// holds as many CTAs per SM as the plain kernel (its registers: Q5_K's w1x4 at 129 against 127 on
 // sm_120 dropped a quarter of the warps and lost 12-30 %, RTX 5070 Ti).
 template <class Decoder, class Schedule, Epilogue E>
 bool rmma_latency_pays() {
     static PerDevice<bool> pays;
     return pays.get([](int) {
-        if (!rmma_latency_board()) return false;
-        if (E == Epilogue::SwiGlu && device_class().major < 8) return false;
+        const bool swiglu = E == Epilogue::SwiGlu;
+        if (dram_bytes_per_sm_cycle() <
+            (swiglu ? kRmmaLatencySwiGluBytes : kRmmaLatencyOneSetBytes)) {
+            return false;
+        }
+        if (swiglu && device_class().major < 8) return false;
         const auto ctas = [](const void* kernel) {
             return kernel_resident_ctas_per_sm(kernel, Schedule::kThreads, 0);
         };
@@ -87,7 +107,8 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     const auto smem = static_cast<std::size_t>(args.spread_smem);
     if (Schedule::kCluster == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
-        rmma_kernel<Decoder, Schedule, E, Latency><<<grid, Schedule::kThreads, smem, stream>>>(args);
+        rmma_kernel<Decoder, Schedule, E, Latency>
+            <<<grid, Schedule::kThreads, smem, stream>>>(args);
     } else {
         cudaLaunchAttribute attributes[2]{};
         unsigned count = 0;
