@@ -1038,7 +1038,10 @@ bool drafters_incomplete(const fs::path& target_artifact) {
         }
         const auto& drafters = manifest.at("drafters");
         return std::any_of(drafters.begin(), drafters.end(), [](const Json& d) {
-            return !d.contains("quant") && d.value("status", "").starts_with("failed");
+            // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
+            // quantization its kind gives it.
+            return d.value("name", std::string()).find('.') == std::string::npos &&
+                   d.value("status", "").starts_with("failed");
         });
     } catch (const std::exception&) { return true; }
 }

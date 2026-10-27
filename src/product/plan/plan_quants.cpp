@@ -256,7 +256,9 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                     if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
                 }
             } catch (const std::exception&) {}
-            if (!d.component.empty() || !d.quant.empty()) {
+            // A separate Gemma 4 assistant takes its quantization whole; a DFlash drafter keeps its
+            // feature projection BF16 (convert.cpp quantize_drafter), so its published size stands.
+            if (!d.component.empty() || (!d.quant.empty() && d.kind == "gemma4_assistant")) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
             }
             if (!out.state && (d.kind == "dflash" || d.kind == "dflash2")) {
