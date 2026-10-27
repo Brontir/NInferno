@@ -6,7 +6,7 @@
 // where it does, greedy speculation reproduces plain decode.
 //
 //   ninferno_r8_schedule_bench [--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...]
-//                            [--samples 15] [--launches 60] [--tokens 1,2,4,8]
+//                            [--samples 15] [--launches 60] [--tokens 1,2,4,8] [--rmma 1]
 //
 // FILE is the NINFERNO_ROUTE_RECORD / ninferno_route_tune format, "<format> <compute> <epilogue>
 // <n> <k>" per line (the compute column is ignored: R8 is the A8 decode route); --problem adds one
@@ -74,6 +74,10 @@ generic::Epilogue parse_epilogue(const std::string& s) {
     if (s == "swiglu") return generic::Epilogue::SwiGlu;
     throw std::invalid_argument("unknown epilogue " + s);
 }
+
+// --rmma 1: also time every launchable register-MMA schedule of one token tile (T <= 8), so a
+// K-quant verify width compares the dispatcher's pick with the other tiles.
+bool g_rmma = false;
 
 double median(std::vector<double> v) {
     std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
@@ -159,6 +163,14 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     }
     if (tokens > 1) offer(generic::Route{generic::Family::GgmlVec, 0});
     offer(picked);
+    if (g_rmma && tokens <= 8) {
+        for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+            if (generic::rmma_schedule_launchable(i) &&
+                generic::rmma_schedule_info(i).n_tiles == 1) {
+                offer(generic::Route{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)});
+            }
+        }
+    }
     const int schedules = static_cast<int>(routes.size());
 
     // The decode route's bytes of the first token (T = 1), against every candidate's first token.
@@ -224,10 +236,14 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     for (int i = 0; i < schedules; ++i) {
         const generic::Route r = routes[i];
         const bool same_decode = std::equal(decoded.begin(), decoded.end(), outputs[i].begin());
-        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s\n", fmt,
-                    epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
+        // FNV-1a of the whole output: one route's bytes compared across builds.
+        std::uint64_t hash = 14695981039346656037ULL;
+        for (const std::uint8_t c : outputs[i]) hash = (hash ^ c) * 1099511628211ULL;
+        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s h=%016llx\n",
+                    fmt, epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
                     static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
-                    same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "");
+                    same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
+                    static_cast<unsigned long long>(hash));
     }
     std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n,
                 p.k, tokens, generic::route_name(picked).c_str(), med[at_picked],
@@ -265,6 +281,8 @@ int main(int argc, char** argv) {
                 samples = std::stoi(v);
             } else if (a == "--launches") {
                 launches = std::stoi(v);
+            } else if (a == "--rmma") {
+                g_rmma = std::stoi(v) != 0;
             } else if (a == "--tokens") {
                 widths.clear();
                 std::stringstream in(v);

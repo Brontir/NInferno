@@ -589,7 +589,7 @@ bool mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int3
 // L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); ninfer-all runs
 // mul_mat_q<16> there (92.9 / 280.1). The route_tune grid, one call with L2 flushed, does not show
 // it (L4 rule 1.06 of its best). Where the BF16 MMA is emulated (Turing) every mmq format takes
-// it, as before.
+// it from 9 tokens, and the codebook formats below that too (mmq_verify_rule).
 bool bf16_mma_native();
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per
 // token tile, which the matrix kernel's one decode a call saves. The K-quants' affine dequant is
@@ -611,9 +611,15 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // register MMA at every width (ops::round_lanes): a C1 MTP round of 5..8 tokens and a C1 copy
     // round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds:
     // with them off, 116.5 both ways), while the C4 verify gains (233.5 -> 249.3).
-    return mmq_call(w, policy, rows, tokens) &&
-           (!bf16_mma_native() || (tokens >= kMmqVerifyMinTokens && ops::round_lanes() != 1 &&
-                                   mmq_verify_format(w.qtype)));
+    // Where the BF16 MMA is emulated (Turing) a verify of 5..8 tokens keeps mmq for the codebook
+    // formats only: the affine ones (the K-quants, Q4_0) dequant cheaply on the register MMA (RTX
+    // 2080 Ti, one call each, T 5..8: Q3_K-Q6_K 10-58 % faster off mmq; Gemma 4 12B Q4_K_M MTP5
+    // 116.7 -> 136.1 tok/s), while the codebook IQ4_XS lost 23-38 % there.
+    if (!bf16_mma_native())
+        return mmq_call(w, policy, rows, tokens) &&
+               (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
+    return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens &&
+           ops::round_lanes() != 1 && mmq_verify_format(w.qtype);
 }
 
 std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
