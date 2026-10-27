@@ -327,7 +327,8 @@ std::unique_ptr<DFlashDrafter> DFlashDrafter::load(const std::filesystem::path& 
     }
     drafter->backing_ = demands.materialize(device);
     // BF16 activations, but A8 where the format verifies a whole draft block on R8 (Q8:
-    // ops::drafter_linear_policy).
+    // ops::drafter_linear_policy). Under --activations exact the invariant routes run BF16
+    // whatever the policy.
     const Prepare prepare(demands, *drafter->backing_, /*recorded=*/false);
     const auto lift = [](Projection p) {
         p.policy = ops::drafter_linear_policy(p.weight, p.policy);
