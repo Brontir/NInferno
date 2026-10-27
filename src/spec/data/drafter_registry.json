@@ -252,7 +252,7 @@
           "gpu": "NVIDIA GeForce RTX 4090",
           "gpu_class": "ad102",
           "measured_on": "gemma-4-26B-A4B-it-qat-UD-Q4_K_XL.ninferno + g26_mtp_Q4_0.ninferno (unsloth MTP Q4_0), RTX 4090, greedy, built-in corpus",
-          "measured_at": "2026-10-27",
+          "measured_at": "2026-10-25",
           "non_thinking": {
             "acceptance": 0.6184329710144928,
             "config": "mtp:4",
@@ -280,8 +280,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 4090, built-in corpus, context 8192, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:48:26Z",
-          "revision": "504fa0fc2e97"
+          "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:26:52Z",
+          "revision": "b8cc3d939a38"
         },
         {
           "gpu_class": "*",
