@@ -112,6 +112,8 @@ CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
         timings.speculation.update(
             Json{{"floor", outcome.metrics.speculative_floor},
                  {"watchdog_tripped", outcome.metrics.speculative_watchdog_tripped},
+                 {"rounds", outcome.metrics.speculative_rounds},
+                 {"fallback_steps", outcome.metrics.speculative_fallback_steps},
                  {"step_downs", outcome.metrics.speculative_step_downs},
                  {"final_draft_window", outcome.metrics.speculative_final_draft_window},
                  {"plain_steps", outcome.metrics.speculative_plain_steps},

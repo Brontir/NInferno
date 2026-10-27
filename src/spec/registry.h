@@ -85,11 +85,22 @@ struct ModelEntry {
     std::string evidence;
 };
 
+// A drafter kind's rule, for every drafter of that kind that does not name its own: the converter
+// recipe, NInferno's quantization of its plain projections (a drafter only proposes and the target
+// verifies every token, so it changes the speed, never the output; a published encoding is kept),
+// and the shortlist its head is restricted to (a Gemma 4 assistant's own head).
 struct KindInfo {
     std::string name;
     std::vector<std::string> architectures;
     std::string recipe;
+    std::string quant;               // q8 | q4 | nvfp4; "" as the recipe leaves it
+    std::uint64_t proposal_rows = 0; // 0: the full head
+    std::string ranking;             // the shortlist ranking proposal_rows reads
 };
+
+// A separately packaged drafter (no component) takes its kind's rule where it names none: the
+// registry's own entries when it is read, a bundle's declared ones when they are planned.
+void apply_kind_rule(DrafterDecl& d, const std::vector<KindInfo>& kinds);
 
 class Registry {
 public:
