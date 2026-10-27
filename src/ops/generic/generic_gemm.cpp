@@ -612,8 +612,9 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds:
     // with them off, 116.5 both ways), while the C4 verify gains (233.5 -> 249.3).
     // Where the BF16 MMA is emulated (Turing) a verify of 5..8 tokens keeps mmq for the codebook
-    // formats only: the K-quants' affine dequant runs faster on the register MMA (RTX 2080 Ti, one
-    // call each, T 5..8: Q3_K-Q6_K 10-58 % faster off mmq), while IQ4_XS lost 23-38 % there.
+    // formats only: the affine ones (the K-quants, Q4_0) dequant cheaply on the register MMA (RTX
+    // 2080 Ti, one call each, T 5..8: Q3_K-Q6_K 10-58 % faster off mmq; Gemma 4 12B Q4_K_M MTP5
+    // 116.7 -> 136.1 tok/s), while the codebook IQ4_XS lost 23-38 % there.
     if (!bf16_mma_native())
         return mmq_call(w, policy, rows, tokens) &&
                (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
