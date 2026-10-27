@@ -322,7 +322,12 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // R8 against 0.99-1.24 on the register MMA (SwiGLU 1.03-1.06 against 1.09-1.10, the down
 // projection 0.96-1.03 against 1.21-1.24), each token summed as at decode; past four tokens the
 // other formats' R8 lost (Q4_K 1.48-1.89, IQ3_XXS 1.49-1.80, IQ4_XS 1.19-1.53 against
-// 1.07-1.62).
+// 1.07-1.62). The rule is the format's on every chip, from the chip's own rates: Q8's codes are
+// whole bytes (no unpacking), so R8 does dp4a work only, and dp4a runs four int8 products per FP32
+// lane per clock on every generation from Volta; the width at which that work takes as long as
+// reading the 1.0625 bytes per weight is 21 tokens on the A100 and H100, 37 on the RTX 3060, 40 on
+// the GV100 and 86 on the RTX 4090, well past eight. Measured: RTX 5090 and 5070 Ti (the bench),
+// RTX 4090 (Qwen3.5-9B Q8_0 spec-tune, dflash:7 229 -> 273 tok/s).
 [[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
 [[nodiscard]] bool r8_verify_compiled(QType qtype);

@@ -293,7 +293,8 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("unknown option " + a);
             }
         }
-        if (problems.empty() || samples <= 0 || launches <= 0 || widths.empty()) {
+        if (problems.empty() || samples <= 0 || launches <= 0 || widths.empty() ||
+            std::any_of(widths.begin(), widths.end(), [](std::int32_t t) { return t <= 0; })) {
             std::cerr << "usage: ninferno_r8_schedule_bench [--shapes FILE] "
                          "[--problem FORMAT,EPILOGUE,N,K ...] [--samples N] [--launches N] "
                          "[--tokens T,...]\n";
