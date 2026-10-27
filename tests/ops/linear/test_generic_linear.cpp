@@ -1556,8 +1556,7 @@ int main() {
         if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != want ||
             ops::drafter_linear_policy(w, ops::LinearPolicy::AllowA4) != ops::LinearPolicy::AllowA4 ||
             (f.qtype == QType::Q8_G32_FP16 && !block)) {
-            std::cout << "FAIL " << f.name << " drafter_linear_policy" << '
-';
+            std::cout << "FAIL " << f.name << " drafter_linear_policy" << std::endl;
             ++failures;
         }
     }
