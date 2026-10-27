@@ -2020,8 +2020,9 @@ struct GroupTailOf : std::false_type {};
 template <class D>
 struct GroupTailOf<D, std::void_t<decltype(D::kGroupTail)>> : std::bool_constant<D::kGroupTail> {};
 // A decoder whose load() leaves part of a run as loaded (the K-quant heads) finishes it with
-// unpack(run, step_k0) when the step computes, so no instruction of a fetch waits for its loads
-// and the next step's loads stay in flight while this step computes.
+// unpack(run, step_k0) before mma_step reads it: rmma_kernel when the step computes, so no
+// instruction of a fetch waits for its loads and the next step's loads stay in flight while this
+// step computes; the MoE kernels right after the load, as the decoders did inside load() before.
 template <class D, class = void>
 struct UnpackOf : std::false_type {};
 template <class D>
@@ -2119,10 +2120,10 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 // Staged (rmma_kernel's act_stage): a spread decoder's activations of the step were copied ahead
 // into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
 template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
-__device__ __forceinline__ void mma_step_runs(float (&acc)[Sets][MT][NT][4],
-                                              const typename Decoder::Run (&runs)[Sets][MT][2],
-                                              const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                              int quad, int k, const uint2* stage = nullptr) {
+__device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
+                                         const typename Decoder::Run (&runs)[Sets][MT][2],
+                                         const __nv_bfloat16* const (&col)[NT], int step_k0,
+                                         int quad, int k, const uint2* stage = nullptr) {
     static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
@@ -2255,37 +2256,6 @@ __device__ __forceinline__ void mma_step_runs(float (&acc)[Sets][MT][NT][4],
                 }
             }
         }
-    }
-}
-
-// A step's runs as pair() and the factors read them: as loaded, or (UnpackOf) unpacked copies.
-template <class Decoder, int Sets, int MT>
-__device__ __forceinline__ void unpack_runs(typename Decoder::Run (&dst)[Sets][MT][2],
-                                            const typename Decoder::Run (&src)[Sets][MT][2],
-                                            int step_k0) {
-#pragma unroll
-    for (int s = 0; s < Sets; ++s)
-#pragma unroll
-        for (int m = 0; m < MT; ++m)
-#pragma unroll
-            for (int h = 0; h < 2; ++h) {
-                dst[s][m][h] = src[s][m][h];
-                Decoder::unpack(dst[s][m][h], step_k0);
-            }
-}
-
-template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
-__device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
-                                         const typename Decoder::Run (&loaded)[Sets][MT][2],
-                                         const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k, const uint2* stage = nullptr) {
-    if constexpr (UnpackOf<Decoder>::value) {
-        typename Decoder::Run runs[Sets][MT][2];
-        unpack_runs<Decoder, Sets, MT>(runs, loaded, step_k0);
-        mma_step_runs<Decoder, NT, J, Sets, MT, Staged>(acc, runs, col, step_k0, quad, k, stage);
-    } else {
-        mma_step_runs<Decoder, NT, J, Sets, MT, Staged>(acc, loaded, col, step_k0, quad, k,
-                                                        stage);
     }
 }
 
@@ -2885,7 +2855,7 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
 
     // A K-quant step of one token tile (the verify widths, T <= 8) also copies its activations
     // ahead, with cp.async into shared memory, each lane the 8-byte chunks its own MMAs read
-    // (mma_step_runs, Staged), so no lane reads another's and the wait is the lane's own. Loaded
+    // (mma_step, Staged), so no lane reads another's and the wait is the lane's own. Loaded
     // in the step itself they were the second long-scoreboard stall after the weights (ncu, RTX
     // 3060, Q4_K SwiGLU 12288x4096 T = 8: a quarter of the stall samples on the MMAs reading them).
     constexpr bool kActStage = kRmmaActStage && UnpackOf<Decoder>::value && NT == 1 &&
@@ -2976,12 +2946,11 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
             } else {
                 cp_wait<0>();
             }
-            mma_step_runs<Decoder, NT, J, kSets, MT, true>(acc, ring[slot], col, step * KStep,
-                                                           quad, a.k,
-                                                           &act_stage[slot][warp][0][lane]);
+            mma_step<Decoder, NT, J, kSets, MT, true>(acc, ring[slot], col, step * KStep, quad, a.k,
+                                                      &act_stage[slot][warp][0][lane]);
         } else {
             (void)ahead;
-            mma_step_runs<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
+            mma_step<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
         }
     };
 
