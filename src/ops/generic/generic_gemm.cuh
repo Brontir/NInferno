@@ -2299,17 +2299,13 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
 // once, after the last step (rmma_kernel). Scales and min terms are linear in those sums, applied
 // per lane as mma_step applies them per tile. No shuffles, and no products for absent tokens.
 // acc[s][m][h][n]: row g + 8h, token n of the tile; col[n]: token n's activations (null: none).
+// runs: unpacked (UnpackOf) by the kernel.
 template <class Decoder, int J, int Sets, int MT>
 __device__ __forceinline__ void mma_step_local(float (&acc)[Sets][MT][2][8],
-                                               const typename Decoder::Run (&loaded)[Sets][MT][2],
+                                               const typename Decoder::Run (&runs)[Sets][MT][2],
                                                const __nv_bfloat16* const (&col)[8], int tokens,
                                                int step_k0, int quad, int k) {
     static_assert(!F16Of<Decoder>::value, "the sm_70 build keeps BF16 codes");
-    typename Decoder::Run unpacked[Sets][MT][2];
-    if constexpr (UnpackOf<Decoder>::value) {
-        unpack_runs<Decoder, Sets, MT>(unpacked, loaded, step_k0);
-    }
-    const auto& runs = UnpackOf<Decoder>::value ? unpacked : loaded;
     // Two products of a code register and an activation register, added to `sum`.
     const auto dot2 = [](float sum, unsigned a, unsigned b) {
         const float2 w = bf16x2_pair(a);
@@ -2941,6 +2937,16 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
     const auto compute = [&](auto slot_tag, int step, bool ahead) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = (GroupTailOf<Decoder>::value ? 0 : quad * R) + step * KStep;
+        // Unpacked in place: a copy (mma_step's) kept both forms live and spilled the 128-register
+        // SwiGLU decode tile (Q5_K w1x8: 80 local loads and stores, 303 -> 435 us at T = 8).
+        if constexpr (UnpackOf<Decoder>::value) {
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int m = 0; m < MT; ++m)
+#pragma unroll
+                    for (int h = 0; h < 2; ++h) Decoder::unpack(ring[slot][s][m][h], step * KStep);
+        }
 #if NINFERNO_FMA_MMA
         if constexpr (kLocal) {
             if (local) {
@@ -2970,11 +2976,12 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
             } else {
                 cp_wait<0>();
             }
-            mma_step<Decoder, NT, J, kSets, MT, true>(acc, ring[slot], col, step * KStep, quad, a.k,
-                                                      &act_stage[slot][warp][0][lane]);
+            mma_step_runs<Decoder, NT, J, kSets, MT, true>(acc, ring[slot], col, step * KStep,
+                                                           quad, a.k,
+                                                           &act_stage[slot][warp][0][lane]);
         } else {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
+            mma_step_runs<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
         }
     };
 
