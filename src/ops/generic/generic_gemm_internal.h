@@ -78,6 +78,10 @@ void launch_rmma_ggml_q20(int schedule, Epilogue epilogue, const GemmArgs& args,
 void launch_scalar(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                    cudaStream_t stream);
 
+// Whether this device is one whose K-quant one-tile register MMA is latency-bound: its DRAM asks
+// at least kRmmaLatencyBytesPerSmCycle bytes of an SM per cycle (generic_gemm.cpp). Once per device.
+[[nodiscard]] bool rmma_latency_board();
+
 // Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 4
 // (generic_volta_gemv.cu), in place of a lane-local register-MMA call.
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args);

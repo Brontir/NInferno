@@ -1258,6 +1258,33 @@ void record_problem(const Problem& p) {
 
 } // namespace
 
+// The DRAM bytes each SM must take per cycle for the board to stream at its bandwidth (the
+// facts' bandwidth over SMs times the reference clock) at or above which the K-quant register MMA
+// of one token tile takes its latency variant (rmma_kernel's Latency, generic_gemm_launch.cuh).
+// The plain kernel cuts a row's scales out as it loads them, so a warp's prefetch issues row
+// after row, each waiting for its own head: it reached 86-91 % of DRAM at T = 8 where a cycle
+// asks 3.1-3.2 B of an SM (RTX 4090, 4070 Ti), and there the variant's back-to-back loads only
+// queued (ncu, Q4_K SwiGLU 12288x4096: lg_throttle 0.02 -> 6.9 stalls per issue, 67 -> 84 us).
+// Where a cycle asks 5.2-7.2 B (RTX 5070 Ti, 2080 Ti, 3060) the plain kernel stayed at 64-74 %,
+// latency-bound, and the variant gained up to 25 %. 4.5 lies between the two classes; boards in
+// the gap (RTX 5080 and 5090 at 4.4, A10 at 4.9) were measured in neither.
+constexpr double kRmmaLatencyBytesPerSmCycle = 4.5;
+
+bool rmma_latency_board() {
+    static PerDevice<bool> on;
+    return on.get([](int) {
+        try {
+            const auto& d = device_class();
+            const auto& f = d.facts;
+            if (!f.has_roofline() || d.sms <= 0) return false;
+            const double per_cycle = f.dram_bytes_per_s() / (d.sms * f.reference_clock_hz());
+            return per_cycle >= kRmmaLatencyBytesPerSmCycle;
+        } catch (const std::exception&) {
+            return false;
+        }
+    });
+}
+
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
 
 int rmma_schedule_count() { return static_cast<int>(kRmmaSchedules.size()); }

@@ -180,9 +180,6 @@ __global__ __launch_bounds__(Schedule::kThreads,
                                    : k_ok      ? Decoder::load(a.w, weight_row(l, s), k0)
                                                : Decoder::masked(a.w, weight_row(l, s),
                                                                  step * KStep);
-                    if constexpr (generic::UnpackOf<Decoder>::value) {
-                        Decoder::unpack(dst[s][m][h], step * KStep);
-                    }
                 }
     };
 
