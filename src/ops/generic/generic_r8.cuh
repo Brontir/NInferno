@@ -80,10 +80,14 @@ __device__ __forceinline__ int dp4a_words(const uint4& w, const uint4& x, int ac
 }
 
 // kPre: the activation arrives quantized (codes [T, K], scales and sums [T, K/32], the W4A8
-// quantizer's output, the same arithmetic as the in-CTA quantization) and is read from global
-// memory; otherwise every CTA quantizes all T tokens into shared memory first.
-template <class C, class S, int NT, Epilogue E, bool kPre = false>
+// quantizer's output, the same arithmetic as the in-CTA quantization); otherwise every CTA quantizes
+// all T tokens into shared memory first. kStaged (with kPre): every CTA copies it into shared memory
+// first, as it would have quantized it, instead of each warp reading it from L2 for every block of
+// its rows: at verify widths a 4-bit format's warps read more activation bytes than weight bytes.
+template <class C, class S, int NT, Epilogue E, bool kPre = false, bool kStaged = false>
 __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activation act) {
+    static_assert(kPre || !kStaged, "only a pre-quantized activation is staged");
+    constexpr bool kShared = !kPre || kStaged; // the activation is read from shared memory
     constexpr bool kSwiGlu = E == Epilogue::SwiGlu;
     constexpr int kSets    = kSwiGlu ? 2 : 1; // gate rows, then the matching up rows
     constexpr int kRows    = S::kRows;
@@ -124,12 +128,12 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
     // 8-byte aligned for SharedGrid::pair (r8_grid_pad).
     auto* grid_words = reinterpret_cast<std::uint32_t*>(
         r8_shared +
-        (kPre ? 0 : (r8_smem_bytes(NT, static_cast<std::int64_t>(a.k), C::kMin) + 7) & ~7LL));
+        (kShared ? (r8_smem_bytes(NT, static_cast<std::int64_t>(a.k), C::kMin) + 7) & ~7LL : 0));
     if constexpr (kGridWords > 0) {
         for (int i = static_cast<int>(threadIdx.x); i < kGridWords; i += S::kThreads) {
             grid_words[i] = __ldg(C::grid() + i);
         }
-        if constexpr (kPre) __syncthreads();
+        if constexpr (!kShared) __syncthreads();
     }
 
     Raw ring[2][kSets][kRows][kStride];
@@ -180,7 +184,23 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         x_scale[task] = scale;
         if constexpr (C::kMin) x_sum[task] = scale * static_cast<float>(qsum);
     }
-    if constexpr (!kPre) __syncthreads();
+    for (int task = tid; kStaged && task < NT * blocks; task += S::kThreads) {
+        const int token = task / blocks;
+        const int b     = task - token * blocks;
+        if (token < a.tokens) {
+            const auto* c = reinterpret_cast<const uint4*>(
+                act.codes + static_cast<std::int64_t>(token) * a.k + b * 32);
+            x_lo[task]    = c[0];
+            x_hi[task]    = c[1];
+            x_scale[task] = act.scales[task];
+            if constexpr (C::kMin) x_sum[task] = act.sums[task];
+        } else {
+            x_lo[task] = x_hi[task] = make_uint4(0, 0, 0, 0);
+            x_scale[task]           = 0.0F;
+            if constexpr (C::kMin) x_sum[task] = 0.0F;
+        }
+    }
+    if constexpr (kShared) __syncthreads();
 
     float acc[kSets][kRows][NT];
 #pragma unroll
@@ -197,7 +217,7 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         float xs[NT], xm[NT];
 #pragma unroll
         for (int n = 0; n < NT; ++n) {
-            if constexpr (kPre) {
+            if constexpr (!kShared) {
                 if (n < a.tokens) {
                     const auto* c = reinterpret_cast<const uint4*>(
                         act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
@@ -318,17 +338,18 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
     X(2, 8, 2)                                                                                     \
     X(3, 8, 1)
 
-template <class C, class S, int NT, Epilogue E, bool kPre = false>
+template <class C, class S, int NT, Epilogue E, bool kPre = false, bool kStaged = false>
 void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation act = {}) {
     const dim3 grid((args.rows + S::kRowsPerCta - 1) / S::kRowsPerCta);
-    const auto smem = (kPre ? std::size_t{0}
-                            : static_cast<std::size_t>(r8_smem_bytes(NT, args.k, C::kMin))) +
+    const auto smem = (kPre && !kStaged
+                           ? std::size_t{0}
+                           : static_cast<std::size_t>(r8_smem_bytes(NT, args.k, C::kMin))) +
                       (r8_stage_grid() && r8_grid_words<C>() > 0
                            ? sizeof(std::uint32_t) * r8_grid_words<C>() + r8_grid_pad
                            : 0);
     // kPre launches in stream order: the quantizer it reads is the kernel right before it.
     if (kPre || (args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported()) {
-        r8_kernel<C, S, NT, E, kPre><<<grid, S::kThreads, smem, stream>>>(args, act);
+        r8_kernel<C, S, NT, E, kPre, kStaged><<<grid, S::kThreads, smem, stream>>>(args, act);
     } else {
         cudaLaunchAttribute attribute{};
         attribute.id = cudaLaunchAttributeProgrammaticStreamSerialization;
@@ -340,7 +361,7 @@ void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation 
         config.stream           = stream;
         config.attrs            = &attribute;
         config.numAttrs         = 1;
-        CUDA_CHECK(cudaLaunchKernelEx(&config, r8_kernel<C, S, NT, E, kPre>, args, act));
+        CUDA_CHECK(cudaLaunchKernelEx(&config, r8_kernel<C, S, NT, E, kPre, kStaged>, args, act));
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -349,9 +370,28 @@ template <class C, class S, Epilogue E, bool kVerify>
 void r8_launch_schedule(const GemmArgs& args, cudaStream_t stream, W4a8Activation pre) {
     if (pre.codes != nullptr) {
         if constexpr (kVerify) {
-            if (args.tokens <= 2) return r8_launch_tokens<C, S, 2, E, true>(args, stream, pre);
-            if (args.tokens <= 4) return r8_launch_tokens<C, S, 4, E, true>(args, stream, pre);
-            if (args.tokens <= 8) return r8_launch_tokens<C, S, 8, E, true>(args, stream, pre);
+            // Staged where the activation fits the static shared bytes beside the grid (r8_fits'
+            // bound): every gate/up and attention projection of the lab's models at eight tokens.
+            const auto staged = [&](int nt) {
+                const std::int64_t grid =
+                    r8_stage_grid() && r8_grid_words<C>() > 0
+                        ? static_cast<std::int64_t>(sizeof(std::uint32_t)) * r8_grid_words<C>() +
+                              static_cast<std::int64_t>(r8_grid_pad)
+                        : 0;
+                return r8_smem_bytes(nt, args.k, C::kMin) + grid <= kStaticSharedBytesPerBlock;
+            };
+            if (args.tokens <= 2) {
+                return staged(2) ? r8_launch_tokens<C, S, 2, E, true, true>(args, stream, pre)
+                                 : r8_launch_tokens<C, S, 2, E, true>(args, stream, pre);
+            }
+            if (args.tokens <= 4) {
+                return staged(4) ? r8_launch_tokens<C, S, 4, E, true, true>(args, stream, pre)
+                                 : r8_launch_tokens<C, S, 4, E, true>(args, stream, pre);
+            }
+            if (args.tokens <= 8) {
+                return staged(8) ? r8_launch_tokens<C, S, 8, E, true, true>(args, stream, pre)
+                                 : r8_launch_tokens<C, S, 8, E, true>(args, stream, pre);
+            }
         }
         throw std::invalid_argument("generic R8: no verify-width form for this call");
     }
