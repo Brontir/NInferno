@@ -98,6 +98,10 @@ struct KindInfo {
     std::string ranking;             // the shortlist ranking proposal_rows reads
 };
 
+// A separately packaged drafter (no component) takes its kind's rule where it names none: the
+// registry's own entries when it is read, a bundle's declared ones when they are planned.
+void apply_kind_rule(DrafterDecl& d, const std::vector<KindInfo>& kinds);
+
 class Registry {
 public:
     [[nodiscard]] static Registry parse(const std::string& text);

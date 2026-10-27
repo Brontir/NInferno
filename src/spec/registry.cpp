@@ -59,6 +59,19 @@ DrafterDecl parse_drafter(const Json& d) {
     return out;
 }
 
+void apply_kind_rule(DrafterDecl& d, const std::vector<KindInfo>& kinds) {
+    if (!d.component.empty()) { return; }
+    for (const auto& k : kinds) {
+        if (k.name != d.kind) { continue; }
+        if (d.recipe.empty()) { d.recipe = k.recipe; }
+        if (d.quant.empty()) { d.quant = k.quant; }
+        if (d.proposal_rows == 0 && d.ranking.empty()) {
+            d.proposal_rows = k.proposal_rows;
+            d.ranking       = k.ranking;
+        }
+    }
+}
+
 std::pair<std::string, std::string> split_variant(std::string_view name) {
     const auto dot = name.find('.');
     if (dot == std::string_view::npos) { return {std::string(name), std::string()}; }
@@ -129,20 +142,8 @@ Registry Registry::parse(const std::string& text) {
         out.kinds_.push_back(std::move(kind));
     }
     for (const auto& item : doc.at("models")) { out.models_.push_back(parse_model_entry(item)); }
-    // A separately packaged drafter takes its kind's rule where it names none (KindInfo).
     for (auto& entry : out.models_) {
-        for (auto& d : entry.drafters) {
-            if (!d.component.empty()) { continue; }
-            for (const auto& k : out.kinds_) {
-                if (k.name != d.kind) { continue; }
-                if (d.recipe.empty()) { d.recipe = k.recipe; }
-                if (d.quant.empty()) { d.quant = k.quant; }
-                if (d.proposal_rows == 0 && d.ranking.empty()) {
-                    d.proposal_rows = k.proposal_rows;
-                    d.ranking       = k.ranking;
-                }
-            }
-        }
+        for (auto& d : entry.drafters) { apply_kind_rule(d, out.kinds_); }
     }
     for (const auto& item : doc.value("pairs", Json::array())) {
         out.pairs_.push_back(parse_pair(item));

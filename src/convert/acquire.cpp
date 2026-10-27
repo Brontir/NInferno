@@ -946,6 +946,19 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
             } else {
                 out.reused = true;
                 say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                // Its separate drafters planned from another registry (one whose kinds convert
+                // them otherwise), or one failed: attached again; its companions are its own.
+                if (drafters_on && !gguf && drafters_incomplete(out.artifact)) {
+                    try {
+                        out.drafters = attach_drafters(
+                            plan_drafters(describe_artifact(out.artifact, model_id)), out.artifact,
+                            attach);
+                        require_drafters(*out.drafters, options);
+                    } catch (const std::exception& error) {
+                        if (options.with_drafters == true) { throw; }
+                        say(options, std::string("drafters not attached: ") + error.what());
+                    }
+                }
                 return out;
             }
         }

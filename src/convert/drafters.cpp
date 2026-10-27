@@ -446,7 +446,8 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
     }
     std::optional<spec::ModelEntry> entry;
     if (t.declaration) {
-        entry           = spec::parse_model_entry(*t.declaration);
+        entry = spec::parse_model_entry(*t.declaration);
+        for (auto& d : entry->drafters) { spec::apply_kind_rule(d, registry.kinds()); }
         plan.source     = "bundle";
         plan.matched_by = "declaration";
     } else {
@@ -908,6 +909,12 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 d.artifact_id = spec::artifact_id_hex(local->second);
                 d.status      = "attached";
                 log_line(options.log, "drafter " + d.decl.name + ": " + d.artifact + " (given)");
+                continue;
+            }
+            // Under --drafter-quant every variant would be that one file: only the drafter itself.
+            if (!options.conversion.drafter_quant.empty() && d.decl.name.find('.') != std::string::npos) {
+                d.status = "skipped: --drafter-quant " + options.conversion.drafter_quant +
+                           " names the drafter's one quantization";
                 continue;
             }
             if (d.decl.repo.empty()) {
