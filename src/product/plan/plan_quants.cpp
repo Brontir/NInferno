@@ -261,11 +261,19 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                     ask.include.clear();
                     ask.quant    = d.gguf;
                     ask.revision = d.revision;
-                    const auto head = convert::fetch_gguf_head(d.repo, ask, 16ULL << 20);
-                    const auto file = convert::parse_gguf_head(
-                        reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(),
-                        head.size, head.path);
-                    for (const auto& t : file.tensors) {
+                    // Read as gguf_head_config does: 16 MiB, four times more while truncated.
+                    std::optional<convert::GgufFile> file;
+                    for (std::uint64_t want = 16ULL << 20; !file; want *= 4) {
+                        const auto head = convert::fetch_gguf_head(d.repo, ask, want);
+                        try {
+                            file = convert::parse_gguf_head(
+                                reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                head.bytes.size(), head.size, head.path);
+                        } catch (const convert::GgufTruncated&) {
+                            if (head.bytes.size() >= head.size || want >= (256ULL << 20)) { throw; }
+                        }
+                    }
+                    for (const auto& t : file->tensors) {
                         if (t.name != "token_embd.weight" || t.ne.size() != 2) { continue; }
                         if (t.ne[1] > d.proposal_rows) {
                             bytes -= std::min(bytes, t.bytes);
