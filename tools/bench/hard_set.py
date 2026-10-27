@@ -10,12 +10,12 @@ those runs sent it and the reference answer. Each question is asked once, greedy
 time, thinking off; the server's own timings give the decode time and, under speculation, the
 drafts it verified and accepted. Per question the output keeps whether the answer matched the
 reference, the answer, the decode tokens and milliseconds, and the drafts; the summary gives the
-share answered right, the decode rate and, under speculation, tokens per round. Every round
-yields its accepted drafts and one token of the target's own, and the first token comes from the
-prefill, so a request's rounds are tokens - 1 - accepted - plain_steps (steps the watchdog ran
-plain), whatever each round drafted: a fixed depth, a stepped-down window or a prompt-lookup copy
-round (copy_rounds; its accepted tokens are among the request's). Tokens per round =
-(accepted + rounds) / rounds (1 for plain decode). A failed request counts as a wrong answer and
+share answered right, the decode rate and, under speculation, tokens per round: the server's
+own count of the request's rounds (timings.speculation.rounds), whatever each drafted (a fixed
+depth, a stepped-down window or a prompt-lookup copy round, copy_rounds, whose accepted tokens are
+among the request's); a server that reports none gives tokens - 1 - accepted - fallback_steps -
+plain_steps (types.h: a request generates 1 + rounds + accepted + fallback_steps + plain_steps).
+Tokens per round = (accepted + rounds) / rounds (1 for plain decode). A failed request counts as a wrong answer and
 is kept with its error; the output is rewritten after every question.
 
 Grading: GSM8K and MATH-500 compare the last \\boxed{...} with the reference after a light
@@ -112,6 +112,8 @@ def ask(url, item, timeout):
             "decode_ms": timings.get("predicted_ms") or 0.0,
             "accepted": timings.get("draft_n_accepted") or 0,
             "drafted": timings.get("draft_n") or 0,
+            "rounds": spec.get("rounds"),
+            "fallback_steps": spec.get("fallback_steps", 0),
             "plain_steps": spec.get("plain_steps", 0),
             "step_downs": spec.get("step_downs", 0),
             "capped_rounds": spec.get("capped_rounds", 0),
@@ -148,7 +150,10 @@ def main():
     timed = sum(max(r["tokens"] - 1, 0) for r in rows)
     decode_ms = sum(r["decode_ms"] for r in rows)
     accepted = sum(r["accepted"] for r in rows)
-    rounds = sum(max(r["tokens"] - 1 - r["accepted"] - r.get("plain_steps", 0), 0) for r in rows)
+    rounds = sum(r["rounds"] if r.get("rounds") is not None else
+                 max(r["tokens"] - 1 - r["accepted"] - r.get("fallback_steps", 0) -
+                     r.get("plain_steps", 0), 0)
+                 for r in rows)
     summary = {"tag": args.tag, "questions": len(rows),
                "correct": sum(r["correct"] for r in rows),
                "by_dataset": {d: sum(r["correct"] for r in rows if r["dataset"] == d)
