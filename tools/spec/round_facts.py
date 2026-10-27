@@ -24,7 +24,9 @@ What a pass reads (round_cost.h PassFacts / DraftFacts):
   mtp     the target's own MTP layers and its output head (per draft, one row); a separate MTP
           drafter (Nemotron's GGUF sidecar) its layers (NextN ones included), its experts and its
           head (the target's when it has none); Gemma 4's assistant its layers and its head over
-          its first 98 304 vocabulary rows (the proposal rows the engine scores).
+          its kind's proposal_rows (98 304; BF16, gathered).
+  A drafter is priced as the converter attaches it: its kind's rule ("quant": q8 re-encodes the
+  plain BF16 projections of Gemma 4 assistants and DFlash drafters; a published encoding is kept).
   dflash  the drafter's layers over its block (config block_size) and, once a round, the target's
           output head over the k drafted rows (models/speculation/dflash.cpp: the head runs on the
           drafted rows only).
@@ -44,7 +46,6 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from registry_add import LAB_BOARDS, write_registry  # noqa: E402
 
 REGISTRY = Path(__file__).resolve().parents[2] / "src/spec/data/drafter_registry.json"
-GEMMA_ASSISTANT_HEAD_ROWS = 98304
 NOT_TEXT = re.compile(r"(^v\.|^mm\.|visual|vision|audio|^a\.|embed_vision|embed_audio)")
 NOT_PARAMS = re.compile(r"(scale|zero|g_idx|_scales$)")
 
@@ -119,6 +120,33 @@ def drafter_key(registry: dict, pair: dict, kind: str) -> str:
     return "drafter:" + at
 
 
+def drafter_rule(registry: dict, pair: dict, kind: str) -> tuple[str, int]:
+    """The quantization and head rows a drafter of `kind` is attached with (src/spec/registry.h
+    apply_kind_rule): its registry entry's own, else its kind's rule."""
+    rule = (registry.get("kinds") or {}).get(kind, {})
+    repo = (pair.get("drafters") or {}).get(kind, "").split("@")[0]
+    for m in registry.get("models", []):
+        for d in m.get("drafters", []):
+            if d.get("kind") == kind and d.get("repo") == repo:
+                return (d.get("quant") or rule.get("quant", ""),
+                        int(d.get("proposal_rows") or rule.get("proposal_rows", 0) or 0))
+    return rule.get("quant", ""), int(rule.get("proposal_rows", 0) or 0)
+
+
+def as_converted(table: dict, quant: str) -> dict:
+    """The table as the converter attaches the drafter: q8 re-encodes its plain BF16 / F16
+    projections (Q8_0, 34 bytes a 32 values); a published encoding (a GGUF, a quantized tensor)
+    and small vectors (norms, biases) are kept."""
+    if quant != "q8" or any(n.startswith("blk.") for n in table["tensors"]):
+        return table
+    out = dict(table, tensors=dict(table["tensors"]))
+    for name, size in table["tensors"].items():
+        e = table["elems"][name]
+        if e >= 65536 and size >= 1.9 * e:
+            out["tensors"][name] = e * 34 // 32
+    return out
+
+
 def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
     target = tables.get(pair["target_repo"])
     if target is None:
@@ -136,7 +164,8 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
                 table = tables.get(drafter_key(registry, pair, kind))
                 if table is None:
                     continue
-                qb, qn, qe, qu = classes(table)
+                quant, head_rows = drafter_rule(registry, pair, kind)
+                qb, qn, qe, qu = classes(as_converted(table, quant))
                 if kind == "nemotron_h_mtp":
                     if not qb.get("head"):
                         qb["head"], qn["head"] = b["head"], n["head"]
@@ -144,10 +173,13 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
                     d = pass_of(qb, qn, ["body", "mtp", "head"], ["experts", "mtp_experts"],
                                 qe or experts, qu or used)
                 else:
-                    share = GEMMA_ASSISTANT_HEAD_ROWS / max(1, int(table.get("meta", {}).get(
-                        "vocab_size", 262144)))
-                    d = {"bytes": int(qb.get("body", 0) + qb.get("head", 0) * share),
-                         "params": int(qn.get("body", 0) + qn.get("head", 0) * share)}
+                    # Its own head over the shortlist's rows, gathered as published (BF16): the
+                    # kind's proposal_rows (the full vocabulary when none).
+                    vocab = max(1, int(table.get("meta", {}).get("vocab_size", 262144)))
+                    rows = min(head_rows or vocab, vocab)
+                    head_params = qn.get("head", 0) * rows / vocab
+                    d = {"bytes": int(qb.get("body", 0) + 2 * head_params),
+                         "params": int(qn.get("body", 0) + head_params)}
             elif b.get("mtp") or b.get("mtp_experts"):
                 d = pass_of(b, n, ["mtp", "head"], ["mtp_experts"], experts, used)
             else:
@@ -163,7 +195,7 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
             if not 1 <= block <= 16:
                 print(f"{pair['target_repo']}: {mode} drafter without a block_size", file=sys.stderr)
                 continue
-            qb, qn, _, _ = classes(table)
+            qb, qn, _, _ = classes(as_converted(table, drafter_rule(registry, pair, mode)[0]))
             d = {"bytes": int(qb.get("body", 0)), "params": int(qn.get("body", 0)), "rows": block,
                  "per_draft": False, "head": {"bytes": int(b["head"]), "params": int(n["head"])}}
         if d["bytes"] > 0 and d["params"] > 0:

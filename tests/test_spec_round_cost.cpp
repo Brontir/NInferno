@@ -106,11 +106,11 @@ int main() {
         const auto rtx4070ti = sp::card_rates_of_board(0x2782);
         const auto gv100     = sp::card_rates_of_board(0x1DBA);
         const auto rtx3060   = sp::card_rates_of_board(0x2503);
-        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.00291555, 1e-5),
+        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0106181, 1e-5),
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
-        expect(gv100.generation == "volta" && near(gv100.kappa(), 0.0643392, 1e-5),
+        expect(gv100.generation == "volta" && near(gv100.kappa(), 0.0729656, 1e-5),
                "Quadro GV100 (dp4a's rate): kappa " + std::to_string(gv100.kappa()));
-        expect(near(rtx3060.kappa(), 0.00984085, 1e-5),
+        expect(near(rtx3060.kappa(), 0.0179333, 1e-5),
                "RTX 3060: kappa " + std::to_string(rtx3060.kappa()));
         const auto from_key = sp::card_rates(card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360));
         expect(near(from_key.kappa(), rtx3060.kappa(), 1e-9), "a GpuKey's rates as the board's");
@@ -127,11 +127,11 @@ int main() {
             double r4070ti, r5070ti, rgv100;
         };
         const Golden golden[] = {
-            {kQ9, "ad104:60sm", "mtp:3", 1.613298, 1.717989, 2.068003},
-            {kQ9, "ad104:60sm", "dflash:7", 1.755999, 2.112343, 3.303722},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.892300, 2.128804, 2.930671},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.569163, 1.630072, 1.836581},
-            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.223803, 2.356480, 2.806895},
+            {kQ9, "ad104:60sm", "mtp:3", 1.679516, 1.753023, 2.120549},
+            {kQ9, "ad104:60sm", "dflash:7", 1.752298, 2.008522, 3.289610},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.873191, 2.043824, 2.908662},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.607643, 1.650542, 1.867971},
+            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.030166, 2.130265, 2.638240},
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
         const double k5070 = sp::card_rates_of_board(0x2C05).kappa();

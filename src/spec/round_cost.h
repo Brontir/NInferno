@@ -22,12 +22,13 @@
 //          small-T kernels reach (kSmallTEta: the only fitted constants, one per generation).
 //
 // Measured against it (docs/maintainer/choice-notes/DECISIONS.md 53, choice-notes/lab/round_cost):
-// Qwen dense and MoE within 1 % on average (3-6 % rms; Qwen MoE on Blackwell +5.5 %), gpt-oss
-// +4.6 %, at k <= 7 on six cards of five generations. Where the model does not fit, the estimate is made conservative and says so
+// Qwen dense within 1 % on average (2-5 % rms), Qwen MoE +1 % (Ada) / +8 % (Blackwell), gpt-oss
+// +12.5 %, at k <= 7 on six cards of five generations. Where the model does not fit, the estimate
+// is made conservative and says so
 // (round_cost_estimate): the lab card's own measurement of the pair, where it found rounds dearer
-// than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets: +8-26 %), scales the estimate
+// than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets, gpt-oss: +10-25 %), scales the estimate
 // up, never down; rounds of more than kPortableDepth drafts (from 12 rows verify kernels change
-// tiles: +15-50 %) are not estimated away from the lab card at all.
+// tiles: up to +60 %) are not estimated away from the lab card at all.
 
 #include "spec/config.h"
 
@@ -94,14 +95,16 @@ inline constexpr double kRoutedExpertShare = 0.30;
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
 // registry's spec-tune rounds of Qwen targets that verify 5-8 rows (k 4..7, the depths profiles
 // choose; choice-notes/lab/round_cost/fit_eta.py), as kappa = BW / (eta peak):
-//   ada    0.539  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
-//                 hard50 within -2..+5 % and -1..+11 %)
-//   gb20x  0.167  RTX 5070 Ti; checked on the RTX 5090 (hard50: MTP within 4 %, DFlash 9-14 %
-//                 conservative)
-//   ga10x  0.359  RTX 3060 (one card)
-//   turing 0.148  RTX 2080 Ti (one card)
-//   volta  0.203  Quadro GV100 (one card; its verify steps up from 5 rows, so a fit over 5-8 rows
-//                 prices 2-4 rows 10-22 % high: conservative)
+//   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
+//                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
+//   gb20x  0.130  RTX 5070 Ti; checked on the RTX 5090 (hard50: MTP -5..+3 %, Qwen DFlash -8..0 %)
+//   ga10x  0.197  RTX 3060 (one card)
+//   turing 0.099  RTX 2080 Ti (one card)
+//   volta  0.179  Quadro GV100 (one card; its verify steps up from 5 rows, so a fit over 5-8 rows
+//                 prices 2-4 rows high: conservative)
+// The rounds are the registry's after #156 (Gemma 4 assistants and DFlash drafters attached q8):
+// their q8 drafters' block passes are compute-bound enough that eta fell from 0.54 (Ada, BF16
+// drafters) to 0.15.
 // One-card rows are architecture facts as DECISIONS 52 takes them (the owner, 27.10): flagged in
 // the estimate's note. A generation without a row (ga100, hopper, gb100, thor) has no estimate.
 struct SmallTEta {
@@ -110,8 +113,8 @@ struct SmallTEta {
     std::int32_t cards; // lab cards the row rests on
 };
 inline constexpr SmallTEta kSmallTEta[] = {
-    {"ada", 0.539, 2}, {"gb20x", 0.167, 1}, {"ga10x", 0.359, 1},
-    {"turing", 0.148, 1}, {"volta", 0.203, 1},
+    {"ada", 0.148, 2}, {"gb20x", 0.130, 1}, {"ga10x", 0.197, 1},
+    {"turing", 0.099, 1}, {"volta", 0.179, 1},
 };
 
 // dp4a's int8 rate a SM-clock, for a generation without an int8 MMA (Volta): the configuration

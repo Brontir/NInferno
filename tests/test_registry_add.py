@@ -328,6 +328,19 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(facts["target"], {"bytes": 15, "params": 60})  # no embedding table read
         self.assertEqual(facts["drafters"]["mtp"]["bytes"], 13)  # the sidecar, not mtp.* (90)
 
+    def test_a_drafter_as_its_kind_attaches_it(self):
+        assistant = self.table({"model.layers.0.mlp.up_proj.weight": (2 * 65536, 65536),
+                                "model.layers.0.input_layernorm.weight": (64, 32),
+                                "model.embed_tokens.weight": (2 * 400 * 256, 400 * 256)}, {"vocab_size": 400})
+        registry = {"kinds": {"gemma4_assistant": {"quant": "q8", "proposal_rows": 100}},
+                    "models": [{"drafters": [{"kind": "gemma4_assistant", "repo": "g/a"}]}]}
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        facts = round_facts.round_facts(self.pair(["mtp:3"], {"gemma4_assistant": "g/a@1"}, ("gemma4_assistant",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:g/a@1": assistant}, registry)
+        # q8 projection (65536 x 34/32), the norm kept (64), the head's 100 of 400 rows in BF16.
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 69632 + 64 + 2 * 100 * 256,
+                                                    "params": 65536 + 32 + 100 * 256, "rows": 1, "per_draft": True})
+
     def test_stale_facts_are_not_kept(self):
         old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
                "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"drafters": {"dflash": {}}}}

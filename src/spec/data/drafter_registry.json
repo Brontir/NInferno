@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 164,
+  "version": 165,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -7954,14 +7954,18 @@
       "round_facts": {
         "target": {
           "bytes": 5928020928,
-          "params": 8369091568
+          "params": 7936684544
         },
         "drafters": {
           "dflash": {
-            "bytes": 4618046464,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 2034237440,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 2520818688,
@@ -8379,10 +8383,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
@@ -9045,10 +9053,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1790323712,
-            "params": 1270125056,
+            "bytes": 674112512,
+            "params": 634425856,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
           },
           "mtp": {
             "bytes": 649648128,
@@ -9713,18 +9725,22 @@
       "round_facts": {
         "target": {
           "bytes": 3286590592,
-          "params": 1197649296
+          "params": 4205751696
         },
         "drafters": {
           "dflash": {
-            "bytes": 2540250112,
-            "params": 1270125056,
+            "bytes": 674112512,
+            "params": 634425856,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 1271398400,
+              "params": 635699200
+            }
           },
           "mtp": {
             "bytes": 1358096496,
-            "params": 665613326,
+            "params": 756298766,
             "rows": 1,
             "per_draft": true
           }
@@ -10150,12 +10166,12 @@
       "lab_board": "0x2782",
       "round_facts": {
         "target": {
-          "bytes": 7365558464,
+          "bytes": 7365559808,
           "params": 11907350576
         },
         "drafters": {
           "mtp": {
-            "bytes": 510169608,
+            "bytes": 365416968,
             "params": 255084804,
             "rows": 1,
             "per_draft": true
@@ -10570,10 +10586,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
@@ -10997,12 +11017,12 @@
       "lab_board": "0x2782",
       "round_facts": {
         "target": {
-          "bytes": 9770197184,
+          "bytes": 9770198528,
           "params": 11907350576
         },
         "drafters": {
           "mtp": {
-            "bytes": 510169608,
+            "bytes": 365416968,
             "params": 255084804,
             "rows": 1,
             "per_draft": true
@@ -11417,10 +11437,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1790323712,
-            "params": 1270125056,
+            "bytes": 674112512,
+            "params": 634425856,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
           }
         }
       }
@@ -11832,10 +11856,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
@@ -12243,11 +12271,11 @@
       "round_facts": {
         "target": {
           "bytes": 8146028704,
-          "params": 7138623936
+          "params": 11907350320
         },
         "drafters": {
           "mtp": {
-            "bytes": 510169608,
+            "bytes": 365416968,
             "params": 255084804,
             "rows": 1,
             "per_draft": true
@@ -12662,10 +12690,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1790323712,
-            "params": 1270125056,
+            "bytes": 674112512,
+            "params": 634425856,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
           }
         }
       }
@@ -13328,10 +13360,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1790323712,
-            "params": 1270125056,
+            "bytes": 674112512,
+            "params": 634425856,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
           },
           "mtp": {
             "bytes": 612825088,
@@ -13749,10 +13785,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
@@ -14415,10 +14455,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1002113024,
@@ -15087,10 +15131,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3664497664,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 1080688640,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1339246592,
@@ -15759,10 +15807,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1014827008,
@@ -16175,12 +16227,12 @@
       "lab_board": "0x2684",
       "round_facts": {
         "target": {
-          "bytes": 17976477936,
+          "bytes": 17976479616,
           "params": 30697345596
         },
         "drafters": {
           "mtp": {
-            "bytes": 603492872,
+            "bytes": 414994952,
             "params": 301746436,
             "rows": 1,
             "per_draft": true
@@ -16599,8 +16651,12 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 374352384,
-            "params": 352324224,
+            "bytes": 231448064,
+            "params": 410484608,
+            "expert_bytes": 718405632,
+            "expert_params": 1277165568,
+            "experts": 128,
+            "experts_used": 6,
             "rows": 1,
             "per_draft": true
           }
@@ -17009,7 +17065,7 @@
       "lab_board": "0x2684",
       "round_facts": {
         "target": {
-          "bytes": 1650012280,
+          "bytes": 1650013120,
           "params": 2395152926,
           "expert_bytes": 15130180608,
           "expert_params": 22837989120,
@@ -17018,7 +17074,7 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 503878152,
+            "bytes": 362074632,
             "params": 251939076,
             "rows": 1,
             "per_draft": true
@@ -17428,12 +17484,12 @@
       "lab_board": "0x2684",
       "round_facts": {
         "target": {
-          "bytes": 18671229168,
+          "bytes": 18671230848,
           "params": 30697345596
         },
         "drafters": {
           "mtp": {
-            "bytes": 603492872,
+            "bytes": 414994952,
             "params": 301746436,
             "rows": 1,
             "per_draft": true
@@ -17840,7 +17896,25 @@
       "drafters": {
         "dflash": "meta-models/Muse-Glimmer-30B-GGUF@70bf1b61ac09f91b24d39038091b41c582bc5d7a"
       },
-      "lab_board": "0x2684"
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 18884376576,
+          "params": 26509962752
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1618131968,
+            "params": 2555985152,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 924571648,
+              "params": 1344831488
+            }
+          }
+        }
+      }
     },
     {
       "target": "b5df31122600666617b05f9be2015552cd2edff401e86b1d99b9127efdc6d819,ff11061ebf57327af4f1993ff758b0859d7746b0c03ca1b17ded7dec30410962",
@@ -18245,15 +18319,15 @@
       "round_facts": {
         "target": {
           "bytes": 4790313020,
-          "params": 2395156510,
+          "params": 2395068190,
           "expert_bytes": 12846458880,
-          "expert_params": 24265382400,
+          "expert_params": 22837985280,
           "experts": 128,
           "experts_used": 8
         },
         "drafters": {
           "mtp": {
-            "bytes": 503878152,
+            "bytes": 362074632,
             "params": 251939076,
             "rows": 1,
             "per_draft": true
@@ -18663,18 +18737,18 @@
       "lab_board": "0x2684",
       "round_facts": {
         "target": {
-          "bytes": 2365584348,
-          "params": 2253838807,
+          "bytes": 1660941276,
+          "params": 1850810688,
           "expert_bytes": 16523353088,
-          "expert_params": 31210739456,
+          "expert_params": 29374808064,
           "experts": 128,
           "experts_used": 6
         },
         "drafters": {
           "mtp": {
-            "bytes": 314501892,
-            "params": 432502017,
-            "expert_bytes": 2554331136,
+            "bytes": 231448064,
+            "params": 410484608,
+            "expert_bytes": 718405632,
             "expert_params": 1277165568,
             "experts": 128,
             "experts_used": 6,
@@ -19119,18 +19193,22 @@
       "round_facts": {
         "target": {
           "bytes": 1688399064,
-          "params": 1979446390,
+          "params": 1939796608,
           "expert_bytes": 18119639040,
-          "expert_params": 34225582080,
+          "expert_params": 32212254720,
           "experts": 256,
           "experts_used": 8
         },
         "drafters": {
           "dflash": {
-            "bytes": 1057877000,
-            "params": 926250498,
+            "bytes": 410053632,
+            "params": 385906176,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 286064648,
+              "params": 508559360
+            }
           }
         }
       }
@@ -19538,15 +19616,15 @@
       "round_facts": {
         "target": {
           "bytes": 2424987300,
-          "params": 1675274680,
+          "params": 2395068190,
           "expert_bytes": 12846458880,
-          "expert_params": 12846389760,
+          "expert_params": 22837985280,
           "experts": 128,
           "experts_used": 8
         },
         "drafters": {
           "mtp": {
-            "bytes": 503878152,
+            "bytes": 362074632,
             "params": 251939076,
             "rows": 1,
             "per_draft": true
@@ -19989,18 +20067,22 @@
       "round_facts": {
         "target": {
           "bytes": 3306809856,
-          "params": 1765471168,
+          "params": 1939796608,
           "expert_bytes": 18119639040,
-          "expert_params": 18119454720,
+          "expert_params": 32212254720,
           "experts": 256,
           "experts_used": 8
         },
         "drafters": {
           "dflash": {
-            "bytes": 1788931072,
-            "params": 894465536,
+            "bytes": 410053632,
+            "params": 385906176,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 1017118720,
+              "params": 508559360
+            }
           }
         }
       }
@@ -20407,12 +20489,12 @@
       "lab_board": "0x2684",
       "round_facts": {
         "target": {
-          "bytes": 17271834864,
+          "bytes": 17271836544,
           "params": 30697345596
         },
         "drafters": {
           "mtp": {
-            "bytes": 603492872,
+            "bytes": 414994952,
             "params": 301746436,
             "rows": 1,
             "per_draft": true
@@ -21078,10 +21160,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1002113024,
@@ -21750,10 +21836,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3664497664,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 1080688640,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1339246592,
@@ -22422,10 +22512,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1014827008,
@@ -22789,10 +22883,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 2184863488,
-            "params": 1363900544,
-            "rows": 16,
-            "per_draft": false
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 615329280,
+              "params": 579133440
+            }
           }
         }
       }
@@ -23225,10 +23323,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1188989952,
-            "params": 894465536,
+            "bytes": 410053632,
+            "params": 385906176,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360
+            }
           }
         }
       }
@@ -23586,10 +23688,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 2184863488,
-            "params": 1363900544,
-            "rows": 16,
-            "per_draft": false
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 615329280,
+              "params": 579133440
+            }
           }
         }
       }
@@ -24803,16 +24909,20 @@
           "bytes": 2437381248,
           "params": 1218690624,
           "expert_bytes": 10165616640,
-          "expert_params": 19714129920,
+          "expert_params": 19116933120,
           "experts": 32,
           "experts_used": 4
         },
         "drafters": {
           "dflash": {
-            "bytes": 2727801088,
-            "params": 1363900544,
-            "rows": 16,
-            "per_draft": false
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1158266880,
+              "params": 579133440
+            }
           }
         }
       }
@@ -25164,16 +25274,20 @@
           "bytes": 2437381248,
           "params": 1218690624,
           "expert_bytes": 10165616640,
-          "expert_params": 19714129920,
+          "expert_params": 19116933120,
           "experts": 32,
           "experts_used": 4
         },
         "drafters": {
           "dflash": {
-            "bytes": 2727801088,
-            "params": 1363900544,
-            "rows": 16,
-            "per_draft": false
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1158266880,
+              "params": 579133440
+            }
           }
         }
       }
@@ -25836,10 +25950,14 @@
         },
         "drafters": {
           "dflash2": {
-            "bytes": 4891752960,
-            "params": 3195802880,
-            "rows": 16,
-            "per_draft": false
+            "bytes": 2044930560,
+            "params": 1924404480,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1042944000,
+              "params": 1271398400
+            }
           },
           "mtp": {
             "bytes": 1242236928,
@@ -26252,12 +26370,12 @@
       "lab_board": "0x2C05",
       "round_facts": {
         "target": {
-          "bytes": 10669187264,
+          "bytes": 10669188608,
           "params": 11907350576
         },
         "drafters": {
           "mtp": {
-            "bytes": 510169608,
+            "bytes": 365416968,
             "params": 255084804,
             "rows": 1,
             "per_draft": true
@@ -26667,7 +26785,7 @@
       "lab_board": "0x2C05",
       "round_facts": {
         "target": {
-          "bytes": 2578661496,
+          "bytes": 2578662336,
           "params": 2395152926,
           "expert_bytes": 11018550272,
           "expert_params": 22837989120,
@@ -26676,7 +26794,7 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 503878152,
+            "bytes": 362074632,
             "params": 251939076,
             "rows": 1,
             "per_draft": true
@@ -27086,7 +27204,7 @@
       "lab_board": "0x2C05",
       "round_facts": {
         "target": {
-          "bytes": 1386840184,
+          "bytes": 1386841024,
           "params": 2395152926,
           "expert_bytes": 12846382080,
           "expert_params": 22837989120,
@@ -27095,7 +27213,7 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 503878152,
+            "bytes": 362074632,
             "params": 251939076,
             "rows": 1,
             "per_draft": true
@@ -27505,12 +27623,12 @@
       "lab_board": "0x2C05",
       "round_facts": {
         "target": {
-          "bytes": 13195020528,
+          "bytes": 13195022208,
           "params": 30697345596
         },
         "drafters": {
           "mtp": {
-            "bytes": 603492872,
+            "bytes": 414994952,
             "params": 301746436,
             "rows": 1,
             "per_draft": true
@@ -27871,10 +27989,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 2727801088,
-            "params": 1363900544,
-            "rows": 16,
-            "per_draft": false
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1158266880,
+              "params": 579133440
+            }
           }
         }
       }
@@ -28102,7 +28224,25 @@
       "drafters": {
         "dflash": "meta-models/Muse-Glimmer-30B-GGUF@70bf1b61ac09f91b24d39038091b41c582bc5d7a"
       },
-      "lab_board": "0x2C05"
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 13006409728,
+          "params": 26509962752
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1618131968,
+            "params": 2555985152,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 1428883456,
+              "params": 1344831488
+            }
+          }
+        }
+      }
     },
     {
       "target": "212ccdf37d416167ce8dcd7e3a59bcd45b30ac7531822a1e7bb79bfbacb2d1aa",
@@ -28532,10 +28672,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1188989952,
-            "params": 894465536,
+            "bytes": 410053632,
+            "params": 385906176,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360
+            }
           }
         }
       }
@@ -29219,10 +29363,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 1188989952,
-            "params": 894465536,
+            "bytes": 410053632,
+            "params": 385906176,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360
+            }
           },
           "mtp": {
             "bytes": 452130816,
@@ -30326,10 +30474,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 988055552,
@@ -30998,10 +31150,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1021511680,
@@ -31670,10 +31826,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1042122752,
@@ -32086,12 +32246,12 @@
       "lab_board": "0x2782",
       "round_facts": {
         "target": {
-          "bytes": 7106035904,
+          "bytes": 7106037248,
           "params": 11907350576
         },
         "drafters": {
           "mtp": {
-            "bytes": 510169608,
+            "bytes": 365416968,
             "params": 255084804,
             "rows": 1,
             "per_draft": true
@@ -32506,10 +32666,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
@@ -33172,10 +33336,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1002113024,
@@ -33593,10 +33761,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
@@ -34259,10 +34431,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           },
           "mtp": {
             "bytes": 1002113024,
@@ -34680,10 +34856,14 @@
         },
         "drafters": {
           "dflash": {
-            "bytes": 3418164224,
-            "params": 2309023232,
+            "bytes": 1372703744,
+            "params": 1291904512,
             "rows": 16,
-            "per_draft": false
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
           }
         }
       }
