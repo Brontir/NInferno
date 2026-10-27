@@ -5,6 +5,7 @@
 #include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
+#include "convert/gguf.h"
 #include "core/ascii.h"
 
 #include "product/numeric_options.h"
@@ -249,6 +250,29 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 if (q.drafter && ascii_lower(q.quant).find(ascii_lower(d.gguf)) != std::string::npos) {
                     bytes = std::max(bytes, q.bytes);
                 }
+            }
+            // A restricted head (restrict_head) replaces the file's embedding table with
+            // proposal_rows rows gathered to BF16, read from the file's metadata (its repository
+            // named; the target's own is not known here).
+            if (d.proposal_rows && bytes && !d.repo.empty() && fetch != nullptr &&
+                convert::resolve_ranking(d.ranking, {})) {
+                try {
+                    auto ask     = *fetch;
+                    ask.include.clear();
+                    ask.quant    = d.gguf;
+                    ask.revision = d.revision;
+                    const auto head = convert::fetch_gguf_head(d.repo, ask, 16ULL << 20);
+                    const auto file = convert::parse_gguf_head(
+                        reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(),
+                        head.size, head.path);
+                    for (const auto& t : file.tensors) {
+                        if (t.name != "token_embd.weight" || t.ne.size() != 2) { continue; }
+                        if (t.ne[1] > d.proposal_rows) {
+                            bytes -= std::min(bytes, t.bytes);
+                            bytes += d.proposal_rows * t.ne[0] * 2;
+                        }
+                    }
+                } catch (const std::exception&) {}
             }
         } else if (!d.repo.empty() && fetch != nullptr) {
             const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
