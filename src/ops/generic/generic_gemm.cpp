@@ -1743,6 +1743,10 @@ void refuse_frag(const Weight& w, const char* op) {
         "reads; a projection needs its published layout (ninferno-convert --relayout published)");
 }
 
+bool r8_takes_block(const Weight& weight) {
+    return supports(weight) && r8_call(weight, LinearPolicy::AllowA8, kR8VerifyTokens);
+}
+
 bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
     return tokens <= kR8DecodeTokens && supports(weight) &&
            r8_call(weight, policy, tokens);

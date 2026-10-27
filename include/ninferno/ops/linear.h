@@ -49,6 +49,19 @@ enum class LinearPolicy : std::uint8_t {
 [[nodiscard]] LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept;
 
 /**
+ * The policy of a speculative drafter's projection: AllowA8 for a weight recorded A16Only whose
+ * format verifies a whole eight-token block on R8 (int8 activations per 32 values, plain decode's
+ * arithmetic: Q8, GGUF Q8_0, on every chip), else the recorded one. A DFlash block (dflash:7 is
+ * eight tokens) of an A16Only Q8 drafter ran the BF16 register MMA, whose 16-row CTAs walk all of
+ * K: at K = 12288 and 32768 (Qwen3.5-9B's drafter down and feature projections) it read 180-200
+ * GB/s against R8's 440-465 on the RTX 4070 Ti (ninferno_r8_schedule_bench, T = 5 and 8), 8 % and
+ * 4 % of a dflash:7 round. Q8 runs A8 under every target that records it (formats.cpp,
+ * kept_block_policy); a drafter converted without a recorded policy now runs it too. The other
+ * formats' R8 stops at four tokens and keeps the recorded policy.
+ */
+[[nodiscard]] LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded);
+
+/**
  * Returns the caller-owned transient capacity required by Linear for every T in the inclusive
  * `[min_tokens,max_tokens]` interval. Invalid registered profiles, policies, or intervals throw;
  * a legal route that requires no transient storage returns zero.

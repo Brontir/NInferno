@@ -4,6 +4,7 @@
 #include "models/common/config_json.h"
 #include "models/common/loading.h"
 #include "core/weight_view.h"
+#include "ninferno/ops/linear.h"
 
 #include <algorithm>
 #include <array>
@@ -325,11 +326,20 @@ std::unique_ptr<DFlashDrafter> DFlashDrafter::load(const std::filesystem::path& 
         }
     }
     drafter->backing_ = demands.materialize(device);
-    // Every activation BF16: the drafter runs one narrow block per round.
+    // BF16 activations, but A8 where the format verifies a whole draft block on R8 (Q8:
+    // ops::drafter_linear_policy).
     const Prepare prepare(demands, *drafter->backing_, /*recorded=*/false);
+    const auto lift = [](Projection p) {
+        p.policy = ops::drafter_linear_policy(p.weight, p.policy);
+        return p;
+    };
+    const auto lift_packed = [&](std::optional<Projection> p) {
+        if (p) { *p = lift(*p); }
+        return p;
+    };
     auto& w              = drafter->weights_;
-    w.feature_projection = prepare.projection(features);
-    w.context_kv         = prepare.packed(context);
+    w.feature_projection = lift(prepare.projection(features));
+    w.context_kv         = lift_packed(prepare.packed(context));
     w.context_norm       = prepare.tensor(ctx_norm);
     w.final_norm         = prepare.tensor(final_norm);
     {
@@ -355,24 +365,24 @@ std::unique_ptr<DFlashDrafter> DFlashDrafter::load(const std::filesystem::path& 
             layer.output_bias = prepare.tensor(*l.output_bias);
         }
         const std::array qkv{l.query, l.key, l.value};
-        layer.qkv = prepare.packed(qkv);
+        layer.qkv = lift_packed(prepare.packed(qkv));
         if (!layer.qkv) {
-            layer.query = prepare.projection(l.query);
-            layer.key   = prepare.projection(l.key);
-            layer.value = prepare.projection(l.value);
+            layer.query = lift(prepare.projection(l.query));
+            layer.key   = lift(prepare.projection(l.key));
+            layer.value = lift(prepare.projection(l.value));
         }
         if (!w.context_kv) {
-            layer.context_key   = prepare.projection(l.context_key);
-            layer.context_value = prepare.projection(l.context_value);
+            layer.context_key   = lift(prepare.projection(l.context_key));
+            layer.context_value = lift(prepare.projection(l.context_value));
         }
-        layer.output = prepare.projection(l.output);
+        layer.output = lift(prepare.projection(l.output));
         const std::array gate_up{l.gate, l.up};
-        layer.gate_up = prepare.packed(gate_up);
+        layer.gate_up = lift_packed(prepare.packed(gate_up));
         if (!layer.gate_up) {
-            layer.gate = prepare.projection(l.gate);
-            layer.up   = prepare.projection(l.up);
+            layer.gate = lift(prepare.projection(l.gate));
+            layer.up   = lift(prepare.projection(l.up));
         }
-        layer.down = prepare.projection(l.down);
+        layer.down = lift(prepare.projection(l.down));
     }
     return drafter;
 }

@@ -18,7 +18,8 @@ namespace {
 
 std::size_t bf16_bytes(std::int64_t elements) { return static_cast<std::size_t>(elements) * 2; }
 
-// One drafter projection; every activation stays BF16 (the loader prepared no W4A4 route).
+// One drafter projection under its loader's policy (BF16 activations, A8 where the format verifies
+// a draft block on R8: ops::drafter_linear_policy; never W4A4).
 void project(const Tensor& x, const Projection& p, Tensor& out, DeviceArena& work,
              cudaStream_t stream) {
     auto scope = work.scope();

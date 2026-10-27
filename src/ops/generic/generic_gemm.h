@@ -338,6 +338,10 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 [[nodiscard]] bool r8_verify_takes(QType qtype);
 // r8_verify_takes for one matrix (Q4_0 takes R8 at the verify widths only on a large one).
 [[nodiscard]] bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k);
+// Whether R8 takes a call of kR8VerifyTokens tokens of this weight under A8: its format verifies a
+// whole eight-token block on R8 (Q8, r8_verify_widest) and the generic path reads the weight.
+// A speculative drafter's A16Only projections take A8 there (ops::drafter_linear_policy).
+[[nodiscard]] bool r8_takes_block(const Weight& weight);
 // Whether a weight format has a TiledMma codec (then its prefill routes are the tiled ones).
 [[nodiscard]] bool tiled_supports(WeightCodec codec);
 // The schedule's shared tiles for the codec fit one block of this build (generic_tiled.cu).

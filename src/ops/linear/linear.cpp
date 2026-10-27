@@ -369,6 +369,13 @@ LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept {
     return recorded == LinearPolicy::AllowA4 ? LinearPolicy::AllowA8 : recorded;
 }
 
+LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded) {
+    if (recorded != LinearPolicy::A16Only || !detail::generic::r8_takes_block(weight)) {
+        return recorded;
+    }
+    return LinearPolicy::AllowA8;
+}
+
 std::size_t linear_workspace_capacity_bytes(QType qtype, std::int32_t output_rows,
                                             std::int32_t input_rows, LinearPolicy policy,
                                             std::int32_t min_tokens, std::int32_t max_tokens) {
