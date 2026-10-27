@@ -66,8 +66,8 @@ Sums sums(const MeasuredPair& pair) {
     return out;
 }
 
-// How one label does over a default's sections on one pair (each section one token's weight, as
-// select() weighs them). nullopt when a section was not measured.
+// How one label does over a default's sections on one pair (each section by its share of the mix,
+// section_weight, as select() weighs them). nullopt when a section was not measured.
 struct Over {
     double speed            = 0; // plain decode's cost over this label's
     double tokens_per_round = 1;
@@ -80,8 +80,8 @@ struct Over {
 };
 std::optional<Over> over(const Sums& table, const std::string& label,
                          const std::vector<std::string>& families) {
-    double cost = 0, plain_cost = 0, seconds = 0, rounds = 0, drafted = 0, accepted = 0;
-    double fine_tune_cost = 0;
+    double cost = 0, plain_cost = 0, rounds = 0, drafted = 0, accepted = 0;
+    double fine_tune_cost = 0, round_cost = 0, weight = 0;
     for (const auto& f : families) {
         const auto m = table.find({label, f});
         const auto p = table.find({"plain", f});
@@ -89,16 +89,18 @@ std::optional<Over> over(const Sums& table, const std::string& label,
             p->second.tokens <= 0) {
             return std::nullopt;
         }
+        const double w            = section_weight(f);
         const double section_cost = m->second.seconds / m->second.tokens;
-        cost += section_cost;
+        cost += w * section_cost;
         // The section's rounds cost the seconds measured and yield, a draft accepted at
         // kFineTuneAcceptance of its rate, rounds + kFineTuneAcceptance x accepted tokens.
         fine_tune_cost +=
-            m->second.rounds > 0
-                ? m->second.seconds / (m->second.rounds + kFineTuneAcceptance * m->second.accepted)
-                : section_cost;
-        plain_cost += p->second.seconds / p->second.tokens;
-        seconds += m->second.seconds;
+            w * (m->second.rounds > 0 ? m->second.seconds / (m->second.rounds +
+                                                             kFineTuneAcceptance * m->second.accepted)
+                                      : section_cost);
+        plain_cost += w * p->second.seconds / p->second.tokens;
+        if (m->second.rounds > 0) { round_cost += w * m->second.seconds / m->second.rounds; }
+        weight += w;
         rounds += m->second.rounds;
         drafted += m->second.drafted;
         accepted += m->second.accepted;
@@ -108,7 +110,7 @@ std::optional<Over> over(const Sums& table, const std::string& label,
     out.speed            = plain_cost / cost;
     out.tokens_per_round = (accepted + rounds) / rounds;
     out.acceptance       = drafted > 0 ? accepted / drafted : 0.0;
-    out.floor            = (seconds / rounds) / (plain_cost / double(families.size()));
+    out.floor            = (round_cost / weight) / (plain_cost / weight);
     out.fine_tune_speed  = plain_cost / fine_tune_cost;
     return out;
 }

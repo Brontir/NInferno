@@ -375,8 +375,9 @@ int main() {
     }
     // Each request at its own thinking flag's depth, or all at the default's (spec::
     // per_request_gain): on Ada the 9B's DFlash drafts 15 with thinking and 7 without. With
-    // thinking on by default the requests without it lose 2 % at depth 15 (within the
-    // measurements' spread: one depth serves); with it off, those with it lose 16 % at depth 7.
+    // thinking on by default the requests without it lose 4 % at depth 15 on the benchmark mix
+    // (2 % with the sections weighing the same: the mix leans to prose, where depth 15 loses);
+    // with it off, those with it lose 16 % at depth 7.
     {
         sp::Profile p = ada_q4.tune;
         sp::select(p);
@@ -385,7 +386,7 @@ int main() {
                    p.non_thinking.config.label());
         const double on  = sp::per_request_gain(p, true);
         const double off = sp::per_request_gain(p, false);
-        expect(on > 1.0 && on < 1.03, "thinking by default: the others lose under 3 %: " + std::to_string(on));
+        expect(on > 1.03 && on < 1.05, "thinking by default: the others lose 4 %: " + std::to_string(on));
         expect(off > 1.10, "thinking off by default: the thinking requests lose over 10 %: " +
                                std::to_string(off));
         sp::Profile same = bw_q4.tune;
