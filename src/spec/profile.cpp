@@ -68,6 +68,9 @@ double seconds_per_token(const Measurement& m) {
     return m.tokens > 0 ? m.seconds / double(m.tokens) : 0.0;
 }
 
+// A section's seconds per token weighted by its share of the mix (section_weight).
+double weighted_cost(const Measurement& m) { return section_weight(m.family) * seconds_per_token(m); }
+
 Choice plain_choice(double plain_tok_s) {
     Choice c;
     c.tok_s       = plain_tok_s;
@@ -157,6 +160,14 @@ std::optional<Choice> fit_fallback_from(const Json& doc) {
 
 } // namespace
 
+double section_weight(std::string_view family) {
+    if (family == "code") { return 7.0; }
+    if (family == "math") { return 4.0; }
+    if (family == "prose") { return 12.0; }
+    if (family == "thinking") { return 1.0; }
+    return 0.0;
+}
+
 void select(Profile& profile, const SelectOptions& options) {
     const auto table = aggregate(profile.measurements);
     const auto get   = [&](const std::string& label, const std::string& family) -> const Measurement* {
@@ -171,8 +182,8 @@ void select(Profile& profile, const SelectOptions& options) {
     const double gain = 1.0 + options.min_gain;
 
     // Drafters first: a mode whose drafter was rejected offers no configuration. A drafter is
-    // judged on the whole mix: its best configuration's speed over every section (each section
-    // weighs the same), never on the one section it suits.
+    // judged on the whole mix: its best configuration's speed over every section (each by its
+    // section_weight), never on the one section it suits.
     std::set<std::string> rejected_modes;
     for (auto& d : profile.drafters) {
         double best = 0, drafted = 0, accepted = 0;
@@ -192,8 +203,8 @@ void select(Profile& profile, const SelectOptions& options) {
                 measured = true;
                 drafted += double(m->drafted);
                 accepted += double(m->accepted);
-                cost += seconds_per_token(*m);
-                plain_cost += seconds_per_token(*get("plain", f));
+                cost += weighted_cost(*m);
+                plain_cost += weighted_cost(*get("plain", f));
             }
             if (complete && cost > 0) { best = std::max(best, plain_cost / cost); }
         }
@@ -236,7 +247,7 @@ void select(Profile& profile, const SelectOptions& options) {
         const auto same_drafter = [](const SpecConfig& a, const SpecConfig& b) {
             return a.mode == b.mode && a.proposal_head == b.proposal_head;
         };
-        // A default over corpus sections: equal weight per section, one token of each.
+        // A default over corpus sections, each weighted by its share of the mix (section_weight).
         const auto group = [&](const std::vector<std::string>& wanted) {
             std::vector<std::string> members;
             for (const auto& f : wanted) {
@@ -244,9 +255,12 @@ void select(Profile& profile, const SelectOptions& options) {
             }
             Choice best;
             if (members.empty()) { return best; }
-            double plain_cost = 0;
-            for (const auto& f : members) { plain_cost += seconds_per_token(*get("plain", f)); }
-            best = plain_choice(double(members.size()) / plain_cost);
+            double plain_cost = 0, weight = 0;
+            for (const auto& f : members) {
+                plain_cost += weighted_cost(*get("plain", f));
+                weight += section_weight(f);
+            }
+            best = plain_choice(weight / plain_cost);
             struct Candidate {
                 SpecConfig config;
                 double cost = 0, seconds = 0, rounds = 0, drafted = 0, accepted = 0;
@@ -264,7 +278,7 @@ void select(Profile& profile, const SelectOptions& options) {
                         complete = false;
                         break;
                     }
-                    c.cost += seconds_per_token(*m);
+                    c.cost += weighted_cost(*m);
                     c.seconds += m->seconds;
                     c.rounds += double(m->rounds);
                     c.drafted += double(m->drafted);
@@ -294,14 +308,14 @@ void select(Profile& profile, const SelectOptions& options) {
                 }
             }
             best.config           = chosen->config;
-            best.tok_s            = double(members.size()) / chosen->cost;
+            best.tok_s            = weight / chosen->cost;
             best.tokens_per_round = chosen->rounds > 0
                                         ? (chosen->accepted + chosen->rounds) / chosen->rounds
                                         : 1.0;
             best.acceptance = chosen->drafted > 0 ? chosen->accepted / chosen->drafted : 0.0;
             best.floor_tokens_per_round =
                 chosen->rounds > 0
-                    ? (chosen->seconds / chosen->rounds) / (plain_cost / double(members.size()))
+                    ? (chosen->seconds / chosen->rounds) / (plain_cost / weight)
                     : 0.0;
             return best;
         };
@@ -528,7 +542,7 @@ double per_request_gain(const Profile& profile, bool thinking_default) {
         for (const auto& f : sections) {
             const auto it = table.find({config.enabled() ? config.label() : std::string("plain"), f});
             if (it == table.end() || it->second.tokens == 0) { return 0.0; }
-            out += seconds_per_token(it->second);
+            out += weighted_cost(it->second);
         }
         return out;
     };

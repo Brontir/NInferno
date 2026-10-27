@@ -9,7 +9,8 @@
 //
 // Selection rules (select()):
 //   overall        the configuration with the lowest total seconds-per-token summed over every
-//                  section (each section weighs the same), measured on all of them and no slower
+//                  section (each weighted by its share of the mix: section_weight), measured on
+//                  all of them and no slower
 //                  than plain decode on any of them; plain decode unless it beats plain by at
 //                  least min_gain
 //   non_thinking   the same over the math, code and prose sections
@@ -39,6 +40,14 @@ namespace ninferno::spec {
 // Bumped whenever an engine change moves speculation speed or acceptance enough to invalidate
 // earlier profiles (verify routes, drafter kernels, round structure).
 inline constexpr const char* kSpecEngineVersion = "ninferno-spec-1";
+
+// A corpus section's share of the mix every choice is judged on: the lab's benchmark tasks
+// (examples/cli/messages, the text ones), each one request of its section. Code (Python, CUDA,
+// TypeScript, a code review, CSV/JSONL/SQL output) 7, math (three long derivations, a Jacobian
+// counterexample) 4, prose (stories, translations, chat, needle-in-a-haystack answers) 12,
+// thinking (a logic grid) 1. Equal weights overstated a mixed workload's speed 1.2-1.5 times:
+// prose gains least and our tasks are mostly prose (choice/DECISIONS 50). 0 for another name.
+[[nodiscard]] double section_weight(std::string_view family);
 
 struct Measurement {
     SpecConfig config;
