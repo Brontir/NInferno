@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -263,25 +264,56 @@ class RoundFactsTest(unittest.TestCase):
         target = self.table({"token_embd.weight": (100, 400), "output.weight": (100, 400),
                              "blk.0.attn_q.weight": (50, 200), "blk.1.ffn_up.weight": (50, 200),
                              "blk.2.nextn.eh_proj.weight": (10, 40), "v.blk.0.w": (999, 999)}, meta)
-        drafter = self.table({"model.layers.0.mlp.up_proj.weight": (30, 15)})
-        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d": drafter}
+        drafter = self.table({"model.layers.0.mlp.up_proj.weight": (30, 15)}, {"block_size": 16})
+        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
         facts = round_facts.round_facts(self.pair(["mtp:3", "dflash:7"], {"dflash": "z/d@2"}), tables, {})
         self.assertEqual(facts["target"], {"bytes": 200, "params": 800})
         self.assertEqual(facts["drafters"]["mtp"], {"bytes": 110, "params": 440, "rows": 1, "per_draft": True})
         self.assertEqual(facts["drafters"]["dflash"],
-                         {"bytes": 130, "params": 415, "rows": 16, "per_draft": False})
+                         {"bytes": 30, "params": 15, "rows": 16, "per_draft": False,
+                          "head": {"bytes": 100, "params": 400}})
+        drafter["meta"] = {}
+        facts = round_facts.round_facts(self.pair(["dflash:7"], {"dflash": "z/d@2"}), tables, {})
+        self.assertIsNone(facts)  # no block_size: no DFlash facts
 
-    def test_moe_experts_apart_and_missing_tables(self):
-        meta = {"general.architecture": "x", "x.expert_count": 8, "x.expert_used_count": 2}
+    def test_nemotron_sidecar_counts_its_nextn_layer(self):
+        meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.expert_count": 8,
+                "nemotron_h_moe.expert_used_count": 2}
         target = self.table({"output.weight": (10, 40), "blk.0.ffn_up_exps.weight": (80, 320),
                              "blk.0.attn_q.weight": (5, 20)}, meta)
-        facts = round_facts.round_facts(self.pair(["dflash:3"], {"dflash": "z/none@1"}),
-                                        {"org/t@1 Q4_K_M": target}, {})
-        self.assertIsNone(facts)  # the drafter's table is missing: no facts at all
-        facts = round_facts.round_facts(self.pair(["dflash:3"], {"dflash": "z/d@1"}),
-                                        {"org/t@1 Q4_K_M": target, "drafter:z/d": self.table({"l.w": (1, 4)})}, {})
-        self.assertEqual(facts["target"], {"bytes": 15, "params": 60, "expert_bytes": 80, "expert_params": 320,
-                                           "experts": 8, "experts_used": 2})
+        side = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (3, 12),
+                           "blk.0.ffn_up_exps.weight": (16, 64)},
+                          dict(meta, **{"nemotron_h_moe.block_count": 1,
+                                        "nemotron_h_moe.nextn_predict_layers": 1}))
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "mtp-Q4_0"}]}]}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:b/g@3:mtp-Q4_0.gguf": side}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        tables, registry)
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 13, "params": 52, "expert_bytes": 16,
+                                                    "expert_params": 64, "experts": 8, "experts_used": 2,
+                                                    "rows": 1, "per_draft": True})
+
+    def test_packed_safetensors_count_logical_parameters(self):
+        header = {"a.qweight": {"dtype": "I32", "shape": [4, 2], "data_offsets": [0, 32]},
+                  "a.scales": {"dtype": "F16", "shape": [2], "data_offsets": [32, 36]},
+                  "b.weight_packed": {"dtype": "U8", "shape": [4], "data_offsets": [36, 40]},
+                  "b.weight_scale": {"dtype": "F8_E4M3", "shape": [1], "data_offsets": [40, 41]},
+                  "c.weight": {"dtype": "BF16", "shape": [3], "data_offsets": [41, 47]}}
+        tensors, elems = round_facts.parse_safetensors_header(header, 4)
+        self.assertEqual(elems, {"a.qweight": 64, "a.scales": 0, "b.weight_packed": 8, "b.weight_scale": 0,
+                                 "c.weight": 3})
+        self.assertEqual(tensors["a.scales"], 4)
+
+    def test_gguf_sizes_from_offsets(self):
+        def s(text):
+            raw = text.encode()
+            return struct.pack("<Q", len(raw)) + raw
+        buf = b"GGUF" + struct.pack("<IQQ", 3, 2, 0)
+        buf += s("x") + struct.pack("<I", 1) + struct.pack("<Q", 64) + struct.pack("<IQ", 99, 0)
+        buf += s("y") + struct.pack("<I", 1) + struct.pack("<Q", 32) + struct.pack("<IQ", 1, 96)
+        _, tensors, elems = round_facts.parse_gguf(buf)
+        self.assertEqual(tensors, {"x": 96, "y": 64})  # x (an unknown type) by the next offset
+        self.assertEqual(elems, {"x": 64, "y": 32})
 
     def test_a_new_tune_keeps_the_facts_and_board(self):
         old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
@@ -290,7 +322,6 @@ class RoundFactsTest(unittest.TestCase):
                "tune": {"key": {"gpu": "ad104:60sm"}}}
         out = registry_add.put_pair([old], new)
         self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
-
 
 if __name__ == "__main__":
     unittest.main()

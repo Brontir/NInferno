@@ -34,6 +34,7 @@ PassFacts parse_pass(const Json& doc) {
     p.experts_used  = doc.value("experts_used", 0);
     if (p.bytes <= 0 || p.params <= 0 || p.expert_bytes < 0 || p.expert_params < 0 ||
         p.experts < 0 || p.experts_used < 0 || p.experts_used > p.experts ||
+        (p.experts > 0 && p.experts_used == 0) ||
         ((p.experts > 0) != (p.expert_bytes > 0))) {
         throw std::runtime_error("round facts: a pass's bytes, parameters or experts are malformed");
     }
@@ -72,6 +73,7 @@ nlohmann::json round_facts_json(const RoundFacts& facts) {
         Json j         = pass_json(d.pass);
         j["rows"]      = d.rows;
         j["per_draft"] = d.per_draft;
+        if (d.head) { j["head"] = pass_json(*d.head); }
         drafters[mode] = std::move(j);
     }
     return Json{{"target", pass_json(facts.target)}, {"drafters", std::move(drafters)}};
@@ -82,13 +84,12 @@ RoundFacts parse_round_facts(const nlohmann::json& doc) {
     try {
         out.target = parse_pass(doc.at("target"));
         for (const auto& [mode, d] : doc.at("drafters").items()) {
-            if (mode != "mtp" && mode != "dflash" && mode != "dflash2") {
-                throw std::runtime_error("round facts: no drafting mode \"" + mode + "\"");
-            }
+            if (mode != "mtp" && mode != "dflash" && mode != "dflash2") { continue; }
             DraftFacts f;
             f.pass      = parse_pass(d);
             f.rows      = d.at("rows").get<std::int32_t>();
             f.per_draft = d.at("per_draft").get<bool>();
+            if (const auto h = d.find("head"); h != d.end()) { f.head = parse_pass(*h); }
             if (f.rows < 1) { throw std::runtime_error("round facts: a drafter's rows below 1"); }
             out.drafters[mode] = f;
         }
@@ -128,7 +129,8 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
     const double plain  = pass_cost(facts.target, 1, kappa);
     const double verify = pass_cost(facts.target, config.k + 1, kappa);
     const double passes = d->second.per_draft ? double(config.k) : 1.0;
-    const double draft  = passes * pass_cost(d->second.pass, d->second.rows, kappa);
+    const double head   = d->second.head ? pass_cost(*d->second.head, config.k, kappa) : 0.0;
+    const double draft  = passes * pass_cost(d->second.pass, d->second.rows, kappa) + head;
     return (verify + draft) / plain;
 }
 

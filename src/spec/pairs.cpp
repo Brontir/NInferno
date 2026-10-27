@@ -478,18 +478,32 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             return out;
         }
     }
-    // The card itself measured it: its own measurement.
-    const std::string own = gpu != nullptr && !gpu->chain.empty() ? gpu->chain.front() : "";
-    for (const auto* pair : home) {
-        if (!own.empty() && pair->tune.key.gpu == own) { return selected(*pair, false, options); }
-    }
-    // Another card's: its tokens a round, its rounds priced for this card by the facts (this
-    // generation's measurement first).
-    if (gpu != nullptr) {
-        std::vector<const MeasuredPair*> order = home;
-        for (const auto* pair : current) {
-            if (std::find(order.begin(), order.end(), pair) == order.end()) { order.push_back(pair); }
+    // The card itself measured it: its own measurement. Its own keys are its class id and chip
+    // (a tune's key.gpu is either); the architecture is every card of it, not this one.
+    if (gpu != nullptr && !gpu->chain.empty()) {
+        const std::size_t own = std::min<std::size_t>(gpu->own_keys == 0 ? 1 : gpu->own_keys, 2);
+        for (const auto* pair : home) {
+            for (std::size_t i = 0; i < own && i < gpu->chain.size(); ++i) {
+                if (pair->tune.key.gpu == gpu->chain[i]) { return selected(*pair, false, options); }
+            }
         }
+    }
+    // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card
+    // by the facts. A pair with facts is taken over another card's measurement without them even
+    // of this generation: R is computed for this card either way, and a raw measurement of another
+    // card is the very transfer the facts replace. This generation's pairs first, then the
+    // others; within each by GPU class id, so the registry's order never decides.
+    if (gpu != nullptr) {
+        const auto by_class = [](const MeasuredPair* a, const MeasuredPair* b) {
+            return a->tune.key.gpu < b->tune.key.gpu;
+        };
+        std::vector<const MeasuredPair*> order = home, rest;
+        std::sort(order.begin(), order.end(), by_class);
+        for (const auto* pair : current) {
+            if (std::find(home.begin(), home.end(), pair) == home.end()) { rest.push_back(pair); }
+        }
+        std::sort(rest.begin(), rest.end(), by_class);
+        order.insert(order.end(), rest.begin(), rest.end());
         for (const auto* pair : order) {
             if (const auto estimate = round_cost_estimate(*pair, *gpu); estimate.known) {
                 if (note != nullptr) { *note = estimate.note; }

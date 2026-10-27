@@ -8,23 +8,24 @@
 //
 // with R(k) a round's price in plain decode steps:
 //
-//     R(k) = [ C_t(k+1) + n(k) C_d(r_d) ] / C_t(1),     C(r) = B(r) + kappa F(r)
+//     R(k) = [ C_t(k+1) + n(k) C_d(r_d) + C_h(k) ] / C_t(1),     C(r) = B(r) + kappa F(r)
 //
 //   B(r)   the weight bytes a pass over r rows reads: the dense weights (layers and output head)
 //          once, an MoE's routed experts as the rows route them (moe_read_fraction);
 //   F(r)   its operations, 2 x r x the active parameters;
 //   C_t    the target's pass: plain decode is C_t(1), the verify of k drafts C_t(k + 1);
 //   C_d    the drafter's pass of r_d rows (1 for MTP, its block for DFlash), n(k) of them a round
-//          (k for MTP, which drafts token by token; 1 for DFlash, which drafts a block at once);
+//          (k for MTP, which drafts token by token; 1 for DFlash, which drafts a block at once),
+//          plus, for DFlash, the target's output head over the k drafted rows once a round;
 //   kappa  the card's bytes per operation at the small batches a round verifies:
 //          DRAM bytes/s / (eta x the generation's int8 tensor peak), eta the share of that peak
 //          small-T kernels reach (kSmallTEta: the only fitted constants, one per generation).
 //
 // Measured against it (docs/maintainer/choice-notes/DECISIONS.md 53, choice-notes/lab/round_cost):
-// Qwen dense and MoE, gpt-oss at k <= 7 within 1-2 % on average (4 % rms) on six cards of five
-// generations. Where the model does not fit, the estimate is made conservative and says so
+// Qwen dense and MoE within 1 % on average (3-6 % rms; Qwen MoE on Blackwell +5.5 %), gpt-oss
+// +4.6 %, at k <= 7 on six cards of five generations. Where the model does not fit, the estimate is made conservative and says so
 // (round_cost_estimate): the lab card's own measurement of the pair, where it found rounds dearer
-// than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets: +10-26 %), scales the estimate
+// than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets: +8-26 %), scales the estimate
 // up, never down; rounds of more than kPortableDepth drafts (from 12 rows verify kernels change
 // tiles: +15-50 %) are not estimated away from the lab card at all.
 
@@ -54,11 +55,14 @@ struct PassFacts {
     friend bool operator==(const PassFacts&, const PassFacts&) = default;
 };
 
-// A drafter's pass: rows a pass runs over, and whether a round runs one per draft (MTP) or one.
+// A drafter's pass: rows a pass runs over, and whether a round runs one per draft (MTP) or one;
+// and a head run once a round over the k drafted rows only (DFlash: the target's output head
+// scores the drafted positions, not the block's, models/speculation/dflash.cpp).
 struct DraftFacts {
     PassFacts pass;
     std::int32_t rows = 1;
     bool per_draft    = true;
+    std::optional<PassFacts> head;
 
     friend bool operator==(const DraftFacts&, const DraftFacts&) = default;
 };
@@ -73,7 +77,8 @@ struct RoundFacts {
 };
 
 [[nodiscard]] nlohmann::json round_facts_json(const RoundFacts& facts);
-// Throws std::runtime_error naming what is malformed.
+// Throws std::runtime_error naming what is malformed. A drafter of a mode this build does not know
+// is left out (a later registry's facts read by an earlier build).
 [[nodiscard]] RoundFacts parse_round_facts(const nlohmann::json& doc);
 
 // Rows routed apart read this share of the experts independent routing would add (the
@@ -89,13 +94,13 @@ inline constexpr double kRoutedExpertShare = 0.30;
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
 // registry's spec-tune rounds of Qwen targets that verify 5-8 rows (k 4..7, the depths profiles
 // choose; choice-notes/lab/round_cost/fit_eta.py), as kappa = BW / (eta peak):
-//   ada    0.614  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
-//                 hard50 within -3..+5 % and -1..+10 %)
-//   gb20x  0.188  RTX 5070 Ti; checked on the RTX 5090 (hard50: MTP within 5 %, DFlash 11-14 %
+//   ada    0.539  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
+//                 hard50 within -2..+5 % and -1..+11 %)
+//   gb20x  0.167  RTX 5070 Ti; checked on the RTX 5090 (hard50: MTP within 4 %, DFlash 9-14 %
 //                 conservative)
-//   ga10x  0.416  RTX 3060 (one card)
-//   turing 0.170  RTX 2080 Ti (one card)
-//   volta  0.236  Quadro GV100 (one card; its verify steps up from 5 rows, so a fit over 5-8 rows
+//   ga10x  0.359  RTX 3060 (one card)
+//   turing 0.148  RTX 2080 Ti (one card)
+//   volta  0.203  Quadro GV100 (one card; its verify steps up from 5 rows, so a fit over 5-8 rows
 //                 prices 2-4 rows 10-22 % high: conservative)
 // One-card rows are architecture facts as DECISIONS 52 takes them (the owner, 27.10): flagged in
 // the estimate's note. A generation without a row (ga100, hopper, gb100, thor) has no estimate.
@@ -105,8 +110,8 @@ struct SmallTEta {
     std::int32_t cards; // lab cards the row rests on
 };
 inline constexpr SmallTEta kSmallTEta[] = {
-    {"ada", 0.614, 2}, {"gb20x", 0.188, 1}, {"ga10x", 0.416, 1},
-    {"turing", 0.170, 1}, {"volta", 0.236, 1},
+    {"ada", 0.539, 2}, {"gb20x", 0.167, 1}, {"ga10x", 0.359, 1},
+    {"turing", 0.148, 1}, {"volta", 0.203, 1},
 };
 
 // dp4a's int8 rate a SM-clock, for a generation without an int8 MMA (Volta): the configuration

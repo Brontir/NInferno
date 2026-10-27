@@ -60,7 +60,8 @@ def R(rf, mode, k, kappa):
     if d is None:
         return None
     n = k if d["per_draft"] else 1
-    return (cost(rf["target"], k + 1, kappa) + n * cost(d, d["rows"], kappa)) / cost(rf["target"], 1, kappa)
+    head = cost(d["head"], k, kappa) if "head" in d else 0.0  # DFlash: the head over the k drafts
+    return (cost(rf["target"], k + 1, kappa) + n * cost(d, d["rows"], kappa) + head) / cost(rf["target"], 1, kappa)
 
 
 def measured(pair):

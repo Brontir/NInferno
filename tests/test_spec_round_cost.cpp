@@ -1,7 +1,8 @@
 // A speculation round's cost from facts (spec/round_cost.h): the formula on the registry's own
 // pairs (golden numbers from choice-notes/lab/round_cost/fit_eta.py), the cards' rates from the
-// PCI-ID table, and a held-out card: the plan's speedup for a card whose measurement is left out,
-// against that measurement. No GPU.
+// PCI-ID table, and a pair-removal consistency check: the plan's speedup for a card whose own pair
+// is left out, against that pair's measurement. It is no hold-out of the fit (kSmallTEta rests on
+// these cards' rounds); the hold-out evidence is fit_eta.py's cross-fit (DECISIONS 53). No GPU.
 
 #include "spec/pairs.h"
 #include "spec/registry.h"
@@ -72,12 +73,22 @@ int main() {
         expect(pair_again.round_facts == q9.round_facts && pair_again.lab_board == 0x2782,
                "a pair's round facts and lab board round-trip");
         auto bad                       = sp::round_facts_json(*q9.round_facts);
-        bad["drafters"]["ngram"]       = bad["drafters"]["mtp"];
-        bool refused                   = false;
+        bad["drafters"]["eagle9"]      = bad["drafters"]["mtp"];
+        expect(sp::parse_round_facts(bad).drafters.size() == q9.round_facts->drafters.size(),
+               "a drafter of a mode this build does not know is left out, the facts kept");
+        auto no_used                              = sp::round_facts_json(*q9.round_facts);
+        no_used["target"]["expert_bytes"]          = 10.0;
+        no_used["target"]["expert_params"]         = 10.0;
+        no_used["target"]["experts"]               = 8;
+        no_used["target"]["experts_used"]          = 0;
+        bool refused                              = false;
         try {
-            (void)sp::parse_round_facts(bad);
+            (void)sp::parse_round_facts(no_used);
         } catch (const std::runtime_error&) { refused = true; }
-        expect(refused, "round facts of no drafting mode are refused");
+        expect(refused, "experts with none used are refused");
+        expect(q9.round_facts->drafters.at("dflash").head.has_value() &&
+                   !q9.round_facts->drafters.at("mtp").head.has_value(),
+               "DFlash prices the target's head over the drafted rows apart; MTP within its pass");
     }
     // An MoE pass's experts: k/E for one row, towards k/E + 0.30 (1 - k/E) for many.
     {
@@ -95,11 +106,11 @@ int main() {
         const auto rtx4070ti = sp::card_rates_of_board(0x2782);
         const auto gv100     = sp::card_rates_of_board(0x1DBA);
         const auto rtx3060   = sp::card_rates_of_board(0x2503);
-        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.00255941, 1e-5),
+        expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.00291555, 1e-5),
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
-        expect(gv100.generation == "volta" && near(gv100.kappa(), 0.0553426, 1e-5),
+        expect(gv100.generation == "volta" && near(gv100.kappa(), 0.0643392, 1e-5),
                "Quadro GV100 (dp4a's rate): kappa " + std::to_string(gv100.kappa()));
-        expect(near(rtx3060.kappa(), 0.00849246, 1e-5),
+        expect(near(rtx3060.kappa(), 0.00984085, 1e-5),
                "RTX 3060: kappa " + std::to_string(rtx3060.kappa()));
         const auto from_key = sp::card_rates(card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360));
         expect(near(from_key.kappa(), rtx3060.kappa(), 1e-9), "a GpuKey's rates as the board's");
@@ -116,11 +127,11 @@ int main() {
             double r4070ti, r5070ti, rgv100;
         };
         const Golden golden[] = {
-            {kQ9, "ad104:60sm", "mtp:3", 1.610161, 1.703991, 2.010646},
-            {kQ9, "ad104:60sm", "dflash:7", 1.754403, 2.111242, 3.277462},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.898877, 2.167194, 3.054983},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.567344, 1.621905, 1.802434},
-            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.247096, 2.478775, 3.246199},
+            {kQ9, "ad104:60sm", "mtp:3", 1.613298, 1.717989, 2.068003},
+            {kQ9, "ad104:60sm", "dflash:7", 1.755999, 2.112343, 3.303722},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.892300, 2.128804, 2.930671},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.569163, 1.630072, 1.836581},
+            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.223803, 2.356480, 2.806895},
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
         const double k5070 = sp::card_rates_of_board(0x2C05).kappa();
@@ -158,22 +169,39 @@ int main() {
                    !sp::round_cost_estimate(q9, sp::GpuKey{{"*"}, 0, false}).known,
                "no facts, or no rates: no estimate (the measured ratios stand)");
     }
-    // Held out: the plan's speedup on a card with its own measurement left out, against that
-    // measurement (the same target, its drafters as a start carries them).
+    // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
+    {
+        const auto rtx3060 = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360);
+        auto chip_keyed    = pair_of(kQ9, "ga106:28sm");
+        chip_keyed.tune.key.gpu = "ga106";
+        for (const auto* p : {&pair_of(kQ9, "ga106:28sm"), static_cast<const sp::MeasuredPair*>(&chip_keyed)}) {
+            std::string note;
+            (void)sp::profile_for_target({p}, "sm86", {}, nullptr, &rtx3060, &note);
+            expect(note.empty(), "the measuring card's own record (" + p->tune.key.gpu + "), not facts");
+        }
+        auto arch_keyed          = chip_keyed;
+        arch_keyed.tune.key.gpu  = "sm86";
+        std::string note;
+        (void)sp::profile_for_target({&arch_keyed}, "sm86", {}, nullptr, &rtx3060, &note);
+        expect(!note.empty(), "an architecture key is no card's own: priced by the facts");
+    }
+    // Pair removal: the plan's speedup on a card with its own pair left out (the facts price the
+    // other cards' measurements for it), against that pair's measurement (the same target, its
+    // drafters as a start carries them). A consistency check, not a hold-out of eta.
     {
         const auto& registry = sp::Registry::builtin();
-        struct Held {
+        struct Removed {
             const char* gpu;
             sp::GpuKey key;
         };
-        const Held held[] = {
+        const Removed removed[] = {
             {"ga106:28sm", card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360)},
             {"ad102:128sm", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)},
             {"gv100:80sm", card("gv100:80sm", "gv100", "sm70", 70, 80, 1627, 870.4)},
         };
         const auto& own_pair = pair_of(kQ9, "ad104:60sm");
         const std::vector<std::string> kinds = {"mtp", "dflash"};
-        for (const auto& h : held) {
+        for (const auto& h : removed) {
             std::vector<sp::MeasuredPair> without;
             for (const auto& p : registry.pairs()) {
                 if (p.tune.key.gpu != h.gpu) { without.push_back(p); }
@@ -189,13 +217,13 @@ int main() {
             }
             const double m = measured->profile.overall.speedup();
             const double p = predicted->profile.overall.speedup();
-            std::printf("held out %-12s measured %s x%.3f  predicted %s x%.3f  (%+.1f %%)\n  %s\n",
+            std::printf("pair removed %-12s measured %s x%.3f  predicted %s x%.3f  (%+.1f %%)\n  %s\n",
                         h.gpu, measured->profile.overall.config.label().c_str(), m,
                         predicted->profile.overall.config.label().c_str(), p, 100 * (p / m - 1),
                         predicted->source.c_str());
             expect(predicted->source.find("rounds priced from the weights' bytes") != std::string::npos,
-                   std::string("the held-out card's rounds are priced by the facts: ") + h.gpu);
-            expect(near(p, m, 0.10), std::string("held-out speedup within 10 %: ") + h.gpu);
+                   std::string("the card's rounds are priced by the facts: ") + h.gpu);
+            expect(near(p, m, 0.10), std::string("speedup without its pair within 10 %: ") + h.gpu);
         }
     }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }
