@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 152,
+  "version": 156,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -989,80 +989,88 @@
             "unsloth/gemma-4-26B-A4B-it-GGUF"
           ],
           "default": {
-            "acceptance": 0.7786001268767181,
-            "config": "mtp:2",
+            "acceptance": 0.6446205425175251,
+            "config": "mtp:4",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.7668783108147452,
-            "plain_tok_s": 250.19080144289924,
-            "speedup": 1.5730782059064645,
-            "tok_s": 393.56969706809645,
-            "tokens_per_round": 2.7659472422062352
+            "floor_tokens_per_round": 2.1215679303524486,
+            "plain_tok_s": 249.72783342081172,
+            "speedup": 1.7504492666927793,
+            "tok_s": 437.13590288423643,
+            "tokens_per_round": 3.7431906614785992
           },
           "gpu": "NVIDIA GeForce RTX 5070 Ti",
           "gpu_class": "gb203:70sm",
-          "measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
-          "measured_at": "2026-10-21",
+          "measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.745141065830721,
+            "acceptance": 0.7477222745837261,
             "config": "mtp:2",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.7745013436497945,
-            "plain_tok_s": 250.48283056747357,
-            "speedup": 1.5675341708739232,
-            "tok_s": 392.6403961317381,
-            "tokens_per_round": 2.758136094674556
+            "floor_tokens_per_round": 1.6273288878830505,
+            "plain_tok_s": 250.0465365768182,
+            "speedup": 1.714213556561664,
+            "tok_s": 428.63316277127376,
+            "tokens_per_round": 2.765578635014837
           },
           "portable": {
             "default": {
-              "acceptance": 0.7786001268767181,
+              "acceptance": 0.7803896653960186,
               "config": "mtp:2",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.7668783108147452,
-              "plain_tok_s": 250.19080144289924,
-              "speedup": 1.5730782059064645,
-              "tok_s": 393.56969706809645,
-              "tokens_per_round": 2.7659472422062352
+              "floor_tokens_per_round": 1.6197713265554157,
+              "plain_tok_s": 249.72783342081172,
+              "speedup": 1.7195235428286757,
+              "tok_s": 429.41288886668355,
+              "tokens_per_round": 2.770783277270543
             },
             "non_thinking": {
-              "acceptance": 0.745141065830721,
+              "acceptance": 0.7477222745837261,
               "config": "mtp:2",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.7745013436497945,
-              "plain_tok_s": 250.48283056747357,
-              "speedup": 1.5675341708739232,
-              "tok_s": 392.6403961317381,
-              "tokens_per_round": 2.758136094674556
+              "floor_tokens_per_round": 1.6273288878830505,
+              "plain_tok_s": 250.0465365768182,
+              "speedup": 1.714213556561664,
+              "tok_s": 428.63316277127376,
+              "tokens_per_round": 2.765578635014837
             },
             "thinking": {
-              "acceptance": 0.7577243746934772,
+              "acceptance": 0.7622101628021707,
               "config": "mtp:4",
               "drafter": "assistant",
-              "floor_tokens_per_round": 2.407668615945038,
-              "plain_tok_s": 249.31878542707196,
-              "speedup": 1.715167373334535,
-              "tok_s": 427.62344632390756,
+              "floor_tokens_per_round": 2.1111676030143274,
+              "plain_tok_s": 248.77657991920944,
+              "speedup": 1.9560524943515913,
+              "tok_s": 486.6200496872276,
               "tokens_per_round": 4.127530364372469
             }
           },
-          "source": "spec-tune 2026-10-20T23:33:38Z (ninferno-spec-1, 111 s)",
+          "source": "spec-tune 2026-10-27T19:00:10Z (ninferno-spec-1, 106 s)",
           "thinking": {
-            "acceptance": 0.7577243746934772,
+            "acceptance": 0.7622101628021707,
             "config": "mtp:4",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.407668615945038,
-            "plain_tok_s": 249.31878542707196,
-            "speedup": 1.715167373334535,
-            "tok_s": 427.62344632390756,
+            "floor_tokens_per_round": 2.1111676030143274,
+            "plain_tok_s": 248.77657991920944,
+            "speedup": 1.9560524943515913,
+            "tok_s": 486.6200496872276,
             "tokens_per_round": 4.127530364372469
           },
           "load": [
             {
-              "depth": 2,
+              "depth": 3,
               "lanes": 2
+            },
+            {
+              "depth": 2,
+              "lanes": 3
+            },
+            {
+              "depth": 3,
+              "lanes": 5
             }
           ],
-          "load_measured_on": "gemma-4-26b-a4b-it (unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact), NVIDIA GeForce RTX 5070 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 5070 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:38:45Z",
-          "revision": "9dc78acd0461"
+          "load_measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-IQ3_XXS --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 5070 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 5070 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T19:05:51Z",
+          "revision": "f1cf7847107d"
         },
         {
           "applies_to": [
@@ -2422,6 +2430,88 @@
           ],
           "load_measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 3060, built-in corpus, context 8192, NVIDIA GeForce RTX 3060, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:49:58Z",
           "revision": "aedfb09511e8"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.5962243650685862,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.4437087755434548,
+            "plain_tok_s": 105.69833120481142,
+            "speedup": 2.835373900002811,
+            "tok_s": 299.694289571975,
+            "tokens_per_round": 4.142448103078024
+          },
+          "gpu": "NVIDIA GeForce RTX 5070 Ti",
+          "gpu_class": "gb203:70sm",
+          "measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 5070 Ti, built-in corpus",
+          "measured_at": "2026-10-27",
+          "non_thinking": {
+            "acceptance": 0.5452236764993162,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.450451290917706,
+            "plain_tok_s": 105.75496421276063,
+            "speedup": 2.718719359969987,
+            "tok_s": 287.51806861816544,
+            "tokens_per_round": 3.9133611691022963
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.5962243650685862,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4437087755434548,
+              "plain_tok_s": 105.69833120481142,
+              "speedup": 2.835373900002811,
+              "tok_s": 299.694289571975,
+              "tokens_per_round": 4.142448103078024
+            },
+            "non_thinking": {
+              "acceptance": 0.5452236764993162,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.450451290917706,
+              "plain_tok_s": 105.75496421276063,
+              "speedup": 2.718719359969987,
+              "tok_s": 287.51806861816544,
+              "tokens_per_round": 3.9133611691022963
+            },
+            "thinking": {
+              "acceptance": 0.7125668449197861,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4283952866349139,
+              "plain_tok_s": 105.52879552881149,
+              "speedup": 3.2532485038540253,
+              "tok_s": 343.31139616762334,
+              "tokens_per_round": 4.642369020501139
+            }
+          },
+          "source": "spec-tune 2026-10-27T18:51:38Z (ninferno-spec-1, 167 s)",
+          "thinking": {
+            "acceptance": 0.7125668449197861,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.4283952866349139,
+            "plain_tok_s": 105.52879552881149,
+            "speedup": 3.2532485038540253,
+            "tok_s": 343.31139616762334,
+            "tokens_per_round": 4.642369020501139
+          },
+          "load": [
+            {
+              "depth": 3,
+              "lanes": 2
+            },
+            {
+              "depth": 1,
+              "lanes": 3
+            }
+          ],
+          "load_measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 5070 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 5070 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T19:00:01Z",
+          "revision": "c211c7510f81"
         },
         {
           "gpu_class": "*",
