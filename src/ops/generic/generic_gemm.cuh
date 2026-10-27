@@ -781,6 +781,7 @@ struct GgmlQ45KDecoder {
     static constexpr bool kStepScale  = true;
     static constexpr int kSplits      = 4;
     static constexpr bool kMinTerm    = true;
+    static constexpr bool kStageActs  = true;
     static constexpr int kBlockBytes  = Bits == 4 ? 144 : 176;
     static constexpr int kNibbleStart = Bits == 4 ? 16 : 48;
     struct Run {
@@ -855,6 +856,7 @@ struct GgmlQ6KDecoder {
     static constexpr int kRun        = 32;
     static constexpr bool kStepScale = true;
     static constexpr int kSplits     = 8;
+    static constexpr bool kStageActs = true;
     struct Run {
         uint4 ql;   // word 2a + u: word u of ql bytes 64h + 32a .. + 31
         uint2 qh;   // word u of qh bytes 32h .. 32h + 31
@@ -909,6 +911,7 @@ struct GgmlQ3KDecoder {
     static constexpr int kRun        = 32;
     static constexpr bool kStepScale = true;
     static constexpr int kSplits     = 8;
+    static constexpr bool kStageActs = true;
     struct Run {
         uint2 qs;    // word u of qs bytes 32h .. 32h + 31
         uint2 hm;    // word u of the hmask bytes; unpacked, shifted so bit jj is quarter jj
@@ -2029,11 +2032,12 @@ template <class D>
 struct UnpackOf<D, std::void_t<decltype(D::unpack(std::declval<typename D::Run&>(), 0))>>
     : std::true_type {};
 
-// Whether rmma_kernel stages a K-quant one-tile step's activations ahead (kActStage there).
-#ifndef NINFERNO_RMMA_ACT_STAGE
-#    define NINFERNO_RMMA_ACT_STAGE 1
-#endif
-inline constexpr bool kRmmaActStage = NINFERNO_RMMA_ACT_STAGE != 0;
+// A decoder whose SwiGLU decode tile stages its activations ahead (kStageActs; rmma_kernel's
+// kActStage).
+template <class D, class = void>
+struct StageActsOf : std::false_type {};
+template <class D>
+struct StageActsOf<D, std::void_t<decltype(D::kStageActs)>> : std::bool_constant<D::kStageActs> {};
 
 template <class D, class = void>
 struct QuadRunsOf : std::false_type {};
@@ -2853,12 +2857,15 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
 
     Run ring[2][kSets][MT][2];
 
-    // A K-quant step of one token tile (the verify widths, T <= 8) also copies its activations
-    // ahead, with cp.async into shared memory, each lane the 8-byte chunks its own MMAs read
-    // (mma_step, Staged), so no lane reads another's and the wait is the lane's own. Loaded
-    // in the step itself they were the second long-scoreboard stall after the weights (ncu, RTX
-    // 3060, Q4_K SwiGLU 12288x4096 T = 8: a quarter of the stall samples on the MMAs reading them).
-    constexpr bool kActStage = kRmmaActStage && UnpackOf<Decoder>::value && NT == 1 &&
+    // A K-quant SwiGLU step of one token tile (the verify widths, T <= 8) also copies its
+    // activations ahead, with cp.async into shared memory, each lane the 8-byte chunks its own
+    // MMAs read (mma_step, Staged), so no lane reads another's and the wait is the lane's own.
+    // Loaded in the step itself they were the second long-scoreboard stall after the weights (ncu,
+    // RTX 3060, Q4_K SwiGLU 12288x4096 T = 8: a quarter of the stall samples on the MMAs reading
+    // them); staged, that call took 263 -> 188 us on w1x8 and Q5_K's 303 -> 232. Store and
+    // add, one row set and half the weight per activation, lost 5-20 % with it (the shared memory
+    // comes out of L1, which the quad's weight words hit): they load in the step.
+    constexpr bool kActStage = StageActsOf<Decoder>::value && kSwiGlu && NT == 1 &&
                                Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value &&
                                !QuadRunsOf<Decoder>::value;
 #if NINFERNO_FMA_MMA
