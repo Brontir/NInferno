@@ -2028,6 +2028,12 @@ template <class D>
 struct UnpackOf<D, std::void_t<decltype(D::unpack(std::declval<typename D::Run&>(), 0))>>
     : std::true_type {};
 
+// Whether rmma_kernel stages a K-quant one-tile step's activations ahead (kActStage there).
+#ifndef NINFERNO_RMMA_ACT_STAGE
+#    define NINFERNO_RMMA_ACT_STAGE 1
+#endif
+inline constexpr bool kRmmaActStage = NINFERNO_RMMA_ACT_STAGE != 0;
+
 template <class D, class = void>
 struct QuadRunsOf : std::false_type {};
 template <class D>
@@ -2109,11 +2115,15 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 // one scale group per step (kStepScale: the step's partial is scaled; otherwise the MMA
 // accumulates straight into acc). Every accumulator takes its terms in the same order whatever
 // MT and the set count are.
-template <class Decoder, int NT, int J, int Sets, int MT>
+//
+// Staged (rmma_kernel's act_stage): a spread decoder's activations of the step were copied ahead
+// into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
+template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
 __device__ __forceinline__ void mma_step_runs(float (&acc)[Sets][MT][NT][4],
                                               const typename Decoder::Run (&runs)[Sets][MT][2],
                                               const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                              int quad, int k) {
+                                              int quad, int k, const uint2* stage = nullptr) {
+    static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2124,7 +2134,16 @@ __device__ __forceinline__ void mma_step_runs(float (&acc)[Sets][MT][NT][4],
                 if (step_k0 + 16 * G * g >= k) break; // the row's end: warp-uniform
             }
             unsigned act[NT][2 * G];
-            load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
+            if constexpr (Staged) {
+#pragma unroll
+                for (int i = 0; i < G; ++i) {
+                    const uint2 w     = stage[32 * (g * G + i)];
+                    act[0][2 * i]     = w.x;
+                    act[0][2 * i + 1] = w.y;
+                }
+            } else {
+                load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
+            }
             act_operands<Decoder, NT, G>(act);
             float sums[NT][4];
             if constexpr (MinTermOf<Decoder>::value) {
@@ -2255,17 +2274,18 @@ __device__ __forceinline__ void unpack_runs(typename Decoder::Run (&dst)[Sets][M
             }
 }
 
-template <class Decoder, int NT, int J, int Sets, int MT>
+template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
 __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                                          const typename Decoder::Run (&loaded)[Sets][MT][2],
                                          const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k) {
+                                         int quad, int k, const uint2* stage = nullptr) {
     if constexpr (UnpackOf<Decoder>::value) {
         typename Decoder::Run runs[Sets][MT][2];
         unpack_runs<Decoder, Sets, MT>(runs, loaded, step_k0);
-        mma_step_runs<Decoder, NT, J, Sets, MT>(acc, runs, col, step_k0, quad, k);
+        mma_step_runs<Decoder, NT, J, Sets, MT, Staged>(acc, runs, col, step_k0, quad, k, stage);
     } else {
-        mma_step_runs<Decoder, NT, J, Sets, MT>(acc, loaded, col, step_k0, quad, k);
+        mma_step_runs<Decoder, NT, J, Sets, MT, Staged>(acc, loaded, col, step_k0, quad, k,
+                                                        stage);
     }
 }
 
@@ -2867,10 +2887,42 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
 
     Run ring[2][kSets][MT][2];
 
+    // A K-quant step of one token tile (the verify widths, T <= 8) also copies its activations
+    // ahead, with cp.async into shared memory, each lane the 8-byte chunks its own MMAs read
+    // (mma_step_runs, Staged), so no lane reads another's and the wait is the lane's own. Loaded
+    // in the step itself they were the second long-scoreboard stall after the weights (ncu, RTX
+    // 3060, Q4_K SwiGLU 12288x4096 T = 8: a quarter of the stall samples on the MMAs reading them).
+    constexpr bool kActStage = kRmmaActStage && UnpackOf<Decoder>::value && NT == 1 &&
+                               Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value &&
+                               !QuadRunsOf<Decoder>::value;
+#if NINFERNO_FMA_MMA
+    constexpr bool kStaged = false;
+#else
+    constexpr bool kStaged = kActStage;
+#endif
+    __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
+                              [kStaged ? J : 1][32];
+    const auto stage_act = [&](auto slot_tag, int step) {
+        if constexpr (kStaged) {
+            constexpr int slot = decltype(slot_tag)::value;
+            const int token    = token0 + group;
+            const int base     = step * KStep;
+            const bool live    = token < a.tokens && base < a.k;
+            const __nv_bfloat16* src = x + (live ? static_cast<std::int64_t>(token) * a.ldx : 0);
+#pragma unroll
+            for (int c = 0; c < J; ++c) {
+                cp_async_zfill<8>(&act_stage[slot][warp][c][lane], src + base + 16 * c + 4 * quad,
+                                  live ? 8 : 0);
+            }
+            cp_commit();
+        }
+    };
+
     const auto fetch = [&](auto slot_tag, int step) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = step * KStep + quad * R;
         const bool k_ok    = (GroupTailOf<Decoder>::value ? step * KStep : k0) < a.k;
+        stage_act(slot_tag, step);
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
@@ -2885,7 +2937,8 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
                 }
     };
 
-    const auto compute = [&](auto slot_tag, int step) {
+    // `ahead`: the next step's copy was issued after this one's (one younger group to leave).
+    const auto compute = [&](auto slot_tag, int step, bool ahead) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = (GroupTailOf<Decoder>::value ? 0 : quad * R) + step * KStep;
 #if NINFERNO_FMA_MMA
@@ -2911,7 +2964,18 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
             col[n] = token < a.tokens && k0 < a.k ? x + static_cast<std::int64_t>(token) * a.ldx
                                                   : nullptr;
         }
-        mma_step<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
+        if constexpr (kStaged) {
+            if (ahead) {
+                cp_wait<1>();
+            } else {
+                cp_wait<0>();
+            }
+            mma_step<Decoder, NT, J, kSets, MT, true>(acc, ring[slot], col, step * KStep, quad, a.k,
+                                                      &act_stage[slot][warp][0][lane]);
+        } else {
+            (void)ahead;
+            mma_step<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
+        }
     };
 
     using Slot0 = std::integral_constant<int, 0>;
@@ -2928,10 +2992,10 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
 #pragma unroll 1
     for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
         if (step + WK < steps) fetch(Slot1{}, step + WK);
-        compute(Slot0{}, step);
+        compute(Slot0{}, step, step + WK < steps);
         if (step + WK >= steps) break;
         if (step + 2 * WK < steps) fetch(Slot0{}, step + 2 * WK);
-        compute(Slot1{}, step + WK);
+        compute(Slot1{}, step + WK, step + 2 * WK < steps);
     }
 #if NINFERNO_FMA_MMA
     if constexpr (kLocal) {
