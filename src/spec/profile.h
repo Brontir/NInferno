@@ -42,10 +42,11 @@ namespace ninferno::spec {
 inline constexpr const char* kSpecEngineVersion = "ninferno-spec-1";
 
 // A corpus section's share of the mix every choice is judged on: the lab's benchmark tasks
-// (examples/cli/messages, the text ones), each one request of its section. Code (Python, CUDA,
-// TypeScript, a code review, CSV/JSONL/SQL output) 7, math (three long derivations, a Jacobian
-// counterexample) 4, prose (stories, translations, chat, needle-in-a-haystack answers) 12,
-// thinking (a logic grid) 1. Equal weights overstated a mixed workload's speed 1.2-1.5 times:
+// (examples/cli/messages, the text ones that decode an answer, each one request of its section,
+// their answers of a few hundred tokens alike). Code (Python, CUDA, TypeScript, a code review,
+// CSV/JSONL/SQL output) 7, math (three long derivations, a Jacobian counterexample) 4, prose
+// (stories, translations, chat) 8, thinking (a logic grid) 1; the needle-in-a-haystack tasks
+// answer in one line and are left out. Equal weights overstated a mixed workload's speed 1.2-1.5 times:
 // prose gains least and our tasks are mostly prose (choice/DECISIONS 50). 0 for another name.
 [[nodiscard]] double section_weight(std::string_view family);
 

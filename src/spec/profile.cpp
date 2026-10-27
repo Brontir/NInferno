@@ -163,7 +163,7 @@ std::optional<Choice> fit_fallback_from(const Json& doc) {
 double section_weight(std::string_view family) {
     if (family == "code") { return 7.0; }
     if (family == "math") { return 4.0; }
-    if (family == "prose") { return 12.0; }
+    if (family == "prose") { return 8.0; }
     if (family == "thinking") { return 1.0; }
     return 0.0;
 }
@@ -263,7 +263,7 @@ void select(Profile& profile, const SelectOptions& options) {
             best = plain_choice(weight / plain_cost);
             struct Candidate {
                 SpecConfig config;
-                double cost = 0, seconds = 0, rounds = 0, drafted = 0, accepted = 0;
+                double cost = 0, round_cost = 0, rounds = 0, drafted = 0, accepted = 0;
             };
             std::vector<Candidate> candidates;
             for (const auto& label : labels) {
@@ -279,7 +279,9 @@ void select(Profile& profile, const SelectOptions& options) {
                         break;
                     }
                     c.cost += weighted_cost(*m);
-                    c.seconds += m->seconds;
+                    if (m->rounds > 0) {
+                        c.round_cost += section_weight(f) * m->seconds / double(m->rounds);
+                    }
                     c.rounds += double(m->rounds);
                     c.drafted += double(m->drafted);
                     c.accepted += double(m->accepted);
@@ -315,7 +317,7 @@ void select(Profile& profile, const SelectOptions& options) {
             best.acceptance = chosen->drafted > 0 ? chosen->accepted / chosen->drafted : 0.0;
             best.floor_tokens_per_round =
                 chosen->rounds > 0
-                    ? (chosen->seconds / chosen->rounds) / (plain_cost / weight)
+                    ? chosen->round_cost / plain_cost
                     : 0.0;
             return best;
         };
