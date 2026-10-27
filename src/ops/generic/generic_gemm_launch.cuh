@@ -90,7 +90,14 @@ bool rmma_latency_pays() {
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
     if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
-        if (rmma_latency_pays<Decoder, Schedule, E>()) {
+        // The choice reads the device's facts and occupancy; where either fails this launch
+        // takes the plain kernel (master's), and the next one asks again.
+        bool pays = false;
+        try {
+            pays = rmma_latency_pays<Decoder, Schedule, E>();
+        } catch (const std::exception&) {
+        }
+        if (pays) {
             launch_rmma_kernel<Decoder, Schedule, E, true>(args, stream);
             return;
         }

@@ -1262,15 +1262,13 @@ void record_problem(const Problem& p) {
 // SMs times the reference clock (rmma_latency_pays reads it); 0 when a fact is unknown.
 double dram_bytes_per_sm_cycle() {
     static PerDevice<double> bytes;
+    // A device whose class cannot be read throws, and PerDevice retries on the next call (the
+    // launch takes the plain kernel meanwhile): caching 0 would turn the variant off for good.
     return bytes.get([](int) {
-        try {
-            const auto& d = device_class();
-            const auto& f = d.facts;
-            if (!f.has_roofline() || d.sms <= 0) return 0.0;
-            return f.dram_bytes_per_s() / (d.sms * f.reference_clock_hz());
-        } catch (const std::exception&) {
-            return 0.0;
-        }
+        const auto& d = device_class();
+        const auto& f = d.facts;
+        if (!f.has_roofline() || d.sms <= 0) return 0.0;
+        return f.dram_bytes_per_s() / (d.sms * f.reference_clock_hz());
     });
 }
 

@@ -1972,6 +1972,9 @@ struct GgmlQ40FragDecoder : GgmlQ40Decoder {
 // Q4_K (144-byte blocks): each 64-byte half of the 128 nibble bytes 4 x 4-transposed by words;
 // the 16-byte head unchanged.
 struct GgmlQ4KFragDecoder : GgmlQ4KDecoder {
+    // The base's raw load reads the untransposed nibbles: deleted, so UnpackOf is false here and
+    // no latency variant decodes this layout with it.
+    __device__ static Run load_raw(const GemmArgs&, int, int) = delete;
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         const int p  = k0 & 255;
         const int h  = p >> 7;
