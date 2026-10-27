@@ -286,11 +286,12 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 std::uint64_t kept = 0;
                 if (dflash && config) {
                     const auto hidden = config->value("hidden_size", std::uint64_t{0});
-                    const auto taps   = config->contains("dflash_config")
-                                            ? (*config)["dflash_config"]
-                                                  .value("target_layer_ids", nlohmann::json::array())
-                                                  .size()
-                                            : 0;
+                    // Muse's config carries the taps at the top level, z-lab's under dflash_config
+                    // (gemma4.cpp block_dflash_config).
+                    const nlohmann::json& fields =
+                        config->contains("dflash_config") ? (*config)["dflash_config"] : *config;
+                    const auto taps =
+                        fields.value("target_layer_ids", nlohmann::json::array()).size();
                     kept = std::min<std::uint64_t>(bytes, 2 * hidden * hidden * taps);
                 }
                 bytes = kept + convert::companion_drafter_bytes(target_model_type, d.kind, d.quant,

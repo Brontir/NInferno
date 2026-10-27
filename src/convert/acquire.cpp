@@ -1,5 +1,7 @@
 #include "convert/acquire.h"
 
+#include "artifact/reader.h"
+
 #include "core/ascii.h"
 #include "core/quant_label.h"
 #include "convert/files.h"
@@ -944,23 +946,45 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                  " again: converted earlier without its drafters");
                 remove_artifact(out.artifact);
             } else {
-                out.reused = true;
-                say(options, "artifact " + out.artifact.string() + " (converted earlier)");
                 // Its separate drafters planned from another registry (one whose kinds convert
-                // them otherwise), or one failed: attached again; its companions are its own.
+                // them otherwise), or one failed: planned again from the checkpoint (its
+                // declaration and lineage), as at first. A companion that plan adds is converted
+                // into the artifact, so the artifact is converted again.
+                std::optional<DrafterPlan> replanned;
+                std::string missing;
+                std::string replan_error;
                 if (drafters_on && !gguf && drafters_incomplete(out.artifact)) {
                     try {
-                        // Planned from the checkpoint (its declaration and lineage), as at first.
-                        out.drafters = attach_drafters(
-                            plan_drafters(describe_checkpoint(fetched.model, model_id)),
-                            out.artifact, attach);
-                        require_drafters(*out.drafters, options);
+                        replanned = plan_drafters(describe_checkpoint(fetched.model, model_id));
+                        const artifact::Reader reader(out.artifact);
+                        for (const PlannedDrafter& d : replanned->drafters) {
+                            if (d.supported && !d.decl.component.empty() &&
+                                !reader.directory().components.count(d.decl.component)) {
+                                missing = d.decl.component;
+                            }
+                        }
+                    } catch (const std::exception& error) {
+                        replan_error = error.what();
+                    }
+                }
+                if (missing.empty()) {
+                    out.reused = true;
+                    say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                    try {
+                        if (!replan_error.empty()) { throw std::runtime_error(replan_error); }
+                        if (replanned) {
+                            out.drafters = attach_drafters(*replanned, out.artifact, attach);
+                            require_drafters(*out.drafters, options);
+                        }
                     } catch (const std::exception& error) {
                         if (options.with_drafters == true) { throw; }
                         say(options, std::string("drafters not attached: ") + error.what());
                     }
+                    return out;
                 }
-                return out;
+                say(options, "converting " + fetched.repo + " again: its drafter component " +
+                                 missing + " is not in the artifact");
+                remove_artifact(out.artifact);
             }
         }
         // A report without its artifact is what an interrupted conversion leaves behind.
