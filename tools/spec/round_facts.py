@@ -77,12 +77,16 @@ def classes(table: dict) -> tuple[dict, dict, int, int]:
             else:
                 c = "body"
         else:
-            if "embed_tokens" in name or ("per_layer" in name and "embed" in name):
+            # An input embedding table by its role: outside the layers, named for embedding
+            # (embed_tokens, Nemotron's backbone.embeddings, wte, word_embeddings, ...): a token
+            # reads one row of it, no pass reads it whole.
+            in_layer = re.search(r"\.(layers|h|blocks)\.\d+\.", name) is not None
+            if name.startswith("mtp."):
+                c = "mtp_experts" if ".experts" in name else "mtp"
+            elif ("embed" in name and not in_layer) or name.split(".")[-2:-1] in (["wte"], ["tok_embeddings"]):
                 c = "embed"
             elif name.startswith("lm_head"):
                 c = "head"
-            elif name.startswith("mtp."):
-                c = "mtp_experts" if ".experts" in name else "mtp"
             elif ".experts" in name:
                 c = "experts"
             else:
@@ -125,9 +129,9 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
     kinds = {d.get("kind") for d in pair["tune"].get("drafters", [])}
     for mode in sorted(modes):
         if mode == "mtp":
-            if b.get("mtp") or b.get("mtp_experts"):
-                d = pass_of(b, n, ["mtp", "head"], ["mtp_experts"], experts, used)
-            elif "nemotron_h_mtp" in kinds or "gemma4_assistant" in kinds:
+            # A separate MTP drafter the pair was measured with takes precedence over MTP layers the
+            # checkpoint carries (Nemotron NVFP4 keeps bf16 mtp.* tensors; the lab ran the sidecar).
+            if "nemotron_h_mtp" in kinds or "gemma4_assistant" in kinds:
                 kind = "nemotron_h_mtp" if "nemotron_h_mtp" in kinds else "gemma4_assistant"
                 table = tables.get(drafter_key(registry, pair, kind))
                 if table is None:
@@ -144,6 +148,8 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
                         "vocab_size", 262144)))
                     d = {"bytes": int(qb.get("body", 0) + qb.get("head", 0) * share),
                          "params": int(qn.get("body", 0) + qn.get("head", 0) * share)}
+            elif b.get("mtp") or b.get("mtp_experts"):
+                d = pass_of(b, n, ["mtp", "head"], ["mtp_experts"], experts, used)
             else:
                 continue
             d.update(rows=1, per_draft=True)
@@ -151,7 +157,9 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
             table = tables.get(drafter_key(registry, pair, mode))
             if table is None:
                 continue
-            block = int(table.get("meta", {}).get("block_size", 0) or 0)
+            meta = table.get("meta", {})
+            arch = meta.get("general.architecture", "")
+            block = int(meta.get("block_size", 0) or meta.get(f"{arch}.block_size", 0) or 0)
             if not 1 <= block <= 16:
                 print(f"{pair['target_repo']}: {mode} drafter without a block_size", file=sys.stderr)
                 continue

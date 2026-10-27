@@ -179,6 +179,13 @@ int main() {
             (void)sp::profile_for_target({p}, "sm86", {}, nullptr, &rtx3060, &note);
             expect(note.empty(), "the measuring card's own record (" + p->tune.key.gpu + "), not facts");
         }
+        // Another board of the lab card's class (RTX 3060 8 GB: 240 GB/s against the 12 GB's 360):
+        // not the lab card, priced by the facts.
+        const auto rtx3060_8gb = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 240);
+        std::string other_note;
+        (void)sp::profile_for_target({&pair_of(kQ9, "ga106:28sm")}, "sm86", {}, nullptr, &rtx3060_8gb,
+                                     &other_note);
+        expect(!other_note.empty(), "another board of the lab card's class: priced by the facts");
         auto arch_keyed          = chip_keyed;
         arch_keyed.tune.key.gpu  = "sm86";
         std::string note;

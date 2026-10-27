@@ -330,10 +330,18 @@ def put_pair(pairs: list[dict], pair: dict) -> list[dict]:
     kept = [p for p in pairs if not same(p)]
     # The weights' round facts are the target's and its drafters' (tools/spec/round_facts.py): a
     # new tune of the same pair keeps them; the lab board stays with its GPU class.
+    # Only facts that price every mode the new tune measured: stale ones would drop its other
+    # configurations off the lab card (spec/pairs.cpp price_by_facts); then none, and a warning.
+    modes = {m.get("config", "plain").split(":")[0] for m in pair["tune"].get("measurements", [])} - {"plain"}
     for p in pairs:
         if (p.get("target") == pair["target"] and p.get("drafters") == pair.get("drafters")
                 and "round_facts" in p and "round_facts" not in pair):
-            pair["round_facts"] = p["round_facts"]
+            if modes <= set(p["round_facts"].get("drafters", {})):
+                pair["round_facts"] = p["round_facts"]
+            else:
+                print(f"{pair['target_repo']}: the earlier round facts do not price "
+                      f"{sorted(modes - set(p['round_facts'].get('drafters', {})))}: none kept "
+                      "(run tools/spec/round_facts.py)", file=sys.stderr)
         if same(p) and "lab_board" in p and "lab_board" not in pair:
             pair["lab_board"] = p["lab_board"]
     return kept + [pair]

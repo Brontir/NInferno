@@ -315,6 +315,28 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(tensors, {"x": 96, "y": 64})  # x (an unknown type) by the next offset
         self.assertEqual(elems, {"x": 64, "y": 32})
 
+    def test_embeddings_by_role_and_the_sidecar_first(self):
+        meta = {"expert_count": 8, "expert_used_count": 2}
+        target = self.table({"backbone.embeddings.weight": (700, 350), "lm_head.weight": (10, 40),
+                             "backbone.layers.0.mixer.q_proj.weight": (5, 20),
+                             "mtp.layers.0.q_proj.weight": (90, 90)}, meta)
+        side = self.table({"blk.0.attn_q.weight": (3, 12)})
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "m"}]}]}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:b/g@3:m.gguf": side}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        tables, registry)
+        self.assertEqual(facts["target"], {"bytes": 15, "params": 60})  # no embedding table read
+        self.assertEqual(facts["drafters"]["mtp"]["bytes"], 13)  # the sidecar, not mtp.* (90)
+
+    def test_stale_facts_are_not_kept(self):
+        old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"drafters": {"dflash": {}}}}
+        new = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89", "target_repo": "t",
+               "tune": {"key": {"gpu": "ad104:60sm"}, "measurements": [{"config": "mtp:3"}, {"config": "plain"}]}}
+        with contextlib.redirect_stderr(io.StringIO()):
+            out = registry_add.put_pair([old], new)
+        self.assertNotIn("round_facts", out[0])
+
     def test_a_new_tune_keeps_the_facts_and_board(self):
         old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
                "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"x": 1}, "lab_board": "0x2782"}
