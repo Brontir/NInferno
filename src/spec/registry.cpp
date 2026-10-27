@@ -59,6 +59,19 @@ DrafterDecl parse_drafter(const Json& d) {
     return out;
 }
 
+void apply_kind_rule(DrafterDecl& d, const std::vector<KindInfo>& kinds) {
+    if (!d.component.empty()) { return; }
+    for (const auto& k : kinds) {
+        if (k.name != d.kind) { continue; }
+        if (d.recipe.empty()) { d.recipe = k.recipe; }
+        if (d.quant.empty()) { d.quant = k.quant; }
+        if (d.proposal_rows == 0 && d.ranking.empty()) {
+            d.proposal_rows = k.proposal_rows;
+            d.ranking       = k.ranking;
+        }
+    }
+}
+
 std::pair<std::string, std::string> split_variant(std::string_view name) {
     const auto dot = name.find('.');
     if (dot == std::string_view::npos) { return {std::string(name), std::string()}; }
@@ -123,9 +136,15 @@ Registry Registry::parse(const std::string& text) {
         kind.name          = name;
         kind.architectures = strings(info, "architectures");
         kind.recipe        = json_text(info, "recipe");
+        kind.quant         = json_text(info, "quant");
+        kind.proposal_rows = info.value("proposal_rows", std::uint64_t{0});
+        kind.ranking       = json_text(info, "ranking");
         out.kinds_.push_back(std::move(kind));
     }
     for (const auto& item : doc.at("models")) { out.models_.push_back(parse_model_entry(item)); }
+    for (auto& entry : out.models_) {
+        for (auto& d : entry.drafters) { apply_kind_rule(d, out.kinds_); }
+    }
     for (const auto& item : doc.value("pairs", Json::array())) {
         out.pairs_.push_back(parse_pair(item));
     }
