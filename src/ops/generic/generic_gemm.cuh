@@ -2891,11 +2891,12 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
         }
     };
 
-    const auto fetch = [&](auto slot_tag, int step) {
+    // `stage`: the step's activations copied too (the first step's wait for x under pdl_prefetch).
+    const auto fetch = [&](auto slot_tag, int step, bool stage = true) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = step * KStep + quad * R;
         const bool k_ok    = (GroupTailOf<Decoder>::value ? step * KStep : k0) < a.k;
-        stage_act(slot_tag, step);
+        if (stage) stage_act(slot_tag, step);
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
@@ -2982,7 +2983,7 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
 
     using Slot0 = std::integral_constant<int, 0>;
     using Slot1 = std::integral_constant<int, 1>;
-    if (s_begin + warp_k < steps) fetch(Slot0{}, s_begin + warp_k);
+    if (s_begin + warp_k < steps) fetch(Slot0{}, s_begin + warp_k, false);
     // GemmArgs::pdl_prefetch: the first step's weights are in flight; x and the output are the
     // previous kernel's to finish. Then the next launch may start: it waits for this one before
     // it reads what this one writes, and a joined call (which reads x without waiting) starts
@@ -2991,6 +2992,8 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
         pdl::wait_for_dependencies();
         if (threadIdx.x == 0) pdl::trigger_dependents();
     }
+    // The first step's staged activations: x copied only after that wait.
+    if (s_begin + warp_k < steps) stage_act(Slot0{}, s_begin + warp_k);
 #pragma unroll 1
     for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
         if (step + WK < steps) fetch(Slot1{}, step + WK);
