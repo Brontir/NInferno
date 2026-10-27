@@ -1272,6 +1272,13 @@ double dram_bytes_per_sm_cycle() {
     });
 }
 
+bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, int wide_ctas,
+                    int plain_ctas, std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
+    return bytes_per_sm_cycle > 0.0 && bytes_per_sm_cycle < kRmmaWideBytes &&
+           compute_capability >= 75 && wide_ctas >= plain_ctas &&
+           wide_local_bytes <= plain_local_bytes;
+}
+
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
 
 int rmma_schedule_count() { return static_cast<int>(kRmmaSchedules.size()); }

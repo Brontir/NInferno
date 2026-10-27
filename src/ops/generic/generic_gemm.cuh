@@ -921,6 +921,54 @@ struct GgmlQ6KDecoder {
     __device__ static __forceinline__ float row_scale(const GemmArgs&, int) { return 1.0F; }
 };
 
+// A quad's 32-byte span in two steps. quad_span_load: lane q (bit e = q & 1, pair c = q >> 1)
+// loads words 4e + 2c, 4e + 2c + 1 of the span, so one load instruction covers the span's sector
+// exactly once. quad_span_words (a decoder's finish(), the whole warp): words q and q + 4 of the
+// span, one word swapped with lane q ^ 1.
+__device__ __forceinline__ uint2 quad_span_load(const std::uint8_t* span, int q) {
+    return *reinterpret_cast<const uint2*>(span + 16 * (q & 1) + 8 * (q >> 1));
+}
+__device__ __forceinline__ uint2 quad_span_words(uint2 v) {
+    unsigned lane;
+    asm("mov.u32 %0, %%laneid;" : "=r"(lane));
+    const bool odd    = (lane & 1U) != 0; // the lane's quad position q, as q & 1
+    const unsigned in = __shfl_xor_sync(0xffffffffU, odd ? v.x : v.y, 1);
+    return odd ? make_uint2(in, v.y) : make_uint2(v.x, in);
+}
+
+// Q6_K with wide loads (rmma_kernel's wide variant; the launch picks it, rmma_wide_pays). The
+// plain decoder's four-byte code loads at a 16-byte stride take every sector of the step's ql and
+// qh bytes twice (ncu, RTX 4090, Gemma 4 12B ffn_down at T = 6: L1 hit 48 %, a third of the
+// stalls lg_throttle); here three eight-byte loads per lane read each sector once and finish()
+// swaps one word a span inside the quad, at the step's MMAs (mma_step, after the step's
+// activation loads issue: the swap waits for the weights). The finished run is the plain one.
+struct GgmlQ6KWideDecoder : GgmlQ6KDecoder {
+    static constexpr bool kFinish = true;
+    __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
+        const int p            = k0 & 255;
+        const int h            = p >> 7;
+        const int qd           = (p >> 5) & 3;
+        const std::int64_t blk = static_cast<std::int64_t>(row) * a.groups_per_row + (k0 >> 8);
+        const std::uint8_t* cb = a.codes + blk * 192;
+        const uint2 ql0        = quad_span_load(cb + 64 * h, qd);
+        const uint2 ql1        = quad_span_load(cb + 64 * h + 32, qd);
+        Run r;
+        r.ql = make_uint4(ql0.x, ql0.y, ql1.x, ql1.y);
+        r.qh = quad_span_load(cb + 128 + 32 * h, qd);
+        r.sc = *reinterpret_cast<const uint2*>(a.high + blk * 16 + 8 * h);
+        r.d  = reinterpret_cast<const unsigned short*>(a.scales)[blk];
+        return r;
+    }
+    // zero() has every word alike, so finish() keeps it.
+    __device__ static __forceinline__ Run finish(Run r) {
+        const uint2 ql0 = quad_span_words(make_uint2(r.ql.x, r.ql.y));
+        const uint2 ql1 = quad_span_words(make_uint2(r.ql.z, r.ql.w));
+        r.ql            = make_uint4(ql0.x, ql0.y, ql1.x, ql1.y);
+        r.qh            = quad_span_words(r.qh);
+        return r;
+    }
+};
+
 // Q3_K planes: per superblock 32 hmask bytes then 64 qs bytes (codes), 12 packed 6-bit scale
 // bytes (high plane), binary16 d (scale plane). Value v of half h: quarter jj = v / 32,
 // l = v % 32: bits 2*jj of qs[32h + l] minus 4 unless bit 4h + jj of hmask[l] is set; scale
@@ -2086,6 +2134,25 @@ struct StageActsOf : std::false_type {};
 template <class D>
 struct StageActsOf<D, std::void_t<decltype(D::kStageActs)>> : std::bool_constant<D::kStageActs> {};
 
+// A decoder with finish() (kFinish: the wide Q6_K) loads its runs in a raw form that finish()
+// completes with the whole warp once the loads have landed: mma_step finishes a copy of the step's
+// runs after issuing the step's activation loads (finished in the fetch, the swap waited for the
+// loads there; ahead of the activation loads, it held them back by the weights' latency).
+template <class D, class = void>
+struct FinishOf : std::false_type {};
+template <class D>
+struct FinishOf<D, std::void_t<decltype(D::kFinish)>> : std::bool_constant<D::kFinish> {};
+
+// The wide-load form of a decoder (rmma_kernel's wide variant; void: none).
+template <class D>
+struct WideOf {
+    using type = void;
+};
+template <>
+struct WideOf<GgmlQ6KDecoder> {
+    using type = GgmlQ6KWideDecoder;
+};
+
 template <class D, class = void>
 struct QuadRunsOf : std::false_type {};
 template <class D>
@@ -2180,13 +2247,43 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
         static_assert(J % S == 0, "a spread step's MMAs split evenly into scale groups");
+        using Run              = typename Decoder::Run;
+        constexpr bool kFinish = FinishOf<Decoder>::value;
+        static_assert(!kFinish || (!Staged && !GroupTailOf<Decoder>::value),
+                      "a finish decoder loads its activations here, for whole steps");
+        // kFinish: every group's activations, issued before the finish waits for the weights.
+        unsigned early[kFinish ? S : 1][NT][2 * G];
+        Run done[kFinish ? Sets : 1][kFinish ? MT : 1][2];
+        if constexpr (kFinish) {
+#pragma unroll
+            for (int g = 0; g < S; ++g)
+                load_act<Decoder, NT, G>(early[g], col, step_k0 + 16 * G * g, quad);
+#pragma unroll
+            for (int s = 0; s < Sets; ++s)
+#pragma unroll
+                for (int m = 0; m < MT; ++m)
+#pragma unroll
+                    for (int h = 0; h < 2; ++h) done[s][m][h] = Decoder::finish(runs[s][m][h]);
+        }
+        const Run(&ready)[Sets][MT][2] = [&]() -> const Run(&)[Sets][MT][2] {
+            if constexpr (kFinish) {
+                return done;
+            } else {
+                return runs;
+            }
+        }();
 #pragma unroll
         for (int g = 0; g < S; ++g) {
             if constexpr (GroupTailOf<Decoder>::value) {
                 if (step_k0 + 16 * G * g >= k) break; // the row's end: warp-uniform
             }
             unsigned act[NT][2 * G];
-            if constexpr (Staged) {
+            if constexpr (kFinish) {
+#pragma unroll
+                for (int n = 0; n < NT; ++n)
+#pragma unroll
+                    for (int i = 0; i < 2 * G; ++i) act[n][i] = early[g][n][i];
+            } else if constexpr (Staged) {
 #pragma unroll
                 for (int i = 0; i < G; ++i) {
                     const uint2 w     = stage[32 * (g * G + i)];
@@ -2215,8 +2312,8 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
             for (int s = 0; s < Sets; ++s) {
 #pragma unroll
                 for (int m = 0; m < MT; ++m) {
-                    const auto& r0 = runs[s][m][0];
-                    const auto& r1 = runs[s][m][1];
+                    const auto& r0 = ready[s][m][0];
+                    const auto& r1 = ready[s][m][1];
                     float part[NT][4];
 #pragma unroll
                     for (int n = 0; n < NT; ++n)
@@ -2257,6 +2354,7 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
             }
         }
     } else {
+        static_assert(!FinishOf<Decoder>::value, "a finish decoder is a spread one");
         unsigned act[NT][2 * J];
         load_act<Decoder, NT, J>(act, col, step_k0, quad);
         act_operands<Decoder, NT, J>(act);
@@ -2323,10 +2421,23 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
 // runs: unpacked (UnpackOf) by the kernel.
 template <class Decoder, int J, int Sets, int MT>
 __device__ __forceinline__ void mma_step_local(float (&acc)[Sets][MT][2][8],
-                                               const typename Decoder::Run (&runs)[Sets][MT][2],
+                                               const typename Decoder::Run (&loaded)[Sets][MT][2],
                                                const __nv_bfloat16* const (&col)[8], int tokens,
                                                int step_k0, int quad, int k) {
     static_assert(!F16Of<Decoder>::value, "the sm_70 build keeps BF16 codes");
+    // A finish decoder's runs finished (no launch takes one on sm_70: rmma_wide_pays).
+    using Run = typename Decoder::Run;
+    Run done[FinishOf<Decoder>::value ? Sets : 1][FinishOf<Decoder>::value ? MT : 1][2];
+    const Run(&runs)[Sets][MT][2] = [&]() -> const Run(&)[Sets][MT][2] {
+        if constexpr (FinishOf<Decoder>::value) {
+            for (int s = 0; s < Sets; ++s)
+                for (int m = 0; m < MT; ++m)
+                    for (int h = 0; h < 2; ++h) done[s][m][h] = Decoder::finish(loaded[s][m][h]);
+            return done;
+        } else {
+            return loaded;
+        }
+    }();
     // Two products of a code register and an activation register, added to `sum`.
     const auto dot2 = [](float sum, unsigned a, unsigned b) {
         const float2 w = bf16x2_pair(a);
