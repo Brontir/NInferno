@@ -366,7 +366,6 @@ static std::size_t own_linear_workspace_capacity_bytes(QType qtype, std::int32_t
 }
 
 LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept {
-    if (build_features().mma_tensor) { return LinearPolicy::A16Only; }
     return recorded == LinearPolicy::AllowA4 ? LinearPolicy::AllowA8 : recorded;
 }
 

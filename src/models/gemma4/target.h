@@ -37,10 +37,9 @@ struct KvPlanes {
                                           std::int32_t kv_heads, std::int32_t window,
                                           bool fp8 = false);
 
-// The activation route of a projection. A verify pass keeps every activation in BF16: it must
-// compute what k+1 single-token steps would, and a W4A4 route at that width would accept drafts
-// against a coarser model than plain decode runs.
-enum class Activations : std::uint8_t { Recorded, A16Only };
+// The activation route of a projection. A verify pass runs the activations plain decode runs, never
+// W4A4 (ops::verify_linear_policy): it must compute what k+1 single-token steps would.
+enum class Activations : std::uint8_t { Recorded, Verify };
 
 // One projection whose transient bytes are released back to `work` on return.
 void project(const Tensor& x, const Projection& p, Tensor& out, DeviceArena& work,
@@ -134,9 +133,9 @@ public:
     // speculation::DraftTarget.
     [[nodiscard]] speculation::TargetShape shape() const noexcept override;
     Tensor draft_forward(const Tensor& ids, const Tensor& pos,
-                         ops::Gemma4AttentionEnvelope envelope, bool a16,
+                         ops::Gemma4AttentionEnvelope envelope, bool verify,
                          const FeatureTap* tap) override;
-    void greedy_logits(const Tensor& normed, Tensor& out, bool a16) override;
+    void greedy_logits(const Tensor& normed, Tensor& out, bool verify) override;
     void draft_embedding(const Tensor& ids, Tensor& out) override;
 
     // Layer i's cache; the MTP drafter attends over the last sliding and last full layers'.

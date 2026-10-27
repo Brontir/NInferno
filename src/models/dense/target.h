@@ -20,8 +20,9 @@
 
 namespace ninferno::models::dense {
 
-// Every projection's activations: the Use's recorded policy, or BF16 whatever it recorded.
-enum class Activations : std::uint8_t { Recorded, A16Only };
+// Every projection's activations: the Use's recorded policy, or a verify pass's
+// (ops::verify_linear_policy: the recorded one, never W4A4).
+enum class Activations : std::uint8_t { Recorded, Verify };
 
 // Where a forward copies the residual stream after chosen layers (a DFlash drafter's context
 // features).
@@ -123,9 +124,9 @@ public:
     // speculation::DraftTarget.
     [[nodiscard]] speculation::TargetShape shape() const noexcept override;
     Tensor draft_forward(const Tensor& ids, const Tensor& pos,
-                         ops::Gemma4AttentionEnvelope envelope, bool a16,
+                         ops::Gemma4AttentionEnvelope envelope, bool verify,
                          const FeatureTap* tap) override;
-    void greedy_logits(const Tensor& normed, Tensor& out, bool a16) override;
+    void greedy_logits(const Tensor& normed, Tensor& out, bool verify) override;
     void draft_embedding(const Tensor& ids, Tensor& out) override;
 
 private:

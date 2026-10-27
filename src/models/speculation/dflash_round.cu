@@ -156,7 +156,7 @@ Tensor DFlashRound::ids(std::int32_t columns) const {
 Tensor DFlashRound::prefill(const Tensor& ids, const Tensor& pos,
                             ops::Gemma4AttentionEnvelope envelope) {
     const FeatureTap tapped = capture(ids.ne[0]);
-    Tensor normed = target_.draft_forward(ids, pos, envelope, /*a16=*/false, &tapped);
+    Tensor normed = target_.draft_forward(ids, pos, envelope, /*verify=*/false, &tapped);
     append_context(tapped.sink, pos);
     return normed;
 }
@@ -298,7 +298,7 @@ void DFlashRound::block_pass() {
     Tensor normed = work_.alloc(DType::BF16, {hidden, b - 1});
     ops::rmsnorm(tail, dw.final_norm, eps, false, normed, s);
     Tensor logits = work_.alloc(DType::BF16, {shape_.vocab_size, b - 1});
-    target_.greedy_logits(normed, logits, /*a16=*/false);
+    target_.greedy_logits(normed, logits, /*verify=*/false);
     Tensor drafts(static_cast<std::int32_t*>(draft_ids_.p) + 1, DType::I32, {b - 1});
     ops::argmax(logits, drafts, shape_.vocab_size, s);
 }
