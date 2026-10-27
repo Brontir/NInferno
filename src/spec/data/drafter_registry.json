@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 139,
+  "version": 141,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -2118,71 +2118,71 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.6608574953732264,
-            "config": "mtp:4",
+            "acceptance": 0.5982556554919597,
+            "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.6307645643686237,
-            "plain_tok_s": 60.30354068926383,
-            "speedup": 2.319635451036889,
-            "tok_s": 139.8822308058619,
-            "tokens_per_round": 3.8265171503957784
+            "floor_tokens_per_round": 1.4178153117454726,
+            "plain_tok_s": 62.34339033811012,
+            "speedup": 2.8818763742777582,
+            "tok_s": 179.66594370777582,
+            "tokens_per_round": 4.140200286123033
           },
           "gpu": "NVIDIA GeForce RTX 4070 Ti",
           "gpu_class": "ad104",
-          "measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4070 Ti, built-in corpus",
-          "measured_at": "2026-10-21",
+          "measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 4070 Ti, built-in corpus",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.6027882274839567,
-            "config": "mtp:4",
+            "acceptance": 0.5429017160686428,
+            "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.6327039998412232,
-            "plain_tok_s": 60.34754827912346,
-            "speedup": 2.2300523178937097,
-            "tok_s": 134.57818991906183,
-            "tokens_per_round": 3.6192307692307693
+            "floor_tokens_per_round": 1.4210058322564527,
+            "plain_tok_s": 62.38603753142419,
+            "speedup": 2.7534632303695354,
+            "tok_s": 171.77766043123034,
+            "tokens_per_round": 3.8819875776397517
           },
           "portable": {
             "default": {
-              "acceptance": 0.6608574953732264,
-              "config": "mtp:4",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.6307645643686237,
-              "plain_tok_s": 60.30354068926383,
-              "speedup": 2.319635451036889,
-              "tok_s": 139.8822308058619,
-              "tokens_per_round": 3.8265171503957784
-            },
-            "non_thinking": {
-              "acceptance": 0.6027882274839567,
-              "config": "mtp:4",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.6327039998412232,
-              "plain_tok_s": 60.34754827912346,
-              "speedup": 2.2300523178937097,
-              "tok_s": 134.57818991906183,
-              "tokens_per_round": 3.6192307692307693
-            },
-            "thinking": {
-              "acceptance": 0.7512784751278475,
+              "acceptance": 0.5982556554919597,
               "config": "mtp:5",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.7510324576963665,
-              "plain_tok_s": 60.17190218192723,
-              "speedup": 2.760727364876217,
-              "tok_s": 166.11821695030144,
-              "tokens_per_round": 4.829383886255924
+              "floor_tokens_per_round": 1.4178153117454726,
+              "plain_tok_s": 62.34339033811012,
+              "speedup": 2.8818763742777582,
+              "tok_s": 179.66594370777582,
+              "tokens_per_round": 4.140200286123033
+            },
+            "non_thinking": {
+              "acceptance": 0.5429017160686428,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4210058322564527,
+              "plain_tok_s": 62.38603753142419,
+              "speedup": 2.7534632303695354,
+              "tok_s": 171.77766043123034,
+              "tokens_per_round": 3.8819875776397517
+            },
+            "thinking": {
+              "acceptance": 0.7266968325791855,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4099615599690392,
+              "plain_tok_s": 62.21579788643459,
+              "speedup": 3.349185081560604,
+              "tok_s": 208.3722221186365,
+              "tokens_per_round": 4.717592592592593
             }
           },
-          "source": "spec-tune 2026-10-20T23:35:51Z (ninferno-spec-1, 300 s)",
+          "source": "spec-tune 2026-10-27T18:15:40Z (ninferno-spec-1, 265 s)",
           "thinking": {
-            "acceptance": 0.7512784751278475,
+            "acceptance": 0.7266968325791855,
             "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.7510324576963665,
-            "plain_tok_s": 60.17190218192723,
-            "speedup": 2.760727364876217,
-            "tok_s": 166.11821695030144,
-            "tokens_per_round": 4.829383886255924
+            "floor_tokens_per_round": 1.4099615599690392,
+            "plain_tok_s": 62.21579788643459,
+            "speedup": 3.349185081560604,
+            "tok_s": 208.3722221186365,
+            "tokens_per_round": 4.717592592592593
           },
           "load": [
             {
@@ -2190,8 +2190,8 @@
               "lanes": 2
             }
           ],
-          "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 4070 Ti, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 4070 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:49:12Z",
-          "revision": "3fd5cf6e3fd4"
+          "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 4070 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 4070 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:26:40Z",
+          "revision": "0b81414149a8"
         },
         {
           "applies_to": [],
