@@ -37,11 +37,19 @@ their options as given.
   context of its own.
 - **Speed.** A decode step of C rows at context n:
   `t0 + (W(C) + C n b_kv k_kv + 2 C s + C min(n, window) b_ring) / (eta_dram BW) + C 2 P / (eta_compute peak_s8) f_route`,
-  prefill `eta_prefill peak_route / (2 P)` (an MoE's times its chunk share, below). A request of P
-  prompt and G answer tokens takes `P / prefill + G / decode(P + G/2)`, the prompt as whole chunks
-  and a final partial one, each at its own rate. Fitted on 49 decode and 15 prefill points over four cards and
-  three models: 5.2 % rms decode, 2.0 % prefill (`tests/fixtures/choice/speed_measured.json`; the
-  test holds the code to it).
+  peak_s8 the int8 MMA's rate; on a generation without one (Volta) the int8 route's is dp4a's (512
+  operations a SM-clock) and the exact route's its BF16 tensor path's. A prompt of n tokens takes `n 2 P / (eta_prefill share peak_route) + F_att(n) /
+  (eta_attention peak_bf16)`: the linears at their route's rate (share: an MoE chunk's share of the
+  saturated rate, below; 1 for a dense model), and attention over the prompt, F_att(n) its flops
+  (full layers over every earlier token, sliding ones over their window). A request of P prompt and G
+  answer tokens takes the prompt so (its linears as whole chunks and a final partial one, each at
+  its own rate) plus `G / decode(P + G/2)`. Decode: fitted on 49 points over four cards and three
+  models, 5.2 % rms (`tests/fixtures/choice/speed_measured.json`; the test holds the code to it).
+  Prefill: fitted on 82 points, six models at ~2K / 7K / 21K-token prompts on seven cards
+  (`choice-notes/lab/scripts/fit_prefill.py`, `choice-notes/data/prefill/rows.json`): from 7K tokens
+  on, dense 6.4 % rms (worst 18.7 %), MoE 8.3 % (18.9 %); a request's fixed time (10-190 ms) is not
+  modeled. A generation without its own prefill rows takes those of one with its BF16 tensor rate
+  per SM (Volta: Turing's), else Ada's.
 - **Accuracy.** KLD against the exact reference (`--activations exact`, BF16 KV, FP32 state) per
   switch, measured with `ninferno-perplexity`; the switches' terms combine as the root of the sum
   of squares (the product default: measured 0.0040, root sum square 0.0044, plain sum 0.0067), and

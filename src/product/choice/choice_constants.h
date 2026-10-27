@@ -72,6 +72,12 @@ struct DecodeConstants {
 inline constexpr DecodeConstants kDenseDecode{0.90, 0.054, 0.0};
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
+// dp4a's int8 rate a SM-clock: a generation without an int8 MMA decodes its int8 route at it
+// (choice.cpp decode_int8_peak). Derived from the CUDA C++ Programming Guide's arithmetic throughput
+// table, compute capability 7.0: 64 32-bit integer multiply-adds a SM-clock, each dp4a 4 int8
+// multiply-adds (2 operations each).
+inline constexpr double kDp4aOpsPerSmClock = 512;
+
 // Rows routed apart read 0.30 of the experts independent routing would add (fitted on the
 // registry's speculation floors, audit1018/x3).
 inline constexpr double kMoeRoutedShare = 0.30;
