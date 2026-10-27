@@ -119,7 +119,8 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     }
     DeviceBuffer y(static_cast<std::size_t>(p.n) * tokens * 2);
     y.fill(0);
-    DeviceArena workspace(256);
+    // The verify widths quantize the activation into the workspace (R8, the vector kernel).
+    DeviceArena workspace(64ULL << 20);
     Tensor tx(x.p, DType::BF16, {p.k, tokens});
     Tensor ty(y.p, DType::BF16, {p.n, tokens});
     Tensor tx1(x.p, DType::BF16, {p.k, 1});
