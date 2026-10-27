@@ -303,15 +303,24 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // from L2 by every CTA, so a token's bytes are those of plain decode and greedy speculation
 // reproduces it. RTX 5080, 27B/31B/35B dense shapes, quantize + R8 against the register MMA:
 // T = 4 IQ2_S/IQ3_S/IQ3_XXS 0.73-0.91 on the large shapes (IQ2_XXS/IQ2_XS follow their
-// family); IQ4_XS and Q8 0.96-1.0 in the micro-benchmark but slower in the product (Qwen3.8-27B
+// family); IQ4_XS 0.96-1.0 in the micro-benchmark but slower in the product (Qwen3.8-27B
 // UD-IQ4_XS, MTP draft 2/3: -1.6 %/-2.4 % tok/s), Q4_K/Q5_K 1.0-1.3 and Q6_K 1.15-1.77:
 // those keep R8 at T = 1 only; at T = 8 the median is 1.35, so no format takes it. Q4_0 takes it
 // (one scale per block, no min: the cheapest codec): serve --spec none at C = 4, the same binary
 // with and without it, Gemma 4 31B QAT (all Q4_0) on the RTX 4090 135 -> 161 tok/s, Gemma 4
 // 26B-A4B Q4_0 on the RTX 5090 710 -> 728 (its attention projections; MTP C = 1 unchanged); Muse
 // 30B Q4_K_M (Q4_K/Q5_K/Q6_K) on the RTX 4090 lost 3 % with the K-quants taking it.
+// The verify form is compiled for up to eight tokens (kR8VerifyTokens); r8_verify_widest is the
+// widest call a format takes it for by rule.
 inline constexpr std::int32_t kR8VerifyTokens = 8;
 [[nodiscard]] bool r8_verify_supports(QType qtype);
+// Eight tokens for Q8 (GGUF Q8_0), four for the other formats: Q8 at T = 2..8 on the RTX 5090
+// (Qwen3.5-9B shapes, ninferno_r8_schedule_bench --tokens) took 0.96-1.15 of its T = 1 time on
+// R8 against 0.99-1.24 on the register MMA (SwiGLU 1.03-1.06 against 1.09-1.10, the down
+// projection 0.96-1.03 against 1.21-1.24), each token summed as at decode; past four tokens the
+// other formats' R8 lost (Q4_K 1.48-1.89, IQ3_XXS 1.49-1.80, IQ4_XS 1.19-1.53 against
+// 1.07-1.62).
+[[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
 // Whether a call of 2..kR8VerifyTokens tokens takes R8 on this device: the formats measured faster

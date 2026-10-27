@@ -381,7 +381,7 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     if (!allows_r8(w, policy)) return false;
     if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= kR8VerifyTokens && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return tokens <= r8_verify_widest(w.qtype) && r8_verify_takes_shape(w.qtype, w.n, w.k);
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -1406,6 +1406,7 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
 }
 bool r8_verify_supports(QType qtype) {
     switch (qtype) {
+    case QType::Q8_G32_FP16:
     case QType::GGML_Q4_0:
     case QType::GGML_IQ3_XXS:
     case QType::GGML_IQ3_S:
@@ -1416,6 +1417,10 @@ bool r8_verify_supports(QType qtype) {
     default:
         return false;
     }
+}
+
+std::int32_t r8_verify_widest(QType qtype) {
+    return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;
 }
 
 bool r8_verify_compiled(QType qtype) {
