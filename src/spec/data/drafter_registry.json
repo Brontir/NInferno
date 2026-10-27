@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 146,
+  "version": 148,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -1954,71 +1954,71 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.5851049605562241,
+            "acceptance": 0.5849511313428839,
             "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.9975688707400467,
-            "plain_tok_s": 59.95858699848515,
-            "speedup": 1.9995305752271104,
-            "tok_s": 119.88902795088576,
-            "tokens_per_round": 4.068723702664797
+            "floor_tokens_per_round": 1.8280229194592257,
+            "plain_tok_s": 62.6911147401312,
+            "speedup": 2.198351228232763,
+            "tok_s": 137.8170890882485,
+            "tokens_per_round": 4.076760563380281
           },
           "gpu": "NVIDIA GeForce RTX 2080 Ti",
           "gpu_class": "tu102",
-          "measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 2080 Ti, built-in corpus",
-          "measured_at": "2026-10-21",
+          "measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 2080 Ti, built-in corpus",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.5229722064662508,
+            "acceptance": 0.5275395464074709,
             "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.002269377836561,
-            "plain_tok_s": 59.90751251560371,
-            "speedup": 1.8937741630080314,
-            "tok_s": 113.45129937213059,
-            "tokens_per_round": 3.7687687687687688
+            "floor_tokens_per_round": 1.8311776942495186,
+            "plain_tok_s": 62.788520614815255,
+            "speedup": 2.094796865125176,
+            "tok_s": 131.5291961497625,
+            "tokens_per_round": 3.8101522842639595
           },
           "portable": {
             "default": {
-              "acceptance": 0.6455427531837478,
-              "config": "mtp:4",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.8753699139907478,
-              "plain_tok_s": 59.95858699848515,
-              "speedup": 1.970147495801146,
-              "tok_s": 118.12726002684067,
-              "tokens_per_round": 3.755987055016181
-            },
-            "non_thinking": {
-              "acceptance": 0.5787096774193549,
-              "config": "mtp:4",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.878937212600554,
-              "plain_tok_s": 59.90751251560371,
-              "speedup": 1.875475264912559,
-              "tok_s": 112.35505790545432,
-              "tokens_per_round": 3.5032558139534884
-            },
-            "thinking": {
-              "acceptance": 0.7351598173515982,
+              "acceptance": 0.5849511313428839,
               "config": "mtp:5",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.9876616738605415,
-              "plain_tok_s": 60.11233431301605,
-              "speedup": 2.4035869017505695,
-              "tok_s": 144.4852193884167,
-              "tokens_per_round": 4.770491803278689
+              "floor_tokens_per_round": 1.8280229194592257,
+              "plain_tok_s": 62.6911147401312,
+              "speedup": 2.198351228232763,
+              "tok_s": 137.8170890882485,
+              "tokens_per_round": 4.076760563380281
+            },
+            "non_thinking": {
+              "acceptance": 0.5841111352289994,
+              "config": "mtp:4",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.7233382918946651,
+              "plain_tok_s": 62.788520614815255,
+              "speedup": 2.0621516269365134,
+              "tok_s": 129.4794499387781,
+              "tokens_per_round": 3.531514581373471
+            },
+            "thinking": {
+              "acceptance": 0.7205220522052205,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.8188469775326064,
+              "plain_tok_s": 62.40070202287393,
+              "speedup": 2.5783670810920216,
+              "tok_s": 160.89191593281046,
+              "tokens_per_round": 4.680459770114942
             }
           },
-          "source": "spec-tune 2026-10-20T22:38:06Z (ninferno-spec-1, 348 s)",
+          "source": "spec-tune 2026-10-27T18:47:49Z (ninferno-spec-1, 314 s)",
           "thinking": {
-            "acceptance": 0.7351598173515982,
+            "acceptance": 0.7205220522052205,
             "config": "mtp:5",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.9876616738605415,
-            "plain_tok_s": 60.11233431301605,
-            "speedup": 2.4035869017505695,
-            "tok_s": 144.4852193884167,
-            "tokens_per_round": 4.770491803278689
+            "floor_tokens_per_round": 1.8188469775326064,
+            "plain_tok_s": 62.40070202287393,
+            "speedup": 2.5783670810920216,
+            "tok_s": 160.89191593281046,
+            "tokens_per_round": 4.680459770114942
           },
           "load": [
             {
@@ -2030,8 +2030,8 @@
               "lanes": 3
             }
           ],
-          "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 2080 Ti, context 8192, load 2,4, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 2080 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T22:52:47Z",
-          "revision": "1289de1826da"
+          "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 2080 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 2080 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T19:03:15Z",
+          "revision": "3469302c0749"
         },
         {
           "applies_to": [],
