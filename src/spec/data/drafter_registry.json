@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 141,
+  "version": 143,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -2274,6 +2274,84 @@
           ],
           "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact), NVIDIA GeForce RTX 3090, context 8192, load 2,4,8, temperature 1.0, thinking on, built-in corpus, NVIDIA GeForce RTX 3090, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-20T23:57:19Z",
           "revision": "76da2c5c6e70"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.5900269541778975,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.3228277714226266,
+            "plain_tok_s": 36.750477531399326,
+            "speedup": 3.066167959105375,
+            "tok_s": 112.68313668859862,
+            "tokens_per_round": 4.107168204400284
+          },
+          "gpu": "NVIDIA GeForce RTX 4060 Ti",
+          "gpu_class": "ad106",
+          "measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 4060 Ti, built-in corpus",
+          "measured_at": "2026-10-27",
+          "non_thinking": {
+            "acceptance": 0.5346553715825954,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.3232337912572232,
+            "plain_tok_s": 36.77919480333336,
+            "speedup": 2.9325922648582927,
+            "tok_s": 107.85838218797173,
+            "tokens_per_round": 3.851129363449692
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.5900269541778975,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.3228277714226266,
+              "plain_tok_s": 36.750477531399326,
+              "speedup": 3.066167959105375,
+              "tok_s": 112.68313668859862,
+              "tokens_per_round": 4.107168204400284
+            },
+            "non_thinking": {
+              "acceptance": 0.5346553715825954,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.3232337912572232,
+              "plain_tok_s": 36.77919480333336,
+              "speedup": 2.9325922648582927,
+              "tok_s": 107.85838218797173,
+              "tokens_per_round": 3.851129363449692
+            },
+            "thinking": {
+              "acceptance": 0.7192273135669363,
+              "config": "mtp:5",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.3211374012747747,
+              "plain_tok_s": 36.66459415686786,
+              "speedup": 3.549710399454827,
+              "tok_s": 130.1486911704245,
+              "tokens_per_round": 4.680459770114942
+            }
+          },
+          "source": "spec-tune 2026-10-27T18:27:59Z (ninferno-spec-1, 426 s)",
+          "thinking": {
+            "acceptance": 0.7192273135669363,
+            "config": "mtp:5",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.3211374012747747,
+            "plain_tok_s": 36.66459415686786,
+            "speedup": 3.549710399454827,
+            "tok_s": 130.1486911704245,
+            "tokens_per_round": 4.680459770114942
+          },
+          "load": [
+            {
+              "depth": 3,
+              "lanes": 2
+            }
+          ],
+          "load_measured_on": "gemma-4-12b-it (unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact, q8 assistant), NVIDIA GeForce RTX 4060 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 4060 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:47:25Z",
+          "revision": "80029555dc28"
         },
         {
           "gpu_class": "*",
