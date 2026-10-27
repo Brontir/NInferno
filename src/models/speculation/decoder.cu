@@ -81,10 +81,11 @@ void Decoder::round(bool accept, std::int32_t k) {
     Tensor pos(verify_positions, DType::I32, {k + 1});
     const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(max_context_), k + 1};
     const std::optional<FeatureTap> tap = round_.tap(k + 1);
-    Tensor normed = target_.draft_forward(ids, pos, envelope, /*a16=*/true, tap ? &*tap : nullptr);
+    Tensor normed =
+        target_.draft_forward(ids, pos, envelope, /*verify=*/true, tap ? &*tap : nullptr);
     mark(2);
     Tensor logits = work_.alloc(DType::BF16, {vocab_size_, k + 1});
-    target_.greedy_logits(normed, logits, /*a16=*/true);
+    target_.greedy_logits(normed, logits, /*verify=*/true);
     Tensor best(target_ids_.p, DType::I32, {k + 1});
     ops::argmax(logits, best, vocab_size_, s);
     mark(3);

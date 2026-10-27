@@ -594,7 +594,7 @@ private:
                     {.layers = layers, .batch = b},
                     {.max_visible_keys = envelopes.target_verify.max_visible_keys,
                      .max_tokens       = width},
-                    Activations::A16Only);
+                    Activations::Verify);
                 CUDA_CHECK(cudaMemcpyAsync(fb.target_hidden.data, normed.data,
                                            fb.target_hidden.bytes(), cudaMemcpyDeviceToDevice, s));
             }

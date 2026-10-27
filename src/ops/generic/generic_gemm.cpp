@@ -381,7 +381,7 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     if (!allows_r8(w, policy)) return false;
     if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= kR8VerifyTokens && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return tokens <= r8_verify_widest(w.qtype) && r8_verify_takes_shape(w.qtype, w.n, w.k);
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -442,13 +442,12 @@ MmqPlaneBytes mmq_plane_bytes(QType q) {
     return {static_cast<int>(p.code), static_cast<int>(p.high), static_cast<int>(p.scale)};
 }
 
-// The token band of the ggml matrix kernel's route: the verify widths between R8's
-// (kR8VerifyTokens) and the W4A8 tiles' (17 tokens and up), which ran the A16 register MMA.
+// The token band of the ggml matrix kernel's route: the verify widths from kMmqMinTokens
+// (generic_gemm.h) to the W4A8 tiles' (17 tokens and up), which ran the A16 register MMA.
 // The dense tuner times it there against the register MMA on the card and the model's own weight
 // (generic_tune.cpp): no fixed rule holds across chips and formats. Against the heuristic's tile,
 // serve C4: RTX 5090 ISTA IQ3_S +10 % at 16 tokens; Muse Q4_K_M -7..14 %, RTX 4080 SUPER ISTA
 // -12 % at 8; RTX 5080 IQ3_S even. Below the band it loses to R8 (5090 C1 -11 %).
-constexpr std::int32_t kMmqMinTokens = kR8VerifyTokens + 1;
 constexpr std::int32_t kMmqMaxTokens = 16;
 // A prefill call on ggml's matrix kernel (mmq_prefill_wins) runs this many tokens at a time: its
 // FP32 plane (a 27B SwiGLU's gate and up rows: 2 x 17408 x 512 x 4 bytes = 71 MB) instead of the
@@ -1406,6 +1405,7 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
 }
 bool r8_verify_supports(QType qtype) {
     switch (qtype) {
+    case QType::Q8_G32_FP16:
     case QType::GGML_Q4_0:
     case QType::GGML_IQ3_XXS:
     case QType::GGML_IQ3_S:
@@ -1416,6 +1416,10 @@ bool r8_verify_supports(QType qtype) {
     default:
         return false;
     }
+}
+
+std::int32_t r8_verify_widest(QType qtype) {
+    return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;
 }
 
 bool r8_verify_compiled(QType qtype) {

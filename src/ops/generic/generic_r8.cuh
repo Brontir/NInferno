@@ -351,6 +351,7 @@ void r8_launch_schedule(const GemmArgs& args, cudaStream_t stream, W4a8Activatio
         if constexpr (kVerify) {
             if (args.tokens <= 2) return r8_launch_tokens<C, S, 2, E, true>(args, stream, pre);
             if (args.tokens <= 4) return r8_launch_tokens<C, S, 4, E, true>(args, stream, pre);
+            if (args.tokens <= 8) return r8_launch_tokens<C, S, 8, E, true>(args, stream, pre);
         }
         throw std::invalid_argument("generic R8: no verify-width form for this call");
     }
@@ -375,7 +376,7 @@ void r8_launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream,
     }
 }
 
-// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..4);
+// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..kR8VerifyTokens);
 // r8_verify_compiled lists the same formats.
 template <class C, bool kVerify = false>
 void r8_launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream,

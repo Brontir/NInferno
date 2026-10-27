@@ -38,11 +38,13 @@ enum class LinearPolicy : std::uint8_t {
 }
 
 /**
- * The policy of a projection a verify pass runs with BF16 activations (the dense and Gemma
- * targets' Activations::A16Only): A16Only, so a W4A4 route at verify widths never accepts drafts
- * against a coarser model than plain decode runs. A build without tensor mma.sync (Volta) runs
- * every A16 route at those widths on FP32-FMA tiles, an order of magnitude slower than its integer
- * routes; there the recorded policy, capped at A8, is what plain decode of the same weights runs.
+ * The policy of a projection in a verify pass (the dense and Gemma targets' Activations::Verify):
+ * the recorded one, the policy plain decode of the same weights runs, capped at A8, so a W4A4
+ * route at verify widths never accepts drafts against a coarser model than plain decode runs. It
+ * was A16Only where the build has tensor mma.sync: GGUF weights then decoded on int8 activations
+ * (R8) and verified on BF16 ones (the register MMA), another model, and their verify cost 1.2-1.5
+ * times a decode step's linears where Qwen3.5's, which keeps the recorded policy, cost 1.0-1.1
+ * (Gemma 4 12B Q4_K_M, RTX 5070 Ti, nsys: gate/up 110 us against 83, down 60 against 41).
  */
 [[nodiscard]] LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept;
 

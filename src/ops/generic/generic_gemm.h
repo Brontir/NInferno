@@ -297,24 +297,41 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // The multiple of K an R8 weight needs: a lane loads w4a8_span * w4a8_stride 32-value blocks
 // together (generic_w4a8.cuh: two for Q4_K and Q5_K, four for Q6_K and Q3_K, one otherwise).
 [[nodiscard]] std::int32_t r8_k_values(QType qtype);
-// Speculative verify (2 <= T <= kR8VerifyTokens) takes R8 too for the formats where it is not
+// Speculative verify (2 <= T <= r8_verify_widest) takes R8 too for the formats where it is not
 // slower than the register MMA there, with the activation quantized once per call into the
 // workspace (the W4A8 quantizer: the same codes, scales and sums the CTA makes at T = 1) and read
 // from L2 by every CTA, so a token's bytes are those of plain decode and greedy speculation
 // reproduces it. RTX 5080, 27B/31B/35B dense shapes, quantize + R8 against the register MMA:
 // T = 4 IQ2_S/IQ3_S/IQ3_XXS 0.73-0.91 on the large shapes (IQ2_XXS/IQ2_XS follow their
-// family); IQ4_XS and Q8 0.96-1.0 in the micro-benchmark but slower in the product (Qwen3.8-27B
+// family); IQ4_XS 0.96-1.0 in the micro-benchmark but slower in the product (Qwen3.8-27B
 // UD-IQ4_XS, MTP draft 2/3: -1.6 %/-2.4 % tok/s), Q4_K/Q5_K 1.0-1.3 and Q6_K 1.15-1.77:
 // those keep R8 at T = 1 only; at T = 8 the median is 1.35, so no format takes it. Q4_0 takes it
 // (one scale per block, no min: the cheapest codec): serve --spec none at C = 4, the same binary
 // with and without it, Gemma 4 31B QAT (all Q4_0) on the RTX 4090 135 -> 161 tok/s, Gemma 4
 // 26B-A4B Q4_0 on the RTX 5090 710 -> 728 (its attention projections; MTP C = 1 unchanged); Muse
 // 30B Q4_K_M (Q4_K/Q5_K/Q6_K) on the RTX 4090 lost 3 % with the K-quants taking it.
-inline constexpr std::int32_t kR8VerifyTokens = 4;
+// The verify form is compiled for up to eight tokens (kR8VerifyTokens); r8_verify_widest is the
+// widest call a format takes it for by rule.
+inline constexpr std::int32_t kR8VerifyTokens = 8;
+// The narrowest call on the ggml matrix kernel's route (generic_gemm.cpp, kMmqMaxTokens): five
+// tokens, past the four R8 verifies for every format but Q8.
+inline constexpr std::int32_t kMmqMinTokens = 5;
 [[nodiscard]] bool r8_verify_supports(QType qtype);
+// Eight tokens for Q8 (GGUF Q8_0), four for the other formats: Q8 at T = 2..8 on the RTX 5090
+// (Qwen3.5-9B shapes, ninferno_r8_schedule_bench --tokens) took 0.96-1.15 of its T = 1 time on
+// R8 against 0.99-1.24 on the register MMA (SwiGLU 1.03-1.06 against 1.09-1.10, the down
+// projection 0.96-1.03 against 1.21-1.24), each token summed as at decode; past four tokens the
+// other formats' R8 lost (Q4_K 1.48-1.89, IQ3_XXS 1.49-1.80, IQ4_XS 1.19-1.53 against
+// 1.07-1.62). The rule is the format's on every chip, from the chip's own rates: Q8's codes are
+// whole bytes (no unpacking), so R8 does dp4a work only, and dp4a runs four int8 products per FP32
+// lane per clock on every generation from Volta; the width at which that work takes as long as
+// reading the 1.0625 bytes per weight is 21 tokens on the A100 and H100, 37 on the RTX 3060, 40 on
+// the GV100 and 86 on the RTX 4090, well past eight. Measured: RTX 5090 and 5070 Ti (the bench),
+// RTX 4090 (Qwen3.5-9B Q8_0 spec-tune, dflash:7 229 -> 273 tok/s).
+[[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
-// Whether a call of 2..kR8VerifyTokens tokens takes R8 on this device: the formats measured faster
+// Whether a call of 2..r8_verify_widest tokens takes R8 on this device: the formats measured faster
 // there (r8_verify_supports) where the MMA takes BF16 operands itself; every compiled format where
 // it does not (Turing: each operand rounded to f16 and two k8 MMAs per k16 make the A16 register
 // MMA the costlier path; RTX 2080 Ti).

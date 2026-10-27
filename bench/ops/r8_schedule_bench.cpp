@@ -1,9 +1,12 @@
 // ninferno_r8_schedule_bench: every compiled R8 schedule of the generic projection path at decode
 // (T = 1) on the given problems, next to the schedule the dispatcher picks, with the check that
-// all schedules give the same bytes.
+// all schedules give the same bytes. With --tokens T (speculative verify widths), the R8
+// schedules that take T, ggml's vector kernel where it reads the format, and the dispatcher's
+// route at T, each with whether its first token's output equals the decode route's (T = 1) bytes:
+// where it does, greedy speculation reproduces plain decode.
 //
 //   ninferno_r8_schedule_bench [--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...]
-//                            [--samples 15] [--launches 60]
+//                            [--samples 15] [--launches 60] [--tokens 1,2,4,8]
 //
 // FILE is the NINFERNO_ROUTE_RECORD / ninferno_route_tune format, "<format> <compute> <epilogue>
 // <n> <k>" per line (the compute column is ignored: R8 is the A8 decode route); --problem adds one
@@ -77,7 +80,8 @@ double median(std::vector<double> v) {
     return v[v.size() / 2];
 }
 
-void run_problem(const Problem& p, int samples, int launches, std::size_t l2_bytes) {
+void run_problem(const Problem& p, int samples, int launches, std::size_t l2_bytes,
+                 std::int32_t tokens) {
     const char* fmt = generic::qtype_name(p.qtype);
     const char* epi = generic::epilogue_name(p.epilogue);
     const bool swiglu       = p.epilogue == generic::Epilogue::SwiGlu;
@@ -100,9 +104,9 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         copies.push_back(std::make_unique<bench::RandomWeight>(bench::clone_weight(*copies[0])));
     }
 
-    DeviceBuffer x(static_cast<std::size_t>(p.k) * 2);
+    DeviceBuffer x(static_cast<std::size_t>(p.k) * tokens * 2);
     {
-        std::vector<std::uint16_t> host(static_cast<std::size_t>(p.k));
+        std::vector<std::uint16_t> host(static_cast<std::size_t>(p.k) * tokens);
         std::mt19937 rng(11);
         std::normal_distribution<float> nd(0.0F, 1.0F);
         for (auto& v : host) {
@@ -113,33 +117,64 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         }
         x.copy_from_host(host.data(), host.size() * 2);
     }
-    DeviceBuffer y(static_cast<std::size_t>(p.n) * 2);
+    DeviceBuffer y(static_cast<std::size_t>(p.n) * tokens * 2);
     y.fill(0);
-    DeviceArena workspace(256);
-    Tensor tx(x.p, DType::BF16, {p.k, 1});
-    Tensor ty(y.p, DType::BF16, {p.n, 1});
-    const auto make_call = [&](const Weight& w) {
+    // The verify widths quantize the activation into the workspace (R8, the vector kernel).
+    DeviceArena workspace(64ULL << 20);
+    Tensor tx(x.p, DType::BF16, {p.k, tokens});
+    Tensor ty(y.p, DType::BF16, {p.n, tokens});
+    Tensor tx1(x.p, DType::BF16, {p.k, 1});
+    Tensor ty1(y.p, DType::BF16, {p.n, 1});
+    const auto make_call = [&](const Weight& w, bool decode = false) {
         generic::Call call;
-        call.x               = &tx;
+        call.x               = decode ? &tx1 : &tx;
         call.weight          = &w;
         call.rows            = p.n;
         call.up_offset       = swiglu ? p.n : 0;
         call.epilogue        = p.epilogue;
-        call.out[0]          = &ty;
+        call.out[0]          = decode ? &ty1 : &ty;
         call.segment_rows[0] = p.n;
         return call;
     };
 
-    const int schedules = generic::r8_schedule_count();
     cudaStream_t stream;
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    const generic::Problem problem{p.qtype, ops::LinearPolicy::AllowA8, p.n, p.k, p.epilogue};
+    const generic::Route picked = generic::select_route(problem, copies[0]->weight, tokens, false);
 
-    // Bytes: every schedule against the first, on copy 0.
+    // The candidates at T: the R8 schedules, ggml's vector kernel and the dispatcher's route; one
+    // the build or the call refuses is left out.
+    std::vector<generic::Route> routes;
+    const auto offer = [&](generic::Route r) {
+        if (std::find(routes.begin(), routes.end(), r) != routes.end()) return;
+        if (!generic::route_admits(r, copies[0]->weight, ops::LinearPolicy::AllowA8)) return;
+        try {
+            generic::run_route(r, make_call(copies[0]->weight), &workspace, stream);
+            CUDA_CHECK(cudaStreamSynchronize(stream));
+            routes.push_back(r);
+        } catch (const std::invalid_argument&) {}
+    };
+    for (int i = 0; i < generic::r8_schedule_count(); ++i) {
+        offer(generic::Route{generic::Family::R8Mma, static_cast<std::uint8_t>(i)});
+    }
+    if (tokens > 1) offer(generic::Route{generic::Family::GgmlVec, 0});
+    offer(picked);
+    const int schedules = static_cast<int>(routes.size());
+
+    // The decode route's bytes of the first token (T = 1), against every candidate's first token.
+    const std::size_t column = static_cast<std::size_t>(p.n) * 2;
+    std::vector<std::uint8_t> decoded(column);
+    {
+        const generic::Route decode = generic::select_route(problem, copies[0]->weight, 1, false);
+        y.fill(0);
+        generic::run_route(decode, make_call(copies[0]->weight, true), &workspace, stream);
+        CUDA_CHECK(cudaStreamSynchronize(stream));
+        y.copy_to_host(decoded.data(), column);
+    }
     std::vector<std::vector<std::uint8_t>> outputs(schedules);
     for (int i = 0; i < schedules; ++i) {
-        const generic::Route r{generic::Family::R8Mma, static_cast<std::uint8_t>(i)};
         y.fill(0);
-        generic::run_route(r, make_call(copies[0]->weight), &workspace, stream);
+        generic::run_route(routes[i], make_call(copies[0]->weight), &workspace, stream);
         CUDA_CHECK(cudaStreamSynchronize(stream));
         outputs[i].resize(y.bytes);
         y.copy_to_host(outputs[i].data(), y.bytes);
@@ -147,7 +182,7 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
 
     std::vector<cudaGraphExec_t> graphs(schedules);
     for (int i = 0; i < schedules; ++i) {
-        const generic::Route r{generic::Family::R8Mma, static_cast<std::uint8_t>(i)};
+        const generic::Route r = routes[i];
         cudaGraph_t graph;
         CUDA_CHECK(cudaStreamBeginCapture(stream, cudaStreamCaptureModeThreadLocal));
         for (int l = 0; l < launches; ++l) {
@@ -178,29 +213,25 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         }
     }
 
-    const generic::Problem problem{p.qtype, ops::LinearPolicy::AllowA8, p.n, p.k, p.epilogue};
-    const generic::Route picked = generic::select_route(problem, copies[0]->weight, 1, false);
-    const generic::Route rules  = generic::r8_rules_route(problem, 1);
-    int best = 0;
+    const generic::Route rules = generic::r8_rules_route(problem, 1);
+    int best = 0, at_picked = 0;
     std::vector<double> med(schedules);
     for (int i = 0; i < schedules; ++i) {
         med[i] = median(us[i]);
         if (med[i] < med[best]) best = i;
+        if (routes[i] == picked) at_picked = i;
     }
     for (int i = 0; i < schedules; ++i) {
-        const generic::Route r{generic::Family::R8Mma, static_cast<std::uint8_t>(i)};
-        std::printf("r8 %s %s n=%d k=%d %s %.2f us %.1f GB/s same=%d%s%s\n", fmt, epi, p.n, p.k,
-                    generic::route_name(r).c_str(), med[i],
-                    static_cast<double>(bytes) / (med[i] * 1e3),
-                    outputs[i] == outputs[0] ? 1 : 0, r == picked ? " picked" : "",
-                    r == rules ? " rules" : "");
+        const generic::Route r = routes[i];
+        const bool same_decode = std::equal(decoded.begin(), decoded.end(), outputs[i].begin());
+        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s\n", fmt,
+                    epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
+                    static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
+                    same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "");
     }
-    const bool picked_r8 = picked.family == generic::Family::R8Mma;
-    const generic::Route fastest{generic::Family::R8Mma, static_cast<std::uint8_t>(best)};
-    std::printf("pick %s %s n=%d k=%d picked=%s %.2f us rules=%s %.2f us best=%s %.2f us\n", fmt,
-                epi, p.n, p.k, generic::route_name(picked).c_str(),
-                picked_r8 ? med[picked.schedule] : 0.0, generic::route_name(rules).c_str(),
-                med[rules.schedule], generic::route_name(fastest).c_str(), med[best]);
+    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n,
+                p.k, tokens, generic::route_name(picked).c_str(), med[at_picked],
+                generic::route_name(routes[best]).c_str(), med[best]);
     std::fflush(stdout);
 
     CUDA_CHECK(cudaEventDestroy(start));
@@ -216,6 +247,7 @@ int main(int argc, char** argv) {
         std::vector<Problem> problems;
         int samples  = 15;
         int launches = 60;
+        std::vector<std::int32_t> widths{1};
         std::set<std::tuple<int, int, int, int>> seen;
         const auto add = [&](const std::string& fmt, const std::string& epi, std::int32_t n,
                              std::int32_t k) {
@@ -233,6 +265,11 @@ int main(int argc, char** argv) {
                 samples = std::stoi(v);
             } else if (a == "--launches") {
                 launches = std::stoi(v);
+            } else if (a == "--tokens") {
+                widths.clear();
+                std::stringstream in(v);
+                std::string item;
+                while (std::getline(in, item, ',')) widths.push_back(std::stoi(item));
             } else if (a == "--problem") {
                 std::stringstream in(v);
                 std::string fmt, epi, n, k;
@@ -256,9 +293,11 @@ int main(int argc, char** argv) {
                 throw std::invalid_argument("unknown option " + a);
             }
         }
-        if (problems.empty() || samples <= 0 || launches <= 0) {
+        if (problems.empty() || samples <= 0 || launches <= 0 || widths.empty() ||
+            std::any_of(widths.begin(), widths.end(), [](std::int32_t t) { return t <= 0; })) {
             std::cerr << "usage: ninferno_r8_schedule_bench [--shapes FILE] "
-                         "[--problem FORMAT,EPILOGUE,N,K ...] [--samples N] [--launches N]\n";
+                         "[--problem FORMAT,EPILOGUE,N,K ...] [--samples N] [--launches N] "
+                         "[--tokens T,...]\n";
             return 2;
         }
         const auto& device = device_class();
@@ -270,7 +309,9 @@ int main(int argc, char** argv) {
             std::printf("board cc %d sms %d l2_mib %g dram_gbps %g\n", b.major * 10 + b.minor,
                         b.sms, b.l2_mib, b.dram_gbps);
         }
-        for (const Problem& p : problems) run_problem(p, samples, launches, device.l2_bytes);
+        for (const Problem& p : problems) {
+            for (const std::int32_t t : widths) run_problem(p, samples, launches, device.l2_bytes, t);
+        }
         std::printf("done\n");
         return 0;
     } catch (const std::exception& e) {
