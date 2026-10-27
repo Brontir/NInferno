@@ -1203,8 +1203,8 @@ int test_registry_and_corpus() {
     failures += check(registry.by_lineage("google/gemma-4-26B-A4B-it") != nullptr,
                       "lineage lookup");
     // gb203 boards tune apart. The RTX 5070 Ti (70 SMs) has a profile of its SM variant
-    // "gb203:70sm" for the GGUF quantizations it was measured on (unsloth UD-IQ3_XXS: mtp:2, two
-    // deep from two lanes); the safetensors and NVFP4 checkpoints keep the gb203 profiles the
+    // "gb203:70sm" for the GGUF quantizations it was measured on (unsloth UD-IQ3_XXS with the q8
+    // assistant: mtp:4, three deep from two lanes, two from three, three from five); the safetensors and NVFP4 checkpoints keep the gb203 profiles the
     // RTX 5080 measured for them (the Engine's mtp:3, two lanes three deep), and a 5080 running a GGUF takes
     // neither the 5070 Ti's nor a gb203 one: the RTX 5060 Ti's (gb206) stands in, capped to its
     // 84 SMs. Chains as ninferno::gpu_similarity_chain builds them.
@@ -1242,10 +1242,10 @@ int test_registry_and_corpus() {
                           "the google gb203 load table");
         failures += check(gguf5070ti != nullptr &&
                               gguf5070ti->value("gpu_class", "") == "gb203:70sm" &&
-                              label(gguf5070ti) == "mtp:2" &&
-                              load(gguf5070ti) == std::vector<LoadBound>{{2, 2}} &&
+                              label(gguf5070ti) == "mtp:4" &&
+                              load(gguf5070ti) == std::vector<LoadBound>{{2, 3}, {3, 2}, {5, 3}} &&
                               !measured_elsewhere(rtx5070ti, *gguf5070ti),
-                          "Gemma 4 26B (unsloth GGUF) on the RTX 5070 Ti: gb203:70sm, mtp:2, 2:2");
+                          "Gemma 4 26B (unsloth GGUF) on the RTX 5070 Ti: gb203:70sm, mtp:4, 2:3 3:2 5:3");
         failures += check(gguf5080 != nullptr && gguf5080->value("gpu_class", "") == "gb206" &&
                               label(gguf5080) == "mtp:3" &&
                               load(gguf5080) == std::vector<LoadBound>{{2, 3}} &&
@@ -1279,8 +1279,8 @@ int test_registry_and_corpus() {
     }
     // gpt-oss-20b was tuned on an RTX 5070 Ti, published for its SM variant "gb203:70sm": the 5070 Ti
     // runs it as its own (dflash:7, two lanes three deep), an RTX 5080 (no gb203 profile) takes the
-    // RTX 5090's as a stand-in (dflash:7 for the openai checkpoint, dflash:5 for the GGUFs), 2:3
-    // capped at 9 rows for its 84 SMs.
+    // RTX 5090's as a stand-in (dflash:7 for both, measured with the q8 DFlash drafter), its load
+    // table (2:3 for the checkpoint, 2:2 3:5 for the GGUFs) capped at 9 rows for its 84 SMs.
     if (const auto* oss = registry.by_repo("openai/gpt-oss-20b")) {
         const GpuKey rtx5080{{"gb203:84sm", "gb203", "sm120", "gb205", "gb202", "gb206", "gb207",
                               "*"},
@@ -1308,11 +1308,11 @@ int test_registry_and_corpus() {
                           "gpt-oss-20b on the RTX 5080: the RTX 5090's profile stands in, "
                           "dflash:7, 2:3 capped at 9 rows");
         failures += check(gguf != nullptr && gguf->value("gpu_class", "") == "gb202" &&
-                              label(gguf) == "dflash:5" &&
+                              label(gguf) == "dflash:7" &&
                               stand_in_load(load(gguf), rtx5080.sms) ==
-                                  std::vector<LoadBound>{{2, 3}, {9, 0}},
+                                  std::vector<LoadBound>{{2, 2}, {3, 5}, {9, 0}},
                           "gpt-oss-20b (unsloth GGUF) on the RTX 5080: the RTX 5090's GGUF "
-                          "profile, dflash:5");
+                          "profile, dflash:7");
     } else {
         failures += check(false, "registry has openai/gpt-oss-20b");
     }
