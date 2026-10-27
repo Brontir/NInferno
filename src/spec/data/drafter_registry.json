@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 135,
+  "version": 137,
   "published": "2026-10-27",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -6024,80 +6024,84 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.46967608545830464,
-            "config": "dflash:5",
+            "acceptance": 0.37996049560064643,
+            "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.3679255882385495,
-            "plain_tok_s": 71.07156805721462,
-            "speedup": 1.3804986383011915,
-            "tok_s": 98.11420292491523,
-            "tokens_per_round": 3.3219761499148213
+            "floor_tokens_per_round": 2.3452401599408677,
+            "plain_tok_s": 69.84816965262746,
+            "speedup": 1.5147044800515563,
+            "tok_s": 105.79933549623597,
+            "tokens_per_round": 3.618811881188119
           },
           "gpu": "NVIDIA GeForce RTX 4060 Ti",
           "gpu_class": "ad106",
-          "measured_on": "gpt-oss-20b-MXFP4.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus",
-          "measured_at": "2026-10-12",
+          "measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, q8 DFlash drafter",
+          "measured_at": "2026-10-27",
           "non_thinking": {
-            "acceptance": 0.42906861120318196,
-            "config": "dflash:5",
+            "acceptance": 0.3443086816720257,
+            "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.359768137069993,
-            "plain_tok_s": 71.07454520888135,
-            "speedup": 1.3233289922763598,
-            "tok_s": 94.05500628776953,
-            "tokens_per_round": 3.118657937806874
+            "floor_tokens_per_round": 2.339248042430717,
+            "plain_tok_s": 69.8532466686703,
+            "speedup": 1.4423461060306595,
+            "tok_s": 100.75255832615574,
+            "tokens_per_round": 3.3669319186560567
           },
           "portable": {
             "default": {
-              "acceptance": 0.46967608545830464,
+              "acceptance": 0.4854403409090909,
               "config": "dflash:5",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.3679255882385495,
-              "plain_tok_s": 71.07156805721462,
-              "speedup": 1.3804986383011915,
-              "tok_s": 98.11420292491523,
-              "tokens_per_round": 3.3219761499148213
+              "floor_tokens_per_round": 2.2302256271484318,
+              "plain_tok_s": 69.84816965262746,
+              "speedup": 1.5031329551603048,
+              "tok_s": 104.99108566249224,
+              "tokens_per_round": 3.4024604569420034
             },
             "non_thinking": {
-              "acceptance": 0.42906861120318196,
+              "acceptance": 0.4445578231292517,
               "config": "dflash:5",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.359768137069993,
-              "plain_tok_s": 71.07454520888135,
-              "speedup": 1.3233289922763598,
-              "tok_s": 94.05500628776953,
-              "tokens_per_round": 3.118657937806874
+              "floor_tokens_per_round": 2.2272871568045685,
+              "plain_tok_s": 69.8532466686703,
+              "speedup": 1.438534863774365,
+              "tok_s": 100.48633068071273,
+              "tokens_per_round": 3.1947942905121747
             },
             "thinking": {
-              "acceptance": 0.561377245508982,
-              "config": "dflash:5",
+              "acceptance": 0.4623847754980672,
+              "config": "dflash:7",
               "drafter": "dflash",
-              "floor_tokens_per_round": 2.3863440694350606,
-              "plain_tok_s": 71.06263809850006,
-              "speedup": 1.586018835425314,
-              "tok_s": 112.70668251923361,
-              "tokens_per_round": 3.782931354359926
+              "floor_tokens_per_round": 2.3590956233394054,
+              "plain_tok_s": 69.83294303157554,
+              "speedup": 1.7829652708423347,
+              "tok_s": 124.5097121860104,
+              "tokens_per_round": 4.206185567010309
             }
           },
-          "source": "spec-tune 2026-10-11T23:13:14Z (ninferno-spec-1, 362 s)",
+          "source": "spec-tune 2026-10-27T18:10:53Z (ninferno-spec-1, 284 s)",
           "thinking": {
-            "acceptance": 0.43547470153496304,
+            "acceptance": 0.4623847754980672,
             "config": "dflash:7",
             "drafter": "dflash",
-            "floor_tokens_per_round": 2.5139524399931386,
-            "plain_tok_s": 71.06263809850006,
-            "speedup": 1.6005349087130052,
-            "tok_s": 113.73823298188812,
-            "tokens_per_round": 4.021696252465484
+            "floor_tokens_per_round": 2.3590956233394054,
+            "plain_tok_s": 69.83294303157554,
+            "speedup": 1.7829652708423347,
+            "tok_s": 124.5097121860104,
+            "tokens_per_round": 4.206185567010309
           },
           "load": [
             {
               "depth": 3,
               "lanes": 2
+            },
+            {
+              "depth": 2,
+              "lanes": 3
             }
           ],
-          "load_measured_on": "gpt-oss-20b-MXFP4.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, load 2,4, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-12T00:16:50Z",
-          "revision": "a98f21afc894"
+          "load_measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:26:49Z",
+          "revision": "589f6c00fa5c"
         },
         {
           "applies_to": [],
@@ -6485,12 +6489,16 @@
           },
           "load": [
             {
-              "depth": 2,
+              "depth": 3,
               "lanes": 2
+            },
+            {
+              "depth": 2,
+              "lanes": 3
             }
           ],
-          "load_measured_on": "gpt-oss-20b-MXFP4.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T15:28:11Z",
-          "revision": "ae14073507da"
+          "load_measured_on": "model.moe_published.ninferno, context 8192, kv fp8, NVIDIA GeForce RTX 4060 Ti, greedy, built-in corpus, q8 DFlash drafter, NVIDIA GeForce RTX 4060 Ti, C 2,4, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T18:26:49Z",
+          "revision": "ebc630d77b1c"
         }
       ]
     },
