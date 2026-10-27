@@ -190,76 +190,118 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
 #pragma unroll
             for (int n = 0; n < NT; ++n) acc[s][r][n] = 0.0F;
 
-    // Block kb of every token against block sp of load q of each row (kb = group*kGroup + q +
-    // kStride*sp): a group's blocks in ascending order, whatever the codec's grouping.
-    const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
-        uint4 xl[NT], xh[NT];
-        float xs[NT], xm[NT];
-#pragma unroll
-        for (int n = 0; n < NT; ++n) {
-            if constexpr (kPre) {
-                if (n < a.tokens) {
-                    const auto* c = reinterpret_cast<const uint4*>(
-                        act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
-                    xl[n] = c[0];
-                    xh[n] = c[1];
-                    xs[n] = act.scales[n * blocks + kb];
-                    xm[n] = C::kMin ? act.sums[n * blocks + kb] : 0.0F;
-                } else {
-                    xl[n] = xh[n] = make_uint4(0, 0, 0, 0);
-                    xs[n] = xm[n] = 0.0F;
-                }
-            } else {
-                xl[n] = x_lo[n * blocks + kb];
-                xh[n] = x_hi[n * blocks + kb];
-                xs[n] = x_scale[n * blocks + kb];
-                xm[n] = C::kMin ? x_sum[n * blocks + kb] : 0.0F;
-            }
+    // A row's block decoded (decode_row) and dotted with one token's block (dot_token): the same
+    // operations in the same order whatever loop holds them, so every form sums alike.
+    struct Decoded {
+        uint4 lo, hi;
+        float s0, s1, m0, m1;
+    };
+    const auto decode_row = [&](const auto& raw, int sp) {
+        Decoded d{};
+        if constexpr (kHalfMin) {
+            C::decode(raw, sp, d.lo, d.hi, d.s0, d.s1, d.m0, d.m1);
+        } else if constexpr (kGridWords > 0) {
+            C::decode(raw, d.lo, d.hi, d.s0, d.s1, SharedGrid{grid_words});
+        } else if constexpr (kSpan == 1) {
+            C::decode(raw, d.lo, d.hi, d.s0, d.s1);
+        } else {
+            C::decode(raw, sp, d.lo, d.hi, d.s0, d.s1);
         }
-        // kHalfMin: each token's code sums of values 0..15 and 16..31 (dp4a against ones).
-        [[maybe_unused]] float hl[NT], hh[NT];
+        return d;
+    };
+    const auto dot_token = [&](const Decoded& d, const uint4& xl, const uint4& xh, float xs, float xm,
+                               [[maybe_unused]] float hl, [[maybe_unused]] float hh, float& acc_n) {
+        if constexpr (kHalves) {
+            const int d0 = dp4a_words(d.lo, xl, int_accumulator_zero());
+            const int d1 = dp4a_words(d.hi, xh, int_accumulator_zero());
+            float w = fmaf(int_accumulator_to_float(d1), d.s1, int_accumulator_to_float(d0) * d.s0);
+            if constexpr (kHalfMin) w = fmaf(hh, d.m1, fmaf(hl, d.m0, w));
+            acc_n = fmaf(w, xs, acc_n);
+        } else {
+            const int dot = dp4a_words(d.hi, xh, dp4a_words(d.lo, xl, int_accumulator_zero()));
+            acc_n         = fmaf(int_accumulator_to_float(dot) * d.s0, xs, acc_n);
+            if constexpr (C::kMin) acc_n = fmaf(d.s1, xm, acc_n);
+        }
+    };
+    // Block kb of token n's activation: its two code halves, scale and sum (zeros past the call's
+    // T), and under kHalfMin its code sums of values 0..15 and 16..31 (dp4a against ones).
+    struct XBlock {
+        uint4 lo, hi;
+        float scale, sum, half_lo, half_hi;
+    };
+    const auto x_block = [&](int n, int kb) {
+        XBlock x{};
+        if constexpr (kPre) {
+            if (n < a.tokens) {
+                const auto* c = reinterpret_cast<const uint4*>(
+                    act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
+                x.lo    = c[0];
+                x.hi    = c[1];
+                x.scale = act.scales[n * blocks + kb];
+                x.sum   = C::kMin ? act.sums[n * blocks + kb] : 0.0F;
+            }
+        } else {
+            x.lo    = x_lo[n * blocks + kb];
+            x.hi    = x_hi[n * blocks + kb];
+            x.scale = x_scale[n * blocks + kb];
+            x.sum   = C::kMin ? x_sum[n * blocks + kb] : 0.0F;
+        }
         if constexpr (kHalfMin) {
             const uint4 ones = make_uint4(0x01010101U, 0x01010101U, 0x01010101U, 0x01010101U);
-#pragma unroll
-            for (int n = 0; n < NT; ++n) {
-                hl[n] = int_accumulator_to_float(dp4a_words(ones, xl[n], int_accumulator_zero()));
-                hh[n] = int_accumulator_to_float(dp4a_words(ones, xh[n], int_accumulator_zero()));
-            }
+            x.half_lo = int_accumulator_to_float(dp4a_words(ones, x.lo, int_accumulator_zero()));
+            x.half_hi = int_accumulator_to_float(dp4a_words(ones, x.hi, int_accumulator_zero()));
         }
+        return x;
+    };
+    // The verify widths past four (NT 8): every row's block decoded once, then the tokens one at a
+    // time, so the registers hold one token's activation instead of all eight (the hoisted form
+    // reached 160-255 registers there, Q5_K/Q6_K spilling). A token past the call's T is skipped.
+    const auto compute_block_streamed = [&](const auto& raws, int q, int sp, int kb) {
+        Decoded w[kSets][kRows];
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
             for (int r = 0; r < kRows; ++r) {
-                if (local0 + r >= a.rows) continue;
-                uint4 lo, hi;
-                float s0 = 0.0F, s1 = 0.0F;
-                [[maybe_unused]] float m0 = 0.0F, m1 = 0.0F;
-                if constexpr (kHalfMin) {
-                    C::decode(raws[s][r][q], sp, lo, hi, s0, s1, m0, m1);
-                } else if constexpr (kGridWords > 0) {
-                    C::decode(raws[s][r][q], lo, hi, s0, s1, SharedGrid{grid_words});
-                } else if constexpr (kSpan == 1) {
-                    C::decode(raws[s][r][q], lo, hi, s0, s1);
-                } else {
-                    C::decode(raws[s][r][q], sp, lo, hi, s0, s1);
-                }
+                if (local0 + r < a.rows) w[s][r] = decode_row(raws[s][r][q], sp);
+            }
 #pragma unroll
-                for (int n = 0; n < NT; ++n) {
-                    if constexpr (kHalves) {
-                        const int d0  = dp4a_words(lo, xl[n], int_accumulator_zero());
-                        const int d1  = dp4a_words(hi, xh[n], int_accumulator_zero());
-                        float w       = fmaf(int_accumulator_to_float(d1), s1,
-                                             int_accumulator_to_float(d0) * s0);
-                        if constexpr (kHalfMin) w = fmaf(hh[n], m1, fmaf(hl[n], m0, w));
-                        acc[s][r][n] = fmaf(w, xs[n], acc[s][r][n]);
-                    } else {
-                        const int d =
-                            dp4a_words(hi, xh[n], dp4a_words(lo, xl[n], int_accumulator_zero()));
-                        acc[s][r][n] = fmaf(int_accumulator_to_float(d) * s0, xs[n], acc[s][r][n]);
-                        if constexpr (C::kMin) acc[s][r][n] = fmaf(s1, xm[n], acc[s][r][n]);
+        for (int n = 0; n < NT; ++n) {
+            if (n >= a.tokens) break;
+            const XBlock x = x_block(n, kb);
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) {
+                    if (local0 + r >= a.rows) continue;
+                    dot_token(w[s][r], x.lo, x.hi, x.scale, x.sum, x.half_lo, x.half_hi,
+                              acc[s][r][n]);
+                }
+        }
+    };
+    // Block kb of every token against block sp of load q of each row (kb = group*kGroup + q +
+    // kStride*sp): a group's blocks in ascending order, whatever the codec's grouping.
+    const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
+        if constexpr (NT > 4) {
+            compute_block_streamed(raws, q, sp, kb);
+        } else {
+            // Decode and the narrow verify widths: every token's activation block first, then
+            // each row decoded and dotted with all of them.
+            XBlock x[NT];
+#pragma unroll
+            for (int n = 0; n < NT; ++n) x[n] = x_block(n, kb);
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) {
+                    if (local0 + r >= a.rows) continue;
+                    const Decoded w = decode_row(raws[s][r][q], sp);
+#pragma unroll
+                    for (int n = 0; n < NT; ++n) {
+                        dot_token(w, x[n].lo, x[n].hi, x[n].scale, x[n].sum, x[n].half_lo,
+                                  x[n].half_hi, acc[s][r][n]);
                     }
                 }
-            }
+        }
     };
     const auto compute = [&](auto slot_tag, int group) {
         constexpr int slot = decltype(slot_tag)::value;
