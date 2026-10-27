@@ -211,75 +211,82 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
             for (int n = 0; n < NT; ++n) acc[s][r][n] = 0.0F;
 
     // Block kb of every token against block sp of load q of each row (kb = group*kGroup + q +
-    // kStride*sp): a group's blocks in ascending order, whatever the codec's grouping.
+    // kStride*sp): a group's blocks in ascending order, whatever the codec's grouping. Every row's
+    // block is decoded first, then the tokens one at a time: only one token's activation is live,
+    // which at verify widths keeps a 4-bit format's kernel off the register limit (sm_75/sm_86:
+    // Q4_K/Q6_K at eight tokens used all 255 registers, Q6_K spilled 0.2-1.7 KB, eight warps an SM).
     const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
-        uint4 xl[NT], xh[NT];
-        float xs[NT], xm[NT];
-#pragma unroll
-        for (int n = 0; n < NT; ++n) {
-            if constexpr (!kShared) {
-                if (n < a.tokens) {
-                    const auto* c = reinterpret_cast<const uint4*>(
-                        act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
-                    xl[n] = c[0];
-                    xh[n] = c[1];
-                    xs[n] = act.scales[n * blocks + kb];
-                    xm[n] = C::kMin ? act.sums[n * blocks + kb] : 0.0F;
-                } else {
-                    xl[n] = xh[n] = make_uint4(0, 0, 0, 0);
-                    xs[n] = xm[n] = 0.0F;
-                }
-            } else {
-                xl[n] = x_lo[n * blocks + kb];
-                xh[n] = x_hi[n * blocks + kb];
-                xs[n] = x_scale[n * blocks + kb];
-                xm[n] = C::kMin ? x_sum[n * blocks + kb] : 0.0F;
-            }
-        }
-        // kHalfMin: each token's code sums of values 0..15 and 16..31 (dp4a against ones).
-        [[maybe_unused]] float hl[NT], hh[NT];
-        if constexpr (kHalfMin) {
-            const uint4 ones = make_uint4(0x01010101U, 0x01010101U, 0x01010101U, 0x01010101U);
-#pragma unroll
-            for (int n = 0; n < NT; ++n) {
-                hl[n] = int_accumulator_to_float(dp4a_words(ones, xl[n], int_accumulator_zero()));
-                hh[n] = int_accumulator_to_float(dp4a_words(ones, xh[n], int_accumulator_zero()));
-            }
-        }
+        uint4 lo[kSets][kRows], hi[kSets][kRows];
+        float s0[kSets][kRows], s1[kSets][kRows];
+        [[maybe_unused]] float m0[kSets][kRows], m1[kSets][kRows];
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
             for (int r = 0; r < kRows; ++r) {
+                s0[s][r] = s1[s][r] = 0.0F;
+                if constexpr (kHalfMin) m0[s][r] = m1[s][r] = 0.0F;
                 if (local0 + r >= a.rows) continue;
-                uint4 lo, hi;
-                float s0 = 0.0F, s1 = 0.0F;
-                [[maybe_unused]] float m0 = 0.0F, m1 = 0.0F;
                 if constexpr (kHalfMin) {
-                    C::decode(raws[s][r][q], sp, lo, hi, s0, s1, m0, m1);
+                    C::decode(raws[s][r][q], sp, lo[s][r], hi[s][r], s0[s][r], s1[s][r], m0[s][r],
+                              m1[s][r]);
                 } else if constexpr (kGridWords > 0) {
-                    C::decode(raws[s][r][q], lo, hi, s0, s1, SharedGrid{grid_words});
+                    C::decode(raws[s][r][q], lo[s][r], hi[s][r], s0[s][r], s1[s][r],
+                              SharedGrid{grid_words});
                 } else if constexpr (kSpan == 1) {
-                    C::decode(raws[s][r][q], lo, hi, s0, s1);
+                    C::decode(raws[s][r][q], lo[s][r], hi[s][r], s0[s][r], s1[s][r]);
                 } else {
-                    C::decode(raws[s][r][q], sp, lo, hi, s0, s1);
-                }
-#pragma unroll
-                for (int n = 0; n < NT; ++n) {
-                    if constexpr (kHalves) {
-                        const int d0  = dp4a_words(lo, xl[n], int_accumulator_zero());
-                        const int d1  = dp4a_words(hi, xh[n], int_accumulator_zero());
-                        float w       = fmaf(int_accumulator_to_float(d1), s1,
-                                             int_accumulator_to_float(d0) * s0);
-                        if constexpr (kHalfMin) w = fmaf(hh[n], m1, fmaf(hl[n], m0, w));
-                        acc[s][r][n] = fmaf(w, xs[n], acc[s][r][n]);
-                    } else {
-                        const int d =
-                            dp4a_words(hi, xh[n], dp4a_words(lo, xl[n], int_accumulator_zero()));
-                        acc[s][r][n] = fmaf(int_accumulator_to_float(d) * s0, xs[n], acc[s][r][n]);
-                        if constexpr (C::kMin) acc[s][r][n] = fmaf(s1, xm[n], acc[s][r][n]);
-                    }
+                    C::decode(raws[s][r][q], sp, lo[s][r], hi[s][r], s0[s][r], s1[s][r]);
                 }
             }
+#pragma unroll
+        for (int n = 0; n < NT; ++n) {
+            uint4 xl, xh;
+            float xs, xm;
+            if constexpr (!kShared) {
+                if (n < a.tokens) {
+                    const auto* c = reinterpret_cast<const uint4*>(
+                        act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
+                    xl = c[0];
+                    xh = c[1];
+                    xs = act.scales[n * blocks + kb];
+                    xm = C::kMin ? act.sums[n * blocks + kb] : 0.0F;
+                } else {
+                    xl = xh = make_uint4(0, 0, 0, 0);
+                    xs = xm = 0.0F;
+                }
+            } else {
+                xl = x_lo[n * blocks + kb];
+                xh = x_hi[n * blocks + kb];
+                xs = x_scale[n * blocks + kb];
+                xm = C::kMin ? x_sum[n * blocks + kb] : 0.0F;
+            }
+            // kHalfMin: the token's code sums of values 0..15 and 16..31 (dp4a against ones).
+            [[maybe_unused]] float hl = 0.0F, hh = 0.0F;
+            if constexpr (kHalfMin) {
+                const uint4 ones = make_uint4(0x01010101U, 0x01010101U, 0x01010101U, 0x01010101U);
+                hl = int_accumulator_to_float(dp4a_words(ones, xl, int_accumulator_zero()));
+                hh = int_accumulator_to_float(dp4a_words(ones, xh, int_accumulator_zero()));
+            }
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) {
+                    if (local0 + r >= a.rows) continue;
+                    if constexpr (kHalves) {
+                        const int d0 = dp4a_words(lo[s][r], xl, int_accumulator_zero());
+                        const int d1 = dp4a_words(hi[s][r], xh, int_accumulator_zero());
+                        float w      = fmaf(int_accumulator_to_float(d1), s1[s][r],
+                                            int_accumulator_to_float(d0) * s0[s][r]);
+                        if constexpr (kHalfMin) w = fmaf(hh, m1[s][r], fmaf(hl, m0[s][r], w));
+                        acc[s][r][n] = fmaf(w, xs, acc[s][r][n]);
+                    } else {
+                        const int d =
+                            dp4a_words(hi[s][r], xh, dp4a_words(lo[s][r], xl, int_accumulator_zero()));
+                        acc[s][r][n] = fmaf(int_accumulator_to_float(d) * s0[s][r], xs, acc[s][r][n]);
+                        if constexpr (C::kMin) acc[s][r][n] = fmaf(s1[s][r], xm, acc[s][r][n]);
+                    }
+                }
+        }
     };
     const auto compute = [&](auto slot_tag, int group) {
         constexpr int slot = decltype(slot_tag)::value;
