@@ -271,9 +271,17 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 } catch (const std::exception&) {}
             }
             if (config && config->contains("quantization_config")) { encoded = true; }
-            if (d.proposal_rows && config && !encoded) {
+            // The head table's bits as published: BF16, or an encoding's own bits when its
+            // quantization_config says them (0: unknown, the published size stands).
+            std::uint64_t head_bits = encoded ? 0 : 16;
+            if (config && config->contains("quantization_config") &&
+                (*config)["quantization_config"].is_object()) {
+                head_bits = (*config)["quantization_config"].value("bits", std::uint64_t{0});
+            }
+            if (d.proposal_rows && config && head_bits) {
                 // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
-                // published [vocab, H] BF16 embedding table the assistant's head is read from.
+                // published [vocab, H] embedding table the assistant's head is read from, also
+                // when the other matrices stay as published.
                 const nlohmann::json& text =
                     config->contains("text_config") && (*config)["text_config"].is_object()
                         ? (*config)["text_config"]
@@ -281,7 +289,7 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 const auto vocab  = text.value("vocab_size", std::uint64_t{0});
                 const auto hidden = text.value("hidden_size", std::uint64_t{0});
                 if (vocab > d.proposal_rows) {
-                    bytes -= std::min(bytes, 2 * (vocab - d.proposal_rows) * hidden);
+                    bytes -= std::min(bytes, (vocab - d.proposal_rows) * hidden * head_bits / 8);
                 }
             }
             if (!d.component.empty()) {
