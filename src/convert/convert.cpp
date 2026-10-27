@@ -1379,6 +1379,10 @@ std::map<std::string, std::size_t> quantize_drafter(const Model& model, Recipe& 
         const auto& p         = model.parameters[i];
         const auto& selection = recipe.selections[i];
         if (!drafter && !companion_parameter(p.name)) { return false; } // the target as published
+        // A separate DFlash drafter's feature projection stays BF16: the engine splits it by tap
+        // (dflash.cpp split_projection_columns: BF16 or ggml blocks) to sum the taps' features
+        // chunk by chunk; whole, every prefill chunk keeps all tapped layers' features.
+        if (drafter && p.name.ends_with("/feature_projection")) { return false; }
         // A companion's Q8 from the recipe is its default, which an explicit mode replaces.
         const bool recipe_q8 = companion_parameter(p.name) &&
                                selection.method == Method::GroupedAbsmax &&

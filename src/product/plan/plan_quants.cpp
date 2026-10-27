@@ -5,6 +5,7 @@
 #include "artifact/reader.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
+#include "convert/gguf.h"
 #include "core/ascii.h"
 
 #include "product/numeric_options.h"
@@ -13,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <optional>
 #include <iomanip>
 #include <cstdio>
 #include <iomanip>
@@ -249,21 +251,108 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                     bytes = std::max(bytes, q.bytes);
                 }
             }
+            // A restricted head (restrict_head) replaces the file's embedding table with
+            // proposal_rows rows gathered to BF16, read from the file's metadata (its repository
+            // named; the target's own is not known here).
+            if (d.proposal_rows && bytes && !d.repo.empty() && fetch != nullptr &&
+                convert::resolve_ranking(d.ranking, {})) {
+                try {
+                    auto ask     = *fetch;
+                    ask.include.clear();
+                    ask.quant    = d.gguf;
+                    ask.revision = d.revision;
+                    // Read as gguf_head_config does: 16 MiB, four times more while truncated.
+                    std::optional<convert::GgufFile> file;
+                    for (std::uint64_t want = 16ULL << 20; !file; want *= 4) {
+                        const auto head = convert::fetch_gguf_head(d.repo, ask, want);
+                        try {
+                            file = convert::parse_gguf_head(
+                                reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                head.bytes.size(), head.size, head.path);
+                        } catch (const convert::GgufTruncated&) {
+                            if (head.bytes.size() >= head.size || want >= (256ULL << 20)) { throw; }
+                        }
+                    }
+                    for (const auto& t : file->tensors) {
+                        if (t.name != "token_embd.weight" || t.ne.size() != 2) { continue; }
+                        if (t.ne[1] > d.proposal_rows) {
+                            bytes -= std::min(bytes, t.bytes);
+                            bytes += d.proposal_rows * t.ne[0] * 2;
+                        }
+                    }
+                } catch (const std::exception&) {}
+            }
         } else if (!d.repo.empty() && fetch != nullptr) {
             const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+            // Published already encoded (a GGUF, a label under 16 bits, a quantization_config):
+            // quantize_drafter keeps its matrices as they are, so its size stands.
+            bool encoded = false;
             try {
                 for (const auto& q : convert::list_quants(spec, *fetch).quants) {
-                    if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
+                    if (!q.drafter && q.bytes > bytes) {
+                        bytes   = q.bytes;
+                        encoded = q.format != "safetensors" || (q.bits > 0 && q.bits < 16);
+                    }
                 }
             } catch (const std::exception&) {}
+            const bool dflash = d.kind == "dflash" || d.kind == "dflash2";
+            std::optional<nlohmann::json> config;
+            if (dflash || d.proposal_rows || (d.component.empty() && !d.quant.empty())) {
+                try {
+                    config = convert::fetch_config(spec, *fetch);
+                } catch (const std::exception&) {}
+            }
+            if (config && config->contains("quantization_config")) { encoded = true; }
+            // The head table's bits as published: BF16, or an encoding's own bits when its
+            // quantization_config says them (0: unknown, the published size stands).
+            std::uint64_t head_bits = encoded ? 0 : 16;
+            if (config && config->contains("quantization_config") &&
+                (*config)["quantization_config"].is_object()) {
+                head_bits = (*config)["quantization_config"].value("bits", std::uint64_t{0});
+            }
+            // Only when the conversion finds the ranking (resolve_ranking, as attach_drafters):
+            // without it the full head is converted. The repository the start names is not known
+            // here; the installed and built-in rankings are what a start finds without one.
+            if (d.proposal_rows && config && head_bits &&
+                convert::resolve_ranking(d.ranking, {})) {
+                // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
+                // published [vocab, H] embedding table the assistant's head is read from, also
+                // when the other matrices stay as published. The gathered rows are decoded to
+                // BF16 (an encoding is not kept through the gather).
+                const nlohmann::json& text =
+                    config->contains("text_config") && (*config)["text_config"].is_object()
+                        ? (*config)["text_config"]
+                        : *config;
+                const auto vocab  = text.value("vocab_size", std::uint64_t{0});
+                const auto hidden = text.value("hidden_size", std::uint64_t{0});
+                if (vocab > d.proposal_rows) {
+                    bytes -= std::min(bytes, vocab * hidden * head_bits / 8);
+                    bytes += d.proposal_rows * hidden * 2;
+                }
+            }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
+            } else if (!d.quant.empty() && config && !encoded) {
+                // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
+                // (convert.cpp quantize_drafter); the rest takes the kind's quantization. Without
+                // its config its encoding and the projection's size are unknown: the published
+                // size stands.
+                std::uint64_t kept = 0;
+                if (dflash) {
+                    const auto hidden = config->value("hidden_size", std::uint64_t{0});
+                    // Muse's config carries the taps at the top level, z-lab's under dflash_config
+                    // (gemma4.cpp block_dflash_config).
+                    const nlohmann::json& fields =
+                        config->contains("dflash_config") ? (*config)["dflash_config"] : *config;
+                    const auto taps =
+                        fields.value("target_layer_ids", nlohmann::json::array()).size();
+                    kept = std::min<std::uint64_t>(bytes, 2 * hidden * hidden * taps);
+                }
+                bytes = kept + convert::companion_drafter_bytes(target_model_type, d.kind, d.quant,
+                                                                bytes - kept);
             }
-            if (!out.state && (d.kind == "dflash" || d.kind == "dflash2")) {
-                try {
-                    out.state = plan_drafter_state_of_config(convert::fetch_config(spec, *fetch),
-                                                             target_hidden);
-                } catch (const std::exception&) {}
+            if (!out.state && dflash && config) {
+                out.state = plan_drafter_state_of_config(*config, target_hidden);
             }
         }
         out.bytes = std::max(out.bytes, bytes);

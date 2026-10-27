@@ -41,6 +41,7 @@
 
 #include <cstdint>
 #include <type_traits>
+#include <utility>
 
 namespace ninferno::ops::detail::generic {
 
@@ -767,6 +768,9 @@ __device__ __forceinline__ float byte_of(unsigned w, int i) {
 // 176-byte blocks: the same head, 32 high-bit bytes, 128 nibble bytes). Sub-block b (32 values)
 // is the low (even b) or high (odd b) nibbles of bytes 32*(b/2) .. + 31, plus bit b of high-bit
 // bytes 0 .. 31 (Q5_K); w = d*sc*q - dmin*m with ggml's packed 6-bit scales and mins.
+// load() cuts the step's scales, mins and high bits out as it loads (master's form); load_raw()
+// only loads and unpack() cuts them when the step computes (UnpackOf, rmma_kernel's latency
+// variant): in load() each row's fetch waits for its own head before the next row's loads issue.
 template <int Bits>
 struct GgmlQ45KDecoder {
     static constexpr bool kF16 = kF16Operands;
@@ -775,13 +779,16 @@ struct GgmlQ45KDecoder {
     static constexpr bool kStepScale  = true;
     static constexpr int kSplits      = 4;
     static constexpr bool kMinTerm    = true;
+    static constexpr bool kStageActs  = true;
     static constexpr int kBlockBytes  = Bits == 4 ? 144 : 176;
     static constexpr int kNibbleStart = Bits == 4 ? 16 : 48;
     struct Run {
-        uint4 nib;       // word 2c + u: word u of the step's nibble bytes 32c .. 32c + 31
-        uint2 hbits;     // Q5_K: word u of the high-bit bytes, shifted so bit g is group g
-        unsigned sc, mn; // the step's four 6-bit scales and mins (sub-blocks 4h .. 4h + 3), bytes
-        unsigned dd;     // binary16 d (low half) and dmin (high half)
+        uint4 nib;   // word 2c + u: word u of the step's nibble bytes 32c .. 32c + 31
+        uint2 hbits; // Q5_K: word u of the high-bit bytes, shifted so bit g is group g
+        // The step's four 6-bit scales and mins (sub-blocks 4h .. 4h + 3), bytes. load_raw():
+        // scale bytes 0..3, 4..7 and 8..11 (head.y, z, w) until unpack(); hi is unused after it.
+        unsigned sc, mn, hi;
+        unsigned dd; // binary16 d (low half) and dmin (high half)
     };
     // Group g of step h is sub-block 4h + g: nibble g % 2 of nibble span g / 2.
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
@@ -805,11 +812,41 @@ struct GgmlQ45KDecoder {
                       : (head.w & 0x0f0f0f0fU) | ((head.y >> 2) & 0x30303030U);
         r.mn = h == 0 ? head.z & 0x3f3f3f3fU
                       : ((head.w >> 4) & 0x0f0f0f0fU) | ((head.z >> 2) & 0x30303030U);
+        r.hi = 0;
         r.dd = head.x;
         return r;
     }
+    __device__ static __forceinline__ Run load_raw(const GemmArgs& a, int row, int k0) {
+        const int p  = k0 & 255;
+        const int h  = p >> 7;
+        const int qd = (p >> 5) & 3;
+        const std::uint8_t* b =
+            a.codes + (static_cast<std::int64_t>(row) * a.groups_per_row + (k0 >> 8)) * kBlockBytes;
+        const uint4 head = *reinterpret_cast<const uint4*>(b);
+        const auto* c    = reinterpret_cast<const unsigned*>(b + kNibbleStart + 64 * h + 4 * qd);
+        Run r;
+        r.nib   = make_uint4(c[0], c[4], c[8], c[12]);
+        r.hbits = make_uint2(0, 0);
+        if constexpr (Bits == 5) {
+            const auto* hb = reinterpret_cast<const unsigned*>(b + 16 + 4 * qd);
+            r.hbits        = make_uint2(hb[0], hb[4]);
+        }
+        r.sc = head.y;
+        r.mn = head.z;
+        r.hi = head.w;
+        r.dd = head.x;
+        return r;
+    }
+    // A load_raw() run of step base step_k0 (half h of its superblock) into load()'s form.
+    __device__ static __forceinline__ void unpack(Run& r, int step_k0) {
+        const int h      = (step_k0 >> 7) & 1;
+        const unsigned y = r.sc, z = r.mn, w = r.hi;
+        r.sc = h == 0 ? y & 0x3f3f3f3fU : (w & 0x0f0f0f0fU) | ((y >> 2) & 0x30303030U);
+        r.mn = h == 0 ? z & 0x3f3f3f3fU : ((w >> 4) & 0x0f0f0f0fU) | ((z >> 2) & 0x30303030U);
+        if constexpr (Bits == 5) r.hbits = make_uint2(r.hbits.x >> (4 * h), r.hbits.y >> (4 * h));
+    }
     __device__ static __forceinline__ Run zero() {
-        return {make_uint4(0, 0, 0, 0), make_uint2(0, 0), 0, 0, 0};
+        return {make_uint4(0, 0, 0, 0), make_uint2(0, 0), 0, 0, 0, 0};
     }
     // K is whole superblocks, so no lane of a step is past K.
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
@@ -840,6 +877,7 @@ struct GgmlQ6KDecoder {
     static constexpr int kRun        = 32;
     static constexpr bool kStepScale = true;
     static constexpr int kSplits     = 8;
+    static constexpr bool kStageActs = true;
     struct Run {
         uint4 ql;   // word 2a + u: word u of ql bytes 64h + 32a .. + 31
         uint2 qh;   // word u of qh bytes 32h .. 32h + 31
@@ -888,16 +926,19 @@ struct GgmlQ6KDecoder {
 // l = v % 32: bits 2*jj of qs[32h + l] minus 4 unless bit 4h + jj of hmask[l] is set; scale
 // s = 8h + 2*jj + l/16 (low 4 bits from byte s%8 >> 4*(s/8), high 2 from byte 8 + s%4 >> 2*(s/4));
 // w = d*(sc - 32)*q, q in [-4, 3]. MMA j is quarter j / 2, word j % 2; its scale is s = 8h + j.
+// As with Q4_K, load_raw() only loads and unpack() cuts out the half's scales and hmask bits.
 struct GgmlQ3KDecoder {
     static constexpr bool kF16       = kF16Operands;
     static constexpr int kRun        = 32;
     static constexpr bool kStepScale = true;
     static constexpr int kSplits     = 8;
+    static constexpr bool kStageActs = true;
     struct Run {
-        uint2 qs;   // word u of qs bytes 32h .. 32h + 31
-        uint2 hm;   // word u of the hmask bytes, shifted so bit jj is quarter jj of half h
-        uint2 sc;   // 6-bit scales 8h .. 8h + 7 (value sc - 32), bytes
-        unsigned d; // binary16 d
+        uint2 qs;    // word u of qs bytes 32h .. 32h + 31
+        uint2 hm;    // word u of the hmask bytes, shifted so bit jj is quarter jj of half h
+        uint2 sc;    // 6-bit scales 8h .. 8h + 7 (value sc - 32); load_raw(): scale words 0, 1
+        unsigned s2; // load_raw(): scale word 2 (the scales' top bits) until unpack()
+        unsigned d;  // binary16 d
     };
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         const int p            = k0 & 255;
@@ -915,13 +956,40 @@ struct GgmlQ3KDecoder {
         r.sc = make_uint2(((s0 >> (4 * h)) & 0x0f0f0f0fU) | (((s2 >> (4 * h)) & 0x03030303U) << 4),
                           ((s1 >> (4 * h)) & 0x0f0f0f0fU) |
                               (((s2 >> (4 * h + 2)) & 0x03030303U) << 4));
+        r.s2 = 0;
         r.d  = reinterpret_cast<const unsigned short*>(a.scales)[blk];
         return r;
     }
-    // Codes q + 4 = 4 (hmask bits set): value 0.
+    __device__ static __forceinline__ Run load_raw(const GemmArgs& a, int row, int k0) {
+        const int p            = k0 & 255;
+        const int h            = p >> 7;
+        const int qd           = (p >> 5) & 3;
+        const std::int64_t blk = static_cast<std::int64_t>(row) * a.groups_per_row + (k0 >> 8);
+        const std::uint8_t* cb = a.codes + blk * 96;
+        const auto* qs         = reinterpret_cast<const unsigned*>(cb + 32 + 32 * h + 4 * qd);
+        const auto* hm         = reinterpret_cast<const unsigned*>(cb + 4 * qd);
+        const auto* sw         = reinterpret_cast<const unsigned*>(a.high + blk * 12);
+        Run r;
+        r.qs = make_uint2(qs[0], qs[4]);
+        r.hm = make_uint2(hm[0], hm[4]);
+        r.sc = make_uint2(sw[0], sw[1]);
+        r.s2 = sw[2];
+        r.d  = reinterpret_cast<const unsigned short*>(a.scales)[blk];
+        return r;
+    }
+    __device__ static __forceinline__ void unpack(Run& r, int step_k0) {
+        const int h       = (step_k0 >> 7) & 1;
+        const unsigned s0 = r.sc.x, s1 = r.sc.y, s2 = r.s2;
+        r.hm = make_uint2(r.hm.x >> (4 * h), r.hm.y >> (4 * h));
+        r.sc = make_uint2(((s0 >> (4 * h)) & 0x0f0f0f0fU) | (((s2 >> (4 * h)) & 0x03030303U) << 4),
+                          ((s1 >> (4 * h)) & 0x0f0f0f0fU) |
+                              (((s2 >> (4 * h + 2)) & 0x03030303U) << 4));
+    }
+    // Codes q + 4 = 4 (hmask bits set): value 0. A zero run is never unpacked into a stored
+    // value: it stands for rows past the call's (rmma_kernel stores none of them).
     __device__ static __forceinline__ Run zero() {
         return {make_uint2(0, 0), make_uint2(0xffffffffU, 0xffffffffU),
-                make_uint2(0x20202020U, 0x20202020U), 0};
+                make_uint2(0x20202020U, 0x20202020U), 0, 0};
     }
     __device__ static __forceinline__ Run masked(const GemmArgs&, int, int) { return zero(); }
     __device__ static __forceinline__ void pair(const Run& r, int j, unsigned& lo, unsigned& hi) {
@@ -1904,6 +1972,9 @@ struct GgmlQ40FragDecoder : GgmlQ40Decoder {
 // Q4_K (144-byte blocks): each 64-byte half of the 128 nibble bytes 4 x 4-transposed by words;
 // the 16-byte head unchanged.
 struct GgmlQ4KFragDecoder : GgmlQ4KDecoder {
+    // The base's raw load reads the untransposed nibbles: deleted, so UnpackOf is false here and
+    // no latency variant decodes this layout with it.
+    __device__ static Run load_raw(const GemmArgs&, int, int) = delete;
     __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
         const int p  = k0 & 255;
         const int h  = p >> 7;
@@ -1918,6 +1989,7 @@ struct GgmlQ4KFragDecoder : GgmlQ4KDecoder {
                          : (head.w & 0x0f0f0f0fU) | ((head.y >> 2) & 0x30303030U);
         r.mn    = h == 0 ? head.z & 0x3f3f3f3fU
                          : ((head.w >> 4) & 0x0f0f0f0fU) | ((head.z >> 2) & 0x30303030U);
+        r.hi    = 0;
         r.dd    = head.x;
         return r;
     }
@@ -1996,6 +2068,24 @@ template <class D, class = void>
 struct GroupTailOf : std::false_type {};
 template <class D>
 struct GroupTailOf<D, std::void_t<decltype(D::kGroupTail)>> : std::bool_constant<D::kGroupTail> {};
+// A decoder with load_raw() (the K-quant heads) can leave part of a run as loaded and finish it
+// with unpack(run, step_k0) when the step computes: rmma_kernel's latency variant, where no
+// instruction of a fetch waits for its loads and the next step's loads stay in flight while
+// this step computes. load() gives the finished run (every other kernel, the MoE ones too).
+template <class D, class = void>
+struct UnpackOf : std::false_type {};
+template <class D>
+struct UnpackOf<D, std::void_t<decltype(D::unpack(std::declval<typename D::Run&>(), 0)),
+                               decltype(D::load_raw(std::declval<const GemmArgs&>(), 0, 0))>>
+    : std::true_type {};
+
+// A decoder whose SwiGLU decode tile stages its activations ahead (kStageActs; rmma_kernel's
+// kActStage).
+template <class D, class = void>
+struct StageActsOf : std::false_type {};
+template <class D>
+struct StageActsOf<D, std::void_t<decltype(D::kStageActs)>> : std::bool_constant<D::kStageActs> {};
+
 template <class D, class = void>
 struct QuadRunsOf : std::false_type {};
 template <class D>
@@ -2077,11 +2167,15 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 // one scale group per step (kStepScale: the step's partial is scaled; otherwise the MMA
 // accumulates straight into acc). Every accumulator takes its terms in the same order whatever
 // MT and the set count are.
-template <class Decoder, int NT, int J, int Sets, int MT>
+//
+// Staged (rmma_kernel's act_stage): a spread decoder's activations of the step were copied ahead
+// into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
+template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
 __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                                          const typename Decoder::Run (&runs)[Sets][MT][2],
                                          const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k) {
+                                         int quad, int k, const uint2* stage = nullptr) {
+    static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2092,7 +2186,16 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 if (step_k0 + 16 * G * g >= k) break; // the row's end: warp-uniform
             }
             unsigned act[NT][2 * G];
-            load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
+            if constexpr (Staged) {
+#pragma unroll
+                for (int i = 0; i < G; ++i) {
+                    const uint2 w     = stage[32 * (g * G + i)];
+                    act[0][2 * i]     = w.x;
+                    act[0][2 * i + 1] = w.y;
+                }
+            } else {
+                load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
+            }
             act_operands<Decoder, NT, G>(act);
             float sums[NT][4];
             if constexpr (MinTermOf<Decoder>::value) {
@@ -2217,6 +2320,7 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
 // once, after the last step (rmma_kernel). Scales and min terms are linear in those sums, applied
 // per lane as mma_step applies them per tile. No shuffles, and no products for absent tokens.
 // acc[s][m][h][n]: row g + 8h, token n of the tile; col[n]: token n's activations (null: none).
+// runs: unpacked (UnpackOf) by the kernel.
 template <class Decoder, int J, int Sets, int MT>
 __device__ __forceinline__ void mma_step_local(float (&acc)[Sets][MT][2][8],
                                                const typename Decoder::Run (&runs)[Sets][MT][2],
@@ -2727,10 +2831,24 @@ __device__ __forceinline__ int w4a4_local_row(int block_row, int tile_row) {
     }
 }
 
+// A run as load() gives it, or (Raw) as load_raw() does.
+template <class Decoder, bool Raw>
+__device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int row, int k0) {
+    if constexpr (Raw) {
+        return Decoder::load_raw(a, row, k0);
+    } else {
+        return Decoder::load(a, row, k0);
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // The register MMA kernel. Grid: x = row blocks of kRowsPerCta local rows, y = token tiles.
 // ---------------------------------------------------------------------------------------------
-template <class Decoder, class Schedule, Epilogue E>
+//
+// Latency (the K-quant decoders of a one-tile schedule, UnpackOf or StageActsOf; the launch picks
+// it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes, and under SwiGLU
+// the activations staged ahead with cp.async. Every other instantiation is the plain kernel.
+template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma_kernel(
     GemmArgs a) {
     constexpr int R        = Decoder::kRun;
@@ -2800,10 +2918,47 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
 
     Run ring[2][kSets][MT][2];
 
-    const auto fetch = [&](auto slot_tag, int step) {
+    // A K-quant SwiGLU step of one token tile (the verify widths, T <= 8) also copies its
+    // activations ahead, with cp.async into shared memory, each lane the 8-byte chunks its own
+    // MMAs read (mma_step, Staged), so no lane reads another's and the wait is the lane's own.
+    // Loaded in the step itself they were the second long-scoreboard stall after the weights (ncu,
+    // RTX 3060, Q4_K SwiGLU 12288x4096 T = 8: a quarter of the stall samples on the MMAs reading
+    // them); staged, that call took 263 -> 188 us on w1x8 and Q5_K's 303 -> 232. Store and
+    // add, one row set and half the weight per activation, lost 5-20 % with it (the shared memory
+    // comes out of L1, which the quad's weight words hit): they load in the step.
+    constexpr bool kRaw      = Latency && UnpackOf<Decoder>::value;
+    constexpr bool kActStage = Latency && StageActsOf<Decoder>::value && kSwiGlu && NT == 1 &&
+                               Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value &&
+                               !QuadRunsOf<Decoder>::value;
+#if NINFERNO_FMA_MMA || !NINFERNO_HAS_CP_ASYNC
+    constexpr bool kStaged = false; // no cp.async (sm_75 copies synchronously, memory.cuh)
+#else
+    constexpr bool kStaged = kActStage;
+#endif
+    __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
+                              [kStaged ? J : 1][32];
+    const auto stage_act = [&](auto slot_tag, int step) {
+        if constexpr (kStaged) {
+            constexpr int slot = decltype(slot_tag)::value;
+            const int token    = token0 + group;
+            const int base     = step * KStep;
+            const bool live    = token < a.tokens && base < a.k;
+            const __nv_bfloat16* src = x + (live ? static_cast<std::int64_t>(token) * a.ldx : 0);
+#pragma unroll
+            for (int c = 0; c < J; ++c) {
+                cp_async_zfill<8>(&act_stage[slot][warp][c][lane], src + base + 16 * c + 4 * quad,
+                                  live ? 8 : 0);
+            }
+            cp_commit();
+        }
+    };
+
+    // `stage`: the step's activations copied too (the first step's wait for x under pdl_prefetch).
+    const auto fetch = [&](auto slot_tag, int step, bool stage = true) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = step * KStep + quad * R;
         const bool k_ok    = (GroupTailOf<Decoder>::value ? step * KStep : k0) < a.k;
+        if (stage) stage_act(slot_tag, step);
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
@@ -2813,14 +2968,44 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
                     const int l   = local0 + m * 16 + h * 8 + group;
                     const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
                     ring[slot][s][m][h] = l >= a.rows ? Decoder::zero()
-                                          : k_ok      ? Decoder::load(a, row, k0)
+                                          : k_ok      ? load_run<Decoder, kRaw>(a, row, k0)
                                                       : Decoder::masked(a, row, step * KStep);
                 }
     };
 
-    const auto compute = [&](auto slot_tag, int step) {
+    // `ahead`: the next step's copy was issued after this one's (one younger group to leave).
+    const auto compute = [&](auto slot_tag, int step, bool ahead) {
         constexpr int slot = decltype(slot_tag)::value;
         const int k0       = (GroupTailOf<Decoder>::value ? 0 : quad * R) + step * KStep;
+        // The step's runs unpacked. SwiGLU unpacks the ring in place: an unpacked copy kept both
+        // forms live and spilled its 128-register decode tile (Q5_K w1x8: 80 local loads and
+        // stores, 303 -> 435 us at T = 8, RTX 3060). One row set unpacks a copy, which ptxas
+        // schedules better there (Q5_K store 8192x4096 w1x4 at T = 8: 81.9 us against 92.9 in
+        // place; Q4_K even).
+        constexpr bool kCopy = kRaw && !kSwiGlu;
+        Run unpacked[kCopy ? kSets : 1][kCopy ? MT : 1][2];
+        if constexpr (kRaw) {
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int m = 0; m < MT; ++m)
+#pragma unroll
+                    for (int h = 0; h < 2; ++h) {
+                        if constexpr (kCopy) {
+                            unpacked[s][m][h] = ring[slot][s][m][h];
+                            Decoder::unpack(unpacked[s][m][h], step * KStep);
+                        } else {
+                            Decoder::unpack(ring[slot][s][m][h], step * KStep);
+                        }
+                    }
+        }
+        const Run(&runs)[kSets][MT][2] = [&]() -> const Run(&)[kSets][MT][2] {
+            if constexpr (kCopy) {
+                return unpacked;
+            } else {
+                return ring[slot];
+            }
+        }();
 #if NINFERNO_FMA_MMA
         if constexpr (kLocal) {
             if (local) {
@@ -2831,7 +3016,7 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
                               ? x + static_cast<std::int64_t>(token0 + n) * a.ldx
                               : nullptr;
             }
-            mma_step_local<Decoder, J, kSets, MT>(local_acc, ring[slot], tcol, local_tokens,
+            mma_step_local<Decoder, J, kSets, MT>(local_acc, runs, tcol, local_tokens,
                                                   step * KStep, quad, a.k);
             return;
             }
@@ -2844,12 +3029,23 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
             col[n] = token < a.tokens && k0 < a.k ? x + static_cast<std::int64_t>(token) * a.ldx
                                                   : nullptr;
         }
-        mma_step<Decoder, NT, J, kSets, MT>(acc, ring[slot], col, step * KStep, quad, a.k);
+        if constexpr (kStaged) {
+            if (ahead) {
+                cp_wait<1>();
+            } else {
+                cp_wait<0>();
+            }
+            mma_step<Decoder, NT, J, kSets, MT, true>(acc, runs, col, step * KStep, quad, a.k,
+                                                      &act_stage[slot][warp][0][lane]);
+        } else {
+            (void)ahead;
+            mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k);
+        }
     };
 
     using Slot0 = std::integral_constant<int, 0>;
     using Slot1 = std::integral_constant<int, 1>;
-    if (s_begin + warp_k < steps) fetch(Slot0{}, s_begin + warp_k);
+    if (s_begin + warp_k < steps) fetch(Slot0{}, s_begin + warp_k, false);
     // GemmArgs::pdl_prefetch: the first step's weights are in flight; x and the output are the
     // previous kernel's to finish. Then the next launch may start: it waits for this one before
     // it reads what this one writes, and a joined call (which reads x without waiting) starts
@@ -2858,13 +3054,15 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) void rmma
         pdl::wait_for_dependencies();
         if (threadIdx.x == 0) pdl::trigger_dependents();
     }
+    // The first step's staged activations: x copied only after that wait.
+    if (s_begin + warp_k < steps) stage_act(Slot0{}, s_begin + warp_k);
 #pragma unroll 1
     for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
         if (step + WK < steps) fetch(Slot1{}, step + WK);
-        compute(Slot0{}, step);
+        compute(Slot0{}, step, step + WK < steps);
         if (step + WK >= steps) break;
         if (step + 2 * WK < steps) fetch(Slot0{}, step + 2 * WK);
-        compute(Slot1{}, step + WK);
+        compute(Slot1{}, step + WK, step + 2 * WK < steps);
     }
 #if NINFERNO_FMA_MMA
     if constexpr (kLocal) {

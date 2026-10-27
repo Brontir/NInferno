@@ -1,5 +1,7 @@
 #include "convert/acquire.h"
 
+#include "artifact/reader.h"
+
 #include "core/ascii.h"
 #include "core/quant_label.h"
 #include "convert/files.h"
@@ -244,7 +246,8 @@ bool complete(const fs::path& artifact, bool drafters) {
 void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
     if (options.with_drafters != true) { return; }
     for (const auto& d : plan.drafters) {
-        if (d.status.starts_with("failed") || d.status.starts_with("incompatible")) {
+        if (d.status.starts_with("failed") || d.status.starts_with("incompatible") ||
+            d.status.starts_with("not in the artifact")) {
             throw std::runtime_error("drafter " + d.decl.name + " " + d.status +
                                      " (--with-drafters requires every drafter; without the "
                                      "flag the model is served without it)");
@@ -710,6 +713,55 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                      "delete " +
                                      kept->string() + " or fetch the model again");
                 }
+                // Its separate drafters planned from another registry, or one failed: planned
+                // again from the artifact (a checkpoint's by default, a GGUF's when asked for), as
+                // when its download was there. A companion it lacks stays reported missing: the
+                // artifact cannot be converted again without that download.
+                // A plan the checkpoint's own declaration (ninferno_speculation.json) made cannot
+                // be made again without that download: kept as it is, and a drafter of it that
+                // failed fails --with-drafters.
+                bool bundle_planned = false, bundle_failed = false;
+                try {
+                    std::ifstream stream(spec::manifest_path(*kept));
+                    if (stream) {
+                        const OJson manifest = OJson::parse(stream);
+                        bundle_planned = manifest.value("matched_by", std::string()) == "declaration";
+                        for (const auto& d : manifest.value("drafters", OJson::array())) {
+                            bundle_failed |=
+                                d.value("name", std::string()).find('.') == std::string::npos &&
+                                d.value("status", std::string()).starts_with("failed");
+                        }
+                    }
+                } catch (const std::exception&) {}
+                if (bundle_planned && bundle_failed && options.with_drafters == true) {
+                    throw std::runtime_error(
+                        "a drafter of " + kept->string() +
+                        " failed and its download was removed: fetch the model again "
+                        "(--with-drafters requires every drafter)");
+                }
+                if (options.with_drafters != false && drafters_incomplete(*kept) &&
+                    !bundle_planned) {
+                    try {
+                        const auto target = describe_artifact(
+                            *kept, options.model_id.empty() ? repo : options.model_id);
+                        if (!target.gguf_source || options.with_drafters == true) {
+                            AttachOptions attach;
+                            attach.fetch                 = options.fetch;
+                            attach.fetch.before_download = [](const FetchPlan& plan) {
+                                check_space(plan);
+                            };
+                            attach.log               = options.log;
+                            attach.repository        = options.repository;
+                            attach.drafter_artifacts = options.drafter_artifacts;
+                            attach.conversion        = convert_options;
+                            out.drafters = attach_drafters(plan_drafters(target), *kept, attach);
+                            require_drafters(*out.drafters, options);
+                        }
+                    } catch (const std::exception& error) {
+                        if (options.with_drafters == true) { throw; }
+                        say(options, std::string("drafters not attached: ") + error.what());
+                    }
+                }
                 return out;
             }
         }
@@ -944,9 +996,45 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                                  " again: converted earlier without its drafters");
                 remove_artifact(out.artifact);
             } else {
-                out.reused = true;
-                say(options, "artifact " + out.artifact.string() + " (converted earlier)");
-                return out;
+                // Its separate drafters planned from another registry (one whose kinds convert
+                // them otherwise), or one failed: planned again from the checkpoint (its
+                // declaration and lineage), as at first. A companion that plan adds is converted
+                // into the artifact, so the artifact is converted again.
+                std::optional<DrafterPlan> replanned;
+                std::string missing;
+                std::string replan_error;
+                if (drafters_on && !gguf && drafters_incomplete(out.artifact)) {
+                    try {
+                        replanned = plan_drafters(describe_checkpoint(fetched.model, model_id));
+                        const artifact::Reader reader(out.artifact);
+                        for (const PlannedDrafter& d : replanned->drafters) {
+                            if (d.supported && !d.decl.component.empty() &&
+                                !reader.directory().components.count(d.decl.component)) {
+                                missing = d.decl.component;
+                            }
+                        }
+                    } catch (const std::exception& error) {
+                        replan_error = error.what();
+                    }
+                }
+                if (missing.empty()) {
+                    out.reused = true;
+                    say(options, "artifact " + out.artifact.string() + " (converted earlier)");
+                    try {
+                        if (!replan_error.empty()) { throw std::runtime_error(replan_error); }
+                        if (replanned) {
+                            out.drafters = attach_drafters(*replanned, out.artifact, attach);
+                            require_drafters(*out.drafters, options);
+                        }
+                    } catch (const std::exception& error) {
+                        if (options.with_drafters == true) { throw; }
+                        say(options, std::string("drafters not attached: ") + error.what());
+                    }
+                    return out;
+                }
+                say(options, "converting " + fetched.repo + " again: its drafter component " +
+                                 missing + " is not in the artifact");
+                remove_artifact(out.artifact);
             }
         }
         // A report without its artifact is what an interrupted conversion leaves behind.

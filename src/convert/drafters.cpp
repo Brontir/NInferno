@@ -446,7 +446,8 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
     }
     std::optional<spec::ModelEntry> entry;
     if (t.declaration) {
-        entry           = spec::parse_model_entry(*t.declaration);
+        entry = spec::parse_model_entry(*t.declaration);
+        for (auto& d : entry->drafters) { spec::apply_kind_rule(d, registry.kinds()); }
         plan.source     = "bundle";
         plan.matched_by = "declaration";
     } else {
@@ -539,11 +540,6 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
             PlannedDrafter d;
             d.decl      = decl;
             d.taps_only = plan.source == "bundle";
-            if (d.decl.recipe.empty() && d.decl.component.empty()) {
-                for (const auto& k : registry.kinds()) {
-                    if (k.name == decl.kind) { d.decl.recipe = k.recipe; }
-                }
-            }
             d.entry_geometry = entry->geometry;
             d.supported      = registry.supported(decl.kind, t.engine);
 
@@ -566,6 +562,7 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
             const auto variants = std::exchange(d.decl.variants, {});
             plan.drafters.push_back(d);
             for (const auto& variant : variants) {
+                if (variant == d.decl.quant) { continue; } // the drafter itself
                 auto v       = d;
                 v.decl.name  = decl.name + "." + variant;
                 v.decl.quant = variant;
@@ -914,6 +911,12 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 log_line(options.log, "drafter " + d.decl.name + ": " + d.artifact + " (given)");
                 continue;
             }
+            // Under --drafter-quant every variant would be that one file: only the drafter itself.
+            if (!options.conversion.drafter_quant.empty() && d.decl.name.find('.') != std::string::npos) {
+                d.status = "skipped: --drafter-quant " + options.conversion.drafter_quant +
+                           " names the drafter's one quantization";
+                continue;
+            }
             if (d.decl.repo.empty()) {
                 d.status = "failed: no repository declared";
                 continue;
@@ -979,7 +982,9 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             // A GGUF-only drafter by its file (its repository holds other models too).
             const std::string stem = d.decl.gguf.empty() ? repo_name(d.decl.repo)
                                                          : fetched.model.stem().string();
-            const std::string quant = d.decl.quant.empty() ? "" : "." + d.decl.quant;
+            // Named by what it holds: --drafter-quant replaces the declared quantization.
+            const std::string quant =
+                convert_options.drafter_quant.empty() ? "" : "." + convert_options.drafter_quant;
             convert_options.out = dir / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
             if (fs::exists(convert_options.out) &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
@@ -1032,8 +1037,16 @@ bool drafters_incomplete(const fs::path& target_artifact) {
             return true;
         }
         const auto& drafters = manifest.at("drafters");
-        return std::any_of(drafters.begin(), drafters.end(), [](const Json& d) {
-            return !d.contains("quant") && d.value("status", "").starts_with("failed");
+        const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
+        return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
+            // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
+            // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
+            // (the target is converted again with it while its download is there; a GGUF's never
+            // holds one).
+            const auto status = d.value("status", std::string());
+            return d.value("name", std::string()).find('.') == std::string::npos &&
+                   (status.starts_with("failed") ||
+                    (!gguf && status.starts_with("not in the artifact")));
         });
     } catch (const std::exception&) { return true; }
 }
