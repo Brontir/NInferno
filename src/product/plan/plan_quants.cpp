@@ -252,19 +252,26 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
         } else if (!d.repo.empty() && fetch != nullptr) {
             const std::string spec = d.repo + (d.revision.empty() ? "" : "@" + d.revision);
+            // Published already encoded (a GGUF, a label under 16 bits, a quantization_config):
+            // quantize_drafter keeps its matrices as they are, so its size stands.
+            bool encoded = false;
             try {
                 for (const auto& q : convert::list_quants(spec, *fetch).quants) {
-                    if (!q.drafter) { bytes = std::max(bytes, q.bytes); }
+                    if (!q.drafter && q.bytes > bytes) {
+                        bytes   = q.bytes;
+                        encoded = q.format != "safetensors" || (q.bits > 0 && q.bits < 16);
+                    }
                 }
             } catch (const std::exception&) {}
             const bool dflash = d.kind == "dflash" || d.kind == "dflash2";
             std::optional<nlohmann::json> config;
-            if (dflash || d.proposal_rows) {
+            if (dflash || d.proposal_rows || (d.component.empty() && !d.quant.empty())) {
                 try {
                     config = convert::fetch_config(spec, *fetch);
                 } catch (const std::exception&) {}
             }
-            if (d.proposal_rows && config) {
+            if (config && config->contains("quantization_config")) { encoded = true; }
+            if (d.proposal_rows && config && !encoded) {
                 // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
                 // published [vocab, H] BF16 embedding table the assistant's head is read from.
                 const nlohmann::json& text =
@@ -279,12 +286,13 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
-            } else if (!d.quant.empty() && (!dflash || config)) {
+            } else if (!d.quant.empty() && config && !encoded) {
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
                 // (convert.cpp quantize_drafter); the rest takes the kind's quantization. Without
-                // its config the projection's size is unknown: the published size stands.
+                // its config its encoding and the projection's size are unknown: the published
+                // size stands.
                 std::uint64_t kept = 0;
-                if (dflash && config) {
+                if (dflash) {
                     const auto hidden = config->value("hidden_size", std::uint64_t{0});
                     // Muse's config carries the taps at the top level, z-lab's under dflash_config
                     // (gemma4.cpp block_dflash_config).
