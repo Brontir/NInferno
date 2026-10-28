@@ -176,6 +176,44 @@ DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c)
     return out;
 }
 
+choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::string& asked) {
+    const std::string label = asked.empty() ? facts.shape.quant_label : asked;
+    choice::QuantOption quant;
+    quant.label = label.empty() ? "the model's weights" : label;
+    // The target's weights: the model's own DFlash drafter (an artifact's dflash component) is
+    // the drafter's, priced by its round; the bits over the elements the same bytes hold (a GGUF's
+    // tensor table, an artifact's tensors: one measure on both paths).
+    const std::uint64_t target = facts.model.weight_bytes > facts.model.own_drafter_bytes
+                                     ? facts.model.weight_bytes - facts.model.own_drafter_bytes
+                                     : facts.model.weight_bytes;
+    quant.bits_per_weight = facts.model.bits_per_weight(static_cast<double>(target));
+    // What one token's decode step reads: the trunk, not the MTP layers (read by an MTP round
+    // only, which the drafter's gain prices).
+    quant.weight_bytes = static_cast<double>(target > facts.model.mtp_bytes ? target - facts.model.mtp_bytes
+                                                                            : target);
+    const auto& formats = facts.shape.weight_formats;
+    quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
+    // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks
+    // (formats.cpp kept_block_policy: TQ1_0, TQ2_0, Q1_0 and Q2_0 keep BF16 activations).
+    quant.int8_route = formats.empty() ||
+                       std::any_of(formats.begin(), formats.end(), [](const std::string& f) {
+                           return f != "bf16" && f != "fp32" && f != "int32" && f != "f16" &&
+                                  f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
+                                  f != "ggml_q2_0";
+                       });
+    // A quantization named by its listing's label (a hub row: the facts' header may be another
+    // row's) takes its route from the label; an artifact's recorded source keeps the routes of the
+    // encodings it holds (its weight_formats, read above).
+    if (!asked.empty()) {
+        quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
+        quant.int8_route = true;
+        for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
+            if (label.find(a16) != std::string::npos) { quant.int8_route = false; }
+        }
+    }
+    return quant;
+}
+
 std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                               const DryRunInputs& inputs, const ChoicePins& pins,
                                               const std::string& label, OwnContext memory) {
@@ -188,29 +226,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     ServedChoice out;
     choice::ModelFacts model       = choice_model_of(facts);
     const choice::CardFacts card   = choice_card_of(inputs.gpu);
-    choice::QuantOption quant;
-    quant.label           = label.empty() ? "the model's weights" : label;
-    quant.weight_bytes    = static_cast<double>(facts.model.weight_bytes);
-    quant.bits_per_weight = facts.model.bits_per_weight(quant.weight_bytes);
-    const auto& formats   = facts.shape.weight_formats;
-    quant.nvfp4      = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
-    // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks
-    // (formats.cpp kept_block_policy: TQ1_0, TQ2_0, Q1_0 and Q2_0 keep BF16 activations).
-    quant.int8_route = formats.empty() ||
-                       std::any_of(formats.begin(), formats.end(), [](const std::string& f) {
-                           return f != "bf16" && f != "fp32" && f != "int32" && f != "f16" &&
-                                  f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
-                                  f != "ggml_q2_0";
-                       });
-    // A quantization named by its listing's label (a hub row: the facts' header may be another
-    // row's) takes its route from the label, as the quant table's estimate does.
-    if (!label.empty()) {
-        quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
-        quant.int8_route = true;
-        for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
-            if (label.find(a16) != std::string::npos) { quant.int8_route = false; }
-        }
-    }
+    const choice::QuantOption quant = quant_option_of(facts, label);
     out.quant = quant;
 
     choice::Pins p;

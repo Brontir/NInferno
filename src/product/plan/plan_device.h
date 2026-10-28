@@ -6,6 +6,7 @@
 // list). No CUDA context is created and no memory is measured: an idle card.
 
 #include "runtime/engine/plan_dry_run.h"
+#include "spec/profile.h"
 
 #include <optional>
 #include <string>
@@ -14,5 +15,8 @@ namespace ninferno::product {
 
 // nullopt when the CUDA runtime does not know the bus id (no driver, a GPU hidden from CUDA).
 [[nodiscard]] std::optional<runtime::PlanDeviceFacts> plan_device_of_bus(const std::string& bus_id);
+// The GPU key a start on that device reads (spec::gpu_identity: its class chain, clocks and DRAM
+// rate as the device reports them), so the choice's card facts are the start's; nullopt as above.
+[[nodiscard]] std::optional<spec::GpuKey> gpu_key_of_bus(const std::string& bus_id);
 
 } // namespace ninferno::product

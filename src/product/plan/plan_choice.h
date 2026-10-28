@@ -19,6 +19,12 @@
 
 namespace ninferno::product {
 
+// The quantization as the choice prices it, from the facts: its label (`label`, else the facts'
+// quant_label: an artifact's recorded source), the bits per weight over the target's elements (its
+// own DFlash drafter left out), the bytes one decode step reads (the trunk: neither the MTP layers
+// nor the own drafter), its activation routes. One rule for a hub row, the CLI's plan and a start.
+[[nodiscard]] choice::QuantOption quant_option_of(const PlanSourceFacts& facts,
+                                                  const std::string& label = "");
 // The choice's facts of a model (its shape, the bytes a step reads per storage) and of a card.
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
