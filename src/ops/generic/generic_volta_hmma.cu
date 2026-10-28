@@ -57,20 +57,27 @@ __device__ __forceinline__ __half2 codes_h2(unsigned bits, unsigned bias_bits) {
 }
 
 // One run's scale and min (w = ds q - dm) as f16 pairs, with whether the f16 path holds the run:
-// |ds| max|q| + |dm| inside the f16 range by a factor of two.
+// |ds| max|q| + |dm| inside the f16 range by a factor of two, and ds and dm each zero or a normal
+// f16 unless the format stores them as f16 already (`exact`): a K-quant's ds = d sc rounded to an
+// f16 subnormal would carry a large relative error into every value of the run.
 struct RunScale {
     __half2 ds, ndm;
     float fds, fdm;
     bool fast;
 };
 
-__device__ __forceinline__ RunScale run_scale(float ds, float dm, float max_code) {
+__device__ __forceinline__ bool f16_normal_or_zero(float v) {
+    return v == 0.0F || fabsf(v) >= 6.103515625e-05F; // 2^-14
+}
+
+__device__ __forceinline__ RunScale run_scale(float ds, float dm, float max_code, bool exact) {
     RunScale s;
     s.fds  = ds;
     s.fdm  = dm;
-    s.fast = fabsf(ds) * max_code + fabsf(dm) < 32768.0F;
-    s.ds   = __float2half2_rn(s.fast ? ds : 0.0F);
-    s.ndm  = __float2half2_rn(s.fast ? -dm : 0.0F);
+    s.fast = fabsf(ds) * max_code + fabsf(dm) < 32768.0F &&
+             (exact || (f16_normal_or_zero(ds) && f16_normal_or_zero(dm)));
+    s.ds  = __float2half2_rn(s.fast ? ds : 0.0F);
+    s.ndm = __float2half2_rn(s.fast ? -dm : 0.0F);
     return s;
 }
 
@@ -129,7 +136,7 @@ struct HK45 {
         }
         return run_scale(half_bits_f32(head.x) * static_cast<float>(sc),
                          half_bits_f32(head.x >> 16) * static_cast<float>(mn),
-                         Bits == 4 ? 15.0F : 31.0F);
+                         Bits == 4 ? 15.0F : 31.0F, false);
     }
 
     // The A fragment of mma m (0..15): run m / 8 (0: low nibbles, sub-block 2q; 1: high, 2q + 1),
@@ -201,7 +208,7 @@ struct HK6 {
             for (int half = 0; half < 2; ++half) {
                 const int i = 8 * h + 2 * (qq + 2 * r) + half;
                 const int v = static_cast<signed char>((words[i >> 2] >> (8 * (i & 3))) & 0xffU);
-                s[2 * r + half] = run_scale(fd * static_cast<float>(v), 0.0F, 32.0F);
+                s[2 * r + half] = run_scale(fd * static_cast<float>(v), 0.0F, 32.0F, false);
             }
     }
 
@@ -252,8 +259,8 @@ struct HQ8 {
     }
 
     __device__ __forceinline__ void scales(int, RunScale (&s)[2]) const {
-        s[0] = run_scale(half_bits_f32(d[0]), 0.0F, 128.0F);
-        s[1] = run_scale(half_bits_f32(d[1]), 0.0F, 128.0F);
+        s[0] = run_scale(half_bits_f32(d[0]), 0.0F, 128.0F, true);
+        s[1] = run_scale(half_bits_f32(d[1]), 0.0F, 128.0F, true);
     }
 
     __device__ __forceinline__ void fragment(int m, int, const RunScale (&s)[2], unsigned& a0,
