@@ -283,6 +283,14 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
     out.task.contexts  = steps;
     out.allowed_activations = allowed.activations;
+    // A mode the family does not run (int8 outside Qwen): the start refuses it, so there is no
+    // choice to make at it.
+    if (p.activations && std::find(allowed.activations.begin(), allowed.activations.end(),
+                                   *p.activations) == allowed.activations.end()) {
+        out.choice.why = std::string("--activations ") + activation_name(*p.activations) +
+                         ": this model's family does not run it";
+        return out;
+    }
     out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
     out.drafters       = std::move(axis.served);
     out.drafter_options = axis.options;
@@ -296,13 +304,36 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     return out;
 }
 
-PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
+                              const ChoicePins& pins) {
+    const StartAxes axes = start_axes(served, pins);
+    DryRunInputs out     = inputs;
+    apply_start_axes(out.options, StartAxes{.kv          = axes.kv,
+                                            .ring        = axes.ring,
+                                            .state       = axes.state,
+                                            .activations = axes.activations});
+    return out;
+}
+
+PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInputs& asked,
                                   const ServedChoice& served, const ChoicePins& pins,
                                   PlannedSpeculation planned) {
-    if (!served.choice.chosen || !inputs.ask.automatic || inputs.subject == nullptr) {
-        return planned;
+    if (!served.choice.chosen) { return planned; }
+    const StartAxes axes = start_axes(served, pins);
+    // The storages a start runs (apply_start_axes: the KV codec, the state, the rings and the
+    // activations the choice took for the axes left automatic): the plan shown is of them, its
+    // memory and its context, not of the family's automatic codec the choice did not take.
+    const DryRunInputs inputs = inputs_at_choice(asked, served, pins);
+    const EngineOptions& was  = asked.options;
+    const bool storages_differ =
+        (axes.kv && *axes.kv != planned.plan.kv_cache) ||
+        (axes.state && *axes.state != planned.plan.recurrent) ||
+        (axes.ring && *axes.ring != was.sliding_kv_cache) ||
+        (axes.activations && *axes.activations != was.activations);
+    if (!inputs.ask.automatic || inputs.subject == nullptr) {
+        return storages_differ ? plan_model(facts, inputs) : planned;
     }
-    const auto drafter = start_axes(served, pins).drafter;
+    const auto drafter = axes.drafter;
     const SpeculativeBackend backend = planned.speculation.engine.backend;
     const spec::Mode serving = backend == SpeculativeBackend::Mtp       ? spec::Mode::Mtp
                                : backend == SpeculativeBackend::DFlash  ? spec::Mode::DFlash
@@ -317,7 +348,9 @@ PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInpu
         option == 0 || option > served.drafters.size() ||
         (served.drafters[option - 1].engine.backend == backend &&
          served.drafters[option - 1].engine.draft_tokens == planned.speculation.engine.draft_tokens);
-    if (!drafter || (*drafter == serving && same_config)) { return planned; }
+    if (!drafter || (*drafter == serving && same_config)) {
+        return storages_differ ? plan_model(facts, inputs) : planned;
+    }
     DryRunInputs again = inputs;
     std::optional<SpeculationSubject> chosen;
     if (*drafter == spec::Mode::None) {

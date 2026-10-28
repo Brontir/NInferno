@@ -80,9 +80,15 @@ struct StartAxes {
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
 
-// The plan a --spec auto start serves at the configuration choice: `planned` (the profile's
-// speculation) planned again with the choice's drafter (StartAxes::drafter) where they differ,
-// plain decode said so. One code for ninferno-serve's plan without the weights and the CLI's.
+// The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings and
+// activations, the axes the user left automatic; not the chunk or the drafter).
+[[nodiscard]] DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
+                                            const ChoicePins& pins);
+// The plan a start serves at the configuration choice: `planned` planned again at the storages the
+// choice took for the axes left automatic (the KV codec, state, rings and activations a start sets:
+// apply_start_axes) where they differ from the ones it was planned at, and, under --spec auto, with
+// the choice's drafter (StartAxes::drafter) where that differs, plain decode said so. One code for
+// ninferno-serve's plan without the weights, the CLI's and ninferno-ui's.
 [[nodiscard]] PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts,
                                                 const DryRunInputs& inputs,
                                                 const ServedChoice& served, const ChoicePins& pins,

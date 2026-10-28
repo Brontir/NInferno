@@ -463,20 +463,22 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.unsupported_code    = why.code;
         row.why_unsupported     = why.text;
         row.candidate.supported = why.code.empty();
+        // What a start of this row sets from its choice (the axes left automatic).
+        std::optional<StartAxes> row_axes;
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             const DryRunInputs own      = inputs_for(inputs, q);
-            // The configuration choice a --spec auto start of this quantization serves, and every
-            // plan of the row at its drafter (plan_at_choice), the probes of its own context
-            // among them: as the plan of that quantization named shows it.
-            std::optional<ServedChoice> served;
-            if (own.subject != nullptr && own.ask.automatic) {
-                served = choose_at_weights(facts, own, inputs.pins, q.quant);
-            }
-            const PlanAt served_plan = [&](const DryRunInputs& at) {
+            // The configuration choice a start of this quantization serves, and every plan of the
+            // row at its storages and (--spec auto) its drafter (plan_at_choice), the probes of
+            // its own context among them: as the plan of that quantization named shows it.
+            const std::optional<ServedChoice> served =
+                choose_at_weights(facts, own, inputs.pins, q.quant);
+            if (served) { row_axes = start_axes(*served, inputs.pins); }
+            const PlanAt served_plan = [&](const DryRunInputs& asked) {
+                if (!served) { return plan_model(facts, asked); }
+                const DryRunInputs at      = inputs_at_choice(asked, *served, inputs.pins);
                 PlannedSpeculation planned = plan_model(facts, at);
-                return served ? plan_at_choice(facts, at, *served, inputs.pins, std::move(planned))
-                              : planned;
+                return plan_at_choice(facts, at, *served, inputs.pins, std::move(planned));
             };
             row.planned = served_plan(own);
             row.fit     = runtime::quant_fit_of(
@@ -513,8 +515,10 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             choice::Candidate c;
             c.kv          = row.planned.plan.kv_cache;
             c.state       = row.planned.plan.recurrent;
-            c.ring        = inputs.options.sliding_kv_cache;
-            c.activations = inputs.options.activations;
+            c.ring        = row_axes && row_axes->ring ? *row_axes->ring : inputs.options.sliding_kv_cache;
+            c.activations = row_axes && row_axes->activations ? *row_axes->activations
+                                                              : inputs.options.activations;
+            if (row_axes && row_axes->chunk) { c.chunk = *row_axes->chunk; }
             // The drafter this row's plan serves, at the gain the choice weighs it with: the
             // row's speed is of what the row would run.
             const SpeculativeBackend served = row.planned.speculation.engine.backend;
