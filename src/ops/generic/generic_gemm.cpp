@@ -1199,8 +1199,14 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
         const bool decode_heavy = iq2 || p.qtype == QType::GGML_IQ3_S ||
                                   p.qtype == QType::GGML_IQ3_XXS || p.qtype == QType::GGML_Q3_K;
         if (decode_heavy && p.k >= 5120) return r8_index(8, 2);
+        // Not on Volta (no mma.sync: the one-slot R8 form, generic_r8.cuh NINFERNO_R8_ONE_SLOT):
+        // there a lane runs its groups through one slot, and a second row per warp adds the
+        // registers that drop the SM from 3 CTAs to 2 (Q6_K 137 -> 213) and the code a cold SM
+        // fetches first (960 -> 1480 instructions). GV100 with ten other kernels between launches,
+        // as in a model step: 4096x12288 add w4r1 88.8 against w4r2 94.7 us, 8192x4096 store 57.9
+        // against 63.3.
         if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu &&
-            (p.n >= 8192 || p.k >= 4096))
+            device_class().features.mma_tensor && (p.n >= 8192 || p.k >= 4096))
             return r8_index(4, 2);
     }
     if (p.qtype == QType::GGML_Q3_K && p.k >= 8192) return r8_index(4, 1);
