@@ -498,12 +498,16 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
             for (auto& q : listing) {
                 if (q.quant == model.quant) { q.head_bytes = model.facts.model.head_bytes; }
             }
-            // Only the rows whose verdict the head could change, read together (and kept).
+            // Every other GGUF row's head from a 1 MiB window of its header, read together and
+            // kept per commit (a second plan reads none).
+            std::vector<std::string> unread;
+            for (const auto& q : listing) {
+                if (!q.drafter && q.format == "gguf" && q.head_bytes == 0) { unread.push_back(q.quant); }
+            }
             const auto heads = convert::gguf_quants_head_bytes(
                 model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
-                fetch_options(), product::head_rows_to_read(model.facts, listing, planning.inputs),
-                model.facts.model.gguf_data_offset, model.facts.model.hidden,
-                model.facts.model.vocab);
+                fetch_options(), unread, model.facts.model.gguf_data_offset,
+                model.facts.model.hidden, model.facts.model.vocab);
             for (auto& q : listing) {
                 if (const auto it = heads.find(q.quant); it != heads.end()) {
                     q.head_bytes = it->second;

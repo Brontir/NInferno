@@ -230,14 +230,6 @@ struct QuantPlan {
                                     const std::vector<QuantListing>& listing,
                                     const DryRunInputs& inputs);
 
-// The GGUF quantizations whose own output head the table needs: those whose fit, or the rule's
-// pick, differs between a head as small as any GGUF stores (Q2_K's 2.625 bits) and as large (16
-// bits) for every row whose head is not read yet. Every other row is priced with the parsed
-// header's head and marked QuantRow::proposal_head_assumed.
-[[nodiscard]] std::vector<std::string> head_rows_to_read(const PlanSourceFacts& shape,
-                                                         const std::vector<QuantListing>& listing,
-                                                         const DryRunInputs& inputs);
-
 // One model at its own weights.
 [[nodiscard]] PlannedSpeculation plan_model(const PlanSourceFacts& facts,
                                             const DryRunInputs& inputs);

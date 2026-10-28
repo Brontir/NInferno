@@ -677,35 +677,6 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     return out;
 }
 
-std::vector<std::string> head_rows_to_read(const PlanSourceFacts& shape,
-                                           const std::vector<QuantListing>& listing,
-                                           const DryRunInputs& inputs) {
-    std::vector<std::string> out;
-    const double values = static_cast<double>(shape.model.vocab) * shape.model.hidden;
-    if (inputs.proposal_drafter_bytes <= 0 || values <= 0) { return out; }
-    const auto at = [&](double bits) {
-        std::vector<QuantListing> bound = listing;
-        for (auto& q : bound) {
-            if (!q.drafter && q.format == "gguf" && q.head_bytes == 0) {
-                q.head_bytes = static_cast<std::uint64_t>(values * bits / 8);
-            }
-        }
-        return plan_quants(shape, bound, inputs);
-    };
-    const QuantPlan small = at(2.625), large = at(16);
-    std::size_t row = 0;
-    for (const auto& q : listing) {
-        if (q.drafter) { continue; }
-        if (row < small.rows.size() && row < large.rows.size() && q.format == "gguf" &&
-            q.head_bytes == 0 &&
-            (small.rows[row].fit.state != large.rows[row].fit.state ||
-             small.rows[row].largest != large.rows[row].largest)) {
-            out.push_back(q.quant);
-        }
-        ++row;
-    }
-    return out;
-}
 
 namespace {
 
