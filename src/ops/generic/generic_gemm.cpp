@@ -517,7 +517,8 @@ bool vec_admits(const Weight& w, LinearPolicy policy) {
 // Without tensor mma.sync (Volta) ggml's matrix kernel is out (device_supported: sm_75 on) and the
 // register-MMA tiles run on FP32 FMAs, so a call of 9..16 tokens (a deep speculative verify) runs
 // the vector kernel eight columns at a time (V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the
-// emulated tiles 1.0..2.6 ms a call, 67 % of the run).
+// emulated tiles 1.0..2.6 ms a call, 67 % of the run); Q4_K / Q5_K / Q6_K / Q8 take Volta's HMMA
+// route from five tokens instead (volta_hmma_route).
 std::int32_t vec_max_tokens() {
     try {
         const auto& f = device_class().features;
@@ -539,9 +540,10 @@ bool vec_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // T = 8 on all of them, the most where a card has the least compute per byte of bandwidth
 // (A100: x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 x1.03).
 // Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs, so the vector kernel takes
-// every width it reads (vec_max_tokens): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at T = 5..16
-// about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3 tok/s against
-// C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
+// every width it reads (vec_max_tokens) but where Volta's HMMA route takes the call (Q4_K / Q5_K /
+// Q6_K / Q8 from five tokens, volta_hmma_route): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at
+// T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
+// tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 
 std::int32_t vec_rule_max_tokens() {
@@ -2689,6 +2691,39 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     return std::nullopt;
 }
 
+namespace {
+// Without tensor mma.sync (Volta) a speculative-verify width of Q4_K / Q5_K / Q6_K or Q8 G32 takes
+// the HMMA kernel (generic_volta_hmma.cu): it runs as a register-MMA route (run_route launches it
+// in place of the emulated tiles, volta_hmma_takes), f16 activations as the tiled route's from 17
+// tokens. Its alternatives grow with T on Volta's CUDA cores: the register MMA's emulated
+// fragments (FP32 FMAs and shuffles), ggml's vector kernel (dp4a, the activation re-read for every
+// column) and R8 (dp4a); the tensor cores multiply eight or sixteen columns for the price of one,
+// so the call costs reading its weight once, whatever its width up to eight (sixteen: two column
+// groups). An A16 call takes it from two tokens. A call with an int8 route keeps that route
+// through the widths it holds where tensor mma.sync exists (kVecRuleMaxTokens): there an HMMA
+// leaves at least half of its eight columns empty while the int8 kernels' per-column work is still
+// small, and from five tokens the HMMA kernel takes over, where those cards move to their MMA.
+// One card (GV100) checked the band, Qwen3.5-9B shapes: at T = 5..8 the HMMA kernel took 0.52..0.91
+// of the vector kernel's time, except Q4_K gate/up at T = 5 (140 against 128 us); at T = 2..4 the
+// vector kernel was up to 1.4x faster.
+std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
+                                      std::int32_t tokens) {
+    if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
+        current_features().mma_tensor || !supports(weight) || (weight.k % 256) != 0 ||
+        !volta_hmma_codec(codec_of(weight))) {
+        return std::nullopt;
+    }
+    if (tokens <= kVecRuleMaxTokens &&
+        (vec_call(weight, problem.policy, tokens) || r8_call(weight, problem.policy, tokens))) {
+        return std::nullopt;
+    }
+    const Route r{Family::RegisterMma,
+                  static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, false))};
+    if (route_admits(r, weight, problem.policy)) return r;
+    return std::nullopt;
+}
+} // namespace
+
 Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    bool prefill) {
     // The invariant profile: one summation order per problem at every width, BF16 activations
@@ -2726,6 +2761,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         return Route{Family::Scalar, 0};
     }
     if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
+    if (const auto r = volta_hmma_route(problem, weight, tokens)) return *r;
     // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
     // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
     // path's, whose speed bands split K by width (heuristic_rmma: 4, 8, 2 or 1 K-warps from 17
@@ -3539,6 +3575,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
+        if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
+            launch_volta_hmma(codec, call.epilogue, args, stream);
+            return;
+        }
         if (!current_features().mma_tensor && volta_gemv_takes(codec, args) &&
             (args.ldx % 8) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 16) == 0) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
