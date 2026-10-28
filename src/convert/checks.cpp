@@ -556,8 +556,11 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
                          drafter_bytes + head;
     if (!(round > head && head > 0)) { return out; }
     const double share = head / round;
-    const auto choice  = spec::draft_head_rows(ranking_totals(model, ranking), share,
-                                               spec::kDraftHeadDepth);
+    std::vector<std::int64_t> totals;
+    try {
+        totals = ranking_totals(model, ranking); // a ranking of another vocabulary: none
+    } catch (const std::exception&) { return out; }
+    const auto choice = spec::draft_head_rows(totals, share, spec::kDraftHeadDepth);
     std::ostringstream note;
     note.precision(3);
     note << "draft head: " << drafter << " round reads the head as " << 100 * share
