@@ -2,6 +2,7 @@
 #include "core/per_device.h"
 
 #include "core/device.h"
+#include "core/generation.h"
 #include "core/pdl.cuh"
 #include "ops/common/arch_limits.h"
 #include "ops/common/math.h"
@@ -443,15 +444,16 @@ int chain_resident() {
 // chained unit pays its prologue (Q fragments, the first key tile, the state hand-off), which
 // lost 2-3 % where the plain waves were already full (RTX 5090: 31B T=4096, 24.1 waves).
 //
-// Only where the chained tile measured near the plain one's speed in full waves: sm_120 (RTX 5090
-// 31B T=4096 -2.2 %; RTX 5080 26B T=1024 at 16K keys +5.5 %). On sm_89 the chained
-// wide tile runs 25-35 % slower even in whole waves (RTX 4090: 26B 96 -> 72 TFLOP/s at
-// 16K-60K keys, same registers and no spills as the plain tile), so the tail it fills never pays
-// (RTX 4080 SUPER: Gemma 4 26B 16K prefill 6566 -> 6455 t/s). Other architectures are
-// unmeasured and keep the plain launch.
+// Only where the chained tile measured near the plain one's speed in full waves: the generation
+// row's attention_chain (core/generation.h: gb20x, RTX 5090 31B T=4096 -2.2 %; RTX 5080 26B
+// T=1024 at 16K keys +5.5 %). On Ada the chained wide tile runs 25-35 % slower even in whole
+// waves (RTX 4090: 26B 96 -> 72 TFLOP/s at 16K-60K keys, same registers and no spills as the
+// plain tile), so the tail it fills never pays (RTX 4080 SUPER: Gemma 4 26B 16K prefill 6566 ->
+// 6455 t/s). Other generations are unmeasured and keep the plain launch.
 bool chain_measured_fast() {
     try {
-        return device_class().major == 12;
+        const DeviceClass& d = device_class();
+        return generation_row(d.major, d.minor).attention_chain;
     } catch (const std::exception&) { return false; }
 }
 
