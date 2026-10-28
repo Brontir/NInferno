@@ -3049,15 +3049,18 @@ std::uint64_t route_demotion_count() noexcept {
 std::uint64_t rmma_spread_count() noexcept { return rmma_spreads.load(std::memory_order_relaxed); }
 
 // w1x16 of one token tile is what a call of at most one CTA per SM takes where clusters do not
-// exist (one_wave_split; the stream regime's long K): its CTAs stream the whole weight from as
-// many SMs as the call has row blocks. A call of at most a quarter as many CTAs as SMs (the cluster
-// of eight's bound) leaves most of them idle: the 32-row GDN a/b projections of Qwen3.5 (BF16,
-// K 4096, T 1..8) took 4.65 us on two CTAs of an RTX 4070 Ti (60 SMs) at 11 % of DRAM bandwidth.
-// The spread form puts each CTA's sixteen K warps on sixteen CTAs, which add up in the same order
-// (RmmaSchedule's KCtas): the same bytes, from sixteen times the SMs. Its plane holds every K
-// warp's FP32 partials (kSets x 128 per warp and row block).
+// exist (one_wave_split; the stream regime's long K): its CTAs run on as many SMs as the call has
+// row blocks. Without tensor mma.sync (Volta: the MMA emulated on FMA) such a call is bound by
+// those SMs' arithmetic: the 32-row GDN a/b projections of Qwen3.5 (BF16, K 4096, T 1..8) took
+// 23.6 us on two CTAs of a Quadro GV100 (80 SMs), 1 % of its DRAM bandwidth. A call of at most a
+// quarter as many CTAs as SMs (the cluster of eight's bound) there takes the spread form, which
+// puts each CTA's sixteen K warps on sixteen CTAs that add up in the same order (RmmaSchedule's
+// KCtas): the same bytes, from sixteen times the SMs. Where the MMA is native the call is bound
+// by the loads its SMs keep in flight (the deep ring, generic_gemm.cuh), and the form's grid
+// barrier cost more than the SMs it adds: BF16 32 x 4096 at T = 8 on an RTX 4070 Ti, 5.6 -> 7.8
+// us (L2 cold). Its plane holds every K warp's FP32 partials (kSets x 128 per warp and row block).
 std::size_t rmma_spread_bytes(std::int32_t rows, std::int32_t tokens, Epilogue epilogue) {
-    if (rows <= 0 || tokens <= 0) return 0;
+    if (rows <= 0 || tokens <= 0 || current_features().mma_tensor) return 0;
     const std::int64_t blocks = ((static_cast<std::int64_t>(rows) + 15) / 16) *
                                 ((static_cast<std::int64_t>(tokens) + 7) / 8);
     if (4 * blocks > sm_count()) return 0;
