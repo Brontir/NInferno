@@ -1288,7 +1288,31 @@ async function refreshState() {
       ${runs}</div>`;
   }).join("");
   renderDownloads();
+  refreshPlanNow();
   if (logId) refreshLog();
+}
+// The cached plans' "now" (what a start right now would get) follows the card's free memory: when
+// it moves (another process started or stopped), every cached "now" is dropped and the selected
+// model's plans are asked again (the server keeps their idle part; it re-plans only "now").
+const NOW_STEP = 256 * 2 ** 20;
+let nowFree = null, nowGpu = null;
+function refreshPlanNow() {
+  const g = (S.gpus || []).find(x => x.index === gpu);
+  if (!g) return;
+  if (nowGpu === gpu && nowFree !== null && Math.abs(g.memory_free - nowFree) < NOW_STEP) return;
+  const moved = nowGpu === gpu && nowFree !== null;
+  nowGpu = gpu; nowFree = g.memory_free;
+  if (!moved) return;
+  for (const doc of planDocs.values()) if (doc) delete doc.now;
+  const sel = selected;
+  if (!sel) return;
+  for (const key of [...planDocs.keys()]) {
+    const q = new URLSearchParams(key.split("?")[1] || "");
+    if (q.get("repo") !== sel.repo || q.get("gpu") !== String(gpu)) continue;
+    api(key).then(doc => { const kept = planDocs.get(key); if (kept && doc && doc.now) kept.now = doc.now; if (selected === sel) renderBody(); })
+      .catch(() => {});
+  }
+  renderBody();
 }
 function shortName(m) {
   const base = m.split("/").pop();
