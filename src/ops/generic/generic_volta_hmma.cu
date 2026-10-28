@@ -29,6 +29,7 @@
 // ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only, never on the call's T or
 // its other tokens, and repeat run to run.
 #include "core/device.h"
+#include "core/device_class.h"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
@@ -63,6 +64,20 @@ __device__ __forceinline__ __half2 bits_h2(unsigned u) { return *reinterpret_cas
 // format's zero point): exact.
 __device__ __forceinline__ unsigned codes_h2(unsigned bits, unsigned bias_bits) {
     return h2_bits(__hsub2(bits_h2(bits | 0x64006400U), bits_h2(bias_bits)));
+}
+
+// Bits 0..3 and 16..19 of w with the f16 exponent of 1024 above them, (w & 0x000f000f) |
+// 0x64006400, in one LOP3: with both constants immediate the compiler emitted two (a SASS LOP3
+// takes one immediate; gate/up SwiGLU 256 -> 192 LOP3, 2272 -> 2208 instructions).
+__device__ __forceinline__ unsigned nibbles_h2(unsigned w) {
+    unsigned r;
+    asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(w), "n"(0x000f000f), "r"(0x64006400U));
+    return r;
+}
+
+// The f16 pair of biased codes (1024 + code, from nibbles_h2) less `bias_bits`: exact.
+__device__ __forceinline__ unsigned biased_h2(unsigned bits, unsigned bias_bits) {
+    return h2_bits(__hsub2(bits_h2(bits), bits_h2(bias_bits)));
 }
 
 __device__ __forceinline__ float half_bits_f32(unsigned bits) {
@@ -127,7 +142,7 @@ struct HK45 {
         const unsigned words[8] = {qs[0].x, qs[0].y, qs[0].z, qs[0].w,
                                    qs[1].x, qs[1].y, qs[1].z, qs[1].w};
         const unsigned w        = words[wd] >> (4 * run);
-        unsigned lo = w & 0x000f000fU, hi = (w >> 8) & 0x000f000fU;
+        unsigned lo = nibbles_h2(w), hi = nibbles_h2(w >> 8);
         if constexpr (Bits == 5) {
             const unsigned hwords[8] = {qh[0].x, qh[0].y, qh[0].z, qh[0].w,
                                         qh[1].x, qh[1].y, qh[1].z, qh[1].w};
@@ -135,8 +150,8 @@ struct HK45 {
             lo |= (hb << 4) & 0x00100010U;
             hi |= (hb >> 4) & 0x00100010U;
         }
-        a0 = codes_h2(lo, 0x64006400U);
-        a1 = codes_h2(hi, 0x64006400U);
+        a0 = biased_h2(lo, 0x64006400U);
+        a1 = biased_h2(hi, 0x64006400U);
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
@@ -290,7 +305,7 @@ __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint
     }
 }
 
-template <class F, Epilogue E, int NG>
+template <class F, Epilogue E, int NG, int Ahead>
 __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #if NINFERNO_HMMA884
     constexpr int kSets   = E == Epilogue::SwiGlu ? 2 : 1;
@@ -319,7 +334,13 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
             for (int i = 0; i < 8; ++i) acc[s][g][i] = 0.0F;
 
-    // The weight stream two superblocks ahead: cur, then nx1 and nx2 in flight.
+    // The weight stream Ahead superblocks ahead: cur, then nx1 (and nx2) in flight. Little's law:
+    // an SM needs ~5.7 KB in flight for the measured 660 GB/s over ~1000 cycles of latency at the
+    // 1.44 GHz it runs under load (GV100), and a CTA keeps 32 rows of a superblock in flight (Q4_K
+    // 4.6 KB, SwiGLU 9.2; the other formats' superblocks are larger). With two CTAs or more an SM
+    // one superblock ahead covers it; the second one held 23 more registers a lane (gate/up
+    // 160 -> 137) and added issue work to a loop that is issue-bound. A grid of fewer CTAs than
+    // two an SM keeps the second (launch_format).
     F cur[kSets], nx1[kSets], nx2[kSets];
 #    pragma unroll
     for (int s = 0; s < kSets; ++s) {
@@ -329,7 +350,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         nx2[s].clear();
         if (live) {
             cur[s].load(a, row, 0, q);
-            if (sbs > 1) nx1[s].load(a, row, 1, q);
+            if (Ahead == 2 && sbs > 1) nx1[s].load(a, row, 1, q);
         }
     }
     uint2 xv[kNTok / 2];
@@ -342,8 +363,9 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         const bool more = sb + 1 < sbs;
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            if (sb + 2 < sbs && live)
-                nx2[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 2, q);
+            const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
+            if (Ahead == 1 && more && live) nx1[s].load(a, row, sb + 1, q);
+            if (Ahead == 2 && sb + 2 < sbs && live) nx2[s].load(a, row, sb + 2, q);
         }
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
@@ -406,7 +428,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
             cur[s] = nx1[s];
-            nx1[s] = nx2[s];
+            if (Ahead == 2) nx1[s] = nx2[s];
         }
     }
 
@@ -445,10 +467,19 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 template <class F, Epilogue E>
 void launch_format(const GemmArgs& args, cudaStream_t stream) {
     const unsigned blocks = static_cast<unsigned>((args.rows + kCtaRows - 1) / kCtaRows);
+    // Two CTAs an SM or more: one superblock ahead (volta_hmma_kernel). GV100 dflash:7 round:
+    // gate/up (384 CTAs) 156.5 -> 152.6 us; a 4096-row add (128 CTAs) 71.1 -> 73.2 one ahead.
+    const bool one_ahead = blocks >= 2U * static_cast<unsigned>(device_class().sms);
     if (args.tokens <= 8) {
-        volta_hmma_kernel<F, E, 1><<<blocks, kWarps * 32, 0, stream>>>(args);
+        if (one_ahead) {
+            volta_hmma_kernel<F, E, 1, 1><<<blocks, kWarps * 32, 0, stream>>>(args);
+        } else {
+            volta_hmma_kernel<F, E, 1, 2><<<blocks, kWarps * 32, 0, stream>>>(args);
+        }
+    } else if (one_ahead) {
+        volta_hmma_kernel<F, E, 2, 1><<<blocks, kWarps * 32, 0, stream>>>(args);
     } else {
-        volta_hmma_kernel<F, E, 2><<<blocks, kWarps * 32, 0, stream>>>(args);
+        volta_hmma_kernel<F, E, 2, 2><<<blocks, kWarps * 32, 0, stream>>>(args);
     }
     CUDA_CHECK(cudaGetLastError());
 }
