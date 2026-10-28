@@ -14,6 +14,9 @@
 #include "ops/linear/q5/q5_dispatch.h"
 #include "ops/linear/q6/q6_dispatch.h"
 #include "ops/linear/q8/q8_dispatch.h"
+#include "ops/linear_add/q8/q8_linear_add_plan.h"
+#include "ops/linear_pair/q8/q8_pair_plan.h"
+#include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -370,10 +373,15 @@ LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept {
 }
 
 LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded) {
-    // A shape the tuned tables own keeps its own A16 kernels at 2..8 tokens (dispatch_linear
-    // sends only a one-token call of it to R8), so lifting its policy would change nothing.
-    if (recorded != LinearPolicy::A16Only ||
-        detail::linear_shape_registered(weight.qtype, weight.n, weight.k) ||
+    // R8 takes an eight-token block of Q8 only (r8_verify_widest). A Q8 shape any tuned table
+    // owns (plain, fused add, fused SwiGLU or pair) keeps that table's A16 kernels at 2..8 tokens
+    // (each dispatcher sends only a one-token call of it to R8), so lifting its policy would
+    // change nothing: the drafter consumes the weight through whichever of those ops it uses.
+    const bool owned = detail::linear_shape_registered(weight.qtype, weight.n, weight.k) ||
+                       detail::q8_linear_add_registered(weight.n, weight.k) ||
+                       detail::q8_linear_swiglu_registered(weight.n, weight.k) ||
+                       detail::q8_pair_registered(weight.n, weight.k);
+    if (recorded != LinearPolicy::A16Only || weight.qtype != QType::Q8_G32_FP16 || owned ||
         !detail::generic::r8_takes_block(weight)) {
         return recorded;
     }

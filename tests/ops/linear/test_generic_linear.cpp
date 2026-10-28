@@ -19,6 +19,10 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/linear/linear_registry.h"
+#include "ops/linear_add/q8/q8_linear_add_plan.h"
+#include "ops/linear_pair/q8/q8_pair_plan.h"
+#include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -1595,12 +1599,22 @@ int main() {
             ++failures;
         }
     }
-    // A shape the tuned tables own (Gemma 4 31B DFlash's 5376 x 10752) keeps its A16 kernels:
-    // dispatch_linear sends only its one-token calls to R8.
-    {
-        const Weight w = cached_weight(QType::Q8_G32_FP16, 5376, 10752, 31U).device->weight;
-        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != ops::LinearPolicy::A16Only) {
-            std::cout << "FAIL registered Q8 shape drafter_linear_policy" << std::endl;
+    // A Q8 shape any tuned table owns (plain, fused add, fused SwiGLU, pair: Gemma 4 31B
+    // DFlash's 5376 x 10752, the Qwen DFlash down projection 2048 x 6144) keeps its A16 kernels,
+    // since each dispatcher sends only its one-token calls to R8; an unowned one takes A8.
+    for (const auto& [n, k] : std::initializer_list<std::pair<std::int32_t, std::int32_t>>{
+             {5376, 10752}, {2048, 6144}, {4096, 4096}, {333, 2560}}) {
+        const Weight w   = cached_weight(QType::Q8_G32_FP16, n, k, 31U).device->weight;
+        const bool owned = ops::detail::linear_shape_registered(QType::Q8_G32_FP16, n, k) ||
+                           ops::detail::q8_linear_add_registered(n, k) ||
+                           ops::detail::q8_linear_swiglu_registered(n, k) ||
+                           ops::detail::q8_pair_registered(n, k);
+        const ops::LinearPolicy want = !owned && generic::r8_takes_block(w)
+                                           ? ops::LinearPolicy::AllowA8
+                                           : ops::LinearPolicy::A16Only;
+        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != want ||
+            ((n == 5376 || n == 2048) && want != ops::LinearPolicy::A16Only)) {
+            std::cout << "FAIL Q8 " << n << " x " << k << " drafter_linear_policy" << std::endl;
             ++failures;
         }
     }
