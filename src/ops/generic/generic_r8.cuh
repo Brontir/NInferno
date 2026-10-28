@@ -54,6 +54,15 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 #    define NINFERNO_R8_STAGED_GRID 0
 #endif
 
+// Volta (no tensor mma.sync): the launch keeps no more CTAs than stay resident and each loops over
+// row blocks with the next block's first loads in flight (r8_resident_grid on the host side);
+// other builds keep a CTA a row block and compile no third ring slot.
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 750
+#    define NINFERNO_R8_RESIDENT 1
+#else
+#    define NINFERNO_R8_RESIDENT 0
+#endif
+
 // The host's side of the same rule: whether this device's R8 launches stage the grid
 // (generic_gemm.cpp: no native BF16 MMA, sm_80 on has it).
 [[nodiscard]] bool r8_stage_grid();
@@ -142,14 +151,17 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         if constexpr (kPre) __syncthreads();
     }
 
-    Raw ring[2][kSets][kRows][kStride];
-    const auto fetch = [&](auto slot_tag, int group) {
+    // Slots 0 and 1: this row block's groups; slot 2: the next row block's first group, in flight
+    // while this one computes (a resident grid's CTA takes several row blocks).
+    constexpr bool kResident = NINFERNO_R8_RESIDENT != 0 && !kPre;
+    Raw ring[kResident ? 3 : 2][kSets][kRows][kStride];
+    const auto fetch = [&](auto slot_tag, int group, int base) {
         constexpr int slot = decltype(slot_tag)::value;
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
             for (int r = 0; r < kRows; ++r) {
-                const int l = local0 + r;
+                const int l = base + r;
                 if (l < a.rows) {
 #pragma unroll
                     for (int q = 0; q < kStride; ++q) {
@@ -161,7 +173,8 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
     };
     using Slot0 = std::integral_constant<int, 0>;
     using Slot1 = std::integral_constant<int, 1>;
-    if (lane < groups) fetch(Slot0{}, lane);
+    using Slot2 = std::integral_constant<int, 2>;
+    if (lane < groups) fetch(Slot0{}, lane, local0);
 
     // GemmArgs::pdl_prefetch: the first group's weights are in flight; x and the output are the
     // previous kernel's to finish. Then a joined next call may start (it reads x without waiting).
@@ -284,22 +297,38 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
             }
         };
 
+        const int row0       = local0;
+        const int next_block = row_block + static_cast<int>(gridDim.x);
+        const bool more      = next_block < row_blocks;
+        const int next0      = next_block * S::kRowsPerCta + warp * kRows;
+        if constexpr (kResident) {
+            if (more && lane < groups) fetch(Slot2{}, lane, next0);
+        }
+
 #pragma unroll 1
         for (int g = lane; g < groups; g += 64) {
-            if (g + 32 < groups) fetch(Slot1{}, g + 32);
+            if (g + 32 < groups) fetch(Slot1{}, g + 32, row0);
             compute(Slot0{}, g);
             if (g + 32 >= groups) break;
-            if (g + 64 < groups) fetch(Slot0{}, g + 64);
+            if (g + 64 < groups) fetch(Slot0{}, g + 64, row0);
             compute(Slot1{}, g + 32);
         }
 
-        // The next row block's first weights go in flight before this one's reduction and stores.
-        const int row0 = local0;
-        row_block += static_cast<int>(gridDim.x);
-        const bool more = row_block < row_blocks;
-        if (more) {
-            local0 = row_block * S::kRowsPerCta + warp * kRows;
-            if (lane < groups) fetch(Slot0{}, lane);
+        if constexpr (kResident) {
+            if (more) {
+                row_block = next_block;
+                local0    = next0;
+#pragma unroll
+                for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                    for (int r = 0; r < kRows; ++r)
+#pragma unroll
+                        for (int q = 0; q < kStride; ++q) ring[0][s][r][q] = ring[2][s][r][q];
+            }
+        } else if (more) {
+            row_block = next_block;
+            local0    = next0;
+            if (lane < groups) fetch(Slot0{}, lane, local0);
         }
 
         // Butterfly: every lane ends with the same sum (each step adds a pair in either order).
