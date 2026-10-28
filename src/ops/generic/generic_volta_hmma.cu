@@ -4,28 +4,30 @@
 // activation for every column on dp4a, so both grow with T and neither streams the weight at the
 // DRAM rate (GV100, Qwen3.5-9B Q4_K_M, dflash:7 round: Q6_K LM head 163 GB/s, target verify
 // 176-312 GB/s, of 870). Volta's one tensor-core shape is mma.m8n8k4 with f16 operands
-// (HMMA.884): this kernel decodes each weight value once, straight from the lane's own loads into
-// an f16 A fragment, and multiplies it against eight (or sixteen) token columns.
+// (HMMA.884): this kernel turns each weight code into f16 once, straight from the lane's own loads
+// into an A fragment, and multiplies it against eight (or sixteen) token columns.
 //
 // The m8n8k4 fragments (PTX ISA): a warp runs four independent products, one per quad-pair q
 // (lanes 4q..4q+3 and 16+4q..16+4q+3). Lane f of a quad-pair (f = lane % 4, + 4 for the high
-// lanes) holds row f of A (k 0..3) and column f of B (k 0..3). Which four K positions the four k
-// slots stand for is free, as long as A and B agree: so each lane decodes the values of its own
-// code bytes in the order they come out of the bytes, and the CTA stages the activation in that
-// order once (bf16 to f16, as the T >= 17 tiled route does).
+// lanes) holds row f of A (k 0..3) and column f of B (k 0..3); accumulator i of a lane is row
+// (lane & 1) + (i & 2) (+ 4 for the high lanes), column (i & 4) + (lane & 2) + (i & 1). Which four
+// K positions the four k slots stand for is free, as long as A and B agree: so each lane takes the
+// codes of its own bytes in the order they come out of them, and the CTA stages the activation in
+// that order once (bf16 to f16, as the T >= 17 tiled route does).
 //
 // Layout: a warp holds eight weight rows (fragment row f = weight row f) and splits each 256-value
 // superblock over its quad-pairs, 64 values each (the format's own runs of 32: Q4_K / Q5_K
 // sub-blocks 2q and 2q+1, Q6_K quarters q % 2 and q % 2 + 2 of half q / 2, Q8 groups 2q and
 // 2q+1). One code word (four bytes) gives two half2 per run: (byte 0, byte 2) and (byte 1, byte 3),
-// so the staged activation swaps the middle two of every four values. The quad-pairs' partial
-// sums meet at the end in a fixed order ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own
-// column only, never on the call's T or its other tokens, and repeat run to run.
+// so the staged activation swaps the middle two of every four values.
 //
-// Weight values as f16: Q4_K / Q5_K w = d sc q - dmin m, Q6_K w = d sc (q - 32), Q8 w = d q, the
-// code exact in f16 (the 0x6400 exponent trick less 1024), then one f16 FMA (or product) with the
-// group's scale and min rounded to f16. A group whose values could leave the f16 range (scales no
-// real model has) takes the FP32 product saturated to +-65504, as Volta's CUTLASS prefill does.
+// Arithmetic: the A operand is the code itself (less its zero point), an exact f16 integer, so
+// the tensor cores sum exact products of codes and f16 activations in FP32 over one scale group
+// (16 or 32 values); the group's scale (and a K-quant's min against the group's activation sum)
+// is applied in FP32 after it. No weight value is ever rounded to f16, whatever its scale. The
+// groups add in K order, the quad-pairs' sums meet at the end in a fixed order
+// ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only, never on the call's T or
+// its other tokens, and repeat run to run.
 #include "core/device.h"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.cuh"
@@ -50,55 +52,28 @@ __device__ __forceinline__ unsigned h2_bits(__half2 h) { return *reinterpret_cas
 
 __device__ __forceinline__ __half2 bits_h2(unsigned u) { return *reinterpret_cast<__half2*>(&u); }
 
-// Two codes in the low bits of each half (exact integers below 1024) as f16, less `bias`
-// (1024 + the format's zero point): exact.
-__device__ __forceinline__ __half2 codes_h2(unsigned bits, unsigned bias_bits) {
-    return __hsub2(bits_h2(bits | 0x64006400U), bits_h2(bias_bits));
-}
-
-// One run's scale and min (w = ds q - dm) as f16 pairs, with whether the f16 path holds the run:
-// |ds| max|q| + |dm| inside the f16 range by a factor of two, and ds and dm each zero or a normal
-// f16 unless the format stores them as f16 already (`exact`): a K-quant's ds = d sc rounded to an
-// f16 subnormal would carry a large relative error into every value of the run.
-struct RunScale {
-    __half2 ds, ndm;
-    float fds, fdm;
-    bool fast;
-};
-
-__device__ __forceinline__ bool f16_normal_or_zero(float v) {
-    return v == 0.0F || fabsf(v) >= 6.103515625e-05F; // 2^-14
-}
-
-__device__ __forceinline__ RunScale run_scale(float ds, float dm, float max_code, bool exact) {
-    RunScale s;
-    s.fds  = ds;
-    s.fdm  = dm;
-    s.fast = fabsf(ds) * max_code + fabsf(dm) < 32768.0F &&
-             (exact || (f16_normal_or_zero(ds) && f16_normal_or_zero(dm)));
-    s.ds  = __float2half2_rn(s.fast ? ds : 0.0F);
-    s.ndm = __float2half2_rn(s.fast ? -dm : 0.0F);
-    return s;
-}
-
-// w = ds q - dm for two exact codes q (f16): one f16 FMA, or the saturated FP32 product.
-__device__ __forceinline__ unsigned weight_h2(__half2 q, const RunScale& s) {
-    if (s.fast) return h2_bits(__hfma2(q, s.ds, s.ndm));
-    const float2 f = __half22float2(q);
-    const float lo = bf16_value_in_f16_range(fmaf(f.x, s.fds, -s.fdm));
-    const float hi = bf16_value_in_f16_range(fmaf(f.y, s.fds, -s.fdm));
-    return h2_bits(__floats2half2_rn(lo, hi));
+// Two codes in the low bits of each half (integers below 1024) as f16, less `bias` (1024 + the
+// format's zero point): exact.
+__device__ __forceinline__ unsigned codes_h2(unsigned bits, unsigned bias_bits) {
+    return h2_bits(__hsub2(bits_h2(bits | 0x64006400U), bits_h2(bias_bits)));
 }
 
 __device__ __forceinline__ float half_bits_f32(unsigned bits) {
     return __half2float(__ushort_as_half(static_cast<unsigned short>(bits)));
 }
 
+// Each format: load(a, row, sb, q) the lane's bytes of superblock sb; clear(); kGroups scale groups
+// a lane's 64 values split into (16 / kGroups MMAs each); scale(q, g, ds, dm) of group g
+// (w = ds code - dm); fragment(m, q) of MMA m (0..15) as two f16 pairs; dest_run(src), where the
+// staged activation puts source run src (32 values) of the superblock: quad-pair D / 2, half D % 2.
+
 // Q4_K / Q5_K: 144 / 176-byte blocks (d, dmin, twelve scale bytes, Q5_K's 32 high-bit bytes, 128
 // nibble bytes). Quad-pair q: nibble bytes 32q .. 32q + 31 (low nibbles sub-block 2q, high 2q + 1).
 template <int Bits>
 struct HK45 {
     static constexpr int kBlockBytes = Bits == 4 ? 144 : 176;
+    static constexpr int kGroups     = 2;
+    static constexpr bool kMin       = true;
     uint4 head;
     uint4 qs[2];
     uint4 qh[2];
@@ -122,8 +97,9 @@ struct HK45 {
         qh[0] = qh[1] = make_uint4(0, 0, 0, 0);
     }
 
-    // Sub-block j's scale and min (ggml get_scale_min_k4) applied to d and dmin.
-    __device__ __forceinline__ RunScale scale(int j) const {
+    // Sub-block 2q + g's scale and min (ggml get_scale_min_k4) applied to d and dmin.
+    __device__ __forceinline__ void scale(int q, int g, float& ds, float& dm) const {
+        const int j       = 2 * q + g;
         const unsigned s0 = head.y, s4 = head.z, s8 = head.w;
         unsigned sc, mn;
         if (j < 4) {
@@ -134,15 +110,12 @@ struct HK45 {
             sc           = ((s8 >> jj) & 0x0fU) | (((s0 >> jj) >> 6 & 3U) << 4);
             mn           = ((s8 >> jj) >> 4 & 0x0fU) | (((s4 >> jj) >> 6 & 3U) << 4);
         }
-        return run_scale(half_bits_f32(head.x) * static_cast<float>(sc),
-                         half_bits_f32(head.x >> 16) * static_cast<float>(mn),
-                         Bits == 4 ? 15.0F : 31.0F, false);
+        ds = half_bits_f32(head.x) * static_cast<float>(sc);
+        dm = half_bits_f32(head.x >> 16) * static_cast<float>(mn);
     }
 
-    // The A fragment of mma m (0..15): run m / 8 (0: low nibbles, sub-block 2q; 1: high, 2q + 1),
-    // code word m % 8.
-    __device__ __forceinline__ void fragment(int m, int q, const RunScale (&s)[2], unsigned& a0,
-                                             unsigned& a1) const {
+    // MMA m: run m / 8 (0: low nibbles, sub-block 2q; 1: high, 2q + 1), code word m % 8.
+    __device__ __forceinline__ void fragment(int m, int q, unsigned& a0, unsigned& a1) const {
         const int run = m >> 3, wd = m & 7;
         const unsigned words[8] = {qs[0].x, qs[0].y, qs[0].z, qs[0].w,
                                    qs[1].x, qs[1].y, qs[1].z, qs[1].w};
@@ -155,24 +128,20 @@ struct HK45 {
             lo |= (hb << 4) & 0x00100010U;
             hi |= (hb >> 4) & 0x00100010U;
         }
-        a0 = weight_h2(codes_h2(lo, 0x64006400U), s[run]);
-        a1 = weight_h2(codes_h2(hi, 0x64006400U), s[run]);
+        a0 = codes_h2(lo, 0x64006400U);
+        a1 = codes_h2(hi, 0x64006400U);
     }
 
-    __device__ __forceinline__ void scales(int q, RunScale (&s)[2]) const {
-        s[0] = scale(2 * q);
-        s[1] = scale(2 * q + 1);
-    }
-
-    // The source run (32 values) of a staged run: the identity.
     __device__ static constexpr int dest_run(int src) { return src; }
 };
 
 // Q6_K planes: 128 ql then 64 qh bytes a superblock (codes), 16 int8 scales (high), binary16 d
 // (scales). Quad-pair q: half h = q / 2, ql bytes 64 h + 32 (q % 2) .. + 31 (low nibbles quarter
 // q % 2, high nibbles quarter q % 2 + 2), qh bytes 32 h .. + 31 (bit pairs 2 (q % 2) and
-// 2 (q % 2) + 4).
+// 2 (q % 2) + 4). Scale groups of 16 values: group g = quarter q % 2 + 2 (g / 2), half g % 2.
 struct HK6 {
+    static constexpr int kGroups = 4;
+    static constexpr bool kMin   = false;
     uint4 ql[2];
     uint4 qh[2];
     uint4 sc;
@@ -197,23 +166,15 @@ struct HK6 {
         d                                  = 0;
     }
 
-    // Scales of this lane's runs: run r (quarter q % 2 + 2 r), the 16-value halves of it.
-    __device__ __forceinline__ void scales(int q, RunScale (&s)[4]) const {
-        const int h = q >> 1, qq = q & 1;
+    __device__ __forceinline__ void scale(int q, int g, float& ds, float& dm) const {
         const unsigned words[4] = {sc.x, sc.y, sc.z, sc.w};
-        const float fd          = half_bits_f32(d);
-#pragma unroll
-        for (int r = 0; r < 2; ++r)
-#pragma unroll
-            for (int half = 0; half < 2; ++half) {
-                const int i = 8 * h + 2 * (qq + 2 * r) + half;
-                const int v = static_cast<signed char>((words[i >> 2] >> (8 * (i & 3))) & 0xffU);
-                s[2 * r + half] = run_scale(fd * static_cast<float>(v), 0.0F, 32.0F, false);
-            }
+        const int i             = 8 * (q >> 1) + 2 * ((q & 1) + 2 * (g >> 1)) + (g & 1);
+        const int v = static_cast<signed char>((words[i >> 2] >> (8 * (i & 3))) & 0xffU);
+        ds          = half_bits_f32(d) * static_cast<float>(v);
+        dm          = 0.0F;
     }
 
-    __device__ __forceinline__ void fragment(int m, int q, const RunScale (&s)[4], unsigned& a0,
-                                             unsigned& a1) const {
+    __device__ __forceinline__ void fragment(int m, int q, unsigned& a0, unsigned& a1) const {
         const int run = m >> 3, wd = m & 7;
         const unsigned lw[8] = {ql[0].x, ql[0].y, ql[0].z, ql[0].w,
                                 ql[1].x, ql[1].y, ql[1].z, ql[1].w};
@@ -223,13 +184,12 @@ struct HK6 {
         const unsigned hb    = hw[wd] >> (2 * (q & 1) + 4 * run);
         const unsigned lo    = (w & 0x000f000fU) | ((hb << 4) & 0x00300030U);
         const unsigned hi    = ((w >> 8) & 0x000f000fU) | ((hb >> 4) & 0x00300030U);
-        // 1024 + 32: the code less its zero point 32, exact.
-        const RunScale& r = s[2 * run + (wd >> 2)];
-        a0                = weight_h2(codes_h2(lo, 0x64206420U), r);
-        a1                = weight_h2(codes_h2(hi, 0x64206420U), r);
+        // 1024 + 32: the code less its zero point 32.
+        a0 = codes_h2(lo, 0x64206420U);
+        a1 = codes_h2(hi, 0x64206420U);
     }
 
-    // Source run 4 h + quarter goes to quad-pair 2 h + quarter % 2, run quarter / 2 of it.
+    // Source run 4 h + quarter goes to quad-pair 2 h + quarter % 2, half quarter / 2 of it.
     __device__ static constexpr int dest_run(int src) {
         return 4 * (src >> 2) + 2 * (src & 1) + ((src >> 1) & 1);
     }
@@ -238,6 +198,8 @@ struct HK6 {
 // Q8 G32: int8 codes in row order (codes), a binary16 scale a group of 32 (scales). Quad-pair q:
 // groups 8 sb + 2q and 8 sb + 2q + 1.
 struct HQ8 {
+    static constexpr int kGroups = 2;
+    static constexpr bool kMin   = false;
     uint4 c[4];
     unsigned d[2];
 
@@ -258,38 +220,27 @@ struct HQ8 {
         d[0] = d[1] = 0;
     }
 
-    __device__ __forceinline__ void scales(int, RunScale (&s)[2]) const {
-        s[0] = run_scale(half_bits_f32(d[0]), 0.0F, 128.0F, true);
-        s[1] = run_scale(half_bits_f32(d[1]), 0.0F, 128.0F, true);
+    __device__ __forceinline__ void scale(int, int g, float& ds, float& dm) const {
+        ds = half_bits_f32(d[g]);
+        dm = 0.0F;
     }
 
-    __device__ __forceinline__ void fragment(int m, int, const RunScale (&s)[2], unsigned& a0,
-                                             unsigned& a1) const {
+    __device__ __forceinline__ void fragment(int m, int, unsigned& a0, unsigned& a1) const {
         const unsigned words[16] = {c[0].x, c[0].y, c[0].z, c[0].w, c[1].x, c[1].y, c[1].z, c[1].w,
                                     c[2].x, c[2].y, c[2].z, c[2].w, c[3].x, c[3].y, c[3].z, c[3].w};
         const unsigned w         = words[m] ^ 0x80808080U; // code + 128
         // (byte 0, byte 2) and (byte 1, byte 3) under the 0x64 exponent byte; 1024 + 128 back.
-        a0 = weight_h2(__hsub2(bits_h2(__byte_perm(w, 0x64646464U, 0x4240U)), bits_h2(0x64806480U)),
-                       s[m >> 3]);
-        a1 = weight_h2(__hsub2(bits_h2(__byte_perm(w, 0x64646464U, 0x4341U)), bits_h2(0x64806480U)),
-                       s[m >> 3]);
+        a0 = codes_h2(__byte_perm(w, 0, 0x7250U) & 0x00ff00ffU, 0x64806480U);
+        a1 = codes_h2(__byte_perm(w, 0, 0x7351U) & 0x00ff00ffU, 0x64806480U);
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
 };
 
-template <class F>
-struct ScaleCount {
-    static constexpr int value = 2;
-};
-
-template <>
-struct ScaleCount<HK6> {
-    static constexpr int value = 4;
-};
-
 // Stage superblock `sb` of the activation as f16 in fragment order: run src of token t goes to
-// quad-pair D / 2, run D % 2 of it (D = dest_run(src)), the middle two of every four swapped.
+// quad-pair D / 2, half D % 2 of it (D = dest_run(src)), the middle two of every four swapped.
+// For a format with a min term, also each staged run's sum over its 32 values (the f16 values the
+// MMA multiplies, summed in FP32 in a fixed order) for token t: sums[t * 8 + D].
 template <class F, int NTok>
 __device__ __forceinline__ void stage_load(const GemmArgs& a, int sb, uint2 (&v)[NTok / 2]) {
     const auto* x = static_cast<const __nv_bfloat16*>(a.x);
@@ -305,29 +256,42 @@ __device__ __forceinline__ void stage_load(const GemmArgs& a, int sb, uint2 (&v)
 }
 
 template <class F, int NTok>
-__device__ __forceinline__ void stage_store(__half* act, const uint2 (&v)[NTok / 2]) {
+__device__ __forceinline__ void stage_store(__half* act, float* sums, const uint2 (&v)[NTok / 2]) {
 #pragma unroll
     for (int i = 0; i < NTok / 2; ++i) {
         const int task = static_cast<int>(threadIdx.x) + i * kWarps * 32;
         const int t    = task >> 6;
         const int g    = task & 63;
-        const int dst  = F::dest_run(g >> 3) * 8 + (g & 7); // destination group, 0..63
+        const int run  = F::dest_run(g >> 3);
+        const int dst  = run * 8 + (g & 7); // destination group, 0..63
         const int q = dst >> 4, s = dst & 15;
         // bf16 (v0, v1), (v2, v3) -> f16 (v0, v2), (v1, v3)
-        const unsigned lo = __byte_perm(v[i].x, v[i].y, 0x5410U); // v0, v2
-        const unsigned hi = __byte_perm(v[i].x, v[i].y, 0x7632U); // v1, v3
+        const unsigned lo = bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x5410U)); // v0, v2
+        const unsigned hi = bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x7632U)); // v1, v3
         *reinterpret_cast<uint2*>(act + q * kQuadStride<NTok> + (s * NTok + t) * 4) =
-            make_uint2(bf16x2_to_f16x2(lo), bf16x2_to_f16x2(hi));
+            make_uint2(lo, hi);
+        if constexpr (F::kMin) {
+            // The eight groups of a run sit on eight neighbouring lanes (task & 7 = g & 7).
+            const float2 l = __half22float2(bits_h2(lo));
+            const float2 h = __half22float2(bits_h2(hi));
+            float sum      = (l.x + h.x) + (l.y + h.y);
+            sum += __shfl_xor_sync(0xffffffffU, sum, 1);
+            sum += __shfl_xor_sync(0xffffffffU, sum, 2);
+            sum += __shfl_xor_sync(0xffffffffU, sum, 4);
+            if ((g & 7) == 0) sums[t * 8 + run] = sum;
+        }
     }
 }
 
 template <class F, Epilogue E, int NG>
 __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #if NINFERNO_HMMA884
-    constexpr int kSets = E == Epilogue::SwiGlu ? 2 : 1;
-    constexpr int kNTok = 8 * NG;
-    constexpr int kSc   = ScaleCount<F>::value;
+    constexpr int kSets   = E == Epilogue::SwiGlu ? 2 : 1;
+    constexpr int kNTok   = 8 * NG;
+    constexpr int kGroups = F::kGroups;
+    constexpr int kSteps  = 16 / kGroups; // MMAs a scale group
     __shared__ __align__(16) __half act[2][4 * kQuadStride<kNTok>];
+    __shared__ float sums[2][F::kMin ? kNTok * 8 : 1];
 
     const int lane  = static_cast<int>(threadIdx.x) & 31;
     const int warp  = static_cast<int>(threadIdx.x) >> 5;
@@ -336,6 +300,9 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
     const int l     = static_cast<int>(blockIdx.x) * kCtaRows + warp * kWarpRows + f; // A row
     const bool live = l < a.rows;
     const int sbs   = a.k >> 8;
+    // The lanes holding the A rows of this lane's accumulators: rows (lane & 1) + 4 (lane / 16)
+    // and that + 2, in this quad-pair.
+    const int src_a = 4 * q + (lane & 1) + ((lane >> 4) << 4);
 
     float acc[kSets][NG][8];
 #    pragma unroll
@@ -360,7 +327,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
     }
     uint2 xv[kNTok / 2];
     stage_load<F, kNTok>(a, 0, xv);
-    stage_store<F, kNTok>(act[0], xv);
+    stage_store<F, kNTok>(act[0], sums[0], xv);
     __syncthreads();
 
 #    pragma unroll 1
@@ -374,25 +341,59 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
         const __half* at = act[sb & 1] + q * kQuadStride<kNTok>;
-        RunScale sc[kSets][kSc];
 #    pragma unroll
-        for (int s = 0; s < kSets; ++s) cur[s].scales(q, sc[s]);
+        for (int gr = 0; gr < kGroups; ++gr) {
+            float part[kSets][NG][8];
 #    pragma unroll
-        for (int m = 0; m < 16; ++m) {
-            uint2 bf[NG];
+            for (int s = 0; s < kSets; ++s)
 #    pragma unroll
-            for (int g = 0; g < NG; ++g) {
-                bf[g] = *reinterpret_cast<const uint2*>(at + (m * kNTok + 8 * g + f) * 4);
+                for (int g = 0; g < NG; ++g)
+#    pragma unroll
+                    for (int i = 0; i < 8; ++i) part[s][g][i] = 0.0F;
+#    pragma unroll
+            for (int st = 0; st < kSteps; ++st) {
+                const int m = gr * kSteps + st;
+                uint2 bf[NG];
+#    pragma unroll
+                for (int g = 0; g < NG; ++g) {
+                    bf[g] = *reinterpret_cast<const uint2*>(at + (m * kNTok + 8 * g + f) * 4);
+                }
+#    pragma unroll
+                for (int s = 0; s < kSets; ++s) {
+                    unsigned a0, a1;
+                    cur[s].fragment(m, q, a0, a1);
+#    pragma unroll
+                    for (int g = 0; g < NG; ++g)
+                        mma_m8n8k4_f16(part[s][g], a0, a1, bf[g].x, bf[g].y);
+                }
             }
+            // The group's scale (and min) of the accumulators' rows, from the lanes holding them.
 #    pragma unroll
             for (int s = 0; s < kSets; ++s) {
-                unsigned a0, a1;
-                cur[s].fragment(m, q, sc[s], a0, a1);
+                float ds, dm;
+                cur[s].scale(q, gr, ds, dm);
+                const float ds0 = __shfl_sync(0xffffffffU, ds, src_a);
+                const float ds2 = __shfl_sync(0xffffffffU, ds, src_a + 2);
+                float dm0 = 0.0F, dm2 = 0.0F;
+                if constexpr (F::kMin) {
+                    dm0 = __shfl_sync(0xffffffffU, dm, src_a);
+                    dm2 = __shfl_sync(0xffffffffU, dm, src_a + 2);
+                }
 #    pragma unroll
-                for (int g = 0; g < NG; ++g) mma_m8n8k4_f16(acc[s][g], a0, a1, bf[g].x, bf[g].y);
+                for (int g = 0; g < NG; ++g)
+#    pragma unroll
+                    for (int i = 0; i < 8; ++i) {
+                        const float d = (i & 2) ? ds2 : ds0;
+                        acc[s][g][i]  = fmaf(d, part[s][g][i], acc[s][g][i]);
+                        if constexpr (F::kMin) {
+                            const int token = 8 * g + (i & 4) + (lane & 2) + (i & 1);
+                            const float xs  = sums[sb & 1][token * 8 + 2 * q + gr];
+                            acc[s][g][i]    = fmaf(-((i & 2) ? dm2 : dm0), xs, acc[s][g][i]);
+                        }
+                    }
             }
         }
-        if (more) stage_store<F, kNTok>(act[(sb + 1) & 1], xv);
+        if (more) stage_store<F, kNTok>(act[(sb + 1) & 1], sums[(sb + 1) & 1], xv);
         __syncthreads();
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
@@ -411,8 +412,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
                 acc[s][g][i] += __shfl_xor_sync(0xffffffffU, acc[s][g][i], 4);
                 acc[s][g][i] += __shfl_xor_sync(0xffffffffU, acc[s][g][i], 8);
             }
-    // Accumulator i: row (lane & 1) + (i & 2) + 4 (lane / 16), column (i & 4) + (lane & 2) +
-    // (i & 1). Quad-pair q stores accumulators 2q and 2q + 1.
+    // Quad-pair q stores accumulators 2q and 2q + 1.
     const int row0 = static_cast<int>(blockIdx.x) * kCtaRows + warp * kWarpRows;
 #    pragma unroll
     for (int i = 0; i < 8; ++i) {
