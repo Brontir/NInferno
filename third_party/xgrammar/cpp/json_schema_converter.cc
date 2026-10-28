@@ -2628,8 +2628,9 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
   // The fixed-order rules below compile optional properties in schema order, each skippable, so a
   // model that writes a later optional key first can never write an earlier one: the output stays
   // valid JSON and fields silently vanish. Here required properties keep their schema order (an
-  // object whose properties are all required keeps the fixed-order rules, the documented order of
-  // OpenAI strict mode) and each optional property may come at any point, at most once. The rule
+  // object whose properties are all required and that admits no other key keeps the fixed-order
+  // rules, the documented order of OpenAI strict mode) and each optional property, and each
+  // additional key, may come at any point; an optional property at most once. The rule
   // state is (required properties written, set of optional properties written); the set is tracked
   // for the first optional properties while (required + 1) * 2^tracked stays within
   // kNInfernoMaxOrderStates, and an optional property past them may come at any point, possibly
@@ -2637,14 +2638,15 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
   // positions to the compiled grammar; the separator lives in one shared rule per property.
   // Counted objects (minProperties/maxProperties) keep the fixed-order rules.
   {
-    constexpr int64_t kNInfernoMaxOrderStates = 1024;
+    constexpr int64_t kNInfernoMaxOrderStates = 256;
     std::vector<size_t> required_indices;
     std::vector<size_t> optional_indices;
     for (size_t index = 0; index < properties.size(); ++index) {
       (required.count(properties[index].name) ? required_indices : optional_indices)
           .push_back(index);
     }
-    if (!optional_indices.empty() && min_properties == 0 && max_properties == -1) {
+    if ((!optional_indices.empty() || additional != nullptr) && min_properties == 0 &&
+        max_properties == -1) {
       int32_t first_separator = NextSeparatorExpression();
       int32_t middle_separator = NextSeparatorExpression();
       int32_t last_separator = NextSeparatorExpression(true);
@@ -2659,7 +2661,9 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
       }
       const size_t required_count = required_indices.size();
       size_t tracked = 0;
-      while (tracked < optional_indices.size() && tracked < 20 &&
+      // A pattern-property override may match declared names, so a declared key could be read
+      // as tracked or as free: no set is tracked then (any order, repeats possible).
+      while (!additional_property_override.has_value() && tracked < optional_indices.size() &&
              static_cast<int64_t>(required_count + 1) * (int64_t{1} << (tracked + 1)) <=
                  kNInfernoMaxOrderStates) {
         ++tracked;

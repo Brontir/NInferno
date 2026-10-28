@@ -32,9 +32,10 @@ Local change: `cpp/json_schema_converter.cc`, `JSONSchemaConverter::GetPartialRu
 one block marked "NInferno local change". Upstream compiles the properties of an object in schema
 order with each optional one skippable, so once a model writes a later optional key, no earlier
 optional key can be written any more: the output stays valid JSON and fields silently vanish. The
-block lets an object's optional properties come in any order, each at most once (tracked up to
-1024 rule states per object; past that, the remaining optional properties may repeat), while its
-required properties keep their schema order. An object with only required properties, or with
+block lets an object's optional properties and additional keys come in any order, an optional
+property at most once (tracked up to 256 rule states per object, none with patternProperties; past
+that, the remaining optional properties may repeat), while its required properties keep their
+schema order. An object with only required properties and no other keys, or with
 minProperties/maxProperties, keeps upstream's rules. `any_order` (non-strict Qwen XML tool
 arguments) is untouched. When updating, re-apply the block and run `ninferno_structured_output_test`
 and `ninferno_chat_test` (their key-order contracts fail without it).

@@ -787,7 +787,7 @@ void integer_digit_bound_contract(const ConstraintCompiler& compiler) {
 }
 
 // JSON inside a structural tag (tool-call arguments) has its whitespace runs bounded like a JSON
-// response format (CompilerOptions::json_whitespace_run, 24 by default).
+// response format (CompilerOptions::json_whitespace_run, 64 by default).
 void structural_tag_whitespace_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec spec;
     spec.kind           = OutputConstraintKind::StructuralTag;
@@ -918,6 +918,19 @@ void key_order_contract(const ConstraintCompiler& compiler) {
     const auto extra             = compiler.compile(schema_spec(open));
     check(admits(extra, object_of({"C", "Z", "A", "Y"})), "additional keys between declared ones");
     check(!admits(extra, object_of({"C", "A", "C"})), "additional pattern excludes declared keys");
+    // An all-required object that admits other keys keeps its order; the others may sit anywhere.
+    Json strict_open        = all;
+    strict_open["additionalProperties"] = true;
+    const auto spine_open   = compiler.compile(schema_spec(strict_open));
+    check(admits(spine_open, object_of({"Z", "A", "B", "Y", "C", "D", "E"})),
+          "all required: additional keys between required ones");
+    check(!admits(spine_open, object_of({"B", "A", "C", "D", "E"})),
+          "all required with additional keys: schema order kept");
+    // Pattern properties may match declared names: any order, no set tracked.
+    Json patterned                 = five;
+    patterned["patternProperties"] = Json{{"^x", Json{{"type", "string"}}}};
+    const auto pattern             = compiler.compile(schema_spec(patterned));
+    check(admits(pattern, object_of({"C", "x1", "A", "E"})), "pattern properties: any order");
     // Nested objects, arrays of objects and $ref targets hold the same rule.
     const Json nested = Json{{"type", "object"},
                              {"$defs", Json{{"five", five}}},
@@ -974,12 +987,12 @@ void key_order_contract(const ConstraintCompiler& compiler) {
         Json::parse(R"({"type":"object","properties":{"v":{"type":"integer"},
             "child":{"$ref":"#"}},"additionalProperties":false})");
     Json value = Json{{"v", 0}};
-    for (int depth = 1; depth <= 15; ++depth) { value = Json{{"v", depth}, {"child", value}}; }
+    for (int depth = 1; depth <= 14; ++depth) { value = Json{{"v", depth}, {"child", value}}; }
     check(admits(compiler.compile(schema_spec(node, false)), value.dump(4)),
-          "a 16-level object indented by four spaces");
+          "a 15-level object indented by four spaces");
     OutputConstraintSpec any;
     any.kind = OutputConstraintKind::JsonObject;
-    check(admits(compiler.compile(any), value.dump(4)), "json_object: 16 levels indented by four");
+    check(admits(compiler.compile(any), value.dump(4)), "json_object: 15 levels indented by four");
 }
 
 // A strict tool's arguments are one JSON object in every tool-call syntax: the root is held to

@@ -818,15 +818,16 @@ still valid JSON. NInferno's grammars let the model write keys in its own order:
 - An object's optional properties may come in any order, each at most once. Its required
   properties keep their schema order among themselves (the optional ones may sit before, between or
   after them), and the object cannot end before all of them are written.
-- An object whose properties are all required keeps its schema order. OpenAI strict mode requires
-  every property to be required and documents that keys come in schema order; such schemas behave
-  the same here.
+- An object whose properties are all required keeps them in schema order. OpenAI strict mode
+  requires every property to be required and documents that keys come in schema order; such
+  schemas behave the same here.
 - Additional properties, where the schema admits them, may sit anywhere among the declared ones.
 - The same rule holds for nested objects, array items and `$ref` targets.
-- Each at most once is tracked for up to 1024 states per object: ten optional properties with no
-  required one, five with 31 required. Optional properties past those (in schema order) may still
-  come in any order but may repeat (the tool-call parser, like most JSON parsers, keeps the last
-  value).
+- Each at most once is tracked for up to 256 states per object (required properties written,
+  times the set of optional ones written): eight optional properties with no required one, six
+  with three required. Optional properties past those (in schema order), and every optional
+  property of an object with `patternProperties` or `propertyNames`, may still come in any order but may repeat (the
+  tool-call parser, like most JSON parsers, keeps the last value).
 - An object with `minProperties` or `maxProperties` keeps its optional properties in schema order;
   list them in the order the prompt asks for them.
 
