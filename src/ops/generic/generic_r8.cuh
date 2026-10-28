@@ -55,11 +55,12 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 
 // NINFERNO-SPECIAL(arch:sm70): on Volta a lane's groups run one at a time through one ring slot
 // (fetch, then compute) instead of two slots in flight with the compute written out once per
-// slot. The kernel's code is what a cold SM fetches before it can issue: a lane runs its 1..3
-// groups once, so every SM executes the whole body straight through from a cold instruction cache
-// at each launch (a model step runs ~400 kernels between two launches of the same projection).
-// One compute body instead of two halves the instruction lines fetched; the slot's registers
-// freed raise the CTAs per SM, which keep more bytes in flight than one warp's second slot did.
+// slot. A model step runs ~400 kernels between two launches of the same projection, so each SM
+// starts a launch with a cold instruction cache and fetches the body before it can issue it; a
+// lane runs only a few groups (Q6_K up to K = 12288: 1..3), so that fetch is not amortized. One
+// compute body instead of two cuts the code 20-33 % (Q6_K w4r1 1352 -> 960 instructions) and the
+// registers (Q6_K w4r2 205 -> 137: 2 -> 3 CTAs per SM), whose extra warps keep more bytes in
+// flight than a warp's second slot did. GV100, Qwen3.5-9B Q4_K_M plain decode 83.8 -> 86.9 tok/s.
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 750
 #    define NINFERNO_R8_ONE_SLOT 1
 #else

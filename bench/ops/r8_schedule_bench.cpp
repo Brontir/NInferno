@@ -46,8 +46,8 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
-#include <utility>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -92,7 +92,8 @@ std::size_t g_interleave_bytes = 0;
 
 // --interleave-weight FORMAT,N: the dispatcher's decode route of another weight (FORMAT, N rows, the
 // problem's K, a fresh copy each launch) runs between launches: other code and only clean lines
-// pass through the L2, as between a model step's projections.
+// pass through the L2, as between a model step's projections. Its copies cover four times the L2
+// (not --span-mib).
 // Repeatable: several formats run in turn (their code, too, passes through the instruction caches).
 std::vector<std::pair<std::string, std::int32_t>> g_interleave;
 
@@ -246,6 +247,8 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
                              generic::Epilogue::Store},
             other.copies[0]->weight, 1, false);
     }
+    // Each interleaved route runs once before the capture (a first call may do work a graph cannot
+    // hold).
     const auto interleave = [&](int l) {
         for (const Other& other : others) {
             generic::Call call;
@@ -258,6 +261,8 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
             generic::run_route(other.route, call, &workspace, stream);
         }
     };
+    interleave(0);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
     std::vector<cudaGraphExec_t> graphs(schedules);
     for (int i = 0; i < schedules; ++i) {
         const generic::Route r = routes[i];
@@ -356,6 +361,9 @@ int main(int argc, char** argv) {
                 g_interleave_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--interleave-weight") {
                 const auto comma = v.find(',');
+                if (comma == std::string::npos) {
+                    throw std::invalid_argument("--interleave-weight: expected FORMAT,N");
+                }
                 g_interleave.emplace_back(v.substr(0, comma), std::stoi(v.substr(comma + 1)));
             } else if (a == "--span-mib") {
                 g_span_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
