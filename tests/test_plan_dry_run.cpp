@@ -281,13 +281,19 @@ void test_seams() {
     }
 }
 
-// The family table the dry run reads is the Engine's (family_registry.cpp).
+// Every family the Engine serves (family_registry.cpp) has its storages in the one table the dry
+// run reads, and FP8 rows stand exactly where the chip has E4M3 instructions (sm_89 on).
 void test_family_table() {
     for (const auto& family : rt::families()) {
-        for (const int cc : {70, 75, 80, 86, 89, 120}) {
+        for (const int cc : {0, 70, 72, 75, 80, 86, 87, 89, 90, 100, 110, 120, 121, 130}) {
             const auto storage = rt::plan_family_storage(family.model_type, cc);
             check(storage.has_value(), std::string(family.model_type) + " has storage");
             if (!storage) { continue; }
+            const auto own = rt::family_storage(family.model_type);
+            const bool fp8 = own && own->kv == KvCacheStorage::Fp8E4M3Row256;
+            check(storage->kv == (fp8 && cc < 89 ? KvCacheStorage::BFloat16 : own->kv),
+                  std::string(family.model_type) + " FP8 rows from sm_89 at cc " +
+                      std::to_string(cc));
             check(storage->kv == rt::automatic_kv_cache(family.model_type, cc),
                   std::string(family.model_type) + " KV codec at cc " + std::to_string(cc));
             check(storage->recurrent == rt::automatic_recurrent_state(family.model_type),

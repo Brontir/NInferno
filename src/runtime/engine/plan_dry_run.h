@@ -125,14 +125,22 @@ struct PlanFitsInstead {
                                                 bool pinned, bool chunk_pinned,
                                                 const PlanLongestContextFn& longest);
 
-// The family's automatic storages, by model_type (family_registry.cpp's table; a CPU test checks
-// the two agree): the KV codec on a GPU of `compute_capability` and the recurrent state under
-// --activations fast. nullopt: no family declares the model_type.
+// The family's automatic storages, by model_type: the KV codec and the recurrent state under
+// --activations fast. One table for the Engine (family_registry.h automatic_kv_cache,
+// automatic_recurrent_state), the plan without the weights and the configuration choice.
 struct PlanFamilyStorage {
     KvCacheStorage kv               = KvCacheStorage::BFloat16;
     RecurrentStateStorage recurrent = RecurrentStateStorage::FP32;
 };
 
+// The family's own, whatever the GPU. nullopt: no family declares the model_type.
+[[nodiscard]] std::optional<PlanFamilyStorage> family_storage(std::string_view model_type);
+
+// A family's KV codec on a GPU of `compute_capability` (major * 10 + minor): FP8 rows fall back to
+// BF16 where the chip has no E4M3 instructions (DeviceFeatures::mma_fp8, a fact of the chip).
+[[nodiscard]] KvCacheStorage kv_storage_on(KvCacheStorage family_kv, int compute_capability);
+
+// family_storage with its KV codec on a GPU of `compute_capability` (kv_storage_on).
 [[nodiscard]] std::optional<PlanFamilyStorage> plan_family_storage(std::string_view model_type,
                                                                    int compute_capability);
 

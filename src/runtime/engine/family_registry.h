@@ -20,11 +20,6 @@ namespace ninferno::runtime {
 struct FamilyEntry {
     std::string_view model_type;
     FamilyLoader load = nullptr;
-    // The KV storage of an automatic kv_cache (EngineOptions::kv_cache_automatic).
-    KvCacheStorage kv_cache = KvCacheStorage::BFloat16;
-    // The recurrent state of an automatic recurrent_state under --activations fast
-    // (EngineOptions::recurrent_state_automatic).
-    RecurrentStateStorage recurrent_state = RecurrentStateStorage::FP32;
 };
 
 // Every family this build serves.
@@ -35,10 +30,8 @@ struct FamilyEntry {
 [[nodiscard]] KvCacheStorage automatic_kv_cache(std::string_view model_type);
 
 // The automatic KV storage on a GPU of `compute_capability` (major * 10 + minor): the family's,
-// except that FP8 rows fall back to BF16 below sm_89. FP8 rows halve the K/V bytes a long step
-// reads only where the GPU converts E4M3 in hardware; below it the attention widens every code
-// in software and the step slows down (RTX 3090, gpt-oss-20b at 88K: 136 -> 91 t/s, short
-// requests 233 -> 208).
+// except that FP8 rows fall back to BF16 on a chip without E4M3 instructions (plan_dry_run.h
+// kv_storage_on, the one rule for the Engine and the plan).
 [[nodiscard]] KvCacheStorage automatic_kv_cache(std::string_view model_type,
                                                 int compute_capability);
 
