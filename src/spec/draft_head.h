@@ -13,10 +13,12 @@
 //           (a_j = 1): E(N) / E(V) = sum_{j=0..k} c^j / (k + 1), the most a restriction can cost
 //           a round of k drafts, so no pair's measured acceptance enters the choice.
 //
-// N maximizes E(N) / R(N) = [sum c^j / (k + 1)] / [1 - (1 - N/V) share] over steps of kRowStep
-// rows. Measured against it (hard50 on the RTX 4070 Ti, Qwen3.5-9B Q4_K_M dflash:7, N 131072):
-// rounds +4.7 % (bytes predicted +5.3 %), tokens a round 4.80 -> 4.79 (bound -0.24, the hard50
-// outputs' own c predict -0.03), tok/s +4.4 % (predicted +4.6 %).
+// N maximizes E(N) / R(N) = [sum c^j / (k + 1)] / [1 - (1 - N/V) share] over steps of kDraftHeadRowStep
+// rows. Measured against it (hard50, Qwen3.5-9B Q4_K_M dflash:7): the time a round saves is the
+// rows' bytes over the DRAM rate (RTX 4070 Ti, N 65536 / 98304 / 131072: 1.30 / 1.06 / 0.82 ms
+// against 1.26 / 1.04 / 0.81 predicted); at the chosen N 147456 tok/s +3.7 % (RTX 4060 Ti),
+// +4.1 % (RTX 4070 Ti), +3.5 % (RTX 5070 Ti) against +3.5 / +3.3 / +3.7 % predicted, tokens a
+// round within 0.03 of the full head's (the hard50 outputs' own c predict -0.03).
 
 #include <cstdint>
 #include <span>
