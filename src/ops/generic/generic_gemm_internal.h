@@ -105,10 +105,16 @@ inline constexpr double kRmmaWideBytes = 5.5;
 // In flight a SM holds tens of KB of weight loads at either count (rmma_kernel's ring: 37-74 KB
 // against the 2-4 KB that Little's law asks at 230-310 ns of DRAM latency, generic_gemm.cuh), so
 // a CTA fewer per SM costs nothing while the grid still fits in as many waves; a grid it pushes
-// into another, part-empty wave runs that wave's CTAs on SMs the rest left idle (RTX 5070 Ti,
-// Q5_K w1x4 at 129 registers against 127, 3 CTAs per SM instead of 4: the 256-CTA calls of
-// Qwen3.5-9B on 70 SMs, one wave at 4 and two at 3, lost 12-30 %). A variant that holds no CTA,
-// or unknown counts (0), never pays.
+// into another, part-empty wave runs that wave on SMs the rest left idle. Q4_K add K = 4096 w1x4
+// at T = 8, held to 4, 3 and 2 CTAs per SM by a pad of shared memory (time against 4 CTAs):
+// RTX 5070 Ti (70 SMs), grids of 192..768 CTAs: as many waves 0.97 and 0.97, a wave more
+// 1.16-1.61 (8 of 8); RTX 4060 Ti (34 SMs), 96..384 CTAs: as many waves 0.98 and 0.99, a wave
+// more 1.02-1.28 (8 of 8). The loss of a wave more lies between the bytes (1.0: the board
+// streams at its bandwidth whatever the residency) and the waves' ratio (a latency-bound CTA
+// takes as long alone), nearer the latter on the latency-bound 5070 Ti; a register more that
+// changed no wave never cost (the old rule refused it: Q5_K w1x4 at 129 registers against 127 on sm_120, 4 -> 3
+// CTAs, one wave -> two on the 256-CTA calls of Qwen3.5-9B, 12-30 % slower). A variant that holds
+// no CTA, or unknown counts (0), never pays.
 [[nodiscard]] bool rmma_variant_occupancy_rule(std::int64_t grid_ctas, int sms, int variant_ctas,
                                                int plain_ctas);
 
