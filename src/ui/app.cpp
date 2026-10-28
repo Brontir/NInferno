@@ -2410,7 +2410,9 @@ void App::install(httplib::Server& server) {
                                     throw std::invalid_argument(why);
                                 }
                             }
-                            if (facts && !request.kv_dtype.empty()) {
+                            // A shape the facts do not name is the engine's to judge at
+                            // load (as refuse_unrun_kv_at_start): not refused here.
+                            if (facts && facts->model.known() && !request.kv_dtype.empty()) {
                                 if (const std::string why = product::kv_refusal(
                                         *facts, product::parse_kv_dtype(request.kv_dtype));
                                     !why.empty()) {
