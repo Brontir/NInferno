@@ -67,7 +67,8 @@ __device__ __forceinline__ unsigned codes_h2(unsigned bits, unsigned bias_bits) 
 }
 
 // Bits 0..3 and 16..19 of w with the f16 exponent of 1024 above them, (w & 0x000f000f) |
-// 0x64006400, in one LOP3: with both constants immediate the compiler splits it in two.
+// 0x64006400, in one LOP3: with both constants immediate the compiler emitted two (a SASS LOP3
+// takes one immediate; gate/up SwiGLU 256 -> 192 LOP3, 2272 -> 2208 instructions).
 __device__ __forceinline__ unsigned nibbles_h2(unsigned w) {
     unsigned r;
     asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(w), "n"(0x000f000f), "r"(0x64006400U));
@@ -336,7 +337,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
     // The weight stream Ahead superblocks ahead: cur, then nx1 (and nx2) in flight. Little's law:
     // an SM needs ~5.7 KB in flight for the measured 660 GB/s over ~1000 cycles of latency at the
     // 1.44 GHz it runs under load (GV100), and a CTA keeps 32 rows of a superblock in flight (Q4_K
-    // 4.6 KB, SwiGLU 9.2). With two CTAs or more an SM one superblock ahead covers it; the second
+    // 4.6 KB, SwiGLU 9.2; the other formats' superblocks are larger). With two CTAs or more an SM one superblock ahead covers it; the second
     // one held 23 more registers a lane (gate/up 160 -> 137) and added issue work to a loop that
     // is issue-bound. A grid of fewer CTAs than two an SM keeps the second (launch_format).
     F cur[kSets], nx1[kSets], nx2[kSets];
