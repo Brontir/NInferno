@@ -1207,6 +1207,11 @@ void test_quant_option_one_rule() {
     check(a.weight_bytes == b.weight_bytes && a.weight_bytes == static_cast<double>(16 * kGiB - kGiB / 2),
           "the same decode bytes: the trunk without the MTP layers or the drafter");
     check(a.int8_route == b.int8_route && a.nvfp4 == b.nvfp4, "the same routes");
+    // An artifact's routes are its stored encodings', whatever its source label says.
+    pr::PlanSourceFacts nvfp4 = artifact;
+    nvfp4.shape.weight_formats = {"nvfp4", "bf16"};
+    check(pr::quant_option_of(nvfp4).nvfp4 && pr::quant_option_of(nvfp4).label == "Q4_K_M",
+          "the artifact's NVFP4 encodings price its route, the source label its accuracy");
     artifact.shape.quant_label.clear();
     check(pr::quant_option_of(artifact).label == "the model's weights", "no label: said so");
 }

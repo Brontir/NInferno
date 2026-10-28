@@ -201,9 +201,10 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
                                   f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
                                   f != "ggml_q2_0";
                        });
-    // A quantization named by its label (a hub row: the facts' header may be another row's; an
-    // artifact's recorded source) takes its route from the label.
-    if (!label.empty()) {
+    // A quantization named by its listing's label (a hub row: the facts' header may be another
+    // row's) takes its route from the label; an artifact's recorded source keeps the routes of the
+    // encodings it holds (its weight_formats, read above).
+    if (!asked.empty()) {
         quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
         quant.int8_route = true;
         for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {

@@ -823,8 +823,13 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
     out.model.weight_elements   = elements;
-    // The source quantization the converter recorded (a GGUF file name's label).
-    if (const auto q = dir.provenance.find("quant"); q != dir.provenance.end() && q->is_string()) {
+    // The source quantization the converter recorded (a GGUF file name's label), where the
+    // weights are still its encodings: a maintainer requantization (--maintainer-quantize) stores
+    // other ones, priced by what the artifact holds (no label).
+    const auto requantized = dir.provenance.find("maintainer_quantize");
+    if (const auto q = dir.provenance.find("quant");
+        q != dir.provenance.end() && q->is_string() &&
+        !(requantized != dir.provenance.end() && requantized->is_boolean() && requantized->get<bool>())) {
         out.shape.quant_label = q->get<std::string>();
     }
     out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
