@@ -290,7 +290,8 @@ void test_family_table() {
             check(storage.has_value(), std::string(family.model_type) + " has storage");
             if (!storage) { continue; }
             const auto own = rt::family_storage(family.model_type);
-            const bool fp8 = own && own->kv == KvCacheStorage::Fp8E4M3Row256;
+            if (!own) { continue; }
+            const bool fp8 = own->kv == KvCacheStorage::Fp8E4M3Row256;
             check(storage->kv == (fp8 && cc < 89 ? KvCacheStorage::BFloat16 : own->kv),
                   std::string(family.model_type) + " FP8 rows from sm_89 at cc " +
                       std::to_string(cc));

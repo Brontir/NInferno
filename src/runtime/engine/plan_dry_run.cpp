@@ -215,6 +215,7 @@ struct FamilyStorageRow {
     PlanFamilyStorage storage;
 };
 
+// A family added to family_registry.cpp's kFamilies adds its row here (test_family_table checks).
 constexpr FamilyStorageRow kFamilyStorage[] = {
     {"qwen3_5_text", {KvCacheStorage::Int8Group64, RecurrentStateStorage::FP16}},
     {"qwen3_5_moe_text", {KvCacheStorage::Int8Group64, RecurrentStateStorage::FP16}},
@@ -235,7 +236,8 @@ std::optional<PlanFamilyStorage> family_storage(std::string_view model_type) {
 
 KvCacheStorage kv_storage_on(KvCacheStorage family_kv, int compute_capability) {
     // FP8 rows halve the K/V bytes a long step reads only where the GPU converts E4M3 in hardware
-    // (the E4M3 instructions, DeviceFeatures::mma_fp8: sm_89 on); below it the attention widens
+    // (the codec's cvt, ops/common/fp8_e4m3.cuh: sm_89 on, the same instruction set as the E4M3
+    // mma.sync, so DeviceFeatures::mma_fp8 stands for both); below it the attention widens
     // every code in software and the step slows down (RTX 3090, gpt-oss-20b at 88K: 136 -> 91
     // t/s, short requests 233 -> 208).
     const bool e4m3 = device_features_for(compute_capability / 10, compute_capability % 10).mma_fp8;

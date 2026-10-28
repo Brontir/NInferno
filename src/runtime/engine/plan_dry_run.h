@@ -137,7 +137,8 @@ struct PlanFamilyStorage {
 [[nodiscard]] std::optional<PlanFamilyStorage> family_storage(std::string_view model_type);
 
 // A family's KV codec on a GPU of `compute_capability` (major * 10 + minor): FP8 rows fall back to
-// BF16 where the chip has no E4M3 instructions (DeviceFeatures::mma_fp8, a fact of the chip).
+// BF16 where the chip has no E4M3 instructions (the cvt the codec decodes with; DeviceFeatures::
+// mma_fp8 marks the same sm_89 instruction set, a fact of the chip).
 [[nodiscard]] KvCacheStorage kv_storage_on(KvCacheStorage family_kv, int compute_capability);
 
 // family_storage with its KV codec on a GPU of `compute_capability` (kv_storage_on).

@@ -14,11 +14,15 @@ namespace {
 
 // The families of this build, by the model_type their artifacts declare. A family is added by one
 // row here and its loader; nothing else in the Engine or the server changes.
-// Their automatic storages are one table beside the plan's (plan_dry_run.h family_storage).
+// Their automatic storages are one table beside the plan's (plan_dry_run.cpp kFamilyStorage): a new
+// family adds its row there too.
 constexpr std::array kFamilies{
-    FamilyEntry{"qwen3_5_text", &load_qwen3_5}, FamilyEntry{"qwen3_5_moe_text", &load_qwen3_5},
-    FamilyEntry{"gemma4_text", &load_gemma4},   FamilyEntry{"dense_decoder", &load_dense},
-    FamilyEntry{"moe_decoder", &load_dense},    FamilyEntry{"nemotron_h", &load_nemotron_h},
+    FamilyEntry{"qwen3_5_text", &load_qwen3_5},
+    FamilyEntry{"qwen3_5_moe_text", &load_qwen3_5},
+    FamilyEntry{"gemma4_text", &load_gemma4},
+    FamilyEntry{"dense_decoder", &load_dense},
+    FamilyEntry{"moe_decoder", &load_dense},
+    FamilyEntry{"nemotron_h", &load_nemotron_h}, // one row a family
 };
 
 } // namespace
