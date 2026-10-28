@@ -275,9 +275,17 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 } // namespace
 
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
-    // T <= 8: a speculative round's drafter block and verify width (dflash:7 = 8 columns).
-    constexpr int kMaxTokens = 8;
-    if (args.lane_local == 0 || args.tokens < 1 || args.tokens > kMaxTokens || args.join_previous != 0) {
+    if (args.lane_local == 0 || args.tokens < 1 || args.join_previous != 0) return false;
+    // Each warp of a CTA reads the whole activation, T x K BF16, for its row: up to four tokens
+    // always, five to eight (a speculative round's drafter block and verify, dflash:7 = 8 columns)
+    // while it fits an SM's L1 (128 KiB on sm_70), where the CTA's eight warps share it. Past that
+    // every warp streams it from L2, and the emulated register MMA was faster (GV100, T 6..8 at
+    // K 12288: Q8 4096 rows 310..399 us against 293; K 32768: 799..1044 against 785).
+    constexpr int kAlwaysTokens     = 4;
+    constexpr int kMaxTokens        = 8;
+    constexpr std::int64_t kL1Bytes = 128 * 1024;
+    const std::int64_t activation   = static_cast<std::int64_t>(args.tokens) * args.k * 2;
+    if (args.tokens > kMaxTokens || (args.tokens > kAlwaysTokens && activation > kL1Bytes)) {
         return false;
     }
     if (codec == WeightCodec::Bf16) return (args.k % 8) == 0;
