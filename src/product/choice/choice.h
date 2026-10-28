@@ -117,12 +117,13 @@ struct QuantOption {
     WeightClass weights = WeightClass::KQuant;
 };
 
-// The weight class of a quantization: from its weight formats where known (as
-// artifact::format_name spells them), else from its label (a hub row: Q4_K / Q5_K / Q6_K mixes,
-// Q8 / Q8_0). A K-quant mix may carry Q8_0 and 16-bit tensors; anything else is Other.
 // The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
 [[nodiscard]] std::string_view generation_of(const CardFacts& card) noexcept;
 
+// The weight class of a quantization: from its weight formats where known (as
+// artifact::format_name spells them), else from its label (a hub row: Q4_K / Q5_K / Q6_K mixes;
+// Q8, Q8_0 and unsloth's Q8_K_XL, which is Q8_0 with 16-bit tensors). A K-quant mix may carry Q8_0
+// and 16-bit tensors; anything else is Other.
 [[nodiscard]] WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label);
 
 // The band within which two quantizations' worths are a tie on this card's decisions (the

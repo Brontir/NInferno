@@ -532,8 +532,14 @@ WeightClass weight_class_of(const std::vector<std::string>& formats, std::string
     for (std::size_t i = 0; i < t.size(); ++i) {
         const bool next_k = i + 1 < t.size() && t[i + 1] == "K";
         if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k) { return WeightClass::KQuant; }
-        if (t[i] == "Q8" && !(i + 1 < t.size() && t[i + 1] == "KV") && !next_k) {
-            if (i + 1 == t.size() || t[i + 1] == "0") { return WeightClass::Q8; }
+        if (t[i] == "Q8") {
+            // Q8, Q8_0; unsloth's Q8_K_XL / _L / _M / _S (Q8_0 with 16-bit tensors), not Q8_KV or Q8_K_R8.
+            const std::string next  = i + 1 < t.size() ? t[i + 1] : "";
+            const std::string after = i + 2 < t.size() ? t[i + 2] : "";
+            if (next.empty() || next == "0" ||
+                (next == "K" && (after == "XL" || after == "L" || after == "M" || after == "S"))) {
+                return WeightClass::Q8;
+            }
         }
     }
     return WeightClass::Other;

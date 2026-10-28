@@ -242,8 +242,8 @@ void counts_the_kernels(const json& census) {
     for (const char* k : {"Q4_K_M", "UD-Q4_K_XL", "Q5_K_M", "UD-Q5_K_XL", "Q6_K", "q6_k"}) {
         check(ch::weight_class_of({}, k) == ch::WeightClass::KQuant, "a K-quant label");
     }
-    for (const char* q : {"Q8_0", "Q8", "UD-Q8_0"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::Q8, "a Q8 label"); }
-    for (const char* o : {"IQ4_NL", "UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_K_XL", "Q8_KV"}) {
+    for (const char* q : {"Q8_0", "Q8", "q8_0", "UD-Q8_K_XL"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::Q8, "a Q8 label"); }
+    for (const char* o : {"IQ4_NL", "UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_KV", "Q8_K_R8"}) {
         check(ch::weight_class_of({}, o) == ch::WeightClass::Other, "an unmeasured label");
     }
 }
