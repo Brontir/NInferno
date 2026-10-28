@@ -2222,7 +2222,7 @@ PLAN:
 | `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
 | `estimate_basis`, `estimate_reason` | `family_planner` (the rung bytes are the start planner's but the workspace) or `approximate` and why |
 | `reason`, `fits_instead` | when nothing fits: why, and `[{concurrency, context}]`, the longest automatic context each concurrency fits |
-| `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`) |
+| `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`), `activations_not_run` (the `--activations` mode pinned is one the model's family does not run: `fits` is false whatever the memory holds, and a start refuses it before any weight loads with the same words) |
 | `ladder` | every rung, top first, as `chosen` |
 | `speculation` | SPEC: the speculation the plan was made with |
 

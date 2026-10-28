@@ -361,6 +361,7 @@ int main(int argc, char** argv) {
                                                          .ring        = cli.sliding_kv_given,
                                                          .chunk       = true};
             product::PlannedSpeculation planned = product::plan_model(facts, inputs);
+            product::refuse_unrun_activations(facts, inputs, planned);
             const std::string source                  = cli.artifact_path.string();
             // The configuration choice for the axes left automatic, as a start would take it.
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
@@ -386,6 +387,11 @@ int main(int argc, char** argv) {
         // GPU (product/plan/plan_choice.h), as ninferno-serve's start takes it, the drafter with
         // them under --spec auto.
         std::optional<ninferno::spec::Mode> chosen_drafter;
+        // --activations given that the model's family does not run: refused before any load.
+        if (cli.activations_given) {
+            ninferno::product::refuse_unrun_activations_at_start(cli.artifact_path,
+                                                                 engine_options.activations);
+        }
         {
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
                                                      .activations = cli.activations_given,

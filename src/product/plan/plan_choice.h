@@ -80,6 +80,19 @@ struct StartAxes {
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
 
+// Why a start refuses `mode` for this model ("" when its family runs it): --activations int8 is
+// the Qwen 3.5/3.6 families' only (choice::allowed_axes, the engine's refuse_qwen_only_options).
+// One check for ninferno-serve's start, its plan without the weights and ninferno-ui's plan and
+// launch.
+[[nodiscard]] std::string activation_refusal(const PlanSourceFacts& facts, ActivationMode mode);
+// A start of `artifact` with --activations `mode` given: throws std::invalid_argument with
+// activation_refusal's words when the model's family does not run it (before any weight loads).
+void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, ActivationMode mode);
+// A plan whose pinned activations (inputs.pins.activations) the family does not run: refused
+// (fits false, refused_code "activations_not_run", the reason in words). Unchanged otherwise.
+void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                              PlannedSpeculation& planned);
+
 // The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
 // activations and widest chunk, the axes the user left automatic; not the drafter).
 [[nodiscard]] DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,

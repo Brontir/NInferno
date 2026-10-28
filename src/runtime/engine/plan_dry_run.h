@@ -339,6 +339,9 @@ struct DryRunPlan {
     // as a start's refusal advises it (plan_fits_instead: the asked concurrency first when an axis
     // was pinned, then each lower one that fits longer).
     std::string reason;
+    // A refusal before the memory (the start refuses the options whatever fits): its code
+    // ("activations_not_run"), "" when none. The plan then does not fit and `reason` says why.
+    std::string refused_code;
     std::vector<ConcurrencyFit> fits_instead;
 
     // The rung selected, or null.

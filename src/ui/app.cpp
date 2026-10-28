@@ -16,6 +16,7 @@
 #include "convert/gguf_model.h"
 #include "convert/cache.h"
 #include "convert/support.h"
+#include "product/activation_options.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
@@ -1061,6 +1062,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             at      = product::with_weights(*facts, chosen->weight_bytes, chosen->basis);
         } else {
             planned = product::plan_model(*facts, inputs);
+            // Nothing fits or runs: a pinned mode the family does not run says so.
+            product::refuse_unrun_activations(*facts, inputs, planned);
         }
         doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
         planned_at = at;
@@ -2367,6 +2370,34 @@ void App::install(httplib::Server& server) {
                             if (const auto local = local_artifact(repo, quant); !local.empty()) {
                                 request.model = local.string();
                                 request.quant.clear();
+                            }
+                        }
+                        // A mode the model's family does not run is refused here, with the
+                        // plan's words (product::activation_refusal), from the facts at hand: the
+                        // artifact's, else the repository's read for its plan. The server refuses
+                        // it at start as well when neither is known yet.
+                        if (!request.activations.empty()) {
+                            const ActivationMode mode =
+                                product::parse_activation_mode(request.activations);
+                            std::optional<product::PlanSourceFacts> facts;
+                            const std::string model = split_model_tag(request.model).first;
+                            if (fs::path(model).extension() == ".ninferno") {
+                                try {
+                                    facts = product::plan_facts_of_artifact(model);
+                                } catch (const std::exception&) {} // unreadable: the server says
+
+                            } else {
+                                std::lock_guard lock(sizes_mutex_);
+                                const auto it = plan_facts_.find(hub_key(
+                                    model, request.hub.empty() ? "huggingface" : request.hub));
+                                if (it != plan_facts_.end()) { facts = it->second; }
+                            }
+                            if (facts) {
+                                if (const std::string why =
+                                        product::activation_refusal(*facts, mode);
+                                    !why.empty()) {
+                                    throw std::invalid_argument(why);
+                                }
                             }
                         }
                         request.port     = processes_.free_port();

@@ -211,6 +211,10 @@ std::uint32_t card_gb(const runtime::PlanDeviceFacts& device) noexcept {
 
 PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
     PlanReasonCode out;
+    if (!plan.refused_code.empty()) {
+        out.code = plan.refused_code;
+        return out;
+    }
     if (!plan.planned) {
         out.code = "shape_unknown";
         return out;
@@ -469,19 +473,23 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // at its storages and (--spec auto) its drafter (plan_at_choice), the probes of its own
         // context among them: as the plan of that quantization named shows it.
         std::optional<ServedChoice> served;
+        if (row.candidate.supported && inputs.pins.activations) {
+            // A pinned activation mode the family does not run: the start refuses it; the row's
+            // plan says so (refused, not a fit at a mode that never runs).
+            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            if (const std::string why = activation_refusal(facts, inputs.options.activations);
+                !why.empty()) {
+                row.candidate.supported = false;
+                row.unsupported_code    = "activations_not_run";
+                row.why_unsupported     = why;
+                row.planned             = plan_model(facts, inputs_for(inputs, q));
+                refuse_unrun_activations(facts, inputs, row.planned);
+            }
+        }
         if (row.candidate.supported) {
             served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
                                        inputs_for(inputs, q), inputs.pins, q.quant);
             if (served) { row_axes = start_axes(*served, inputs.pins); }
-            // A pinned activation mode the family does not run: the start refuses it.
-            const std::vector<ActivationMode> modes =
-                served ? served->allowed_activations : std::vector<ActivationMode>{};
-            if (inputs.pins.activations && !modes.empty() &&
-                std::find(modes.begin(), modes.end(), inputs.options.activations) == modes.end()) {
-                row.candidate.supported = false;
-                row.unsupported_code    = "activations_not_run";
-                row.why_unsupported     = served->choice.why;
-            }
         }
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
@@ -509,7 +517,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                 ? runtime::QuantFitState::Unknown
                                 : runtime::QuantFitState::Unsupported;
         }
-        if (row.planned.plan.planned) {
+        if (row.candidate.supported && row.planned.plan.planned) {
             // The speed of a typical request at the storages this row's plan serves with.
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             choice::ModelFacts model     = choice_model_of(facts);

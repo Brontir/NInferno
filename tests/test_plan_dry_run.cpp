@@ -1136,9 +1136,33 @@ void test_rows_at_choice() {
                 inputs.pins.activations       = launch.activations_pinned();
                 const pr::QuantPlan plan      = pr::plan_quants(shape, listing, inputs);
                 const pr::QuantRow& row       = plan.rows.front();
+                const std::string refusal = pr::activation_refusal(
+                    pr::with_weights(shape, row.weight_bytes, row.basis), o.options.activations);
+                check(refusal.empty() == !(std::string(act) == "int8" && !family.int8),
+                      what + ": the shared check refuses only a mode the family does not run");
                 if (std::string(act) == "int8" && !family.int8) {
-                    check(!row.candidate.supported && row.unsupported_code == "activations_not_run",
+                    check(!row.candidate.supported && row.unsupported_code == "activations_not_run" &&
+                              row.why_unsupported == refusal,
                           what + ": refused");
+                    // The row's plan keeps the verdict: planned, not fitting, its code and words
+                    // (a named quantization's plan shows this row, never a fit at a mode never run).
+                    check(row.planned.plan.planned && !row.planned.plan.fits &&
+                              row.planned.plan.refused_code == "activations_not_run" &&
+                              row.planned.plan.reason == refusal && !row.estimate,
+                          what + ": the row's plan is refused");
+                    const nlohmann::json doc = pr::dry_plan_document(
+                        shape, "test/repo:Q4_K_M", "hub", inputs, row.planned, &plan);
+                    check(doc["plan"]["fits"] == false &&
+                              doc["plan"]["reason_code"] == "activations_not_run" &&
+                              doc["quants"][0]["unsupported_code"] == "activations_not_run",
+                          what + ": the document says fits false with the code");
+                    // A plan of the same inputs made elsewhere (a CLI's, a fallback) is refused too.
+                    pr::PlannedSpeculation fallback = pr::plan_model(
+                        pr::with_weights(shape, row.weight_bytes, row.basis), inputs);
+                    pr::refuse_unrun_activations(pr::with_weights(shape, row.weight_bytes, row.basis),
+                                                 inputs, fallback);
+                    check(!fallback.plan.fits && fallback.plan.refused_code == "activations_not_run",
+                          what + ": a fallback plan is refused");
                     continue;
                 }
                 const auto served = pr::choose_at_weights(

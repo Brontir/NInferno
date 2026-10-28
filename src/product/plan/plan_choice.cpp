@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 
 namespace ninferno::product {
 
@@ -287,8 +288,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     // choice to make at it.
     if (p.activations && std::find(allowed.activations.begin(), allowed.activations.end(),
                                    *p.activations) == allowed.activations.end()) {
-        out.choice.why = std::string("--activations ") + activation_name(*p.activations) +
-                         ": this model's family does not run it";
+        out.choice.why = activation_refusal(facts, *p.activations);
         return out;
     }
     out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
@@ -302,6 +302,35 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                   .decode_per_stream;
     }
     return out;
+}
+
+std::string activation_refusal(const PlanSourceFacts& facts, ActivationMode mode) {
+    if (!facts.model.known()) { return ""; }
+    const choice::Allowed allowed = choice::allowed_axes(choice_model_of(facts), KvCacheStorage::BFloat16);
+    if (std::find(allowed.activations.begin(), allowed.activations.end(), mode) !=
+        allowed.activations.end()) {
+        return "";
+    }
+    return std::string("--activations ") + activation_name(mode) +
+           " is for Qwen 3.5/3.6 models; this model (" + facts.model.model_type +
+           ") runs fast or exact";
+}
+
+void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, ActivationMode mode) {
+    const std::string why = activation_refusal(plan_facts_of_artifact(artifact), mode);
+    if (!why.empty()) { throw std::invalid_argument(why); }
+}
+
+void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                              PlannedSpeculation& planned) {
+    if (!inputs.pins.activations) { return; }
+    const std::string why = activation_refusal(facts, inputs.options.activations);
+    if (why.empty()) { return; }
+    planned.plan.fits         = false;
+    planned.plan.rung         = 0;
+    planned.plan.reason       = why;
+    planned.plan.refused_code = "activations_not_run";
+    planned.plan.fits_instead.clear();
 }
 
 DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,

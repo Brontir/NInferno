@@ -1152,6 +1152,10 @@ void test_http() {
                       "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "spec_profile is a boolean");
+    res = client.Post("/api/launch", R"({"model":"org/m","activations":"fp4"})",
+                      "application/json");
+    check(res && res->status == 400 && res->body.find("activations") != std::string::npos,
+          "an activation mode serve does not know answered 400");
     res = client.Post("/api/tune", "{", "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "a broken JSON body answered 400");
@@ -1159,7 +1163,8 @@ void test_http() {
     // offline the repository's shape cannot be read (502 with the reason, never a guess).
     for (const char* query : {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9",
                               "/api/plan?repo=a/b&par=0", "/api/plan?repo=a/b&kv=fp16",
-                              "/api/plan?repo=a/b&spec=eagle", "/api/quants?repo=a/b&gpu=0&ctx=-5",
+                              "/api/plan?repo=a/b&spec=eagle", "/api/plan?repo=a/b&act=fp4",
+                              "/api/quants?repo=a/b&gpu=0&ctx=-5",
                               "/api/catalog?gpu=0&ctx=abc", "/api/catalog?gpu=0&par=12"}) {
         res = client.Get(query);
         check(res && res->status == 400 && res->body.find("\"error\"") != std::string::npos,
