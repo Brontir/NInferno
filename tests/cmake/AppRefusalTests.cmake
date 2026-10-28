@@ -84,3 +84,11 @@ foreach(program ninferno ninferno-serve ninferno-ui ninferno-convert ninferno-pe
   add_test(NAME ${test_name} COMMAND $<TARGET_FILE:${program}> --version)
   set_tests_properties(${test_name} PROPERTIES PASS_REGULAR_EXPRESSION "^NInferno ")
 endforeach()
+# The lab tuners time kernels on the machine: ninferno and ninferno-serve refuse them, the
+# maintainer tools take them (ninferno-perplexity parses the value, so a bad one is its refusal).
+ninferno_add_refusal_test(ninferno_serve_dense_tune_test ninferno-serve
+  "--dense-tune is a lab tuner's option" --model missing.ninferno --dense-tune on)
+ninferno_add_refusal_test(ninferno_cli_moe_tune_test ninferno
+  "--moe-tune is a lab tuner's option" missing.ninferno --moe-tune on)
+ninferno_add_refusal_test(ninferno_perplexity_moe_tune_test ninferno-perplexity
+  "--moe-tune must be off, on or retune" missing.ninferno --text t --moe-tune yes)
