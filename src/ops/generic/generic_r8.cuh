@@ -53,6 +53,19 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 #    define NINFERNO_R8_STAGED_GRID 0
 #endif
 
+// NINFERNO-SPECIAL(arch:sm70): on Volta a lane's groups run one at a time through one ring slot
+// (fetch, then compute) instead of two slots in flight with the compute written out once per
+// slot. The kernel's code is what a cold SM fetches before it can issue: a lane runs its 1..3
+// groups once, so every SM executes the whole body straight through from a cold instruction cache
+// at each launch (a model step runs ~400 kernels between two launches of the same projection).
+// One compute body instead of two halves the instruction lines fetched; the slot's registers
+// freed raise the CTAs per SM, which keep more bytes in flight than one warp's second slot did.
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 750
+#    define NINFERNO_R8_ONE_SLOT 1
+#else
+#    define NINFERNO_R8_ONE_SLOT 0
+#endif
+
 // The host's side of the same rule: whether this device's R8 launches stage the grid
 // (generic_gemm.cpp: no native BF16 MMA, sm_80 on has it).
 [[nodiscard]] bool r8_stage_grid();
@@ -132,7 +145,8 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         if constexpr (kPre) __syncthreads();
     }
 
-    Raw ring[2][kSets][kRows][kStride];
+    constexpr bool kOneSlot = NINFERNO_R8_ONE_SLOT != 0;
+    Raw ring[kOneSlot ? 1 : 2][kSets][kRows][kStride];
     const auto fetch = [&](auto slot_tag, int group) {
         constexpr int slot = decltype(slot_tag)::value;
 #pragma unroll
@@ -269,13 +283,22 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         }
     };
 
+    if constexpr (kOneSlot) {
+        // The first group is in flight since before the activation.
 #pragma unroll 1
-    for (int g = lane; g < groups; g += 64) {
-        if (g + 32 < groups) fetch(Slot1{}, g + 32);
-        compute(Slot0{}, g);
-        if (g + 32 >= groups) break;
-        if (g + 64 < groups) fetch(Slot0{}, g + 64);
-        compute(Slot1{}, g + 32);
+        for (int g = lane; g < groups; g += 32) {
+            if (g != lane) fetch(Slot0{}, g);
+            compute(Slot0{}, g);
+        }
+    } else {
+#pragma unroll 1
+        for (int g = lane; g < groups; g += 64) {
+            if (g + 32 < groups) fetch(Slot1{}, g + 32);
+            compute(Slot0{}, g);
+            if (g + 32 >= groups) break;
+            if (g + 64 < groups) fetch(Slot0{}, g + 64);
+            compute(Slot1{}, g + 32);
+        }
     }
 
     // Butterfly: every lane ends with the same sum (each step adds a pair in either order).
