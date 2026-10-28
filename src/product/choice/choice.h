@@ -262,6 +262,8 @@ struct Allowed {
     KvCacheStorage automatic_kv = KvCacheStorage::BFloat16;
 };
 [[nodiscard]] Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv);
+// Whether the model is of the Qwen 3.5/3.6 families (their paged KV pool, int8 activations).
+[[nodiscard]] bool is_qwen_family(const ModelFacts& model) noexcept;
 
 [[nodiscard]] Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                             const Allowed& allowed, const Pins& pins, const Task& task,

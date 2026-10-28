@@ -5,7 +5,6 @@
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
 #include "convert/drafters.h"
-#include "core/paged_kv_storage.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -1248,19 +1247,16 @@ void test_kv_options() {
                   "Gemma 4 refuses " + std::string(kv_cache_storage_name(kv)));
         }
     }
-    // A Qwen pool of 128-wide heads: the layout's own refusals (INT8 takes 128, the others not).
+    // A Qwen pool of 128-wide heads: the target's append and attention are 256-wide only, so no
+    // compact codec (the layout's 128-wide INT8 is the DFlash drafter pool's).
     pr::PlanSourceFacts narrow = qwen;
     narrow.model.full_key_dim = narrow.model.full_value_dim = 128;
     const auto n = pr::kv_options(narrow, 89);
-    check(find(n, KvCacheStorage::Int8Group64).allowed, "INT8 takes 128-wide heads");
-    for (const KvCacheStorage kv : {KvCacheStorage::Fp8E4M3Row256, KvCacheStorage::Nvfp4Group16,
-                                    KvCacheStorage::Fp8KeyNvfp4Value}) {
-        bool layout_ok = true;
-        try {
-            (void)ninferno::paged_kv_storage_layout(kv, 128);
-        } catch (const std::exception&) { layout_ok = false; }
-        check(find(n, kv).allowed == layout_ok && (layout_ok || find(n, kv).why_code == "head_width"),
-              "the paged layout decides " + std::string(kv_cache_storage_name(kv)));
+    check(find(n, KvCacheStorage::BFloat16).allowed, "BF16 takes any head width");
+    for (const KvCacheStorage kv : {KvCacheStorage::Int8Group64, KvCacheStorage::Fp8E4M3Row256,
+                                    KvCacheStorage::Nvfp4Group16, KvCacheStorage::Fp8KeyNvfp4Value}) {
+        check(!find(n, kv).allowed && find(n, kv).why_code == "head_width",
+              "128-wide Qwen heads refuse " + std::string(kv_cache_storage_name(kv)));
     }
     pr::PlanSourceFacts unknown;
     const auto u = pr::kv_options(unknown, 89);
@@ -1285,6 +1281,13 @@ void test_kv_options() {
           "a pinned INT8 on Gemma 4: refused, never planned as fitting");
     check(pr::kv_refusal(gemma, KvCacheStorage::Int8Group64) == row.why_unsupported,
           "one refusal text for the plan, the launch and the start");
+    // The choice is not made at a refused pin (no configuration the engine refuses is shown).
+    pr::DryRunInputs pinned = pr::inputs_for(inputs, listing.front());
+    const auto refused_choice = pr::choose_at_weights(
+        pr::with_weights(gemma, 9 * kGiB, rt::WeightBasis::GgufTensors), pinned, inputs.pins, "Q4_K_M");
+    check(refused_choice && !refused_choice->choice.chosen &&
+              refused_choice->choice.why == pr::kv_refusal(gemma, KvCacheStorage::Int8Group64),
+          "no choice at a refused KV pin, its words instead");
     const pr::QuantPlan ok_plan = pr::plan_quants(qwen, listing, inputs);
     check(ok_plan.rows.front().candidate.supported, "a pinned INT8 on Qwen plans");
 }
