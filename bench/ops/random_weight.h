@@ -86,9 +86,8 @@ inline RandomWeight random_weight(QType q, std::int32_t rows, std::int32_t k, st
         break;
     case QType::GGML_Q4_K:
     case QType::GGML_Q5_K: {
-        // The blocks (codes first) carry their own FP16 d and dmin: 2^-7 and 2^-8, as a model's.
-        // Random bytes made infinities and values past the f16 range, which Volta's verify route
-        // saturates on a slow path no real weight takes.
+        // The blocks (codes first) carry their own FP16 d and dmin: 2^-7 and 2^-8, as a model's
+        // (random bytes made infinities and NaNs of them).
         const std::uint64_t block = q == QType::GGML_Q4_K ? 144 : 176;
         for (std::uint64_t b = 0; b + block <= g.code_bytes; b += block) {
             fill16(b, 2, 0x2000);

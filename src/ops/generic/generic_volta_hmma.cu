@@ -48,6 +48,13 @@ constexpr int kCtaRows  = kWarps * kWarpRows;
 template <int NTok>
 constexpr int kQuadStride = 16 * NTok * 4 + 16;
 
+// Token t of group s sits at slot t ^ swizzle(s): a half-warp's staging stores (one token, sixteen
+// groups) and its fragment loads (one group, eight tokens) each fall on distinct banks.
+template <int NTok>
+__device__ __forceinline__ int token_slot(int s, int t) {
+    return t ^ (NTok == 8 ? (s >> 1) & 7 : s & 15);
+}
+
 __device__ __forceinline__ unsigned h2_bits(__half2 h) { return *reinterpret_cast<unsigned*>(&h); }
 
 __device__ __forceinline__ __half2 bits_h2(unsigned u) { return *reinterpret_cast<__half2*>(&u); }
@@ -268,8 +275,8 @@ __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint
         // bf16 (v0, v1), (v2, v3) -> f16 (v0, v2), (v1, v3)
         const unsigned lo = bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x5410U)); // v0, v2
         const unsigned hi = bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x7632U)); // v1, v3
-        *reinterpret_cast<uint2*>(act + q * kQuadStride<NTok> + (s * NTok + t) * 4) =
-            make_uint2(lo, hi);
+        *reinterpret_cast<uint2*>(act + q * kQuadStride<NTok> +
+                                  (s * NTok + token_slot<NTok>(s, t)) * 4) = make_uint2(lo, hi);
         if constexpr (F::kMin) {
             // The eight groups of a run sit on eight neighbouring lanes (task & 7 = g & 7).
             const float2 l = __half22float2(bits_h2(lo));
@@ -356,7 +363,8 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
                 uint2 bf[NG];
 #    pragma unroll
                 for (int g = 0; g < NG; ++g) {
-                    bf[g] = *reinterpret_cast<const uint2*>(at + (m * kNTok + 8 * g + f) * 4);
+                    bf[g] = *reinterpret_cast<const uint2*>(
+                        at + (m * kNTok + token_slot<kNTok>(m, 8 * g + f)) * 4);
                 }
 #    pragma unroll
                 for (int s = 0; s < kSets; ++s) {
@@ -468,7 +476,9 @@ bool volta_hmma_codec(WeightCodec codec) {
 }
 
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
-    if (args.lane_local == 0 || args.join_previous != 0 || args.tokens < kVoltaHmmaMinTokens ||
+    // join_previous asks for a programmatic dependent launch, which sm_70 does not have: stream
+    // order already runs the call after the one before it (a segmented projection's later parts).
+    if (args.lane_local == 0 || args.tokens < kVoltaHmmaMinTokens ||
         args.tokens > kVoltaHmmaMaxTokens) {
         return false;
     }
