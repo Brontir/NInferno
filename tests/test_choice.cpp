@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -101,6 +102,7 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     out.label           = label;
     out.bits_per_weight = q.at("bits_per_weight").get<double>();
     out.weight_bytes    = q.at("weight_bytes").get<double>();
+    out.weights         = ch::weight_class_of({}, label);
     return out;
 }
 
@@ -157,11 +159,13 @@ void reproduces_the_measurements(const json& fixture) {
 
 // Plain decode from facts (choice_constants.h): every point of the 2026-10-28 campaign
 // (tests/fixtures/choice/decode_measured.json: 1/2/4/8 streams, Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4
-// 12B Q4_K_M, seven cards of four generations) within the model's spread: 5.1 % rms; the worst,
-// Gemma 4 at 2-4 streams on the RTX 2080 Ti (+13..19 %), a kernel deficit.
+// 12B Q4_K_M, seven cards of four generations) within the model's spread; the generations that decide
+// at the error kDecodePredictionError states (the worth's tie band: derived here, not tuned).
 void decodes_from_facts(const json& fixture) {
     double sq = 0, worst = 0;
     int n = 0;
+    std::map<std::string, std::pair<double, int>> by_generation; // sum of ln(predicted / measured)^2
+    double own_worst = 0; // the worst on the generations that decide
     for (const json& row : fixture.at("rows")) {
         const json& m            = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q      = row.at("quant").get<std::string>();
@@ -181,10 +185,67 @@ void decodes_from_facts(const json& fixture) {
         sq += d * d;
         worst = std::max(worst, std::abs(d));
         ++n;
+        const std::string gen = std::string(ch::generation_of(cf));
+        auto& g = by_generation[gen];
+        g.first += std::log1p(d) * std::log1p(d);
+        ++g.second;
+        if (gen == "ada" || gen == "gb20x") { own_worst = std::max(own_worst, std::abs(std::log1p(d))); }
     }
     const double rms = std::sqrt(sq / n);
     std::cout << "decode from facts, " << n << " points: rms " << rms * 100 << " %, worst " << worst * 100 << " %\n";
-    check(n == 84 && rms < 0.06 && worst < 0.20, "decode from facts within the model's spread");
+    check(n == 84 && rms < 0.05, "decode from facts within the model's spread");
+    // The generations whose rows rest on their own census: within 10 %; Turing (one card) within its
+    // stated rows' 6 % rms; Ampere on Ada's rows (transferred: its census pending) within 10 % rms.
+    const auto gen_rms = [&](const char* g) {
+        const auto& v = by_generation[g];
+        return v.second > 0 ? std::sqrt(v.first / v.second) : 1.0;
+    };
+    check(by_generation["turing"].second == 12 && gen_rms("turing") < 0.06, "Turing's estimate within its rows' error");
+    check(by_generation["ga10x"].second == 12 && gen_rms("ga10x") < 0.10, "Ampere on Ada's rows (transferred)");
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        const auto& g       = by_generation[std::string(e.generation)];
+        const double g_rms  = g.second > 0 ? std::sqrt(g.first / g.second) : 0;
+        std::cout << "  " << e.generation << ": " << g.second << " points, rms " << g_rms << " (stated " << e.rms << ")\n";
+        check(g.second >= 24 && std::abs(g_rms - e.rms) < 0.0015, "the stated decode error is the measured one");
+    }
+    check(own_worst < 0.09, "the deciding generations' worst point within 9 %");
+}
+
+// The kernels a step launches are the graph's (kDecodeLaunches against the nsys census,
+// tests/fixtures/choice/decode_census.json): every card's weight-reading kernels, and its small ones at
+// one row.
+void counts_the_kernels(const json& census) {
+    int n = 0;
+    for (const json& row : census.at("rows")) {
+        const std::string model = row.at("model").get<std::string>();
+        const std::string family = model.rfind("gemma", 0) == 0 ? "gemma4_text" : "qwen3_5_text";
+        const ch::WeightClass w  = ch::weight_class_of({}, row.at("quant").get<std::string>());
+        const auto* l = std::find_if(std::begin(ch::kDecodeLaunches), std::end(ch::kDecodeLaunches),
+                                     [&](const ch::DecodeLaunches& r) { return r.family == family && r.weights == w; });
+        if (l == std::end(ch::kDecodeLaunches)) {
+            check(false, "a census row has its family's launches");
+            continue;
+        }
+        check(row.at("gemv_kernels").get<double>() == l->gemv, "the weight-reading kernels a step: the census's");
+        if (row.at("streams").get<int>() == 1) {
+            check(row.at("small_kernels").get<double>() == l->small[0], "the small kernels at one row: the census's");
+        }
+        ++n;
+    }
+    check(n >= 50, "the census rows");
+    // The weight class from formats, else the label.
+    check(ch::weight_class_of({"ggml_q4_k", "ggml_q6_k", "q8_g32_fp16", "bf16"}, "") == ch::WeightClass::KQuant,
+          "a K-quant mix with Q8_0 and 16-bit tensors");
+    check(ch::weight_class_of({"q8_g32_fp16", "bf16"}, "") == ch::WeightClass::Q8, "Q8_0 alone");
+    check(ch::weight_class_of({"ggml_iq4_nl", "q8_g32_fp16", "ggml_q5_k"}, "Q4_K_M") == ch::WeightClass::Other,
+          "IQ4_NL: the formats decide over the label");
+    for (const char* k : {"Q4_K_M", "UD-Q4_K_XL", "Q5_K_M", "UD-Q5_K_XL", "Q6_K", "q6_k"}) {
+        check(ch::weight_class_of({}, k) == ch::WeightClass::KQuant, "a K-quant label");
+    }
+    for (const char* q : {"Q8_0", "Q8", "q8_0", "UD-Q8_K_XL"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::Q8, "a Q8 label"); }
+    for (const char* o : {"IQ4_NL", "UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_KV", "Q8_K_R8"}) {
+        check(ch::weight_class_of({}, o) == ch::WeightClass::Other, "an unmeasured label");
+    }
 }
 
 // Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of the
@@ -200,13 +261,12 @@ void prefills_by_format(const json& fixture) {
         const std::string q     = row.at("quant").get<std::string>();
         const ch::ModelFacts mf = model_at(m, q);
         const ch::CardFacts cf  = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
-        ch::QuantOption qo      = quant_of(q, m.at("quants").at(q));
-        qo.int8_tiles           = ch::q8_label(q);
+        const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv                       = KvCacheStorage::Int8Group64;
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
-        const int i    = qo.int8_tiles ? 1 : 0;
+        const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
         ++n[i];
@@ -217,9 +277,6 @@ void prefills_by_format(const json& fixture) {
               << " %)\n";
     check(n[1] == 42 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(n[0] == 42 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
-    check(ch::q8_label("Q8_0") && ch::q8_label("UD-Q8_K_XL") && ch::q8_label("Q8") && ch::q8_label("q8_0") &&
-              !ch::q8_label("Q4_K_M") && !ch::q8_label("Q6_K") && !ch::q8_label("Q8_KV") && !ch::q8_label("IQ4_XS"),
-          "a Q8 label takes the tiles");
 }
 
 struct Bench {
@@ -769,6 +826,8 @@ int main() {
         decodes_from_facts(json::parse(campaign));
         std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
         prefills_by_format(json::parse(prefills));
+        std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
+        counts_the_kernels(json::parse(census));
     }
     prices_attention(fixture);
     chooses(fixture);

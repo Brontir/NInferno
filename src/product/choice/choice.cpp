@@ -12,11 +12,11 @@
 
 namespace ninferno::product::choice {
 
-namespace {
-
 std::string_view generation_of(const CardFacts& card) noexcept {
     return generation_row(card.major, card.minor).name;
 }
+
+namespace {
 
 // The generation row's tensor rate per SM and clock for a route (Fp4: twice the int8 rate). A
 // generation without an int8 MMA (Volta) takes its BF16 rate for the int8 route's compute.
@@ -50,7 +50,7 @@ const Row* generation_row_of(const Row (&rows)[N], std::string_view generation, 
     return nullptr;
 }
 
-// A row of kLaunchCost or kRowsEta that rests on one card prices only its boards' estimate: marked.
+// A row of kKernelCost or kRowsEta that rests on one card prices only its boards' estimate: marked.
 template <class Row, std::size_t N>
 const Row* measured_row_of(const Row (&rows)[N], std::string_view generation, bool& transferred) noexcept {
     const Row* row = generation_row_of(rows, generation, transferred);
@@ -65,19 +65,29 @@ double dram_eta(std::string_view generation) noexcept {
     return kDramEta;
 }
 
-// The share of the DRAM rate the weight reads of `rows` rows reach (kRowsEta: linear in log2 rows
-// between the generation's points, kDramEta's at one row, the last point's beyond), scaled by the
-// generation's own DRAM share.
-double rows_eta(std::string_view generation, double rows, bool& transferred) noexcept {
+// The share of the DRAM rate the weight reads of `rows` rows of a weight class reach (kRowsEta:
+// linear in log2 rows between the generation's points, kDramEta's at one row, the last point's
+// beyond), scaled by the generation's own DRAM share. A generation without rows takes Ada's, a class
+// without rows the K-quants' (transferred either way); a row of one card marks it too.
+double rows_eta(std::string_view generation, WeightClass weights, double rows, bool& transferred) noexcept {
     double lo_rows = 1, lo_eta = kDramEta;
     std::string_view gen = generation;
-    if (std::none_of(std::begin(kRowsEta), std::end(kRowsEta), [&](const RowsEta& r) { return r.generation == gen; })) {
+    const auto has = [&](std::string_view g, WeightClass w) {
+        return std::any_of(std::begin(kRowsEta), std::end(kRowsEta),
+                           [&](const RowsEta& r) { return r.generation == g && r.weights == w; });
+    };
+    if (!has(gen, WeightClass::KQuant)) {
         gen         = kTransferGeneration;
         transferred = transferred || rows > 1;
     }
+    WeightClass cls = weights;
+    if (!has(gen, cls)) {
+        cls         = WeightClass::KQuant;
+        transferred = true;
+    }
     const double scale = dram_eta(generation) / kDramEta;
     for (const RowsEta& r : kRowsEta) {
-        if (r.generation != gen) { continue; }
+        if (r.generation != gen || r.weights != cls) { continue; }
         if (r.cards < 2 && rows > 1) { transferred = true; } // one card: its boards' estimate only
         if (rows <= r.rows) {
             const double t = std::log2(rows / lo_rows) / std::log2(r.rows / lo_rows);
@@ -87,6 +97,27 @@ double rows_eta(std::string_view generation, double rows, bool& transferred) noe
         lo_eta  = r.eta;
     }
     return scale * lo_eta;
+}
+
+// The kernels a step of `rows` rows launches (kDecodeLaunches by the family's layers): the
+// family's row for the class, else Qwen 3.5's K-quant row (transferred).
+struct StepKernels {
+    double gemv  = 0;
+    double small = 0;
+};
+StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double rows, bool& transferred) noexcept {
+    const DecodeLaunches* row = nullptr;
+    for (const DecodeLaunches& r : kDecodeLaunches) {
+        if (r.family == model.family && r.weights == weights) { row = &r; }
+    }
+    if (row == nullptr) {
+        transferred = true;
+        row         = &kDecodeLaunches[0];
+    }
+    if (model.layers == 0) { transferred = true; } // unknown layers: the census model's
+    const double scale = model.layers > 0 ? model.layers / row->layers : 1.0;
+    const int at       = rows <= 1 ? 0 : rows <= 4 ? 1 : 2;
+    return {row->gemv * scale, row->small[at] * scale};
 }
 
 const PrefillEta* prefill_row(bool moe, std::string_view generation, Route route) noexcept {
@@ -352,21 +383,6 @@ Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationM
     return out;
 }
 
-bool q8_label(std::string_view label) noexcept {
-    std::string upper(label);
-    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    // "Q8" as a token of its own (a native artifact's "Q8", "Q8_0", "UD-Q8_K_XL"), not inside another
-    // label ("Q8_KV" or "Q8_K_R8" of other engines' formats, "Q4_K_M-Q8_0" composites aside).
-    for (std::size_t at = upper.find("Q8"); at != std::string::npos; at = upper.find("Q8", at + 1)) {
-        const bool starts = at == 0 || upper[at - 1] == '-' || upper[at - 1] == '_' || upper[at - 1] == '.';
-        const std::string_view rest = std::string_view(upper).substr(at + 2);
-        const bool ends = rest.empty() || rest.rfind("_0", 0) == 0 || rest == "_K" || rest.rfind("_K_XL", 0) == 0 ||
-                          rest.rfind("_K_L", 0) == 0 || rest.rfind("_K_M", 0) == 0 || rest.rfind("_K_S", 0) == 0;
-        if (starts && ends) { return true; }
-    }
-    return false;
-}
-
 Route route_of(const QuantOption& quant, ActivationMode activations, const CardFacts& card) noexcept {
     if (activations == ActivationMode::Exact) { return Route::Bf16; }
     if (quant.nvfp4) {
@@ -397,7 +413,7 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     const double params = model.active_params > 0 ? model.active_params : model.params;
     if (params <= 0) { return 0; }
     const std::string_view gen = generation_of(card);
-    const double eta           = route == Route::Int8 && quant.int8_tiles && !model.moe()
+    const double eta           = route == Route::Int8 && quant.weights == WeightClass::Q8 && !model.moe()
                                      ? tiles_eta(gen, transferred)
                                      : prefill_eta(model.moe(), gen, route, transferred);
     double rate = eta * peak(card, route) / (2 * params);
@@ -461,21 +477,21 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double weights = std::max(0.0, quant.weight_bytes - model.speculation_bytes - table);
         // A generation without a row: the one whose launches it shares (Volta: Turing's, neither
         // has PDL nor Ada's L2), else Ada's; transferred either way.
-        const LaunchCost* launch = measured_row_of(kLaunchCost, gen == "volta" ? std::string_view("turing") : gen,
-                                                   transferred);
+        const KernelCost* cost = measured_row_of(kKernelCost, gen == "volta" ? std::string_view("turing") : gen,
+                                                 transferred);
         if (gen == "volta") { transferred = true; }
-        // Unknown layers: no launch term, and the estimate says it is not the card's own.
-        if (model.layers == 0) { transferred = true; }
-        const double t0          = launch != nullptr ? launch->seconds : 0;
-        const double reads = weights / (rows_eta(gen, rows, transferred) * card.dram_bytes_per_s) +
+        if (quant.weights == WeightClass::Other) { transferred = true; } // no census of its routes
+        const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
+        const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
+        const double reads = weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
                              rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
         bool prefill_transferred = false;
         // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
         QuantOption decode_quant = quant;
-        decode_quant.int8_tiles  = false;
+        decode_quant.weights     = WeightClass::KQuant;
         const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
         const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
-        step = std::max(reads + kDecodeLaunchesPerLayer * model.layers * t0 + exact, flops);
+        step = std::max(reads + launches + exact, flops);
     }
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
     // A drafter's measured gain over plain decode, while its load table lets these many streams
@@ -496,6 +512,64 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     }
     out.transferred = transferred || prefill_transferred;
     return out;
+}
+
+namespace {
+
+// A label's tokens (split at '-', '_', '.', ' '), upper-cased.
+std::vector<std::string> label_tokens(std::string_view label) {
+    std::vector<std::string> out(1);
+    for (const char ch : label) {
+        if (ch == '-' || ch == '_' || ch == '.' || ch == ' ') {
+            if (!out.back().empty()) { out.emplace_back(); }
+        } else {
+            out.back() += static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+        }
+    }
+    if (out.back().empty()) { out.pop_back(); }
+    return out;
+}
+
+} // namespace
+
+WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label) {
+    if (!formats.empty()) {
+        bool k = false, q8 = false, other = false;
+        for (const std::string& f : formats) {
+            if (f == "ggml_q4_k" || f == "ggml_q5_k" || f == "ggml_q6_k") {
+                k = true;
+            } else if (f == "q8_g32_fp16") {
+                q8 = true;
+            } else if (f != "bf16" && f != "f16" && f != "ggml_f16" && f != "fp32" && f != "int32") {
+                other = true;
+            }
+        }
+        return other ? WeightClass::Other : k ? WeightClass::KQuant : q8 ? WeightClass::Q8 : WeightClass::Other;
+    }
+    // A label: Q8 / Q8_0 (not Q8_KV), or a Q4_K / Q5_K / Q6_K mix (Q4_K_M, UD-Q5_K_XL, Q6_K).
+    const std::vector<std::string> t = label_tokens(label);
+    for (std::size_t i = 0; i < t.size(); ++i) {
+        const bool next_k = i + 1 < t.size() && t[i + 1] == "K";
+        if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k) { return WeightClass::KQuant; }
+        if (t[i] == "Q8") {
+            // Q8, Q8_0; unsloth's Q8_K_XL / _L / _M / _S (Q8_0 with 16-bit tensors), not Q8_KV or Q8_K_R8.
+            const std::string next  = i + 1 < t.size() ? t[i + 1] : "";
+            const std::string after = i + 2 < t.size() ? t[i + 2] : "";
+            if (next.empty() || next == "0" ||
+                (next == "K" && (after == "XL" || after == "L" || after == "M" || after == "S"))) {
+                return WeightClass::Q8;
+            }
+        }
+    }
+    return WeightClass::Other;
+}
+
+double worth_band(const CardFacts& card) noexcept {
+    const std::string_view gen = generation_of(card);
+    for (const PredictionError& e : kDecodePredictionError) {
+        if (e.generation == gen) { return e.rms; }
+    }
+    return 0;
 }
 
 double request_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,

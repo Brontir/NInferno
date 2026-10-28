@@ -39,6 +39,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::product::choice {
@@ -111,12 +112,25 @@ struct QuantOption {
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
-    // Its linears prefill on the generic int8 tiles, not ggml's MMQ: Q8 weights (a GGUF's Q8_0
-    // converts to q8_g32_fp16, which the int8 tiers take: ops/generic q8_prefill_a8). The native
-    // Q4/Q5/Q6_G64 formats take the same tiles on GeForce parts but are not measured: they keep the
-    // int8 rows.
-    bool int8_tiles        = false;
+    // The routes its weights take (weight_class_of): Q8 prefills on the generic int8 tiles, not
+    // ggml's MMQ (a GGUF's Q8_0 converts to q8_g32_fp16, which the int8 tiers take: ops/generic
+    // q8_prefill_a8); an Other's decode speed is transferred and it wins no decision on worth
+    // (plan_quants).
+    WeightClass weights = WeightClass::KQuant;
 };
+
+// The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
+[[nodiscard]] std::string_view generation_of(const CardFacts& card) noexcept;
+
+// The weight class of a quantization: from its weight formats where known (as
+// artifact::format_name spells them), else from its label (a hub row: Q4_K / Q5_K / Q6_K mixes;
+// Q8, Q8_0 and unsloth's Q8_K_XL, which is Q8_0 with 16-bit tensors). A K-quant mix may carry Q8_0
+// and 16-bit tensors; anything else is Other.
+[[nodiscard]] WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label);
+
+// The band within which two quantizations' worths are a tie on this card's decisions (the
+// generation's measured decode error, kDecodePredictionError; 0 where none is measured).
+[[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape.
@@ -159,9 +173,6 @@ struct Candidate {
 };
 
 // ---- The three estimates.
-
-// Whether a quantization label names Q8 weights (Q8, Q8_0, UD-Q8_K_XL: the int8 tiles' prefill).
-[[nodiscard]] bool q8_label(std::string_view label) noexcept;
 
 // The route a candidate's linears take on this card.
 [[nodiscard]] Route route_of(const QuantOption& quant, ActivationMode activations,

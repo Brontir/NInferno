@@ -234,6 +234,10 @@ eq(H.quantChangeNotice(prev, next, {ctx: 131072, par: 2}, tr),
    'quantChanged{"from":"Q5_K_M","to":"IQ4_XS","why":"quantWhyMore{\\"ask\\":\\"2 × 128K\\"}"}', "smaller: needs more memory");
 eq(H.quantChangeNotice(next, prev, {ctx: 0, par: 1}, tr),
    'quantChanged{"from":"IQ4_XS","to":"Q5_K_M","why":"quantWhyRoom{\\"ask\\":\\"ctxAutoWord\\"}"}', "larger: room for a larger one");
+eq(H.quantChangeNotice(next, prev, {ctx: 0, par: 4, rule: "best_worth"}, tr),
+   'quantChanged{"from":"IQ4_XS","to":"Q5_K_M","why":"quantWhyWorth{\\"ask\\":\\"4 × ctxAutoWord\\"}"}', "by worth: the trade, not the memory");
+eq(H.quantChangeNotice(prev, next, {ctx: 0, par: 4, rule: "best_worth"}, RU),
+   "Выбран другой квант: Q5_K_M → IQ4_XS (при 4 × авто это лучший баланс скорости и точности)", "RU by worth: smaller, still the trade");
 eq(H.quantChangeNotice(prev, next, {ctx: 131072, par: 2, picked: true}, tr), "", "never for an explicit pick");
 eq(H.quantChangeNotice(prev, next, {ctx: 131072, par: 2, stale: true}, tr), "", "never from a stale plan");
 eq(H.quantChangeNotice(prev, {...prev}, {ctx: 0, par: 2}, tr), "", "no change");

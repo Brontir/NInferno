@@ -63,22 +63,22 @@ enum class Route : std::uint8_t {
 
 // ---- Speed.
 
-// Decode of a dense model, from the chip's and the model's facts (2026-10-28; an MoE keeps
-// kMoeDecode below). A step of C rows at context n reads
+// Decode of a dense model (2026-10-28; an MoE keeps kMoeDecode below). The fitted share of the int8
+// peak a step's flops reached (kDenseDecode) is replaced by measured per-generation efficiencies of
+// the kernels a step runs. A step of C rows at context n reads
 //   W + C (n b_kv k_kv + 2 s + min(n, window) b_ring)
-// bytes: W the weights it reads (every layer and the output head, not the input table a token
-// gathers one row of, nor the MTP layers or own drafter plain decode leaves), b_kv, s and b_ring as
-// above. It takes
+// bytes (W the weights it reads: every layer and the output head, not the input table a token
+// gathers one row of, nor the MTP layers or own drafter plain decode leaves) and takes
 //   t(C) = W / (eta_rows(C) BW) + C (n b_kv k_kv + 2 s + min(n, window) b_ring) / (eta_dram BW)
-//          + L t0
-// and no less than its rows' flops at the prefill route's rate (C 2 P / (eta_prefill peak): a wide
-// batch is compute-bound): eta_dram the share of the DRAM rate a long read reaches, eta_rows(C) the
-// share the weight reads of C rows reach (the T-row routes: ggml's vec kernel at 2-4 rows, the
-// register MMA and MMQ tiles at 5-8), L = kDecodeLaunchesPerLayer x layers the kernels a step
-// launches and t0 the generation's cost of one beyond its bytes (launch, ramp, the small kernels:
-// norms, the recurrent update, attention at a short context). Measured against
-// (choice-notes/lab/speed_model, master 03afc418): Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M,
-// 1/2/4/8 streams, on the RTX 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, 3060 and 2080 Ti.
+//          + N_gemv t_gemv + N_small(C) t_small,
+// and no less than its rows' flops at the prefill route's rate (a wide batch is compute-bound).
+// N_gemv and N_small(C) are the kernels the family's graph launches a step (kDecodeLaunches, nsys
+// counts, facts of the graph); t_gemv and t_small what one costs beyond its bytes (kKernelCost, the
+// census's measured residual); eta_rows(C) the share of the DRAM rate C rows' weight reads reach on
+// the weight class's routes (kRowsEta, measured). Measured against tests/fixtures/choice/
+// decode_measured.json (Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, 1/2/4/8 streams, seven cards,
+// master 03afc418) and the census tests/fixtures/choice/decode_census.json;
+// choice-notes/lab/speed_model/fit_decode.py derives every row from the two.
 struct DecodeConstants {
     double eta_dram     = 0; // the share of the DRAM rate a step's reads reach
     double eta_compute  = 0; // the share of the int8 tensor peak a step's flops reach
@@ -97,53 +97,94 @@ struct DramEta {
 inline constexpr double kDramEta = 0.946;
 inline constexpr DramEta kDramEtaOf[] = {{"volta", 660.0 / 870.0, 1}};
 
-// The kernels a dense decode step launches a layer (nsys, master 03afc418: Qwen3.5-9B 312 over 32
-// layers, its Q8_0 368, Gemma 4 12B 462 over 48: norms, projections, the mixer, the feed-forward).
-inline constexpr double kDecodeLaunchesPerLayer = 10;
+// The weight class of a quantization: which decode routes its weights take.
+enum class WeightClass : std::uint8_t {
+    KQuant, // ggml's K-quant mixes (Q4_K, Q5_K, Q6_K, with Q8_0 and 16-bit tensors: Q4_K_M ... Q6_K,
+            // UD-Q4_K_XL, UD-Q5_K_XL): R8 at one row, ggml's vec kernel at 2-4, register MMA / MMQ at 5-8
+    Q8,     // Q8_0 (q8_g32_fp16): R8 at every width
+    Other,  // a format whose decode routes no census measured (codebook IQ*, Q4_0/Q4_1, IQ4_NL, Q2_K,
+            // Q3_K, FP4): its speed is transferred (the K-quants' rows) and it decides nothing
+};
 
-// What a launch costs a step beyond its bytes, by generation: the step time less its bytes at
-// kDramEta over the launches, one plain stream at a short context (choice-notes/lab/speed_model/
-// fit_decode.py on tests/fixtures/choice/decode_measured.json:
-// Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, the mean of the three; the RTX 4070 Ti's Q8_0 left
-// out: its T=1 Q8 GEMV runs at 86 % of the DRAM rate, a kernel deficit). Not one number of SM
-// cycles: Ada and Blackwell ~5,450 at the reference clock, Ampere 6,150, Turing 10,300 (its Q8 and
-// Gemma steps 7.3-7.9 us a launch against 4.8 on 9B Q4_K_M). Ada and Blackwell rest on two cards or
-// more. Ampere and Turing rest on one card each: a row of one card only prices the estimate its own
-// generation's boards show, marked transferred (Speed::transferred), never a decision (the choice
-// prices on a reference card's generation, whose rows rest on two: kReferenceCards); Ada's in their
-// place would run Turing's estimates 9-58 % fast. A generation without a row takes Ada's
-// (transferred).
-struct LaunchCost {
+// The kernels a family's decode graph launches a step, by weight class, at 1, 2-4 and 5-8 rows
+// (nsys, master 03afc418; another size of the family scales them by its layers): the weight-reading
+// ones (R8, register MMA, ggml's vec and MMQ, the output head) and the small ones (norms, the mixers'
+// control, convolution and recurrent update, attention, the activations' quantize ahead of a vec or
+// MMQ call, sampling). One row: Qwen3.5-9B 145 + 167 = 312 (9.75 a layer), its Q8_0 177 + 191 = 368
+// (11.5), Gemma 4 12B 213 + 249 = 462 (9.6), the same on every card. At 2-8 rows Ada's counts (the
+// reference generation's routes; the 5-8-row K-quant routes launch 167-215 small kernels by card). A
+// family or class without a row takes Qwen 3.5's K-quant row by layers (transferred).
+struct DecodeLaunches {
+    std::string_view family;
+    WeightClass weights;
+    double layers;   // the census model's
+    double gemv;     // the weight-reading kernels a step (the same at every row count)
+    double small[3]; // the small ones at 1, 2-4 and 5-8 rows
+};
+inline constexpr DecodeLaunches kDecodeLaunches[] = {
+    {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}},
+    {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}},
+    {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}},
+};
+
+// What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one row,
+// the three models (decode_census.json): a weight-reading kernel's time less its weights at kDramEta,
+// a small one's less the state and KV bytes it reads, the mean over every kernel of the class. Where
+// the census explains it: Ada's plain R8 projections 1.5 us of launch and ramp plus the graph's
+// 0.29 us gap (the median 1.9-2.2 us); the SwiGLU and residual epilogues 2.2-6 us and the Q8_0 R8 on
+// the 4090 3.5 us raise the mean to 2.40; its norms 1.7-1.9 us (four times their bytes), the attention
+// at a short context 6.6. Blackwell's PDL hides the plain projections' launch (0.2 us median: their
+// weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
+// Turing: the projections 4.2-8.3 us, one card. A row of one card prices only its own boards'
+// estimate (marked transferred; no decision reads it: the choice prices on a reference card's
+// generation; DECISIONS 54); a generation without a row takes Ada's (transferred). Ampere's census
+// is pending: its estimates take Ada's rows, transferred.
+struct KernelCost {
     std::string_view generation;
-    double seconds;
+    double gemv;  // seconds a weight-reading kernel beyond its bytes
+    double small; // seconds a small kernel beyond its bytes
     int cards;
 };
-inline constexpr LaunchCost kLaunchCost[] = {
-    {"ada", 2.17e-6, 3},    // RTX 4060 Ti 1.5-2.0, 4070 Ti 2.1-2.2, 4090 2.2-3.1
-    {"gb20x", 2.23e-6, 2},  // RTX 5070 Ti 1.8-2.3, 5090 2.1-2.7
-    {"ga10x", 3.48e-6, 1},  // RTX 3060 2.7-4.1
-    {"turing", 6.69e-6, 1}, // RTX 2080 Ti 4.8-7.9
+inline constexpr KernelCost kKernelCost[] = {
+    {"ada", 2.40e-6, 1.96e-6, 3},    // RTX 4060 Ti, 4070 Ti, 4090
+    {"gb20x", 1.87e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
+    {"turing", 8.30e-6, 5.09e-6, 1}, // RTX 2080 Ti
 };
 
-// The share of the DRAM rate the weight reads of C rows reach (C = 1: kDramEta; between two rows
-// the share is linear in log2 C; beyond the last, the last's): the mean of the three models per
-// generation and row count, the launches at kLaunchCost. Ada (nine points a row count): 2 rows
-// 0.84-0.94, 4 rows 0.82-0.91, 8 rows 0.74-0.88; Blackwell (six): 0.80-0.91, 0.70-0.87, 0.67-0.83;
-// Gemma 4's shapes the lowest, Q8_0 the highest. Ampere, Turing: one card each, estimates only and
-// marked transferred as kLaunchCost's (Turing's Gemma 4 at 0.71 / 0.59 / 0.57, a kernel deficit). A
-// generation without rows takes Ada's (transferred).
+// The share of the DRAM rate C rows' weight reads reach on a weight class's routes (C = 1: kDramEta;
+// linear in log2 C between points; beyond the last, the last's): measured, the mean over the class's
+// models and the generation's cards, the launches at kDecodeLaunches and kKernelCost. Ada K-quants
+// 0.87-0.93 / 0.86-0.89 / 0.75-0.85 at 2 / 4 / 8 rows (Gemma 4's shapes the lowest), Q8 0.92-0.95 /
+// 0.90-0.93 / 0.84-0.89; Blackwell K-quants 0.91-0.93 / 0.78-0.81 / 0.68-0.79. Turing: one card. A
+// class without rows (WeightClass::Other) takes the K-quants' and is marked transferred.
 struct RowsEta {
     std::string_view generation;
+    WeightClass weights;
     double rows;
     double eta;
     int cards;
 };
 inline constexpr RowsEta kRowsEta[] = {
-    {"ada", 2, 0.886, 3},    {"ada", 4, 0.864, 3},    {"ada", 8, 0.807, 3},
-    {"gb20x", 2, 0.866, 2},  {"gb20x", 4, 0.781, 2},  {"gb20x", 8, 0.754, 2},
-    {"ga10x", 2, 0.885, 1},  {"ga10x", 4, 0.798, 1},  {"ga10x", 8, 0.754, 1},
-    {"turing", 2, 0.829, 1}, {"turing", 4, 0.723, 1}, {"turing", 8, 0.629, 1},
+    {"ada", WeightClass::KQuant, 2, 0.906, 3},    {"ada", WeightClass::KQuant, 4, 0.878, 3},
+    {"ada", WeightClass::KQuant, 8, 0.795, 3},    {"ada", WeightClass::Q8, 2, 0.934, 3},
+    {"ada", WeightClass::Q8, 4, 0.916, 3},        {"ada", WeightClass::Q8, 8, 0.869, 3},
+    {"gb20x", WeightClass::KQuant, 2, 0.922, 2},  {"gb20x", WeightClass::KQuant, 4, 0.795, 2},
+    {"gb20x", WeightClass::KQuant, 8, 0.732, 2},  {"gb20x", WeightClass::Q8, 2, 0.951, 2},
+    {"gb20x", WeightClass::Q8, 4, 0.911, 2},      {"gb20x", WeightClass::Q8, 8, 0.867, 2},
+    {"turing", WeightClass::KQuant, 2, 0.863, 1}, {"turing", WeightClass::KQuant, 4, 0.712, 1},
+    {"turing", WeightClass::KQuant, 8, 0.628, 1}, {"turing", WeightClass::Q8, 2, 0.961, 1},
+    {"turing", WeightClass::Q8, 4, 0.898, 1},     {"turing", WeightClass::Q8, 8, 0.687, 1},
 };
+
+// The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
+// measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
+// not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)
+// differ by less are a tie: the lower KLD wins (DECISIONS 54).
+struct PredictionError {
+    std::string_view generation;
+    double rms;
+};
+inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.025}, {"gb20x", 0.020}};
 
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
@@ -375,6 +416,7 @@ inline constexpr int kQuantKldCards = 2;
 inline constexpr QuantKldPoint kQuantKld[] = {
     {8.516, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
     {6.665, 0.00629, "Q6_K"},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
+    {6.016, 0.00936, "UD-Q5_K_XL"}, // one card (WORKLOG 24.10); the curve gives 0.00985 at its bits
     {5.878, 0.01061, "Q5_K_M"},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
     {5.080, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
     {4.617, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
@@ -433,6 +475,7 @@ inline constexpr ReferenceCard kReferenceCards[] = {
 
 // Two configurations whose worth differs by less than this are a tie (then: the longer own context,
 // then the fewer bytes of weights, then the smaller quantization label, then the listing's order).
+// Between quantizations the band is wider: kDecodePredictionError (the lower KLD wins inside it).
 inline constexpr double kWorthTie = 1e-9;
 
 // With the quantization curve, a generation that decides weighs the quantizations by worth too; one
