@@ -92,3 +92,8 @@ ninferno_add_refusal_test(ninferno_cli_moe_tune_test ninferno
   "--moe-tune is a lab tuner's option" missing.ninferno --moe-tune on)
 ninferno_add_refusal_test(ninferno_perplexity_moe_tune_test ninferno-perplexity
   "--moe-tune must be off, on or retune" missing.ninferno --text t --moe-tune yes)
+# --artifact-io replaces NINFERNO_ARTIFACT_DIRECT_IO: an option, parsed before anything loads.
+ninferno_add_refusal_test(ninferno_dense_artifact_io_test ninferno-dense
+  "--artifact-io must be auto, direct or buffered" missing.ninferno score --artifact-io maybe)
+ninferno_add_refusal_test(ninferno_serve_artifact_io_test ninferno-serve
+  "--artifact-io must be auto, direct or buffered" --model missing.ninferno --artifact-io 1)

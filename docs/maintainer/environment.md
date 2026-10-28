@@ -59,6 +59,12 @@ how the host waits, never which tokens.
 | `--decode-wait` | `auto`, `spin`, `block` | `auto` (`spin` under `ninferno spec-tune`, which takes `--decode-wait` too) |
 | `--cuda-sync` | `spin`, `blocking`, `yield`, `auto` | `spin` |
 
+### Loading
+
+| Option | Values | Effect |
+|---|---|---|
+| `--artifact-io` | `auto` (default), `direct`, `buffered` | How the weights are read at load. `auto` reads local disks with `O_DIRECT` (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file systems through the page cache; `direct` forces `O_DIRECT` (a file system without it is then an error), `buffered` the page cache. The bytes read are the same: an I/O mode, not a decision. `ninferno`, `ninferno-serve`, `ninferno-perplexity`, `ninferno-dense` and `ninferno-gemma4` take it; it is process-wide like the options below. |
+
 ### Route tables and lab tuners
 
 These are lab tools. A user's engine times nothing and reads no state an earlier run left: routes
@@ -116,6 +122,7 @@ that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise
 | `NINFERNO_SPEC_CORPUS` | `--corpus` (`ninferno spec-tune`, `ninferno-gemma4`); elsewhere the compiled-in corpus |
 | `NINFERNO_RANKING_DIR` | none: rankings are found in `tools/spec/rankings`, then beside the binary, then in the source tree; `ninferno-convert --ranking FILE` names one |
 | `NINFERNO_MMQ_VERIFY` | none (an A/B knob of the IQ formats' verify rule) |
+| `NINFERNO_ARTIFACT_DIRECT_IO` | `--artifact-io direct\|buffered` |
 
 ### Outside the engine
 
@@ -138,12 +145,6 @@ The user-facing ones are documented where they belong: `NINFERNO_API_KEY` in
 `NINFERNO_UPDATE_URL` and `NINFERNO_UPDATE_CHECK` with the desktop UI and the release tools, and
 `NINFERNO_PDFIUM` (where the PDF library is) with document input. Test programs read
 `NINFERNO_TEST_*`, `NINFERNO_DET_*` and `NINFERNO_PROBE_*` and map them to the options above.
-
-### Loading
-
-| Variable | Values | Effect |
-|---|---|---|
-| `NINFERNO_ARTIFACT_DIRECT_IO` | `1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off` | Forces `O_DIRECT` or buffered reads of artifact payloads. Unset or any other value: chosen automatically. The bytes read are the same either way. |
 
 ### Numerics investigation and route recording
 

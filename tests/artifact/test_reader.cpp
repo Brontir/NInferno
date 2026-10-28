@@ -422,7 +422,7 @@ void invalid_directories() {
     rejects([&] { (void)shortened.read_range(499, 1); }, "premature EOF accepted");
 }
 
-// Payload reads return the same bytes, up to the file's tail, in every I/O mode the environment
+// Payload reads return the same bytes, up to the file's tail, in every I/O mode --artifact-io
 // can select (buffered on network and FUSE file systems, O_DIRECT elsewhere).
 void payload_reads_in_every_mode() {
     constexpr std::size_t kBlock = 4096;
@@ -438,15 +438,9 @@ void payload_reads_in_every_mode() {
     };
     const std::unique_ptr<std::byte, Free> buffer(
         static_cast<std::byte*>(ninferno::test::aligned_alloc(kBlock, 4 * kBlock)));
-    const char* saved = std::getenv("NINFERNO_ARTIFACT_DIRECT_IO");
-    const std::optional<std::string> restore =
-        saved ? std::optional<std::string>(saved) : std::nullopt;
-    for (const char* mode : {"", "1", " On ", "0", "off", "maybe"}) {
-        if (*mode) {
-            ::setenv("NINFERNO_ARTIFACT_DIRECT_IO", mode, 1);
-        } else {
-            ::unsetenv("NINFERNO_ARTIFACT_DIRECT_IO");
-        }
+    for (const ninferno::ArtifactIo mode :
+         {ninferno::ArtifactIo::Auto, ninferno::ArtifactIo::Direct, ninferno::ArtifactIo::Buffered}) {
+        ninferno::artifact::set_artifact_io(mode);
         std::fill_n(buffer.get(), 4 * kBlock, std::byte{0});
         std::size_t read = 0;
         try {
@@ -454,18 +448,14 @@ void payload_reads_in_every_mode() {
             read = file.read_direct(0, {buffer.get(), 4 * kBlock});
         } catch (const ArtifactError& error) {
             // A file system without O_DIRECT refuses a forced direct read; nothing else may fail.
-            if (std::string(mode) == "1" || std::string(mode) == " On ") continue;
+            if (mode == ninferno::ArtifactIo::Direct) continue;
             throw;
         }
         require(read == bytes.size(), "payload read did not stop at the file's tail");
         require(std::equal(bytes.begin(), bytes.end(), reinterpret_cast<const char*>(buffer.get())),
                 "payload read returned different bytes");
     }
-    if (restore) {
-        ::setenv("NINFERNO_ARTIFACT_DIRECT_IO", restore->c_str(), 1);
-    } else {
-        ::unsetenv("NINFERNO_ARTIFACT_DIRECT_IO");
-    }
+    ninferno::artifact::set_artifact_io(ninferno::ArtifactIo::Auto);
     std::filesystem::remove(path);
 }
 
