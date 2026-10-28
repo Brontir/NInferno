@@ -627,8 +627,21 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             // streams under an automatic context: never a pool they silently share), as the rule's
             // pick does: its preliminary plan was made at the family's defaults.
             QuantRow& row = out.rows[*best];
-            if (ask.automatic && ask.concurrency > 1 && best_context != 0) {
-                row.launch_context = best_context;
+            // A plan that already gives each stream its own context needs no ceiling (one would
+            // only lower it); otherwise the row's plan is the one under the ceiling the launch
+            // passes, so that the plan shown, its now view and the start agree.
+            if (ask.automatic && ask.concurrency > 1 && best_context != 0 &&
+                !own_plan(row.planned.plan) && row.launch_context != best_context) {
+                row.launch_context          = best_context;
+                const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+                const DryRunInputs own      = inputs_for(inputs, row.listing);
+                const DryRunInputs capped   = under_context_cap(own, best_context);
+                if (const auto served = choose_at_weights(facts, own, pins, row.listing.quant)) {
+                    const DryRunInputs at = inputs_at_choice(capped, *served, pins);
+                    row.planned = plan_at_choice(facts, at, *served, pins, plan_model(facts, at));
+                } else {
+                    row.planned = plan_model(facts, capped);
+                }
             }
             row.fit.state       = runtime::QuantFitState::Own;
             row.fit.own_context = std::max(row.fit.own_context, best_context);
