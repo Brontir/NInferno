@@ -100,20 +100,26 @@ double rows_eta(std::string_view generation, WeightClass weights, double rows, b
 }
 
 // The kernels a step of `rows` rows launches (kDecodeLaunches by the family's layers): the
-// family's row for the class, else Qwen 3.5's K-quant row (transferred).
+// family's row for the class; else the family's K-quant row, Qwen 3.5's row for the class, Qwen 3.5's
+// K-quant row, in that order (transferred).
 struct StepKernels {
     double gemv  = 0;
     double small = 0;
 };
 StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double rows, bool& transferred) noexcept {
-    const DecodeLaunches* row = nullptr;
-    for (const DecodeLaunches& r : kDecodeLaunches) {
-        if (r.family == model.family && r.weights == weights) { row = &r; }
-    }
+    const auto find = [](std::string_view family, WeightClass w) -> const DecodeLaunches* {
+        for (const DecodeLaunches& r : kDecodeLaunches) {
+            if (r.family == family && r.weights == w) { return &r; }
+        }
+        return nullptr;
+    };
+    const DecodeLaunches* row = find(model.family, weights);
     if (row == nullptr) {
         transferred = true;
-        row         = &kDecodeLaunches[0];
+        row         = find(model.family, WeightClass::KQuant);
     }
+    if (row == nullptr) { row = find(kDecodeLaunches[0].family, weights); }
+    if (row == nullptr) { row = &kDecodeLaunches[0]; }
     if (model.layers == 0) { transferred = true; } // unknown layers: the census model's
     const double scale = model.layers > 0 ? model.layers / row->layers : 1.0;
     const int at       = rows <= 1 ? 0 : rows <= 4 ? 1 : 2;
@@ -531,7 +537,10 @@ WeightClass weight_class_of(const std::vector<std::string>& formats, std::string
     const std::vector<std::string> t = label_tokens(label);
     for (std::size_t i = 0; i < t.size(); ++i) {
         const bool next_k = i + 1 < t.size() && t[i + 1] == "K";
-        if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k) { return WeightClass::KQuant; }
+        // Not another engine's repacked layouts (Q4_K_R4, Q8_K_R8): their routes are not ours.
+        const bool repacked = i + 2 < t.size() && t[i + 2].size() >= 2 && t[i + 2][0] == 'R' &&
+                              std::isdigit(static_cast<unsigned char>(t[i + 2][1]));
+        if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k && !repacked) { return WeightClass::KQuant; }
         if (t[i] == "Q8") {
             // Q8, Q8_0; unsloth's Q8_K_XL / _L / _M / _S (Q8_0 with 16-bit tensors), not Q8_KV or Q8_K_R8.
             const std::string next  = i + 1 < t.size() ? t[i + 1] : "";
