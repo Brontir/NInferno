@@ -113,16 +113,6 @@ DryRunInputs at_context(const DryRunInputs& inputs, std::uint32_t context) {
     return out;
 }
 
-// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
-// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
-// kept), the way a row's launch_context starts.
-DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
-    DryRunInputs out                  = inputs;
-    out.options.max_context           = context;
-    out.options.max_context_automatic = true;
-    return out;
-}
-
 bool own_plan(const runtime::DryRunPlan& plan) {
     const runtime::DryRunRung* chosen = plan.chosen();
     return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();
@@ -1122,6 +1112,16 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
             << "\n";
     }
     return out.str();
+}
+
+// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
+// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
+// kept), the way a row's launch_context starts.
+DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
+    DryRunInputs out                  = inputs;
+    out.options.max_context           = context;
+    out.options.max_context_automatic = true;
+    return out;
 }
 
 } // namespace ninferno::product

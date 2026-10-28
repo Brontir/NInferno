@@ -1110,6 +1110,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
     std::string planned_label           = quant;
+    std::uint32_t launch_context        = 0; // the ceiling a start of the shown row passes
     if (quant.empty()) {
         const product::QuantPlan plan   = product::plan_quants(*facts, listing, inputs);
         const product::QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
@@ -1125,7 +1126,10 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         }
         doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
         planned_at = at;
-        if (chosen != nullptr) { planned_label = chosen->listing.quant; }
+        if (chosen != nullptr) {
+            planned_label  = chosen->listing.quant;
+            launch_context = chosen->launch_context;
+        }
     } else {
         // One quantization: its row of the table (the same states, sizes and codes), and its plan.
         std::vector<product::QuantListing> one;
@@ -1134,6 +1138,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         }
         const product::QuantPlan plan = product::plan_quants(*facts, one, inputs);
         const product::QuantRow& row  = plan.rows.front();
+        launch_context                = row.launch_context;
         const product::PlanSourceFacts at =
             product::with_weights(*facts, row.weight_bytes, row.basis);
         product::PlannedSpeculation planned =
@@ -1158,7 +1163,11 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     auto now      = std::make_shared<PlanNowContext>();
     now->subjects = subjects_kept;
     now->facts    = planned_at;
-    now->inputs   = at_label;
+    // A start passes the row's ceiling (several streams each get their own context): now is
+    // planned under it, as the idle plan is.
+    now->inputs   = launch_context != 0 && inputs.options.max_context_automatic
+                        ? product::under_context_cap(at_label, launch_context)
+                        : at_label;
     now->served   = served;
     now->pins     = inputs.pins;
     std::lock_guard lock(sizes_mutex_);

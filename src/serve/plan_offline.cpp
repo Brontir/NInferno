@@ -543,7 +543,12 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
         const product::QuantRow& row             = quants->rows[quants->pick->index];
-        const product::DryRunInputs at_row       = product::inputs_for(planning.inputs, row.listing);
+        // Under the row's ceiling when a start passes one (several streams, automatic context).
+        const product::DryRunInputs listed       = product::inputs_for(planning.inputs, row.listing);
+        const product::DryRunInputs at_row =
+            row.launch_context != 0 && listed.options.max_context_automatic
+                ? product::under_context_cap(listed, row.launch_context)
+                : listed;
         const product::PlanSourceFacts at_weights =
             product::with_weights(model.facts, row.weight_bytes, row.basis);
         // The choice is made at the chosen row: there, its storages and the drafter it serves.
