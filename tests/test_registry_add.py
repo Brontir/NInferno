@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import struct
 import sys
 import tempfile
 import unittest
@@ -15,6 +16,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "spec"))
 import registry_add  # noqa: E402
+import round_facts  # noqa: E402
 
 
 def choice(config: str, drafter: str = "assistant") -> dict:
@@ -243,6 +245,118 @@ class PairTest(unittest.TestCase):
         self.assertEqual(len(pairs), 2)
         self.assertIn("org/m@def Q4_K_M", [p["target_repo"] for p in pairs])
 
+
+class RoundFactsTest(unittest.TestCase):
+    """tools/spec/round_facts.py: what each pass of a round reads, from a tensor table."""
+
+    @staticmethod
+    def table(names: dict, meta: dict | None = None) -> dict:
+        return {"meta": meta or {}, "tensors": {n: b for n, (b, e) in names.items()},
+                "elems": {n: e for n, (b, e) in names.items()}}
+
+    def pair(self, configs: list[str], drafters: dict | None = None, kinds: tuple = ()) -> dict:
+        return {"target_repo": "org/t@1 Q4_K_M", "drafters": drafters or {},
+                "tune": {"key": {"gpu": "ad104:60sm"}, "drafters": [{"kind": k} for k in kinds],
+                         "measurements": [{"config": c} for c in configs + ["plain"]]}}
+
+    def test_mtp_layers_and_dflash(self):
+        meta = {"general.architecture": "qwen35", "qwen35.block_count": 3, "qwen35.nextn_predict_layers": 1}
+        target = self.table({"token_embd.weight": (100, 400), "output.weight": (100, 400),
+                             "blk.0.attn_q.weight": (50, 200), "blk.1.ffn_up.weight": (50, 200),
+                             "blk.2.nextn.eh_proj.weight": (10, 40), "v.blk.0.w": (999, 999)}, meta)
+        drafter = self.table({"model.layers.0.mlp.up_proj.weight": (30, 15)}, {"block_size": 16})
+        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
+        facts = round_facts.round_facts(self.pair(["mtp:3", "dflash:7"], {"dflash": "z/d@2"}), tables, {})
+        self.assertEqual(facts["target"], {"bytes": 200, "params": 800})
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 110, "params": 440, "rows": 1, "per_draft": True})
+        self.assertEqual(facts["drafters"]["dflash"],
+                         {"bytes": 30, "params": 15, "rows": 16, "per_draft": False,
+                          "head": {"bytes": 100, "params": 400}})
+        drafter["meta"] = {}
+        facts = round_facts.round_facts(self.pair(["dflash:7"], {"dflash": "z/d@2"}), tables, {})
+        self.assertIsNone(facts)  # no block_size: no DFlash facts
+
+    def test_nemotron_sidecar_counts_its_nextn_layer(self):
+        meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.expert_count": 8,
+                "nemotron_h_moe.expert_used_count": 2}
+        target = self.table({"output.weight": (10, 40), "blk.0.ffn_up_exps.weight": (80, 320),
+                             "blk.0.attn_q.weight": (5, 20)}, meta)
+        side = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (3, 12),
+                           "blk.0.ffn_up_exps.weight": (16, 64)},
+                          dict(meta, **{"nemotron_h_moe.block_count": 1,
+                                        "nemotron_h_moe.nextn_predict_layers": 1}))
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "mtp-Q4_0"}]}]}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:b/g@3:mtp-Q4_0.gguf": side}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        tables, registry)
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 13, "params": 52, "expert_bytes": 16,
+                                                    "expert_params": 64, "experts": 8, "experts_used": 2,
+                                                    "rows": 1, "per_draft": True})
+
+    def test_packed_safetensors_count_logical_parameters(self):
+        header = {"a.qweight": {"dtype": "I32", "shape": [4, 2], "data_offsets": [0, 32]},
+                  "a.scales": {"dtype": "F16", "shape": [2], "data_offsets": [32, 36]},
+                  "b.weight_packed": {"dtype": "U8", "shape": [4], "data_offsets": [36, 40]},
+                  "b.weight_scale": {"dtype": "F8_E4M3", "shape": [1], "data_offsets": [40, 41]},
+                  "c.weight": {"dtype": "BF16", "shape": [3], "data_offsets": [41, 47]}}
+        tensors, elems = round_facts.parse_safetensors_header(header, 4)
+        self.assertEqual(elems, {"a.qweight": 64, "a.scales": 0, "b.weight_packed": 8, "b.weight_scale": 0,
+                                 "c.weight": 3})
+        self.assertEqual(tensors["a.scales"], 4)
+
+    def test_gguf_sizes_from_offsets(self):
+        def s(text):
+            raw = text.encode()
+            return struct.pack("<Q", len(raw)) + raw
+        buf = b"GGUF" + struct.pack("<IQQ", 3, 2, 0)
+        buf += s("x") + struct.pack("<I", 1) + struct.pack("<Q", 64) + struct.pack("<IQ", 99, 0)
+        buf += s("y") + struct.pack("<I", 1) + struct.pack("<Q", 32) + struct.pack("<IQ", 1, 96)
+        _, tensors, elems = round_facts.parse_gguf(buf)
+        self.assertEqual(tensors, {"x": 96, "y": 64})  # x (an unknown type) by the next offset
+        self.assertEqual(elems, {"x": 64, "y": 32})
+
+    def test_embeddings_by_role_and_the_sidecar_first(self):
+        meta = {"expert_count": 8, "expert_used_count": 2}
+        target = self.table({"backbone.embeddings.weight": (700, 350), "lm_head.weight": (10, 40),
+                             "backbone.layers.0.mixer.q_proj.weight": (5, 20),
+                             "mtp.layers.0.q_proj.weight": (90, 90)}, meta)
+        side = self.table({"blk.0.attn_q.weight": (3, 12)})
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "m"}]}]}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:b/g@3:m.gguf": side}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        tables, registry)
+        self.assertEqual(facts["target"], {"bytes": 15, "params": 60})  # no embedding table read
+        self.assertEqual(facts["drafters"]["mtp"]["bytes"], 13)  # the sidecar, not mtp.* (90)
+
+    def test_a_drafter_as_its_kind_attaches_it(self):
+        assistant = self.table({"model.layers.0.mlp.up_proj.weight": (2 * 65536, 65536),
+                                "model.layers.0.input_layernorm.weight": (64, 32),
+                                "model.embed_tokens.weight": (2 * 400 * 256, 400 * 256)}, {"vocab_size": 400})
+        registry = {"kinds": {"gemma4_assistant": {"quant": "q8", "proposal_rows": 100}},
+                    "models": [{"drafters": [{"kind": "gemma4_assistant", "repo": "g/a"}]}]}
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        facts = round_facts.round_facts(self.pair(["mtp:3"], {"gemma4_assistant": "g/a@1"}, ("gemma4_assistant",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:g/a@1": assistant}, registry)
+        # q8 projection (65536 x 34/32), the norm kept (64), the head's 100 of 400 rows in BF16.
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 69632 + 64 + 2 * 100 * 256,
+                                                    "params": 65536 + 32 + 100 * 256, "rows": 1, "per_draft": True})
+
+    def test_stale_facts_are_not_kept(self):
+        old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"drafters": {"dflash": {}}}}
+        new = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89", "target_repo": "t",
+               "tune": {"key": {"gpu": "ad104:60sm"}, "measurements": [{"config": "mtp:3"}, {"config": "plain"}]}}
+        with contextlib.redirect_stderr(io.StringIO()):
+            out = registry_add.put_pair([old], new)
+        self.assertNotIn("round_facts", out[0])
+
+    def test_a_new_tune_keeps_the_facts_and_board(self):
+        old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"x": 1}, "lab_board": "0x2782"}
+        new = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}}
+        out = registry_add.put_pair([old], new)
+        self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
 
 if __name__ == "__main__":
     unittest.main()

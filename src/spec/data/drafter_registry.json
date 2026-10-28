@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 170,
+  "version": 171,
   "published": "2026-10-28",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -8035,6 +8035,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 5928020928,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 2034237440,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 2520818688,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -8435,6 +8460,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 6165891072,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     },
     {
@@ -9086,6 +9130,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-4B-DFlash@9a1996ccf887b79ab3af4fcbf8c1d1f4b5658bcf"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 3117266944,
+          "params": 4205751296
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 674112512,
+            "params": 634425856,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
+          },
+          "mtp": {
+            "bytes": 649648128,
+            "params": 756298752,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -9737,6 +9806,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-4B-DFlash@9a1996ccf887b79ab3af4fcbf8c1d1f4b5658bcf"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 3286590592,
+          "params": 4205751696
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 674112512,
+            "params": 634425856,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 1271398400,
+              "params": 635699200
+            }
+          },
+          "mtp": {
+            "bytes": 1358096496,
+            "params": 756298766,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -10154,6 +10248,21 @@
       "drafters": {
         "gemma4_assistant": "google/gemma-4-12B-it-assistant@46d4c6f13f0ac0ad827b915669b8df9b81c64c51",
         "dflash": "z-lab/gemma4-12B-it-DFlash@541d351de6dc9cd698fc348612bd5cdf03c636d0"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 7365559808,
+          "params": 11907350576
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 365416968,
+            "params": 255084804,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -10554,6 +10663,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 6513936384,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     },
     {
@@ -10971,6 +11099,21 @@
       "drafters": {
         "gemma4_assistant": "google/gemma-4-12B-it-assistant@46d4c6f13f0ac0ad827b915669b8df9b81c64c51",
         "dflash": "z-lab/gemma4-12B-it-DFlash@541d351de6dc9cd698fc348612bd5cdf03c636d0"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 9770198528,
+          "params": 11907350576
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 365416968,
+            "params": 255084804,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -11371,6 +11514,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-4B-DFlash@9a1996ccf887b79ab3af4fcbf8c1d1f4b5658bcf"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 3453087744,
+          "params": 4205751296
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 674112512,
+            "params": 634425856,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
+          }
+        }
       }
     },
     {
@@ -11771,6 +11933,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 6513936384,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     },
     {
@@ -12171,6 +12352,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-12B-it-assistant@46d4c6f13f0ac0ad827b915669b8df9b81c64c51"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 8146028704,
+          "params": 11907350320
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 365416968,
+            "params": 255084804,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -12571,6 +12767,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-4B-DFlash@9a1996ccf887b79ab3af4fcbf8c1d1f4b5658bcf"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 3239901184,
+          "params": 4205751296
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 674112512,
+            "params": 634425856,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
+          }
+        }
       }
     },
     {
@@ -13222,6 +13437,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-4B-DFlash@9a1996ccf887b79ab3af4fcbf8c1d1f4b5658bcf"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 3110467584,
+          "params": 4205751296
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 674112512,
+            "params": 634425856,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200
+            }
+          },
+          "mtp": {
+            "bytes": 612825088,
+            "params": 756298752,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -13622,6 +13862,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 6033442816,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     },
     {
@@ -14273,6 +14532,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 5117970432,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1002113024,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -14924,6 +15208,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 8435845120,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 1080688640,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1339246592,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -15575,6 +15884,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 5983635456,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1014827008,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -15975,6 +16309,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-31B-it-assistant@627c5ec1458b9086b841a91e0512fd31fd2fbbf1"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 17976479616,
+          "params": 30697345596
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 414994952,
+            "params": 301746436,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -16375,6 +16724,29 @@
       },
       "drafters": {
         "nemotron_h_mtp": "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF@f0eec2267ae843d9eb21ea3926ab0046da0a8628"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 1992524544,
+          "params": 1850810688,
+          "expert_bytes": 16523329536,
+          "expert_params": 29374808064,
+          "experts": 128,
+          "experts_used": 6
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 231448064,
+            "params": 410484608,
+            "expert_bytes": 718405632,
+            "expert_params": 1277165568,
+            "experts": 128,
+            "experts_used": 6,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -16775,6 +17147,25 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b98394530b8fda2e95cadd65c151c"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 1650013120,
+          "params": 2395152926,
+          "expert_bytes": 15130180608,
+          "expert_params": 22837989120,
+          "experts": 128,
+          "experts_used": 8
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 362074632,
+            "params": 251939076,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -17175,6 +17566,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-31B-it-assistant@627c5ec1458b9086b841a91e0512fd31fd2fbbf1"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 18671230848,
+          "params": 30697345596
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 414994952,
+            "params": 301746436,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -17575,6 +17981,25 @@
       },
       "drafters": {
         "dflash": "meta-models/Muse-Glimmer-30B-GGUF@70bf1b61ac09f91b24d39038091b41c582bc5d7a"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 18884376576,
+          "params": 26509962752
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1618131968,
+            "params": 2555985152,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 924571648,
+              "params": 1344831488
+            }
+          }
+        }
       }
     },
     {
@@ -17975,6 +18400,25 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b98394530b8fda2e95cadd65c151c"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 4790313020,
+          "params": 2395068190,
+          "expert_bytes": 12846458880,
+          "expert_params": 22837985280,
+          "experts": 128,
+          "experts_used": 8
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 362074632,
+            "params": 251939076,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -18375,6 +18819,29 @@
       },
       "drafters": {
         "nemotron_h_mtp": "bartowski/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-GGUF@f0eec2267ae843d9eb21ea3926ab0046da0a8628"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 1660941276,
+          "params": 1850810688,
+          "expert_bytes": 16523353088,
+          "expert_params": 29374808064,
+          "experts": 128,
+          "experts_used": 6
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 231448064,
+            "params": 410484608,
+            "expert_bytes": 718405632,
+            "expert_params": 1277165568,
+            "experts": 128,
+            "experts_used": 6,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -18807,6 +19274,29 @@
       "drafters": {
         "dflash": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646affea2c38b2765f1aaa01a9734ccd",
         "dflash2": "incoai/Qwen3.6-35B-A3B-DFlash2@51ef7b6923ad6c14cb1bb41c37a9041446496ab6"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 1688399064,
+          "params": 1939796608,
+          "expert_bytes": 18119639040,
+          "expert_params": 32212254720,
+          "experts": 256,
+          "experts_used": 8
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 410053632,
+            "params": 385906176,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 286064648,
+              "params": 508559360
+            }
+          }
+        }
       }
     },
     {
@@ -19207,6 +19697,25 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b98394530b8fda2e95cadd65c151c"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 2424987300,
+          "params": 2395068190,
+          "expert_bytes": 12846458880,
+          "expert_params": 22837985280,
+          "experts": 128,
+          "experts_used": 8
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 362074632,
+            "params": 251939076,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -19639,6 +20148,29 @@
       "drafters": {
         "dflash": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646affea2c38b2765f1aaa01a9734ccd",
         "dflash2": "incoai/Qwen3.6-35B-A3B-DFlash2@51ef7b6923ad6c14cb1bb41c37a9041446496ab6"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 3306809856,
+          "params": 1939796608,
+          "expert_bytes": 18119639040,
+          "expert_params": 32212254720,
+          "experts": 256,
+          "experts_used": 8
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 410053632,
+            "params": 385906176,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 1017118720,
+              "params": 508559360
+            }
+          }
+        }
       }
     },
     {
@@ -20039,6 +20571,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-31B-it-assistant@627c5ec1458b9086b841a91e0512fd31fd2fbbf1"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 17271836544,
+          "params": 30697345596
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 414994952,
+            "params": 301746436,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -20690,6 +21237,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 5117970432,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1002113024,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -21341,6 +21913,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 8435845120,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 1080688640,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1339246592,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -21992,6 +22589,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2684",
+      "round_facts": {
+        "target": {
+          "bytes": 5983635456,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1014827008,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -22334,6 +22956,29 @@
       },
       "drafters": {
         "dflash": "z-lab/gpt-oss-20b-DFlash@d53f6551543204c859e8bbaaddbd15d11b447af9"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 1302341376,
+          "params": 1218690624,
+          "expert_bytes": 10178887680,
+          "expert_params": 19116933120,
+          "experts": 32,
+          "experts_used": 4
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 615329280,
+              "params": 579133440
+            }
+          }
+        }
       }
     },
     {
@@ -22751,6 +23396,29 @@
       "drafters": {
         "dflash": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646affea2c38b2765f1aaa01a9734ccd",
         "dflash2": "incoai/Qwen3.6-35B-A3B-DFlash2@51ef7b6923ad6c14cb1bb41c37a9041446496ab6"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 1191547392,
+          "params": 1939796608,
+          "expert_bytes": 14019461120,
+          "expert_params": 32212254720,
+          "experts": 256,
+          "experts_used": 8
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 410053632,
+            "params": 385906176,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360
+            }
+          }
+        }
       }
     },
     {
@@ -23093,6 +23761,29 @@
       },
       "drafters": {
         "dflash": "z-lab/gpt-oss-20b-DFlash@d53f6551543204c859e8bbaaddbd15d11b447af9"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 1302341376,
+          "params": 1218690624,
+          "expert_bytes": 10178887680,
+          "expert_params": 19116933120,
+          "experts": 32,
+          "experts_used": 4
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 615329280,
+              "params": 579133440
+            }
+          }
+        }
       }
     },
     {
@@ -23509,6 +24200,21 @@
       },
       "drafters": {
         "dflash2": "z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 14507493376,
+          "params": 25624600064
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 1269475328,
+            "params": 1696097792,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -23925,6 +24631,21 @@
       },
       "drafters": {
         "dflash2": "z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 14507493376,
+          "params": 25624600064
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 1269475328,
+            "params": 1696097792,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -24267,6 +24988,29 @@
       },
       "drafters": {
         "dflash": "z-lab/gpt-oss-20b-DFlash@d53f6551543204c859e8bbaaddbd15d11b447af9"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 2437381248,
+          "params": 1218690624,
+          "expert_bytes": 10165616640,
+          "expert_params": 19116933120,
+          "experts": 32,
+          "experts_used": 4
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1158266880,
+              "params": 579133440
+            }
+          }
+        }
       }
     },
     {
@@ -24609,6 +25353,29 @@
       },
       "drafters": {
         "dflash": "z-lab/gpt-oss-20b-DFlash@d53f6551543204c859e8bbaaddbd15d11b447af9"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 2437381248,
+          "params": 1218690624,
+          "expert_bytes": 10165616640,
+          "expert_params": 19116933120,
+          "experts": 32,
+          "experts_used": 4
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1158266880,
+              "params": 579133440
+            }
+          }
+        }
       }
     },
     {
@@ -25260,6 +26027,31 @@
       },
       "drafters": {
         "dflash2": "z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 12744144896,
+          "params": 25624600064
+        },
+        "drafters": {
+          "dflash2": {
+            "bytes": 2044930560,
+            "params": 1924404480,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1042944000,
+              "params": 1271398400
+            }
+          },
+          "mtp": {
+            "bytes": 1242236928,
+            "params": 1696097792,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -25660,6 +26452,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-12B-it-assistant@46d4c6f13f0ac0ad827b915669b8df9b81c64c51"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 10669188608,
+          "params": 11907350576
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 365416968,
+            "params": 255084804,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -26060,6 +26867,25 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b98394530b8fda2e95cadd65c151c"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 2578662336,
+          "params": 2395152926,
+          "expert_bytes": 11018550272,
+          "expert_params": 22837989120,
+          "experts": 128,
+          "experts_used": 8
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 362074632,
+            "params": 251939076,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -26460,6 +27286,25 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-26B-A4B-it-assistant@6e5aaaf4c42b98394530b8fda2e95cadd65c151c"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 1386841024,
+          "params": 2395152926,
+          "expert_bytes": 12846382080,
+          "expert_params": 22837989120,
+          "experts": 128,
+          "experts_used": 8
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 362074632,
+            "params": 251939076,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -26860,6 +27705,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-31B-it-assistant@627c5ec1458b9086b841a91e0512fd31fd2fbbf1"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 13195022208,
+          "params": 30697345596
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 414994952,
+            "params": 301746436,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -27202,6 +28062,29 @@
       },
       "drafters": {
         "dflash": "z-lab/gpt-oss-20b-DFlash@d53f6551543204c859e8bbaaddbd15d11b447af9"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 1845278976,
+          "params": 1218690624,
+          "expert_bytes": 10178887680,
+          "expert_params": 19116933120,
+          "experts": 32,
+          "experts_used": 4
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 833924608,
+            "params": 784767104,
+            "rows": 8,
+            "per_draft": false,
+            "head": {
+              "bytes": 1158266880,
+              "params": 579133440
+            }
+          }
+        }
       }
     },
     {
@@ -27426,6 +28309,25 @@
       },
       "drafters": {
         "dflash": "meta-models/Muse-Glimmer-30B-GGUF@70bf1b61ac09f91b24d39038091b41c582bc5d7a"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 13006409728,
+          "params": 26509962752
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1618131968,
+            "params": 2555985152,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 1428883456,
+              "params": 1344831488
+            }
+          }
+        }
       }
     },
     {
@@ -27843,6 +28745,29 @@
       "drafters": {
         "dflash": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646affea2c38b2765f1aaa01a9734ccd",
         "dflash2": "incoai/Qwen3.6-35B-A3B-DFlash2@51ef7b6923ad6c14cb1bb41c37a9041446496ab6"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 2014669312,
+          "params": 1939796608,
+          "expert_bytes": 12916359168,
+          "expert_params": 32212254720,
+          "experts": 256,
+          "experts_used": 8
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 410053632,
+            "params": 385906176,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360
+            }
+          }
+        }
       }
     },
     {
@@ -28511,6 +29436,39 @@
       "drafters": {
         "dflash": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646affea2c38b2765f1aaa01a9734ccd",
         "dflash2": "incoai/Qwen3.6-35B-A3B-DFlash2@51ef7b6923ad6c14cb1bb41c37a9041446496ab6"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 1681738240,
+          "params": 1939796608,
+          "expert_bytes": 12874416128,
+          "expert_params": 32212254720,
+          "experts": 256,
+          "experts_used": 8
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 410053632,
+            "params": 385906176,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360
+            }
+          },
+          "mtp": {
+            "bytes": 452130816,
+            "params": 547893760,
+            "expert_bytes": 327155712,
+            "expert_params": 805306368,
+            "experts": 256,
+            "experts_used": 8,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -28927,6 +29885,21 @@
       },
       "drafters": {
         "dflash2": "z-lab/Qwen3.8-27B-DFlash2@50307d4c4cde6860d4eee73e2547cd786fe8e8a4"
+      },
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 14449903616,
+          "params": 25624600064
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 1393952768,
+            "params": 1696097792,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -29578,6 +30551,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 4840491008,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 988055552,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -30229,6 +31227,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 5832050688,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1021511680,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -30880,6 +31903,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 6631458816,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1042122752,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -31280,6 +32328,21 @@
       },
       "drafters": {
         "gemma4_assistant": "google/gemma-4-12B-it-assistant@46d4c6f13f0ac0ad827b915669b8df9b81c64c51"
+      },
+      "lab_board": "0x2782",
+      "round_facts": {
+        "target": {
+          "bytes": 7106037248,
+          "params": 11907350576
+        },
+        "drafters": {
+          "mtp": {
+            "bytes": 365416968,
+            "params": 255084804,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -31680,6 +32743,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2503",
+      "round_facts": {
+        "target": {
+          "bytes": 5097424896,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     },
     {
@@ -32331,6 +33413,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x2503",
+      "round_facts": {
+        "target": {
+          "bytes": 5117970432,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1002113024,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -32731,6 +33838,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x1DBA",
+      "round_facts": {
+        "target": {
+          "bytes": 5097424896,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     },
     {
@@ -33382,6 +34508,31 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x1DBA",
+      "round_facts": {
+        "target": {
+          "bytes": 5117970432,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          },
+          "mtp": {
+            "bytes": 1002113024,
+            "params": 1260409344,
+            "rows": 1,
+            "per_draft": true
+          }
+        }
       }
     },
     {
@@ -33782,6 +34933,25 @@
       },
       "drafters": {
         "dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d474760f18c516db87d84c37edbfd3ede6"
+      },
+      "lab_board": "0x1E04",
+      "round_facts": {
+        "target": {
+          "bytes": 5097424896,
+          "params": 7936684544
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 1372703744,
+            "params": 1291904512,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720
+            }
+          }
+        }
       }
     }
   ]

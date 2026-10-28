@@ -18,6 +18,7 @@ add_library(ninferno_spec STATIC
   menu.cpp
   pairs.cpp
   profile.cpp
+  round_cost.cpp
   registry.cpp
 )
 ninferno_internal_includes(ninferno_spec)

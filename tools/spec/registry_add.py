@@ -276,6 +276,20 @@ def generation_of(gpu_class: str) -> str:
     raise SystemExit(f"no generation for GPU class {gpu_class!r} in {FACTS.name}")
 
 
+# The lab's boards by GPU class (the tunes' key.gpu): their PCI product ids in
+# src/core/data/gpu_facts.json.
+LAB_BOARDS = {
+    "ad104:60sm": "0x2782",   # GeForce RTX 4070 Ti
+    "ad102:128sm": "0x2684",  # GeForce RTX 4090
+    "ad106:34sm": "0x2805",   # GeForce RTX 4060 Ti 16GB
+    "gb203:70sm": "0x2C05",   # GeForce RTX 5070 Ti
+    "gb202:170sm": "0x2B85",  # GeForce RTX 5090
+    "ga106:28sm": "0x2503",   # GeForce RTX 3060
+    "tu102:68sm": "0x1E04",   # GeForce RTX 2080 Ti
+    "gv100:80sm": "0x1DBA",   # Quadro GV100
+}
+
+
 def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[str]) -> dict:
     """The registry's pair for one tune (src/spec/pairs.h MeasuredPair)."""
     shas = sorted(w.strip().lower() for w in weights if w.strip())
@@ -304,6 +318,8 @@ def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[s
             "target_bits": label_bits(quant), "generation": generation_of(gpu), "tune": tune}
     if drafters:
         pair["drafters"] = drafters
+    if gpu in LAB_BOARDS:  # the board whose rates price the pair's rounds (spec/round_cost.h)
+        pair["lab_board"] = LAB_BOARDS[gpu]
     return pair
 
 
@@ -312,6 +328,22 @@ def put_pair(pairs: list[dict], pair: dict) -> list[dict]:
     same = lambda p: (p.get("target") == pair["target"] and p.get("generation") == pair["generation"]
                       and (p.get("tune") or {}).get("key", {}).get("gpu") == pair["tune"]["key"]["gpu"])
     kept = [p for p in pairs if not same(p)]
+    # The weights' round facts are the target's and its drafters' (tools/spec/round_facts.py): a
+    # new tune of the same pair keeps them; the lab board stays with its GPU class.
+    # Only facts that price every mode the new tune measured: stale ones would drop its other
+    # configurations off the lab card (spec/pairs.cpp price_by_facts); then none, and a warning.
+    modes = {m.get("config", "plain").split(":")[0] for m in pair["tune"].get("measurements", [])} - {"plain"}
+    for p in pairs:
+        if (p.get("target") == pair["target"] and p.get("drafters") == pair.get("drafters")
+                and "round_facts" in p and "round_facts" not in pair):
+            if modes <= set(p["round_facts"].get("drafters", {})):
+                pair["round_facts"] = p["round_facts"]
+            else:
+                print(f"{pair['target_repo']}: the earlier round facts do not price "
+                      f"{sorted(modes - set(p['round_facts'].get('drafters', {})))}: none kept "
+                      "(run tools/spec/round_facts.py)", file=sys.stderr)
+        if same(p) and "lab_board" in p and "lab_board" not in pair:
+            pair["lab_board"] = p["lab_board"]
     return kept + [pair]
 
 
