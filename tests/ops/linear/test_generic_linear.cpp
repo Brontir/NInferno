@@ -17,6 +17,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/r8_decode_table.h"
 #include "ops/op_tester.h"
 
@@ -1462,6 +1463,40 @@ int main() {
     }
     int failures = 0;
     std::mt19937 rng(20260924U);
+
+    // 0. The wide-load Q6_K's choice (rmma_wide_rule) on the boards' facts: DRAM bytes per SM
+    // cycle and compute capability; as many CTAs and as much local memory as the plain kernel.
+    {
+        namespace g = ops::detail::generic;
+
+        struct Board {
+            const char* name;
+            double bytes;
+            int cc;
+            bool wide;
+        };
+
+        const Board boards[] = {{"RTX 4090", 3.1, 89, true},     {"RTX 4070 Ti", 3.2, 89, true},
+                                {"RTX 5090", 4.4, 120, true},    {"RTX 5070 Ti", 5.2, 120, true},
+                                {"RTX 2080 Ti", 5.9, 75, false}, {"RTX 3060", 7.2, 86, false},
+                                {"Tesla V100", 3.4, 70, false},  {"facts unknown", 0.0, 89, false}};
+        for (const Board& b : boards) {
+            if (g::rmma_wide_rule(b.bytes, b.cc, 2, 2, 0, 0) != b.wide) {
+                std::cerr << "rmma_wide_rule: " << b.name << " expected " << b.wide << "\n";
+                ++failures;
+            }
+        }
+        // Fewer resident CTAs, or a spill the plain kernel lacks: plain, on any board.
+        if (g::rmma_wide_rule(3.1, 89, 1, 2, 0, 0) || g::rmma_wide_rule(3.1, 89, 2, 2, 64, 0)) {
+            std::cerr << "rmma_wide_rule: took the wide kernel at lower occupancy or a spill\n";
+            ++failures;
+        }
+        if (!g::rmma_wide_rule(3.1, 89, 2, 2, 16, 16) || !g::rmma_wide_rule(3.1, 89, 4, 4, 8, 0) ||
+            g::rmma_wide_rule(3.1, 89, 1, 1, 160, 0)) {
+            std::cerr << "rmma_wide_rule: refused a spill within the slack or took a large one\n";
+            ++failures;
+        }
+    }
 
     // 1. Public entry points at random and curated awkward shapes, every format and op.
     for (const Format& f : kFormats) {

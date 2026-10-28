@@ -6,6 +6,8 @@
 
 #include <cuda_runtime.h>
 
+#include <cstddef>
+
 namespace ninferno::ops::detail::generic {
 
 // out [K, T] BF16 = x [K, T] (leading dimension ldx) gathered by K int32 column indices.
@@ -81,6 +83,25 @@ void launch_scalar(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
 // The DRAM bytes the device's bandwidth asks of each SM per cycle (MachineFacts: bandwidth over
 // SMs times the reference clock); 0 when unknown. Once per device.
 [[nodiscard]] double dram_bytes_per_sm_cycle();
+
+// The DRAM bytes per SM cycle below which the wide-load Q6_K (GgmlQ6KWideDecoder) of one token
+// tile pays: there the plain kernel's twice-fetched sectors fill the load queue (ncu, RTX 4090,
+// Gemma 4 12B ffn_down 3840x15360 at T = 6: lg_throttle a third of the stalls, 54 % of DRAM).
+// A/B, T = 1..8, bytes per SM cycle: RTX 4090 3.1 (that add 71 -> 59 us), 5070 Ti 5.2 (every
+// problem 1-8 % faster); on the 3060 (7.2), whose plain kernel streams at 84 % of DRAM, the
+// extra shuffles cost 2-10 %. The boundary of rmma_latency_pays' one row set, from the other side.
+inline constexpr double kRmmaWideBytes = 5.5;
+
+// rmma_wide_pays' rule on its inputs: below kRmmaWideBytes (0: unknown, no), not before sm_75
+// (Volta's register MMA is FMA-emulated, compute-bound), and only where the wide kernel holds as
+// many CTAs per SM as the plain one and spills at most kRmmaWideSpillSlack bytes a thread more
+// (sm_89's one-row-set tiles, held to 128 registers, keep 8 bytes of loop-invariant state in
+// local memory; SwiGLU's 128-register tiles spill 160 bytes in the loop, RTX 4090 w1x16 at
+// T = 6 100.3 -> 103.9 us).
+inline constexpr std::size_t kRmmaWideSpillSlack = 16;
+[[nodiscard]] bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, int wide_ctas,
+                                  int plain_ctas, std::size_t wide_local_bytes,
+                                  std::size_t plain_local_bytes);
 
 // Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 4
 // (generic_volta_gemv.cu), in place of a lane-local register-MMA call.
