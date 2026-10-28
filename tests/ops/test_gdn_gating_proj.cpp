@@ -53,6 +53,11 @@ constexpr ReductionCriterion kGdnNormControlFp32{/*relative_l2=*/8.0e-4,
                                                  /*gross_absolute=*/1.5e-4,
                                                  /*gross_relative_to_max_reference=*/2.0e-3};
 
+// The composed segmented form rounds a and b to BF16 before the gates (gdn_gating): one BF16 ulp
+// of the pre-activation on top of the FP32 criterion.
+constexpr ReductionCriterion kSegmentedComposedControl{/*relative_l2=*/4.0e-3,
+                                                       /*gross_absolute=*/1.0 / 64.0,
+                                                       /*gross_relative_to_max_reference=*/8.0e-3};
 // The generic path quantizes h for the kept matrices' activation widths: the linear tests'
 // allowances for A4 (NVFP4 W4A4) and A8 (FP8 rows), against an FP64 oracle over the decoded words.
 constexpr ReductionCriterion kPublishedA4Control{/*relative_l2=*/0.16,
@@ -747,10 +752,12 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
                     from_device<float>(device_beta.data(), ctl_elements)};
         failures += verify_normwise(label + " h", from_device_bf16(device_h.data(), h_elements), rh,
                                     kGdnNormOutputBf16);
+        const ReductionCriterion& control = tokens <= ops::kSegmentedFusedControlMaxTokens
+                                                ? kGdnNormControlFp32
+                                                : kSegmentedComposedControl;
+        failures += verify_normwise(label + " g", {out.g.begin(), out.g.end()}, rg, control);
         failures +=
-            verify_normwise(label + " g", {out.g.begin(), out.g.end()}, rg, kGdnNormControlFp32);
-        failures += verify_normwise(label + " beta", {out.beta.begin(), out.beta.end()}, rb,
-                                    kGdnNormControlFp32);
+            verify_normwise(label + " beta", {out.beta.begin(), out.beta.end()}, rb, control);
         failures += device_h.verify_guards((label + " h").c_str());
         failures += device_g.verify_guards((label + " g").c_str());
         failures += device_beta.verify_guards((label + " beta").c_str());
