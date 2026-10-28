@@ -82,7 +82,9 @@ bool rmma_latency_pays() {
         // Volta's register MMA is emulated on FMA (no m16n8k16): its kernel is compute-bound,
         // and the variant only cost there (GV100, T 5..8: 0-5 % slower, never picked).
         if (d.major * 10 + d.minor < 75) return false;
+#if !defined(NINFERNO_RMMA_AHEAD_EXP) || !(NINFERNO_RMMA_AHEAD_EXP & 1)
         if (swiglu && d.major < 8) return false;
+#endif
         const auto ctas = [](const void* kernel) {
             return kernel_resident_ctas_per_sm(kernel, Schedule::kThreads, 0);
         };

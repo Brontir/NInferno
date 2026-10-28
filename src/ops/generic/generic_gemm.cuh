@@ -2238,12 +2238,16 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 //
 // Staged (rmma_kernel's act_stage): a spread decoder's activations of the step were copied ahead
 // into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
-template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
+// Ahead (rmma_kernel's act_ring): they were loaded into registers with the step's weights, MMA c's
+// B fragment at ahead[2c], ahead[2c + 1] (load_act of the whole step: the same values).
+template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false, bool Ahead = false>
 __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                                          const typename Decoder::Run (&runs)[Sets][MT][2],
                                          const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k, const uint2* stage = nullptr) {
+                                         int quad, int k, const uint2* stage = nullptr,
+                                         const unsigned* ahead = nullptr) {
     static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
+    static_assert(!Ahead || (SpreadOf<Decoder> && NT == 1 && !Staged), "ahead: one tile, spread");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2287,6 +2291,9 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     act[0][2 * i]     = w.x;
                     act[0][2 * i + 1] = w.y;
                 }
+            } else if constexpr (Ahead) {
+#pragma unroll
+                for (int i = 0; i < 2 * G; ++i) act[0][i] = ahead[2 * G * g + i];
             } else {
                 load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
             }
@@ -3055,6 +3062,19 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
 #else
     constexpr bool kStaged = kActStage;
 #endif
+#ifndef NINFERNO_RMMA_AHEAD_EXP
+#    define NINFERNO_RMMA_AHEAD_EXP 0
+#endif
+#if NINFERNO_FMA_MMA
+    constexpr bool kAhead = false;
+#else
+    constexpr bool kAhead = Latency && !kStaged && SpreadOf<Decoder> && NT == 1 &&
+                            !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value &&
+                            !QuadRunsOf<Decoder>::value &&
+                            ((kSwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 1)) ||
+                             (!kSwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2)));
+#endif
+    unsigned act_ring[kAhead ? 2 : 1][kAhead ? 2 * J : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
     const auto stage_act = [&](auto slot_tag, int step) {
@@ -3070,6 +3090,14 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
                                   live ? 8 : 0);
             }
             cp_commit();
+        } else if constexpr (kAhead) {
+            constexpr int slot = decltype(slot_tag)::value;
+            const int token    = token0 + group;
+            const __nv_bfloat16* const c[1] = {
+                token < a.tokens && step * KStep + quad * R < a.k
+                    ? x + static_cast<std::int64_t>(token) * a.ldx
+                    : nullptr};
+            load_act<Decoder, 1, J>(act_ring[slot], c, step * KStep, quad);
         }
     };
 
@@ -3157,6 +3185,10 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
             }
             mma_step<Decoder, NT, J, kSets, MT, true>(acc, runs, col, step * KStep, quad, a.k,
                                                       &act_stage[slot][warp][0][lane]);
+        } else if constexpr (kAhead) {
+            (void)ahead;
+            mma_step<Decoder, NT, J, kSets, MT, false, true>(acc, runs, col, step * KStep, quad,
+                                                             a.k, nullptr, act_ring[slot]);
         } else {
             (void)ahead;
             mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k);
