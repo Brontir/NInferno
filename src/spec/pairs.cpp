@@ -748,6 +748,18 @@ std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> measured) {
                                             [&](const DrafterRecord& r) { return r.name == d.name; });
             if (known == into.drafters.end()) { into.drafters.push_back(d); }
         }
+        // Each record's facts price its own drafters' rounds: the pooled pair carries every mode's
+        // (the same weights, so one target), whatever the records' order.
+        if (p.round_facts) {
+            if (!same->round_facts) {
+                same->round_facts = p.round_facts;
+            } else {
+                for (const auto& [mode, d] : p.round_facts->drafters) {
+                    same->round_facts->drafters.emplace(mode, d);
+                }
+            }
+        }
+        if (same->lab_board == 0) { same->lab_board = p.lab_board; }
         if (into.load != p.tune.load) { into.load.clear(); }
         if (!into.fit_fallback || !p.tune.fit_fallback ||
             into.fit_fallback->config != p.tune.fit_fallback->config) {

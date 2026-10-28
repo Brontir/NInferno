@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -191,6 +192,43 @@ int main() {
         std::string note;
         (void)sp::profile_for_target({&arch_keyed}, "sm86", {}, nullptr, &rtx3060, &note);
         expect(!note.empty(), "an architecture key is no card's own: priced by the facts");
+    }
+    // One card's two tunes (spec-tune measures one drafter at a time), each with its own mode's
+    // facts: pooled, both drafters are priced, whatever the records' order.
+    {
+        const auto& whole = pair_of(kQ9, "ad104:60sm");
+        auto only = [&](sp::Mode mode, const char* name) {
+            auto p = whole;
+            std::erase_if(p.tune.measurements, [&](const sp::Measurement& m) {
+                return m.config.enabled() && m.config.mode != mode;
+            });
+            std::erase_if(p.round_facts->drafters, [&](const auto& d) { return d.first != name; });
+            return p;
+        };
+        const auto mtp    = only(sp::Mode::Mtp, "mtp");
+        const auto dflash = only(sp::Mode::DFlash, "dflash");
+        const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        const std::vector<std::string> kinds = {"mtp", "dflash"};
+        const auto choose = [&](std::vector<sp::MeasuredPair> records) {
+            return sp::pair_choice(records, whole.target, "qwen3_5", kinds, 4.0, "sm89", {},
+                                   whole.drafters, {}, &rtx4060ti);
+        };
+        const auto ab = choose({mtp, dflash});
+        const auto ba = choose({dflash, mtp});
+        const auto modes = [](const sp::Profile& p) {
+            std::set<sp::Mode> out;
+            for (const auto& m : p.measurements) {
+                if (m.config.enabled()) { out.insert(m.config.mode); }
+            }
+            return out;
+        };
+        expect(ab && ba && modes(ab->profile) == std::set<sp::Mode>{sp::Mode::Mtp, sp::Mode::DFlash} &&
+                   modes(ba->profile) == modes(ab->profile),
+               "two tunes of one card, each with its mode's facts: both drafters priced");
+        expect(ab && ba && ab->profile.overall.config == ba->profile.overall.config &&
+                   ab->profile.thinking.config == ba->profile.thinking.config &&
+                   std::abs(ab->profile.overall.speedup() - ba->profile.overall.speedup()) < 1e-9,
+               "the pooled choice does not depend on the records' order");
     }
     // Pair removal: the plan's speedup on a card with its own pair left out (the facts price the
     // other cards' measurements for it), against that pair's measurement (the same target, its
