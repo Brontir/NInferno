@@ -844,8 +844,8 @@ void test_default_copy_window(const std::vector<Subject>& all) {
     }
 }
 
-// An artifact's proposal head (proposal/*) is on the Device only while it drafts: under DFlash
-// (which drafts with it) or when asked for; plain, MTP and DFlash2 plans leave it off (Codex on
+// An artifact's proposal head (proposal/*) is on the Device only while it drafts: under MTP or
+// DFlash (which draft with it) or when asked for; plain and DFlash2 plans leave it off (Codex on
 // #170: the default head counted for every plan, a false 484 MB on the 9B).
 void test_proposal_bytes_only_when_drafting() {
     rt::PlanDeviceFacts device;
@@ -865,11 +865,12 @@ void test_proposal_bytes_only_when_drafting() {
     };
     const std::uint64_t without = facts.weight_bytes - facts.proposal_bytes;
     check(weights(SpeculativeBackend::None, ProposalHead::Full) == without, "plain: no head");
-    check(weights(SpeculativeBackend::Mtp, ProposalHead::Full) == without, "MTP: no head");
+    check(weights(SpeculativeBackend::Mtp, ProposalHead::Full) == facts.weight_bytes,
+          "MTP: the head");
     check(weights(SpeculativeBackend::DFlash2, ProposalHead::Full) == without, "DFlash2: no head");
     check(weights(SpeculativeBackend::DFlash, ProposalHead::Full) == facts.weight_bytes,
           "DFlash: the head");
-    check(weights(SpeculativeBackend::Mtp, ProposalHead::Optimized) == facts.weight_bytes,
+    check(weights(SpeculativeBackend::DFlash2, ProposalHead::Optimized) == facts.weight_bytes,
           "an asked-for head");
 }
 

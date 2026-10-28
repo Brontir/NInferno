@@ -62,8 +62,8 @@ int main() {
     const auto dflash = [&] { return model_drafter(target, SpeculativeBackend::DFlash); };
 
     failures += check(mtp().empty(), "no manifest: no drafter");
-    // The head a backend drafts with (model_draft_head): DFlash takes the artifact's head when it
-    // serves DFlash; MTP and DFlash2 keep what they were asked for; an asked-for head stays.
+    // The head a backend drafts with (model_draft_head): MTP and DFlash take the artifact's head
+    // when it serves them; DFlash2 keeps what it was asked for; an asked-for head stays.
     {
         using ninferno::ProposalHead;
         using ninferno::product::model_draft_head;
@@ -74,8 +74,11 @@ int main() {
                               ProposalHead::Full,
                           "DFlash keeps the full head without one");
         failures += check(model_draft_head(true, SpeculativeBackend::Mtp, ProposalHead::Full) ==
+                              ProposalHead::Optimized,
+                          "MTP drafts with a head that serves it");
+        failures += check(model_draft_head(false, SpeculativeBackend::Mtp, ProposalHead::Full) ==
                               ProposalHead::Full,
-                          "MTP keeps the full head");
+                          "MTP keeps the full head without one");
         failures += check(model_draft_head(true, SpeculativeBackend::DFlash2, ProposalHead::Full) ==
                               ProposalHead::Full,
                           "DFlash2 keeps the full head");

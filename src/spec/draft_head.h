@@ -28,6 +28,9 @@ namespace ninferno::spec {
 // The depth a converted head is chosen for: DFlash's default draft count (the built-in default
 // dflash:7 and an explicit --spec dflash without --draft-tokens, product/speculative_options.h).
 inline constexpr std::int32_t kDraftHeadDepth = 7;
+// The depth an MTP head is chosen for: MTP's default draft count (the built-in default mtp:3 and an
+// explicit --spec mtp without --draft-tokens).
+inline constexpr std::int32_t kDraftHeadMtpDepth = 3;
 
 // The granularity of the rows searched (the restricted head's rows are whole multiples of it).
 inline constexpr std::uint64_t kDraftHeadRowStep = 8192;

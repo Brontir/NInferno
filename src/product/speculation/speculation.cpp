@@ -694,20 +694,22 @@ std::filesystem::path model_drafter(const std::filesystem::path& artifact,
     return {};
 }
 
-ProposalHead model_draft_head(bool head_serves_dflash, SpeculativeBackend backend,
+ProposalHead model_draft_head(bool head_serves_backend, SpeculativeBackend backend,
                               ProposalHead given) noexcept {
     if (given == ProposalHead::Optimized) { return given; }
-    return backend == SpeculativeBackend::DFlash && head_serves_dflash ? ProposalHead::Optimized
-                                                                       : ProposalHead::Full;
+    const bool restricted = backend == SpeculativeBackend::DFlash || backend == SpeculativeBackend::Mtp;
+    return restricted && head_serves_backend ? ProposalHead::Optimized : ProposalHead::Full;
 }
 
 ProposalHead model_draft_head(const std::filesystem::path& artifact, SpeculativeBackend backend,
                               const std::filesystem::path& separate_drafter, ProposalHead given) {
-    if (given == ProposalHead::Optimized || backend != SpeculativeBackend::DFlash ||
-        !separate_drafter.empty()) {
+    const char* component = backend == SpeculativeBackend::DFlash ? "dflash"
+                            : backend == SpeculativeBackend::Mtp  ? "mtp"
+                                                                  : nullptr;
+    if (given == ProposalHead::Optimized || component == nullptr || !separate_drafter.empty()) {
         return given;
     }
-    return model_draft_head(proposal_head_serves(artifact, "dflash"), backend, given);
+    return model_draft_head(proposal_head_serves(artifact, component), backend, given);
 }
 
 RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,

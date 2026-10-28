@@ -1,7 +1,8 @@
-// Which cached artifacts revisions 4 to 6 convert again: an artifact of any recipe whose DFlash
+// Which cached artifacts revisions 4 to 7 convert again: an artifact of any recipe whose DFlash
 // companion drafter kept its attention projections unquantized (revision 4: qwen3_5_published;
 // revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too), and one with a DFlash /
-// DFlash2 companion and no proposal head (revision 6); not a text-only one. A current older artifact is stamped current, so its report is read
+// DFlash2 companion and no proposal head (revision 6), and one with MTP layers and no head or
+// revision 6's DFlash-only head (revision 7); not a text-only one. A current older artifact is stamped current, so its report is read
 // once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
 
 #include "convert/acquire.h"
@@ -80,8 +81,13 @@ int main() {
           "a Q8 drafter without a proposal head at revision 4 is converted again");
     check(!cache_current(artifact(dir, "rev5", 5, "dflash/layers/0/attention/query", "q8_g32_fp16")),
           "a companion without a proposal head at revision 5 is converted again");
-    check(cache_current(artifact(dir, "new", 6, "dflash/layers/0/attention/query", "bf16")),
-          "revision 6 is current");
+    check(cache_current(artifact(dir, "new", 7, "dflash/layers/0/attention/query", "bf16")),
+          "revision 7 is current");
+    // Revision 7: MTP layers take the default head too; revision 6's head was DFlash's alone.
+    check(!cache_current(artifact(dir, "mtp5", 5, "mtp/layers/0/attention/query", "q8_g32_fp16")),
+          "MTP layers without a head at revision 5 are converted again");
+    check(!cache_current(artifact(dir, "rev6", 6, "dflash/layers/0/attention/query", "q8_g32_fp16")),
+          "a DFlash companion without a head at revision 6 is converted again");
     check(!cache_current(artifact(dir, "old", 2, "text/output_head", "bf16")), "revision 2 is not");
 
     // The pre-conversion budget of the default proposal head (convert::planned_proposal_bytes):

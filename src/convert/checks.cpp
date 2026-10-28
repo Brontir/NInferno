@@ -534,21 +534,23 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
     DefaultProposal out;
     const auto type = model.config().value("model_type", std::string());
     if (type != "qwen3_5_text" && type != "qwen3_5_moe_text") { return out; }
-    const std::string drafter = "dflash";
-    if (!model.components.contains(drafter) || !model.index.contains("text/output_head")) {
-        return out;
-    }
+    const bool mtp    = model.components.contains("mtp");
+    const bool dflash = model.components.contains("dflash");
+    if ((!mtp && !dflash) || !model.index.contains("text/output_head")) { return out; }
     // A round as spec/round_cost.h prices it: the target's verify pass over depth + 1 rows (its
-    // routed experts at that width), the drafter's block pass, the draft head.
+    // routed experts at that width), the drafters' passes, the draft head (MTP: once a draft,
+    // with its layer; DFlash: once a round, after its block).
     spec::PassFacts target;
-    double drafter_bytes = 0;
+    double mtp_bytes = 0, dflash_bytes = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const Parameter& p = model.parameters[i];
         // A parameter bound to another's objects is read once (a tied head is the head's read).
         if (recipe.alias[i] && p.name != "text/output_head") { continue; }
         const double bytes = stored_bytes(model, recipe, i);
-        if (p.residency == drafter) {
-            drafter_bytes += bytes;
+        if (p.residency == "dflash") {
+            dflash_bytes += bytes;
+        } else if (p.residency == "mtp") {
+            mtp_bytes += bytes;
         } else if (p.residency == "text" && p.name != "text/token_embedding") {
             if (p.name.find("/moe/experts/") != std::string::npos) {
                 target.expert_bytes += bytes;
@@ -561,27 +563,41 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
         target.experts      = model.config().value("num_experts", std::int32_t{0});
         target.experts_used = model.config().value("num_experts_per_tok", std::int32_t{0});
     }
-    const double head  = stored_bytes(model, recipe, model.at("text/output_head"));
-    const double round = target.bytes +
-                         target.expert_bytes * spec::moe_read_fraction(target, spec::kDraftHeadDepth + 1) +
-                         drafter_bytes + head;
-    if (!(round > head && head > 0)) { return out; }
-    const double share = head / round;
+    const double head = stored_bytes(model, recipe, model.at("text/output_head"));
+    if (!(head > 0)) { return out; }
+    const auto verify = [&](std::int32_t depth) {
+        return target.bytes + target.expert_bytes * spec::moe_read_fraction(target, depth + 1);
+    };
     // A ranking of another vocabulary throws (the caller keeps the full head).
-    const auto choice =
-        spec::draft_head_rows(ranking_totals(model, ranking), share, spec::kDraftHeadDepth);
+    const auto totals = ranking_totals(model, ranking);
     std::ostringstream note;
     note.precision(3);
-    note << "draft head: " << drafter << " round reads the head as " << 100 * share
-         << " % of its bytes; ";
-    if (choice.rows == 0) {
-        note << "no restriction pays, the full head drafts";
-    } else {
-        note << choice.rows << " ranked rows keep " << 100 * choice.coverage
-             << " % of the ranking's tokens (bound at depth " << spec::kDraftHeadDepth << ": "
-             << 100 * choice.gain << " % a round)";
+    note << "draft head:";
+    const auto choose = [&](const char* drafter, std::int32_t depth, double share) {
+        const auto choice = spec::draft_head_rows(totals, share, depth);
+        note << " " << drafter << ":" << depth << " reads the head as " << 100 * share
+             << " % of a round, ";
+        if (choice.rows == 0) {
+            note << "no restriction pays;";
+            return;
+        }
+        note << choice.rows << " ranked rows (" << 100 * choice.coverage
+             << " % of the ranking's tokens, bound " << 100 * choice.gain << " % a round);";
+        out.drafters.push_back(drafter);
+        out.rows = std::max(out.rows, choice.rows);
+    };
+    if (mtp) {
+        const std::int32_t k = spec::kDraftHeadMtpDepth;
+        const double round   = verify(k) + k * (mtp_bytes + head);
+        choose("mtp", k, k * head / round);
     }
-    out.rows = choice.rows;
+    if (dflash) {
+        const std::int32_t k = spec::kDraftHeadDepth;
+        choose("dflash", k, head / (verify(k) + dflash_bytes + head));
+    }
+    // One head serves them: the rows the most demanding drafter's bound asks for (a drafter that
+    // asks fewer only reads more bytes than its own optimum, never loses more tokens).
+    if (out.rows != 0) { note << " the head keeps " << out.rows << " rows"; }
     out.note = note.str();
     return out;
 }

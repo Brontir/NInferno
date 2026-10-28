@@ -77,15 +77,17 @@ void load_resources(Model& model, const std::filesystem::path& root, std::uint64
 // (tools/freq_corpus/fixtures/ranking, installed with the registry's rankings).
 inline constexpr const char* kDefaultProposalRanking = "ranking.train.counts.i64";
 
-// The proposal head a Qwen target converted with a DFlash drafter gets without --proposal
-// (spec/draft_head.h), for its DFlash drafter only (MTP keeps the full head; DFlash2's fused
-// top-k runs only on the 131072-row Q4 head, so it is left as it is): its rows from the
-// ranking's counts and the share of a DFlash round's stored bytes the full draft head reads (the
-// target's pass without its token table, the drafter's component, the head), at the default
-// depth. rows 0: the target has no such drafter, its facts are unreadable, or no restriction
-// pays. `note` says what the choice rested on.
+// The proposal head a Qwen target with MTP layers or a DFlash drafter gets without --proposal
+// (spec/draft_head.h), for those drafters (DFlash2's fused top-k runs only on the 131072-row Q4
+// head, so it keeps the full head): for each, the rows from the ranking's counts and the share of
+// its round's stored bytes the full draft head reads (MTP: k heads over the target's pass and k
+// MTP passes; DFlash: one over the target's pass, the drafter's component and the head), at its
+// default depth; the head keeps the most rows any of them asks for. rows 0: the target has no
+// such drafter, its facts are unreadable, or no restriction pays. `note` says what the choice
+// rested on.
 struct DefaultProposal {
     std::uint64_t rows = 0;
+    std::vector<std::string> drafters; // the components it serves ("mtp", "dflash")
     std::string note;
 };
 [[nodiscard]] DefaultProposal default_proposal(const Model& model, const Recipe& recipe,

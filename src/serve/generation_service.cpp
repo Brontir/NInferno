@@ -390,7 +390,7 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         engine_options.speculative.drafter =
             product::model_drafter(options_.artifact_path, engine_options.speculative.backend);
     }
-    // DFlash drafts with the artifact's proposal head when it has one for it.
+    // MTP and DFlash draft with the artifact's proposal head when it has one for them.
     engine_options.speculative.proposal_head = product::model_draft_head(
         options_.artifact_path, engine_options.speculative.backend,
         engine_options.speculative.drafter, engine_options.speculative.proposal_head);

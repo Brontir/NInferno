@@ -202,7 +202,7 @@ struct PlanModelFacts {
     std::uint64_t mtp_bytes         = 0;
     std::uint64_t own_drafter_bytes = 0;
     // The proposal head's (an artifact's proposal/head and proposal/token_ids), loaded only when
-    // a run drafts with it (ProposalHead::Optimized; DFlash promotes to it, product::
+    // a run drafts with it (ProposalHead::Optimized; MTP and DFlash promote to it, product::
     // model_draft_head). 0: none or unknown.
     std::uint64_t proposal_bytes = 0;
     // The output head's stored bytes (a whole GGUF tensor table's output.weight, or the token
