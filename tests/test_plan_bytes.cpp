@@ -873,6 +873,37 @@ void test_proposal_bytes_only_when_drafting() {
           "an asked-for head");
 }
 
+// The plan reads the quantizations' heads only where the converter would add the default proposal
+// head (Codex on #170: not for every Qwen table): a declared DFlash companion, a speculation that
+// may draft with DFlash.
+void test_default_proposal_possible() {
+    pr::PlannedTarget nine{.repo = "unsloth/Qwen3.5-9B-GGUF",
+                           .facts = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0),
+                           .gguf  = true};
+    nine.facts.shape.hidden_size       = 4096;
+    nine.facts.shape.num_hidden_layers = 32;
+    nine.facts.shape.vocab_size        = 248320;
+    nine.facts.shape.base_models       = {"Qwen/Qwen3.5-9B"};
+    pr::SpeculationAsk automatic;
+    check(pr::default_proposal_possible(nine, automatic), "9B, --spec auto: the companion's head");
+    pr::SpeculationAsk none{.automatic = false};
+    check(!pr::default_proposal_possible(nine, none), "--spec none: no head to price");
+    pr::SpeculationAsk mtp{.automatic = false};
+    mtp.given.backend = SpeculativeBackend::Mtp;
+    check(!pr::default_proposal_possible(nine, mtp), "--spec mtp: no DFlash head");
+    pr::SpeculationAsk dflash{.automatic = false};
+    dflash.given.backend = SpeculativeBackend::DFlash;
+    check(pr::default_proposal_possible(nine, dflash), "--spec dflash: the head");
+    pr::PlannedTarget other = nine;
+    other.facts.shape.base_models       = {};
+    other.facts.shape.hidden_size       = 1234;
+    other.repo                          = "someone/unknown-qwen";
+    check(!pr::default_proposal_possible(other, automatic), "no companion declared: none");
+    pr::PlannedTarget llama = nine;
+    llama.facts.model.model_type = "dense_decoder";
+    check(!pr::default_proposal_possible(llama, automatic), "not Qwen 3.5: none");
+}
+
 // The default proposal head a Qwen conversion with a DFlash companion adds, per quantization:
 // each row's own head where its header was read, else the parsed one's as it is (Codex on #170:
 // GGUF quantizations often share one Q6_K output.weight while their layers differ).
@@ -1085,6 +1116,7 @@ int main() {
     test_fits_instead();
     test_proposal_bytes_only_when_drafting();
     test_proposal_bytes_per_quant();
+    test_default_proposal_possible();
     std::cout << "rung bytes compared: " << compared << '\n';
     check(compared > 1000, "many rungs compared");
     if (failures != 0) {

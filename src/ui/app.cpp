@@ -1064,7 +1064,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
             config = it->second;
         }
     }
-    const std::vector<product::QuantListing> listing = quant_listing(list, config);
+    std::vector<product::QuantListing> listing = quant_listing(list, config);
     const bool gguf                                  = std::any_of(listing.begin(), listing.end(),
                                                                    [](const auto& q) { return !q.drafter && q.format == "gguf"; });
     const product::LaunchPlanOptions options         = product::launch_options(launch);
@@ -1136,6 +1136,27 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         inputs.drafter_bytes                = drafter.bytes;
         inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
         inputs.drafter_state = drafter.state;
+    }
+    // Each GGUF quantization's own output head where the default proposal head is priced (Codex on
+    // #170: the plan reads them, the UI reused one file's): 1 MiB windows around the parsed
+    // header's tensor table end, read together and kept per commit.
+    if (gguf && !options_.offline && inputs.proposal_drafter_bytes > 0 &&
+        facts->model.gguf_data_offset != 0) {
+        std::vector<std::string> quants;
+        for (const auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && (quant.empty() || q.quant == quant)) {
+                quants.push_back(q.quant);
+            }
+        }
+        convert::FetchOptions fetch;
+        fetch.hub = hub;
+        if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        const auto heads = convert::gguf_quants_head_bytes(
+            commit.empty() ? repo : repo + "@" + commit, fetch, quants,
+            facts->model.gguf_data_offset, facts->model.hidden, facts->model.vocab);
+        for (auto& q : listing) {
+            if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }
+        }
     }
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at

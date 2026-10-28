@@ -1,5 +1,6 @@
 #include "product/plan/plan_speculation.h"
 
+#include "convert/checks.h"
 #include "convert/drafters.h"
 #include "core/hub_revision.h"
 #include "core/device_class.h"
@@ -163,6 +164,20 @@ DeclaredDrafters declared_drafters(const PlannedTarget& target) {
 }
 
 } // namespace
+
+bool default_proposal_possible(const PlannedTarget& target, const SpeculationAsk& ask) {
+    if (!target.facts.model.model_type.starts_with("qwen3_5")) { return false; }
+    if (!ask.automatic && ask.given.backend != SpeculativeBackend::DFlash) { return false; }
+    if (!convert::resolve_ranking(convert::kDefaultProposalRanking, std::filesystem::current_path())) {
+        return false;
+    }
+    try {
+        for (const spec::DrafterDecl& d : declared_drafters(target).attached) {
+            if (!d.component.empty() && d.kind == "dflash") { return true; }
+        }
+    } catch (const std::exception&) {}
+    return false;
+}
 
 SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuKey& gpu) {
     const PlanSourceFacts& facts = target.facts;

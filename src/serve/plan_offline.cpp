@@ -426,8 +426,13 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
             if (!q.drafter && q.format == "gguf" && q.quant != model.quant) { others.push_back(q.quant); }
         }
         // A Qwen target's default proposal head is priced by each quantization's own head: their
-        // 1 MiB header windows, read at the same time (and kept per commit).
-        if (model.facts.model.model_type.starts_with("qwen3_5")) {
+        // 1 MiB header windows, read at the same time (and kept per commit), only where the
+        // converter would add one.
+        // Only where one is planned (Codex on #170: not for every Qwen table).
+        if (product::default_proposal_possible(
+                product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
+                                       .commit = model.commit},
+                out.inputs.ask)) {
             out.heads = std::async(std::launch::async, [spec = model.commit.empty()
                                                                    ? model.repo
                                                                    : model.repo + "@" + model.commit,
