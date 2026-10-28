@@ -7,6 +7,7 @@
 //
 //   ninferno_r8_schedule_bench [--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...]
 //                            [--samples 15] [--launches 60] [--tokens 1,2,4,8] [--rmma 1]
+//                            [--span-mib M]
 //
 // FILE is the NINFERNO_ROUTE_RECORD / ninferno_route_tune format, "<format> <compute> <epilogue>
 // <n> <k>" per line (the compute column is ignored: R8 is the A8 decode route); --problem adds one
@@ -79,6 +80,10 @@ generic::Epilogue parse_epilogue(const std::string& s) {
 // K-quant verify width compares the dispatcher's pick with the other tiles.
 bool g_rmma = false;
 
+// --span-mib M: the weight copies cover at least M MiB (default: four times the L2), so that a run
+// of launches also walks as many distinct pages as a model's step does.
+std::size_t g_span_bytes = 0;
+
 double median(std::vector<double> v) {
     std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
     return v[v.size() / 2];
@@ -86,8 +91,8 @@ double median(std::vector<double> v) {
 
 void run_problem(const Problem& p, int samples, int launches, std::size_t l2_bytes,
                  std::int32_t tokens) {
-    const char* fmt = generic::qtype_name(p.qtype);
-    const char* epi = generic::epilogue_name(p.epilogue);
+    const char* fmt         = generic::qtype_name(p.qtype);
+    const char* epi         = generic::epilogue_name(p.epilogue);
     const bool swiglu       = p.epilogue == generic::Epilogue::SwiGlu;
     const std::int32_t rows = swiglu ? 2 * p.n : p.n;
     if (!generic::r8_supports(p.qtype) || (p.k % 128) != 0 || !generic::r8_fits(p.qtype, p.k, 1)) {
@@ -102,7 +107,8 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     copies.push_back(std::make_unique<bench::RandomWeight>(
         bench::random_weight(p.qtype, rows, p.k, 7U + p.n + p.k)));
     const std::size_t bytes = copies[0]->parent.geometry.bytes;
-    std::size_t count       = std::max<std::size_t>(2, (4 * l2_bytes + bytes - 1) / bytes);
+    const std::size_t span  = std::max(4 * l2_bytes, g_span_bytes);
+    std::size_t count       = std::max<std::size_t>(2, (span + bytes - 1) / bytes);
     count = std::min<std::size_t>(count, std::max<std::size_t>(2, (3ULL << 30) / bytes));
     for (std::size_t c = 1; c < count; ++c) {
         copies.push_back(std::make_unique<bench::RandomWeight>(bench::clone_weight(*copies[0])));
@@ -244,15 +250,15 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         // FNV-1a of the whole output: one route's bytes compared across builds.
         std::uint64_t hash = 14695981039346656037ULL;
         for (const std::uint8_t c : outputs[i]) hash = (hash ^ c) * 1099511628211ULL;
-        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n",
-                    fmt, epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
-                    static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
-                    same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
-                    r == picked16 ? " a16pick" : "",
-                    static_cast<unsigned long long>(hash));
+        std::printf(
+            "r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n", fmt,
+            epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
+            static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
+            same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
+            r == picked16 ? " a16pick" : "", static_cast<unsigned long long>(hash));
     }
-    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n,
-                p.k, tokens, generic::route_name(picked).c_str(), med[at_picked],
+    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n, p.k,
+                tokens, generic::route_name(picked).c_str(), med[at_picked],
                 generic::route_name(routes[best]).c_str(), med[best]);
     std::fflush(stdout);
 
@@ -287,6 +293,8 @@ int main(int argc, char** argv) {
                 samples = std::stoi(v);
             } else if (a == "--launches") {
                 launches = std::stoi(v);
+            } else if (a == "--span-mib") {
+                g_span_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--rmma") {
                 g_rmma = std::stoi(v) != 0;
             } else if (a == "--tokens") {
@@ -334,7 +342,8 @@ int main(int argc, char** argv) {
                         b.sms, b.l2_mib, b.dram_gbps);
         }
         for (const Problem& p : problems) {
-            for (const std::int32_t t : widths) run_problem(p, samples, launches, device.l2_bytes, t);
+            for (const std::int32_t t : widths)
+                run_problem(p, samples, launches, device.l2_bytes, t);
         }
         std::printf("done\n");
         return 0;
