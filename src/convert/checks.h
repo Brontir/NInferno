@@ -95,13 +95,14 @@ struct DefaultProposal {
 // The bytes the proposal head default_proposal gives a target take, from what a plan knows before
 // the conversion: the head's stored bytes (0: unknown, an unquantized checkpoint's: stored as its
 // default recipe stores it, qwen3_5_recipe_head_format of qwen3_5_checkpoint_recipe(`moe`), its
-// rows gathered to the recipe's Q4), the target's and its DFlash drafter's weights, the
-// vocabulary and width. The rows
-// from the default ranking as default_proposal finds it, with their int32 token ids; 0 when it is
-// not found or nothing pays.
+// rows gathered to the recipe's Q4), the target's weights, its MTP layers' (0: none) and its DFlash drafter's (0:
+// none), the vocabulary and width. The rows from the default ranking as default_proposal finds
+// it (the most MTP 3 and DFlash 7 ask for), with their int32 token ids; 0 when it is not found
+// or nothing pays.
 [[nodiscard]] std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
-                                                   double drafter_bytes, std::uint64_t vocab,
-                                                   std::uint64_t hidden, bool moe = false);
+                                                   double mtp_bytes, double drafter_bytes,
+                                                   std::uint64_t vocab, std::uint64_t hidden,
+                                                   bool moe = false);
 
 // select_shortlist(counts, n, force_include).
 [[nodiscard]] std::vector<std::int64_t> select_shortlist(const std::vector<std::int64_t>& counts,

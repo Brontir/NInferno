@@ -540,8 +540,8 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
     // A round as spec/round_cost.h prices it: the target's verify pass over depth + 1 rows (its
     // routed experts at that width), the drafters' passes, the draft head (MTP: once a draft,
     // with its layer; DFlash: once a round, after its block).
-    spec::PassFacts target;
-    double mtp_bytes = 0, dflash_bytes = 0;
+    spec::PassFacts target, mtp_pass;
+    double dflash_bytes = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const Parameter& p = model.parameters[i];
         // A parameter bound to another's objects is read once (a tied head is the head's read).
@@ -549,20 +549,25 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
         const double bytes = stored_bytes(model, recipe, i);
         if (p.residency == "dflash") {
             dflash_bytes += bytes;
-        } else if (p.residency == "mtp") {
-            mtp_bytes += bytes;
-        } else if (p.residency == "text" && p.name != "text/token_embedding") {
+        } else if (p.residency == "mtp" || (p.residency == "text" && p.name != "text/token_embedding")) {
+            // Routed experts apart (an MoE target's and its MTP layer's bank): a pass reads
+            // the share its rows route to.
+            auto& pass = p.residency == "mtp" ? mtp_pass : target;
             if (p.name.find("/moe/experts/") != std::string::npos) {
-                target.expert_bytes += bytes;
+                pass.expert_bytes += bytes;
             } else {
-                target.bytes += bytes;
+                pass.bytes += bytes;
             }
         }
     }
-    if (target.expert_bytes > 0) {
-        target.experts      = model.config().value("num_experts", std::int32_t{0});
-        target.experts_used = model.config().value("num_experts_per_tok", std::int32_t{0});
+    for (auto* pass : {&target, &mtp_pass}) {
+        if (pass->expert_bytes > 0) {
+            pass->experts      = model.config().value("num_experts", std::int32_t{0});
+            pass->experts_used = model.config().value("num_experts_per_tok", std::int32_t{0});
+        }
     }
+    const double mtp_bytes =
+        mtp_pass.bytes + mtp_pass.expert_bytes * spec::moe_read_fraction(mtp_pass, 1);
     const double head = stored_bytes(model, recipe, model.at("text/output_head"));
     if (!(head > 0)) { return out; }
     const auto verify = [&](std::int32_t depth) {
@@ -609,20 +614,23 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
     try {
         return default_proposal_of(model, recipe, ranking);
     } catch (const std::exception& error) {
-        return {0, std::string("draft head: the full head drafts (") + error.what() + ")"};
+        DefaultProposal none;
+        none.note = std::string("draft head: the full head drafts (") + error.what() + ")";
+        return none;
     }
 }
 
-std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double drafter_bytes,
-                                     std::uint64_t vocab, std::uint64_t hidden, bool moe) {
+std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double mtp_bytes,
+                                     double drafter_bytes, std::uint64_t vocab,
+                                     std::uint64_t hidden, bool moe) {
     if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return 0; }
     // A plan prices many rows and probes: the ranking is read once per vocabulary, each answer
     // kept (the same facts, the same bytes).
-    using Key = std::tuple<double, double, double, std::uint64_t, std::uint64_t, bool>;
+    using Key = std::tuple<double, double, double, double, std::uint64_t, std::uint64_t, bool>;
     static std::mutex mutex;
     static std::map<std::uint64_t, std::vector<std::int64_t>> rankings; // by vocabulary
     static std::map<Key, std::uint64_t> answers;
-    const Key key{head_bytes, target_bytes, drafter_bytes, vocab, hidden, moe};
+    const Key key{head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe};
     std::lock_guard lock(mutex);
     if (const auto it = answers.find(key); it != answers.end()) { return it->second; }
     auto ranking = rankings.find(vocab);
@@ -655,12 +663,24 @@ std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, dou
                 : values * stored_bits(qwen3_5_recipe_head_format(qwen3_5_checkpoint_recipe(moe))) / 8;
         const double rows_bytes = head_bytes > 0 ? head_bytes / static_cast<double>(vocab)
                                                  : hidden * stored_bits(QType::Q4_G64_FP16) / 8;
-        // The target's weights hold its head already (a GGUF's tensor table counts output.weight).
-        const double round = std::max(target_bytes, full) + drafter_bytes + full;
-        const auto choice  = spec::draft_head_rows(ranking->second, full / round, spec::kDraftHeadDepth);
+        // The target's weights hold its head already (a GGUF's tensor table counts output.weight);
+        // the rows the most demanding drafter asks for, as default_proposal keeps.
+        const auto& totals  = ranking->second;
+        const double target = std::max(target_bytes - mtp_bytes, full);
+        std::uint64_t rows  = 0;
+        if (mtp_bytes > 0) {
+            const std::int32_t k = spec::kDraftHeadMtpDepth;
+            rows = std::max(
+                rows, spec::draft_head_rows(totals, k * full / (target + k * (mtp_bytes + full)), k).rows);
+        }
+        if (drafter_bytes > 0) {
+            rows = std::max(rows, spec::draft_head_rows(totals, full / (target + drafter_bytes + full),
+                                                        spec::kDraftHeadDepth)
+                                      .rows);
+        }
         // The gathered rows and their int32 token ids (proposal/token_ids).
-        out = static_cast<std::uint64_t>(static_cast<double>(choice.rows) * rows_bytes) +
-              choice.rows * sizeof(std::int32_t);
+        out = static_cast<std::uint64_t>(static_cast<double>(rows) * rows_bytes) +
+              rows * sizeof(std::int32_t);
     }
     answers.emplace(key, out);
     return out;

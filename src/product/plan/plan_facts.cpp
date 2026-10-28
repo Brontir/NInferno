@@ -845,6 +845,10 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         out.shape.quant_label = q->get<std::string>();
     }
     out.model.proposal_bytes    = proposal_bytes;
+    out.model.proposal_serves_mtp =
+        dir.uses.contains({std::string("proposal/head"), std::string("mtp/final_hidden")});
+    out.model.proposal_serves_dflash =
+        dir.uses.contains({std::string("proposal/head"), std::string("dflash/final_hidden")});
     out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
     // A Qwen artifact's own DFlash drafter (its dflash or dflash2 component).
     for (const char* component : {"dflash", "dflash2"}) {

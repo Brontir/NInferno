@@ -60,8 +60,10 @@ struct QuantListing {
 struct AttachedDrafterMemory {
     std::uint64_t bytes = 0;
     std::optional<models::DrafterStateShape> state;
-    // A Qwen DFlash companion's bytes as converted (0: none): what the default proposal head the
-    // converter adds is priced on, per quantization (DryRunInputs::proposal_drafter_bytes).
+    // Whether the target takes the converter's default proposal head (a Qwen target), and its
+    // DFlash companion's bytes as converted (0: none): what the head is priced on, per
+    // quantization with the row's MTP layers (DryRunInputs::proposal_drafter_bytes).
+    bool proposal_planned         = false;
     double proposal_drafter_bytes = 0;
 };
 [[nodiscard]] AttachedDrafterMemory
@@ -106,8 +108,10 @@ struct DryRunInputs {
     // nullptr from it: `subject` for every quantization.
     std::function<const SpeculationSubject*(const QuantListing&)> subject_of;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
-    // The default proposal head a Qwen conversion with a DFlash companion adds, priced for each
-    // quantization (proposal_bytes_at): the companion's bytes (0: none).
+    // The default proposal head a Qwen conversion with MTP layers or a DFlash companion adds,
+    // priced for each quantization (proposal_bytes_at): whether one is planned and the
+    // companion's bytes (0: none).
+    bool proposal_planned         = false;
     double proposal_drafter_bytes = 0;
     // The row's own head (QuantListing::head_bytes, inputs_for); 0: the facts' head stands.
     std::uint64_t proposal_row_head_bytes = 0;

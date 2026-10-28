@@ -178,11 +178,14 @@ DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
 }
 
 std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
-    if (inputs.proposal_drafter_bytes <= 0) { return 0; }
-    const auto& m     = facts.model;
+    const auto& m = facts.model;
+    if (!inputs.proposal_planned || (inputs.proposal_drafter_bytes <= 0 && m.mtp_bytes == 0)) {
+        return 0;
+    }
     const double head = static_cast<double>(
         inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
     return convert::planned_proposal_bytes(head, static_cast<double>(m.weight_bytes),
+                                           static_cast<double>(m.mtp_bytes),
                                            inputs.proposal_drafter_bytes, m.vocab, m.hidden,
                                            facts.shape.experts > 0);
 }
@@ -252,6 +255,9 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                         std::string_view target_model_type, std::uint32_t target_hidden,
                         const convert::FetchOptions* fetch) {
     AttachedDrafterMemory out;
+    // A Qwen target takes the default proposal head where it has MTP layers or a DFlash
+    // companion (convert::default_proposal), priced per quantization (proposal_bytes_at).
+    out.proposal_planned = target_model_type.starts_with("qwen3_5");
     for (const spec::DrafterDecl& d : subject.attached_drafters) {
         std::uint64_t bytes = 0;
         if (!d.gguf.empty()) {
@@ -467,7 +473,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             shape.model.weight_basis != runtime::WeightBasis::Unknown) {
             row.basis = shape.model.weight_basis;
         }
-        row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_drafter_bytes > 0 &&
+        row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_planned &&
                                     proposal_bytes_at(with_weights(shape, row.weight_bytes,
                                                                    row.basis),
                                                       inputs_for(inputs, q)) != 0;

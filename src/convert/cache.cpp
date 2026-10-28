@@ -1,4 +1,5 @@
 #include "convert/cache.h"
+#include "artifact/reader.h"
 #include "convert/checks.h"
 #include "convert/drafters.h"
 
@@ -93,7 +94,13 @@ bool default_head_outdated(const std::filesystem::path& artifact, int revision) 
     } catch (const std::exception&) { return false; }
     // Without a head: one with MTP layers or a DFlash companion takes one now. With one: the
     // head revision 6 gave served DFlash alone, so one with MTP layers takes MTP's use too.
-    return proposal ? revision == 6 && mtp : dflash || mtp;
+    if (!proposal) { return dflash || mtp; }
+    if (revision != 6 || !mtp) { return false; }
+    try {
+        const artifact::Reader reader(artifact);
+        return !reader.directory().uses.contains(
+            {std::string("proposal/head"), std::string("mtp/final_hidden")});
+    } catch (const std::exception&) { return false; }
 }
 
 namespace {

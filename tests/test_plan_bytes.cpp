@@ -856,6 +856,8 @@ void test_proposal_bytes_only_when_drafting() {
     rt::PlanModelFacts facts  = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0).model;
     facts.weight_bytes        = static_cast<std::uint64_t>(10.20 * kGiB);
     facts.proposal_bytes      = static_cast<std::uint64_t>(0.45 * kGiB);
+    facts.proposal_serves_mtp    = true;
+    facts.proposal_serves_dflash = true;
     const auto weights = [&](SpeculativeBackend backend, ProposalHead head) {
         EngineOptions options;
         options.speculative.backend       = backend;
@@ -872,6 +874,10 @@ void test_proposal_bytes_only_when_drafting() {
           "DFlash: the head");
     check(weights(SpeculativeBackend::DFlash2, ProposalHead::Optimized) == facts.weight_bytes,
           "an asked-for head");
+    // A head that does not serve MTP (revision 6's DFlash-only head) stays off an MTP plan.
+    facts.proposal_serves_mtp = false;
+    check(weights(SpeculativeBackend::Mtp, ProposalHead::Full) == without,
+          "MTP: no head that does not serve it");
 }
 
 // The plan reads the quantizations' heads only where the converter would add the default proposal
@@ -914,7 +920,9 @@ void test_proposal_bytes_per_quant() {
     q4.model.head_bytes    = 834355200;
     q4.model.vocab         = 248320;
     q4.model.hidden        = 4096;
+    q4.model.mtp_bytes     = 0;
     pr::DryRunInputs inputs;
+    inputs.proposal_planned       = true;
     inputs.proposal_drafter_bytes = 1372703744.0;
     // Q5_K_M: larger layers, the same Q6_K head (its header read).
     pr::PlanSourceFacts q5 = q4;
@@ -936,7 +944,12 @@ void test_proposal_bytes_per_quant() {
     check(at_q8 % (3360 + 4) == 0, "an unread row's rows are the parsed head's 3,360 bytes each");
     pr::DryRunInputs none = inputs;
     none.proposal_drafter_bytes = 0;
-    check(pr::proposal_bytes_at(q4, none) == 0, "no companion: no head");
+    check(pr::proposal_bytes_at(q4, none) == 0, "no companion and no MTP layers: no head");
+    // MTP layers alone: the rows MTP 3 asks for (57,344 on the 9B).
+    pr::PlanSourceFacts mtp = q4;
+    mtp.model.mtp_bytes     = 1002113024 - 834355200; // the MTP layer without the head it shares
+    check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3360 + 57344ULL * 4,
+          "MTP layers alone: 57,344 rows and ids");
 }
 
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the

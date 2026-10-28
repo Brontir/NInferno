@@ -188,7 +188,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
     out.support    = spec::engine_support(facts.model.model_type);
     // A GGUF conversion carries no proposal head; a checkpoint's recipe may (Qwen's +head): the
     // conservative side, the full head.
-    out.proposal_head = false;
+    out.proposal_drafters.clear();
 
     const std::string engine = engine_of(facts.model.model_type);
     std::optional<spec::SpeculationManifest> manifest;

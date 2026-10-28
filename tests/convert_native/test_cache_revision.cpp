@@ -17,6 +17,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -39,6 +40,24 @@ std::filesystem::path artifact(const std::filesystem::path& dir, const std::stri
         << R"({"components": {"text": {"config": {"model_type": "qwen3_5_text"}}}, "methods": [)"
         << R"({"parameters": ["text/layers/0/attention/query"], "format": "nvfp4"},)"
         << R"({"parameters": [")" << query << R"("], "format": ")" << format << R"("}]})";
+    return path;
+}
+
+// The same with several parameters bound, each in `format`.
+std::filesystem::path artifact_of(const std::filesystem::path& dir, const std::string& name,
+                                  int revision, const std::vector<std::string>& parameters,
+                                  const std::string& format) {
+    const auto path = dir / (name + ".ninferno");
+    std::ofstream(path) << "x";
+    std::ofstream(path.string() + ".revision") << revision << "
+";
+    std::ofstream report(path.string() + ".conversion.json");
+    report << R"({"components": {"text": {"config": {"model_type": "qwen3_5_text"}}}, "methods": [)"
+           << R"({"parameters": [)";
+    for (std::size_t i = 0; i < parameters.size(); ++i) {
+        report << (i ? "," : "") << '"' << parameters[i] << '"';
+    }
+    report << R"(], "format": ")" << format << R"("}]})";
     return path;
 }
 
@@ -88,12 +107,20 @@ int main() {
           "MTP layers without a head at revision 5 are converted again");
     check(!cache_current(artifact(dir, "rev6", 6, "dflash/layers/0/attention/query", "q8_g32_fp16")),
           "a DFlash companion without a head at revision 6 is converted again");
+    check(cache_current(artifact_of(dir, "rev6-head", 6,
+                                    {"dflash/layers/0/attention/query", "proposal/head"},
+                                    "q8_g32_fp16")),
+          "a DFlash companion with its revision 6 head and no MTP layers is current");
+    check(cache_current(artifact_of(dir, "rev5-head", 5,
+                                    {"mtp/layers/0/attention/query", "proposal/head"},
+                                    "q8_g32_fp16")),
+          "MTP layers with a head made before revision 6 (--proposal: every drafter's) are current");
     check(!cache_current(artifact(dir, "old", 2, "text/output_head", "bf16")), "revision 2 is not");
 
     // The pre-conversion budget of the default proposal head (convert::planned_proposal_bytes):
     // Qwen3.5-9B Q4_K_M with z-lab's DFlash drafter keeps 147,456 rows of its Q6_K head (3,360 B a
     // row) and their int32 token ids (Codex on #170).
-    check(ninferno::convert::planned_proposal_bytes(834355200.0, 5117970432.0, 1372703744.0,
+    check(ninferno::convert::planned_proposal_bytes(834355200.0, 5117970432.0, 0.0, 1372703744.0,
                                                     248320, 4096) ==
               147456ULL * 3360 + 147456ULL * 4,
           "the planned proposal head counts its rows and their token ids");

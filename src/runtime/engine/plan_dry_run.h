@@ -205,6 +205,9 @@ struct PlanModelFacts {
     // a run drafts with it (ProposalHead::Optimized; MTP and DFlash promote to it, product::
     // model_draft_head). 0: none or unknown.
     std::uint64_t proposal_bytes = 0;
+    // The drafters it serves (a Use on mtp/final_hidden, dflash/final_hidden).
+    bool proposal_serves_mtp    = false;
+    bool proposal_serves_dflash = false;
     // The output head's stored bytes (a whole GGUF tensor table's output.weight, or the token
     // table it is tied to), 0 when unknown: what a proposal head gathered from it is priced by.
     std::uint64_t head_bytes = 0;
