@@ -791,6 +791,16 @@ bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
 
 bool bf16_mma_native();
 
+// Q6_K's one-tile call on a grid of one to two eight-warp CTAs per SM (sms < ctas <= 2 sms),
+// where the board's DRAM bytes per SM cycle are below this: the four-warp CTA, half the warps on
+// the SM issuing the plain decoder's narrow loads into a load queue they fill (rmma_wide_rule).
+// Store / add, T = 5 and 8, K 4096 and 15360, n at 1.25..2.0 CTAs per SM (w1x4 against w1x8):
+// RTX 4090 (3.1) 0.82-0.98, 4070 Ti (3.2) 0.80-0.99, 4060 Ti (3.4) 0.87-1.00; on the 5070 Ti
+// (5.2) 0.98-1.12. The boundary sits below the RTX 5080 and 5090 (4.4), not measured, which keep
+// eight warps. Q4_K lost on w1x4 on all four boards (1.04-1.53), and a grid of more than two CTAs
+// per SM keeps eight warps (light_ggml_step).
+inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -803,6 +813,15 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 if (ctas > 2 * sms && light_ggml_step(problem.qtype) &&
                     problem.epilogue != Epilogue::SwiGlu) {
                     return rmma_index(1, 4, 1, 1);
+                }
+                if (ctas <= 2 * sms && problem.qtype == QType::GGML_Q6_K &&
+                    problem.epilogue != Epilogue::SwiGlu) {
+                    double bytes = 0.0; // a device whose class cannot be read: eight warps
+                    try {
+                        bytes = dram_bytes_per_sm_cycle();
+                    } catch (const std::exception&) {
+                    }
+                    if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) return rmma_index(1, 4, 1, 1);
                 }
             } else if (tokens <= 16) {
                 // 9..16 tokens (verify of an 8- or 16-token draft): one 8-token tile per CTA would
@@ -1276,6 +1295,13 @@ double dram_bytes_per_sm_cycle() {
         if (!f.has_roofline() || d.sms <= 0) return 0.0;
         return f.dram_bytes_per_s() / (d.sms * f.reference_clock_hz());
     });
+}
+
+bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, int wide_ctas,
+                    int plain_ctas, std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
+    return bytes_per_sm_cycle > 0.0 && bytes_per_sm_cycle < kRmmaWideBytes &&
+           compute_capability >= 75 && wide_ctas >= plain_ctas &&
+           wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
 }
 
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
