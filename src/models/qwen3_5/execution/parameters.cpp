@@ -277,6 +277,9 @@ public:
                     const std::array<ops::WeightInput, 3> qkv{
                         model_.input(a.query), model_.input(a.key), model_.input(a.value)};
                     result.query_key_value_bank = ops::prepare_segmented_projection_weights(qkv);
+                    for (auto& slice : result.query_key_value_bank.slices) {
+                        slice.policy = drafter(LinearParameters{slice.parent, slice.policy}).policy;
+                    }
                     // The fused Q/K/V kernel reads one RowSplit Q8 parent of its compiled
                     // geometry; a published drafter whose Q/K/V are one parent in another format
                     // (the dflash GGUF's Q4_0 blocks), or another width (Qwen3.5-9B's 4096), runs
