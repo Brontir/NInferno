@@ -328,6 +328,8 @@ void test_launch_options_match_serve() {
         {{.spec = "none"}, {"--spec", "none"}},
         {{.spec = "mtp"}, {"--spec", "mtp"}},
         {{.exact = true}, {"--kv-dtype", "bf16", "--activations", "exact", "--spec", "auto"}},
+        {{.activations = "int8"}, {"--activations", "int8", "--spec", "auto"}},
+        {{.activations = "exact"}, {"--activations", "exact", "--spec", "auto"}},
     };
     for (const Case& c : cases) {
         const pr::LaunchPlanOptions ours          = pr::launch_options(c.ask);
@@ -351,6 +353,7 @@ void test_launch_options_match_serve() {
         check(o.recurrent_state_automatic == theirs.recurrent_state_automatic,
               label + ": state codec");
         check(o.activations == theirs.activations, label + ": activations");
+        check(c.ask.activations_pinned() == serve.activations_given, label + ": activations pinned");
         check(o.prefill_chunk == theirs.prefill_chunk &&
                   o.prefill_chunk_automatic == theirs.prefill_chunk_automatic,
               label + ": chunk");

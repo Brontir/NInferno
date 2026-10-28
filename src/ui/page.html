@@ -1073,6 +1073,28 @@ Object.assign(T.ru, {
 // words, the other languages show the English ones until they are translated.
 T.uk.parTip = "Скільки запитів сервер обслуговує одночасно\nсумарна швидкість росте повільніше за кількість запитів. При авто-контексті кожен запит має власний контекст, якщо карта його вміщує; інакше запити ділять один спільний кеш — про це буде сказано";
 for (const code of ["de", "fr", "es", "it", "pl", "zh", "ja"]) if (T[code]) delete T[code].parTip;
+// Activation precision (ninferno-serve --activations): a choice the user may pin; Auto is the
+// configuration choice's. The modes offered are the ones the plan's choice says the model runs.
+for (const [code, words] of Object.entries({
+  en:{actType:"Activations",actTip:"The precision the matrix multiplies take their inputs in.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nThe numbers on each button: what it changes against Auto, from the configuration choice's estimates (not a measurement)",
+      act_exact:"16-bit",act_fast:"fast",act_int8:"8-bit",
+      actTip_exact:"exact: BF16 inputs on every multiply; the answer does not depend on how the prompt is cut or on speculation; slowest prefill",
+      actTip_fast:"fast (the default): 8 bits (4 for NVFP4 weights) on wide calls such as prefill and verify, 16 bits on decode",
+      actTip_int8:"int8: 8 bits wherever a route has them, never 4; Qwen models only",
+      actNotHere:"This model does not run it",actAgainst:"against Auto ({v}): decode {d}, request time {t}, KLD {k}",actPinned:"chosen by you"},
+  ru:{actType:"Активации",actTip:"Точность, в которой умножения матриц берут входы.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nЧисла на кнопках — что изменится против Авто, по оценкам модели выбора (не замер)",
+      act_exact:"16 бит",act_fast:"быстро",act_int8:"8 бит",
+      actTip_exact:"exact: входы BF16 на каждом умножении; ответ не зависит от нарезки промпта и спекуляции; самый медленный префилл",
+      actTip_fast:"fast (по умолчанию): 8 бит (4 для весов NVFP4) на широких вызовах — префилл и проверка, 16 бит на декоде",
+      actTip_int8:"int8: 8 бит везде, где у маршрута они есть, никогда 4; только модели Qwen",
+      actNotHere:"Эта модель так не работает",actAgainst:"против Авто ({v}): декод {d}, время запроса {t}, KLD {k}",actPinned:"выбрано вами"},
+  uk:{actType:"Активації",actTip:"Точність, у якій множення матриць беруть входи.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nЧисла на кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір)",
+      act_exact:"16 біт",act_fast:"швидко",act_int8:"8 біт",
+      actTip_exact:"exact: входи BF16 на кожному множенні; відповідь не залежить від нарізки промпту й спекуляції; найповільніший префіл",
+      actTip_fast:"fast (типово): 8 біт (4 для ваг NVFP4) на широких викликах — префіл і перевірка, 16 біт на декоді",
+      actTip_int8:"int8: 8 біт скрізь, де маршрут їх має, ніколи 4; лише моделі Qwen",
+      actNotHere:"Ця модель так не працює",actAgainst:"проти Авто ({v}): декод {d}, час запиту {t}, KLD {k}",actPinned:"вибрано вами"},
+})) { if (T[code]) Object.assign(T[code], words); }
 const LANGS = [
   ["en", "English", '<svg viewBox="0 0 60 30"><rect width="60" height="30" fill="#012169"/><path d="M0,0L60,30M60,0L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0L60,30M60,0L0,30" stroke="#C8102E" stroke-width="2"/><path d="M30,0V30M0,15H60" stroke="#fff" stroke-width="10"/><path d="M30,0V30M0,15H60" stroke="#C8102E" stroke-width="6"/></svg>'],
   ["uk", "Українська", '<svg viewBox="0 0 3 2"><rect width="3" height="1" fill="#0057B7"/><rect y="1" width="3" height="1" fill="#FFD700"/></svg>'],
@@ -1652,13 +1674,15 @@ function ctxNoteText(note, native, tr) {
 // choice (auto), a manual kind as it is.
 function planSpecOf(mode) { return mode === "off" ? "none" : mode || "auto"; }
 const clampPar = n => Math.min(PLAN_MAX_PAR, Math.max(1, Math.round(n || 1)));
-// The /api/plan request of an ask {repo, hub, gpu, quant, ctx (0: auto), par, kv, spec, precision}.
+// The /api/plan request of an ask {repo, hub, gpu, quant, ctx (0: auto), par, kv, spec, precision,
+// act (auto | exact | fast | int8: --activations)}.
 function planQuery(a) {
   const p = [["repo", a.repo], ["hub", a.hub || "huggingface"], ["gpu", a.gpu ?? 0]];
   if (a.quant) p.push(["quant", a.quant]);
   p.push(["ctx", a.ctx > 0 ? Math.round(a.ctx) : "auto"], ["par", clampPar(a.par)],
          ["kv", a.kv || "auto"], ["spec", a.spec || "auto"]);
   if (a.precision === "exact") p.push(["precision", "exact"]);
+  if (a.act && a.act !== "auto") p.push(["act", a.act]);
   return "/api/plan?" + p.map(([k, v]) => k + "=" + encodeURIComponent(String(v))).join("&");
 }
 // The catalog at the user's context × streams: its "fits" marks follow them.
@@ -1909,15 +1933,36 @@ function specBasisText(s, mode, tr) {
   if (mode === "off") return tr("specOffChosen");
   return SPEC_BASES.includes(s.basis) ? tr("specBasis_" + s.basis) : s.basis;
 }
-// The settings a launch of a model used, as "My models → Run" takes them again: {ctx, cap, par, kv, spec},
-// each with its default (Auto, 1 stream, Auto KV, Auto speed-up).
+// The settings a launch of a model used, as "My models → Run" takes them again: {ctx, cap, par, kv, spec,
+// act}, each with its default (Auto, 1 stream, Auto KV, Auto speed-up, Auto activations).
 function launchSettingsOf(saved) {
   const s = saved || {};
   const ctx = s.ctx > 0 ? Math.round(s.ctx) : 0;
   // Under Auto, the planned own context the launch kept as the automatic context's ceiling.
   return {ctx, cap: ctx > 0 ? 0 : (s.cap > 0 ? Math.round(s.cap) : 0), par: clampPar(s.par),
-          kv: typeof s.kv === "string" ? s.kv : "", spec: typeof s.spec === "string" && s.spec ? s.spec : "auto"};
+          kv: typeof s.kv === "string" ? s.kv : "", spec: typeof s.spec === "string" && s.spec ? s.spec : "auto",
+          act: ACT_MODES.includes(s.act) ? s.act : ""};
 }
+// The activation modes (ninferno-serve --activations), in the selector's order.
+const ACT_MODES = ["exact", "fast", "int8"];
+// The activation selector from a plan document's choice (src/product/plan/plan_choice.h): the modes
+// the model runs (choice.activations_allowed), Auto's (choice.chosen.activations under Auto), and what
+// each other mode would change against Auto (the choice's "activations" alternatives) from `autoDoc`,
+// the last document planned under Auto. mode: "auto" or a pinned mode. Each option:
+// {value, allowed, on, delta: {value, ddecode, dtime, dkld} | null}; auto: Auto's resolved mode.
+function actOptions(doc, autoDoc, mode) {
+  const c = doc && doc.choice, ac = autoDoc && autoDoc.choice;
+  const allowed = (c && c.activations_allowed) || (ac && ac.activations_allowed) || null;
+  const auto = ac && ac.chosen ? ac.chosen.activations : mode === "auto" && c && c.chosen ? c.chosen.activations : "";
+  const rows = choiceRows(autoDoc).filter(r => r.axis === "activations");
+  return {auto, options: ACT_MODES.map(v => {
+    const r = rows.find(x => x.value === v && v !== auto);
+    return {value: v, allowed: !allowed || allowed.includes(v), on: mode === v,
+            delta: r ? {value: v, ddecode: r.ddecode, dtime: r.dtime, dkld: r.dkld, fits: r.fits} : null};
+  })};
+}
+// The mode a plan and a launch take: Auto, or the one chosen while the model runs it.
+function actAskOf(mode, allowed) { return mode && mode !== "auto" && (!allowed || allowed.includes(mode)) ? mode : "auto"; }
 // ---- end plan helpers ----
 
 // Detail: one hub repository; the catalog's model when it lists the repository.
@@ -1939,7 +1984,7 @@ function setCtx(v, note) {
 let launchSaved = {};
 try { launchSaved = JSON.parse(localStorage.getItem("ninferno-launch-settings") || "{}") || {}; } catch (e) { launchSaved = {}; }
 function saveLaunch(keys, s) {
-  for (const k of keys) if (k) launchSaved[k] = {ctx: s.ctx, cap: s.cap || 0, par: s.par, kv: s.kv, spec: s.spec};
+  for (const k of keys) if (k) launchSaved[k] = {ctx: s.ctx, cap: s.cap || 0, par: s.par, kv: s.kv, spec: s.spec, act: s.act || ""};
   try { localStorage.setItem("ninferno-launch-settings", JSON.stringify(launchSaved)); } catch (e) {}
 }
 const savedLaunchOf = m => launchSettingsOf(launchSaved[m.artifact] || (m.repo ? launchSaved[m.repo + ":" + (m.quant || "")] : null));
@@ -2003,7 +2048,7 @@ const planDocs = new Map(), PLAN_CACHE = 48;
 let planTimer = 0;
 function planAsk(sel, quant) {
   return {repo: sel.repo, hub: sel.hubName, gpu, quant: quant || "", ctx: ctxValue, par: parallel,
-          kv: kvChosen && !kvWhyNot(kvType, sel.kv) ? kvType : "auto", spec: planSpecOf(specMode)};
+          kv: kvChosen && !kvWhyNot(kvType, sel.kv) ? kvType : "auto", spec: planSpecOf(specMode), act: actAsk(sel)};
 }
 function schedulePlan() {
   const sel = selected;
@@ -2070,6 +2115,11 @@ const KV = {bf16: 2, int8: 264 / 256, fp8: 258 / 256, nvfp4: 144 / 256, k8v4: 40
 // The KV storage: the one the user picked, else Auto (the codec the plan resolves for the family
 // and the card).
 let kvType = "bf16", kvChosen = false;
+// The activation precision: "auto" (the configuration choice's) or a mode the user pinned.
+let actMode = "auto";
+// The modes the selected model runs, from its last plan (null before one).
+const actAllowedOf = sel => sel && sel.plan && sel.plan.choice && sel.plan.choice.activations_allowed || null;
+const actAsk = sel => actAskOf(actMode, actAllowedOf(sel));
 function kvPlanned() {
   const r = quantSel ? rowPlan(quantSel) : null;
   const k = r && r.plan && r.plan.kv_dtype || selected && selected.plan && selected.plan.plan && selected.plan.plan.kv_dtype || "";
@@ -2252,6 +2302,7 @@ function renderDetail() {
     <div class="ctl"><div class="row"><span>${t("parallel")}${info(t("parTip") + "\n" + t("parMax"))}</span><output id="parout"></output></div>
       <input type="range" id="par" min="1" max="${MAX_PAR}" step="1" value="${parallel}" aria-label="${esc(t("parallel"))}" data-tip="${esc(t("parMax"))}"></div>
     <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div>
+    <div class="ctl"><div class="row"><span>${t("actType")}${info(t("actTip"))}</span><span class="kvsel" id="actsel"></span></div>
 </div></div>
     ${accelBlock(sel)}
     <div id="dbody"></div>`;
@@ -2306,6 +2357,24 @@ function renderKv() {
   $("kvsel").innerHTML = auto + Object.keys(KV).map(k => {
     const why = kvWhyNot(k, kv);
     return `<span data-tip="${esc(t("kv_" + k) + (why ? "\n" + why : ""))}"><button data-kv="${k}" class="${kvChosen && k === kvType && !why ? "on" : ""}" ${why ? "disabled" : ""}>${k.toUpperCase()}</button></span>`;
+  }).join("");
+}
+// The activation selector: Auto (the mode the choice takes) and each mode the model runs, with what it
+// would change against Auto (the choice's estimates of the last plan under Auto).
+function renderAct() {
+  const el = $("actsel");
+  if (!el || !selected) return;
+  const doc = planStale() ? null : selected.plan;
+  if (doc && doc.choice && actAsk(selected) === "auto") selected.actAutoDoc = doc;
+  const o = actOptions(doc, selected.actAutoDoc || null, actAsk(selected));
+  const pct = v => v === null || v === undefined ? "—" : (v > 0 ? "+" : "") + Math.round(v * 100) + " %";
+  const auto = `<span data-tip="${esc(t("actTip"))}"><button data-act="auto" class="${actAsk(selected) === "auto" ? "on" : ""}">${esc(t("kvAuto"))}${o.auto ? " (" + esc(t("act_" + o.auto)) + ")" : ""}</button></span>`;
+  el.innerHTML = auto + o.options.map(x => {
+    const tip = [t("actTip_" + x.value), !x.allowed ? t("actNotHere") : "",
+      x.delta ? fill(t("actAgainst"), {v: t("act_" + o.auto), d: pct(x.delta.ddecode), t: pct(x.delta.dtime),
+        k: x.delta.dkld === null ? "—" : (x.delta.dkld > 0 ? "+" : "") + x.delta.dkld.toFixed(4)}) : ""].filter(Boolean).join("\n");
+    const badge = x.delta && x.delta.dtime !== null ? ` <small>${esc(pct(x.delta.dtime))}</small>` : "";
+    return `<span data-tip="${esc(tip)}"><button data-act="${x.value}" class="${x.on && x.allowed ? "on" : ""}" ${x.allowed ? "" : "disabled"}>${esc(t("act_" + x.value))}${badge}</button></span>`;
   }).join("");
 }
 // What the plan says of speculation for the selected quantization: one line under the speed-up
@@ -2383,6 +2452,7 @@ function renderBody() {
   $("parout").textContent = String(parallel);
   if (+$("par").value !== parallel) $("par").value = parallel;
   renderKv();
+  renderAct();
   renderPlanSpec();
   let html = "";
   if (sel.error) html += `<p class="err">${esc(sel.error)}</p>`;
@@ -2648,7 +2718,8 @@ function detailLaunchSettings() {
   const planned = launchContextOf(quantSel ? rowPlan(quantSel) : null, {ctx: ctxValue, par: parallel});
   return {ctx: ctxValue > 0 ? planned : 0, cap: ctxValue > 0 ? 0 : planned,
           par: Math.min(Math.max(parallel, 1), MAX_PAR),
-          kv: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : "", spec: specMode};
+          kv: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : "", spec: specMode,
+          act: selected && actAsk(selected) !== "auto" ? actAsk(selected) : ""};
 }
 async function launch(model, quant, button, settings, keys) {
   if (button) { button.disabled = true; button.textContent = t("launching"); }
@@ -2656,7 +2727,8 @@ async function launch(model, quant, button, settings, keys) {
   try {
     const j = await api("/api/launch", {model, quant, gpu, max_context: s.ctx || 0,
       max_context_cap: s.ctx > 0 ? 0 : (s.cap || 0), max_concurrency: s.par,
-      hub: selected && model === selected.repo ? selected.hubName : "", spec: planSpecOf(s.spec), kv_dtype: s.kv});
+      hub: selected && model === selected.repo ? selected.hubName : "", spec: planSpecOf(s.spec), kv_dtype: s.kv,
+      activations: s.act || ""});
     saveLaunch(keys || [], s);
     openLog(j.id, shortName(model)); refreshState(); setTimeout(refreshMine, 1500);
   } catch (e) {
@@ -2669,7 +2741,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
+  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-act],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.fitctx !== undefined) {
@@ -2724,6 +2796,7 @@ document.addEventListener("click", async ev => {
   else if (d.hub) openRepo(d.hub, found.hub.find(h => h.id === d.hub));
   else if (d.repo) { selected.repo = d.repo; loadRepo(); }
   else if (d.kv) { if (d.kv === "auto") kvChosen = false; else { kvType = d.kv; kvChosen = true; } renderBody(); }
+  else if (d.act) { actMode = ACT_MODES.includes(d.act) ? d.act : "auto"; renderBody(); }
   else if (d.qi !== undefined) { const q = selected.quants[+d.qi]; if (!q.drafter && q.supported) { quantSel = q; quantPicked = true; quantNote = ""; renderBody(); } }
   else if (d.get !== undefined) prepare(selected.repo, quantSel.quant);
   else if (d.go !== undefined) {

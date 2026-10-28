@@ -8,6 +8,7 @@
 #include "convert/gguf.h"
 #include "core/ascii.h"
 
+#include "product/activation_options.h"
 #include "product/numeric_options.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -152,7 +153,9 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
                                                        : parse_kv_dtype(kv);
     o.recurrent_state           = RecurrentStateStorage::FP32;
     o.recurrent_state_automatic = true;
-    o.activations               = launch.exact ? ActivationMode::Exact : kDefaultActivationMode;
+    o.activations               = launch.exact                 ? ActivationMode::Exact
+                                  : launch.activations.empty() ? kDefaultActivationMode
+                                                               : parse_activation_mode(launch.activations);
     // ninferno-serve: an automatic context or several slots take an automatic pool, one slot at
     // an explicit context exactly its tokens.
     o.kv_capacity                       = o.max_context_automatic || o.max_concurrency > 1

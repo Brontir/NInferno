@@ -131,7 +131,12 @@ struct LaunchAsk {
     std::uint32_t max_concurrency = 1;
     std::string kv_dtype;      // "" (auto) or bf16 | int8 | fp8 | nvfp4 | k8v4
     std::string spec = "auto"; // auto | none | mtp | dflash | dflash2
-    bool exact       = false;  // --activations exact
+    bool exact       = false;  // the exact preset: --activations exact with a BF16 KV cache
+    // --activations: "" (automatic: the configuration choice's) or exact | fast | int8. The exact
+    // preset takes exact whatever this says.
+    std::string activations;
+    // Whether the activations are pinned (the choice keeps them) rather than chosen.
+    [[nodiscard]] bool activations_pinned() const noexcept { return exact || !activations.empty(); }
 };
 
 struct LaunchPlanOptions {

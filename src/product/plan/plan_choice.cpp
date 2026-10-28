@@ -282,6 +282,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const choice::Allowed allowed =
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
     out.task.contexts  = steps;
+    out.allowed_activations = allowed.activations;
     out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
     out.drafters       = std::move(axis.served);
     out.drafter_options = axis.options;
@@ -450,6 +451,11 @@ Json choice_json(const ServedChoice& served) {
         alternatives.push_back(row);
     }
     out["alternatives"] = alternatives;
+    // The activation modes the model runs (a choice the user may pin: --activations), whatever
+    // is pinned now: what a selector offers.
+    Json modes = Json::array();
+    for (const ActivationMode m : served.allowed_activations) { modes.push_back(activation_name(m)); }
+    out["activations_allowed"] = modes;
     return out;
 }
 

@@ -436,6 +436,31 @@ void test_launch() {
     bad           = request;
     bad.precision = "fp2";
     refused(bad, "bad precision");
+    bad             = request;
+    bad.activations = "fp4";
+    refused(bad, "bad activations");
+    {
+        // A mode the user pinned is ninferno-serve's --activations; none named leaves the choice
+        // to the server (no flag); the exact preset keeps exact.
+        const auto value_after = [](const std::vector<std::string>& argv, const std::string& flag) {
+            const auto at = std::find(argv.begin(), argv.end(), flag);
+            return at == argv.end() || at + 1 == argv.end() ? std::string() : *(at + 1);
+        };
+        LaunchRequest pinned = request;
+        pinned.precision.clear();
+        pinned.activations = "int8";
+        const auto argv    = make_launch(options, pinned).argv;
+        check(value_after(argv, "--activations") == "int8" && value_after(argv, "--kv-dtype").empty(),
+              "activations int8: --activations int8, the KV codec still automatic");
+        LaunchRequest automatic = request;
+        automatic.precision.clear();
+        check(value_after(make_launch(options, automatic).argv, "--activations").empty(),
+              "no mode named: no --activations (the server's choice)");
+        LaunchRequest preset = request;
+        preset.activations   = "fast";
+        check(value_after(make_launch(options, preset).argv, "--activations") == "exact",
+              "the exact preset keeps exact");
+    }
 }
 
 void test_catalog() {
