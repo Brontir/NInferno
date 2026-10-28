@@ -213,6 +213,11 @@ int main(int argc, char** argv) {
             ninferno::product::refuse_unrun_activations_at_start(options.artifact_path,
                                                                  options.activations);
         }
+        // --kv-dtype given that the model does not take (its family's codecs, its head width):
+        // refused the same way (product::kv_refusal).
+        if (options.kv_cache) {
+            ninferno::product::refuse_unrun_kv_at_start(options.artifact_path, *options.kv_cache);
+        }
         // The axes the user left to the engine (--kv-dtype auto, no --activations, no
         // --state-dtype): the configuration choice for this artifact on this GPU
         // (product/choice/choice.h through serve/plan_offline.h).

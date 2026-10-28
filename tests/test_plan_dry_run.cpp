@@ -5,6 +5,7 @@
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
 #include "convert/drafters.h"
+#include "core/paged_kv_storage.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -1159,7 +1160,7 @@ void test_rows_at_choice() {
                     // A plan of the same inputs made elsewhere (a CLI's, a fallback) is refused too.
                     pr::PlannedSpeculation fallback = pr::plan_model(
                         pr::with_weights(shape, row.weight_bytes, row.basis), inputs);
-                    pr::refuse_unrun_activations(pr::with_weights(shape, row.weight_bytes, row.basis),
+                    pr::refuse_unrun_pins(pr::with_weights(shape, row.weight_bytes, row.basis),
                                                  inputs, fallback);
                     check(!fallback.plan.fits && fallback.plan.refused_code == "activations_not_run",
                           what + ": a fallback plan is refused");
@@ -1214,6 +1215,78 @@ void test_quant_option_one_rule() {
           "the artifact's NVFP4 encodings price its route, the source label its accuracy");
     artifact.shape.quant_label.clear();
     check(pr::quant_option_of(artifact).label == "the model's weights", "no label: said so");
+// The KV codecs a start takes, from the engine's rules (product::kv_options): the family's codecs,
+// the Qwen paged pool's head width, FP8 in software below sm_89 (allowed, slow); a pinned codec the
+// model does not take is refused by the plan with kv_not_run, never replaced.
+void test_kv_options() {
+    const auto find = [](const std::vector<pr::KvOption>& list, KvCacheStorage kv) {
+        return *std::find_if(list.begin(), list.end(),
+                             [&](const pr::KvOption& o) { return o.codec == kv; });
+    };
+    pr::PlanSourceFacts qwen;
+    qwen.model = qwen27b(9 * kGiB);
+    pr::PlanSourceFacts gemma;
+    gemma.model = gemma31b(9 * kGiB);
+    for (const int cc : {75, 86, 89, 120}) {
+        const auto q = pr::kv_options(qwen, cc);
+        check(q.size() == 5, "every codec listed");
+        for (const pr::KvOption& o : q) {
+            check(o.allowed, "Qwen 256-wide heads take every codec at cc " + std::to_string(cc));
+        }
+        const bool slow = cc < 89;
+        check(find(q, KvCacheStorage::Fp8E4M3Row256).slow_on_card == slow &&
+                  find(q, KvCacheStorage::Fp8KeyNvfp4Value).slow_on_card == slow &&
+                  !find(q, KvCacheStorage::Int8Group64).slow_on_card,
+              "FP8 codes are slow, not refused, below sm_89");
+        const auto g = pr::kv_options(gemma, cc);
+        check(find(g, KvCacheStorage::BFloat16).allowed && find(g, KvCacheStorage::Fp8E4M3Row256).allowed,
+              "Gemma 4 takes BF16 and FP8");
+        for (const KvCacheStorage kv : {KvCacheStorage::Int8Group64, KvCacheStorage::Nvfp4Group16,
+                                        KvCacheStorage::Fp8KeyNvfp4Value}) {
+            const pr::KvOption o = find(g, kv);
+            check(!o.allowed && o.why_code == "family_codec" && !o.why.empty(),
+                  "Gemma 4 refuses " + std::string(kv_cache_storage_name(kv)));
+        }
+    }
+    // A Qwen pool of 128-wide heads: the layout's own refusals (INT8 takes 128, the others not).
+    pr::PlanSourceFacts narrow = qwen;
+    narrow.model.full_key_dim = narrow.model.full_value_dim = 128;
+    const auto n = pr::kv_options(narrow, 89);
+    check(find(n, KvCacheStorage::Int8Group64).allowed, "INT8 takes 128-wide heads");
+    for (const KvCacheStorage kv : {KvCacheStorage::Fp8E4M3Row256, KvCacheStorage::Nvfp4Group16,
+                                    KvCacheStorage::Fp8KeyNvfp4Value}) {
+        bool layout_ok = true;
+        try {
+            (void)ninferno::paged_kv_storage_layout(kv, 128);
+        } catch (const std::exception&) { layout_ok = false; }
+        check(find(n, kv).allowed == layout_ok && (layout_ok || find(n, kv).why_code == "head_width"),
+              "the paged layout decides " + std::string(kv_cache_storage_name(kv)));
+    }
+    pr::PlanSourceFacts unknown;
+    const auto u = pr::kv_options(unknown, 89);
+    check(find(u, KvCacheStorage::BFloat16).allowed && !find(u, KvCacheStorage::Fp8E4M3Row256).allowed &&
+              find(u, KvCacheStorage::Fp8E4M3Row256).why_code == "shape_unknown",
+          "an unread shape: BF16 only, said so");
+    // A pinned codec the model does not take: the plan refuses it (kv_not_run), the row too.
+    pr::DryRunInputs inputs;
+    inputs.device = card(16, 89);
+    inputs.gpu    = pr::gpu_key_of(inputs.device);
+    const pr::LaunchPlanOptions o =
+        pr::launch_options({.max_context = 32768, .kv_dtype = "int8", .spec = "none"});
+    inputs.options  = o.options;
+    inputs.ask      = o.ask;
+    inputs.pins.kv  = true;
+    const std::vector<pr::QuantListing> listing = {
+        {.quant = "Q4_K_M", .format = "gguf", .bytes = 9 * kGiB, .bits = 4}};
+    const pr::QuantPlan plan = pr::plan_quants(gemma, listing, inputs);
+    const pr::QuantRow& row  = plan.rows.front();
+    check(!row.candidate.supported && row.unsupported_code == "kv_not_run" &&
+              row.planned.plan.refused_code == "kv_not_run" && !row.planned.plan.fits,
+          "a pinned INT8 on Gemma 4: refused, never planned as fitting");
+    check(pr::kv_refusal(gemma, KvCacheStorage::Int8Group64) == row.why_unsupported,
+          "one refusal text for the plan, the launch and the start");
+    const pr::QuantPlan ok_plan = pr::plan_quants(qwen, listing, inputs);
+    check(ok_plan.rows.front().candidate.supported, "a pinned INT8 on Qwen plans");
 }
 
 int main() {
@@ -1237,6 +1310,7 @@ int main() {
     test_properties();
     test_rows_at_choice();
     test_quant_option_one_rule();
+    test_kv_options();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

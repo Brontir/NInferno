@@ -361,7 +361,7 @@ int main(int argc, char** argv) {
                                                          .ring        = cli.sliding_kv_given,
                                                          .chunk       = true};
             product::PlannedSpeculation planned = product::plan_model(facts, inputs);
-            product::refuse_unrun_activations(facts, inputs, planned);
+            product::refuse_unrun_pins(facts, inputs, planned);
             const std::string source                  = cli.artifact_path.string();
             // The configuration choice for the axes left automatic, as a start would take it.
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
@@ -391,6 +391,10 @@ int main(int argc, char** argv) {
         if (cli.activations_given) {
             ninferno::product::refuse_unrun_activations_at_start(cli.artifact_path,
                                                                  engine_options.activations);
+        }
+        // --kv-dtype given that the model does not take: refused the same way.
+        if (cli.kv_cache) {
+            ninferno::product::refuse_unrun_kv_at_start(cli.artifact_path, *cli.kv_cache);
         }
         {
             const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),

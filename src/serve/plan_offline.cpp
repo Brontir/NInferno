@@ -513,7 +513,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     }
     // A pinned --activations mode the model's family does not run: the start refuses it, so the
     // plan does (product::activation_refusal), whatever the memory would hold.
-    product::refuse_unrun_activations(facts, planning.inputs, planned);
+    product::refuse_unrun_pins(facts, planning.inputs, planned);
     // The configuration choice at the chosen weights: what the start would pick for the axes left
     // automatic, and what every other value would change.
     std::string label = model.quant;

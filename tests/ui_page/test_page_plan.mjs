@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -464,5 +464,25 @@ for (const lang of ["en", "ru", "uk"]) for (const k of ["actType", "actTip", "ac
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 whole(EN("actAgainst", {v: "int8", d: "-10 %", t: "+25 %", k: "-0.0050"}), "actAgainst en");
 whole(RU("actAgainst", {v: "int8", d: "-10 %", t: "+25 %", k: "-0.0050"}), "actAgainst ru");
+
+// ---- the KV selector from the server's options (choice.kv_options), no rule of the page's ----
+eq(H.kvOptionsOf(null), null, "no document: no options (nothing guessed)");
+eq(H.kvOptionsOf({choice: {}}), null, "an older document without kv_options");
+{
+  const doc = {choice: {kv_options: [{codec: "bf16", allowed: true, why_code: "", why: "", slow_on_card: false},
+    {codec: "int8", allowed: false, why_code: "family_codec", why: "this model (gemma4_text) keeps ...", slow_on_card: false},
+    {codec: "fp8", allowed: true, why_code: "", why: "", slow_on_card: true},
+    {codec: "nvfp4", allowed: false, why_code: "head_width", why: "heads are 128 wide", slow_on_card: false},
+    {codec: "k8v4", allowed: false, why_code: "new_code", why: "an English reason", slow_on_card: true}]}};
+  const o = H.kvOptionsOf(doc);
+  ok(o.bf16.allowed && !o.int8.allowed && o.fp8.allowed && o.fp8.slow, "allowed, refused and slow as the server says");
+  eq(H.kvWhyText(o.int8, tr), "kvWhy_family_codec", "a known code in the page's words");
+  eq(H.kvWhyText(o.k8v4, tr), "an English reason", "an unknown code: the server's words");
+  eq(H.kvWhyText(o.fp8, tr), "", "an allowed codec: no reason");
+  eq(H.KV_CODECS, ["bf16", "int8", "fp8", "nvfp4", "k8v4"], "every --kv-dtype codec");
+}
+for (const lang of ["en", "ru", "uk"]) for (const k of ["kvWhy_family_codec", "kvWhy_head_width", "kvWhy_shape_unknown", "kvNotRead", "kvSlowCard", "kvPinRefused", "kvUseAuto"])
+  ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
+whole(EN("kvPinRefused", {kv: "INT8", why: "x"}), "kvPinRefused en");
 
 console.log(`test_page_plan: ${checks} checks passed`);

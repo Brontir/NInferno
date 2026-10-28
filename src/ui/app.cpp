@@ -17,6 +17,7 @@
 #include "convert/cache.h"
 #include "convert/support.h"
 #include "product/activation_options.h"
+#include "product/numeric_options.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
@@ -1069,7 +1070,7 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         } else {
             planned = product::plan_model(*facts, inputs);
             // Nothing fits or runs: a pinned mode the family does not run says so.
-            product::refuse_unrun_activations(*facts, inputs, planned);
+            product::refuse_unrun_pins(*facts, inputs, planned);
         }
         doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
         planned_at = at;
@@ -2378,13 +2379,12 @@ void App::install(httplib::Server& server) {
                                 request.quant.clear();
                             }
                         }
-                        // A mode the model's family does not run is refused here, with the
-                        // plan's words (product::activation_refusal), from the facts at hand: the
+                        // A pin the model does not run (an activation mode its family does not
+                        // run, a KV codec it does not take) is refused here, with the plan's words
+                        // (product::activation_refusal, kv_refusal), from the facts at hand: the
                         // artifact's, else the repository's read for its plan. The server refuses
-                        // it at start as well when neither is known yet.
-                        if (!request.activations.empty()) {
-                            const ActivationMode mode =
-                                product::parse_activation_mode(request.activations);
+                        // it at start as well when neither is known yet. Never substituted.
+                        if (!request.activations.empty() || !request.kv_dtype.empty()) {
                             std::optional<product::PlanSourceFacts> facts;
                             const std::string model = split_model_tag(request.model).first;
                             if (fs::path(model).extension() == ".ninferno") {
@@ -2398,9 +2398,18 @@ void App::install(httplib::Server& server) {
                                     model, request.hub.empty() ? "huggingface" : request.hub));
                                 if (it != plan_facts_.end()) { facts = it->second; }
                             }
-                            if (facts) {
+                            if (facts && !request.activations.empty()) {
+                                const ActivationMode mode =
+                                    product::parse_activation_mode(request.activations);
                                 if (const std::string why =
                                         product::activation_refusal(*facts, mode);
+                                    !why.empty()) {
+                                    throw std::invalid_argument(why);
+                                }
+                            }
+                            if (facts && !request.kv_dtype.empty()) {
+                                if (const std::string why = product::kv_refusal(
+                                        *facts, product::parse_kv_dtype(request.kv_dtype));
                                     !why.empty()) {
                                     throw std::invalid_argument(why);
                                 }

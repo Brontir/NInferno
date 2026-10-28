@@ -1,6 +1,8 @@
 #include "product/plan/plan_choice.h"
 
 #include "runtime/engine/plan_dry_run.h"
+#include "core/device_class.h"
+#include "core/paged_kv_storage.h"
 #include "product/speculation/speculation.h"
 #include "spec/gpu_identity.h"
 #include "runtime/engine/quant_rule.h"
@@ -300,6 +302,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
     out.task.contexts  = steps;
     out.allowed_activations = allowed.activations;
+    out.kv_options          = kv_options(facts, inputs.device.compute_capability);
     // A mode the family does not run (int8 outside Qwen): the start refuses it, so there is no
     // choice to make at it.
     if (p.activations && std::find(allowed.activations.begin(), allowed.activations.end(),
@@ -337,15 +340,88 @@ void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, Ac
     if (!why.empty()) { throw std::invalid_argument(why); }
 }
 
-void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
-                              PlannedSpeculation& planned) {
-    if (!inputs.pins.activations) { return; }
-    const std::string why = activation_refusal(facts, inputs.options.activations);
-    if (why.empty()) { return; }
+std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capability) {
+    const KvCacheStorage codecs[] = {KvCacheStorage::BFloat16, KvCacheStorage::Int8Group64,
+                                     KvCacheStorage::Fp8E4M3Row256, KvCacheStorage::Nvfp4Group16,
+                                     KvCacheStorage::Fp8KeyNvfp4Value};
+    const bool e4m3 =
+        compute_capability <= 0 ||
+        device_features_for(compute_capability / 10, compute_capability % 10).mma_fp8;
+    const choice::ModelFacts model = choice_model_of(facts);
+    const choice::Allowed allowed  = choice::allowed_axes(model, KvCacheStorage::BFloat16);
+    // The Qwen families keep the paged pool (the int8 activations are theirs too).
+    const bool paged = std::find(allowed.activations.begin(), allowed.activations.end(),
+                                 ActivationMode::Int8) != allowed.activations.end();
+    std::vector<KvOption> out;
+    for (const KvCacheStorage kv : codecs) {
+        KvOption o;
+        o.codec        = kv;
+        o.slow_on_card = !e4m3 && (kv == KvCacheStorage::Fp8E4M3Row256 ||
+                                   kv == KvCacheStorage::Fp8KeyNvfp4Value);
+        const std::string name(kv_cache_storage_name(kv));
+        if (kv == KvCacheStorage::BFloat16) {
+            out.push_back(o);
+            continue;
+        }
+        if (!facts.model.known()) {
+            o.allowed  = false;
+            o.why_code = "shape_unknown";
+            o.why      = "the model's shape is not read: --kv-dtype " + name + " cannot be checked";
+        } else if (std::find(allowed.kv.begin(), allowed.kv.end(), kv) == allowed.kv.end()) {
+            o.allowed  = false;
+            o.why_code = "family_codec";
+            o.why      = "this model (" + facts.model.model_type +
+                    ") keeps keys and values in BF16 or FP8 (--kv-dtype bf16|fp8), not " + name;
+        } else if (paged) {
+            try {
+                (void)paged_kv_storage_layout(kv,
+                                              static_cast<std::int32_t>(facts.model.full_key_dim));
+            } catch (const std::exception&) {
+                o.allowed  = false;
+                o.why_code = "head_width";
+                o.why      = "this model's heads are " + std::to_string(facts.model.full_key_dim) +
+                        " wide: --kv-dtype " + name + " takes 256-wide heads";
+            }
+        }
+        out.push_back(o);
+    }
+    return out;
+}
+
+std::string kv_refusal(const PlanSourceFacts& facts, KvCacheStorage kv) {
+    for (const KvOption& o : kv_options(facts, 0)) {
+        if (o.codec == kv) { return o.allowed ? std::string() : o.why; }
+    }
+    return "";
+}
+
+void refuse_unrun_kv_at_start(const std::filesystem::path& artifact, KvCacheStorage kv) {
+    const std::string why = kv_refusal(plan_facts_of_artifact(artifact), kv);
+    if (!why.empty()) { throw std::invalid_argument(why); }
+}
+
+PinRefusal pin_refusal(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    if (inputs.pins.activations) {
+        if (std::string why = activation_refusal(facts, inputs.options.activations); !why.empty()) {
+            return {"activations_not_run", std::move(why)};
+        }
+    }
+    if (inputs.pins.kv && !inputs.options.kv_cache_automatic) {
+        if (std::string why = kv_refusal(facts, inputs.options.kv_cache); !why.empty()) {
+            return {"kv_not_run", std::move(why)};
+        }
+    }
+    return {};
+}
+
+void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                       PlannedSpeculation& planned) {
+    const PinRefusal refusal = pin_refusal(facts, inputs);
+    if (refusal.code.empty()) { return; }
     planned.plan.fits         = false;
     planned.plan.rung         = 0;
-    planned.plan.reason       = why;
-    planned.plan.refused_code = "activations_not_run";
+    planned.plan.reason       = refusal.why;
+    planned.plan.refused_code = refusal.code;
     planned.plan.fits_instead.clear();
 }
 
@@ -506,6 +582,16 @@ Json choice_json(const ServedChoice& served) {
     // is pinned now: what a selector offers.
     Json modes = Json::array();
     for (const ActivationMode m : served.allowed_activations) { modes.push_back(activation_name(m)); }
+    // Every KV codec a start takes or refuses here, and why (what a selector offers).
+    Json kv = Json::array();
+    for (const KvOption& o : served.kv_options) {
+        kv.push_back({{"codec", std::string(kv_cache_storage_name(o.codec))},
+                      {"allowed", o.allowed},
+                      {"why_code", o.why_code},
+                      {"why", o.why},
+                      {"slow_on_card", o.slow_on_card}});
+    }
+    out["kv_options"] = kv;
     out["activations_allowed"] = modes;
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
