@@ -991,7 +991,13 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     const product::LaunchPlanOptions options         = product::launch_options(launch);
     product::DryRunInputs inputs;
     inputs.device         = *device;
-    inputs.gpu            = product::gpu_key_of(*device);
+    // The GPU key a start on that device reads (its reported clocks and DRAM rate), else one
+    // from the facts alone: the choice prices the card as the server will.
+    inputs.gpu = product::gpu_key_of(*device);
+    for (const auto& stat : gpus_->snapshot()) {
+        if (stat.index != gpu) { continue; }
+        if (const auto key = product::gpu_key_of_bus(stat.bus_id)) { inputs.gpu = *key; }
+    }
     inputs.options        = options.options;
     inputs.ask            = options.ask;
     // The launch pins the KV codec and the activations the user chose; the rest is chosen.
