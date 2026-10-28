@@ -3074,7 +3074,7 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
                             ((kSwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 1)) ||
                              (!kSwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2)));
 #endif
-    unsigned act_ring[kAhead ? 2 : 1][kAhead ? 2 * J : 1];
+    unsigned act_ring[kAhead ? 2 : 1][1][kAhead ? 2 * J : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
     const auto stage_act = [&](auto slot_tag, int step) {
@@ -3188,7 +3188,7 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
         } else if constexpr (kAhead) {
             (void)ahead;
             mma_step<Decoder, NT, J, kSets, MT, false, true>(acc, runs, col, step * KStep, quad,
-                                                             a.k, nullptr, act_ring[slot]);
+                                                             a.k, nullptr, act_ring[slot][0]);
         } else {
             (void)ahead;
             mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k);
