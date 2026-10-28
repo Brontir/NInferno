@@ -11,6 +11,7 @@
 #include <cmath>
 #include <iomanip>
 #include <sstream>
+#include <stdexcept>
 
 namespace ninferno::product {
 
@@ -282,6 +283,14 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     const choice::Allowed allowed =
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
     out.task.contexts  = steps;
+    out.allowed_activations = allowed.activations;
+    // A mode the family does not run (int8 outside Qwen): the start refuses it, so there is no
+    // choice to make at it.
+    if (p.activations && std::find(allowed.activations.begin(), allowed.activations.end(),
+                                   *p.activations) == allowed.activations.end()) {
+        out.choice.why = activation_refusal(facts, *p.activations);
+        return out;
+    }
     out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
     out.drafters       = std::move(axis.served);
     out.drafter_options = axis.options;
@@ -295,13 +304,67 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     return out;
 }
 
-PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+std::string activation_refusal(const PlanSourceFacts& facts, ActivationMode mode) {
+    if (!facts.model.known()) { return ""; }
+    const choice::Allowed allowed = choice::allowed_axes(choice_model_of(facts), KvCacheStorage::BFloat16);
+    if (std::find(allowed.activations.begin(), allowed.activations.end(), mode) !=
+        allowed.activations.end()) {
+        return "";
+    }
+    return std::string("--activations ") + activation_name(mode) +
+           " is for Qwen 3.5/3.6 models; this model (" + facts.model.model_type +
+           ") runs fast or exact";
+}
+
+void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, ActivationMode mode) {
+    const std::string why = activation_refusal(plan_facts_of_artifact(artifact), mode);
+    if (!why.empty()) { throw std::invalid_argument(why); }
+}
+
+void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                              PlannedSpeculation& planned) {
+    if (!inputs.pins.activations) { return; }
+    const std::string why = activation_refusal(facts, inputs.options.activations);
+    if (why.empty()) { return; }
+    planned.plan.fits         = false;
+    planned.plan.rung         = 0;
+    planned.plan.reason       = why;
+    planned.plan.refused_code = "activations_not_run";
+    planned.plan.fits_instead.clear();
+}
+
+DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
+                              const ChoicePins& pins) {
+    const StartAxes axes = start_axes(served, pins);
+    DryRunInputs out     = inputs;
+    apply_start_axes(out.options, StartAxes{.kv          = axes.kv,
+                                            .ring        = axes.ring,
+                                            .state       = axes.state,
+                                            .activations = axes.activations,
+                                            .chunk       = axes.chunk});
+    return out;
+}
+
+PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInputs& asked,
                                   const ServedChoice& served, const ChoicePins& pins,
                                   PlannedSpeculation planned) {
-    if (!served.choice.chosen || !inputs.ask.automatic || inputs.subject == nullptr) {
-        return planned;
+    if (!served.choice.chosen) { return planned; }
+    const StartAxes axes = start_axes(served, pins);
+    // The storages a start runs (apply_start_axes: the KV codec, the state, the rings and the
+    // activations the choice took for the axes left automatic): the plan shown is of them, its
+    // memory and its context, not of the family's automatic codec the choice did not take.
+    const DryRunInputs inputs = inputs_at_choice(asked, served, pins);
+    const EngineOptions& was  = asked.options;
+    const bool storages_differ =
+        (axes.kv && *axes.kv != planned.plan.kv_cache) ||
+        (axes.state && *axes.state != planned.plan.recurrent) ||
+        (axes.ring && *axes.ring != was.sliding_kv_cache) ||
+        (axes.activations && *axes.activations != was.activations) ||
+        (axes.chunk && *axes.chunk != was.prefill_chunk);
+    if (!inputs.ask.automatic || inputs.subject == nullptr) {
+        return storages_differ ? plan_model(facts, inputs) : planned;
     }
-    const auto drafter = start_axes(served, pins).drafter;
+    const auto drafter = axes.drafter;
     const SpeculativeBackend backend = planned.speculation.engine.backend;
     const spec::Mode serving = backend == SpeculativeBackend::Mtp       ? spec::Mode::Mtp
                                : backend == SpeculativeBackend::DFlash  ? spec::Mode::DFlash
@@ -316,7 +379,10 @@ PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInpu
         option == 0 || option > served.drafters.size() ||
         (served.drafters[option - 1].engine.backend == backend &&
          served.drafters[option - 1].engine.draft_tokens == planned.speculation.engine.draft_tokens);
-    if (!drafter || (*drafter == serving && same_config)) { return planned; }
+    if (!drafter) { return storages_differ ? plan_model(facts, inputs) : planned; }
+    if (*drafter == serving && same_config && !storages_differ) { return planned; }
+    // Planned again at the choice's drafter (its mode pinned: the profile's own pick at other
+    // storages may be another) and the choice's storages.
     DryRunInputs again = inputs;
     std::optional<SpeculationSubject> chosen;
     if (*drafter == spec::Mode::None) {
@@ -420,6 +486,11 @@ Json choice_json(const ServedChoice& served) {
                 {"why", served.choice.why},
                 {"by_worth", served.choice.by_worth},
                 {"chunk_by_speed", served.choice.chunk_by_speed}};
+    // The activation modes the model runs (a choice the user may pin: --activations), whatever
+    // is pinned now: what a selector offers.
+    Json modes = Json::array();
+    for (const ActivationMode m : served.allowed_activations) { modes.push_back(activation_name(m)); }
+    out["activations_allowed"] = modes;
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
         return out;

@@ -16,6 +16,7 @@
 #include "convert/gguf_model.h"
 #include "convert/cache.h"
 #include "convert/support.h"
+#include "product/activation_options.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
@@ -66,8 +67,8 @@ void reply_error(httplib::Response& res, int status, const std::string& message)
 int int_param(const httplib::Request& req, const char* name, int fallback);
 
 // What a launch would ask for, from /api/plan's and /api/quants' parameters: ctx (tokens, "auto"
-// or absent: automatic), par (1..8), kv, spec, precision. Throws std::invalid_argument for a value
-// ninferno-serve refuses.
+// or absent: automatic), par (1..8), kv, spec, precision, act (auto | exact | fast | int8).
+// Throws std::invalid_argument for a value ninferno-serve refuses.
 product::LaunchAsk launch_ask_of(const httplib::Request& req) {
     product::LaunchAsk out;
     const std::string ctx = req.get_param_value("ctx");
@@ -100,7 +101,12 @@ product::LaunchAsk launch_ask_of(const httplib::Request& req) {
         throw std::invalid_argument("spec must be auto, none, mtp, dflash or dflash2");
     }
     out.spec  = sp.empty() ? std::string("auto") : sp;
-    out.exact = req.get_param_value("precision") == "exact";
+    out.exact             = req.get_param_value("precision") == "exact";
+    const std::string act = req.get_param_value("act");
+    if (!act.empty() && act != "auto" && act != "exact" && act != "fast" && act != "int8") {
+        throw std::invalid_argument("act must be auto, exact, fast or int8");
+    }
+    out.activations = act == "auto" ? std::string() : act;
     return out;
 }
 
@@ -437,6 +443,10 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
     if (!precisions.count(request.precision)) {
         throw std::invalid_argument("bad precision: " + request.precision);
     }
+    if (!request.activations.empty() && request.activations != "exact" &&
+        request.activations != "fast" && request.activations != "int8") {
+        throw std::invalid_argument("bad activations: " + request.activations);
+    }
     static const std::set<std::string> kv_dtypes = {"", "bf16", "int8", "fp8", "nvfp4", "k8v4"};
     if (!kv_dtypes.count(request.kv_dtype)) {
         throw std::invalid_argument("bad kv_dtype: " + request.kv_dtype);
@@ -507,9 +517,11 @@ LaunchSpec make_launch(const UiOptions& options, const LaunchRequest& request, c
             spec.argv.push_back("--kv-dtype");
             spec.argv.push_back(request.kv_dtype.empty() ? "bf16" : request.kv_dtype);
         }
-        if (exact) {
+        // Activations: the exact preset's, else the mode the user chose (16 / 8 bits: exact | fast
+        // | int8), else none named: the configuration choice decides as on any start.
+        if (exact || !request.activations.empty()) {
             spec.argv.push_back("--activations");
-            spec.argv.push_back("exact");
+            spec.argv.push_back(exact ? "exact" : request.activations);
         }
         // Speculation: the one the request names, else the published profile's (--spec auto,
         // ninferno-serve's default too), named so that the command line says it.
@@ -927,7 +939,8 @@ std::vector<product::QuantListing> quant_listing(const Json& list, const Json& c
 
 std::string launch_key(const product::LaunchAsk& launch) {
     return std::to_string(launch.max_context) + "|" + std::to_string(launch.max_concurrency) + "|" +
-           launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "");
+           launch.kv_dtype + "|" + launch.spec + "|" + (launch.exact ? "exact" : "") + "|" +
+           launch.activations;
 }
 
 } // namespace
@@ -981,10 +994,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     inputs.gpu            = product::gpu_key_of(*device);
     inputs.options        = options.options;
     inputs.ask            = options.ask;
-    // The launch pins the KV codec the user chose and --activations exact; the rest is chosen.
+    // The launch pins the KV codec and the activations the user chose; the rest is chosen.
     // The exact preset also pins BF16 KV (launch_options resolves it, the launch passes it).
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
-                                      .activations = launch.exact};
+                                      .activations = launch.activations_pinned()};
     // ninferno-ui's launch passes no --with-drafters: the server attaches a GGUF model's separate
     // drafters when the choice drafts with one (choice/DECISIONS 45) and starts a quantization
     // converted here with its drafters from that conversion; product::PlannedSubjects plans both as
@@ -1049,6 +1062,8 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             at      = product::with_weights(*facts, chosen->weight_bytes, chosen->basis);
         } else {
             planned = product::plan_model(*facts, inputs);
+            // Nothing fits or runs: a pinned mode the family does not run says so.
+            product::refuse_unrun_activations(*facts, inputs, planned);
         }
         doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
         planned_at = at;
@@ -2305,6 +2320,8 @@ void App::install(httplib::Server& server) {
         out.max_concurrency = body.value("max_concurrency", 0);
         out.spec        = body.value("spec", std::string());
         out.precision   = body.value("precision", std::string());
+        out.activations = body.value("activations", std::string());
+        if (out.activations == "auto") { out.activations.clear(); }
         out.kv_dtype        = body.value("kv_dtype", std::string());
         out.hub             = body.value("hub", std::string());
         out.spec_profile    = body.value("spec_profile", false);
@@ -2353,6 +2370,34 @@ void App::install(httplib::Server& server) {
                             if (const auto local = local_artifact(repo, quant); !local.empty()) {
                                 request.model = local.string();
                                 request.quant.clear();
+                            }
+                        }
+                        // A mode the model's family does not run is refused here, with the
+                        // plan's words (product::activation_refusal), from the facts at hand: the
+                        // artifact's, else the repository's read for its plan. The server refuses
+                        // it at start as well when neither is known yet.
+                        if (!request.activations.empty()) {
+                            const ActivationMode mode =
+                                product::parse_activation_mode(request.activations);
+                            std::optional<product::PlanSourceFacts> facts;
+                            const std::string model = split_model_tag(request.model).first;
+                            if (fs::path(model).extension() == ".ninferno") {
+                                try {
+                                    facts = product::plan_facts_of_artifact(model);
+                                } catch (const std::exception&) {} // unreadable: the server says
+
+                            } else {
+                                std::lock_guard lock(sizes_mutex_);
+                                const auto it = plan_facts_.find(hub_key(
+                                    model, request.hub.empty() ? "huggingface" : request.hub));
+                                if (it != plan_facts_.end()) { facts = it->second; }
+                            }
+                            if (facts) {
+                                if (const std::string why =
+                                        product::activation_refusal(*facts, mode);
+                                    !why.empty()) {
+                                    throw std::invalid_argument(why);
+                                }
                             }
                         }
                         request.port     = processes_.free_port();

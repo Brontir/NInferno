@@ -49,6 +49,8 @@ struct ServedChoice {
     // The drafter axis's speculations (choice::ModelFacts::drafters, in its order): what a start of
     // each would run. Empty without a speculation subject.
     std::vector<ServedSpeculation> drafters;
+    // The activation modes the model's family runs (choice::allowed_axes), pinned or not.
+    std::vector<ActivationMode> allowed_activations;
 };
 
 // How a choice plans each candidate's memory: its exact own context per stream (the longest it
@@ -78,9 +80,28 @@ struct StartAxes {
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
 
-// The plan a --spec auto start serves at the configuration choice: `planned` (the profile's
-// speculation) planned again with the choice's drafter (StartAxes::drafter) where they differ,
-// plain decode said so. One code for ninferno-serve's plan without the weights and the CLI's.
+// Why a start refuses `mode` for this model ("" when its family runs it): --activations int8 is
+// the Qwen 3.5/3.6 families' only (choice::allowed_axes, the engine's refuse_qwen_only_options).
+// One check for ninferno-serve's start, its plan without the weights and ninferno-ui's plan and
+// launch.
+[[nodiscard]] std::string activation_refusal(const PlanSourceFacts& facts, ActivationMode mode);
+// A start of `artifact` with --activations `mode` given: throws std::invalid_argument with
+// activation_refusal's words when the model's family does not run it (before any weight loads).
+void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, ActivationMode mode);
+// A plan whose pinned activations (inputs.pins.activations) the family does not run: refused
+// (fits false, refused_code "activations_not_run", the reason in words). Unchanged otherwise.
+void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                              PlannedSpeculation& planned);
+
+// The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
+// activations and widest chunk, the axes the user left automatic; not the drafter).
+[[nodiscard]] DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
+                                            const ChoicePins& pins);
+// The plan a start serves at the configuration choice: `planned` planned again at the storages the
+// choice took for the axes left automatic (the KV codec, state, rings and activations a start sets:
+// apply_start_axes) where they differ from the ones it was planned at, and, under --spec auto, with
+// the choice's drafter (StartAxes::drafter) where that differs, plain decode said so. One code for
+// ninferno-serve's plan without the weights, the CLI's and ninferno-ui's.
 [[nodiscard]] PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts,
                                                 const DryRunInputs& inputs,
                                                 const ServedChoice& served, const ChoicePins& pins,

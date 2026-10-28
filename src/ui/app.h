@@ -6,7 +6,7 @@
 //   GET  /api/state        GPUs (NVML), running processes, UI settings: polled by the page
 //   GET  /api/catalog?gpu  recommended models with fit, speed and context for that GPU
 //   GET  /api/quants?repo&gpu   a hub repository's quantizations with sizes and fit (one listing)
-//   GET  /api/plan?repo&gpu&quant&ctx&par&kv&spec  the plan without the weights of one or every
+//   GET  /api/plan?repo&gpu&quant&ctx&par&kv&spec&act  the plan without the weights of one or every
 //                          quantization and the largest that fits (ninferno-dry-plan/1)
 //   GET  /api/local        models already converted (hub cache, --models-dir): architecture,
 //                          size, quantization, what they take, the original kept beside them
@@ -15,7 +15,8 @@
 //                          of that repository is left)
 //   POST /api/delete_original {repo}: a converted hub model's downloaded original
 //   GET  /api/log?id&n     the last lines of a process's output
-//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?, spec_profile?}
+//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?, activations?,
+//                          spec_profile?}
 //                          -> ninferno-serve (spec_profile: the tune beside the model, by request)
 //   POST /api/tune         {artifact, gpu}: spec-tune on that GPU writes a tune beside the model
 //   POST /api/prepare      {model, quant?} -> download and convert only (--prepare-only)
@@ -95,7 +96,8 @@ struct LaunchRequest {
     long max_context_cap = 0;  // with an automatic context: its ceiling (--max-context-cap)
     int max_concurrency = 0;  // requests at once; 0: ninferno-serve's default
     std::string spec;      // "" or auto | none | mtp | dflash | dflash2
-    std::string precision; // "" or exact | balanced | fast
+    std::string precision; // "" or exact | balanced | compact (exact: --activations exact, BF16 KV)
+    std::string activations; // "" (the choice's) or exact | fast | int8 (--activations)
     std::string kv_dtype;  // "" or bf16 | int8 | fp8 | nvfp4 | k8v4 (serve's --kv-dtype)
     std::string hub;       // "" (Hugging Face) or modelscope: where a hub id is fetched
     // Name the tune beside the artifact (<artifact>.spec_profile.json, /api/tune's) for this start

@@ -8,6 +8,7 @@
 #include "convert/gguf.h"
 #include "core/ascii.h"
 
+#include "product/activation_options.h"
 #include "product/numeric_options.h"
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
@@ -152,7 +153,9 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
                                                        : parse_kv_dtype(kv);
     o.recurrent_state           = RecurrentStateStorage::FP32;
     o.recurrent_state_automatic = true;
-    o.activations               = launch.exact ? ActivationMode::Exact : kDefaultActivationMode;
+    o.activations               = launch.exact                 ? ActivationMode::Exact
+                                  : launch.activations.empty() ? kDefaultActivationMode
+                                                               : parse_activation_mode(launch.activations);
     // ninferno-serve: an automatic context or several slots take an automatic pool, one slot at
     // an explicit context exactly its tokens.
     o.kv_capacity                       = o.max_context_automatic || o.max_concurrency > 1
@@ -208,6 +211,10 @@ std::uint32_t card_gb(const runtime::PlanDeviceFacts& device) noexcept {
 
 PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
     PlanReasonCode out;
+    if (!plan.refused_code.empty()) {
+        out.code = plan.refused_code;
+        return out;
+    }
     if (!plan.planned) {
         out.code = "shape_unknown";
         return out;
@@ -460,20 +467,38 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.unsupported_code    = why.code;
         row.why_unsupported     = why.text;
         row.candidate.supported = why.code.empty();
+        // What a start of this row sets from its choice (the axes left automatic).
+        std::optional<StartAxes> row_axes;
+        // The configuration choice a start of this quantization serves, and every plan of the row
+        // at its storages and (--spec auto) its drafter (plan_at_choice), the probes of its own
+        // context among them: as the plan of that quantization named shows it.
+        std::optional<ServedChoice> served;
+        if (row.candidate.supported && inputs.pins.activations) {
+            // A pinned activation mode the family does not run: the start refuses it; the row's
+            // plan says so (refused, not a fit at a mode that never runs).
+            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            if (const std::string why = activation_refusal(facts, inputs.options.activations);
+                !why.empty()) {
+                row.candidate.supported = false;
+                row.unsupported_code    = "activations_not_run";
+                row.why_unsupported     = why;
+                row.planned             = plan_model(facts, inputs_for(inputs, q));
+                refuse_unrun_activations(facts, inputs, row.planned);
+            }
+        }
+        if (row.candidate.supported) {
+            served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+                                       inputs_for(inputs, q), inputs.pins, q.quant);
+            if (served) { row_axes = start_axes(*served, inputs.pins); }
+        }
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             const DryRunInputs own      = inputs_for(inputs, q);
-            // The configuration choice a --spec auto start of this quantization serves, and every
-            // plan of the row at its drafter (plan_at_choice), the probes of its own context
-            // among them: as the plan of that quantization named shows it.
-            std::optional<ServedChoice> served;
-            if (own.subject != nullptr && own.ask.automatic) {
-                served = choose_at_weights(facts, own, inputs.pins, q.quant);
-            }
-            const PlanAt served_plan = [&](const DryRunInputs& at) {
+            const PlanAt served_plan = [&](const DryRunInputs& asked) {
+                if (!served) { return plan_model(facts, asked); }
+                const DryRunInputs at      = inputs_at_choice(asked, *served, inputs.pins);
                 PlannedSpeculation planned = plan_model(facts, at);
-                return served ? plan_at_choice(facts, at, *served, inputs.pins, std::move(planned))
-                              : planned;
+                return plan_at_choice(facts, at, *served, inputs.pins, std::move(planned));
             };
             row.planned = served_plan(own);
             row.fit     = runtime::quant_fit_of(
@@ -488,11 +513,11 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 row.planned = served_plan(under_context_cap(own, row.launch_context));
             }
         } else {
-            row.fit.state = why.code == "converted_size_unknown"
+            row.fit.state = row.unsupported_code == "converted_size_unknown"
                                 ? runtime::QuantFitState::Unknown
                                 : runtime::QuantFitState::Unsupported;
         }
-        if (row.planned.plan.planned) {
+        if (row.candidate.supported && row.planned.plan.planned) {
             // The speed of a typical request at the storages this row's plan serves with.
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             choice::ModelFacts model     = choice_model_of(facts);
@@ -510,8 +535,10 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             choice::Candidate c;
             c.kv          = row.planned.plan.kv_cache;
             c.state       = row.planned.plan.recurrent;
-            c.ring        = inputs.options.sliding_kv_cache;
-            c.activations = inputs.options.activations;
+            c.ring        = row_axes && row_axes->ring ? *row_axes->ring : inputs.options.sliding_kv_cache;
+            c.activations = row_axes && row_axes->activations ? *row_axes->activations
+                                                              : inputs.options.activations;
+            if (row_axes && row_axes->chunk) { c.chunk = *row_axes->chunk; }
             // The drafter this row's plan serves, at the gain the choice weighs it with: the
             // row's speed is of what the row would run.
             const SpeculativeBackend served = row.planned.speculation.engine.backend;

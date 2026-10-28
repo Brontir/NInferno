@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -380,13 +380,13 @@ for (const b of H.SPEC_BASES) {
 ok(T.en.specAutoRuns === "Auto runs this" && T.ru.specAutoRuns === "Запустится в Авто", "the served-kind badge words");
 
 // My models → Run: the model's own saved settings, with defaults.
-eq(H.launchSettingsOf(null), {ctx: 0, cap: 0, par: 1, kv: "", spec: "auto"}, "defaults");
-eq(H.launchSettingsOf({ctx: 49152, par: 4, kv: "fp8", spec: "none"}), {ctx: 49152, cap: 0, par: 4, kv: "fp8", spec: "none"}, "saved");
-eq(H.launchSettingsOf({ctx: -1, par: 99, kv: 5, spec: ""}), {ctx: 0, cap: 0, par: 8, kv: "", spec: "auto"}, "bad saved values");
+eq(H.launchSettingsOf(null), {ctx: 0, cap: 0, par: 1, kv: "", spec: "auto", act: ""}, "defaults");
+eq(H.launchSettingsOf({ctx: 49152, par: 4, kv: "fp8", spec: "none"}), {ctx: 49152, cap: 0, par: 4, kv: "fp8", spec: "none", act: ""}, "saved");
+eq(H.launchSettingsOf({ctx: -1, par: 99, kv: 5, spec: ""}), {ctx: 0, cap: 0, par: 8, kv: "", spec: "auto", act: ""}, "bad saved values");
 // A saved Auto x 4 launch runs again with its planned context as the ceiling (max_context_cap),
 // never as a pool the streams silently share; a typed context wins over a stale cap.
-eq(H.launchSettingsOf({ctx: 0, cap: 49152, par: 4, kv: "", spec: "auto"}), {ctx: 0, cap: 49152, par: 4, kv: "", spec: "auto"}, "saved Auto x 4 keeps its cap");
-eq(H.launchSettingsOf({ctx: 65536, cap: 49152, par: 4}), {ctx: 65536, cap: 0, par: 4, kv: "", spec: "auto"}, "a typed context drops the cap");
+eq(H.launchSettingsOf({ctx: 0, cap: 49152, par: 4, kv: "", spec: "auto"}), {ctx: 0, cap: 49152, par: 4, kv: "", spec: "auto", act: ""}, "saved Auto x 4 keeps its cap");
+eq(H.launchSettingsOf({ctx: 65536, cap: 49152, par: 4}), {ctx: 65536, cap: 0, par: 4, kv: "", spec: "auto", act: ""}, "a typed context drops the cap");
 
 // The page no longer decides speculation itself (P7): no autoVerdict, no spec=none from it.
 ok(!/autoVerdict/.test(html), "autoVerdict is gone");
@@ -430,5 +430,39 @@ ok(H.choiceFor(atQ4, "Q4_K_M") && !H.choiceFor(atQ4, "Q8_0") && H.choiceFor(atQ4
 ok(!H.choiceFor({choice: {chosen: null}}, "Q4_K_M") && !H.choiceFor(null, "Q4_K_M"), "no choice: for none");
 for (const lang of ["en", "ru"]) for (const k of ["choiceHead", "choiceLine", "choiceAlt", "estBasis", "why_no_fit", "why_lower_worth", "ax_kv", "ax_activations", "ax_drafter", "choiceDrafter", "why_default_drafter", "why_unmeasured"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
+
+// ---- activation precision (--activations): the selector from the plan's choice ----
+eq(H.launchSettingsOf({act: "int8"}).act, "int8", "a saved mode");
+eq(H.launchSettingsOf({act: "fp2"}).act, "", "a bad saved mode: Auto");
+ok(H.planQuery({repo: "a/b", ctx: 0, par: 1, act: "exact"}).endsWith("&act=exact"), "a pinned mode is asked");
+ok(!H.planQuery({repo: "a/b", ctx: 0, par: 1, act: "auto"}).includes("act="), "Auto asks no mode");
+eq(H.actAskOf("int8", ["fast", "exact"]), "auto", "a mode the model does not run: Auto");
+eq(H.actAskOf("int8", ["fast", "exact", "int8"]), "int8", "a mode the model runs");
+eq(H.actAskOf("exact", null), "exact", "before a plan: as chosen");
+{
+  const autoDoc = {choice: {activations_allowed: ["fast", "exact", "int8"],
+    chosen: {activations: "int8", decode_tok_s: 100, prefill_tok_s: 4000, request_seconds: 10, kld: 0.01, own_context: 32768},
+    alternatives: [{axis: "activations", value: "fast", fits: true, decode_tok_s: 100, prefill_tok_s: 3000, request_seconds: 11, kld: 0.008, own_context: 32768},
+                   {axis: "activations", value: "exact", fits: true, decode_tok_s: 90, prefill_tok_s: 2000, request_seconds: 12.5, kld: 0.005, own_context: 32768},
+                   {axis: "kv", value: "bf16", fits: true, decode_tok_s: 95, request_seconds: 10.5, kld: 0.009, own_context: 16384}]}};
+  const o = H.actOptions(autoDoc, autoDoc, "auto");
+  eq(o.auto, "int8", "Auto's mode is the choice's");
+  eq(o.options.map(x => x.value), ["exact", "fast", "int8"], "every mode, in order");
+  const exact = o.options.find(x => x.value === "exact");
+  ok(exact.allowed && !exact.on && Math.abs(exact.delta.dtime - 0.25) < 1e-9 && Math.abs(exact.delta.dkld + 0.005) < 1e-9,
+     "exact: +25 % time, 0.005 less KLD against Auto");
+  eq(o.options.find(x => x.value === "int8").delta, null, "Auto's own mode has no delta");
+  // Pinned exact: the pinned plan's choice has no activation alternatives; the deltas stay Auto's.
+  const pinned = {choice: {activations_allowed: ["fast", "exact", "int8"], chosen: {activations: "exact"}, alternatives: []}};
+  const p = H.actOptions(pinned, autoDoc, "exact");
+  ok(p.auto === "int8" && p.options.find(x => x.value === "exact").on && p.options.find(x => x.value === "exact").delta, "pinned: Auto's deltas kept");
+  // A family without int8 (Gemma): the button is not offered.
+  const gemma = {choice: {activations_allowed: ["fast", "exact"], chosen: {activations: "fast"}, alternatives: []}};
+  ok(!H.actOptions(gemma, gemma, "auto").options.find(x => x.value === "int8").allowed, "int8 not offered where the family does not run it");
+}
+for (const lang of ["en", "ru", "uk"]) for (const k of ["actType", "actTip", "act_exact", "act_fast", "act_int8", "actTip_exact", "actTip_fast", "actTip_int8", "actNotHere", "actAgainst"])
+  ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
+whole(EN("actAgainst", {v: "int8", d: "-10 %", t: "+25 %", k: "-0.0050"}), "actAgainst en");
+whole(RU("actAgainst", {v: "int8", d: "-10 %", t: "+25 %", k: "-0.0050"}), "actAgainst ru");
 
 console.log(`test_page_plan: ${checks} checks passed`);

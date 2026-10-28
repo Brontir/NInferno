@@ -487,6 +487,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     std::optional<product::QuantPlan> quants;
     product::PlannedSpeculation planned;
     product::PlanSourceFacts facts = model.facts;
+    bool planned_at_row = false; // a table row's plan: at the row's choice already
     // A GGUF repository without --quant: every quantization and the largest that fits.
     if (model.kind == "hub" && model.gguf && options.quant.empty()) {
         quants = product::plan_quants(model.facts, model.listing, planning.inputs);
@@ -501,7 +502,8 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
             }
         }
         if (chosen != nullptr) {
-            planned = chosen->planned;
+            planned        = chosen->planned;
+            planned_at_row = true;
             facts   = product::with_weights(model.facts, chosen->weight_bytes, chosen->basis);
         } else {
             planned = product::plan_model(model.facts, planning.inputs);
@@ -509,6 +511,9 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     } else {
         planned = product::plan_model(model.facts, planning.inputs);
     }
+    // A pinned --activations mode the model's family does not run: the start refuses it, so the
+    // plan does (product::activation_refusal), whatever the memory would hold.
+    product::refuse_unrun_activations(facts, planning.inputs, planned);
     // The configuration choice at the chosen weights: what the start would pick for the axes left
     // automatic, and what every other value would change.
     std::string label = model.quant;
@@ -518,8 +523,11 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
             ? product::inputs_for(planning.inputs, quants->rows[*quants->chosen].listing)
             : planning.inputs;
     const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label);
-    // A start serves the choice's drafter (product::StartAxes::drafter): the plan shown is of it.
-    if (served) { planned = product::plan_at_choice(facts, at_chosen, *served, pins_of(options), planned); }
+    // A start serves the choice's drafter (product::StartAxes::drafter) and storages: the plan
+    // shown is of them (a table's row is planned there already: product::plan_quants).
+    if (served && !planned_at_row) {
+        planned = product::plan_at_choice(facts, at_chosen, *served, pins_of(options), planned);
+    }
     const std::string source =
         model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
     out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,

@@ -1,6 +1,7 @@
 #include "core/removed_environment.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
+#include "product/plan/plan_choice.h"
 #include "product/update/update_check.h"
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
@@ -205,6 +206,12 @@ int main(int argc, char** argv) {
         if (options.prepare_only) {
             logger->info("model | prepared {}", options.artifact_path);
             return 0;
+        }
+        // --activations given that the model's family does not run: refused before any weight
+        // loads, with the plan's words (product::activation_refusal), not run at another mode.
+        if (options.activations_given) {
+            ninferno::product::refuse_unrun_activations_at_start(options.artifact_path,
+                                                                 options.activations);
         }
         // The axes the user left to the engine (--kv-dtype auto, no --activations, no
         // --state-dtype): the configuration choice for this artifact on this GPU

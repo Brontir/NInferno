@@ -5,6 +5,7 @@
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
 #include "convert/drafters.h"
+#include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
@@ -18,6 +19,7 @@
 #include "spec/registry.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
@@ -328,6 +330,8 @@ void test_launch_options_match_serve() {
         {{.spec = "none"}, {"--spec", "none"}},
         {{.spec = "mtp"}, {"--spec", "mtp"}},
         {{.exact = true}, {"--kv-dtype", "bf16", "--activations", "exact", "--spec", "auto"}},
+        {{.activations = "int8"}, {"--activations", "int8", "--spec", "auto"}},
+        {{.activations = "exact"}, {"--activations", "exact", "--spec", "auto"}},
     };
     for (const Case& c : cases) {
         const pr::LaunchPlanOptions ours          = pr::launch_options(c.ask);
@@ -351,6 +355,7 @@ void test_launch_options_match_serve() {
         check(o.recurrent_state_automatic == theirs.recurrent_state_automatic,
               label + ": state codec");
         check(o.activations == theirs.activations, label + ": activations");
+        check(c.ask.activations_pinned() == serve.activations_given, label + ": activations pinned");
         check(o.prefill_chunk == theirs.prefill_chunk &&
                   o.prefill_chunk_automatic == theirs.prefill_chunk_automatic,
               label + ": chunk");
@@ -1103,6 +1108,84 @@ void test_device_facts() {
 
 } // namespace
 
+// A row's plan and estimate are of the storages a start of it runs (product::start_axes over the
+// row's choice), whatever activation mode is pinned; a mode the family does not run is refused.
+void test_rows_at_choice() {
+    const rt::PlanDeviceFacts device = card(16, 89);
+    struct Family {
+        const char* name;
+        rt::PlanModelFacts (*make)(std::uint64_t);
+        bool int8;
+    };
+    for (const Family& family : {Family{"qwen27b", qwen27b, true}, Family{"gemma31b", gemma31b, false}}) {
+        pr::PlanSourceFacts shape;
+        shape.model = family.make(9 * kGiB);
+        const std::vector<pr::QuantListing> listing = {
+            {.quant = "Q4_K_M", .format = "gguf", .bytes = 9 * kGiB, .bits = 4}};
+        for (const char* act : {"", "exact", "fast", "int8"}) {
+            for (const std::uint32_t context : {8192U, 65536U}) {
+                const std::string what = std::string(family.name) + " act '" + act + "' ctx " +
+                                         std::to_string(context);
+                pr::DryRunInputs inputs;
+                inputs.device = device;
+                inputs.gpu    = pr::gpu_key_of(device);
+                const pr::LaunchAsk launch{.max_context = context, .spec = "none", .activations = act};
+                const pr::LaunchPlanOptions o = pr::launch_options(launch);
+                inputs.options                = o.options;
+                inputs.ask                    = o.ask;
+                inputs.pins.activations       = launch.activations_pinned();
+                const pr::QuantPlan plan      = pr::plan_quants(shape, listing, inputs);
+                const pr::QuantRow& row       = plan.rows.front();
+                const std::string refusal = pr::activation_refusal(
+                    pr::with_weights(shape, row.weight_bytes, row.basis), o.options.activations);
+                check(refusal.empty() == !(std::string(act) == "int8" && !family.int8),
+                      what + ": the shared check refuses only a mode the family does not run");
+                if (std::string(act) == "int8" && !family.int8) {
+                    check(!row.candidate.supported && row.unsupported_code == "activations_not_run" &&
+                              row.why_unsupported == refusal,
+                          what + ": refused");
+                    // The row's plan keeps the verdict: planned, not fitting, its code and words
+                    // (a named quantization's plan shows this row, never a fit at a mode never run).
+                    check(row.planned.plan.planned && !row.planned.plan.fits &&
+                              row.planned.plan.refused_code == "activations_not_run" &&
+                              row.planned.plan.reason == refusal && !row.estimate,
+                          what + ": the row's plan is refused");
+                    const nlohmann::json doc = pr::dry_plan_document(
+                        shape, "test/repo:Q4_K_M", "hub", inputs, row.planned, &plan);
+                    check(doc["plan"]["fits"] == false &&
+                              doc["plan"]["reason_code"] == "activations_not_run" &&
+                              doc["quants"][0]["unsupported_code"] == "activations_not_run",
+                          what + ": the document says fits false with the code");
+                    // A plan of the same inputs made elsewhere (a CLI's, a fallback) is refused too.
+                    pr::PlannedSpeculation fallback = pr::plan_model(
+                        pr::with_weights(shape, row.weight_bytes, row.basis), inputs);
+                    pr::refuse_unrun_activations(pr::with_weights(shape, row.weight_bytes, row.basis),
+                                                 inputs, fallback);
+                    check(!fallback.plan.fits && fallback.plan.refused_code == "activations_not_run",
+                          what + ": a fallback plan is refused");
+                    continue;
+                }
+                const auto served = pr::choose_at_weights(
+                    pr::with_weights(shape, row.weight_bytes, row.basis),
+                    pr::inputs_for(inputs, row.listing), inputs.pins, row.listing.quant);
+                check(served && served->choice.chosen && row.planned.plan.planned, what + ": chosen");
+                if (!served || !served->choice.chosen || !row.planned.plan.planned) { continue; }
+                const pr::StartAxes axes = pr::start_axes(*served, inputs.pins);
+                check(!axes.kv || *axes.kv == row.planned.plan.kv_cache,
+                      what + ": the row's KV codec is the start's");
+                check(!axes.state || *axes.state == row.planned.plan.recurrent,
+                      what + ": the row's state is the start's");
+                check(row.estimate && std::abs(row.estimate->decode_per_stream - served->decode_at_depth) < 1e-6,
+                      what + ": the row's decode is the choice's");
+                if (!std::string(act).empty()) {
+                    const auto& c = served->choice.scored[*served->choice.chosen].candidate;
+                    check(c.activations == o.options.activations, what + ": the pin is kept");
+                }
+            }
+        }
+    }
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -1122,6 +1205,7 @@ int main() {
     test_rule();
     test_speculation_order();
     test_properties();
+    test_rows_at_choice();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
