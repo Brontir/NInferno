@@ -7,7 +7,7 @@
 //
 //   ninferno_r8_schedule_bench [--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...]
 //                            [--samples 15] [--launches 60] [--tokens 1,2,4,8] [--rmma 1]
-//                            [--span-mib M]
+//                            [--span-mib M] [--interleave-mib M]
 //
 // FILE is the NINFERNO_ROUTE_RECORD / ninferno_route_tune format, "<format> <compute> <epilogue>
 // <n> <k>" per line (the compute column is ignored: R8 is the A8 decode route); --problem adds one
@@ -83,6 +83,11 @@ bool g_rmma = false;
 // --span-mib M: the weight copies cover at least M MiB (default: four times the L2), so that a run
 // of launches also walks as many distinct pages as a model's step does.
 std::size_t g_span_bytes = 0;
+
+// --interleave-mib M: a memset of M MiB between launches in the graph (a model step runs other
+// kernels between its projections: their data and code leave the L2). The time per launch then
+// includes the memset; profile the graph for the R8 kernel's own duration.
+std::size_t g_interleave_bytes = 0;
 
 double median(std::vector<double> v) {
     std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
@@ -203,6 +208,8 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         y.copy_to_host(outputs[i].data(), y.bytes);
     }
 
+    std::unique_ptr<DeviceBuffer> scratch;
+    if (g_interleave_bytes > 0) scratch = std::make_unique<DeviceBuffer>(g_interleave_bytes);
     std::vector<cudaGraphExec_t> graphs(schedules);
     for (int i = 0; i < schedules; ++i) {
         const generic::Route r = routes[i];
@@ -211,6 +218,9 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         for (int l = 0; l < launches; ++l) {
             const auto& copy = *copies[static_cast<std::size_t>(l) % copies.size()];
             generic::run_route(r, make_call(copy.weight), &workspace, stream);
+            if (scratch) {
+                CUDA_CHECK(cudaMemsetAsync(scratch->p, l & 0xff, g_interleave_bytes, stream));
+            }
         }
         CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
         CUDA_CHECK(cudaGraphInstantiate(&graphs[i], graph, 0));
@@ -293,6 +303,8 @@ int main(int argc, char** argv) {
                 samples = std::stoi(v);
             } else if (a == "--launches") {
                 launches = std::stoi(v);
+            } else if (a == "--interleave-mib") {
+                g_interleave_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--span-mib") {
                 g_span_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--rmma") {
