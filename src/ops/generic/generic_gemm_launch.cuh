@@ -75,7 +75,8 @@ bool rmma_latency_pays() {
     return pays.get([](int) {
         const bool swiglu = E == Epilogue::SwiGlu;
         if (dram_bytes_per_sm_cycle() <
-            (swiglu ? kRmmaLatencySwiGluBytes : kRmmaLatencyOneSetBytes)) {
+                (swiglu ? kRmmaLatencySwiGluBytes : kRmmaLatencyOneSetBytes) &&
+            !(!swiglu && (NINFERNO_RMMA_AHEAD_EXP & 8))) {
             return false;
         }
         const auto& d = device_class();

@@ -2967,15 +2967,38 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // Q6_K) on one m16 tile of one row set at least as many as 128 registers a thread allow, the
 // plain kernels' size there (ptxas for sm_89 gave the wide w1x4 159 registers against 124: three
 // CTAs per SM against four).
-template <class Decoder, class Schedule, Epilogue E>
+#ifndef NINFERNO_RMMA_AHEAD_EXP
+#    define NINFERNO_RMMA_AHEAD_EXP 0
+#endif
+// Whether the latency kernel loads each step's activations into registers with its weights
+// (rmma_kernel's act_ring), where they are not staged with cp.async.
+template <class Decoder, class Schedule, Epilogue E, bool Latency>
+inline constexpr bool kRmmaAhead =
+#if NINFERNO_FMA_MMA
+    false;
+#else
+    Latency && SpreadOf<Decoder> && Schedule::kNTiles == 1 && !FinishOf<Decoder>::value &&
+    !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value &&
+#    if NINFERNO_HAS_CP_ASYNC
+    // SwiGLU of up to eight warps stages them (kActStage)
+    !(E == Epilogue::SwiGlu && StageActsOf<Decoder>::value &&
+      Schedule::kWarpsM * Schedule::kWarpsK <= 8) &&
+#    endif
+    ((E == Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 1)) ||
+     (E != Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2)));
+#endif
+
+template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 inline constexpr int kRmmaMinBlocks =
-    FinishOf<Decoder>::value && E != Epilogue::SwiGlu && Schedule::kMTiles == 1 &&
-            65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
-        ? 65536 / (Schedule::kThreads * 128)
+    (FinishOf<Decoder>::value && E != Epilogue::SwiGlu && Schedule::kMTiles == 1) ||
+            (kRmmaAhead<Decoder, Schedule, E, Latency> && (NINFERNO_RMMA_AHEAD_EXP & 4))
+        ? (65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
+               ? 65536 / (Schedule::kThreads * 128)
+               : Schedule::kMinBlocks)
         : Schedule::kMinBlocks;
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
-__global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E>)) void
+__global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
     GemmArgs a) {
     constexpr int R        = Decoder::kRun;
@@ -3062,18 +3085,8 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
 #else
     constexpr bool kStaged = kActStage;
 #endif
-#ifndef NINFERNO_RMMA_AHEAD_EXP
-#    define NINFERNO_RMMA_AHEAD_EXP 0
-#endif
-#if NINFERNO_FMA_MMA
-    constexpr bool kAhead = false;
-#else
-    constexpr bool kAhead = Latency && !kStaged && SpreadOf<Decoder> && NT == 1 &&
-                            !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value &&
-                            !QuadRunsOf<Decoder>::value &&
-                            ((kSwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 1)) ||
-                             (!kSwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2)));
-#endif
+    constexpr bool kAhead = kRmmaAhead<Decoder, Schedule, E, Latency>;
+    static_assert(!(kAhead && kStaged));
     unsigned act_ring[kAhead ? 2 : 1][1][kAhead ? 2 * J : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
