@@ -20,7 +20,6 @@
 
 #include <cuda_bf16.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <stdexcept>
 
@@ -58,10 +57,6 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 // (generic_gemm.cpp: no native BF16 MMA, sm_80 on has it).
 [[nodiscard]] bool r8_stage_grid();
 
-// Whether this device's R8 launches (in-CTA quantization) take a resident grid: no more CTAs than
-// the SMs hold at once, each looping over row blocks (generic_gemm.cpp).
-[[nodiscard]] bool r8_resident_grid();
-
 // The staged grid starts at the next 8-byte boundary after the activation (whose bytes are a
 // multiple of 4): at most this many bytes of padding.
 inline constexpr std::size_t r8_grid_pad = 4;
@@ -89,9 +84,9 @@ __device__ __forceinline__ int dp4a_words(const uint4& w, const uint4& x, int ac
 // memory; otherwise every CTA quantizes all T tokens into shared memory first.
 template <class C, class S, int NT, Epilogue E, bool kPre = false>
 __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activation act) {
-    constexpr bool kSwiGlu  = E == Epilogue::SwiGlu;
-    constexpr int kSets     = kSwiGlu ? 2 : 1; // gate rows, then the matching up rows
-    constexpr int kRows     = S::kRows;
+    constexpr bool kSwiGlu = E == Epilogue::SwiGlu;
+    constexpr int kSets    = kSwiGlu ? 2 : 1; // gate rows, then the matching up rows
+    constexpr int kRows    = S::kRows;
     constexpr bool kHalves  = w4a8_halves<C>();
     constexpr bool kHalfMin = w4a8_half_min<C>();
     // A lane's unit is a group of kSpan*kStride blocks: kStride loads of kSpan blocks each (load q
@@ -118,16 +113,11 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
     const int warp   = tid >> 5;
     const int blocks = a.k / 32;
     const int groups = blocks / kGroup;
-    // Row blocks: blockIdx.x, then every gridDim.x-th after it (r8_launch_tokens may launch fewer
-    // CTAs than row blocks, as many as stay resident: each CTA then quantizes the activation once
-    // for all of its row blocks). A row's sums do not depend on which CTA takes it.
-    const int row_blocks = (a.rows + S::kRowsPerCta - 1) / S::kRowsPerCta;
-    int row_block        = static_cast<int>(blockIdx.x);
-    int local0           = row_block * S::kRowsPerCta + warp * kRows;
-    auto* x_lo           = reinterpret_cast<uint4*>(r8_shared);
-    auto* x_hi           = x_lo + NT * blocks;
-    auto* x_scale        = reinterpret_cast<float*>(x_hi + NT * blocks);
-    auto* x_sum          = x_scale + NT * blocks; // codecs with a min: scale times the codes' sum
+    const int local0 = static_cast<int>(blockIdx.x) * S::kRowsPerCta + warp * kRows;
+    auto* x_lo       = reinterpret_cast<uint4*>(r8_shared);
+    auto* x_hi       = x_lo + NT * blocks;
+    auto* x_scale    = reinterpret_cast<float*>(x_hi + NT * blocks);
+    auto* x_sum      = x_scale + NT * blocks; // codecs with a min: scale times the codes' sum
     // A codebook codec's grid, after the activation (none under kPre), staged once per CTA: the
     // lookups then read shared memory, not random lines of the global table.
     constexpr int kGridWords = NINFERNO_R8_STAGED_GRID ? r8_grid_words<C>() : 0;
@@ -175,8 +165,8 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
     // The activation: token slots past T hold zeros.
     const auto* x = static_cast<const __nv_bfloat16*>(a.x);
     for (int task = tid; !kPre && task < NT * blocks; task += S::kThreads) {
-        const int token   = task / blocks;
-        const int b       = task - token * blocks;
+        const int token = task / blocks;
+        const int b     = task - token * blocks;
         unsigned words[8] = {};
         float scale       = 0.0F;
         int qsum          = 0;
@@ -192,140 +182,124 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
     }
     if constexpr (!kPre) __syncthreads();
 
-#pragma unroll 1
-    for (;;) {
-        float acc[kSets][kRows][NT];
+    float acc[kSets][kRows][NT];
+#pragma unroll
+    for (int s = 0; s < kSets; ++s)
+#pragma unroll
+        for (int r = 0; r < kRows; ++r)
+#pragma unroll
+            for (int n = 0; n < NT; ++n) acc[s][r][n] = 0.0F;
+
+    // Block kb of every token against block sp of load q of each row (kb = group*kGroup + q +
+    // kStride*sp): a group's blocks in ascending order, whatever the codec's grouping.
+    const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
+        uint4 xl[NT], xh[NT];
+        float xs[NT], xm[NT];
+#pragma unroll
+        for (int n = 0; n < NT; ++n) {
+            if constexpr (kPre) {
+                if (n < a.tokens) {
+                    const auto* c = reinterpret_cast<const uint4*>(
+                        act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
+                    xl[n] = c[0];
+                    xh[n] = c[1];
+                    xs[n] = act.scales[n * blocks + kb];
+                    xm[n] = C::kMin ? act.sums[n * blocks + kb] : 0.0F;
+                } else {
+                    xl[n] = xh[n] = make_uint4(0, 0, 0, 0);
+                    xs[n] = xm[n] = 0.0F;
+                }
+            } else {
+                xl[n] = x_lo[n * blocks + kb];
+                xh[n] = x_hi[n * blocks + kb];
+                xs[n] = x_scale[n * blocks + kb];
+                xm[n] = C::kMin ? x_sum[n * blocks + kb] : 0.0F;
+            }
+        }
+        // kHalfMin: each token's code sums of values 0..15 and 16..31 (dp4a against ones).
+        [[maybe_unused]] float hl[NT], hh[NT];
+        if constexpr (kHalfMin) {
+            const uint4 ones = make_uint4(0x01010101U, 0x01010101U, 0x01010101U, 0x01010101U);
+#pragma unroll
+            for (int n = 0; n < NT; ++n) {
+                hl[n] = int_accumulator_to_float(dp4a_words(ones, xl[n], int_accumulator_zero()));
+                hh[n] = int_accumulator_to_float(dp4a_words(ones, xh[n], int_accumulator_zero()));
+            }
+        }
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
-            for (int r = 0; r < kRows; ++r)
-#pragma unroll
-                for (int n = 0; n < NT; ++n) acc[s][r][n] = 0.0F;
-
-        // Block kb of every token against block sp of load q of each row (kb = group*kGroup + q +
-        // kStride*sp): a group's blocks in ascending order, whatever the codec's grouping.
-        const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
-            uint4 xl[NT], xh[NT];
-            float xs[NT], xm[NT];
-#pragma unroll
-            for (int n = 0; n < NT; ++n) {
-                if constexpr (kPre) {
-                    if (n < a.tokens) {
-                        const auto* c = reinterpret_cast<const uint4*>(
-                            act.codes + static_cast<std::int64_t>(n) * a.k + kb * 32);
-                        xl[n] = c[0];
-                        xh[n] = c[1];
-                        xs[n] = act.scales[n * blocks + kb];
-                        xm[n] = C::kMin ? act.sums[n * blocks + kb] : 0.0F;
-                    } else {
-                        xl[n] = xh[n] = make_uint4(0, 0, 0, 0);
-                        xs[n] = xm[n] = 0.0F;
-                    }
+            for (int r = 0; r < kRows; ++r) {
+                if (local0 + r >= a.rows) continue;
+                uint4 lo, hi;
+                float s0 = 0.0F, s1 = 0.0F;
+                [[maybe_unused]] float m0 = 0.0F, m1 = 0.0F;
+                if constexpr (kHalfMin) {
+                    C::decode(raws[s][r][q], sp, lo, hi, s0, s1, m0, m1);
+                } else if constexpr (kGridWords > 0) {
+                    C::decode(raws[s][r][q], lo, hi, s0, s1, SharedGrid{grid_words});
+                } else if constexpr (kSpan == 1) {
+                    C::decode(raws[s][r][q], lo, hi, s0, s1);
                 } else {
-                    xl[n] = x_lo[n * blocks + kb];
-                    xh[n] = x_hi[n * blocks + kb];
-                    xs[n] = x_scale[n * blocks + kb];
-                    xm[n] = C::kMin ? x_sum[n * blocks + kb] : 0.0F;
+                    C::decode(raws[s][r][q], sp, lo, hi, s0, s1);
                 }
-            }
-            // kHalfMin: each token's code sums of values 0..15 and 16..31 (dp4a against ones).
-            [[maybe_unused]] float hl[NT], hh[NT];
-            if constexpr (kHalfMin) {
-                const uint4 ones = make_uint4(0x01010101U, 0x01010101U, 0x01010101U, 0x01010101U);
 #pragma unroll
                 for (int n = 0; n < NT; ++n) {
-                    hl[n] =
-                        int_accumulator_to_float(dp4a_words(ones, xl[n], int_accumulator_zero()));
-                    hh[n] =
-                        int_accumulator_to_float(dp4a_words(ones, xh[n], int_accumulator_zero()));
-                }
-            }
-#pragma unroll
-            for (int s = 0; s < kSets; ++s)
-#pragma unroll
-                for (int r = 0; r < kRows; ++r) {
-                    if (local0 + r >= a.rows) continue;
-                    uint4 lo, hi;
-                    float s0 = 0.0F, s1 = 0.0F;
-                    [[maybe_unused]] float m0 = 0.0F, m1 = 0.0F;
-                    if constexpr (kHalfMin) {
-                        C::decode(raws[s][r][q], sp, lo, hi, s0, s1, m0, m1);
-                    } else if constexpr (kGridWords > 0) {
-                        C::decode(raws[s][r][q], lo, hi, s0, s1, SharedGrid{grid_words});
-                    } else if constexpr (kSpan == 1) {
-                        C::decode(raws[s][r][q], lo, hi, s0, s1);
+                    if constexpr (kHalves) {
+                        const int d0  = dp4a_words(lo, xl[n], int_accumulator_zero());
+                        const int d1  = dp4a_words(hi, xh[n], int_accumulator_zero());
+                        float w       = fmaf(int_accumulator_to_float(d1), s1,
+                                             int_accumulator_to_float(d0) * s0);
+                        if constexpr (kHalfMin) w = fmaf(hh[n], m1, fmaf(hl[n], m0, w));
+                        acc[s][r][n] = fmaf(w, xs[n], acc[s][r][n]);
                     } else {
-                        C::decode(raws[s][r][q], sp, lo, hi, s0, s1);
-                    }
-#pragma unroll
-                    for (int n = 0; n < NT; ++n) {
-                        if constexpr (kHalves) {
-                            const int d0 = dp4a_words(lo, xl[n], int_accumulator_zero());
-                            const int d1 = dp4a_words(hi, xh[n], int_accumulator_zero());
-                            float w      = fmaf(int_accumulator_to_float(d1), s1,
-                                                int_accumulator_to_float(d0) * s0);
-                            if constexpr (kHalfMin) w = fmaf(hh[n], m1, fmaf(hl[n], m0, w));
-                            acc[s][r][n] = fmaf(w, xs[n], acc[s][r][n]);
-                        } else {
-                            const int d = dp4a_words(hi, xh[n],
-                                                     dp4a_words(lo, xl[n], int_accumulator_zero()));
-                            acc[s][r][n] =
-                                fmaf(int_accumulator_to_float(d) * s0, xs[n], acc[s][r][n]);
-                            if constexpr (C::kMin) acc[s][r][n] = fmaf(s1, xm[n], acc[s][r][n]);
-                        }
+                        const int d =
+                            dp4a_words(hi, xh[n], dp4a_words(lo, xl[n], int_accumulator_zero()));
+                        acc[s][r][n] = fmaf(int_accumulator_to_float(d) * s0, xs[n], acc[s][r][n]);
+                        if constexpr (C::kMin) acc[s][r][n] = fmaf(s1, xm[n], acc[s][r][n]);
                     }
                 }
-        };
-        const auto compute = [&](auto slot_tag, int group) {
-            constexpr int slot = decltype(slot_tag)::value;
-#pragma unroll
-            for (int j = 0; j < kGroup; ++j) {
-                compute_block(ring[slot], j % kStride, j / kStride, group * kGroup + j);
             }
-        };
+    };
+    const auto compute = [&](auto slot_tag, int group) {
+        constexpr int slot = decltype(slot_tag)::value;
+#pragma unroll
+        for (int j = 0; j < kGroup; ++j) {
+            compute_block(ring[slot], j % kStride, j / kStride, group * kGroup + j);
+        }
+    };
 
 #pragma unroll 1
-        for (int g = lane; g < groups; g += 64) {
-            if (g + 32 < groups) fetch(Slot1{}, g + 32);
-            compute(Slot0{}, g);
-            if (g + 32 >= groups) break;
-            if (g + 64 < groups) fetch(Slot0{}, g + 64);
-            compute(Slot1{}, g + 32);
-        }
+    for (int g = lane; g < groups; g += 64) {
+        if (g + 32 < groups) fetch(Slot1{}, g + 32);
+        compute(Slot0{}, g);
+        if (g + 32 >= groups) break;
+        if (g + 64 < groups) fetch(Slot0{}, g + 64);
+        compute(Slot1{}, g + 32);
+    }
 
-        // The next row block's first weights go in flight before this one's reduction and stores.
-        const int row0 = local0;
-        row_block += static_cast<int>(gridDim.x);
-        const bool more = row_block < row_blocks;
-        if (more) {
-            local0 = row_block * S::kRowsPerCta + warp * kRows;
-            if (lane < groups) fetch(Slot0{}, lane);
-        }
-
-        // Butterfly: every lane ends with the same sum (each step adds a pair in either order).
+    // Butterfly: every lane ends with the same sum (each step adds a pair in either order).
 #pragma unroll
-        for (int s = 0; s < kSets; ++s)
+    for (int s = 0; s < kSets; ++s)
 #pragma unroll
-            for (int r = 0; r < kRows; ++r)
+        for (int r = 0; r < kRows; ++r)
 #pragma unroll
-                for (int n = 0; n < NT; ++n)
+            for (int n = 0; n < NT; ++n)
 #pragma unroll
-                    for (int m = 16; m > 0; m >>= 1)
-                        acc[s][r][n] += __shfl_xor_sync(0xffffffffU, acc[s][r][n], m);
+                for (int m = 16; m > 0; m >>= 1)
+                    acc[s][r][n] += __shfl_xor_sync(0xffffffffU, acc[s][r][n], m);
 
 #pragma unroll
-        for (int r = 0; r < kRows; ++r) {
-            const int l = row0 + r;
-            if (l >= a.rows) continue;
+    for (int r = 0; r < kRows; ++r) {
+        const int l = local0 + r;
+        if (l >= a.rows) continue;
 #pragma unroll
-            for (int n = 0; n < NT; ++n) {
-                if (n >= a.tokens || lane != ((r * NT + n) & 31)) continue;
-                float value = acc[0][r][n];
-                if constexpr (kSwiGlu) value = generic_gate(a, value) * acc[kSets - 1][r][n];
-                store_output<E>(a, l, n, value);
-            }
+        for (int n = 0; n < NT; ++n) {
+            if (n >= a.tokens || lane != ((r * NT + n) & 31)) continue;
+            float value = acc[0][r][n];
+            if constexpr (kSwiGlu) value = generic_gate(a, value) * acc[kSets - 1][r][n];
+            store_output<E>(a, l, n, value);
         }
-        if (!more) break;
     }
     // A joined launch (Call::join_previous) ran alongside the kernel before it; the grid completes
     // only after that one has, so the stream's next kernel follows both.
@@ -346,32 +320,12 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
 
 template <class C, class S, int NT, Epilogue E, bool kPre = false>
 void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation act = {}) {
-    const auto smem =
-        (kPre ? std::size_t{0} : static_cast<std::size_t>(r8_smem_bytes(NT, args.k, C::kMin))) +
-        (r8_stage_grid() && r8_grid_words<C>() > 0
-             ? sizeof(std::uint32_t) * r8_grid_words<C>() + r8_grid_pad
-             : 0);
-    const int row_blocks = (args.rows + S::kRowsPerCta - 1) / S::kRowsPerCta;
-    int ctas             = row_blocks;
-    if (!kPre && r8_resident_grid()) {
-        // As many CTAs as the SMs hold at once (the device's SM count times this kernel's
-        // occupancy at its block size and shared bytes): each quantizes the activation once.
-        static thread_local int device_ = -1, resident_ = 0;
-        static thread_local std::size_t smem_ = 0;
-        int device                            = 0;
-        CUDA_CHECK(cudaGetDevice(&device));
-        if (device != device_ || smem != smem_) {
-            int per_sm = 0, sms = 0;
-            CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
-                &per_sm, r8_kernel<C, S, NT, E, kPre>, S::kThreads, smem));
-            CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
-            device_   = device;
-            smem_     = smem;
-            resident_ = per_sm * sms;
-        }
-        if (resident_ > 0) ctas = std::min(row_blocks, resident_);
-    }
-    const dim3 grid(static_cast<unsigned>(ctas));
+    const dim3 grid((args.rows + S::kRowsPerCta - 1) / S::kRowsPerCta);
+    const auto smem = (kPre ? std::size_t{0}
+                            : static_cast<std::size_t>(r8_smem_bytes(NT, args.k, C::kMin))) +
+                      (r8_stage_grid() && r8_grid_words<C>() > 0
+                           ? sizeof(std::uint32_t) * r8_grid_words<C>() + r8_grid_pad
+                           : 0);
     // kPre launches in stream order: the quantizer it reads is the kernel right before it.
     if (kPre || (args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported()) {
         r8_kernel<C, S, NT, E, kPre><<<grid, S::kThreads, smem, stream>>>(args, act);
@@ -422,8 +376,8 @@ void r8_launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream,
     }
 }
 
-// kVerify: the codec also has the verify-width form (a pre-quantized activation, T
-// = 2..kR8VerifyTokens); r8_verify_compiled lists the same formats.
+// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..kR8VerifyTokens);
+// r8_verify_compiled lists the same formats.
 template <class C, bool kVerify = false>
 void r8_launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream,
                      W4a8Activation pre = {}) {

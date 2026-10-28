@@ -1419,17 +1419,6 @@ bool r8_stage_grid() {
     } catch (const std::exception&) { return false; }
 }
 
-// Without tensor mma.sync (Volta) the R8 decode launch keeps no more CTAs than stay resident, each
-// looping over row blocks: a CTA quantizes the whole activation before its first row, and with a
-// CTA a row block (4..16 rows) that quantization and the CTA's setup were a third of a call's
-// instructions (GV100, Q4_K 4096 x 4096: 834 warp instructions a row at 1.1 instructions a cycle
-// an SM, 3.2 of the 7.5 bytes a cycle an SM needs to stream at 870 GB/s). Same bytes either way.
-bool r8_resident_grid() {
-    try {
-        return !device_class().features.mma_tensor;
-    } catch (const std::exception&) { return false; }
-}
-
 bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
     if (tokens <= 0 || tokens > kR8MaxTokens || k <= 0) return false;
     std::int64_t slots = 1;
