@@ -3058,8 +3058,8 @@ std::uint64_t rmma_spread_count() noexcept { return rmma_spreads.load(std::memor
 // warp's FP32 partials (kSets x 128 per warp and row block).
 std::size_t rmma_spread_bytes(std::int32_t rows, std::int32_t tokens, Epilogue epilogue) {
     if (rows <= 0 || tokens <= 0) return 0;
-    const std::int64_t blocks =
-        ((static_cast<std::int64_t>(rows) + 15) / 16) * ((static_cast<std::int64_t>(tokens) + 7) / 8);
+    const std::int64_t blocks = ((static_cast<std::int64_t>(rows) + 15) / 16) *
+                                ((static_cast<std::int64_t>(tokens) + 7) / 8);
     if (4 * blocks > sm_count()) return 0;
     const std::int64_t sets = epilogue == Epilogue::SwiGlu ? 2 : 1;
     return static_cast<std::size_t>(blocks * kRmmaSpreadCtas * sets * 128) * sizeof(float);

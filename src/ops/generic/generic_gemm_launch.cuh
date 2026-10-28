@@ -195,7 +195,7 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
             ++count;
         }
         cudaLaunchConfig_t config{};
-        config.gridDim  = dim3(grid.x, grid.y, Schedule::kCluster * Schedule::kKCtas);
+        config.gridDim          = dim3(grid.x, grid.y, Schedule::kCluster * Schedule::kKCtas);
         config.blockDim = dim3(Schedule::kThreads);
         config.dynamicSmemBytes = smem;
         config.stream   = stream;

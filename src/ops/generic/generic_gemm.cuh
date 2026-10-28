@@ -2998,10 +2998,10 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
     const int local0 = static_cast<int>(blockIdx.x) * Schedule::kRowsPerCta + warp_m * MT * 16;
     const int token0 = static_cast<int>(blockIdx.y) * (NT * 8);
     constexpr int C  = Schedule::kCluster;
-    // The spread form: this CTA's K warps are k_warp0 .. k_warp0 + WK - 1 of WKS (blockIdx.z).
-    constexpr int G    = Schedule::kKCtas;
-    constexpr int WKS  = WK * G;
-    const int k_warp   = (G == 1 ? 0 : static_cast<int>(blockIdx.z) * WK) + warp_k;
+    // The spread form: CTA z holds K warps z * WK .. z * WK + WK - 1 of WKS (k_warp: this warp's).
+    constexpr int G   = Schedule::kKCtas;
+    constexpr int WKS = WK * G;
+    const int k_warp  = (G == 1 ? 0 : static_cast<int>(blockIdx.z) * WK) + warp_k;
     // This CTA's K steps: all of them, or its cluster rank's share (blockIdx.z is the rank).
     const int all_steps = (a.k + KStep - 1) / KStep;
     const int s_begin   = C == 1 ? 0 : (all_steps * static_cast<int>(blockIdx.z)) / C;
@@ -3221,10 +3221,9 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
     // The spread form: every K warp's partial to the call's plane, and after the grid barrier
     // K warp 0 (CTA z = 0) adds K warps 1 .. WKS - 1 in order, the one-CTA schedule's order below.
     if constexpr (G > 1) {
-        constexpr int kValues = kSets * MT * NT * 4 * 32;
-        const std::int64_t tile =
-            static_cast<std::int64_t>(blockIdx.y) * gridDim.x + blockIdx.x;
-        float* plane = a.k_partials + (tile * Schedule::kWarpsM + warp_m) * WKS * kValues;
+        constexpr int kValues   = kSets * MT * NT * 4 * 32;
+        const std::int64_t tile = static_cast<std::int64_t>(blockIdx.y) * gridDim.x + blockIdx.x;
+        float* plane  = a.k_partials + (tile * Schedule::kWarpsM + warp_m) * WKS * kValues;
         const auto at = [&](int w, int s, int m, int n, int e) {
             return static_cast<std::int64_t>(w) * kValues + (((s * MT + m) * NT + n) * 4 + e) * 32 +
                    lane;
@@ -3237,8 +3236,7 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
 #pragma unroll
                     for (int n = 0; n < NT; ++n)
 #pragma unroll
-                        for (int e = 0; e < 4; ++e)
-                            plane[at(k_warp, s, m, n, e)] = acc[s][m][n][e];
+                        for (int e = 0; e < 4; ++e) plane[at(k_warp, s, m, n, e)] = acc[s][m][n][e];
         }
         cooperative_groups::this_grid().sync();
         if (k_warp != 0) return;

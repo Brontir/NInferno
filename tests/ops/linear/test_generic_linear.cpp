@@ -959,8 +959,8 @@ int check_k_spread(const Format& f, Op op, std::int32_t out_rows, std::int32_t k
     const auto epilogue = gated(op)       ? generic::Epilogue::SwiGlu
                           : op == Op::Add ? generic::Epilogue::AddResidual
                                           : generic::Epilogue::Store;
-    DeviceArena workspace(std::max<std::size_t>(
-        generic::rmma_spread_bytes(out_rows, wide, epilogue), 256));
+    DeviceArena workspace(
+        std::max<std::size_t>(generic::rmma_spread_bytes(out_rows, wide, epilogue), 256));
     const auto run = [&](std::int32_t t, bool spread, std::vector<std::uint16_t>& bits) {
         DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
         if (op == Op::Add) {
@@ -990,19 +990,17 @@ int check_k_spread(const Format& f, Op op, std::int32_t out_rows, std::int32_t k
         run(t, false, one_cta);
         const std::uint64_t before = generic::rmma_spread_count();
         run(t, true, spread);
-        const bool took = generic::rmma_spread_count() != before;
+        const bool took         = generic::rmma_spread_count() != before;
         const std::string label = std::string(f.name) + " " + op_name(op) + " [" +
                                   std::to_string(rows_n) + "," + std::to_string(k) +
                                   "] T=" + std::to_string(t);
         if (took != (generic::rmma_spread_bytes(out_rows, t, epilogue) != 0)) {
             std::cerr << label << ": the spread form " << (took ? "ran" : "did not run")
-                      << " against rmma_spread_bytes
-";
+                      << " against rmma_spread_bytes\n";
             ++failures;
         }
         if (one_cta != spread) {
-            std::cerr << label << ": the spread form of w1x16 differs from its one-CTA form
-";
+            std::cerr << label << ": the spread form of w1x16 differs from its one-CTA form\n";
             ++failures;
         }
     }
