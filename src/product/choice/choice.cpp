@@ -49,6 +49,14 @@ const Row* generation_row_of(const Row (&rows)[N], std::string_view generation, 
     return nullptr;
 }
 
+// A row of kLaunchCost or kRowsEta that rests on one card prices only its boards' estimate: marked.
+template <class Row, std::size_t N>
+const Row* measured_row_of(const Row (&rows)[N], std::string_view generation, bool& transferred) noexcept {
+    const Row* row = generation_row_of(rows, generation, transferred);
+    if (row != nullptr && row->cards < 2) { transferred = true; }
+    return row;
+}
+
 double dram_eta(std::string_view generation) noexcept {
     for (const DramEta& row : kDramEtaOf) {
         if (row.generation == generation) { return row.eta; }
@@ -69,6 +77,7 @@ double rows_eta(std::string_view generation, double rows, bool& transferred) noe
     const double scale = dram_eta(generation) / kDramEta;
     for (const RowsEta& r : kRowsEta) {
         if (r.generation != gen) { continue; }
+        if (r.cards < 2 && rows > 1) { transferred = true; } // one card: its boards' estimate only
         if (rows <= r.rows) {
             const double t = std::log2(rows / lo_rows) / std::log2(r.rows / lo_rows);
             return scale * (lo_eta + t * (r.eta - lo_eta));
@@ -420,8 +429,8 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double weights = std::max(0.0, quant.weight_bytes - model.speculation_bytes - table);
         // A generation without a row: the one whose launches it shares (Volta: Turing's, neither
         // has PDL nor Ada's L2), else Ada's; transferred either way.
-        const LaunchCost* launch = generation_row_of(kLaunchCost, gen == "volta" ? std::string_view("turing") : gen,
-                                                     transferred);
+        const LaunchCost* launch = measured_row_of(kLaunchCost, gen == "volta" ? std::string_view("turing") : gen,
+                                                   transferred);
         if (gen == "volta") { transferred = true; }
         // Unknown layers: no launch term, and the estimate says it is not the card's own.
         if (model.layers == 0) { transferred = true; }

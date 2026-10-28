@@ -108,8 +108,11 @@ inline constexpr double kDecodeLaunchesPerLayer = 10;
 // out: its T=1 Q8 GEMV runs at 86 % of the DRAM rate, a kernel deficit). Not one number of SM
 // cycles: Ada and Blackwell ~5,450 at the reference clock, Ampere 6,150, Turing 10,300 (its Q8 and
 // Gemma steps 7.3-7.9 us a launch against 4.8 on 9B Q4_K_M). Ada and Blackwell rest on two cards or
-// more; Ampere and Turing on one (estimates only: neither has a reference card); a generation without
-// a row takes Ada's (transferred).
+// more. Ampere and Turing rest on one card each: a row of one card only prices the estimate its own
+// generation's boards show, marked transferred (Speed::transferred), never a decision (the choice
+// prices on a reference card's generation, whose rows rest on two: kReferenceCards); Ada's in their
+// place would run Turing's estimates 9-58 % fast. A generation without a row takes Ada's
+// (transferred).
 struct LaunchCost {
     std::string_view generation;
     double seconds;
@@ -126,18 +129,20 @@ inline constexpr LaunchCost kLaunchCost[] = {
 // the share is linear in log2 C; beyond the last, the last's): the mean of the three models per
 // generation and row count, the launches at kLaunchCost. Ada (nine points a row count): 2 rows
 // 0.84-0.94, 4 rows 0.82-0.91, 8 rows 0.74-0.88; Blackwell (six): 0.80-0.91, 0.70-0.87, 0.67-0.83;
-// Gemma 4's shapes the lowest, Q8_0 the highest. Ampere, Turing: one card each (Turing's Gemma 4 at
-// 0.71 / 0.59 / 0.57, a kernel deficit). A generation without rows takes Ada's (transferred).
+// Gemma 4's shapes the lowest, Q8_0 the highest. Ampere, Turing: one card each, estimates only and
+// marked transferred as kLaunchCost's (Turing's Gemma 4 at 0.71 / 0.59 / 0.57, a kernel deficit). A
+// generation without rows takes Ada's (transferred).
 struct RowsEta {
     std::string_view generation;
     double rows;
     double eta;
+    int cards;
 };
 inline constexpr RowsEta kRowsEta[] = {
-    {"ada", 2, 0.886},    {"ada", 4, 0.864},    {"ada", 8, 0.807},
-    {"gb20x", 2, 0.866},  {"gb20x", 4, 0.781},  {"gb20x", 8, 0.754},
-    {"ga10x", 2, 0.885},  {"ga10x", 4, 0.798},  {"ga10x", 8, 0.754},
-    {"turing", 2, 0.829}, {"turing", 4, 0.723}, {"turing", 8, 0.629},
+    {"ada", 2, 0.886, 3},    {"ada", 4, 0.864, 3},    {"ada", 8, 0.807, 3},
+    {"gb20x", 2, 0.866, 2},  {"gb20x", 4, 0.781, 2},  {"gb20x", 8, 0.754, 2},
+    {"ga10x", 2, 0.885, 1},  {"ga10x", 4, 0.798, 1},  {"ga10x", 8, 0.754, 1},
+    {"turing", 2, 0.829, 1}, {"turing", 4, 0.723, 1}, {"turing", 8, 0.629, 1},
 };
 
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
