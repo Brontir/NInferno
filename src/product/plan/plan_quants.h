@@ -42,7 +42,15 @@ struct QuantListing {
     // Its files' identity (spec::weights_identity of the listing's digests; "" unknown): the key
     // of the lab's speculation pairs.
     std::string weights;
+    // Its output head's stored bytes (output.weight, or the token table it is tied to) read from
+    // its own GGUF header (read_head_bytes); 0: not read.
+    std::uint64_t head_bytes = 0;
 };
+
+// Each GGUF quantization's output head from its own header (a header range read, as the hub facts
+// are): QuantListing::head_bytes; a row whose header is not read keeps 0.
+void read_head_bytes(std::vector<QuantListing>& listing, const std::string& spec,
+                     convert::FetchOptions fetch);
 
 // The weights and the state of the drafters a start attaches beside the target (the subject's
 // attached_drafters, as the converter's drafter plan takes them): a GGUF drafter file's size from
@@ -103,10 +111,10 @@ struct DryRunInputs {
     std::function<const SpeculationSubject*(const QuantListing&)> subject_of;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
     // The default proposal head a Qwen conversion with a DFlash companion adds, priced for each
-    // quantization from its own weights (proposal_bytes_at): the companion's bytes (0: none) and
-    // the weights the facts' head_bytes were read at.
-    double proposal_drafter_bytes              = 0;
-    std::uint64_t proposal_header_weight_bytes = 0;
+    // quantization (proposal_bytes_at): the companion's bytes (0: none).
+    double proposal_drafter_bytes = 0;
+    // The row's own head (QuantListing::head_bytes, inputs_for); 0: the facts' head stands.
+    std::uint64_t proposal_row_head_bytes = 0;
     // A DFlash drafter's state read from its config before it is downloaded (nullopt: unknown).
     std::optional<models::DrafterStateShape> drafter_state;
     ChoicePins pins;
@@ -116,8 +124,9 @@ struct DryRunInputs {
 // --max-context-cap X: a row's launch_context; the free memory picks the rung under that ceiling).
 [[nodiscard]] DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context);
 
-// The default proposal head's bytes (convert::planned_proposal_bytes) at `facts`' weights: its
-// head at the header's share of the weights; 0 when the inputs plan none.
+// The default proposal head's bytes (convert::planned_proposal_bytes) at `facts`' weights: the
+// row's own head where its header was read, else the facts' head as it is (a head's format is
+// the file's, not a share of the weights); 0 when the inputs plan none.
 [[nodiscard]] std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts,
                                               const DryRunInputs& inputs);
 
@@ -190,6 +199,9 @@ struct QuantRow {
     // or a drafter the plan serves whose gain no measurement gives (the choice's drafter axis).
     std::string estimate_drafter;
     double request_seconds       = 0;
+    // The plan counts a default proposal head whose size its own header did not give (the
+    // parsed header's head taken as this row's).
+    bool proposal_head_assumed = false;
 };
 
 struct QuantPlan {

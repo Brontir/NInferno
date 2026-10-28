@@ -448,8 +448,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                model.facts.model.hidden);
     out.inputs.drafter_bytes = drafter.bytes;
     out.inputs.drafter_state = drafter.state;
-    out.inputs.proposal_drafter_bytes       = drafter.proposal_drafter_bytes;
-    out.inputs.proposal_header_weight_bytes = model.facts.model.weight_bytes;
+    out.inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
     // A repository's quantizations each have their weights, and the lab's pairs are of weights:
     // every row of the table resolves its own (the subject above is the one read).
     if (model.listing.size() > 1) { out.inputs.subject_of = out.subjects->lookup(); }
@@ -492,7 +491,18 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     bool planned_at_row = false; // a table row's plan: at the row's choice already
     // A GGUF repository without --quant: every quantization and the largest that fits.
     if (model.kind == "hub" && model.gguf && options.quant.empty()) {
-        quants = product::plan_quants(model.facts, model.listing, planning.inputs);
+        // Each quantization's own output head where a default proposal head is planned: read
+        // from its header (the parsed one's is the header row's).
+        std::vector<product::QuantListing> listing = model.listing;
+        if (planning.inputs.proposal_drafter_bytes > 0) {
+            for (auto& q : listing) {
+                if (q.quant == model.quant) { q.head_bytes = model.facts.model.head_bytes; }
+            }
+            product::read_head_bytes(
+                listing, model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
+                fetch_options());
+        }
+        quants = product::plan_quants(model.facts, listing, planning.inputs);
         const product::QuantRow* chosen = quants->chosen ? &quants->rows[*quants->chosen] : nullptr;
         if (chosen == nullptr) {
             // Nothing fits: the smallest supported one's plan says why.

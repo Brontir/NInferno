@@ -873,8 +873,9 @@ void test_proposal_bytes_only_when_drafting() {
           "an asked-for head");
 }
 
-// The default proposal head a Qwen conversion with a DFlash companion adds, per quantization: each
-// row's own weights (Codex on #170: every row of the --plan table took the header's size).
+// The default proposal head a Qwen conversion with a DFlash companion adds, per quantization:
+// each row's own head where its header was read, else the parsed one's as it is (Codex on #170:
+// GGUF quantizations often share one Q6_K output.weight while their layers differ).
 void test_proposal_bytes_per_quant() {
     pr::PlanSourceFacts q4 = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0);
     q4.model.weight_bytes  = 5117970432;
@@ -882,14 +883,25 @@ void test_proposal_bytes_per_quant() {
     q4.model.vocab         = 248320;
     q4.model.hidden        = 4096;
     pr::DryRunInputs inputs;
-    inputs.proposal_drafter_bytes       = 1372703744.0;
-    inputs.proposal_header_weight_bytes = q4.model.weight_bytes;
+    inputs.proposal_drafter_bytes = 1372703744.0;
+    // Q5_K_M: larger layers, the same Q6_K head (its header read).
+    pr::PlanSourceFacts q5 = q4;
+    q5.model.weight_bytes  = 6033000000;
+    pr::QuantListing row_q4{.quant = "Q4_K_M", .format = "gguf", .bytes = q4.model.weight_bytes};
+    pr::QuantListing row_q5{.quant = "Q5_K_M", .format = "gguf", .bytes = q5.model.weight_bytes};
+    row_q4.head_bytes = 834355200;
+    row_q5.head_bytes = 834355200;
+    const std::uint64_t at_q4 = pr::proposal_bytes_at(q4, pr::inputs_for(inputs, row_q4));
+    const std::uint64_t at_q5 = pr::proposal_bytes_at(q5, pr::inputs_for(inputs, row_q5));
+    check(at_q4 == 147456ULL * 3360 + 147456ULL * 4, "Q4_K_M: 147,456 rows of its Q6_K head");
+    check(at_q5 % (3360 + 4) == 0 && at_q5 / (3360 + 4) >= 147456,
+          "Q5_K_M: rows of the same 3,360-byte Q6_K head (a smaller share: no fewer rows)");
+    // A row whose header was not read: the parsed head as it is, not scaled by the weights.
+    pr::QuantListing unread{.quant = "Q8_0", .format = "gguf", .bytes = 2 * q4.model.weight_bytes};
     pr::PlanSourceFacts q8 = q4;
-    q8.model.weight_bytes  = 2 * q4.model.weight_bytes; // a quantization twice the size
-    const std::uint64_t at_q4 = pr::proposal_bytes_at(q4, inputs);
-    const std::uint64_t at_q8 = pr::proposal_bytes_at(q8, inputs);
-    check(at_q4 == 147456ULL * 3360 + 147456ULL * 4, "the header's row: 147,456 rows and ids");
-    check(at_q8 > at_q4, "a larger quantization's head is larger");
+    q8.model.weight_bytes  = unread.bytes;
+    const std::uint64_t at_q8 = pr::proposal_bytes_at(q8, pr::inputs_for(inputs, unread));
+    check(at_q8 % (3360 + 4) == 0, "an unread row's rows are the parsed head's 3,360 bytes each");
     pr::DryRunInputs none = inputs;
     none.proposal_drafter_bytes = 0;
     check(pr::proposal_bytes_at(q4, none) == 0, "no companion: no head");
