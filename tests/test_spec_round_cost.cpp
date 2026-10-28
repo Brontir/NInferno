@@ -113,7 +113,7 @@ int main() {
         expect(gv100.generation == "volta" && near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) &&
                    !gv100.known() && !rtx3060.known() && !sp::card_rates_of_board(0x1E04).known(),
                "Volta (dp4a's rate), Ampere, Turing: one lab card each, no eta yet");
-        // Blackwell's two lab cards (RTX 5070 Ti, RTX 5090: DECISIONS 55).
+        // Blackwell's two lab cards (RTX 5070 Ti, RTX 5090: DECISIONS 56).
         const auto rtx5070ti = sp::card_rates_of_board(0x2C05);
         const auto rtx5090   = sp::card_rates_of_board(0x2B85);
         expect(rtx5070ti.generation == "gb20x" && rtx5070ti.known() && rtx5070ti.eta_cards == 2 &&
@@ -321,7 +321,7 @@ int main() {
                     std::string::npos) == facts,
                    std::string("the card's rounds are priced by the facts only with eta: ") + h.gpu);
             // The RTX 5070 Ti's 9B rounds verifying 6-8 rows are cheaper than their facts
-            // (-7..-12 %, DECISIONS 55): its plan's speedup stays low by up to 15 %, the pick right.
+            // (-7..-12 %, DECISIONS 56): its plan's speedup stays low by up to 15 %, the pick right.
             const double within = h.key.compute_capability == 120 && h.key.sms == 70 ? 0.15 : 0.10;
             if (facts) {
                 expect(near(p, m, within) && predicted->profile.overall.config ==

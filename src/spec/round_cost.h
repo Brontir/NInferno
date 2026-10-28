@@ -99,7 +99,7 @@ inline constexpr double kRoutedExpertShare = 0.30;
 // predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
 //   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
 //                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
-//   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 55: held out, R within +4.3 % / +1.4 % on
+//   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 56: held out, R within +4.3 % / +1.4 % on
 //                 average; the plan's pick on the other card's pairs is the held-out card's
 //                 measured best or within 1.5 % of it, gpt-oss 4 %; the 5070 Ti's 9B rounds of
 //                 6-8 verify rows cost 7-12 % less than their facts, its speedup predicted low)
