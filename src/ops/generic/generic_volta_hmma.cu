@@ -456,8 +456,8 @@ bool volta_hmma_codec(WeightCodec codec) {
 }
 
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
-    if (current_features().mma_tensor || args.lane_local == 0 || args.join_previous != 0 ||
-        args.tokens < kVoltaHmmaMinTokens || args.tokens > kVoltaHmmaMaxTokens) {
+    if (args.lane_local == 0 || args.join_previous != 0 || args.tokens < kVoltaHmmaMinTokens ||
+        args.tokens > kVoltaHmmaMaxTokens) {
         return false;
     }
     // Whole superblocks; the staging reads four bf16 values at a time.

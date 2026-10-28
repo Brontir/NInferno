@@ -3562,7 +3562,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
-        if (volta_hmma_takes(codec, args)) {
+        if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
             launch_volta_hmma(codec, call.epilogue, args, stream);
             return;
         }
