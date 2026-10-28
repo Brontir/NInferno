@@ -5,8 +5,10 @@
 // of the selector shows there line by line, and a refactor that means none must leave every file
 // as it was. Regenerate with --update (writes the files) after a change that means to move routes.
 //
-// The route table and several heuristics cache what they read of the device on first use, so one
-// process runs one board: without arguments the test runs itself once per board.
+// Without arguments the test runs itself once per board, then every board again in one process:
+// the selector's per-device caches keep a substituted board's answers apart by its content, so the
+// two must agree. Each choice is also asked of the pure query (route_query.h); a difference is
+// written into the dump.
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -14,6 +16,7 @@
 #include "core/weight.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 
 #include <cstdint>
@@ -173,6 +176,15 @@ std::string dump_board(const GoldenBoard& b) {
                                     generic::select_route(problem, w, t, prefill);
                                 what = generic::route_name(r) + " ws=" +
                                        std::to_string(generic::route_workspace_bytes(r, shape.k, t));
+                                // The pure query (a weight described by format and shape, the
+                                // board by its class) answers as the selector does; a difference
+                                // shows in the dump and so fails the comparison.
+                                const auto q = generic::route_shape(d, qtype, policy, epilogue,
+                                                                    rows, shape.k, t, prefill);
+                                if (!q || !(q->route == r)) {
+                                    what += q ? " query=" + generic::route_name(q->route)
+                                              : std::string(" query=none");
+                                }
                             } catch (const std::exception& error) {
                                 what = std::string("threw: ") + error.what();
                             }
@@ -261,6 +273,14 @@ int main(int argc, char** argv) {
             const std::string command = std::string(argv[0]) + (update ? " --update" : "") +
                                         " --board " + b.name;
             if (std::system(command.c_str()) != 0) ++failed;
+        }
+        // Every board again in this one process, one after the other: the selector's per-device
+        // caches and route tables keep a substitute's answers apart by its content
+        // (core/per_device.h), so a board answers as it does alone (route_query.h relies on it).
+        if (!update) {
+            for (const GoldenBoard& b : kBoards) {
+                if (run_board(b, false) != 0) ++failed;
+            }
         }
         if (failed != 0) {
             std::cerr << "selector golden: " << failed << " boards differ\n";
