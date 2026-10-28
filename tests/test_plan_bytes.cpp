@@ -897,7 +897,10 @@ void test_default_proposal_possible() {
     check(!pr::default_proposal_possible(nine, none), "--spec none: no head to price");
     pr::SpeculationAsk mtp{.automatic = false};
     mtp.given.backend = SpeculativeBackend::Mtp;
-    check(!pr::default_proposal_possible(nine, mtp), "--spec mtp: no DFlash head");
+    nine.facts.shape.builtin_mtp = false;
+    check(!pr::default_proposal_possible(nine, mtp), "--spec mtp without MTP layers: no head");
+    nine.facts.shape.builtin_mtp = true;
+    check(pr::default_proposal_possible(nine, mtp), "--spec mtp with MTP layers: the head");
     pr::SpeculationAsk dflash{.automatic = false};
     dflash.given.backend = SpeculativeBackend::DFlash;
     check(pr::default_proposal_possible(nine, dflash), "--spec dflash: the head");
@@ -905,6 +908,7 @@ void test_default_proposal_possible() {
     other.facts.shape.base_models       = {};
     other.facts.shape.hidden_size       = 1234;
     other.repo                          = "someone/unknown-qwen";
+    other.facts.shape.builtin_mtp       = false;
     check(!pr::default_proposal_possible(other, automatic), "no companion declared: none");
     pr::PlannedTarget llama = nine;
     llama.facts.model.model_type = "dense_decoder";
