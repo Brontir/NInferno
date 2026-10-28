@@ -109,42 +109,42 @@ int main() {
         const auto rtx3060   = sp::card_rates_of_board(0x2503);
         expect(rtx4070ti.generation == "ada" && near(rtx4070ti.kappa(), 0.0106181, 1e-5),
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
-        expect(gv100.generation == "volta" && near(gv100.kappa(), 0.0729656, 1e-5),
-               "Quadro GV100 (dp4a's rate): kappa " + std::to_string(gv100.kappa()));
-        expect(near(rtx3060.kappa(), 0.0179333, 1e-5),
-               "RTX 3060: kappa " + std::to_string(rtx3060.kappa()));
-        const auto from_key = sp::card_rates(card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360));
-        expect(near(from_key.kappa(), rtx3060.kappa(), 1e-9), "a GpuKey's rates as the board's");
+        // A generation with one lab card has no eta (a constant rests on two cards): no estimate.
+        expect(gv100.generation == "volta" && near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) &&
+                   !gv100.known() && !rtx3060.known() && !sp::card_rates_of_board(0x2C05).known() &&
+                   !sp::card_rates_of_board(0x1E04).known(),
+               "Volta (dp4a's rate), Ampere, Blackwell, Turing: one lab card each, no eta yet");
+        const auto from_key = sp::card_rates(card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504));
+        expect(near(from_key.kappa(), rtx4070ti.kappa(), 1e-9), "a GpuKey's rates as the board's");
         expect(!sp::card_rates(80, 108, 1410000, 1555).known() &&
                    !sp::card_rates_of_board(0x1234).known() && !sp::card_rates(89, 0, 0, 0).known(),
                "no estimate for a generation without eta (A100), an unknown board, or no rates");
     }
-    // R(k) golden numbers (fit_eta.py on the same facts).
+    // R(k) golden numbers (fit_eta.py on the same facts): at the RTX 4070 Ti's kappa, at none
+    // (bytes alone) and at 0.05.
     {
         struct Golden {
             const char* repo;
             const char* gpu;
             const char* config;
-            double r4070ti, r5070ti, rgv100;
+            double r4070ti, r_bytes, r_k005;
         };
         const Golden golden[] = {
-            {kQ9, "ad104:60sm", "mtp:3", 1.679516, 1.753023, 2.120549},
-            {kQ9, "ad104:60sm", "dflash:7", 1.752298, 2.008522, 3.289610},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.873191, 2.043824, 2.908662},
-            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.607643, 1.650542, 1.867971},
-            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.030166, 2.130265, 2.638240},
+            {kQ9, "ad104:60sm", "mtp:3", 1.679516, 1.587408, 1.975274},
+            {kQ9, "ad104:60sm", "dflash:7", 1.752298, 1.431237, 2.783223},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "dflash:5", 1.873191, 1.660462, 2.564459},
+            {"unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm", "mtp:2", 1.607643, 1.554161, 1.781435},
+            {"ggml-org/gpt-oss-20b-GGUF", "gb203:70sm", "dflash:3", 2.030166, 1.905428, 2.435942},
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
-        const double k5070 = sp::card_rates_of_board(0x2C05).kappa();
-        const double kgv   = sp::card_rates_of_board(0x1DBA).kappa();
         for (const auto& g : golden) {
             const auto& p     = pair_of(g.repo, g.gpu);
             const auto config = sp::SpecConfig::parse(g.config);
             const auto a = sp::round_cost(*p.round_facts, config, k4070);
-            const auto b = sp::round_cost(*p.round_facts, config, k5070);
-            const auto c = sp::round_cost(*p.round_facts, config, kgv);
-            expect(a && b && c && near(*a, g.r4070ti, 1e-5) && near(*b, g.r5070ti, 1e-5) &&
-                       near(*c, g.rgv100, 1e-5),
+            const auto b = sp::round_cost(*p.round_facts, config, 0.0);
+            const auto c = sp::round_cost(*p.round_facts, config, 0.05);
+            expect(a && b && c && near(*a, g.r4070ti, 1e-5) && near(*b, g.r_bytes, 1e-5) &&
+                       near(*c, g.r_k005, 1e-5),
                    std::string("R of ") + g.repo + " " + g.config);
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
@@ -172,26 +172,62 @@ int main() {
     }
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
-        const auto rtx3060 = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360);
-        auto chip_keyed    = pair_of(kQ9, "ga106:28sm");
-        chip_keyed.tune.key.gpu = "ga106";
-        for (const auto* p : {&pair_of(kQ9, "ga106:28sm"), static_cast<const sp::MeasuredPair*>(&chip_keyed)}) {
+        const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
+        auto chip_keyed      = pair_of(kQ9, "ad104:60sm");
+        chip_keyed.tune.key.gpu = "ad104";
+        for (const auto* p : {&pair_of(kQ9, "ad104:60sm"), static_cast<const sp::MeasuredPair*>(&chip_keyed)}) {
             std::string note;
-            (void)sp::profile_for_target({p}, "sm86", {}, nullptr, &rtx3060, &note);
+            (void)sp::profile_for_target({p}, "sm89", {}, nullptr, &rtx4070ti, &note);
             expect(note.empty(), "the measuring card's own record (" + p->tune.key.gpu + "), not facts");
         }
-        // Another board of the lab card's class (RTX 3060 8 GB: 240 GB/s against the 12 GB's 360):
+        // Another board of the lab card's class (RTX 4500 Ada: 432 GB/s against the 4070 Ti's 504):
         // not the lab card, priced by the facts.
-        const auto rtx3060_8gb = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 240);
+        const auto rtx4500 = card("ad104:60sm", "ad104", "sm89", 89, 60, 2580, 432);
         std::string other_note;
-        (void)sp::profile_for_target({&pair_of(kQ9, "ga106:28sm")}, "sm86", {}, nullptr, &rtx3060_8gb,
+        (void)sp::profile_for_target({&pair_of(kQ9, "ad104:60sm")}, "sm89", {}, nullptr, &rtx4500,
                                      &other_note);
         expect(!other_note.empty(), "another board of the lab card's class: priced by the facts");
         auto arch_keyed          = chip_keyed;
-        arch_keyed.tune.key.gpu  = "sm86";
+        arch_keyed.tune.key.gpu  = "sm89";
         std::string note;
-        (void)sp::profile_for_target({&arch_keyed}, "sm86", {}, nullptr, &rtx3060, &note);
+        (void)sp::profile_for_target({&arch_keyed}, "sm89", {}, nullptr, &rtx4070ti, &note);
         expect(!note.empty(), "an architecture key is no card's own: priced by the facts");
+        // A generation without eta (one lab card): another board keeps the lab-measured profile.
+        const auto rtx3060_8gb = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 240);
+        std::string ampere_note;
+        (void)sp::profile_for_target({&pair_of(kQ9, "ga106:28sm")}, "sm86", {}, nullptr, &rtx3060_8gb,
+                                     &ampere_note);
+        expect(ampere_note.empty(), "Ampere has no eta yet: the lab-measured profile, no facts");
+    }
+    // Two lab cards of the generation that agree: their deep depths and load table are theirs; a
+    // card that measured nothing is priced by the facts, no deeper than kPortableDepth (Codex P2
+    // on #161); a lab board keeps the measurement.
+    {
+        const auto& ada   = pair_of(kQ9, "ad104:60sm");
+        auto twin         = ada; // the same measurement on a second Ada card: they agree
+        twin.tune.key.gpu = "ad102:128sm";
+        twin.lab_board    = 0x2684;
+        const std::vector<const sp::MeasuredPair*> both = {&ada, &twin};
+        const auto agreed    = sp::profile_for_target(both, "sm89");
+        const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        std::string note;
+        const auto priced  = sp::profile_for_target(both, "sm89", {}, nullptr, &rtx4060ti, &note);
+        const auto shallow = [](const sp::Profile& p) {
+            return p.overall.config.k <= sp::kPortableDepth &&
+                   p.thinking.config.k <= sp::kPortableDepth &&
+                   p.non_thinking.config.k <= sp::kPortableDepth;
+        };
+        expect(!shallow(agreed), "the agreeing lab cards choose a deep depth: " +
+                                     agreed.thinking.config.label());
+        expect(!note.empty() && shallow(priced),
+               "an unmeasured Ada card: facts, no deeper than kPortableDepth: " +
+                   priced.thinking.config.label());
+        const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
+        std::string own_note;
+        const auto own = sp::profile_for_target(both, "sm89", {}, nullptr, &rtx4070ti, &own_note);
+        expect(own_note.empty() && own.thinking.config == agreed.thinking.config &&
+                   own.overall.config == agreed.overall.config,
+               "a lab board keeps the agreeing cards' measured profile");
     }
     // One card's two tunes (spec-tune measures one drafter at a time), each with its own mode's
     // facts: pooled, both drafters are priced, whatever the records' order.
@@ -240,9 +276,8 @@ int main() {
             sp::GpuKey key;
         };
         const Removed removed[] = {
-            {"ga106:28sm", card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360)},
             {"ad102:128sm", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)},
-            {"gv100:80sm", card("gv100:80sm", "gv100", "sm70", 70, 80, 1627, 870.4)},
+            {"ga106:28sm", card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360)},
         };
         const auto& own_pair = pair_of(kQ9, "ad104:60sm");
         const std::vector<std::string> kinds = {"mtp", "dflash"};
@@ -266,9 +301,14 @@ int main() {
                         h.gpu, measured->profile.overall.config.label().c_str(), m,
                         predicted->profile.overall.config.label().c_str(), p, 100 * (p / m - 1),
                         predicted->source.c_str());
-            expect(predicted->source.find("rounds priced from the weights' bytes") != std::string::npos,
-                   std::string("the card's rounds are priced by the facts: ") + h.gpu);
-            expect(near(p, m, 0.10), std::string("speedup without its pair within 10 %: ") + h.gpu);
+            // Ada has eta (two lab cards); Ampere not yet (one): it keeps the previous transfer.
+            const bool facts = h.key.compute_capability == 89;
+            expect((predicted->source.find("rounds priced from the weights' bytes") !=
+                    std::string::npos) == facts,
+                   std::string("the card's rounds are priced by the facts only with eta: ") + h.gpu);
+            if (facts) {
+                expect(near(p, m, 0.10), std::string("speedup without its pair within 10 %: ") + h.gpu);
+            }
         }
     }
     if (failures == 0) { std::cout << "round cost: all passed\n"; }

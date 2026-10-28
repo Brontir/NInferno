@@ -453,6 +453,49 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
     if (current.empty()) {
         return measured.empty() ? Profile{} : not_current(*measured.front());
     }
+    const MeasuredPair* own_pair = nullptr;
+    // The card itself measured it: its own measurement (below, after the agreement of its
+    // generation's lab cards). Its own keys are its class id and chip
+    // (a tune's key.gpu is either; the architecture is every card of it, not this one), and where
+    // the pair names its lab board, that board's rates too: another board of the class (an RTX
+    // 3060 8 GB beside the 12 GB lab card, an RTX 4500 Ada beside the 4070 Ti) is priced by the
+    // facts where its generation has them.
+    if (gpu != nullptr && !gpu->chain.empty()) {
+        const std::size_t own = std::min<std::size_t>(gpu->own_keys == 0 ? 1 : gpu->own_keys, 2);
+        const CardRates here  = card_rates(*gpu);
+        const auto same_board = [&](const MeasuredPair& pair) {
+            const CardRates lab = card_rates_of_board(pair.lab_board);
+            if (lab.dram_bytes_per_s <= 0 || here.dram_bytes_per_s <= 0) { return true; }
+            return std::abs(here.dram_bytes_per_s / lab.dram_bytes_per_s - 1) < 0.01 &&
+                   std::abs(here.int8_ops_per_s / lab.int8_ops_per_s - 1) < 0.01;
+        };
+        for (const auto* pair : home) {
+            for (std::size_t i = 0; i < own && i < gpu->chain.size() && own_pair == nullptr; ++i) {
+                if (pair->tune.key.gpu == gpu->chain[i] && same_board(*pair)) { own_pair = pair; }
+            }
+        }
+    }
+    // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card
+    // by the facts. A pair with facts is taken over another card's measurement without them even
+    // of this generation: R is computed for this card either way, and a raw measurement of another
+    // card is the very transfer the facts replace. This generation's records first (every one of
+    // them, a card's second record too), then the others; within each by GPU class id, so the
+    // registry's order never decides.
+    // Ahead of the generation's agreeing lab cards too: their deeper depths and load table are
+    // theirs, not a card that measured nothing (kPortableDepth bounds an estimate).
+    if (gpu != nullptr && own_pair == nullptr) {
+        std::vector<const MeasuredPair*> order = current;
+        std::stable_sort(order.begin(), order.end(), [&](const MeasuredPair* a, const MeasuredPair* b) {
+            const bool ha = a->generation == generation, hb = b->generation == generation;
+            return ha != hb ? ha : a->tune.key.gpu < b->tune.key.gpu;
+        });
+        for (const auto* pair : order) {
+            if (const auto estimate = round_cost_estimate(*pair, *gpu); estimate.known) {
+                if (note != nullptr) { *note = estimate.note; }
+                return selected(*pair, false, options, {}, &estimate);
+            }
+        }
+    }
     if (home.size() >= 2) {
         std::vector<Profile> each;
         for (const auto* pair : home) { each.push_back(selected(*pair, true, options)); }
@@ -478,46 +521,7 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             return out;
         }
     }
-    // The card itself measured it: its own measurement. Its own keys are its class id and chip
-    // (a tune's key.gpu is either; the architecture is every card of it, not this one), and where
-    // the pair names its lab board, that board's rates too: another board of the class (an RTX
-    // 3060 8 GB beside the 12 GB lab card, a Titan V beside the Quadro GV100) is priced by the facts.
-    if (gpu != nullptr && !gpu->chain.empty()) {
-        const std::size_t own = std::min<std::size_t>(gpu->own_keys == 0 ? 1 : gpu->own_keys, 2);
-        const CardRates here  = card_rates(*gpu);
-        const auto same_board = [&](const MeasuredPair& pair) {
-            const CardRates lab = card_rates_of_board(pair.lab_board);
-            if (lab.dram_bytes_per_s <= 0 || here.dram_bytes_per_s <= 0) { return true; }
-            return std::abs(here.dram_bytes_per_s / lab.dram_bytes_per_s - 1) < 0.01 &&
-                   std::abs(here.int8_ops_per_s / lab.int8_ops_per_s - 1) < 0.01;
-        };
-        for (const auto* pair : home) {
-            for (std::size_t i = 0; i < own && i < gpu->chain.size(); ++i) {
-                if (pair->tune.key.gpu == gpu->chain[i] && same_board(*pair)) {
-                    return selected(*pair, false, options);
-                }
-            }
-        }
-    }
-    // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card
-    // by the facts. A pair with facts is taken over another card's measurement without them even
-    // of this generation: R is computed for this card either way, and a raw measurement of another
-    // card is the very transfer the facts replace. This generation's records first (every one of
-    // them, a card's second record too), then the others; within each by GPU class id, so the
-    // registry's order never decides.
-    if (gpu != nullptr) {
-        std::vector<const MeasuredPair*> order = current;
-        std::stable_sort(order.begin(), order.end(), [&](const MeasuredPair* a, const MeasuredPair* b) {
-            const bool ha = a->generation == generation, hb = b->generation == generation;
-            return ha != hb ? ha : a->tune.key.gpu < b->tune.key.gpu;
-        });
-        for (const auto* pair : order) {
-            if (const auto estimate = round_cost_estimate(*pair, *gpu); estimate.known) {
-                if (note != nullptr) { *note = estimate.note; }
-                return selected(*pair, false, options, {}, &estimate);
-            }
-        }
-    }
+    if (own_pair != nullptr) { return selected(*own_pair, false, options); }
     if (!home.empty()) { return selected(*home.front(), false, options); }
     // Another generation's measurement: its rounds costed as on this one where the lab measured
     // a target on both.

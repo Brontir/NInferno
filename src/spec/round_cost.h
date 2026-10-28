@@ -94,27 +94,24 @@ inline constexpr double kRoutedExpertShare = 0.30;
 // The share of its int8 tensor peak (the generation row's s8 rate, core/generation.h; dp4a's where
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
 // registry's spec-tune rounds of Qwen targets that verify 5-8 rows (k 4..7, the depths profiles
-// choose; choice-notes/lab/round_cost/fit_eta.py), as kappa = BW / (eta peak):
+// choose; choice-notes/lab/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
+// constant rests on two lab cards of the generation or more (AGENTS.md):
 //   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
 //                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
-//   gb20x  0.130  RTX 5070 Ti; checked on the RTX 5090 (hard50: MTP -5..+3 %, Qwen DFlash -8..0 %)
-//   ga10x  0.197  RTX 3060 (one card)
-//   turing 0.099  RTX 2080 Ti (one card)
-//   volta  0.179  Quadro GV100 (one card; its verify steps up from 5 rows, so a fit over 5-8 rows
-//                 prices 2-4 rows high: conservative)
-// The rounds are the registry's after #156 (Gemma 4 assistants and DFlash drafters attached q8):
-// their q8 drafters' block passes are compute-bound enough that eta fell from 0.54 (Ada, BF16
-// drafters) to 0.15.
-// One-card rows are architecture facts as DECISIONS 52 takes them (the owner, 27.10): flagged in
-// the estimate's note. A generation without a row (ga100, hopper, gb100, thor) has no estimate.
+// Each other generation needs a second lab card's registry pairs before it gets a row; until then
+// it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
+// one-card fits, for when the second card comes (DECISIONS 53): gb20x 0.130 (RTX 5070 Ti; the RTX
+// 5090 has hard50 runs but no registry pair yet), ga10x 0.197 (RTX 3060), turing 0.099 (RTX
+// 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
+// assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
+// enough that eta fell from 0.54 (Ada, BF16 drafters) to 0.15.
 struct SmallTEta {
     std::string_view generation;
     double eta;
-    std::int32_t cards; // lab cards the row rests on
+    std::int32_t cards; // lab cards the row rests on (two or more)
 };
 inline constexpr SmallTEta kSmallTEta[] = {
-    {"ada", 0.148, 2}, {"gb20x", 0.130, 1}, {"ga10x", 0.197, 1},
-    {"turing", 0.099, 1}, {"volta", 0.179, 1},
+    {"ada", 0.148, 2},
 };
 
 // dp4a's int8 rate a SM-clock, for a generation without an int8 MMA (Volta): the configuration
