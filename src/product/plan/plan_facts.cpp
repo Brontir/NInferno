@@ -852,6 +852,8 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
     facts.model.mtp_bytes         = scaled(facts.model.mtp_bytes);
     facts.shape.input_table_bytes = scaled(facts.shape.input_table_bytes);
     facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
+    // Another quantization's weight formats are not this file's: unknown (its label names them).
+    if (bytes != facts.model.weight_bytes) { facts.shape.weight_formats.clear(); }
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;
     return facts;
