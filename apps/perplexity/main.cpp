@@ -167,7 +167,8 @@ Options parse_options(int argc, char** argv) {
             usage_error(std::string(option) + " does not apply: ninferno-perplexity scores, it "
                                               "does not decode");
         } else if (ninferno::product::parse_engine_flag(
-                       option, [&] { return value(argv[i]); }, out.pacing, out.maintainer)) {
+                       option, [&] { return value(argv[i]); }, out.pacing, out.maintainer,
+                       ninferno::product::TunerFlags::Accepted)) {
         } else {
             usage_error("unknown option: " + std::string(option));
         }

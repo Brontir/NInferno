@@ -36,14 +36,15 @@ inline constexpr std::array<std::string_view, 6> kToolMaintainerKeys{
         throw std::invalid_argument(
             "--moe-tune does not apply: " + std::string(program) +
             " loads no model through an Engine, whose load runs the MoE schedule tuner (use "
-            "ninferno or ninferno-serve)");
+            "ninferno-perplexity)");
     }
     MaintainerOptions out;
     DecodePacingOptions unused;
     for (const std::string_view key : kToolMaintainerKeys) {
         const auto it = args.options.find(std::string(key));
         if (it == args.options.end()) { continue; }
-        (void)parse_engine_flag("--" + std::string(key), [&] { return it->second; }, unused, out);
+        (void)parse_engine_flag(
+            "--" + std::string(key), [&] { return it->second; }, unused, out, TunerFlags::Accepted);
     }
     ops::check_route_options(out.route_table, out.route_dir);
     return out;

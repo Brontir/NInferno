@@ -1060,3 +1060,46 @@ generation's tensor rate and the route's tiles, apart from the verify, and the v
 per-row compute where it is not bound by bytes (NVFP4, AWQ). That is a study of the kernels, not
 cleanup. Until then eta stays the Ada row fitted on two cards (principle 4); the value and the
 behaviour do not change. Other generations keep no estimate (as in 53).
+
+## 55. Tuners only in maintainer tools; the shipped dense-tuner measurements stay as data, with a plan to remove (28.10, cleanup)
+
+**Tuners.** `--dense-tune`, `--moe-tune` and `--tune-cache` time kernels on the machine and keep
+their choices per machine. Under principle 3 (no timing at startup) they belong to the lab. Until
+now `ninferno` and `ninferno-serve` accepted them, and both tuners ran if a user passed `on`. Now
+both refuse them (`product::is_tuner_flag`, `TunerFlags::Refused`). The tuner hosts are:
+- `ninferno-perplexity`: both tuners. It is an Engine, so the MoE tuner runs at its model load and
+  the dense one at the warm-up and the scored prefills.
+- `ninferno-dense` and `ninferno-gemma4`: the dense tuner.
+
+Nothing changes for a user. The defaults were already `off`, and the GUI never passed the flags.
+
+**`routes/tuner/dense_tune.json`, the shipped tuner measurements.** It is read at every load, even
+with `--dense-tune off` (`model_instance.cpp` `enable_dense_tune(true)`). Each entry is keyed by the
+board's exact class id: 356 problems, and in 347 of them the tuned route differs from what the
+selector picked when it was timed (`prefill_base`):
+
+| class | problems | with an override | override points (T bands) |
+|---|---|---|---|
+| ad102:128sm (RTX 4090) | 10 | 8 | 40 |
+| ad104:58sm | 45 | 45 | 462 |
+| ad106:34sm (RTX 4060 Ti) | 102 | 99 | 1006 |
+| ga100:108sm (A100) | 14 | 14 | 192 |
+| gb206:36sm (RTX 5060 Ti) | 102 | 101 | 1191 |
+| gv100:80sm (Quadro GV100) | 12 | 9 | 88 |
+| tu102:68sm (RTX 2080 Ti) | 71 | 71 | 823 |
+
+These are per-board decisions, which principle 1 ("copy facts, never decisions") rules out. They
+also carry nothing over: a board of another SM count (the RTX 4070 Ti is ad104 with 60 SMs) gets
+none of them.
+
+No rule over facts that reproduces them exists yet. Dropping the file would change routes on these
+seven classes, so this PR keeps it and documents it as measured data.
+
+Plan to remove it:
+1. For each class, compare its overrides with the selector's rules (T-band edges against SMs,
+   DRAM bytes per SM-clock, tile waves). This is work for the selector owners in
+   `src/ops/generic`.
+2. Move every override that a rule explains into the selector, and regenerate the selector golden.
+3. Drop those entries.
+4. A/B-measure what is left on its card. Turn it into a rule or drop it.
+5. Once the file is empty, remove the read path (`generic_tune.cpp` `load_cache_locked` under Off).
