@@ -29,6 +29,7 @@
 // ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only, never on the call's T or
 // its other tokens, and repeat run to run.
 #include "core/device.h"
+#include "core/device_class.h"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
@@ -290,7 +291,7 @@ __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint
     }
 }
 
-template <class F, Epilogue E, int NG>
+template <class F, Epilogue E, int NG, int Ahead>
 __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #if NINFERNO_HMMA884
     constexpr int kSets   = E == Epilogue::SwiGlu ? 2 : 1;
@@ -319,20 +320,22 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
             for (int i = 0; i < 8; ++i) acc[s][g][i] = 0.0F;
 
-    // The weight stream one superblock ahead: cur, and nx in flight. By Little's law that is enough
-    // where an SM holds two CTAs or more: a CTA keeps 32 rows of a superblock in flight (Q4_K 4.6
-    // KB, SwiGLU 9.2), against the ~5.7 KB an SM needs for the measured 660 GB/s over ~1000 cycles
-    // of latency at the 1.44 GHz it runs under load (GV100). A second superblock ahead held 23 more registers a lane (gate/up 160 -> 137) and
-    // added issue work to a loop that is issue-bound: GV100, Qwen3.5-9B Q4_K_M hard50 dflash:7
-    // 207.3 -> 211.3 tok/s, mtp:3 153.3 -> 154.2, answers identical.
-    F cur[kSets], nx[kSets];
+    // The weight stream Ahead superblocks ahead: cur, then nx1 (and nx2) in flight. Little's law:
+    // an SM needs ~5.7 KB in flight for the measured 660 GB/s over ~1000 cycles of latency at the
+    // 1.44 GHz it runs under load (GV100), and a CTA keeps 32 rows of a superblock in flight (Q4_K
+    // 4.6 KB, SwiGLU 9.2). With two CTAs or more an SM one superblock ahead covers it; the second
+    // one held 23 more registers a lane (gate/up 160 -> 137) and added issue work to a loop that
+    // is issue-bound. A grid of fewer CTAs than two an SM keeps the second (launch_format).
+    F cur[kSets], nx1[kSets], nx2[kSets];
 #    pragma unroll
     for (int s = 0; s < kSets; ++s) {
         const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
         cur[s].clear();
-        nx[s].clear();
+        nx1[s].clear();
+        nx2[s].clear();
         if (live) {
             cur[s].load(a, row, 0, q);
+            if (Ahead == 2 && sbs > 1) nx1[s].load(a, row, 1, q);
         }
     }
     uint2 xv[kNTok / 2];
@@ -345,8 +348,9 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         const bool more = sb + 1 < sbs;
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            if (more && live)
-                nx[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 1, q);
+            const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
+            if (Ahead == 1 && more && live) nx1[s].load(a, row, sb + 1, q);
+            if (Ahead == 2 && sb + 2 < sbs && live) nx2[s].load(a, row, sb + 2, q);
         }
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
@@ -408,7 +412,8 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         __syncthreads();
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            cur[s] = nx[s];
+            cur[s] = nx1[s];
+            if (Ahead == 2) nx1[s] = nx2[s];
         }
     }
 
@@ -447,10 +452,19 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 template <class F, Epilogue E>
 void launch_format(const GemmArgs& args, cudaStream_t stream) {
     const unsigned blocks = static_cast<unsigned>((args.rows + kCtaRows - 1) / kCtaRows);
+    // Two CTAs an SM or more: one superblock ahead (volta_hmma_kernel). GV100 dflash:7 round:
+    // gate/up (384 CTAs) 156.5 -> 152.6 us; a 4096-row add (128 CTAs) 71.1 -> 73.2 one ahead.
+    const bool one_ahead = blocks >= 2U * static_cast<unsigned>(device_class().sms);
     if (args.tokens <= 8) {
-        volta_hmma_kernel<F, E, 1><<<blocks, kWarps * 32, 0, stream>>>(args);
+        if (one_ahead) {
+            volta_hmma_kernel<F, E, 1, 1><<<blocks, kWarps * 32, 0, stream>>>(args);
+        } else {
+            volta_hmma_kernel<F, E, 1, 2><<<blocks, kWarps * 32, 0, stream>>>(args);
+        }
+    } else if (one_ahead) {
+        volta_hmma_kernel<F, E, 2, 1><<<blocks, kWarps * 32, 0, stream>>>(args);
     } else {
-        volta_hmma_kernel<F, E, 2><<<blocks, kWarps * 32, 0, stream>>>(args);
+        volta_hmma_kernel<F, E, 2, 2><<<blocks, kWarps * 32, 0, stream>>>(args);
     }
     CUDA_CHECK(cudaGetLastError());
 }
