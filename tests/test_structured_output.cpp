@@ -928,7 +928,7 @@ void key_order_contract(const ConstraintCompiler& compiler) {
           "all required with additional keys: schema order kept");
     // Pattern properties may match declared names: any order, no set tracked.
     Json patterned                 = five;
-    patterned["patternProperties"] = Json{{"^x", Json{{"type", "string"}}}};
+    patterned["patternProperties"] = Json{{"^x[0-9]$", Json{{"type", "string"}}}};
     const auto pattern             = compiler.compile(schema_spec(patterned));
     check(admits(pattern, object_of({"C", "x1", "A", "E"})), "pattern properties: any order");
     // Nested objects, arrays of objects and $ref targets hold the same rule.
