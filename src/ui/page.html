@@ -1292,7 +1292,7 @@ async function refreshState() {
   if (logId) refreshLog();
 }
 // The cached plans' "now" (what a start right now would get) follows the card's free memory: when
-// it moves (another process started or stopped) or another GPU is chosen, every cached "now" is dropped and the selected
+// it moves (another process started or stopped) or another GPU is chosen, every cached "now" is dropped (asked again when its plan is shown: cachedPlan) and the selected
 // model's plans are asked again (the server keeps their idle part; it re-plans only "now").
 const NOW_STEP = 256 * 2 ** 20;
 let nowFree = null, nowGpu = null;
@@ -1310,10 +1310,22 @@ function refreshPlanNow() {
   for (const key of [...planDocs.keys()]) {
     const q = new URLSearchParams(key.split("?")[1] || "");
     if (q.get("repo") !== sel.repo || q.get("gpu") !== String(gpu)) continue;
-    api(key).then(doc => { const kept = planDocs.get(key); if (kept && doc && doc.now) kept.now = doc.now; if (selected === sel) renderBody(); })
-      .catch(() => {});
+    askNow(key, sel);
   }
   renderBody();
+}
+// A cached plan whose "now" was dropped (the memory moved since): asked again when it is shown.
+const nowFetching = new Set();
+function askNow(key, sel) {
+  if (nowFetching.has(key)) return;
+  nowFetching.add(key);
+  api(key).then(doc => { const kept = planDocs.get(key); if (kept && doc) kept.now = doc.now ?? null; })
+    .catch(() => {}).finally(() => { nowFetching.delete(key); if (selected === sel) renderBody(); });
+}
+function cachedPlan(key, sel) {
+  const doc = planDocs.get(key);
+  if (doc && doc.now === undefined) askNow(key, sel);
+  return doc;
 }
 function shortName(m) {
   const base = m.split("/").pop();
@@ -2094,7 +2106,7 @@ function choiceDocOf(sel, q) {
   if (!sel || !q) return null;
   if (choiceFor(sel.plan, q.quant)) return sel.plan;
   const key = planQuery(planAsk(sel, q.quant));
-  if (planDocs.has(key)) return planDocs.get(key);
+  if (planDocs.has(key)) return cachedPlan(key, sel);
   if (!choiceFetching.has(key)) {
     choiceFetching.add(key);
     api(key).then(doc => { planDocs.set(key, doc); if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value); })
@@ -2119,7 +2131,7 @@ function schedulePlan() {
   const q = planQuery(planAsk(sel));
   if (q === sel.planQ) return;
   sel.planQ = q; clearTimeout(planTimer);
-  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
+  if (planDocs.has(q)) { sel.plan = cachedPlan(q, sel); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
   sel.planBusy = true;
   planTimer = setTimeout(async () => {
     let doc = null, err = "";
