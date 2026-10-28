@@ -193,7 +193,8 @@ Options parse_options(int argc, char** argv) {
         } else if (arg == "--greedy") {
             options.greedy = true;
         } else if (product::parse_engine_flag(
-                       arg, [&] { return value(arg); }, options.pacing, options.maintainer)) {
+                       arg, [&] { return value(arg); }, options.pacing, options.maintainer,
+                       product::TunerFlags::Refused)) {
         } else if (arg == "--drafter-registry") {
             options.drafter_registry = value(arg);
         } else if (arg == "--log-level") {

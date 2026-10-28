@@ -529,7 +529,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.greedy = true;
         } else if (product::parse_engine_flag(
                        arg, [&] { return require_value(arg.c_str()); }, options.pacing,
-                       options.maintainer)) {
+                       options.maintainer, product::TunerFlags::Refused)) {
         } else if (arg == "--drafter-registry") {
             options.drafter_registry = require_value("--drafter-registry");
         } else if (arg == "--recipe") {

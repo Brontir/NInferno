@@ -23,7 +23,10 @@ measured with other tables. The family tools
 process as an Engine does: the dense tuner is on for the loaded model whatever `--dense-tune` says,
 so `off` reads the release's `routes/tuner/dense_tune.json` as `ninferno` and `ninferno-serve` do.
 They refuse `--moe-tune`: the MoE schedule tuner runs in an Engine's model load (every family's),
-which neither tool goes through. `ninferno-gemma4 spec-tune` names in its profile's settings the
+which neither tool goes through. The tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time
+kernels on the machine, so `ninferno` and `ninferno-serve` refuse them: the tuner hosts are
+`ninferno-perplexity` (an Engine: both tuners, the MoE one at its model load, the dense one at the
+warm-up and the scored prefills) and the family tools above (the dense tuner). `ninferno-gemma4 spec-tune` names in its profile's settings the
 `--cuda-sync`, `--dense-tune`, `--route-table` and `--route-dir` it ran with, when not the
 release's. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
 carry them for the Engine API.

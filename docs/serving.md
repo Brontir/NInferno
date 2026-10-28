@@ -140,9 +140,10 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 All other options (media, Host cache, response store, penalties, limits, decode pacing with
 `--decode-steps`, `--decode-wait` and `--cuda-sync`) are in the
 [option tables](reference/serving.md#11-server-options). The maintainer options (`--route-table`,
-`--route-dir`, `--dense-tune`, `--moe-tune`, `--tune-cache`, `--drafter-registry`, `--debug-*`)
-are in [maintainer options](maintainer/environment.md); no environment variable changes what the
-server decides.
+`--route-dir`, `--drafter-registry`, `--debug-*`) are in
+[maintainer options](maintainer/environment.md); no environment variable changes what the server
+decides. The server refuses the lab tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`): they
+time kernels on the machine, and run only in the maintainer tools.
 
 ## Endpoints
 
