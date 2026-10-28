@@ -2991,7 +2991,8 @@ inline constexpr bool kRmmaAhead =
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 inline constexpr int kRmmaMinBlocks =
     (FinishOf<Decoder>::value && E != Epilogue::SwiGlu && Schedule::kMTiles == 1) ||
-            (kRmmaAhead<Decoder, Schedule, E, Latency> && (NINFERNO_RMMA_AHEAD_EXP & 4))
+            (kRmmaAhead<Decoder, Schedule, E, Latency> && E != Epilogue::SwiGlu &&
+             (NINFERNO_RMMA_AHEAD_EXP & 4))
         ? (65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
                ? 65536 / (Schedule::kThreads * 128)
                : Schedule::kMinBlocks)
