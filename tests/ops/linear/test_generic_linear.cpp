@@ -1595,6 +1595,15 @@ int main() {
             ++failures;
         }
     }
+    // A shape the tuned tables own (Gemma 4 31B DFlash's 5376 x 10752) keeps its A16 kernels:
+    // dispatch_linear sends only its one-token calls to R8.
+    {
+        const Weight w = cached_weight(QType::Q8_G32_FP16, 5376, 10752, 31U).device->weight;
+        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != ops::LinearPolicy::A16Only) {
+            std::cout << "FAIL registered Q8 shape drafter_linear_policy" << std::endl;
+            ++failures;
+        }
+    }
 
     // 2a. NVFP4 with A8 allowed and A4 not: W4A8 from 17 tokens, W4A4 kept under AllowA4.
     if (on_build(nvfp4)) failures += check_nvfp4_a8_routes();

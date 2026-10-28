@@ -370,7 +370,11 @@ LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept {
 }
 
 LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded) {
-    if (recorded != LinearPolicy::A16Only || !detail::generic::r8_takes_block(weight)) {
+    // A shape the tuned tables own keeps its own A16 kernels at 2..8 tokens (dispatch_linear
+    // sends only a one-token call of it to R8), so lifting its policy would change nothing.
+    if (recorded != LinearPolicy::A16Only ||
+        detail::linear_shape_registered(weight.qtype, weight.n, weight.k) ||
+        !detail::generic::r8_takes_block(weight)) {
         return recorded;
     }
     return LinearPolicy::AllowA8;
