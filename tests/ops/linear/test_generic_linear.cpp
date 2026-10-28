@@ -932,10 +932,10 @@ int check_r8_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std:
     return failures;
 }
 
-// The invariant route profile (--activations exact): every call through select_route, a single
-// token included and whatever the policy allows, gives a token the bytes of the wide call.
 // The spread form of w1x16 (GemmArgs::k_partials: its sixteen K warps on sixteen CTAs) gives the
 // one-CTA form's bytes: the same call with the workspace that holds its plane and without one.
+// Where the form runs (no tensor mma.sync) the call joins the one before it, as project()'s second
+// and later calls do: Volta's GEMV takes an unjoined call of up to four tokens.
 int check_k_spread(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
                    std::uint32_t seed) {
     int w1x16 = -1;
@@ -980,6 +980,7 @@ int check_k_spread(const Format& f, Op op, std::int32_t out_rows, std::int32_t k
         call.epilogue        = epilogue;
         call.out[0]          = &tout;
         call.segment_rows[0] = out_rows;
+        call.join_previous   = generic::rmma_spread_bytes(16, 1, epilogue) != 0;
         generic::run_route(route, call, spread ? &workspace : nullptr, nullptr);
         cuda_check(cudaDeviceSynchronize(), "run");
         bits = download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
@@ -1007,6 +1008,8 @@ int check_k_spread(const Format& f, Op op, std::int32_t out_rows, std::int32_t k
     return failures;
 }
 
+// The invariant route profile (--activations exact): every call through select_route, a single
+// token included and whatever the policy allows, gives a token the bytes of the wide call.
 int check_invariant_profile(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
                             std::uint32_t seed) {
     const std::int32_t wide   = 300;

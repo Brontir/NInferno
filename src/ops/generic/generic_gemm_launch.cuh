@@ -121,13 +121,15 @@ bool rmma_wide_pays() {
 
 // The schedule with a spread form (GemmArgs::k_partials): sixteen K warps of one CTA, one token
 // tile, and that form, one K warp per CTA on sixteen CTAs (rmma_spread_bytes, generic_gemm.cpp).
+// The form launches the plain kernel: it runs only without tensor mma.sync (sm_70), where neither
+// the latency nor the wide variant below is ever launched (both need compute capability 7.5).
 using RmmaSpreadSource = RmmaSchedule<1, 16, 1, 1>;
 using RmmaSpreadForm   = RmmaSchedule<1, 1, 1, 1, 1, kRmmaSpreadCtas>;
 static_assert(RmmaSpreadSource::kWarpsK == RmmaSpreadForm::kWarpsK * RmmaSpreadForm::kKCtas);
 
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
-    if constexpr (std::is_same_v<Schedule, RmmaSpreadSource>) {
+    if constexpr (kRmmaSpreadCompiled && std::is_same_v<Schedule, RmmaSpreadSource>) {
         if (args.k_partials != nullptr) {
             launch_rmma_kernel<Decoder, RmmaSpreadForm, E, false>(args, stream);
             return;

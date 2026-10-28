@@ -3060,7 +3060,9 @@ std::uint64_t rmma_spread_count() noexcept { return rmma_spreads.load(std::memor
 // barrier cost more than the SMs it adds: BF16 32 x 4096 at T = 8 on an RTX 4070 Ti, 5.6 -> 7.8
 // us (L2 cold). Its plane holds every K warp's FP32 partials (kSets x 128 per warp and row block).
 std::size_t rmma_spread_bytes(std::int32_t rows, std::int32_t tokens, Epilogue epilogue) {
-    if (rows <= 0 || tokens <= 0 || current_features().mma_tensor) return 0;
+    if (rows <= 0 || tokens <= 0 || !kRmmaSpreadCompiled || current_features().mma_tensor) {
+        return 0;
+    }
     const std::int64_t blocks = ((static_cast<std::int64_t>(rows) + 15) / 16) *
                                 ((static_cast<std::int64_t>(tokens) + 7) / 8);
     if (4 * blocks > sm_count()) return 0;
@@ -3219,15 +3221,14 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
                                             problem.epilogue == Epilogue::SwiGlu)
             : 0;
     mmq = std::max(mmq, volta);
-    // w1x16's spread form (rmma_spread_bytes): its plane at the widest call of the interval that
-    // still takes it (the plane grows with the token tiles until the call leaves the form).
-    for (std::int32_t tiles = (max_tokens + 7) / 8; tiles >= (min_tokens + 7) / 8; --tiles) {
-        const std::size_t spread =
-            rmma_spread_bytes(problem.n, std::min(max_tokens, 8 * tiles), problem.epilogue);
-        if (spread != 0) {
-            mmq = std::max(mmq, spread);
-            break;
-        }
+    // w1x16's spread form (rmma_spread_bytes): its plane for the most row blocks a call of the
+    // interval takes it with, any call of at most n rows (a caller's slices of a wider parent).
+    if (rmma_spread_bytes(1, 1, problem.epilogue) != 0) {
+        const std::int64_t blocks = std::min<std::int64_t>(
+            sm_count() / 4,
+            ((static_cast<std::int64_t>(problem.n) + 15) / 16) * ((max_tokens + 7) / 8));
+        mmq = std::max(
+            mmq, rmma_spread_bytes(static_cast<std::int32_t>(16 * blocks), 1, problem.epilogue));
     }
     if (!a8 && !r8_verify) return with_gather(mmq);
     const std::size_t i8 = (problem.qtype == QType::Q4_G64_FP16 ||
@@ -3458,27 +3459,6 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             : 0;
     const WeightCodec codec = codec_of(w);
     args.spread_smem        = spread_smem(route, codec, call.epilogue, args);
-    // w1x16's spread form (rmma_spread_bytes) where the workspace holds its plane, in place of a
-    // launch with no programmatic dependency (its grid barrier is a cooperative launch): every
-    // launch on a device without PDL. It neither joins nor releases, so no neighbouring call runs
-    // while it reads the plane; without the plane the one-CTA form gives the same bytes.
-    std::optional<WorkspaceArena::Scope> spread_scope;
-    if (route.family == Family::RegisterMma && route.schedule == rmma_index(1, 16, 1, 1) &&
-        workspace != nullptr &&
-        (!pdl_device() ||
-         (args.join_previous == 0 && args.release_next == 0 && args.pdl_prefetch == 0))) {
-        const std::size_t bytes = rmma_spread_bytes(call.rows, args.tokens, call.epilogue);
-        if (bytes != 0 && mmq_fits(*workspace, bytes)) {
-            spread_scope.emplace(workspace->scope());
-            args.k_partials    = static_cast<float*>(workspace->alloc_bytes(bytes).data);
-            args.join_previous = 0;
-            args.release_next  = 0;
-            args.pdl_prefetch  = 0;
-            args.spread_smem   = 0;
-            if (released != nullptr) *released = false;
-            rmma_spreads.fetch_add(1, std::memory_order_relaxed);
-        }
-    }
     switch (route.family) {
     case Family::GgmlMmq: {
         auto scope       = workspace->scope();
@@ -3583,7 +3563,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     case Family::Scalar:
         launch_scalar(codec, call.epilogue, args, stream);
         return;
-    case Family::RegisterMma:
+    case Family::RegisterMma: {
         if ((w.k % k_multiple(codec)) != 0) {
             // K off the register kernel's step runs scalar: a demotion (other bytes and speed).
             note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
@@ -3597,6 +3577,21 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             (args.ldx % 8) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 16) == 0) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
             return;
+        }
+        // w1x16's spread form (rmma_spread_bytes) where the workspace holds its plane: a call the
+        // GEMV above does not take, on a device without PDL (no device without tensor mma.sync
+        // has it), so it neither joins nor releases a neighbour while it reads the plane. Without
+        // the plane the one-CTA form gives the same bytes.
+        std::optional<WorkspaceArena::Scope> spread_scope;
+        if (route.schedule == rmma_index(1, 16, 1, 1) && workspace != nullptr) {
+            const std::size_t bytes = rmma_spread_bytes(call.rows, args.tokens, call.epilogue);
+            if (bytes != 0 && !pdl_device() && mmq_fits(*workspace, bytes)) {
+                spread_scope.emplace(workspace->scope());
+                args.k_partials    = static_cast<float*>(workspace->alloc_bytes(bytes).data);
+                args.join_previous = 0;
+                args.release_next  = 0;
+                rmma_spreads.fetch_add(1, std::memory_order_relaxed);
+            }
         }
         switch (codec) {
         case WeightCodec::Bf16:
@@ -3712,6 +3707,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         return;
+    }
     case Family::TiledMma:
         if ((w.k % 64) != 0) {
             throw std::invalid_argument("generic tiled: K must be whole 64-value tiles");

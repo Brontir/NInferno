@@ -47,7 +47,14 @@ inline constexpr std::int32_t kW4a8WideMinTokens    = 128;
 // (GemmArgs::pdl_prefetch): decode and speculative verify.
 inline constexpr std::int32_t kPdlPrefetchMaxTokens = 16;
 // The CTAs of the register MMA's spread form (GemmArgs::k_partials): one per K warp of w1x16.
+// It runs only without tensor mma.sync (rmma_spread_bytes), so only a build for such a target
+// (Volta: NINFERNO_BUILD_ARCH 70, 72) compiles it.
 inline constexpr int kRmmaSpreadCtas = 16;
+#if !defined(NINFERNO_BUILD_ARCH) || NINFERNO_BUILD_ARCH < 75
+inline constexpr bool kRmmaSpreadCompiled = true;
+#else
+inline constexpr bool kRmmaSpreadCompiled = false;
+#endif
 
 enum class Epilogue : std::uint8_t {
     Store,       // out = W x (GemmArgs::relu2: relu(W x)^2, one rounding)
