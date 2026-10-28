@@ -311,7 +311,8 @@ DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& se
     apply_start_axes(out.options, StartAxes{.kv          = axes.kv,
                                             .ring        = axes.ring,
                                             .state       = axes.state,
-                                            .activations = axes.activations});
+                                            .activations = axes.activations,
+                                            .chunk       = axes.chunk});
     return out;
 }
 
@@ -329,7 +330,8 @@ PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInpu
         (axes.kv && *axes.kv != planned.plan.kv_cache) ||
         (axes.state && *axes.state != planned.plan.recurrent) ||
         (axes.ring && *axes.ring != was.sliding_kv_cache) ||
-        (axes.activations && *axes.activations != was.activations);
+        (axes.activations && *axes.activations != was.activations) ||
+        (axes.chunk && *axes.chunk != was.prefill_chunk);
     if (!inputs.ask.automatic || inputs.subject == nullptr) {
         return storages_differ ? plan_model(facts, inputs) : planned;
     }
@@ -348,9 +350,10 @@ PlannedSpeculation plan_at_choice(const PlanSourceFacts& facts, const DryRunInpu
         option == 0 || option > served.drafters.size() ||
         (served.drafters[option - 1].engine.backend == backend &&
          served.drafters[option - 1].engine.draft_tokens == planned.speculation.engine.draft_tokens);
-    if (!drafter || (*drafter == serving && same_config)) {
-        return storages_differ ? plan_model(facts, inputs) : planned;
-    }
+    if (!drafter) { return storages_differ ? plan_model(facts, inputs) : planned; }
+    if (*drafter == serving && same_config && !storages_differ) { return planned; }
+    // Planned again at the choice's drafter (its mode pinned: the profile's own pick at other
+    // storages may be another) and the choice's storages.
     DryRunInputs again = inputs;
     std::optional<SpeculationSubject> chosen;
     if (*drafter == spec::Mode::None) {
@@ -454,6 +457,11 @@ Json choice_json(const ServedChoice& served) {
                 {"why", served.choice.why},
                 {"by_worth", served.choice.by_worth},
                 {"chunk_by_speed", served.choice.chunk_by_speed}};
+    // The activation modes the model runs (a choice the user may pin: --activations), whatever
+    // is pinned now: what a selector offers.
+    Json modes = Json::array();
+    for (const ActivationMode m : served.allowed_activations) { modes.push_back(activation_name(m)); }
+    out["activations_allowed"] = modes;
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
         return out;
@@ -484,11 +492,6 @@ Json choice_json(const ServedChoice& served) {
         alternatives.push_back(row);
     }
     out["alternatives"] = alternatives;
-    // The activation modes the model runs (a choice the user may pin: --activations), whatever
-    // is pinned now: what a selector offers.
-    Json modes = Json::array();
-    for (const ActivationMode m : served.allowed_activations) { modes.push_back(activation_name(m)); }
-    out["activations_allowed"] = modes;
     return out;
 }
 

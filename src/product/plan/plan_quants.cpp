@@ -465,15 +465,27 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.candidate.supported = why.code.empty();
         // What a start of this row sets from its choice (the axes left automatic).
         std::optional<StartAxes> row_axes;
+        // The configuration choice a start of this quantization serves, and every plan of the row
+        // at its storages and (--spec auto) its drafter (plan_at_choice), the probes of its own
+        // context among them: as the plan of that quantization named shows it.
+        std::optional<ServedChoice> served;
+        if (row.candidate.supported) {
+            served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+                                       inputs_for(inputs, q), inputs.pins, q.quant);
+            if (served) { row_axes = start_axes(*served, inputs.pins); }
+            // A pinned activation mode the family does not run: the start refuses it.
+            const std::vector<ActivationMode> modes =
+                served ? served->allowed_activations : std::vector<ActivationMode>{};
+            if (inputs.pins.activations && !modes.empty() &&
+                std::find(modes.begin(), modes.end(), inputs.options.activations) == modes.end()) {
+                row.candidate.supported = false;
+                row.unsupported_code    = "activations_not_run";
+                row.why_unsupported     = served->choice.why;
+            }
+        }
         if (row.candidate.supported) {
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             const DryRunInputs own      = inputs_for(inputs, q);
-            // The configuration choice a start of this quantization serves, and every plan of the
-            // row at its storages and (--spec auto) its drafter (plan_at_choice), the probes of
-            // its own context among them: as the plan of that quantization named shows it.
-            const std::optional<ServedChoice> served =
-                choose_at_weights(facts, own, inputs.pins, q.quant);
-            if (served) { row_axes = start_axes(*served, inputs.pins); }
             const PlanAt served_plan = [&](const DryRunInputs& asked) {
                 if (!served) { return plan_model(facts, asked); }
                 const DryRunInputs at      = inputs_at_choice(asked, *served, inputs.pins);
@@ -493,7 +505,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 row.planned = served_plan(under_context_cap(own, row.launch_context));
             }
         } else {
-            row.fit.state = why.code == "converted_size_unknown"
+            row.fit.state = row.unsupported_code == "converted_size_unknown"
                                 ? runtime::QuantFitState::Unknown
                                 : runtime::QuantFitState::Unsupported;
         }

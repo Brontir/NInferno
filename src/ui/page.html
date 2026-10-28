@@ -1076,24 +1076,27 @@ for (const code of ["de", "fr", "es", "it", "pl", "zh", "ja"]) if (T[code]) dele
 // Activation precision (ninferno-serve --activations): a choice the user may pin; Auto is the
 // configuration choice's. The modes offered are the ones the plan's choice says the model runs.
 for (const [code, words] of Object.entries({
-  en:{actType:"Activations",actTip:"The precision the matrix multiplies take their inputs in.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nThe numbers on each button: what it changes against Auto, from the configuration choice's estimates (not a measurement)",
-      act_exact:"16-bit",act_fast:"fast",act_int8:"8-bit",
-      actTip_exact:"exact: BF16 inputs on every multiply; the answer does not depend on how the prompt is cut or on speculation; slowest prefill",
-      actTip_fast:"fast (the default): 8 bits (4 for NVFP4 weights) on wide calls such as prefill and verify, 16 bits on decode",
-      actTip_int8:"int8: 8 bits wherever a route has them, never 4; Qwen models only",
-      actNotHere:"This model does not run it",actAgainst:"against Auto ({v}): decode {d}, request time {t}, KLD {k}",actPinned:"chosen by you"},
-  ru:{actType:"Активации",actTip:"Точность, в которой умножения матриц берут входы.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nЧисла на кнопках — что изменится против Авто, по оценкам модели выбора (не замер)",
-      act_exact:"16 бит",act_fast:"быстро",act_int8:"8 бит",
-      actTip_exact:"exact: входы BF16 на каждом умножении; ответ не зависит от нарезки промпта и спекуляции; самый медленный префилл",
-      actTip_fast:"fast (по умолчанию): 8 бит (4 для весов NVFP4) на широких вызовах — префилл и проверка, 16 бит на декоде",
-      actTip_int8:"int8: 8 бит везде, где у маршрута они есть, никогда 4; только модели Qwen",
-      actNotHere:"Эта модель так не работает",actAgainst:"против Авто ({v}): декод {d}, время запроса {t}, KLD {k}",actPinned:"выбрано вами"},
-  uk:{actType:"Активації",actTip:"Точність, у якій множення матриць беруть входи.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nЧисла на кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір)",
-      act_exact:"16 біт",act_fast:"швидко",act_int8:"8 біт",
-      actTip_exact:"exact: входи BF16 на кожному множенні; відповідь не залежить від нарізки промпту й спекуляції; найповільніший префіл",
-      actTip_fast:"fast (типово): 8 біт (4 для ваг NVFP4) на широких викликах — префіл і перевірка, 16 біт на декоді",
-      actTip_int8:"int8: 8 біт скрізь, де маршрут їх має, ніколи 4; лише моделі Qwen",
-      actNotHere:"Ця модель так не працює",actAgainst:"проти Авто ({v}): декод {d}, час запиту {t}, KLD {k}",actPinned:"вибрано вами"},
+  en:{actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
+      act_exact:"16-bit",act_fast:"mixed (fast)",act_int8:"8-bit everywhere",
+      actTip_exact:"exact: 16-bit (BF16) inputs on every multiply: the closest to the original model, the slowest prompt reading",
+      actTip_fast:"fast (the default): 8 bits (4 for NVFP4 weights) on wide calls such as prompt reading and speculative checks, 16 bits when generating",
+      actTip_int8:"int8: 8 bits on every call that has an 8-bit route, never 4 (ternary and 2-bit blocks keep 16); Qwen models only",
+      actNotHere:"Not available for this model",actAgainst:"against Auto ({v}): decode {d}, request time {t}, KLD {k}",actTime:"time",actNoFit:"does not hold the context",
+      actDropped:"{m} is not available for this model: Auto is used",unsup_activations_not_run:"this model's family does not run the chosen activations"},
+  ru:{actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
+      act_exact:"16 бит",act_fast:"смешанный (быстро)",act_int8:"8 бит везде",
+      actTip_exact:"exact: входы 16 бит (BF16) на каждом умножении: ближе всего к исходной модели, самое медленное чтение промпта",
+      actTip_fast:"fast (по умолчанию): 8 бит (4 для весов NVFP4) на широких вызовах — чтение промпта и проверка спекуляции, 16 бит при генерации",
+      actTip_int8:"int8: 8 бит на каждом вызове, где есть 8-битный маршрут, никогда 4 (тернарные и 2-битные блоки остаются 16); только модели Qwen",
+      actNotHere:"Недоступно для этой модели",actAgainst:"против Авто ({v}): декод {d}, время запроса {t}, KLD {k}",actTime:"время",actNoFit:"не держит контекст",
+      actDropped:"{m}: недоступно для этой модели, используется Авто",unsup_activations_not_run:"семейство этой модели не запускает выбранные активации"},
+  uk:{actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
+      act_exact:"16 біт",act_fast:"змішаний (швидко)",act_int8:"8 біт скрізь",
+      actTip_exact:"exact: входи 16 біт (BF16) на кожному множенні: найближче до вихідної моделі, найповільніше читання промпту",
+      actTip_fast:"fast (типово): 8 біт (4 для ваг NVFP4) на широких викликах — читання промпту й перевірка спекуляції, 16 біт під час генерації",
+      actTip_int8:"int8: 8 біт на кожному виклику, де є 8-бітний маршрут, ніколи 4 (тернарні та 2-бітні блоки лишаються 16); лише моделі Qwen",
+      actNotHere:"Недоступно для цієї моделі",actAgainst:"проти Авто ({v}): декод {d}, час запиту {t}, KLD {k}",actTime:"час",actNoFit:"не тримає контекст",
+      actDropped:"{m}: недоступно для цієї моделі, використовується Авто",unsup_activations_not_run:"сімейство цієї моделі не запускає вибрані активації"},
 })) { if (T[code]) Object.assign(T[code], words); }
 const LANGS = [
   ["en", "English", '<svg viewBox="0 0 60 30"><rect width="60" height="30" fill="#012169"/><path d="M0,0L60,30M60,0L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0L60,30M60,0L0,30" stroke="#C8102E" stroke-width="2"/><path d="M30,0V30M0,15H60" stroke="#fff" stroke-width="10"/><path d="M30,0V30M0,15H60" stroke="#C8102E" stroke-width="6"/></svg>'],
@@ -1762,7 +1765,7 @@ function launchContextOf(row, ask) {
   return (ask.par || 1) > 1 && planStateOf(row) === "own" && p && p.context > 0 ? p.context : 0;
 }
 const REASON_CODES = ["shape_unknown", "weights_too_big", "smallest_plan_short", "survival_only"];
-const UNSUPPORTED_CODES = ["drafter_file", "converted_size_unknown", "above_8_bits", "nvfp4_card"];
+const UNSUPPORTED_CODES = ["drafter_file", "converted_size_unknown", "above_8_bits", "nvfp4_card", "activations_not_run"];
 const RULE_TIERS = ["own", "own_stepped", "shared", "own_below_floor", "shared_below_floor", "desktop"];
 // A plan's reason in words: its reason_code with the numbers, else the server's text.
 function reasonText(p, tr) {
@@ -2365,17 +2368,24 @@ function renderAct() {
   const el = $("actsel");
   if (!el || !selected) return;
   const doc = planStale() ? null : selected.plan;
-  if (doc && doc.choice && actAsk(selected) === "auto") selected.actAutoDoc = doc;
-  const o = actOptions(doc, selected.actAutoDoc || null, actAsk(selected));
+  // Auto's deltas only for the ask shown (the same context, streams, KV and speed-up under Auto).
+  const autoQ = planQuery({...planAsk(selected), act: "auto"});
+  if (doc && doc.choice && actAsk(selected) === "auto") { selected.actAutoDoc = doc; selected.actAutoQ = autoQ; }
+  const autoDoc = selected.actAutoQ === autoQ ? selected.actAutoDoc : null;
+  const o = actOptions(doc, autoDoc, actAsk(selected));
   const pct = v => v === null || v === undefined ? "—" : (v > 0 ? "+" : "") + Math.round(v * 100) + " %";
+  const allowed = actAllowedOf(selected);
+  const dropped = actMode !== "auto" && allowed && !allowed.includes(actMode);
   const auto = `<span data-tip="${esc(t("actTip"))}"><button data-act="auto" class="${actAsk(selected) === "auto" ? "on" : ""}">${esc(t("kvAuto"))}${o.auto ? " (" + esc(t("act_" + o.auto)) + ")" : ""}</button></span>`;
   el.innerHTML = auto + o.options.map(x => {
+    const d = x.delta;
     const tip = [t("actTip_" + x.value), !x.allowed ? t("actNotHere") : "",
-      x.delta ? fill(t("actAgainst"), {v: t("act_" + o.auto), d: pct(x.delta.ddecode), t: pct(x.delta.dtime),
-        k: x.delta.dkld === null ? "—" : (x.delta.dkld > 0 ? "+" : "") + x.delta.dkld.toFixed(4)}) : ""].filter(Boolean).join("\n");
-    const badge = x.delta && x.delta.dtime !== null ? ` <small>${esc(pct(x.delta.dtime))}</small>` : "";
+      d ? fill(t("actAgainst"), {v: t("act_" + o.auto), d: pct(d.ddecode), t: pct(d.dtime),
+        k: d.dkld === null ? "—" : (d.dkld > 0 ? "+" : "") + d.dkld.toFixed(4)}) + (d.fits ? "" : ", " + t("actNoFit")) : ""].filter(Boolean).join("\n");
+    const badge = !x.allowed || !d ? "" : !d.fits ? ` <small class="err">${esc(t("actNoFit"))}</small>`
+                : d.dtime !== null ? ` <small>${esc(t("actTime"))} ${esc(pct(d.dtime))}</small>` : "";
     return `<span data-tip="${esc(tip)}"><button data-act="${x.value}" class="${x.on && x.allowed ? "on" : ""}" ${x.allowed ? "" : "disabled"}>${esc(t("act_" + x.value))}${badge}</button></span>`;
-  }).join("");
+  }).join("") + (dropped ? `<div class="sub lowq">${esc(fill(t("actDropped"), {m: t("act_" + actMode)}))}</div>` : "");
 }
 // What the plan says of speculation for the selected quantization: one line under the speed-up
 // choice (the server's resolved choice), the measured gain only when it is of the same config, and

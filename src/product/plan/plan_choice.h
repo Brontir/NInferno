@@ -80,8 +80,8 @@ struct StartAxes {
 };
 [[nodiscard]] StartAxes start_axes(const ServedChoice& served, const ChoicePins& pins);
 
-// The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings and
-// activations, the axes the user left automatic; not the chunk or the drafter).
+// The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
+// activations and widest chunk, the axes the user left automatic; not the drafter).
 [[nodiscard]] DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
                                             const ChoicePins& pins);
 // The plan a start serves at the configuration choice: `planned` planned again at the storages the
