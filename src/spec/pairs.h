@@ -128,9 +128,9 @@ struct RoundCostEstimate {
 // equal (else one request at a time); otherwise the portable one (profile_for_pair away from home)
 // from a measurement of this generation if there is one, else the first, its rounds costed as on
 // this generation where `lab` measured a target on both (generation_round_costs). With `gpu`, a
-// card other than the measuring one prices its rounds by the facts instead (round_cost_estimate)
-// where they are known: rather than a home measurement of another card, and rather than the
-// generation's ratio; `note` (when given) then says so. Pairs another engine version measured are
+// card prices its rounds by the facts instead (round_cost_estimate) where they are known, the
+// measuring card too (with its own tokens a round): rather than a card's measured rounds, a home
+// measurement of another card, or the generation's ratio; `note` (when given) then says so. Pairs another engine version measured are
 // left out; none left: plain decode, disabled with the reason.
 [[nodiscard]] Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                                          std::string_view generation,
