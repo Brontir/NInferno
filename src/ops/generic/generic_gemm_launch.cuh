@@ -42,13 +42,13 @@ template <class Decoder, class Schedule, Epilogue E, bool Latency>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
 
 // The schedules and decoders with a latency variant (rmma_kernel's Latency): one token tile of a
-// K-quant whose heads unpack late (UnpackOf), or SwiGLU of one that stages its activations.
+// K-quant whose heads unpack late (UnpackOf), SwiGLU of one that stages its activations, or one
+// row set of one with the activation ring (kRmmaAheadForm: Q6_K, which has no load_raw).
 template <class Decoder, class Schedule, Epilogue E>
 inline constexpr bool kRmmaLatencyVariant =
     Schedule::kNTiles == 1 &&
     (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu) ||
-     (E != Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2) && StageActsOf<Decoder>::value && SpreadOf<Decoder> &&
-      !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value));
+     (E != Epilogue::SwiGlu && kRmmaAheadForm<Decoder, Schedule, E>));
 
 // The DRAM bytes per SM cycle (dram_bytes_per_sm_cycle: the board's facts) from which the plain
 // K-quant kernel of one token tile is latency-bound. It cuts a row's scales out as it loads them,
@@ -63,12 +63,12 @@ inline constexpr bool kRmmaLatencyVariant =
 //   the 5070 Ti between +14 % (Q3_K) and -3 % (Q4_K add 4096x12288 w1x4, 40.7 -> 41.7 us), so
 //   its threshold lies above that board.
 // Both thresholds lie between the boards measured on either side of them, not on one.
-inline constexpr double kRmmaLatencySwiGluBytes = 4.5;
-inline constexpr double kRmmaLatencyOneSetBytes = 5.5;
+// (kRmmaLatencySwiGluBytes, kRmmaLatencyOneSetBytes: generic_gemm_internal.h.)
 
 // Whether this device launches the latency variant: where the board is latency-bound for the
-// epilogue (above), where SwiGLU's staging copies asynchronously (cp.async, sm_80+: on the RTX
-// 2080 Ti the variant without it left Q4_K SwiGLU 7-8 % slower), and only where the variant
+// epilogue (above), where SwiGLU's activations are staged with cp.async (sm_80+) or ride the
+// activation ring (kRmmaAheadForm; on the RTX 2080 Ti the variant with neither left Q4_K SwiGLU
+// 7-8 % slower, with the ring w1x4 took 168.9 -> 122.3 us at T = 8), and only where the variant
 // holds as many CTAs per SM as the plain kernel (its registers: Q5_K's w1x4 at 129 against 127 on
 // sm_120 dropped a quarter of the warps and lost 12-30 %, RTX 5070 Ti).
 template <class Decoder, class Schedule, Epilogue E>
@@ -77,17 +77,15 @@ bool rmma_latency_pays() {
     return pays.get([](int) {
         const bool swiglu = E == Epilogue::SwiGlu;
         if (dram_bytes_per_sm_cycle() <
-                (swiglu ? kRmmaLatencySwiGluBytes : kRmmaLatencyOneSetBytes) &&
-            !(!swiglu && (NINFERNO_RMMA_AHEAD_EXP & 8))) {
+            (swiglu ? kRmmaLatencySwiGluBytes : kRmmaLatencyOneSetBytes)) {
             return false;
         }
         const auto& d = device_class();
         // Volta's register MMA is emulated on FMA (no m16n8k16): its kernel is compute-bound,
         // and the variant only cost there (GV100, T 5..8: 0-5 % slower, never picked).
         if (d.major * 10 + d.minor < 75) return false;
-#if !defined(NINFERNO_RMMA_AHEAD_EXP) || !(NINFERNO_RMMA_AHEAD_EXP & 1)
-        if (swiglu && d.major < 8) return false;
-#endif
+        // Without cp.async (sm_75) SwiGLU's variant is the activation ring's form, or none.
+        if (swiglu && d.major < 8 && !kRmmaAheadForm<Decoder, Schedule, E>) return false;
         const auto ctas = [](const void* kernel) {
             return kernel_resident_ctas_per_sm(kernel, Schedule::kThreads, 0);
         };

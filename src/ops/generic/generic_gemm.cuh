@@ -2963,40 +2963,50 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // Latency (the K-quant decoders of a one-tile schedule, UnpackOf or StageActsOf; the launch picks
 // it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes, and under SwiGLU
 // the activations staged ahead with cp.async. Every other instantiation is the plain kernel.
-// The CTAs per SM the kernel is built for: the schedule's, and for a finish decoder (the wide
-// Q6_K) on one m16 tile of one row set at least as many as 128 registers a thread allow, the
-// plain kernels' size there (ptxas for sm_89 gave the wide w1x4 159 registers against 124: three
-// CTAs per SM against four).
-#ifndef NINFERNO_RMMA_AHEAD_EXP
-#    define NINFERNO_RMMA_AHEAD_EXP 0
-#endif
-// Whether the latency kernel loads each step's activations into registers with its weights
-// (rmma_kernel's act_ring), where they are not staged with cp.async.
+// The latency kernel's activation ring (rmma_kernel's act_ring): each K step's activations loaded
+// into registers with the step's weights, one step ahead, instead of inside the step. Inside the
+// step a spread decoder loads them group by group, each group's MMAs waiting on its own load, so
+// a warp's step is a chain of S dependent L1/L2 round trips (S = kSplits: 4 for Q4_K/Q5_K, 8 for
+// Q3_K/Q6_K) on top of its ~600-800 instructions. On boards that need about half of every issue
+// slot to stream (warp instructions per weight byte x DRAM bytes per SM cycle / 4 schedulers:
+// RTX 3060 0.47-0.57, 2080 Ti 0.49-0.73, against 0.21-0.27 on the RTX 4060 Ti, ncu at T = 8) that
+// chain is what the SM waits on, not DRAM: the 2-slot weight ring already keeps 37-74 KB a SM in
+// flight against the 4-8 KB that saturate DRAM there (Little's law: 2080 Ti 313 ns, 3060 274 ns
+// idle latency; a streaming probe reached 96-100 % of its peak from 8 KB a SM on both).
+// The K-quant decoders (kStageActs) of one token tile and at most eight warps (kActStage's CTAs);
+// SwiGLU only on a 128-thread CTA, whose register cap (255 at two CTAs a SM) holds both row sets'
+// rings and the activations' (ptxas sm_75: 214-217 registers; the 256-thread CTA's 128 spill).
+// Host-side (no architecture condition): the launch asks it of the kernel it would take.
+template <class Decoder, class Schedule, Epilogue E>
+inline constexpr bool kRmmaAheadForm =
+    StageActsOf<Decoder>::value && SpreadOf<Decoder> && Schedule::kNTiles == 1 &&
+    !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value &&
+    Schedule::kWarpsM * Schedule::kWarpsK <= 8 &&
+    (E != Epilogue::SwiGlu || Schedule::kThreads <= 128);
+
+// The latency kernel takes the ring where it has the form and does not stage the activations with
+// cp.async (SwiGLU from sm_80: kActStage); never on the FMA-emulated MMA (Volta).
 template <class Decoder, class Schedule, Epilogue E, bool Latency>
 inline constexpr bool kRmmaAhead =
 #if NINFERNO_FMA_MMA
     false;
 #else
-    Latency && StageActsOf<Decoder>::value && SpreadOf<Decoder> && Schedule::kNTiles == 1 &&
-    !FinishOf<Decoder>::value &&
-    !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value &&
-#    if NINFERNO_HAS_CP_ASYNC
-    // SwiGLU of up to eight warps stages them (kActStage)
-    !(E == Epilogue::SwiGlu && StageActsOf<Decoder>::value &&
-      Schedule::kWarpsM * Schedule::kWarpsK <= 8) &&
-#    endif
-    ((E == Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 1)) ||
-     (E != Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2)));
+    Latency && kRmmaAheadForm<Decoder, Schedule, E> &&
+    (E != Epilogue::SwiGlu || !NINFERNO_HAS_CP_ASYNC);
 #endif
 
+// The CTAs per SM the kernel is built for: the schedule's, and at least as many as 128 registers a
+// thread allow for a finish decoder (the wide Q6_K) on one m16 tile of one row set, and for a
+// one-row-set kernel with the activation ring: the plain one-row-set kernels' size (110-128
+// registers on sm_75..sm_89). Without the cap the ring took the four-warp CTA to 141-144
+// registers, three CTAs per SM against four (RTX 3060 Q4_K add w1x4 at T = 8: 112.4 -> 142.1 us;
+// held to 128: 107.2 us). ptxas for sm_89 gave the wide w1x4 159 registers against 124.
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 inline constexpr int kRmmaMinBlocks =
-    (FinishOf<Decoder>::value && E != Epilogue::SwiGlu && Schedule::kMTiles == 1) ||
-            (kRmmaAhead<Decoder, Schedule, E, Latency> && E != Epilogue::SwiGlu &&
-             (NINFERNO_RMMA_AHEAD_EXP & 4))
-        ? (65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
-               ? 65536 / (Schedule::kThreads * 128)
-               : Schedule::kMinBlocks)
+    ((FinishOf<Decoder>::value && Schedule::kMTiles == 1) ||
+     kRmmaAhead<Decoder, Schedule, E, Latency>) &&
+            E != Epilogue::SwiGlu && 65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
+        ? 65536 / (Schedule::kThreads * 128)
         : Schedule::kMinBlocks;
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>

@@ -803,6 +803,25 @@ bool bf16_mma_native();
 // per SM keeps eight warps (light_ggml_step).
 inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;
 
+// K-quant SwiGLU at T <= 8 on a board without cp.async (sm_75) whose bytes per SM cycle take the
+// latency variant: four K warps, the CTA whose register cap holds the activation ring of both row
+// sets (kRmmaAheadForm, generic_gemm.cuh; 214-217 registers, where the eight-warp CTA is held to
+// 128 and spills). RTX 2080 Ti (5.9), Qwen3.5-9B gate/up 12288x4096 Q4_K: w1x8 142.4 us (plain,
+// the old pick) against 122.3 us w1x4 with the ring at T = 8, 141.2 -> 118.7 at T = 5.
+bool ring_swiglu_four_warps(QType q) {
+    if (q != QType::GGML_Q3_K && q != QType::GGML_Q4_K && q != QType::GGML_Q5_K &&
+        q != QType::GGML_Q6_K) {
+        return false;
+    }
+    try {
+        const auto& d = device_class();
+        const int cc  = d.major * 10 + d.minor;
+        return cc >= 75 && cc < 80 && dram_bytes_per_sm_cycle() >= kRmmaLatencySwiGluBytes;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -814,6 +833,10 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 if (ctas <= sms) return one_wave_split(ctas, sms);
                 if (ctas > 2 * sms && light_ggml_step(problem.qtype) &&
                     problem.epilogue != Epilogue::SwiGlu) {
+                    return rmma_index(1, 4, 1, 1);
+                }
+                if (ctas > 2 * sms && problem.epilogue == Epilogue::SwiGlu &&
+                    ring_swiglu_four_warps(problem.qtype)) {
                     return rmma_index(1, 4, 1, 1);
                 }
                 if (ctas <= 2 * sms && problem.qtype == QType::GGML_Q6_K &&
