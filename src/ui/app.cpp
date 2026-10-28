@@ -1085,9 +1085,12 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         const product::QuantRow& row  = plan.rows.front();
         const product::PlanSourceFacts at =
             product::with_weights(*facts, row.weight_bytes, row.basis);
-        const product::PlannedSpeculation planned =
-            row.planned.plan.planned ? row.planned
-                                     : product::plan_model(at, product::inputs_for(inputs, row.listing));
+        product::PlannedSpeculation planned =
+            row.planned.plan.planned || !row.planned.plan.refused_code.empty()
+                ? row.planned
+                : product::plan_model(at, product::inputs_for(inputs, row.listing));
+        // A pin the model does not run keeps its verdict (kv_not_run, activations_not_run).
+        product::refuse_unrun_pins(at, product::inputs_for(inputs, row.listing), planned);
         doc = product::dry_plan_document(at, repo + ":" + quant, "hub", inputs, planned, &plan);
         planned_at = at;
     }
