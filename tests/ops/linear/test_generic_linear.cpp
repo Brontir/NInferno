@@ -21,7 +21,6 @@
 #include "ops/generic/r8_decode_table.h"
 #include "ops/linear/linear_registry.h"
 #include "ops/linear_add/q8/q8_linear_add_plan.h"
-#include "ops/linear_pair/q8/q8_pair_plan.h"
 #include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 #include "ops/op_tester.h"
 
@@ -1592,28 +1591,35 @@ int main() {
         const bool block = generic::r8_verify_widest(f.qtype) >= generic::kR8VerifyTokens &&
                            generic::r8_takes_block(w);
         const ops::LinearPolicy want = block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
-        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != want ||
-            ops::drafter_linear_policy(w, ops::LinearPolicy::AllowA4) != ops::LinearPolicy::AllowA4 ||
+        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only, ops::DrafterOp::Linear) != want ||
+            ops::drafter_linear_policy(w, ops::LinearPolicy::AllowA4, ops::DrafterOp::Linear) !=
+                ops::LinearPolicy::AllowA4 ||
             (f.qtype == QType::Q8_G32_FP16 && !block)) {
             std::cout << "FAIL " << f.name << " drafter_linear_policy" << std::endl;
             ++failures;
         }
     }
-    // A Q8 shape any tuned table owns (plain, fused add, fused SwiGLU, pair: Gemma 4 31B
-    // DFlash's 5376 x 10752, the Qwen DFlash down projection 2048 x 6144) keeps its A16 kernels,
-    // since each dispatcher sends only its one-token calls to R8; an unowned one takes A8.
+    // A Q8 shape the table of the op that runs it owns keeps its A16 kernels, since that
+    // dispatcher sends only its one-token calls to R8; the segmented projection reads no table.
+    // Gemma 4 31B DFlash's 5376 x 10752 (plain table), the Qwen DFlash down 2048 x 6144 (fused
+    // add table only: lifted through plain linear), unowned shapes.
     for (const auto& [n, k] : std::initializer_list<std::pair<std::int32_t, std::int32_t>>{
              {5376, 10752}, {2048, 6144}, {4096, 4096}, {333, 2560}}) {
         const Weight w   = cached_weight(QType::Q8_G32_FP16, n, k, 31U).device->weight;
-        const bool owned = ops::detail::linear_shape_registered(QType::Q8_G32_FP16, n, k) ||
-                           ops::detail::q8_linear_add_registered(n, k) ||
-                           ops::detail::q8_linear_swiglu_registered(n, k) ||
-                           ops::detail::q8_pair_registered(n, k);
-        const ops::LinearPolicy want = !owned && generic::r8_takes_block(w)
-                                           ? ops::LinearPolicy::AllowA8
-                                           : ops::LinearPolicy::A16Only;
-        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only) != want ||
-            ((n == 5376 || n == 2048) && want != ops::LinearPolicy::A16Only)) {
+        const bool block = generic::r8_takes_block(w);
+        const auto want  = [&](bool owned) {
+            return !owned && block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+        };
+        const auto got = [&](ops::DrafterOp op) {
+            return ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only, op);
+        };
+        if (got(ops::DrafterOp::Linear) !=
+                want(ops::detail::linear_shape_registered(QType::Q8_G32_FP16, n, k)) ||
+            got(ops::DrafterOp::LinearAdd) != want(ops::detail::q8_linear_add_registered(n, k)) ||
+            got(ops::DrafterOp::LinearSwiGlu) !=
+                want(ops::detail::q8_linear_swiglu_registered(n, k)) ||
+            got(ops::DrafterOp::Generic) != want(false) ||
+            (n == 5376 && got(ops::DrafterOp::Linear) != ops::LinearPolicy::A16Only)) {
             std::cout << "FAIL Q8 " << n << " x " << k << " drafter_linear_policy" << std::endl;
             ++failures;
         }

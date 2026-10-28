@@ -57,12 +57,16 @@ enum class LinearPolicy : std::uint8_t {
  * GB/s against R8's 440-465 on the RTX 4070 Ti (ninferno_r8_schedule_bench, T = 5 and 8), 8 % and
  * 4 % of a dflash:7 round. Q8 runs A8 under every target that records it (formats.cpp,
  * kept_block_policy); a drafter converted without a recorded policy now runs it too. The other
- * formats' R8 stops at four tokens and keeps the recorded policy. So does a Q8 shape a tuned
- * table owns (plain linear, fused add, fused SwiGLU or pair: Gemma 4 31B DFlash's 5376 x 10752, a
- * Qwen DFlash down projection 2048 x 6144): its dispatcher runs the table's A16 kernels at 2..8
- * tokens and sends only a one-token call to R8, so the lift would change nothing.
+ * formats' R8 stops at four tokens and keeps the recorded policy. So does a Q8 shape the tuned
+ * table of the op that runs it owns (`op`: plain linear, fused add or fused SwiGLU; Gemma 4 31B
+ * DFlash's 5376 x 10752 through linear, a Qwen DFlash down projection 2048 x 6144 through
+ * linear_add): that dispatcher runs the table's A16 kernels at 2..8 tokens and sends only a
+ * one-token call to R8, so the lift would change nothing. The segmented projection (Generic)
+ * reads no table.
  */
-[[nodiscard]] LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded);
+enum class DrafterOp { Linear, LinearAdd, LinearSwiGlu, Generic };
+[[nodiscard]] LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded,
+                                                 DrafterOp op);
 
 /**
  * Returns the caller-owned transient capacity required by Linear for every T in the inclusive

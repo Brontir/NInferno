@@ -256,7 +256,8 @@ bool DFlashDrafter::split_feature_projection(DeviceContext& device, std::string*
     // the drafter policy of its own shape (ops::drafter_linear_policy).
     for (auto& slice : weights_.feature_slices) {
         if (slice.policy == ops::LinearPolicy::A16Only || slice.policy == ops::LinearPolicy::AllowA8) {
-            slice.policy = ops::drafter_linear_policy(slice.weight, ops::LinearPolicy::A16Only);
+            slice.policy = ops::drafter_linear_policy(slice.weight, ops::LinearPolicy::A16Only,
+                                                       ops::DrafterOp::Linear);
         }
     }
     return !weights_.feature_slices.empty();
@@ -339,7 +340,7 @@ std::unique_ptr<DFlashDrafter> DFlashDrafter::load(const std::filesystem::path& 
     // whatever the policy.
     const Prepare prepare(demands, *drafter->backing_, /*recorded=*/false);
     const auto lift = [](Projection p) {
-        p.policy = ops::drafter_linear_policy(p.weight, p.policy);
+        p.policy = ops::drafter_linear_policy(p.weight, p.policy, ops::DrafterOp::Linear);
         return p;
     };
     const auto lift_packed = [&](std::optional<Projection> p) {
