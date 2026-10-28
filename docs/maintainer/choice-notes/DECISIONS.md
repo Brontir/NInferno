@@ -1023,34 +1023,39 @@ kSmallTEta подогнан и на этих картах.
 карты не оценивается. Пара без фактов или карта без частот — прежний перенос (generation_round_costs).
 Одна дорожка: pair_choice (сервер, план без весов, GUI).
 
-## 54. η малого T (kSmallTEta 0,148): вывод из фактов не найден, значение не меняется (28.10, ревизия)
+## 54. Small-T eta (kSmallTEta 0.148): no fact derivation found yet, the value stays (28.10, revision)
 
-Владелец (28.10): правила — из фактов архитектуры, замер только проверяет. `kSmallTEta`
-(`src/spec/round_cost.h`) — единственная подогнанная константа цены раунда: доля пика int8, которую
-дают ядра малого T. Проверены две гипотезы из фактов (`lab/round_cost/eta_facts.py`, реестр master
-9c2d8c91, раунды Qwen k 4..7, η своей карты):
+The owner (28.10): rules come from architecture facts, and measurements only check them.
+`kSmallTEta` (`src/spec/round_cost.h`) is the one fitted constant in the round cost: the share of
+the int8 peak that small-T kernels reach. Two fact hypotheses were checked (`lab/round_cost/eta_facts.py`,
+the master 9c2d8c91 registry, Qwen rounds at k 4..7, each card's own eta):
 
-| карта | раундов | η | 4·η = доля пика dp4a (512 оп/SM·такт) | лишнее время раунда сверх байтов, мс (9B DFlash, k 5 → 7) |
+| card | rounds | eta | 4 x eta = share of the dp4a peak (512 ops a SM-clock) | excess over the bytes, ms a round (9B DFlash, k 5 -> 7) |
 |---|---|---|---|---|
-| RTX 2080 Ti | 2 | 0,099 | 0,40 | 8,5 → 7,7 |
-| RTX 3060 | 6 | 0,197 | 0,79 | 7,4 → 8,0 |
-| RTX 4070 Ti | 48 | 0,149 | 0,60 | 3,9 → 4,0 |
-| RTX 4090 | 12 | 0,144 | 0,57 | 1,7 → 1,8 |
-| RTX 5070 Ti | 18 | 0,130 | 0,52 | (27B MTP 4,9 → 4,9) |
-| Quadro GV100 | 6 | 0,651 (пик Volta = dp4a) | 0,65 | 6,4 → 6,8 |
+| RTX 2080 Ti | 2 | 0.099 | 0.40 | 8.5 -> 7.7 |
+| RTX 3060 | 6 | 0.197 | 0.79 | 7.4 -> 8.0 |
+| RTX 4070 Ti | 48 | 0.149 | 0.60 | 3.9 -> 4.0 |
+| RTX 4090 | 12 | 0.144 | 0.57 | 1.7 -> 1.8 |
+| RTX 5070 Ti | 18 | 0.130 | 0.52 | (27B MTP 4.9 -> 4.9) |
+| Quadro GV100 | 6 | 0.651 (Volta's peak is dp4a's) | 0.65 | 6.4 -> 6.8 |
 
-1. **Счёт малого T идёт на пике dp4a с одной долей на все поколения** — нет: 0,40…0,79, порядок не
-   следует ни из пика, ни из BW на SM·такт. Оговорки: у 2080 Ti две строки; темп dp4a на Blackwell
-   (общие INT32/FP32-линии) по таблице Programming Guide не сверен — при 1024 доля 5070 Ti 0,26.
-   Внутри Ada две карты сходятся (0,57/0,60) — поэтому строка Ada держится.
-2. **Лишнее сверх байтов — постоянная цена раунда** (лишнее = (R замер − R байты) × замеренное время
-   шага plain). По каждой паре и режиму оно почти не зависит от k (k 5 → 7: 0…+10 %), но растёт с
-   моделью (4B ~1,3 мс, 9B ~4 мс на 4070 Ti) и падает с картой (9B DFlash: 4070 Ti 3,9 мс, 4090
-   1,8 мс). Значит, это не время запусков (оно не зависит от карты), а проход, который от k не
-   зависит: блок драфтера DFlash (16 строк при любом k, q8 после #156) и у MTP — меньше. Сейчас κ·F
-   размазывает его по строкам проверки и драфтера одной долей η.
+1. **The small-T compute runs at the dp4a peak, at one share on every generation.** No: 0.40 to 0.79,
+   and the order follows neither the peak nor the DRAM bytes per SM-clock. Caveats: the 2080 Ti has
+   two rounds; Blackwell's dp4a rate (unified INT32/FP32 lanes) is not checked against the
+   Programming Guide's table (at 1024 the 5070 Ti's share is 0.26). The two Ada cards agree (0.57
+   and 0.60), which is why the Ada row stands.
+2. **The excess over the bytes is a fixed cost a round** (excess = (R measured - R bytes) x the
+   measured plain step). Partly. In 33 of 45 series (one pair and mode each) it moves by 10 % or
+   less from the smallest k to the largest (median +2 %), it grows with the model (4B about 1.3 ms,
+   9B about 4 ms on the 4070 Ti) and falls with the card (9B DFlash: 4070 Ti 3.9 ms, 4090 1.8 ms):
+   not launch time (that would not follow the card), but a pass that k does not change, the DFlash
+   drafter's block (16 rows at every k, q8 since #156). The other 12 series do depend on k
+   (4070 Ti 4B AWQ DFlash +40 %, 9B NVFP4 DFlash +25 %, several 5070 Ti series +19..+30 %; the
+   small MTP residuals swing widely in relative terms): a row-dependent part remains.
+   kappa F today spreads both over the verify and drafter rows at one eta.
 
-Вывод: недостающий факт — цена прохода драфтера (блок 16 строк, маршрут q8 MMA) из темпа тензорного
-пика поколения и тайлов маршрута, отдельно от проверки (T ≤ 8, упирается в байты). Это изучение
-ядер, не чистка. До него η остаётся подогнанной строкой Ada на двух картах (принцип 4); значение и
-поведение не меняются. Остальные поколения — без оценки (как в 53).
+The missing facts: the drafter pass's cost (a 16-row block on its q8 MMA route) from the
+generation's tensor rate and the route's tiles, apart from the verify, and the verify's own
+per-row compute where it is not bound by bytes (NVFP4, AWQ). That is a study of the kernels, not
+cleanup. Until then eta stays the Ada row fitted on two cards (principle 4); the value and the
+behaviour do not change. Other generations keep no estimate (as in 53).

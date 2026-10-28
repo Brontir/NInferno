@@ -32,6 +32,7 @@ def main():
         by[r["board"]["name"]].append(r)
     print("| card | rounds | eta | dp4a share | fixed ms a round per pair and mode: k -> ms |")
     print("|---|---|---|---|---|")
+    growth = []
     for name, rs in sorted(by.items()):
         b = rs[0]["board"]
         eta = F.fit(rs)
@@ -42,13 +43,21 @@ def main():
             if not tp:
                 continue
             rb = F.R(r["p"]["round_facts"], r["mode"], r["k"], 0.0)
-            series[(r["p"]["target_repo"].split("/")[-1][:24], r["mode"])].append(
+            series[(r["p"]["target_repo"].split("/")[-1], id(r["p"]), r["mode"])].append(
                 (r["k"], (r["meas"] - rb) * tp * 1e3))
         cells = []
-        for (t, mode), v in sorted(series.items()):
+        for (t, _, mode), v in sorted(series.items(), key=lambda kv: (kv[0][0], kv[0][2])):
             v.sort()
             cells.append(f"{t} {mode}: " + " ".join(f"{k}:{ms:.2f}" for k, ms in v))
+            if len(v) >= 2 and v[0][1] > 0:
+                growth.append(v[-1][1] / v[0][1] - 1)
         print(f"| {name} | {len(rs)} | {eta:.3f} | {share:.2f} | {'; '.join(cells)} |")
+    growth.sort()
+    within = sum(1 for g in growth if abs(g) <= 0.10)
+    print()
+    print(f"residual from the smallest to the largest k, per pair and mode: {within} of {len(growth)} "
+          f"series within 10 %; median {100 * growth[len(growth) // 2]:+.0f} %, "
+          f"range {100 * growth[0]:+.0f} .. {100 * growth[-1]:+.0f} %")
 
 
 if __name__ == "__main__":
