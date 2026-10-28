@@ -337,9 +337,10 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
     // The weight stream Ahead superblocks ahead: cur, then nx1 (and nx2) in flight. Little's law:
     // an SM needs ~5.7 KB in flight for the measured 660 GB/s over ~1000 cycles of latency at the
     // 1.44 GHz it runs under load (GV100), and a CTA keeps 32 rows of a superblock in flight (Q4_K
-    // 4.6 KB, SwiGLU 9.2; the other formats' superblocks are larger). With two CTAs or more an SM one superblock ahead covers it; the second
-    // one held 23 more registers a lane (gate/up 160 -> 137) and added issue work to a loop that
-    // is issue-bound. A grid of fewer CTAs than two an SM keeps the second (launch_format).
+    // 4.6 KB, SwiGLU 9.2; the other formats' superblocks are larger). With two CTAs or more an SM
+    // one superblock ahead covers it; the second one held 23 more registers a lane (gate/up
+    // 160 -> 137) and added issue work to a loop that is issue-bound. A grid of fewer CTAs than
+    // two an SM keeps the second (launch_format).
     F cur[kSets], nx1[kSets], nx2[kSets];
 #    pragma unroll
     for (int s = 0; s < kSets; ++s) {
