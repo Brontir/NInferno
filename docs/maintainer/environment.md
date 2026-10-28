@@ -19,7 +19,7 @@ the SHA-256 of its bytes, a route directory as the SHA-256 over the files the en
 path, each as the line `<relative path>\0<hex SHA-256 of its bytes>\n`, so `--resume` refuses cells
 measured with other tables. The family tools
 `ninferno-gemma4` and `ninferno-dense` take `--cuda-sync`, `--route-table`, `--route-dir`,
-`--dense-tune`, `--tune-cache`, `--debug-poison` and `--debug-poison-skip` (`ninferno-gemma4` also
+`--dense-tune`, `--tune-cache`, `--debug-poison`, `--debug-poison-skip` and `--artifact-io` (`ninferno-gemma4` also
 `--drafter-registry`), check them before anything is converted or loaded, and apply them to the
 process as an Engine does: the dense tuner is on for the loaded model whatever `--dense-tune` says,
 so `off` reads the release's `routes/tuner/dense_tune.json` as `ninferno` and `ninferno-serve` do.
@@ -63,7 +63,7 @@ how the host waits, never which tokens.
 
 | Option | Values | Effect |
 |---|---|---|
-| `--artifact-io` | `auto` (default), `direct`, `buffered` | How the weights are read at load. `auto` reads local disks with `O_DIRECT` (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file systems through the page cache; `direct` forces `O_DIRECT` (a file system without it is then an error), `buffered` the page cache. The bytes read are the same: an I/O mode, not a decision. `ninferno`, `ninferno-serve`, `ninferno-perplexity`, `ninferno-dense` and `ninferno-gemma4` take it; it is process-wide like the options below. |
+| `--artifact-io` | `auto` (default), `direct`, `buffered` | How the weights are read at load. `auto` reads local disks with `O_DIRECT` (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file systems through the page cache; `direct` forces `O_DIRECT` (a file system without it is then an error), `buffered` the page cache. The bytes read are the same: an I/O mode, not a decision. `ninferno`, `ninferno-serve`, `ninferno-perplexity`, `ninferno-dense` and `ninferno-gemma4` take it; it is process-wide like the options below (a second Engine of the process must ask for the same mode). `ninferno-gemma4-inspect` and a tool's in-process conversion read with `auto`. |
 
 ### Route tables and lab tuners
 

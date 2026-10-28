@@ -96,4 +96,4 @@ ninferno_add_refusal_test(ninferno_perplexity_moe_tune_test ninferno-perplexity
 ninferno_add_refusal_test(ninferno_dense_artifact_io_test ninferno-dense
   "--artifact-io must be auto, direct or buffered" missing.ninferno score --artifact-io maybe)
 ninferno_add_refusal_test(ninferno_serve_artifact_io_test ninferno-serve
-  "--artifact-io must be auto, direct or buffered" --model missing.ninferno --artifact-io 1)
+  "--artifact-io must be auto, direct or buffered" missing.ninferno --artifact-io 1)
