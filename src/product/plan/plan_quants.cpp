@@ -473,17 +473,16 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // at its storages and (--spec auto) its drafter (plan_at_choice), the probes of its own
         // context among them: as the plan of that quantization named shows it.
         std::optional<ServedChoice> served;
-        if (row.candidate.supported && inputs.pins.activations) {
-            // A pinned activation mode the family does not run: the start refuses it; the row's
-            // plan says so (refused, not a fit at a mode that never runs).
+        if (row.candidate.supported && (inputs.pins.activations || inputs.pins.kv)) {
+            // A pin the model does not run (--activations, --kv-dtype): the start refuses it; the
+            // row's plan says so (refused, not a fit at a setting that never runs).
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
-            if (const std::string why = activation_refusal(facts, inputs.options.activations);
-                !why.empty()) {
+            if (const PinRefusal refusal = pin_refusal(facts, inputs); !refusal.code.empty()) {
                 row.candidate.supported = false;
-                row.unsupported_code    = "activations_not_run";
-                row.why_unsupported     = why;
+                row.unsupported_code    = refusal.code;
+                row.why_unsupported     = refusal.why;
                 row.planned             = plan_model(facts, inputs_for(inputs, q));
-                refuse_unrun_activations(facts, inputs, row.planned);
+                refuse_unrun_pins(facts, inputs, row.planned);
             }
         }
         if (row.candidate.supported) {

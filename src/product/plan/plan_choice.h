@@ -42,6 +42,19 @@ struct DrafterAxis {
 };
 [[nodiscard]] DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask);
 
+// One KV codec as a start of this model would take it (--kv-dtype): allowed or why not, from the
+// engine's own rules: the family's codecs (choice::allowed_axes; the ring decoders, Gemma 4 and
+// Nemotron-H keep BF16 or FP8: validate_state_storage) and, for the Qwen paged pool, the head
+// width its layout takes (core/paged_kv_storage.h paged_kv_storage_layout). `slow_on_card`: the
+// codec runs, but this card widens FP8 codes in software (no E4M3 instructions below sm_89).
+struct KvOption {
+    KvCacheStorage codec = KvCacheStorage::BFloat16;
+    bool allowed         = true;
+    std::string why_code; // "" | family_codec | head_width | shape_unknown
+    std::string why;      // English, "" when allowed
+    bool slow_on_card = false;
+};
+
 struct ServedChoice {
     // The drafter axis's options (their gains, measured or not), beside `drafters`.
     std::vector<choice::DrafterOption> drafter_options;
@@ -57,6 +70,8 @@ struct ServedChoice {
     std::vector<ServedSpeculation> drafters;
     // The activation modes the model's family runs (choice::allowed_axes), pinned or not.
     std::vector<ActivationMode> allowed_activations;
+    // Every KV codec a start of this model takes or refuses, and why (kv_options on this card).
+    std::vector<KvOption> kv_options;
 };
 
 // How a choice plans each candidate's memory: its exact own context per stream (the longest it
@@ -94,10 +109,27 @@ struct StartAxes {
 // A start of `artifact` with --activations `mode` given: throws std::invalid_argument with
 // activation_refusal's words when the model's family does not run it (before any weight loads).
 void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, ActivationMode mode);
-// A plan whose pinned activations (inputs.pins.activations) the family does not run: refused
-// (fits false, refused_code "activations_not_run", the reason in words). Unchanged otherwise.
-void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
-                              PlannedSpeculation& planned);
+
+// Every --kv-dtype codec in kKvCacheStorageNames' order, on a card of `compute_capability` (0:
+// no card: no slow flag).
+[[nodiscard]] std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capability);
+// Why a start refuses KV codec `kv` for this model ("" when it runs).
+[[nodiscard]] std::string kv_refusal(const PlanSourceFacts& facts, KvCacheStorage kv);
+// A start of `artifact` with --kv-dtype `kv` given: throws std::invalid_argument with
+// kv_refusal's words when the model does not run it (before any weight loads).
+void refuse_unrun_kv_at_start(const std::filesystem::path& artifact, KvCacheStorage kv);
+
+// What a start refuses of the pins (inputs.pins: --activations, --kv-dtype) for this model:
+// {code, words}, code "" when it runs them. Codes: activations_not_run, kv_not_run.
+struct PinRefusal {
+    std::string code;
+    std::string why;
+};
+[[nodiscard]] PinRefusal pin_refusal(const PlanSourceFacts& facts, const DryRunInputs& inputs);
+// A plan whose pins the model does not run (pin_refusal): refused (fits false, refused_code the
+// refusal's code, the reason in words). Unchanged otherwise.
+void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                       PlannedSpeculation& planned);
 
 // The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
 // activations and widest chunk, the axes the user left automatic; not the drafter).
