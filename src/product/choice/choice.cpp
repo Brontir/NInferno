@@ -381,7 +381,10 @@ namespace {
 // int8 row (kPrefillTilesEta: the tiles' share of MMQ's differs by generation), transferred.
 double tiles_eta(std::string_view generation, bool& transferred) noexcept {
     for (const TilesEta& row : kPrefillTilesEta) {
-        if (row.generation == generation) { return row.eta; }
+        if (row.generation == generation) {
+            transferred = transferred || row.cards < 2; // one card: its boards' estimate only
+            return row.eta;
+        }
     }
     transferred = true;
     return prefill_eta(false, generation, Route::Int8, transferred);

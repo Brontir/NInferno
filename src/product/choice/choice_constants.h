@@ -191,7 +191,8 @@ inline constexpr PrefillEta kPrefillEta[] = {
 // on Q4_K_M at 33.7 %). Blackwell: RTX 5070 Ti 0.303, 5090 0.269. Ampere: RTX 3060 0.342, Turing:
 // RTX 2080 Ti 0.147 (one card each). The tiles' share of MMQ's differs by generation (Ada 0.69,
 // Blackwell 0.90, Ampere 0.97, Turing 0.69), so none carries: a generation without a row keeps its
-// int8 row (transferred).
+// int8 row (transferred). A row of one card (Ampere, Turing) prices only its own boards' estimate,
+// marked transferred; no decision reads it (the choice prices on a reference card's generation).
 struct TilesEta {
     std::string_view generation;
     double eta;
