@@ -226,6 +226,11 @@ private:
     // shape cannot be read.
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
+    nlohmann::json plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
+                                  const std::string& quant, const product::LaunchAsk& launch);
+    [[nodiscard]] std::string plan_key(const std::string& repo, const std::string& hub, int gpu,
+                                       const std::string& quant,
+                                       const product::LaunchAsk& launch) const;
     // The facts of a repository's model (kv_json reads them from the same header); nullopt
     // offline or unreadable.
     std::optional<product::PlanSourceFacts>
@@ -318,6 +323,10 @@ private:
     // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
     // bounded: plan_json clears it beyond kMaxKeptPlans)
     std::map<std::string, nlohmann::json> plans_;
+    // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
+    // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
+    struct PlanNowContext;
+    std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
     // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
     std::map<std::string, nlohmann::json> configs_;
     // hub_key -> when a header or config read last failed (tried again after a minute)

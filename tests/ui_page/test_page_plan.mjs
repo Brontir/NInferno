@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "nowLine", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -484,5 +484,21 @@ eq(H.kvOptionsOf({choice: {}}), null, "an older document without kv_options");
 for (const lang of ["en", "ru", "uk"]) for (const k of ["kvWhy_family_codec", "kvWhy_head_width", "kvWhy_shape_unknown", "kvNotRead", "kvSlowCard", "kvPinRefused", "kvUseAuto"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 whole(EN("kvPinRefused", {kv: "INT8", why: "x"}), "kvPinRefused en");
+
+// ---- what a start right now would get (/api/plan "now"), said where it differs from the idle card ----
+eq(H.nowLine(null, null, tr), null, "no document: nothing");
+eq(H.nowLine({now: undefined}, {context: 65536}, tr), null, "no now view (NVML silent): nothing");
+eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65536}}, {context: 65536}, tr), null,
+   "the same as the idle card: nothing");
+{
+  const less = H.nowLine({now: {free_now_bytes: 5 * 2 ** 30, fits_now: true, context_now: 32768}}, {context: 65536}, tr);
+  ok(less && less.cls === "lowq" && less.text.startsWith("nowLess"), "less context now: said");
+  const none = H.nowLine({now: {free_now_bytes: 2 ** 30, fits_now: false, context_now: 0, reason_code_now: "weights_too_big", reason_now: "x"}}, {context: 65536}, tr);
+  ok(none && none.cls === "err" && none.text.startsWith("nowNoStart"), "no start now: said with the reason");
+  whole(EN("nowLess", {free: "5.0 GiB", ctx: "32K", was: "64K"}), "nowLess en");
+  whole(RU("nowNoStart", {free: "1.0 GiB", why: "x"}), "nowNoStart ru");
+}
+for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowLess", "nowTip"])
+  ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
 console.log(`test_page_plan: ${checks} checks passed`);

@@ -432,6 +432,37 @@ void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
     planned.plan.fits_instead.clear();
 }
 
+std::uint64_t plan_free_now_of_nvml(std::uint64_t nvml_free_bytes) noexcept {
+    return nvml_free_bytes > runtime::kPlanIdleContextBytes
+               ? nvml_free_bytes - runtime::kPlanIdleContextBytes
+               : 0;
+}
+
+PlannedSpeculation plan_now(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                          const ServedChoice* served, const ChoicePins& pins,
+                          std::uint64_t free_now_bytes) {
+    DryRunInputs now      = served != nullptr ? inputs_at_choice(inputs, *served, pins) : inputs;
+    now.device.free_bytes = free_now_bytes;
+    PlannedSpeculation planned = plan_model(facts, now);
+    if (served != nullptr) { planned = plan_at_choice(facts, now, *served, pins, std::move(planned)); }
+    refuse_unrun_pins(facts, now, planned);
+    return planned;
+}
+
+nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_now_bytes) {
+    const runtime::DryRunPlan& p      = now.plan;
+    const runtime::DryRunRung* chosen = p.chosen();
+    return {{"free_now_bytes", free_now_bytes},
+            {"fits_now", p.fits},
+            {"context_now", chosen != nullptr ? chosen->rung.max_context : 0U},
+            {"rung_now", chosen != nullptr ? p.rung + 1 : 0U},
+            {"rungs", p.ladder.size()},
+            {"private_contexts_now", chosen != nullptr && p.private_contexts()},
+            {"survival_now", chosen != nullptr && chosen->rung.survival},
+            {"reason_now", p.reason},
+            {"reason_code_now", plan_reason_code(p).code}};
+}
+
 DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
                               const ChoicePins& pins) {
     const StartAxes axes = start_axes(served, pins);

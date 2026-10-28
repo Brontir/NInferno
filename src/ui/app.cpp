@@ -956,15 +956,64 @@ App::plan_facts(const std::string& repo, const Json& listing, const std::string&
     return std::nullopt;
 }
 
+struct App::PlanNowContext {
+    std::shared_ptr<product::PlannedSubjects> subjects; // what inputs' subject pointers name
+    product::PlanSourceFacts facts;
+    product::DryRunInputs inputs;
+    std::optional<product::ServedChoice> served;
+    product::ChoicePins pins;
+};
+
+namespace {
+
+// The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
+std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int gpu) {
+    for (const auto& stat : stats) {
+        if (stat.index == gpu && stat.memory_total > 0) {
+            return product::plan_free_now_of_nvml(static_cast<std::uint64_t>(stat.memory_free));
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
+    // The plan of an idle card (cached), and what a start right now would get at the GPU's free
+    // memory (product::plan_now, each request: another process's share moves).
+    Json doc = plan_json_idle(repo, hub, gpu, quant, launch);
+    const auto free_now = free_now_of(gpus_->snapshot(), gpu);
+    std::shared_ptr<const PlanNowContext> now;
+    {
+        std::lock_guard lock(sizes_mutex_);
+        if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, quant, launch));
+            it != plan_now_.end()) {
+            now = it->second;
+        }
+    }
+    if (free_now && now) {
+        doc["now"] = product::plan_now_json(
+            product::plan_now(now->facts, now->inputs, now->served ? &*now->served : nullptr,
+                              now->pins, *free_now),
+            *free_now);
+    }
+    return doc;
+}
+
+std::string App::plan_key(const std::string& repo, const std::string& hub, int gpu,
+                          const std::string& quant, const product::LaunchAsk& launch) const {
+    return hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
+           "|" + convert::conversions_stamp(hub_root(), repo);
+}
+
+Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
+                         const std::string& quant, const product::LaunchAsk& launch) {
     const auto generation = hub_generation();
     const Json list   = listing_of(repo, hub);
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
-    const std::string key =
-        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
-        "|" + convert::conversions_stamp(hub_root(), repo);
+    const std::string key = plan_key(repo, hub, gpu, quant, launch);
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
@@ -1034,9 +1083,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             return gguf_mtp(repo, hub, commit, label);
         };
     }
-    product::PlannedSubjects subjects(
+    // Kept with the "now" context (plan_now_): the inputs' subjects point into it.
+    const auto subjects_kept = std::make_shared<product::PlannedSubjects>(
         product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
-        inputs.gpu, std::move(conversion_of), {}, std::move(mtp_of));
+        inputs.gpu, std::move(conversion_of), std::filesystem::path{}, std::move(mtp_of));
+    product::PlannedSubjects& subjects = *subjects_kept;
     std::string weights; // the named quantization's (none for the table: each row its own)
     for (const auto& q : listing) {
         if (!q.drafter && q.quant == quant) { weights = q.weights; }
@@ -1101,13 +1152,24 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     for (const auto& q : listing) {
         if (!q.drafter && q.quant == planned_label) { at_label = product::inputs_for(inputs, q); }
     }
-    if (const auto served =
-            product::choose_at_weights(planned_at, at_label, inputs.pins, planned_label)) {
-        doc["choice"] = product::choice_json(*served);
-    }
+    const auto served =
+        product::choose_at_weights(planned_at, at_label, inputs.pins, planned_label);
+    if (served) { doc["choice"] = product::choice_json(*served); }
+    auto now      = std::make_shared<PlanNowContext>();
+    now->subjects = subjects_kept;
+    now->facts    = planned_at;
+    now->inputs   = at_label;
+    now->served   = served;
+    now->pins     = inputs.pins;
     std::lock_guard lock(sizes_mutex_);
-    if (plans_.size() >= kMaxKeptPlans) { plans_.clear(); }
-    if (generation == hub_generation_) { plans_[key] = doc; }
+    if (plans_.size() >= kMaxKeptPlans) {
+        plans_.clear();
+        plan_now_.clear();
+    }
+    if (generation == hub_generation_) {
+        plans_[key]     = doc;
+        plan_now_[key] = std::move(now);
+    }
     return doc;
 }
 
@@ -1166,7 +1228,7 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
     Json plan = nullptr;
     if (gpu >= 0) {
         try {
-            plan = plan_json(repo, hub, gpu, "", launch);
+            plan = plan_json_idle(repo, hub, gpu, "", launch);
         } catch (const std::exception&) {}
     }
     if (plan.is_object() && plan.contains("quants")) {
@@ -1264,7 +1326,7 @@ Json App::catalog_json(int gpu, const product::LaunchAsk& launch) {
                 if (!plan_facts_.contains(hub_key(repo, "huggingface"))) { return std::nullopt; }
             }
             try {
-                return plan_json(repo, "huggingface", gpu, "", launch);
+                return plan_json_idle(repo, "huggingface", gpu, "", launch);
             } catch (const std::exception&) { return std::nullopt; }
         };
         const auto fits = [&](const std::string& repo, const Json& q) -> std::optional<bool> {
@@ -2550,6 +2612,7 @@ void App::install(httplib::Server& server) {
                 kv_failed_.clear();
                 plan_facts_.clear();
                 plans_.clear();
+                plan_now_.clear();
             }
             catalog_wake_ = true;
             const auto now = convert::hub_token();
