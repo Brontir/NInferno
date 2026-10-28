@@ -2977,7 +2977,8 @@ inline constexpr bool kRmmaAhead =
 #if NINFERNO_FMA_MMA
     false;
 #else
-    Latency && SpreadOf<Decoder> && Schedule::kNTiles == 1 && !FinishOf<Decoder>::value &&
+    Latency && StageActsOf<Decoder>::value && SpreadOf<Decoder> && Schedule::kNTiles == 1 &&
+    !FinishOf<Decoder>::value &&
     !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value &&
 #    if NINFERNO_HAS_CP_ASYNC
     // SwiGLU of up to eight warps stages them (kActStage)

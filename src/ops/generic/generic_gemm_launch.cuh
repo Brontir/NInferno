@@ -47,7 +47,7 @@ template <class Decoder, class Schedule, Epilogue E>
 inline constexpr bool kRmmaLatencyVariant =
     Schedule::kNTiles == 1 &&
     (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu) ||
-     (E != Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2) && SpreadOf<Decoder> &&
+     (E != Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2) && StageActsOf<Decoder>::value && SpreadOf<Decoder> &&
       !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value));
 
 // The DRAM bytes per SM cycle (dram_bytes_per_sm_cycle: the board's facts) from which the plain
