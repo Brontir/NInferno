@@ -451,8 +451,8 @@ check, and the shortfall that moves a rung down.
 It uses the functions a start uses: `plan_axes`, `plan_ladder_inputs`, `plan_margins` and
 `plan_advice_margins`, then `plan_ladder`, `prune_plan_ladder` and `select_plan_rung`.
 `construct_or_plan` calls the same seams. `tests/test_plan_dry_run.cpp` checks that the two
-build the same rungs for the same options, and that the family table the dry run reads
-(`plan_family_storage`) is the Engine's.
+build the same rungs for the same options, and that every family the Engine serves has its row in
+the one table of automatic storages the dry run and the Engine read (`family_storage`).
 
 Only the rung bytes differ: a declared estimate of KV pages, states, rings, workspace and a graph
 allowance.

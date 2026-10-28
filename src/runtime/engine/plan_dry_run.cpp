@@ -1,5 +1,6 @@
 #include "runtime/engine/plan_dry_run.h"
 
+#include "core/device_class.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "runtime/engine/kv_capacity.h"
 
@@ -201,22 +202,53 @@ PlanFitsInstead plan_fits_instead(std::uint32_t concurrency, std::uint32_t ceili
     return out;
 }
 
+namespace {
+
+// The families' automatic storages: the one table (family_registry.cpp's Engine reads it through
+// family_storage too). Qwen 3.5 / 3.6 keep INT8 K/V groups and an FP16 recurrent state under
+// --activations fast; Gemma 4 keeps its full layers' pool in FP8 rows (the sliding rings stay
+// BF16: RTX 5090 long1 26B at 218K decodes 173 -> 221 t/s, 31B at 98K 55 -> 63); the dense
+// decoders keep FP8 rows (E4M3 and a scale per row): half the K/V a long decode step reads
+// (gpt-oss ~24.6 KB a context token in BF16). Nemotron-H keeps the defaults.
+struct FamilyStorageRow {
+    std::string_view model_type;
+    PlanFamilyStorage storage;
+};
+
+// A family added to family_registry.cpp's kFamilies adds its row here (test_family_table checks).
+constexpr FamilyStorageRow kFamilyStorage[] = {
+    {"qwen3_5_text", {KvCacheStorage::Int8Group64, RecurrentStateStorage::FP16}},
+    {"qwen3_5_moe_text", {KvCacheStorage::Int8Group64, RecurrentStateStorage::FP16}},
+    {"gemma4_text", {KvCacheStorage::Fp8E4M3Row256, RecurrentStateStorage::FP32}},
+    {"dense_decoder", {KvCacheStorage::Fp8E4M3Row256, RecurrentStateStorage::FP32}},
+    {"moe_decoder", {KvCacheStorage::Fp8E4M3Row256, RecurrentStateStorage::FP32}},
+    {"nemotron_h", {KvCacheStorage::BFloat16, RecurrentStateStorage::FP32}},
+};
+
+} // namespace
+
+std::optional<PlanFamilyStorage> family_storage(std::string_view model_type) {
+    for (const FamilyStorageRow& row : kFamilyStorage) {
+        if (row.model_type == model_type) { return row.storage; }
+    }
+    return std::nullopt;
+}
+
+KvCacheStorage kv_storage_on(KvCacheStorage family_kv, int compute_capability) {
+    // FP8 rows halve the K/V bytes a long step reads only where the GPU converts E4M3 in hardware
+    // (the codec's cvt, ops/common/fp8_e4m3.cuh: sm_89 on, the same instruction set as the E4M3
+    // mma.sync, so DeviceFeatures::mma_fp8 stands for both); below it the attention widens
+    // every code in software and the step slows down (RTX 3090, gpt-oss-20b at 88K: 136 -> 91
+    // t/s, short requests 233 -> 208).
+    const bool e4m3 = device_features_for(compute_capability / 10, compute_capability % 10).mma_fp8;
+    return family_kv == KvCacheStorage::Fp8E4M3Row256 && !e4m3 ? KvCacheStorage::BFloat16
+                                                               : family_kv;
+}
+
 std::optional<PlanFamilyStorage> plan_family_storage(std::string_view model_type,
                                                      int compute_capability) {
-    PlanFamilyStorage out;
-    if (model_type == "qwen3_5_text" || model_type == "qwen3_5_moe_text") {
-        out.kv        = KvCacheStorage::Int8Group64;
-        out.recurrent = RecurrentStateStorage::FP16;
-    } else if (model_type == "gemma4_text" || model_type == "dense_decoder" ||
-               model_type == "moe_decoder") {
-        out.kv = KvCacheStorage::Fp8E4M3Row256;
-    } else if (model_type != "nemotron_h") {
-        return std::nullopt;
-    }
-    // FP8 rows fall back to BF16 below sm_89 (family_registry.h automatic_kv_cache).
-    if (out.kv == KvCacheStorage::Fp8E4M3Row256 && compute_capability < 89) {
-        out.kv = KvCacheStorage::BFloat16;
-    }
+    std::optional<PlanFamilyStorage> out = family_storage(model_type);
+    if (out) { out->kv = kv_storage_on(out->kv, compute_capability); }
     return out;
 }
 
