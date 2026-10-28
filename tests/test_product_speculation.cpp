@@ -62,6 +62,31 @@ int main() {
     const auto dflash = [&] { return model_drafter(target, SpeculativeBackend::DFlash); };
 
     failures += check(mtp().empty(), "no manifest: no drafter");
+    // The head a backend drafts with (model_draft_head): DFlash takes the artifact's head when it
+    // serves DFlash; MTP and DFlash2 keep what they were asked for; an asked-for head stays.
+    {
+        using ninferno::ProposalHead;
+        using ninferno::product::model_draft_head;
+        failures += check(model_draft_head(true, SpeculativeBackend::DFlash, ProposalHead::Full) ==
+                              ProposalHead::Optimized,
+                          "DFlash drafts with a head that serves it");
+        failures += check(model_draft_head(false, SpeculativeBackend::DFlash, ProposalHead::Full) ==
+                              ProposalHead::Full,
+                          "DFlash keeps the full head without one");
+        failures += check(model_draft_head(true, SpeculativeBackend::Mtp, ProposalHead::Full) ==
+                              ProposalHead::Full,
+                          "MTP keeps the full head");
+        failures += check(model_draft_head(true, SpeculativeBackend::DFlash2, ProposalHead::Full) ==
+                              ProposalHead::Full,
+                          "DFlash2 keeps the full head");
+        failures += check(model_draft_head(false, SpeculativeBackend::Mtp, ProposalHead::Optimized) ==
+                              ProposalHead::Optimized,
+                          "an asked-for head stays");
+        failures += check(model_draft_head(target, SpeculativeBackend::DFlash,
+                                           std::filesystem::path("drafter.ninferno"),
+                                           ProposalHead::Full) == ProposalHead::Full,
+                          "a separate DFlash drafter keeps the full head");
+    }
     // One mode of a published profile (no measurements): its fit fallback of that mode becomes its
     // choice, and the load table measured with the default's drafter gives way to one request at a
     // time (Codex on #117).
