@@ -112,7 +112,9 @@ struct QuantOption {
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
     // Its linears prefill on the generic int8 tiles, not ggml's MMQ: Q8 weights (a GGUF's Q8_0
-    // converts to q8_g32_fp16, which the int8 tiers take: ops/generic q8_prefill_a8).
+    // converts to q8_g32_fp16, which the int8 tiers take: ops/generic q8_prefill_a8). The native
+    // Q4/Q5/Q6_G64 formats take the same tiles on GeForce parts but are not measured: they keep the
+    // int8 rows.
     bool int8_tiles        = false;
 };
 
@@ -158,7 +160,7 @@ struct Candidate {
 
 // ---- The three estimates.
 
-// Whether a quantization label names Q8 weights (Q8_0, Q8_K_XL: the int8 tiles' prefill).
+// Whether a quantization label names Q8 weights (Q8, Q8_0, UD-Q8_K_XL: the int8 tiles' prefill).
 [[nodiscard]] bool q8_label(std::string_view label) noexcept;
 
 // The route a candidate's linears take on this card.

@@ -189,7 +189,9 @@ void decodes_from_facts(const json& fixture) {
 
 // Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of the
 // 2026-10-28 campaign (tests/fixtures/choice/prefill_measured.json), Q8_0 on the int8 tiles, Q4_K_M on
-// MMQ's int8 rows; Q8_0 had taken the MMQ rows (+35-61 % at 14K before).
+// MMQ's int8 rows; Q8_0 had taken the MMQ rows (+35-61 % at 14K before). The Q8 rows are the mean of
+// these same points (Ada, Blackwell: each card within 7 % of its generation's mean; Ampere and Turing
+// one card each, so in sample).
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0};
     int n[2] = {0, 0};
@@ -215,7 +217,8 @@ void prefills_by_format(const json& fixture) {
               << " %)\n";
     check(n[1] == 42 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(n[0] == 42 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
-    check(ch::q8_label("Q8_0") && ch::q8_label("UD-Q8_K_XL") && !ch::q8_label("Q4_K_M") && !ch::q8_label("Q6_K"),
+    check(ch::q8_label("Q8_0") && ch::q8_label("UD-Q8_K_XL") && ch::q8_label("Q8") && ch::q8_label("q8_0") &&
+              !ch::q8_label("Q4_K_M") && !ch::q8_label("Q6_K") && !ch::q8_label("Q8_KV") && !ch::q8_label("IQ4_XS"),
           "a Q8 label takes the tiles");
 }
 

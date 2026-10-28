@@ -210,7 +210,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     // Every quantized format q8_g32_fp16 (a GGUF's Q8_0): the linears prefill on the int8 tiles.
     quant.int8_tiles = std::any_of(formats.begin(), formats.end(), [](const std::string& f) { return f == "q8_g32_fp16"; }) &&
                        std::all_of(formats.begin(), formats.end(), [](const std::string& f) {
-                           return f == "q8_g32_fp16" || f == "bf16" || f == "fp32" || f == "f16" || f == "int32";
+                           return f == "q8_g32_fp16" || f == "bf16" || f == "fp32" || f == "int32";
                        });
     // A quantization named by its listing's label (a hub row: the facts' header may be another
     // row's) takes its route from the label, as the quant table's estimate does.

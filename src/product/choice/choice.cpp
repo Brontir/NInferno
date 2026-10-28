@@ -346,7 +346,16 @@ Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationM
 bool q8_label(std::string_view label) noexcept {
     std::string upper(label);
     std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
-    return upper.find("Q8_0") != std::string::npos || upper.find("Q8_K") != std::string::npos;
+    // "Q8" as a token of its own (a native artifact's "Q8", "Q8_0", "UD-Q8_K_XL"), not inside another
+    // label ("Q8_KV" or "Q8_K_R8" of other engines' formats, "Q4_K_M-Q8_0" composites aside).
+    for (std::size_t at = upper.find("Q8"); at != std::string::npos; at = upper.find("Q8", at + 1)) {
+        const bool starts = at == 0 || upper[at - 1] == '-' || upper[at - 1] == '_' || upper[at - 1] == '.';
+        const std::string_view rest = std::string_view(upper).substr(at + 2);
+        const bool ends = rest.empty() || rest.rfind("_0", 0) == 0 || rest == "_K" || rest.rfind("_K_XL", 0) == 0 ||
+                          rest.rfind("_K_L", 0) == 0 || rest.rfind("_K_M", 0) == 0 || rest.rfind("_K_S", 0) == 0;
+        if (starts && ends) { return true; }
+    }
+    return false;
 }
 
 Route route_of(const QuantOption& quant, ActivationMode activations, const CardFacts& card) noexcept {
@@ -449,7 +458,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double reads = weights / (rows_eta(gen, rows, transferred) * card.dram_bytes_per_s) +
                              rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
         bool prefill_transferred = false;
-        const double flops_rate  = linear_prefill(model, card, quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
+        // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
+        QuantOption decode_quant = quant;
+        decode_quant.int8_tiles  = false;
+        const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
         const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
         step = std::max(reads + kDecodeLaunchesPerLayer * model.layers * t0 + exact, flops);
     }
