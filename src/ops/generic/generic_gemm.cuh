@@ -2238,12 +2238,16 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 //
 // Staged (rmma_kernel's act_stage): a spread decoder's activations of the step were copied ahead
 // into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
-template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false>
+// Ahead (rmma_kernel's act_ring): they were loaded into registers with the step's weights, MMA c's
+// B fragment at ahead[2c], ahead[2c + 1] (load_act of the whole step: the same values).
+template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false, bool Ahead = false>
 __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                                          const typename Decoder::Run (&runs)[Sets][MT][2],
                                          const __nv_bfloat16* const (&col)[NT], int step_k0,
-                                         int quad, int k, const uint2* stage = nullptr) {
+                                         int quad, int k, const uint2* stage = nullptr,
+                                         const unsigned* ahead = nullptr) {
     static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
+    static_assert(!Ahead || (SpreadOf<Decoder> && NT == 1 && !Staged), "ahead: one tile, spread");
     if constexpr (SpreadOf<Decoder>) {
         constexpr int S = SplitsOf<Decoder>::value;
         constexpr int G = J / S; // MMAs per scale group
@@ -2287,6 +2291,9 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     act[0][2 * i]     = w.x;
                     act[0][2 * i + 1] = w.y;
                 }
+            } else if constexpr (Ahead) {
+#pragma unroll
+                for (int i = 0; i < 2 * G; ++i) act[0][i] = ahead[2 * G * g + i];
             } else {
                 load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
             }
@@ -2954,21 +2961,59 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // ---------------------------------------------------------------------------------------------
 //
 // Latency (the K-quant decoders of a one-tile schedule, UnpackOf or StageActsOf; the launch picks
-// it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes, and under SwiGLU
-// the activations staged ahead with cp.async. Every other instantiation is the plain kernel.
-// The CTAs per SM the kernel is built for: the schedule's, and for a finish decoder (the wide
-// Q6_K) on one m16 tile of one row set at least as many as 128 registers a thread allow, the
-// plain kernels' size there (ptxas for sm_89 gave the wide w1x4 159 registers against 124: three
-// CTAs per SM against four).
+// it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes (UnpackOf), under
+// SwiGLU the activations staged ahead with cp.async, and where kRmmaAhead holds the activations
+// loaded a step ahead into registers (act_ring; for one row set of Q3_K / Q6_K, which have no
+// load_raw, that ring is the whole variant). Every other instantiation is the plain kernel.
+// The latency kernel's activation ring (rmma_kernel's act_ring): each K step's activations loaded
+// into registers with the step's weights, one step ahead, instead of inside the step. Inside the
+// step a spread decoder loads them group by group, each group's MMAs waiting on its own load, so
+// a warp's step is a chain of S dependent L1/L2 round trips (S = kSplits: 4 for Q4_K/Q5_K, 8 for
+// Q3_K/Q6_K) on top of its ~600-800 instructions. On boards that need about half of every issue
+// slot to stream (warp instructions per weight byte x DRAM bytes per SM cycle / 4 schedulers:
+// RTX 3060 0.47-0.57, 2080 Ti 0.49-0.73, against 0.21-0.27 on the RTX 4060 Ti, ncu at T = 8) that
+// chain is what the SM waits on, not DRAM: the 2-slot weight ring already keeps 37-74 KB a SM in
+// flight against the 4-8 KB that saturate DRAM there (Little's law: 2080 Ti 313 ns, 3060 274 ns
+// idle latency; a streaming probe reached 96-100 % of its peak from 8 KB a SM on both).
+// The K-quant decoders (kStageActs) of one token tile and at most eight warps (kActStage's CTAs);
+// SwiGLU only on a 128-thread CTA, whose register cap (255 at two CTAs a SM) holds both row sets'
+// rings and the activations' (ptxas sm_75: 214-217 registers; the 256-thread CTA's 128 spill).
+// Host-side (no architecture condition): the launch asks it of the kernel it would take.
 template <class Decoder, class Schedule, Epilogue E>
+inline constexpr bool kRmmaAheadForm =
+    StageActsOf<Decoder>::value && SpreadOf<Decoder> && Schedule::kNTiles == 1 &&
+    !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value &&
+    Schedule::kWarpsM * Schedule::kWarpsK <= 8 &&
+    (E != Epilogue::SwiGlu || Schedule::kThreads <= 128);
+
+// The latency kernel takes the ring where it has the form and does not stage the activations with
+// cp.async (SwiGLU from sm_80: kActStage); never on the FMA-emulated MMA (Volta).
+template <class Decoder, class Schedule, Epilogue E, bool Latency>
+inline constexpr bool kRmmaAhead =
+#if NINFERNO_FMA_MMA
+    false;
+#else
+    Latency && kRmmaAheadForm<Decoder, Schedule, E> &&
+    (E != Epilogue::SwiGlu || !NINFERNO_HAS_CP_ASYNC);
+#endif
+
+// The CTAs per SM the kernel is built for: the schedule's, and at least as many as 128 registers a
+// thread allow for a finish decoder (the wide Q6_K) on one m16 tile of one row set, and for a
+// one-row-set kernel with the activation ring: the plain one-row-set kernels' size (110-128
+// registers on sm_75..sm_89). Without the cap the ring took the four-warp CTA to 141-144
+// registers, three CTAs per SM against four (RTX 3060 Q4_K add w1x4 at T = 8: 112.4 -> 142.1 us;
+// held to 128: 107.2 us). ptxas for sm_89 gave the wide w1x4 159 registers against 124.
+template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 inline constexpr int kRmmaMinBlocks =
-    FinishOf<Decoder>::value && E != Epilogue::SwiGlu && Schedule::kMTiles == 1 &&
-            65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
+    (FinishOf<Decoder>::value || kRmmaAhead<Decoder, Schedule, E, Latency>) &&
+            Schedule::kMTiles == 1 &&
+            E != Epilogue::SwiGlu && 65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
         ? 65536 / (Schedule::kThreads * 128)
         : Schedule::kMinBlocks;
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
-__global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E>)) void
+__global__
+__launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
     GemmArgs a) {
     constexpr int R        = Decoder::kRun;
@@ -3055,6 +3100,9 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
 #else
     constexpr bool kStaged = kActStage;
 #endif
+    constexpr bool kAhead = kRmmaAhead<Decoder, Schedule, E, Latency>;
+    static_assert(!(kAhead && kStaged));
+    unsigned act_ring[kAhead ? 2 : 1][1][kAhead ? 2 * J : 1];
     __shared__ uint2 act_stage[kStaged ? 2 : 1][kStaged ? Schedule::kWarpsM * WK : 1]
                               [kStaged ? J : 1][32];
     const auto stage_act = [&](auto slot_tag, int step) {
@@ -3070,6 +3118,14 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
                                   live ? 8 : 0);
             }
             cp_commit();
+        } else if constexpr (kAhead) {
+            constexpr int slot = decltype(slot_tag)::value;
+            const int token    = token0 + group;
+            const __nv_bfloat16* const c[1] = {
+                token < a.tokens && step * KStep + quad * R < a.k
+                    ? x + static_cast<std::int64_t>(token) * a.ldx
+                    : nullptr};
+            load_act<Decoder, 1, J>(act_ring[slot], c, step * KStep, quad);
         }
     };
 
@@ -3157,6 +3213,10 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
             }
             mma_step<Decoder, NT, J, kSets, MT, true>(acc, runs, col, step * KStep, quad, a.k,
                                                       &act_stage[slot][warp][0][lane]);
+        } else if constexpr (kAhead) {
+            (void)ahead;
+            mma_step<Decoder, NT, J, kSets, MT, false, true>(acc, runs, col, step * KStep, quad,
+                                                             a.k, nullptr, act_ring[slot][0]);
         } else {
             (void)ahead;
             mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k);

@@ -84,6 +84,12 @@ void launch_scalar(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
 // SMs times the reference clock); 0 when unknown. Once per device.
 [[nodiscard]] double dram_bytes_per_sm_cycle();
 
+// The DRAM bytes per SM cycle from which the K-quant register MMA of one token tile takes its
+// latency variant (rmma_latency_pays, generic_gemm_launch.cuh, where the measurements are), for
+// SwiGLU and for one row set.
+inline constexpr double kRmmaLatencySwiGluBytes = 4.5;
+inline constexpr double kRmmaLatencyOneSetBytes = 5.5;
+
 // The DRAM bytes per SM cycle below which the wide-load Q6_K (GgmlQ6KWideDecoder) of one token
 // tile pays: there the plain kernel's twice-fetched sectors fill the load queue (ncu, RTX 4090,
 // Gemma 4 12B ffn_down 3840x15360 at T = 6: lg_throttle a third of the stalls, 54 % of DRAM).
