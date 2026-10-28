@@ -23,7 +23,7 @@
 //
 // Measured against it (docs/maintainer/choice-notes/DECISIONS.md 53, choice-notes/lab/round_cost):
 // Qwen dense within 1 % on average (2-5 % rms), Qwen MoE +1 % (Ada) / +8 % (Blackwell), gpt-oss
-// +12.5 %, at k <= 7 on six cards of five generations. Where the model does not fit, the estimate
+// +12.5 %, at k <= 7 on seven cards of five generations. Where the model does not fit, the estimate
 // is made conservative and says so
 // (round_cost_estimate): the lab card's own measurement of the pair, where it found rounds dearer
 // than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets, gpt-oss: +10-25 %), scales the estimate
@@ -95,14 +95,17 @@ inline constexpr double kRoutedExpertShare = 0.30;
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
 // registry's spec-tune rounds of Qwen targets that verify 5-8 rows (k 4..7, the depths profiles
 // choose; choice-notes/lab/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
-// constant rests on two lab cards of the generation or more (AGENTS.md):
+// constant rests on two lab cards of the generation or more (AGENTS.md); each card's rounds are
+// predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
 //   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
 //                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
+//   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 55: held out, R within +4.3 % / +1.4 % on
+//                 average; the plan's pick for each pair the other card measured is the held-out
+//                 card's measured best, or within 1.5 % of it)
 // Each other generation needs a second lab card's registry pairs before it gets a row; until then
 // it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
-// one-card fits, for when the second card comes (DECISIONS 53): gb20x 0.130 (RTX 5070 Ti; the RTX
-// 5090 has hard50 runs but no registry pair yet), ga10x 0.197 (RTX 3060), turing 0.099 (RTX
-// 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
+// one-card fits, for when the second card comes (DECISIONS 53): ga10x 0.197 (RTX 3060), turing
+// 0.099 (RTX 2080 Ti), volta 0.179 (Quadro GV100). The rounds are the registry's after #156 (Gemma 4
 // assistants and DFlash drafters attached q8): their q8 drafters' block passes are compute-bound
 // enough that eta fell from 0.54 (Ada, BF16 drafters) to 0.15.
 struct SmallTEta {
@@ -112,6 +115,7 @@ struct SmallTEta {
 };
 inline constexpr SmallTEta kSmallTEta[] = {
     {"ada", 0.148, 2},
+    {"gb20x", 0.165, 2},
 };
 
 // dp4a's int8 rate a SM-clock, for a generation without an int8 MMA (Volta): the configuration

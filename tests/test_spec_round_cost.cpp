@@ -111,9 +111,14 @@ int main() {
                "RTX 4070 Ti: kappa " + std::to_string(rtx4070ti.kappa()));
         // A generation with one lab card has no eta (a constant rests on two cards): no estimate.
         expect(gv100.generation == "volta" && near(gv100.int8_ops_per_s, 512.0 * 80 * 1627e6, 1e-9) &&
-                   !gv100.known() && !rtx3060.known() && !sp::card_rates_of_board(0x2C05).known() &&
-                   !sp::card_rates_of_board(0x1E04).known(),
-               "Volta (dp4a's rate), Ampere, Blackwell, Turing: one lab card each, no eta yet");
+                   !gv100.known() && !rtx3060.known() && !sp::card_rates_of_board(0x1E04).known(),
+               "Volta (dp4a's rate), Ampere, Turing: one lab card each, no eta yet");
+        // Blackwell's two lab cards (RTX 5070 Ti, RTX 5090: DECISIONS 55).
+        const auto rtx5070ti = sp::card_rates_of_board(0x2C05);
+        const auto rtx5090   = sp::card_rates_of_board(0x2B85);
+        expect(rtx5070ti.generation == "gb20x" && rtx5070ti.known() && rtx5070ti.eta_cards == 2 &&
+                   rtx5090.known() && near(rtx5090.kappa(), 1792e9 / (0.165 * 2048.0 * 170 * 2407e6), 1e-9),
+               "Blackwell: eta from two lab cards, kappa " + std::to_string(rtx5090.kappa()));
         const auto from_key = sp::card_rates(card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504));
         expect(near(from_key.kappa(), rtx4070ti.kappa(), 1e-9), "a GpuKey's rates as the board's");
         expect(!sp::card_rates(80, 108, 1410000, 1555).known() &&
@@ -278,6 +283,8 @@ int main() {
         const Removed removed[] = {
             {"ad102:128sm", card("ad102:128sm", "ad102", "sm89", 89, 128, 2520, 1008)},
             {"ga106:28sm", card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 360)},
+            {"gb202:170sm", card("gb202:170sm", "gb202", "sm120", 120, 170, 2407, 1792)},
+            {"gb203:70sm", card("gb203:70sm", "gb203", "sm120", 120, 70, 2452, 896)},
         };
         const auto& own_pair = pair_of(kQ9, "ad104:60sm");
         const std::vector<std::string> kinds = {"mtp", "dflash"};
@@ -301,8 +308,9 @@ int main() {
                         h.gpu, measured->profile.overall.config.label().c_str(), m,
                         predicted->profile.overall.config.label().c_str(), p, 100 * (p / m - 1),
                         predicted->source.c_str());
-            // Ada has eta (two lab cards); Ampere not yet (one): it keeps the previous transfer.
-            const bool facts = h.key.compute_capability == 89;
+            // Ada and Blackwell have eta (two lab cards); Ampere not yet (one): it keeps the
+            // previous transfer.
+            const bool facts = h.key.compute_capability == 89 || h.key.compute_capability == 120;
             expect((predicted->source.find("rounds priced from the weights' bytes") !=
                     std::string::npos) == facts,
                    std::string("the card's rounds are priced by the facts only with eta: ") + h.gpu);
