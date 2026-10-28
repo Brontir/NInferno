@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <map>
 #include <memory>
 #include <regex>
@@ -373,6 +374,9 @@ struct Planning {
     std::optional<product::SpeculationSubject> subject;
     // A hub model's quantizations' subjects (inputs.subject_of), each made when first asked.
     std::shared_ptr<product::PlannedSubjects> subjects;
+    // A Qwen GGUF table's other quantizations' output heads (convert::gguf_quants_head_bytes),
+    // read beside the MTP reads; invalid when not asked.
+    std::shared_future<std::map<std::string, std::uint64_t>> heads;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -420,6 +424,18 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         std::vector<std::string> others;
         for (const auto& q : model.listing) {
             if (!q.drafter && q.format == "gguf" && q.quant != model.quant) { others.push_back(q.quant); }
+        }
+        // A Qwen target's default proposal head is priced by each quantization's own head: their
+        // 1 MiB header windows, read at the same time (and kept per commit).
+        if (model.facts.model.model_type.starts_with("qwen3_5")) {
+            out.heads = std::async(std::launch::async, [spec = model.commit.empty()
+                                                                   ? model.repo
+                                                                   : model.repo + "@" + model.commit,
+                                                        others, facts = model.facts.model] {
+                            return convert::gguf_quants_head_bytes(spec, fetch_options(), others,
+                                                                   facts.gguf_data_offset,
+                                                                   facts.hidden, facts.vocab);
+                        }).share();
         }
         auto read = std::make_shared<const std::map<std::string, std::optional<bool>>>(
             convert::gguf_quants_carry_mtp(
@@ -498,16 +514,10 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
             for (auto& q : listing) {
                 if (q.quant == model.quant) { q.head_bytes = model.facts.model.head_bytes; }
             }
-            // Every other GGUF row's head from a 1 MiB window of its header, read together and
-            // kept per commit (a second plan reads none).
-            std::vector<std::string> unread;
-            for (const auto& q : listing) {
-                if (!q.drafter && q.format == "gguf" && q.head_bytes == 0) { unread.push_back(q.quant); }
-            }
-            const auto heads = convert::gguf_quants_head_bytes(
-                model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
-                fetch_options(), unread, model.facts.model.gguf_data_offset,
-                model.facts.model.hidden, model.facts.model.vocab);
+            // Every other GGUF row's head, read beside the MTP reads (planning_of).
+            const std::map<std::string, std::uint64_t> heads =
+                planning.heads.valid() ? planning.heads.get()
+                                       : std::map<std::string, std::uint64_t>{};
             for (auto& q : listing) {
                 if (const auto it = heads.find(q.quant); it != heads.end()) {
                     q.head_bytes = it->second;
