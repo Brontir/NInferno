@@ -212,10 +212,14 @@ struct HK6 {
                                 qh[1].x, qh[1].y, qh[1].z, qh[1].w};
         const unsigned w     = lw[wd] >> (4 * run);
         const unsigned hb    = hw[wd] >> (2 * (q & 1) + 4 * run);
-        // Low four bits from ql, the two above from qh, under the exponent of 1024: two LOP3s a
-        // pair (with immediate masks the compiler spent four), then 1024 + 32 off (the zero point).
-        const unsigned lo = and_or<0x000f000fU>(w, and_or<0x00300030U>(hb << 4, 0x64006400U));
-        const unsigned hi = and_or<0x000f000fU>(w >> 8, and_or<0x00300030U>(hb >> 4, 0x64006400U));
+        // Low four bits from ql, the two above from qh, under the exponent of 1024, then 1024 + 32
+        // off (the zero point). Two LOP3s a pair through and_or (622 -> 595 loop instructions) lost
+        // 4 us on the 128-CTA Q6_K add: one CTA an SM issues each warp's chain back to back, and
+        // and_or chains the two masks where the compiler's four instructions run side by side.
+        const unsigned lo =
+            ((w & 0x000f000fU) | ((hb << 4) & 0x00300030U)) | 0x64006400U;
+        const unsigned hi =
+            (((w >> 8) & 0x000f000fU) | ((hb >> 4) & 0x00300030U)) | 0x64006400U;
         a0 = biased_h2(lo, 0x64206420U);
         a1 = biased_h2(hi, 0x64206420U);
     }
