@@ -251,6 +251,14 @@ bool DFlashDrafter::split_feature_projection(DeviceContext& device, std::string*
     }
     weights_.feature_slices =
         split_projection_columns(weights_.feature_projection, taps, device.stream, why);
+    // A slice has its own geometry: the full six-tap matrix may be one a tuned table owns
+    // (Gemma 4 31B's 5376 x 32256, kept A16) while its [H, H] slices are not, so each slice takes
+    // the drafter policy of its own shape (ops::drafter_linear_policy).
+    for (auto& slice : weights_.feature_slices) {
+        if (slice.policy == ops::LinearPolicy::A16Only || slice.policy == ops::LinearPolicy::AllowA8) {
+            slice.policy = ops::drafter_linear_policy(slice.weight, ops::LinearPolicy::A16Only);
+        }
+    }
     return !weights_.feature_slices.empty();
 }
 
