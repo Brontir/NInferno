@@ -95,13 +95,17 @@ int main() {
                           defaults.drafter_registry.empty(),
                       "pacing or maintainer options are not the defaults");
     {
-        const ServeOptions lab =
-            parse({"ninferno-serve",       "model.ninferno", "--decode-steps", "8",
-                   "--decode-wait",        "block",          "--cuda-sync",    "yield",
-                   "--route-table",        "t.json",         "--route-dir",    "r",
-                   "--debug-prefill-cuts", "700,64",         "--debug-poison", "nan",
-                   "--debug-poison-skip",  "kv,state",       "--artifact-io",  "direct",
-                   "--drafter-registry",   "reg.json"});
+        const ServeOptions lab = parse({"ninferno-serve",       "model.ninferno",
+                                        "--decode-steps",       "8",
+                                        "--decode-wait",        "block",
+                                        "--cuda-sync",          "yield",
+                                        "--route-table",        "t.json",
+                                        "--route-dir",          "r",
+                                        "--debug-prefill-cuts", "700,64",
+                                        "--debug-poison",       "nan",
+                                        "--debug-poison-skip",  "kv,state",
+                                        "--artifact-io",        "direct",
+                                        "--drafter-registry",   "reg.json"});
         failures += check(lab.pacing.steps == 8 && lab.pacing.wait == ninferno::DecodeWait::Block &&
                               lab.pacing.cuda_sync == ninferno::CudaSyncSchedule::Yield,
                           "the pacing flags are not read");
