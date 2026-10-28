@@ -826,8 +826,8 @@ still valid JSON. NInferno's grammars let the model write keys in its own order:
 - Each at most once is tracked for up to 256 states per object (required properties written,
   times the set of optional ones written): eight optional properties with no required one, six
   with three required. Optional properties past those (in schema order), and every optional
-  property of an object with `patternProperties` or `propertyNames`, may still come in any order but may repeat (the
-  tool-call parser, like most JSON parsers, keeps the last value).
+  property of an object with `patternProperties` or `propertyNames`, may still come in any order
+  but may repeat (the tool-call parser, like most JSON parsers, keeps the last value).
 - An object with `minProperties` or `maxProperties` keeps its optional properties in schema order;
   list them in the order the prompt asks for them.
 
