@@ -66,8 +66,8 @@ void reply_error(httplib::Response& res, int status, const std::string& message)
 int int_param(const httplib::Request& req, const char* name, int fallback);
 
 // What a launch would ask for, from /api/plan's and /api/quants' parameters: ctx (tokens, "auto"
-// or absent: automatic), par (1..8), kv, spec, precision, act (auto | exact | fast | int8). Throws std::invalid_argument for a value
-// ninferno-serve refuses.
+// or absent: automatic), par (1..8), kv, spec, precision, act (auto | exact | fast | int8).
+// Throws std::invalid_argument for a value ninferno-serve refuses.
 product::LaunchAsk launch_ask_of(const httplib::Request& req) {
     product::LaunchAsk out;
     const std::string ctx = req.get_param_value("ctx");

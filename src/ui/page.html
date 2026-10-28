@@ -2367,9 +2367,11 @@ function renderKv() {
 function renderAct() {
   const el = $("actsel");
   if (!el || !selected) return;
-  const doc = planStale() ? null : selected.plan;
-  // Auto's deltas only for the ask shown (the same context, streams, KV and speed-up under Auto).
-  const autoQ = planQuery({...planAsk(selected), act: "auto"});
+  // The choice of the quantization shown (the user's pick, else the plan's: choiceDocOf).
+  const doc = planStale() ? null : quantSel ? choiceDocOf(selected, quantSel) : selected.plan;
+  // Auto's deltas only for the ask shown (the same quantization, context, streams, KV and
+  // speed-up under Auto).
+  const autoQ = planQuery({...planAsk(selected), act: "auto"}) + "|" + (quantSel ? quantSel.quant : "");
   if (doc && doc.choice && actAsk(selected) === "auto") { selected.actAutoDoc = doc; selected.actAutoQ = autoQ; }
   const autoDoc = selected.actAutoQ === autoQ ? selected.actAutoDoc : null;
   const o = actOptions(doc, autoDoc, actAsk(selected));
