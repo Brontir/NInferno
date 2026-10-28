@@ -614,7 +614,9 @@ std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, dou
     // The target's weights hold its head already (a GGUF's tensor table counts output.weight).
     const double round = std::max(target_bytes, full) + drafter_bytes + full;
     const auto choice  = spec::draft_head_rows(totals, full / round, spec::kDraftHeadDepth);
-    return static_cast<std::uint64_t>(static_cast<double>(choice.rows) * rows_bytes);
+    // The gathered rows and their int32 token ids (proposal/token_ids).
+    return static_cast<std::uint64_t>(static_cast<double>(choice.rows) * rows_bytes) +
+           choice.rows * sizeof(std::int32_t);
 }
 
 std::vector<std::int64_t> shortlist_ids(const Model& model, const std::filesystem::path& ranking,

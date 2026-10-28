@@ -93,7 +93,8 @@ struct DefaultProposal {
 // The bytes the proposal head default_proposal gives a target take, from what a plan knows before
 // the conversion: the head's stored bytes (0: unknown, a checkpoint's head gathered to the
 // recipe's Q4), the target's and its DFlash drafter's weights, the vocabulary and width. The rows
-// from the default ranking as default_proposal finds it; 0 when it is not found or nothing pays.
+// from the default ranking as default_proposal finds it, with their int32 token ids; 0 when it is
+// not found or nothing pays.
 [[nodiscard]] std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
                                                    double drafter_bytes, std::uint64_t vocab,
                                                    std::uint64_t hidden);

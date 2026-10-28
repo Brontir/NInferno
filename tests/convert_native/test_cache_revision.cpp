@@ -6,6 +6,7 @@
 
 #include "convert/acquire.h"
 #include "convert/cache.h"
+#include "convert/checks.h"
 #include "convert/fetch.h"
 #include "core/sys.h"
 
@@ -81,6 +82,14 @@ int main() {
     check(cache_current(artifact(dir, "new", 6, "dflash/layers/0/attention/query", "bf16")),
           "revision 6 is current");
     check(!cache_current(artifact(dir, "old", 2, "text/output_head", "bf16")), "revision 2 is not");
+
+    // The pre-conversion budget of the default proposal head (convert::planned_proposal_bytes):
+    // Qwen3.5-9B Q4_K_M with z-lab's DFlash drafter keeps 147,456 rows of its Q6_K head (3,360 B a
+    // row) and their int32 token ids (Codex on #170).
+    check(ninferno::convert::planned_proposal_bytes(834355200.0, 5117970432.0, 1372703744.0,
+                                                    248320, 4096) ==
+              147456ULL * 3360 + 147456ULL * 4,
+          "the planned proposal head counts its rows and their token ids");
 
     // A checkpoint replaced at the same path changes the stamp of what its conversion read; an
     // artifact converted before stamps were kept is stamped on first sight, not converted again.
