@@ -170,7 +170,8 @@ struct Candidate {
 struct Speed {
     double decode_per_stream = 0; // tokens a second each stream decodes at the context given
     double prefill           = 0; // prompt tokens a second
-    bool transferred         = false; // a constant came from another generation (kTransferGeneration)
+    bool transferred         = false; // a constant came from another generation (kTransferGeneration),
+                                      // or rests on one lab card of this one
 };
 
 // Decode at `context` tokens in the window with `concurrency` rows, and prefill of a `prompt`
