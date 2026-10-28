@@ -1060,6 +1060,7 @@ generation's tensor rate and the route's tiles, apart from the verify, and the v
 per-row compute where it is not bound by bytes (NVFP4, AWQ). That is a study of the kernels, not
 cleanup. Until then eta stays the Ada row fitted on two cards (principle 4); the value and the
 behaviour do not change. Other generations keep no estimate (as in 53).
+
 ## 55. Tuners only in maintainer tools; the shipped dense-tuner measurements stay as data, with a plan to remove (28.10, cleanup)
 
 **Tuners.** `--dense-tune`, `--moe-tune` and `--tune-cache` time kernels on the machine and keep
