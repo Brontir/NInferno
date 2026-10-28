@@ -648,6 +648,139 @@ int run_published_control_case(const Geometry& geometry, PublishedFormat format,
     return failures;
 }
 
+// BF16 a/b at an unregistered geometry (the Qwen3.5 0.8B..9B sizes): the segmented generic path.
+// At decode and verify widths (T <= kSegmentedFusedControlMaxTokens) it runs the fused norm and
+// control kernel, wider calls the composed form; both against the FP64 oracle. In the fused
+// widths a token's h, g and beta must not depend on the other columns of its call (a verify pass
+// and the decode step of the same token agree). `one_parent` binds a and b as consecutive rows of
+// one [2H, D] parent, otherwise as two parents.
+int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, std::uint32_t seed,
+                                    cudaStream_t stream) {
+    constexpr float kEps         = 1.0e-6F;
+    constexpr std::int32_t kMaxT = 64;
+    const std::string base_label = std::string("segmented bf16 ") + geometry.label + " [" +
+                                   std::to_string(geometry.heads) + ", " +
+                                   std::to_string(geometry.hidden) + "]" +
+                                   (one_parent ? " one parent" : " two parents");
+    const std::size_t rows_elements = std::size_t(geometry.heads) * geometry.hidden;
+    std::vector<float> x(std::size_t(geometry.hidden) * kMaxT), norm_weight(geometry.hidden);
+    std::vector<float> a_weight(rows_elements), b_weight(rows_elements);
+    std::vector<float> a_log(geometry.heads), dt_bias(geometry.heads);
+    fill_uniform(x, seed, -1.0F, 1.0F);
+    fill_uniform(norm_weight, seed + 1u, -0.2F, 0.2F);
+    fill_uniform(a_weight, seed + 2u, -0.015F, 0.015F);
+    fill_uniform(b_weight, seed + 3u, -0.015F, 0.015F);
+    fill_uniform(a_log, seed + 4u, -2.0F, 1.0F);
+    fill_uniform(dt_bias, seed + 5u, -1.0F, 1.0F);
+    round_to_bf16(x);
+    round_to_bf16(norm_weight);
+    round_to_bf16(a_weight);
+    round_to_bf16(b_weight);
+    auto ab_bits             = bf16_bits(a_weight);
+    const auto b_weight_bits = bf16_bits(b_weight);
+    ab_bits.insert(ab_bits.end(), b_weight_bits.begin(), b_weight_bits.end());
+    DeviceBuffer device_ab = to_device(ab_bits);
+    const std::vector<std::uint64_t> a_shape{static_cast<std::uint64_t>(geometry.heads),
+                                             static_cast<std::uint64_t>(geometry.hidden)};
+    const std::vector<std::uint64_t> ab_shape{static_cast<std::uint64_t>(2 * geometry.heads),
+                                              static_cast<std::uint64_t>(geometry.hidden)};
+    const auto* ab_data = static_cast<const std::byte*>(device_ab.p);
+    const WeightParent ab_parent{weight_geometry(QType::BF16, QuantLayout::Contiguous, ab_shape),
+                                 ab_data};
+    const WeightParent a_parent{weight_geometry(QType::BF16, QuantLayout::Contiguous, a_shape),
+                                ab_data};
+    const WeightParent b_parent{weight_geometry(QType::BF16, QuantLayout::Contiguous, a_shape),
+                                ab_data + rows_elements * 2};
+    const WeightView a_view{a_shape, {{one_parent ? &ab_parent : &a_parent, 0, rows_elements}}};
+    const WeightView b_view{a_shape,
+                            {one_parent ? WeightRegion{&ab_parent, rows_elements, 2 * rows_elements}
+                                        : WeightRegion{&b_parent, 0, rows_elements}}};
+    const ops::ProjectionWeights prepared = ops::prepare_gdn_gating_proj_weights(
+        ops::WeightInput{a_view, ops::LinearPolicy::A16Only, std::nullopt},
+        ops::WeightInput{b_view, ops::LinearPolicy::A16Only, std::nullopt});
+    const auto* segmented = std::get_if<ops::SegmentedProjectionWeights>(&prepared);
+    if (segmented == nullptr || segmented->rows() != 2 * geometry.heads) {
+        std::cerr << base_label
+                  << ": prepare_gdn_gating_proj_weights did not take the segmented path\n";
+        return 1;
+    }
+    const auto x_bits = bf16_bits(x), norm_bits = bf16_bits(norm_weight);
+    DeviceBuffer device_x = to_device(x_bits), device_norm = to_device(norm_bits);
+    DeviceBuffer device_a_log = to_device(a_log), device_dt_bias = to_device(dt_bias);
+    Tensor tn(device_norm.p, DType::BF16, {geometry.hidden});
+    Tensor ta(device_a_log.p, DType::FP32, {geometry.heads}),
+        td(device_dt_bias.p, DType::FP32, {geometry.heads});
+
+    struct Outputs {
+        std::vector<std::uint16_t> h;
+        std::vector<float> g, beta;
+    };
+
+    int failures   = 0;
+    const auto run = [&](std::int32_t tokens) {
+        const std::string label        = base_label + " T=" + std::to_string(tokens);
+        const std::size_t h_elements   = std::size_t(geometry.hidden) * tokens;
+        const std::size_t ctl_elements = std::size_t(geometry.heads) * tokens;
+        GuardedDeviceBuffer device_h(h_elements * 2), device_g(ctl_elements * 4),
+            device_beta(ctl_elements * 4);
+        device_h.fill(0xff);
+        device_g.fill(0xff);
+        device_beta.fill(0xff);
+        Tensor tx(device_x.p, DType::BF16, {geometry.hidden, tokens});
+        Tensor th(device_h.data(), DType::BF16, {geometry.hidden, tokens}),
+            tg(device_g.data(), DType::FP32, {geometry.heads, tokens}),
+            tb(device_beta.data(), DType::FP32, {geometry.heads, tokens});
+        const std::size_t capacity = std::max<std::size_t>(
+            256,
+            ops::segmented_gdn_norm_gating_workspace_capacity_bytes(*segmented, tokens, tokens));
+        GuardedDeviceBuffer scratch(capacity);
+        WorkspaceArena workspace(DeviceSpan{scratch.data(), capacity});
+        ops::segmented_gdn_norm_gating_proj(tx, tn, kEps, *segmented, ta, td, workspace, th, tg, tb,
+                                            stream);
+        cuda_synchronize(stream);
+        std::vector<double> rh, rg, rb;
+        const std::vector<float> xt(x.begin(), x.begin() + static_cast<std::ptrdiff_t>(h_elements));
+        norm_projection_oracle(geometry, xt, norm_weight, a_weight, b_weight, a_log, dt_bias,
+                               tokens, kEps, rh, rg, rb);
+        Outputs out{from_device<std::uint16_t>(device_h.data(), h_elements),
+                    from_device<float>(device_g.data(), ctl_elements),
+                    from_device<float>(device_beta.data(), ctl_elements)};
+        failures += verify_normwise(label + " h", from_device_bf16(device_h.data(), h_elements), rh,
+                                    kGdnNormOutputBf16);
+        failures +=
+            verify_normwise(label + " g", {out.g.begin(), out.g.end()}, rg, kGdnNormControlFp32);
+        failures += verify_normwise(label + " beta", {out.beta.begin(), out.beta.end()}, rb,
+                                    kGdnNormControlFp32);
+        failures += device_h.verify_guards((label + " h").c_str());
+        failures += device_g.verify_guards((label + " g").c_str());
+        failures += device_beta.verify_guards((label + " beta").c_str());
+        failures += scratch.verify_guards((label + " scratch").c_str());
+        return out;
+    };
+    const Outputs widest = run(ops::kSegmentedFusedControlMaxTokens);
+    for (const std::int32_t tokens : {1, 2, 3, 5, 8, 13}) {
+        const Outputs narrow = run(tokens);
+        const auto prefix    = [&](const auto& v, std::int32_t rows) {
+            return std::vector(v.begin(), v.begin() + static_cast<std::ptrdiff_t>(rows) * tokens);
+        };
+        if (narrow.h != prefix(widest.h, geometry.hidden) ||
+            narrow.g != prefix(widest.g, geometry.heads) ||
+            narrow.beta != prefix(widest.beta, geometry.heads)) {
+            std::cerr << base_label << " T=" << tokens
+                      << ": a token's bytes follow the width of its call\n";
+            ++failures;
+        }
+    }
+    for (const std::int32_t tokens : {ops::kSegmentedFusedControlMaxTokens + 1, kMaxT})
+        (void)run(tokens);
+    if (from_device<std::uint16_t>(device_ab.p, ab_bits.size()) != ab_bits) {
+        std::cerr << base_label << ": a/b weights were modified\n";
+        ++failures;
+    }
+    std::cout << base_label << (failures == 0 ? " ok" : " FAILED") << '\n';
+    return failures;
+}
+
 int verify_workspace_capacity_contract(const Geometry& geometry,
                                        std::initializer_list<std::int32_t> route_endpoints) {
     const std::int32_t last = *std::max_element(route_endpoints.begin(), route_endpoints.end());
@@ -742,6 +875,15 @@ int main() {
             for (const std::int32_t tokens : {1, 64})
                 failures += run_published_control_case(
                     *geometry, format, tokens, published_seed += 0x10u, norm_execution.stream);
+
+    // BF16 a/b at the Qwen3.5 sizes no fused registration owns (9B, 4B, 0.8B).
+    std::uint32_t segmented_seed = 0xa000u;
+    for (const Geometry& geometry :
+         {Geometry{"qwen3_5_9b", 4096, 32, false}, Geometry{"qwen3_5_4b", 2560, 32, false},
+          Geometry{"qwen3_5_0_8b", 1024, 16, false}})
+        for (const bool one_parent : {false, true})
+            failures += run_segmented_bf16_control_case(
+                geometry, one_parent, segmented_seed += 0x10u, norm_execution.stream);
 
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gdn_gating_proj correctness\n";
     return failures == 0 ? 0 : 1;
