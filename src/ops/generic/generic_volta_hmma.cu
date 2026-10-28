@@ -21,10 +21,14 @@
 // 2q+1). One code word (four bytes) gives two half2 per run: (byte 0, byte 2) and (byte 1, byte 3),
 // so the staged activation swaps the middle two of every four values.
 //
-// Arithmetic: the A operand is the code itself (less its zero point), an exact f16 integer, so
-// the tensor cores sum exact products of codes and f16 activations in FP32 over one scale group
-// (16 or 32 values); the group's scale (and a K-quant's min against the group's activation sum)
-// is applied in FP32 after it. No weight value is ever rounded to f16, whatever its scale. The
+// Arithmetic: the A operand is the code itself (less its zero point; Q4_K / Q5_K: plus 1024), an
+// exact f16 integer, so the tensor cores sum exact products of codes and f16 activations in FP32
+// over one scale group (16 or 32 values); the group's scale (and a K-quant's min against the
+// group's activation sum) is applied in FP32 after it. Q4_K / Q5_K leave the 1024 the f16 bit
+// trick puts under each code in the operand and take 1024 d times the group's activation sum off
+// with the min, which already reads that sum (HK45::kBias): one FFMA a group instead of an HSUB2 a
+// code pair, at FP32 rounding of the 1024-scaled sum. No weight value is ever rounded to f16,
+// whatever its scale. The
 // groups add in K order, the quad-pairs' sums meet at the end in a fixed order
 // ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only, never on the call's T or
 // its other tokens, and repeat run to run.
@@ -60,12 +64,6 @@ __device__ __forceinline__ unsigned h2_bits(__half2 h) { return *reinterpret_cas
 
 __device__ __forceinline__ __half2 bits_h2(unsigned u) { return *reinterpret_cast<__half2*>(&u); }
 
-// Two codes in the low bits of each half (integers below 1024) as f16, less `bias` (1024 + the
-// format's zero point): exact.
-__device__ __forceinline__ unsigned codes_h2(unsigned bits, unsigned bias_bits) {
-    return h2_bits(__hsub2(bits_h2(bits | 0x64006400U), bits_h2(bias_bits)));
-}
-
 // Bits 0..3 and 16..19 of w with the f16 exponent of 1024 above them, (w & 0x000f000f) |
 // 0x64006400, in one LOP3: with both constants immediate the compiler emitted two (a SASS LOP3
 // takes one immediate; gate/up SwiGLU 256 -> 192 LOP3, 2272 -> 2208 instructions).
@@ -75,7 +73,15 @@ __device__ __forceinline__ unsigned nibbles_h2(unsigned w) {
     return r;
 }
 
-// The f16 pair of biased codes (1024 + code, from nibbles_h2) less `bias_bits`: exact.
+// (a & imm) | c in one LOP3, c a register (one SASS LOP3 takes a single immediate).
+template <unsigned Imm>
+__device__ __forceinline__ unsigned and_or(unsigned a, unsigned c) {
+    unsigned r;
+    asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(a), "n"(Imm), "r"(c));
+    return r;
+}
+
+// The f16 pair of biased codes (1024 + code, from nibbles_h2 / and_or) less `bias_bits`: exact.
 __device__ __forceinline__ unsigned biased_h2(unsigned bits, unsigned bias_bits) {
     return h2_bits(__hsub2(bits_h2(bits), bits_h2(bias_bits)));
 }
@@ -96,6 +102,8 @@ struct HK45 {
     static constexpr int kBlockBytes = Bits == 4 ? 144 : 176;
     static constexpr int kGroups     = 2;
     static constexpr bool kMin       = true;
+    // The operand is 1024 + code: the min takes 1024 d times the group's activation sum off.
+    static constexpr float kBias = 1024.0F;
     uint4 head;
     uint4 qs[2];
     uint4 qh[2];
@@ -150,8 +158,8 @@ struct HK45 {
             lo |= (hb << 4) & 0x00100010U;
             hi |= (hb >> 4) & 0x00100010U;
         }
-        a0 = biased_h2(lo, 0x64006400U);
-        a1 = biased_h2(hi, 0x64006400U);
+        a0 = lo;
+        a1 = hi;
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
@@ -204,11 +212,12 @@ struct HK6 {
                                 qh[1].x, qh[1].y, qh[1].z, qh[1].w};
         const unsigned w     = lw[wd] >> (4 * run);
         const unsigned hb    = hw[wd] >> (2 * (q & 1) + 4 * run);
-        const unsigned lo    = (w & 0x000f000fU) | ((hb << 4) & 0x00300030U);
-        const unsigned hi    = ((w >> 8) & 0x000f000fU) | ((hb >> 4) & 0x00300030U);
-        // 1024 + 32: the code less its zero point 32.
-        a0 = codes_h2(lo, 0x64206420U);
-        a1 = codes_h2(hi, 0x64206420U);
+        // Low four bits from ql, the two above from qh, under the exponent of 1024: two LOP3s a
+        // pair (with immediate masks the compiler spent four), then 1024 + 32 off (the zero point).
+        const unsigned lo = and_or<0x000f000fU>(w, and_or<0x00300030U>(hb << 4, 0x64006400U));
+        const unsigned hi = and_or<0x000f000fU>(w >> 8, and_or<0x00300030U>(hb >> 4, 0x64006400U));
+        a0 = biased_h2(lo, 0x64206420U);
+        a1 = biased_h2(hi, 0x64206420U);
     }
 
     // Source run 4 h + quarter goes to quad-pair 2 h + quarter % 2, half quarter / 2 of it.
@@ -251,9 +260,10 @@ struct HQ8 {
         const unsigned words[16] = {c[0].x, c[0].y, c[0].z, c[0].w, c[1].x, c[1].y, c[1].z, c[1].w,
                                     c[2].x, c[2].y, c[2].z, c[2].w, c[3].x, c[3].y, c[3].z, c[3].w};
         const unsigned w         = words[m] ^ 0x80808080U; // code + 128
-        // (byte 0, byte 2) and (byte 1, byte 3) under the 0x64 exponent byte; 1024 + 128 back.
-        a0 = codes_h2(__byte_perm(w, 0, 0x7250U) & 0x00ff00ffU, 0x64806480U);
-        a1 = codes_h2(__byte_perm(w, 0, 0x7351U) & 0x00ff00ffU, 0x64806480U);
+        // (byte 0, byte 2) and (byte 1, byte 3) under the 0x64 exponent byte, in one PRMT each
+        // (the exponent bytes from the second operand); 1024 + 128 back.
+        a0 = biased_h2(__byte_perm(w, 0x64646464U, 0x4240U), 0x64806480U);
+        a1 = biased_h2(__byte_perm(w, 0x64646464U, 0x4341U), 0x64806480U);
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
@@ -402,6 +412,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
             for (int s = 0; s < kSets; ++s) {
                 float ds, dm;
                 cur[s].scale(q, gr, ds, dm);
+                if constexpr (requires { F::kBias; }) dm = fmaf(F::kBias, ds, dm);
                 const float ds0 = __shfl_sync(0xffffffffU, ds, src_a);
                 const float ds2 = __shfl_sync(0xffffffffU, ds, src_a + 2);
                 float dm0 = 0.0F, dm2 = 0.0F;
