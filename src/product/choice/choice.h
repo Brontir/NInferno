@@ -39,6 +39,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::product::choice {
@@ -111,7 +112,22 @@ struct QuantOption {
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
+    // The decode routes its weights take (weight_class_of): an Other's speed is transferred and it
+    // wins no decision on worth (plan_quants).
+    WeightClass weights = WeightClass::KQuant;
 };
+
+// The weight class of a quantization: from its weight formats where known (as
+// artifact::format_name spells them), else from its label (a hub row: Q4_K / Q5_K / Q6_K mixes,
+// Q8 / Q8_0). A K-quant mix may carry Q8_0 and 16-bit tensors; anything else is Other.
+// The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
+[[nodiscard]] std::string_view generation_of(const CardFacts& card) noexcept;
+
+[[nodiscard]] WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label);
+
+// The band within which two quantizations' worths are a tie on this card's decisions (the
+// generation's measured decode error, kDecodePredictionError; 0 where none is measured).
+[[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape.

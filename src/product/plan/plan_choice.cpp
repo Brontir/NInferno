@@ -199,6 +199,9 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     quant.bits_per_weight = facts.model.bits_per_weight(quant.weight_bytes);
     const auto& formats   = facts.shape.weight_formats;
     quant.nvfp4      = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
+    // The weight class: a hub row's from its label (the facts' header may be another row's), else
+    // the file's formats.
+    quant.weights = label.empty() ? choice::weight_class_of(formats, "") : choice::weight_class_of({}, label);
     // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks
     // (formats.cpp kept_block_policy: TQ1_0, TQ2_0, Q1_0 and Q2_0 keep BF16 activations).
     quant.int8_route = formats.empty() ||
