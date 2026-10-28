@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "nowLine", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -495,6 +495,8 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
   ok(less && less.cls === "lowq" && less.text.startsWith("nowLess"), "less context now: said");
   const none = H.nowLine({now: {free_now_bytes: 2 ** 30, fits_now: false, context_now: 0, reason_code_now: "weights_too_big", reason_now: "x"}}, {context: 65536}, tr);
   ok(none && none.cls === "err" && none.text.startsWith("nowNoStart"), "no start now: said with the reason");
+  const why = H.nowReasonText({reason_code_now: "weights_too_big", reason_now: "x", reason_params_now: {weights_bytes: 6 * 2 ** 30, free_bytes: 2 ** 30}}, (k, v) => k + JSON.stringify(v || {}));
+  ok(why.includes("6.0") && why.includes("1.0"), "the now reason keeps its numbers");
   whole(EN("nowLess", {free: "5.0 GiB", ctx: "32K", was: "64K"}), "nowLess en");
   whole(RU("nowNoStart", {free: "1.0 GiB", why: "x"}), "nowNoStart ru");
 }

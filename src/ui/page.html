@@ -1946,6 +1946,10 @@ function launchSettingsOf(saved) {
           kv: typeof s.kv === "string" ? s.kv : "", spec: typeof s.spec === "string" && s.spec ? s.spec : "auto",
           act: ACT_MODES.includes(s.act) ? s.act : ""};
 }
+// Why a start right now does not fit, in words with its numbers (the now plan's code and params).
+function nowReasonText(n, tr) {
+  return reasonText({reason_code: n.reason_code_now, reason_params: n.reason_params_now, reason: n.reason_now}, tr);
+}
 // What a start right now would get (/api/plan's "now": product::plan_now at the GPU's free memory),
 // said only where it differs from the idle card's plan `idle` (the row's plan): {cls, text}, or null.
 function nowLine(doc, idle, tr) {
@@ -1953,7 +1957,7 @@ function nowLine(doc, idle, tr) {
   if (!n || typeof n.free_now_bytes !== "number") return null;
   const free = planGiB(n.free_now_bytes);
   if (!n.fits_now) {
-    const why = REASON_CODES.includes(n.reason_code_now) ? tr("reason_" + n.reason_code_now, {}) : n.reason_now || "";
+    const why = nowReasonText(n, tr);
     return {cls: "err", text: tr("nowNoStart", {free, why})};
   }
   const ctx = n.context_now || 0, was = idle && idle.context || 0;

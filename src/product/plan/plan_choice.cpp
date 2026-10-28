@@ -460,7 +460,8 @@ nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_n
             {"private_contexts_now", chosen != nullptr && p.private_contexts()},
             {"survival_now", chosen != nullptr && chosen->rung.survival},
             {"reason_now", p.reason},
-            {"reason_code_now", plan_reason_code(p).code}};
+            {"reason_code_now", plan_reason_code(p).code},
+            {"reason_params_now", plan_reason_code(p).params}};
 }
 
 DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
