@@ -1151,7 +1151,7 @@ void test_rows_at_choice() {
                       what + ": the row's KV codec is the start's");
                 check(!axes.state || *axes.state == row.planned.plan.recurrent,
                       what + ": the row's state is the start's");
-                check(std::abs(row.estimate.decode_per_stream - served->decode_at_depth) < 1e-6,
+                check(row.estimate && std::abs(row.estimate->decode_per_stream - served->decode_at_depth) < 1e-6,
                       what + ": the row's decode is the choice's");
                 if (!std::string(act).empty()) {
                     const auto& c = served->choice.scored[*served->choice.chosen].candidate;
