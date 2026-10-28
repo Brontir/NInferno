@@ -3,6 +3,7 @@
 #include "core/generation.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <iomanip>
 #include <sstream>
@@ -342,6 +343,12 @@ Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationM
     return out;
 }
 
+bool q8_label(std::string_view label) noexcept {
+    std::string upper(label);
+    std::transform(upper.begin(), upper.end(), upper.begin(), [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    return upper.find("Q8_0") != std::string::npos || upper.find("Q8_K") != std::string::npos;
+}
+
 Route route_of(const QuantOption& quant, ActivationMode activations, const CardFacts& card) noexcept {
     if (activations == ActivationMode::Exact) { return Route::Bf16; }
     if (quant.nvfp4) {
@@ -352,14 +359,27 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 
 namespace {
 
+// A dense model's int8 route on the int8 tiles (Q8 weights): the generation's tiles row, else its
+// int8 row (kPrefillTilesEta: the tiles' share of MMQ's differs by generation), transferred.
+double tiles_eta(std::string_view generation, bool& transferred) noexcept {
+    for (const TilesEta& row : kPrefillTilesEta) {
+        if (row.generation == generation) { return row.eta; }
+    }
+    transferred = true;
+    return prefill_eta(false, generation, Route::Int8, transferred);
+}
+
 // The linears' prefill rate (tokens a second) with chunks of `filled` tokens: an MoE's chunk fills
 // its experts only as far as its tokens reach (its share of the saturated rate).
-double linear_prefill(const ModelFacts& model, const CardFacts& card, Route route,
-                      std::uint32_t filled, bool& transferred) noexcept {
+double linear_prefill(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                      Route route, std::uint32_t filled, bool& transferred) noexcept {
     const double params = model.active_params > 0 ? model.active_params : model.params;
     if (params <= 0) { return 0; }
-    double rate = prefill_eta(model.moe(), generation_of(card), route, transferred) *
-                  peak(card, route) / (2 * params);
+    const std::string_view gen = generation_of(card);
+    const double eta           = route == Route::Int8 && quant.int8_tiles && !model.moe()
+                                     ? tiles_eta(gen, transferred)
+                                     : prefill_eta(model.moe(), gen, route, transferred);
+    double rate = eta * peak(card, route) / (2 * params);
     if (model.moe() && model.experts_per_token > 0) {
         rate *= chunk_share(model, filled);
     }
@@ -429,7 +449,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double reads = weights / (rows_eta(gen, rows, transferred) * card.dram_bytes_per_s) +
                              rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
         bool prefill_transferred = false;
-        const double flops_rate  = linear_prefill(model, card, route, kDefaultChunk, prefill_transferred) * 2 * params;
+        const double flops_rate  = linear_prefill(model, card, quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
         const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
         step = std::max(reads + kDecodeLaunchesPerLayer * model.layers * t0 + exact, flops);
     }
@@ -445,7 +465,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
 
     bool prefill_transferred = false;
     const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
-    out.prefill = linear_prefill(model, card, route, filled, prefill_transferred);
+    out.prefill = linear_prefill(model, card, quant, route, filled, prefill_transferred);
     if (prompt > 0 && out.prefill > 0) {
         const double attention = attention_seconds(model, card, prompt, prefill_transferred);
         out.prefill            = prompt / (prompt / out.prefill + attention);
@@ -467,8 +487,8 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const std::uint32_t rest  = task.prompt - whole;
     bool transferred          = false;
     double prefill_seconds    = attention_seconds(model, card, task.prompt, transferred);
-    if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, route, chunk, transferred); }
-    if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, route, rest, transferred); }
+    if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
+    if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
 }
 

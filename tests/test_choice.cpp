@@ -187,6 +187,38 @@ void decodes_from_facts(const json& fixture) {
     check(n == 84 && rms < 0.06 && worst < 0.20, "decode from facts within the model's spread");
 }
 
+// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of the
+// 2026-10-28 campaign (tests/fixtures/choice/prefill_measured.json), Q8_0 on the int8 tiles, Q4_K_M on
+// MMQ's int8 rows; Q8_0 had taken the MMQ rows (+35-61 % at 14K before).
+void prefills_by_format(const json& fixture) {
+    double sq[2] = {0, 0}, worst[2] = {0, 0};
+    int n[2] = {0, 0};
+    for (const json& row : fixture.at("rows")) {
+        const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
+        const std::string q     = row.at("quant").get<std::string>();
+        const ch::ModelFacts mf = model_at(m, q);
+        const ch::CardFacts cf  = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
+        ch::QuantOption qo      = quant_of(q, m.at("quants").at(q));
+        qo.int8_tiles           = ch::q8_label(q);
+        ch::Candidate c;
+        c.kv                       = KvCacheStorage::Int8Group64;
+        const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
+        const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
+        const int i    = qo.int8_tiles ? 1 : 0;
+        sq[i] += d * d;
+        worst[i] = std::max(worst[i], std::abs(d));
+        ++n[i];
+    }
+    const double mmq = std::sqrt(sq[0] / n[0]), tiles = std::sqrt(sq[1] / n[1]);
+    std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
+              << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
+              << " %)\n";
+    check(n[1] == 42 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
+    check(n[0] == 42 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+    check(ch::q8_label("Q8_0") && ch::q8_label("UD-Q8_K_XL") && !ch::q8_label("Q4_K_M") && !ch::q8_label("Q6_K"),
+          "a Q8 label takes the tiles");
+}
+
 struct Bench {
     ch::ModelFacts model;
     ch::CardFacts card;
@@ -732,6 +764,8 @@ int main() {
     {
         std::ifstream campaign(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_measured.json");
         decodes_from_facts(json::parse(campaign));
+        std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
+        prefills_by_format(json::parse(prefills));
     }
     prices_attention(fixture);
     chooses(fixture);

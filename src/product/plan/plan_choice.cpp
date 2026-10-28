@@ -207,9 +207,15 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                   f != "ggml_tq1_0" && f != "ggml_tq2_0" && f != "ggml_q1_0" &&
                                   f != "ggml_q2_0";
                        });
+    // Every quantized format q8_g32_fp16 (a GGUF's Q8_0): the linears prefill on the int8 tiles.
+    quant.int8_tiles = std::any_of(formats.begin(), formats.end(), [](const std::string& f) { return f == "q8_g32_fp16"; }) &&
+                       std::all_of(formats.begin(), formats.end(), [](const std::string& f) {
+                           return f == "q8_g32_fp16" || f == "bf16" || f == "fp32" || f == "f16" || f == "int32";
+                       });
     // A quantization named by its listing's label (a hub row: the facts' header may be another
     // row's) takes its route from the label, as the quant table's estimate does.
     if (!label.empty()) {
+        quant.int8_tiles = choice::q8_label(label);
         quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
         quant.int8_route = true;
         for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {

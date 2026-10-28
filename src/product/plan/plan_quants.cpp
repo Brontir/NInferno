@@ -526,6 +526,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             q.label           = row.listing.quant;
             q.weight_bytes    = static_cast<double>(row.weight_bytes);
             q.bits_per_weight = row.candidate.bits_per_weight;
+            q.int8_tiles      = choice::q8_label(q.label);
             q.nvfp4           = q.label.find("NVFP4") != std::string::npos ||
                                 q.label.find("nvfp4") != std::string::npos;
             // The ternary and two-bit GGML blocks keep BF16 activations (kept_block_policy).

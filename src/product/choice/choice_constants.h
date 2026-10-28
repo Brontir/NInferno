@@ -177,6 +177,24 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {true, "gb20x", Route::Int8, 0.205},   // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
 
+// A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
+// Q8 codec, ops/generic q8_prefill_a8), not ggml's MMQ that kPrefillEta's int8 rows measured: its
+// linears reach this share of the int8 peak (sm_bench.py prefill, master 03afc418: Qwen3.5-9B Q8_0
+// at 7K and 14K prompts, attention apart; the same campaign's Q4_K_M within 4 % of the int8 rows on
+// Ada, Blackwell and Ampere, 12 % below Turing's). Ada: RTX 4060 Ti 0.197, 4070 Ti 0.217, 4090 0.223
+// (the nsys census of a 6.8K prompt on the 4090: the W4A8 Q8 kernel at 20.8 % of the peak, ggml's MMQ
+// on Q4_K_M at 33.7 %). Blackwell: RTX 5070 Ti 0.303, 5090 0.269. Ampere: RTX 3060 0.342, Turing:
+// RTX 2080 Ti 0.147 (one card each). The tiles' share of MMQ's differs by generation (Ada 0.69,
+// Blackwell 0.90, Ampere 0.97, Turing 0.69), so none carries: a generation without a row keeps its
+// int8 row (transferred).
+struct TilesEta {
+    std::string_view generation;
+    double eta;
+    int cards;
+};
+inline constexpr TilesEta kPrefillTilesEta[] = {
+    {"ada", 0.212, 3}, {"gb20x", 0.286, 2}, {"ga10x", 0.342, 1}, {"turing", 0.147, 1}};
+
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak
 // (fit_prefill.py, the same points; Turing's BF16 row is the composed aggregate, core/generation.h).

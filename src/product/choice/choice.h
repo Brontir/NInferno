@@ -111,6 +111,9 @@ struct QuantOption {
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
+    // Its linears prefill on the generic int8 tiles, not ggml's MMQ: Q8 weights (a GGUF's Q8_0
+    // converts to q8_g32_fp16, which the int8 tiers take: ops/generic q8_prefill_a8).
+    bool int8_tiles        = false;
 };
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
@@ -154,6 +157,9 @@ struct Candidate {
 };
 
 // ---- The three estimates.
+
+// Whether a quantization label names Q8 weights (Q8_0, Q8_K_XL: the int8 tiles' prefill).
+[[nodiscard]] bool q8_label(std::string_view label) noexcept;
 
 // The route a candidate's linears take on this card.
 [[nodiscard]] Route route_of(const QuantOption& quant, ActivationMode activations,
