@@ -47,13 +47,6 @@ struct QuantListing {
     std::uint64_t head_bytes = 0;
 };
 
-// The GGUF quantizations whose own output head the table needs: those whose fit, or the rule's
-// pick, differs between a head as small as any GGUF stores (Q2_K's 2.625 bits) and as large (16
-// bits) for every row whose head is not read yet. Every other row is priced with the parsed
-// header's head and marked QuantRow::proposal_head_assumed.
-[[nodiscard]] std::vector<std::string> head_rows_to_read(const PlanSourceFacts& shape,
-                                                         const std::vector<QuantListing>& listing,
-                                                         const DryRunInputs& inputs);
 
 // The weights and the state of the drafters a start attaches beside the target (the subject's
 // attached_drafters, as the converter's drafter plan takes them): a GGUF drafter file's size from
@@ -236,6 +229,14 @@ struct QuantPlan {
 [[nodiscard]] QuantPlan plan_quants(const PlanSourceFacts& shape,
                                     const std::vector<QuantListing>& listing,
                                     const DryRunInputs& inputs);
+
+// The GGUF quantizations whose own output head the table needs: those whose fit, or the rule's
+// pick, differs between a head as small as any GGUF stores (Q2_K's 2.625 bits) and as large (16
+// bits) for every row whose head is not read yet. Every other row is priced with the parsed
+// header's head and marked QuantRow::proposal_head_assumed.
+[[nodiscard]] std::vector<std::string> head_rows_to_read(const PlanSourceFacts& shape,
+                                                         const std::vector<QuantListing>& listing,
+                                                         const DryRunInputs& inputs);
 
 // One model at its own weights.
 [[nodiscard]] PlannedSpeculation plan_model(const PlanSourceFacts& facts,
