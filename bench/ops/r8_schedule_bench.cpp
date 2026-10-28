@@ -91,8 +91,8 @@ double median(std::vector<double> v) {
 
 void run_problem(const Problem& p, int samples, int launches, std::size_t l2_bytes,
                  std::int32_t tokens) {
-    const char* fmt         = generic::qtype_name(p.qtype);
-    const char* epi         = generic::epilogue_name(p.epilogue);
+    const char* fmt = generic::qtype_name(p.qtype);
+    const char* epi = generic::epilogue_name(p.epilogue);
     const bool swiglu       = p.epilogue == generic::Epilogue::SwiGlu;
     const std::int32_t rows = swiglu ? 2 * p.n : p.n;
     if (!generic::r8_supports(p.qtype) || (p.k % 128) != 0 || !generic::r8_fits(p.qtype, p.k, 1)) {
@@ -250,15 +250,15 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         // FNV-1a of the whole output: one route's bytes compared across builds.
         std::uint64_t hash = 14695981039346656037ULL;
         for (const std::uint8_t c : outputs[i]) hash = (hash ^ c) * 1099511628211ULL;
-        std::printf(
-            "r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n", fmt,
-            epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
-            static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
-            same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
-            r == picked16 ? " a16pick" : "", static_cast<unsigned long long>(hash));
+        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n",
+                    fmt, epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
+                    static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
+                    same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
+                    r == picked16 ? " a16pick" : "",
+                    static_cast<unsigned long long>(hash));
     }
-    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n, p.k,
-                tokens, generic::route_name(picked).c_str(), med[at_picked],
+    std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n,
+                p.k, tokens, generic::route_name(picked).c_str(), med[at_picked],
                 generic::route_name(routes[best]).c_str(), med[best]);
     std::fflush(stdout);
 
@@ -342,8 +342,7 @@ int main(int argc, char** argv) {
                         b.sms, b.l2_mib, b.dram_gbps);
         }
         for (const Problem& p : problems) {
-            for (const std::int32_t t : widths)
-                run_problem(p, samples, launches, device.l2_bytes, t);
+            for (const std::int32_t t : widths) run_problem(p, samples, launches, device.l2_bytes, t);
         }
         std::printf("done\n");
         return 0;
