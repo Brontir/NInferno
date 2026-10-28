@@ -105,7 +105,13 @@ void segmented_gdn_input_proj_conv_record(const Tensor& x,
 // gdn_norm_gating_proj on a segmented a/b projection of any head count:
 //   h = x * rsqrt(mean(x^2) + eps) * (1 + norm_weight)   (BF16 output)
 //   a, b = projections of h;  g = -exp(A_log) * softplus(a + dt_bias);  beta = sigmoid(b)
-// a and b are rounded to BF16 before the gate, as in gdn_gating.
+// Composed (the norm, the generic projection, the gates), a and b are rounded to BF16 before the
+// gate, as in gdn_gating. A call of at most kSegmentedFusedControlMaxTokens columns whose a and b
+// are each one BF16 row block runs instead as one kernel, the 27B's fused kernel
+// (gdn_norm_gating_proj) at one CTA width chosen from the hidden size alone: a and b come from the
+// unrounded normalized input in FP32, and a token's bytes do not depend on the other columns of
+// the call. Never under the invariant route profile.
+inline constexpr std::int32_t kSegmentedFusedControlMaxTokens = 16;
 [[nodiscard]] std::size_t segmented_gdn_norm_gating_workspace_capacity_bytes(
     const SegmentedProjectionWeights& weights, std::int32_t min_tokens, std::int32_t max_tokens);
 
