@@ -147,6 +147,23 @@ void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
 // fit), rung_now and rungs, private_contexts_now, reason_now and reason_code_now.
 [[nodiscard]] nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_now_bytes);
 
+// The plan without the weights of an artifact on disk, as its start plans it: the artifact's facts
+// and speculation subject (`spec_profile`: a tune named, else none), `inputs`' device, GPU key,
+// options, ask and pins; the pins a start refuses refused; the configuration choice for the axes
+// left automatic and the plan at its storages and drafter. One code for the CLI's --plan
+// --no-load and ninferno-ui's /api/plan?artifact= ("My models": a start again, planned first).
+struct ArtifactPlan {
+    PlanSourceFacts facts;
+    std::unique_ptr<SpeculationSubject> subject; // what inputs.subject points to
+    DryRunInputs inputs;
+    PlannedSpeculation planned;
+    std::optional<ServedChoice> served;
+};
+[[nodiscard]] ArtifactPlan plan_artifact(const std::filesystem::path& artifact, DryRunInputs inputs,
+                                         const std::filesystem::path& spec_profile = {});
+// Its ninferno-dry-plan/1 document (source the artifact's path) with the choice.
+[[nodiscard]] nlohmann::json artifact_plan_document(const ArtifactPlan& plan, const std::string& source);
+
 // The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
 // activations and widest chunk, the axes the user left automatic; not the drafter).
 [[nodiscard]] DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
