@@ -46,7 +46,9 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
 template <class Decoder, class Schedule, Epilogue E>
 inline constexpr bool kRmmaLatencyVariant =
     Schedule::kNTiles == 1 &&
-    (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu));
+    (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu) ||
+     (E != Epilogue::SwiGlu && (NINFERNO_RMMA_AHEAD_EXP & 2) && SpreadOf<Decoder> &&
+      !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value));
 
 // The DRAM bytes per SM cycle (dram_bytes_per_sm_cycle: the board's facts) from which the plain
 // K-quant kernel of one token tile is latency-bound. It cuts a row's scales out as it loads them,
