@@ -319,10 +319,10 @@ int main(int argc, char** argv) {
                 cli.artifact_path, engine_options.speculative.backend);
         }
         if (cli.spec_explicit) {
-            // DFlash and DFlash2 draft with the artifact's proposal head when it has one.
+            // DFlash drafts with the artifact's proposal head when it has one for it.
             engine_options.speculative.proposal_head = ninferno::product::model_draft_head(
                 cli.artifact_path, engine_options.speculative.backend,
-                engine_options.speculative.proposal_head);
+                engine_options.speculative.drafter, engine_options.speculative.proposal_head);
         }
         engine_options.enable_vision      = cli.enable_vision;
         engine_options.use_cuda_graph     = cli.use_cuda_graph;

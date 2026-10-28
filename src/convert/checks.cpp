@@ -456,11 +456,16 @@ std::vector<std::int64_t> select_shortlist(const std::vector<std::int64_t>& coun
 
 namespace {
 
+// The rows a ranking file holds at most (tools/freq_corpus: the total and five strata).
+constexpr std::uint64_t kRankingMaxRows = 8;
+
 // Row 0 of a ranking file (total counts over the vocabulary), cut to the model's token domain.
 std::vector<std::int64_t> ranking_totals(const Model& model, const std::filesystem::path& ranking) {
     const auto vocab = model.config()["vocab_size"].get<std::uint64_t>();
     const auto size  = std::filesystem::file_size(ranking);
-    if (size == 0 || size % (vocab * 8)) {
+    // A ranking holds a few rows of the vocabulary (the total, its strata): many more rows of
+    // `vocab` mean a file of another vocabulary whose size `vocab` happens to divide.
+    if (size == 0 || size % (vocab * 8) || size / (vocab * 8) > kRankingMaxRows) {
         throw std::runtime_error("ranking must contain complete int64 vocabulary rows");
     }
     std::vector<std::int64_t> total(vocab);
@@ -518,15 +523,17 @@ double stored_bytes(const Model& model, const Recipe& recipe, std::size_t index)
 
 } // namespace
 
-DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
-                                 const std::filesystem::path& ranking) {
+namespace {
+
+DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
+                                    const std::filesystem::path& ranking) {
     DefaultProposal out;
     const auto type = model.config().value("model_type", std::string());
     if (type != "qwen3_5_text" && type != "qwen3_5_moe_text") { return out; }
-    const std::string drafter = model.components.contains("dflash2") ? "dflash2"
-                                : model.components.contains("dflash") ? "dflash"
-                                                                      : "";
-    if (drafter.empty() || !model.index.contains("text/output_head")) { return out; }
+    const std::string drafter = "dflash";
+    if (!model.components.contains(drafter) || !model.index.contains("text/output_head")) {
+        return out;
+    }
     // A round as spec/round_cost.h prices it: the target's verify pass over depth + 1 rows (its
     // routed experts at that width), the drafter's block pass, the draft head.
     spec::PassFacts target;
@@ -556,11 +563,9 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
                          drafter_bytes + head;
     if (!(round > head && head > 0)) { return out; }
     const double share = head / round;
-    std::vector<std::int64_t> totals;
-    try {
-        totals = ranking_totals(model, ranking); // a ranking of another vocabulary: none
-    } catch (const std::exception&) { return out; }
-    const auto choice = spec::draft_head_rows(totals, share, spec::kDraftHeadDepth);
+    // A ranking of another vocabulary throws (the caller keeps the full head).
+    const auto choice =
+        spec::draft_head_rows(ranking_totals(model, ranking), share, spec::kDraftHeadDepth);
     std::ostringstream note;
     note.precision(3);
     note << "draft head: " << drafter << " round reads the head as " << 100 * share
@@ -577,6 +582,17 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
     return out;
 }
 
+} // namespace
+
+DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
+                                 const std::filesystem::path& ranking) {
+    try {
+        return default_proposal_of(model, recipe, ranking);
+    } catch (const std::exception& error) {
+        return {0, std::string("draft head: the full head drafts (") + error.what() + ")"};
+    }
+}
+
 std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double drafter_bytes,
                                      std::uint64_t vocab, std::uint64_t hidden) {
     if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return 0; }
@@ -584,7 +600,8 @@ std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, dou
     if (!found) { return 0; }
     std::vector<std::int64_t> totals(vocab);
     try {
-        if (std::filesystem::file_size(*found) % (vocab * 8) != 0) { return 0; }
+        const auto size = std::filesystem::file_size(*found);
+        if (size % (vocab * 8) != 0 || size / (vocab * 8) > kRankingMaxRows) { return 0; }
         std::ifstream stream(*found, std::ios::binary);
         stream.read(reinterpret_cast<char*>(totals.data()), static_cast<std::streamsize>(vocab * 8));
         if (!stream) { return 0; }
@@ -615,7 +632,8 @@ std::string declared_architecture(const OJson& config) {
 }
 
 void add_official_proposal(Model& model, Recipe& recipe, const std::filesystem::path& ranking,
-                           const std::string& ranking_text, std::uint64_t rows) {
+                           const std::string& ranking_text, std::uint64_t rows,
+                           const std::vector<std::string>& drafters) {
     if (model.index.contains("proposal/head")) {
         throw std::runtime_error("proposal head already configured");
     }
@@ -623,7 +641,9 @@ void add_official_proposal(Model& model, Recipe& recipe, const std::filesystem::
     auto head      = gather_source(model.parameters[model.at("text/output_head")].source, ids);
     std::vector<std::string> inputs;
     for (const char* component : {"mtp", "dflash", "dflash2"}) {
-        if (model.components.contains(component)) {
+        const bool wanted = drafters.empty() || std::find(drafters.begin(), drafters.end(),
+                                                          component) != drafters.end();
+        if (wanted && model.components.contains(component)) {
             inputs.push_back(std::string(component) + "/final_hidden");
         }
     }

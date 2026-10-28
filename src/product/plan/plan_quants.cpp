@@ -330,10 +330,10 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
-                // A Qwen target converted with a DFlash / DFlash2 companion takes the proposal
-                // head the converter's default_proposal chooses, loaded only to draft with it.
+                // A Qwen target converted with a DFlash companion takes the proposal head the
+                // converter's default_proposal chooses, loaded only to draft with it.
                 const bool qwen = target_model_type.starts_with("qwen3_5");
-                if (target != nullptr && qwen && dflash) {
+                if (target != nullptr && qwen && d.kind == "dflash") {
                     bytes += convert::planned_proposal_bytes(
                         static_cast<double>(target->head_bytes),
                         static_cast<double>(target->weight_bytes), static_cast<double>(bytes),

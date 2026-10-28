@@ -1711,9 +1711,9 @@ ConvertResult convert(const ConvertOptions& options) {
     if (share_tied_head(model, recipe)) {
         log("tied output head: bound to the token embedding's objects (one copy)");
     }
-    // Without --proposal a Qwen target converted with a DFlash or DFlash2 drafter gets a proposal
-    // head of the rows the bytes/acceptance bound chooses (default_proposal, spec/draft_head.h),
-    // when the default ranking is found; --no-proposal keeps the full head.
+    // Without --proposal a Qwen target converted with a DFlash drafter gets a proposal head for
+    // that drafter, of the rows the bytes/acceptance bound chooses (default_proposal,
+    // spec/draft_head.h), when the default ranking is found; --no-proposal keeps the full head.
     std::filesystem::path proposal_ranking = ranking;
     std::string proposal_ranking_text      = ranking_text;
     std::uint64_t proposal_rows            = options.proposal ? options.proposal_rows : 0;
@@ -1728,9 +1728,11 @@ ConvertResult convert(const ConvertOptions& options) {
             }
         }
     }
-    if (proposal_rows != 0 && !restricted) {
+    if (options.proposal && !restricted) {
+        add_official_proposal(model, recipe, ranking, ranking_text, options.proposal_rows);
+    } else if (proposal_rows != 0 && !restricted) {
         add_official_proposal(model, recipe, proposal_ranking, proposal_ranking_text,
-                              proposal_rows);
+                              proposal_rows, {"dflash"});
     }
     // --maintainer-quantize runs the recipe's table as written.
     if (!options.maintainer_quantize) {

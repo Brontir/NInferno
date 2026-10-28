@@ -33,7 +33,7 @@ std::filesystem::path artifact(const std::filesystem::path& dir, const std::stri
     std::ofstream(path) << "x";
     std::ofstream(path.string() + ".revision") << revision << "\n";
     std::ofstream(path.string() + ".conversion.json")
-        << R"({"components": {"text": {}}, "methods": [)"
+        << R"({"components": {"text": {"config": {"model_type": "qwen3_5_text"}}}, "methods": [)"
         << R"({"parameters": ["text/layers/0/attention/query"], "format": "nvfp4"},)"
         << R"({"parameters": [")" << query << R"("], "format": ")" << format << R"("}]})";
     return path;
@@ -61,9 +61,12 @@ int main() {
     check(cached_revision(bf16) == 3, "and keeps its stamp");
     check(!cache_current(artifact(dir, "bf16-2", 3, "dflash2/layers/1/attention/query", "bf16")),
           "a BF16 DFlash2 drafter too");
-    // Revision 6: a Q8 companion without a proposal head is converted again (it takes one).
-    check(!cache_current(artifact(dir, "q8", 3, "dflash2/layers/0/attention/query", "q8_g32_fp16")),
-          "a Q8 drafter without a proposal head at revision 3 is converted again");
+    // Revision 6: a Qwen DFlash companion without a proposal head is converted again (it takes
+    // one, the ranking found in this tree); DFlash2 takes none.
+    check(!cache_current(artifact(dir, "q8", 3, "dflash/layers/0/attention/query", "q8_g32_fp16")),
+          "a Q8 DFlash drafter without a proposal head at revision 3 is converted again");
+    check(cache_current(artifact(dir, "q8-2", 3, "dflash2/layers/0/attention/query", "q8_g32_fp16")),
+          "a Q8 DFlash2 drafter at revision 3 is current");
     check(cache_current(artifact(dir, "q8-head", 3, "proposal/head", "ggml_q6_k")) ,
           "an artifact with a proposal head and no companion at revision 3 is current");
     // Revision 5: the GGUF dense default (qwen3_5_bf16) left the companion BF16 through

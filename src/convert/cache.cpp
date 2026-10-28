@@ -1,4 +1,6 @@
 #include "convert/cache.h"
+#include "convert/checks.h"
+#include "convert/drafters.h"
 
 #include "convert/acquire.h"
 #include "convert/convert.h"
@@ -69,6 +71,13 @@ bool companion_without_proposal(const std::filesystem::path& artifact) {
     bool companion = false;
     try {
         const OJson report = OJson::parse(stream);
+        // Only a Qwen target's (default_proposal), and only where this build finds the ranking.
+        const auto& config = report.at("components").at("text").at("config");
+        const auto type    = config.value("model_type", std::string());
+        if ((type != "qwen3_5_text" && type != "qwen3_5_moe_text") ||
+            !resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
+            return false;
+        }
         const auto methods = report.find("methods");
         if (methods == report.end() || !methods->is_array()) { return false; }
         for (const auto& method : *methods) {
@@ -76,7 +85,7 @@ bool companion_without_proposal(const std::filesystem::path& artifact) {
                 if (!name.is_string()) { continue; }
                 const auto& text = name.get_ref<const std::string&>();
                 if (text.starts_with("proposal/")) { return false; }
-                companion = companion || text.starts_with("dflash/") || text.starts_with("dflash2/");
+                companion = companion || text.starts_with("dflash/");
             }
         }
     } catch (const std::exception&) { return false; }
