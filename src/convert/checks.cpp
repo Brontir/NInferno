@@ -10,11 +10,14 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <map>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <set>
 #include <sstream>
 #include <stdexcept>
+#include <tuple>
 
 namespace ninferno::convert {
 
@@ -596,27 +599,49 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
 std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double drafter_bytes,
                                      std::uint64_t vocab, std::uint64_t hidden) {
     if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return 0; }
-    const auto found = resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path());
-    if (!found) { return 0; }
-    std::vector<std::int64_t> totals(vocab);
-    try {
-        const auto size = std::filesystem::file_size(*found);
-        if (size % (vocab * 8) != 0 || size / (vocab * 8) > kRankingMaxRows) { return 0; }
-        std::ifstream stream(*found, std::ios::binary);
-        stream.read(reinterpret_cast<char*>(totals.data()), static_cast<std::streamsize>(vocab * 8));
-        if (!stream) { return 0; }
-    } catch (const std::exception&) { return 0; }
-    // A checkpoint's head: BF16 in the round (the share), its gathered rows the recipe's Q4.
-    const double values = static_cast<double>(vocab) * static_cast<double>(hidden);
-    const double full   = head_bytes > 0 ? head_bytes : values * 2;
-    const double rows_bytes =
-        head_bytes > 0 ? head_bytes / static_cast<double>(vocab) : hidden * stored_bits(QType::Q4_G64_FP16) / 8;
-    // The target's weights hold its head already (a GGUF's tensor table counts output.weight).
-    const double round = std::max(target_bytes, full) + drafter_bytes + full;
-    const auto choice  = spec::draft_head_rows(totals, full / round, spec::kDraftHeadDepth);
-    // The gathered rows and their int32 token ids (proposal/token_ids).
-    return static_cast<std::uint64_t>(static_cast<double>(choice.rows) * rows_bytes) +
-           choice.rows * sizeof(std::int32_t);
+    // A plan prices many rows and probes: the ranking is read once per vocabulary, each answer
+    // kept (the same facts, the same bytes).
+    using Key = std::tuple<double, double, double, std::uint64_t, std::uint64_t>;
+    static std::mutex mutex;
+    static std::map<std::uint64_t, std::vector<std::int64_t>> rankings; // by vocabulary
+    static std::map<Key, std::uint64_t> answers;
+    const Key key{head_bytes, target_bytes, drafter_bytes, vocab, hidden};
+    std::lock_guard lock(mutex);
+    if (const auto it = answers.find(key); it != answers.end()) { return it->second; }
+    auto ranking = rankings.find(vocab);
+    if (ranking == rankings.end()) {
+        std::vector<std::int64_t> totals;
+        if (const auto found =
+                resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
+            try {
+                const auto size = std::filesystem::file_size(*found);
+                if (size % (vocab * 8) == 0 && size / (vocab * 8) <= kRankingMaxRows) {
+                    totals.resize(vocab);
+                    std::ifstream stream(*found, std::ios::binary);
+                    stream.read(reinterpret_cast<char*>(totals.data()),
+                                static_cast<std::streamsize>(vocab * 8));
+                    if (!stream) { totals.clear(); }
+                }
+            } catch (const std::exception&) { totals.clear(); }
+        }
+        ranking = rankings.emplace(vocab, std::move(totals)).first;
+    }
+    std::uint64_t out = 0;
+    if (!ranking->second.empty()) {
+        // A checkpoint's head: BF16 in the round (the share), its gathered rows the recipe's Q4.
+        const double values = static_cast<double>(vocab) * static_cast<double>(hidden);
+        const double full   = head_bytes > 0 ? head_bytes : values * 2;
+        const double rows_bytes = head_bytes > 0 ? head_bytes / static_cast<double>(vocab)
+                                                 : hidden * stored_bits(QType::Q4_G64_FP16) / 8;
+        // The target's weights hold its head already (a GGUF's tensor table counts output.weight).
+        const double round = std::max(target_bytes, full) + drafter_bytes + full;
+        const auto choice  = spec::draft_head_rows(ranking->second, full / round, spec::kDraftHeadDepth);
+        // The gathered rows and their int32 token ids (proposal/token_ids).
+        out = static_cast<std::uint64_t>(static_cast<double>(choice.rows) * rows_bytes) +
+              choice.rows * sizeof(std::int32_t);
+    }
+    answers.emplace(key, out);
+    return out;
 }
 
 std::vector<std::int64_t> shortlist_ids(const Model& model, const std::filesystem::path& ranking,
