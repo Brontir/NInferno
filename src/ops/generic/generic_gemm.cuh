@@ -2961,8 +2961,10 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // ---------------------------------------------------------------------------------------------
 //
 // Latency (the K-quant decoders of a one-tile schedule, UnpackOf or StageActsOf; the launch picks
-// it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes, and under SwiGLU
-// the activations staged ahead with cp.async. Every other instantiation is the plain kernel.
+// it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes (UnpackOf), under
+// SwiGLU the activations staged ahead with cp.async, and where kRmmaAhead holds the activations
+// loaded a step ahead into registers (act_ring; for one row set of Q3_K / Q6_K, which have no
+// load_raw, that ring is the whole variant). Every other instantiation is the plain kernel.
 // The latency kernel's activation ring (rmma_kernel's act_ring): each K step's activations loaded
 // into registers with the step's weights, one step ahead, instead of inside the step. Inside the
 // step a spread decoder loads them group by group, each group's MMAs waiting on its own load, so
@@ -3003,8 +3005,8 @@ inline constexpr bool kRmmaAhead =
 // held to 128: 107.2 us). ptxas for sm_89 gave the wide w1x4 159 registers against 124.
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 inline constexpr int kRmmaMinBlocks =
-    ((FinishOf<Decoder>::value && Schedule::kMTiles == 1) ||
-     kRmmaAhead<Decoder, Schedule, E, Latency>) &&
+    (FinishOf<Decoder>::value || kRmmaAhead<Decoder, Schedule, E, Latency>) &&
+            Schedule::kMTiles == 1 &&
             E != Epilogue::SwiGlu && 65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
         ? 65536 / (Schedule::kThreads * 128)
         : Schedule::kMinBlocks;

@@ -43,7 +43,11 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
 
 // The schedules and decoders with a latency variant (rmma_kernel's Latency): one token tile of a
 // K-quant whose heads unpack late (UnpackOf), SwiGLU of one that stages its activations, or one
-// row set of one with the activation ring (kRmmaAheadForm: Q6_K, which has no load_raw).
+// row set of one with the activation ring (kRmmaAheadForm: Q3_K and Q6_K, which have no load_raw;
+// Q4_K / Q5_K's one-row-set variant takes the ring too). The one-row-set variant runs from
+// kRmmaLatencyOneSetBytes and Q6_K's wide variant below kRmmaWideBytes: one board takes one.
+static_assert(kRmmaWideBytes <= kRmmaLatencyOneSetBytes,
+              "the Q6_K latency (ring) kernel would shadow the wide one");
 template <class Decoder, class Schedule, Epilogue E>
 inline constexpr bool kRmmaLatencyVariant =
     Schedule::kNTiles == 1 &&
