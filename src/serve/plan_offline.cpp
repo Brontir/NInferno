@@ -443,12 +443,13 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         options.speculative.drafter.empty()
             ? product::attached_drafter_memory(*out.subject, model.listing,
                                                model.facts.model.model_type,
-                                               model.facts.model.hidden, &fetch,
-                                               &model.facts.model)
+                                               model.facts.model.hidden, &fetch)
             : product::supplied_drafter_memory(options.speculative.drafter,
                                                model.facts.model.hidden);
     out.inputs.drafter_bytes = drafter.bytes;
     out.inputs.drafter_state = drafter.state;
+    out.inputs.proposal_drafter_bytes       = drafter.proposal_drafter_bytes;
+    out.inputs.proposal_header_weight_bytes = model.facts.model.weight_bytes;
     // A repository's quantizations each have their weights, and the lab's pairs are of weights:
     // every row of the table resolves its own (the subject above is the one read).
     if (model.listing.size() > 1) { out.inputs.subject_of = out.subjects->lookup(); }

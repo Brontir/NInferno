@@ -873,6 +873,28 @@ void test_proposal_bytes_only_when_drafting() {
           "an asked-for head");
 }
 
+// The default proposal head a Qwen conversion with a DFlash companion adds, per quantization: each
+// row's own weights (Codex on #170: every row of the --plan table took the header's size).
+void test_proposal_bytes_per_quant() {
+    pr::PlanSourceFacts q4 = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0);
+    q4.model.weight_bytes  = 5117970432;
+    q4.model.head_bytes    = 834355200;
+    q4.model.vocab         = 248320;
+    q4.model.hidden        = 4096;
+    pr::DryRunInputs inputs;
+    inputs.proposal_drafter_bytes       = 1372703744.0;
+    inputs.proposal_header_weight_bytes = q4.model.weight_bytes;
+    pr::PlanSourceFacts q8 = q4;
+    q8.model.weight_bytes  = 2 * q4.model.weight_bytes; // a quantization twice the size
+    const std::uint64_t at_q4 = pr::proposal_bytes_at(q4, inputs);
+    const std::uint64_t at_q8 = pr::proposal_bytes_at(q8, inputs);
+    check(at_q4 == 147456ULL * 3360 + 147456ULL * 4, "the header's row: 147,456 rows and ids");
+    check(at_q8 > at_q4, "a larger quantization's head is larger");
+    pr::DryRunInputs none = inputs;
+    none.proposal_drafter_bytes = 0;
+    check(pr::proposal_bytes_at(q4, none) == 0, "no companion: no head");
+}
+
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the
 // replay records, a DFlash drafter's pool and ring (the review's M2: all of them were missing).
 void test_what_the_estimate_missed() {
@@ -1050,6 +1072,7 @@ int main() {
     test_dry_run_basis();
     test_fits_instead();
     test_proposal_bytes_only_when_drafting();
+    test_proposal_bytes_per_quant();
     std::cout << "rung bytes compared: " << compared << '\n';
     check(compared > 1000, "many rungs compared");
     if (failures != 0) {

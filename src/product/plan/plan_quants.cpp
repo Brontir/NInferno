@@ -176,9 +176,25 @@ DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
     return out;
 }
 
+std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    if (inputs.proposal_drafter_bytes <= 0) { return 0; }
+    const auto& m = facts.model;
+    // The header names one quantization's head: another row's head is taken at the same share of
+    // its weights (the plan reads one header).
+    double head = static_cast<double>(m.head_bytes);
+    if (head > 0 && inputs.proposal_header_weight_bytes > 0 &&
+        m.weight_bytes != inputs.proposal_header_weight_bytes) {
+        head *= static_cast<double>(m.weight_bytes) /
+                static_cast<double>(inputs.proposal_header_weight_bytes);
+    }
+    return convert::planned_proposal_bytes(head, static_cast<double>(m.weight_bytes),
+                                           inputs.proposal_drafter_bytes, m.vocab, m.hidden);
+}
+
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.drafter_bytes, inputs.drafter_state);
+                                 inputs.drafter_bytes + proposal_bytes_at(facts, inputs),
+                                 inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
@@ -238,7 +254,7 @@ PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
 AttachedDrafterMemory
 attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
                         std::string_view target_model_type, std::uint32_t target_hidden,
-                        const convert::FetchOptions* fetch, const runtime::PlanModelFacts* target) {
+                        const convert::FetchOptions* fetch) {
     AttachedDrafterMemory out;
     for (const spec::DrafterDecl& d : subject.attached_drafters) {
         std::uint64_t bytes = 0;
@@ -331,13 +347,10 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
                 // A Qwen target converted with a DFlash companion takes the proposal head the
-                // converter's default_proposal chooses, loaded only to draft with it.
-                const bool qwen = target_model_type.starts_with("qwen3_5");
-                if (target != nullptr && qwen && d.kind == "dflash") {
-                    bytes += convert::planned_proposal_bytes(
-                        static_cast<double>(target->head_bytes),
-                        static_cast<double>(target->weight_bytes), static_cast<double>(bytes),
-                        target->vocab, target->hidden);
+                // converter's default_proposal chooses: priced per quantization from that row's
+                // weights (proposal_bytes_at), so here only the companion's bytes it rests on.
+                if (target_model_type.starts_with("qwen3_5") && d.kind == "dflash") {
+                    out.proposal_drafter_bytes = static_cast<double>(bytes);
                 }
             } else if (!d.quant.empty() && config && !encoded) {
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16

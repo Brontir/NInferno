@@ -52,18 +52,18 @@ struct QuantListing {
 // Q8), a DFlash drafter's state from that revision's config.json.
 // One code for every plan of a model not converted yet: ninferno-serve --plan --no-load and its
 // start's memory check, ninferno-ui's /api/plan. `fetch` nullptr (offline): only the target's
-// listing is read. What is not known stays 0 / nullopt. `target` (its head, weights, vocabulary
-// and width): a Qwen DFlash companion's bytes include the proposal head the converter adds
-// (convert::planned_proposal_bytes); nullptr leaves it out.
+// listing is read. What is not known stays 0 / nullopt.
 struct AttachedDrafterMemory {
     std::uint64_t bytes = 0;
     std::optional<models::DrafterStateShape> state;
+    // A Qwen DFlash companion's bytes as converted (0: none): what the default proposal head the
+    // converter adds is priced on, per quantization (DryRunInputs::proposal_drafter_bytes).
+    double proposal_drafter_bytes = 0;
 };
 [[nodiscard]] AttachedDrafterMemory
 attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
                         std::string_view target_model_type, std::uint32_t target_hidden,
-                        const convert::FetchOptions* fetch,
-                        const runtime::PlanModelFacts* target = nullptr);
+                        const convert::FetchOptions* fetch);
 
 // The memory of a drafter artifact given with --drafter, which drafts in place of the model's
 // own: its tensors' bytes, and a DFlash drafter's state from its components' config (beside a
@@ -102,6 +102,11 @@ struct DryRunInputs {
     // nullptr from it: `subject` for every quantization.
     std::function<const SpeculationSubject*(const QuantListing&)> subject_of;
     std::uint64_t drafter_bytes       = 0; // a separate drafter's weights, when known
+    // The default proposal head a Qwen conversion with a DFlash companion adds, priced for each
+    // quantization from its own weights (proposal_bytes_at): the companion's bytes (0: none) and
+    // the weights the facts' head_bytes were read at.
+    double proposal_drafter_bytes              = 0;
+    std::uint64_t proposal_header_weight_bytes = 0;
     // A DFlash drafter's state read from its config before it is downloaded (nullopt: unknown).
     std::optional<models::DrafterStateShape> drafter_state;
     ChoicePins pins;
@@ -110,6 +115,11 @@ struct DryRunInputs {
 // The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
 // --max-context-cap X: a row's launch_context; the free memory picks the rung under that ceiling).
 [[nodiscard]] DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context);
+
+// The default proposal head's bytes (convert::planned_proposal_bytes) at `facts`' weights: its
+// head at the header's share of the weights; 0 when the inputs plan none.
+[[nodiscard]] std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts,
+                                              const DryRunInputs& inputs);
 
 // `inputs` for one quantization: its own subject when DryRunInputs::subject_of gives one.
 [[nodiscard]] DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant);
