@@ -338,13 +338,17 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
             for (int i = 0; i < 8; ++i) acc[s][g][i] = 0.0F;
 
-    F cur[kSets];
+    // The weight stream two superblocks ahead: cur, then nx1 and nx2 in flight.
+    F cur[kSets], nx1[kSets], nx2[kSets];
 #    pragma unroll
     for (int s = 0; s < kSets; ++s) {
+        const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
+        cur[s].clear();
+        nx1[s].clear();
+        nx2[s].clear();
         if (live) {
-            cur[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), 0, q);
-        } else {
-            cur[s].clear();
+            cur[s].load(a, row, 0, q);
+            if (sbs > 1) nx1[s].load(a, row, 1, q);
         }
     }
     uint2 xv[kNTok / 2];
@@ -355,12 +359,10 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll 1
     for (int sb = 0; sb < sbs; ++sb) {
         const bool more = sb + 1 < sbs;
-        F nxt[kSets];
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            nxt[s] = cur[s];
-            if (more && live)
-                nxt[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 1, q);
+            if (sb + 2 < sbs && live)
+                nx2[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 2, q);
         }
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
@@ -386,7 +388,10 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         if (more) stage_store<F, kNTok>(act[(sb + 1) & 1], xv);
         __syncthreads();
 #    pragma unroll
-        for (int s = 0; s < kSets; ++s) cur[s] = nxt[s];
+        for (int s = 0; s < kSets; ++s) {
+            cur[s] = nx1[s];
+            nx1[s] = nx2[s];
+        }
     }
 
     // The quad-pairs' partial sums: ((q0 + q1) + (q2 + q3)) in every lane of the four.
