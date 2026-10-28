@@ -42,17 +42,14 @@ template <class Decoder, class Schedule, Epilogue E, bool Latency>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
 
 // The schedules and decoders with a latency variant (rmma_kernel's Latency): one token tile of a
-// K-quant whose heads unpack late (UnpackOf), SwiGLU of one that stages its activations, or one
-// row set of one with the activation ring (kRmmaAheadForm: Q3_K and Q6_K, which have no load_raw;
-// Q4_K / Q5_K's one-row-set variant takes the ring too). The one-row-set variant runs from
-// kRmmaLatencyOneSetBytes and Q6_K's wide variant below kRmmaWideBytes: one board takes one.
-static_assert(kRmmaWideBytes <= kRmmaLatencyOneSetBytes,
-              "the Q6_K latency (ring) kernel would shadow the wide one");
+// K-quant whose heads unpack late (UnpackOf), or SwiGLU of one that stages its activations. The
+// variant carries the activation ring where it has its form (kRmmaAhead). One row set of Q3_K /
+// Q6_K (no load_raw) gets no ring-only variant: on the RTX 2080 Ti the Q6_K output head (248320 x
+// 4096, store) at T = 1, whose plain kernel streams at 94 % of DRAM, took 1.52 -> 1.71 ms with it.
 template <class Decoder, class Schedule, Epilogue E>
 inline constexpr bool kRmmaLatencyVariant =
     Schedule::kNTiles == 1 &&
-    (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu) ||
-     (E != Epilogue::SwiGlu && kRmmaAheadForm<Decoder, Schedule, E>));
+    (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu));
 
 // The DRAM bytes per SM cycle (dram_bytes_per_sm_cycle: the board's facts) from which the plain
 // K-quant kernel of one token tile is latency-bound. It cuts a row's scales out as it loads them,
