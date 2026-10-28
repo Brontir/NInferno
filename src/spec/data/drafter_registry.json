@@ -1,7 +1,7 @@
 {
   "schema": 1,
-  "version": 164,
-  "published": "2026-10-27",
+  "version": 170,
+  "published": "2026-10-28",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
     "mtp": {
@@ -752,80 +752,84 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.8120556414219474,
-            "config": "mtp:1",
+            "acceptance": 0.722083481983589,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.5136467150028854,
-            "plain_tok_s": 49.18641686111979,
-            "speedup": 1.1730570502878856,
-            "tok_s": 57.69847307733551,
-            "tokens_per_round": 1.8120556414219475
+            "floor_tokens_per_round": 2.1329699860005498,
+            "plain_tok_s": 70.50750213668465,
+            "speedup": 1.5768534443847793,
+            "tok_s": 111.17999759919837,
+            "tokens_per_round": 3.3825779870512065
           },
-          "gpu": "Tesla V100-SXM2-32GB",
+          "gpu": "Quadro GV100",
           "gpu_class": "gv100",
-          "measured_on": "gemma-4-26B-A4B-it-UD-Q4_K_XL.ninferno, kv fp8, Tesla V100-SXM2-32GB, greedy, built-in corpus",
-          "measured_at": "2026-10-14",
+          "measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact (q8 drafters), Quadro GV100, built-in corpus",
+          "measured_at": "2026-10-28",
           "non_thinking": {
-            "acceptance": 0.7680890538033395,
-            "config": "mtp:1",
+            "acceptance": 0.6747776033490319,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.506677520055119,
-            "plain_tok_s": 49.196007300808965,
-            "speedup": 1.151506492850161,
-            "tok_s": 56.649521829185446,
-            "tokens_per_round": 1.7680890538033396
+            "floor_tokens_per_round": 2.1562183425404213,
+            "plain_tok_s": 70.54317013342784,
+            "speedup": 1.5345045533892583,
+            "tok_s": 108.24881578025814,
+            "tokens_per_round": 3.282300884955752
           },
           "portable": {
             "default": {
-              "acceptance": 0.8120556414219474,
-              "config": "mtp:1",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.5136467150028854,
-              "plain_tok_s": 49.18641686111979,
-              "speedup": 1.1730570502878856,
-              "tok_s": 57.69847307733551,
-              "tokens_per_round": 1.8120556414219475
-            },
-            "non_thinking": {
-              "acceptance": 0.7680890538033395,
-              "config": "mtp:1",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.506677520055119,
-              "plain_tok_s": 49.196007300808965,
-              "speedup": 1.151506492850161,
-              "tok_s": 56.649521829185446,
-              "tokens_per_round": 1.7680890538033396
-            },
-            "thinking": {
-              "acceptance": 0.7966008771929824,
+              "acceptance": 0.722083481983589,
               "config": "mtp:3",
               "drafter": "assistant",
-              "floor_tokens_per_round": 2.3542015617060197,
-              "plain_tok_s": 49.15766796406071,
-              "speedup": 1.4308125130078433,
-              "tok_s": 70.33540643326285,
-              "tokens_per_round": 3.3898026315789473
+              "floor_tokens_per_round": 2.1329699860005498,
+              "plain_tok_s": 70.50750213668465,
+              "speedup": 1.5768534443847793,
+              "tok_s": 111.17999759919837,
+              "tokens_per_round": 3.3825779870512065
+            },
+            "non_thinking": {
+              "acceptance": 0.6747776033490319,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.1562183425404213,
+              "plain_tok_s": 70.54317013342784,
+              "speedup": 1.5345045533892583,
+              "tok_s": 108.24881578025814,
+              "tokens_per_round": 3.282300884955752
+            },
+            "thinking": {
+              "acceptance": 0.8234304932735426,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 2.0858013974438987,
+              "plain_tok_s": 70.40071423186595,
+              "speedup": 1.7188775799755456,
+              "tok_s": 121.01020930741969,
+              "tokens_per_round": 3.5817223198594026
             }
           },
-          "source": "spec-tune 2026-10-12T00:42:28Z (ninferno-spec-1, 902 s)",
+          "source": "spec-tune 2026-10-27T21:06:15Z (ninferno-spec-1, 396 s)",
           "thinking": {
-            "acceptance": 0.7966008771929824,
+            "acceptance": 0.8234304932735426,
             "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 2.3542015617060197,
-            "plain_tok_s": 49.15766796406071,
-            "speedup": 1.4308125130078433,
-            "tok_s": 70.33540643326285,
-            "tokens_per_round": 3.3898026315789473
+            "floor_tokens_per_round": 2.0858013974438987,
+            "plain_tok_s": 70.40071423186595,
+            "speedup": 1.7188775799755456,
+            "tok_s": 121.01020930741969,
+            "tokens_per_round": 3.5817223198594026
           },
           "load": [
             {
-              "lanes": 2,
-              "depth": 1
+              "depth": 1,
+              "lanes": 2
+            },
+            {
+              "depth": 0,
+              "lanes": 5
             }
           ],
-          "load_measured_on": "Tesla V100-SXM2-32GB, gemma-4-26B-A4B-it UD-Q4_K_XL 8K, short greedy, fixed MTP depths 0..3 at C=4/8 (C4 depth 1 60.8 tok/s a request, plain 55.7, 3 53.6; C8 1 41.0, plain 39.7, 3 21.8), 2026-10-14",
-          "revision": "4a3a61e6e7f2"
+          "load_measured_on": "unsloth/gemma-4-26B-A4B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact (q8 drafters), Quadro GV100, built-in corpus, context 8192, Quadro GV100, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T21:28:41Z",
+          "revision": "cb561f63bca4"
         },
         {
           "applies_to": [],
@@ -1674,84 +1678,84 @@
         {
           "applies_to": [],
           "default": {
-            "acceptance": 0.691636215996752,
-            "config": "mtp:2",
+            "acceptance": 0.7269824374667376,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.4371242365924835,
-            "plain_tok_s": 30.28186919646105,
-            "speedup": 1.6295532628121854,
-            "tok_s": 49.345918753144915,
-            "tokens_per_round": 2.383272431993504
+            "floor_tokens_per_round": 1.4666706705797485,
+            "plain_tok_s": 24.94186718676582,
+            "speedup": 2.3172728239708618,
+            "tok_s": 57.797111010983,
+            "tokens_per_round": 3.4176991150442477
           },
-          "gpu": "Tesla V100-SXM2-32GB",
+          "gpu": "Quadro GV100",
           "gpu_class": "gv100",
-          "measured_on": "gemma-4-31B-it-UD-Q4_K_XL.ninferno, kv fp8, Tesla V100-SXM2-32GB, greedy, built-in corpus",
-          "measured_at": "2026-10-14",
+          "measured_on": "unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact (q8 drafters), Quadro GV100, built-in corpus",
+          "measured_at": "2026-10-28",
           "non_thinking": {
-            "acceptance": 0.6462462462462463,
-            "config": "mtp:2",
+            "acceptance": 0.6904699396166973,
+            "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.4367345011332768,
-            "plain_tok_s": 30.296106181507056,
-            "speedup": 1.5833541769763269,
-            "tok_s": 47.96946626860751,
-            "tokens_per_round": 2.2924924924924923
+            "floor_tokens_per_round": 1.483885743757785,
+            "plain_tok_s": 24.953884004491695,
+            "speedup": 2.263514168139562,
+            "tok_s": 56.483469994278146,
+            "tokens_per_round": 3.3398576512455516
           },
           "portable": {
             "default": {
-              "acceptance": 0.691636215996752,
-              "config": "mtp:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.4371242365924835,
-              "plain_tok_s": 30.28186919646105,
-              "speedup": 1.6295532628121854,
-              "tok_s": 49.345918753144915,
-              "tokens_per_round": 2.383272431993504
-            },
-            "non_thinking": {
-              "acceptance": 0.6462462462462463,
-              "config": "mtp:2",
-              "drafter": "assistant",
-              "floor_tokens_per_round": 1.4367345011332768,
-              "plain_tok_s": 30.296106181507056,
-              "speedup": 1.5833541769763269,
-              "tok_s": 47.96946626860751,
-              "tokens_per_round": 2.2924924924924923
-            },
-            "thinking": {
-              "acceptance": 0.7247942386831275,
+              "acceptance": 0.7269824374667376,
               "config": "mtp:3",
               "drafter": "assistant",
-              "floor_tokens_per_round": 1.6934521399842555,
-              "plain_tok_s": 30.239238412573847,
-              "speedup": 1.866302420090761,
-              "tok_s": 56.435563831088075,
-              "tokens_per_round": 3.174382716049383
+              "floor_tokens_per_round": 1.4666706705797485,
+              "plain_tok_s": 24.94186718676582,
+              "speedup": 2.3172728239708618,
+              "tok_s": 57.797111010983,
+              "tokens_per_round": 3.4176991150442477
+            },
+            "non_thinking": {
+              "acceptance": 0.6904699396166973,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.483885743757785,
+              "plain_tok_s": 24.953884004491695,
+              "speedup": 2.263514168139562,
+              "tok_s": 56.483469994278146,
+              "tokens_per_round": 3.3398576512455516
+            },
+            "thinking": {
+              "acceptance": 0.8030634573304157,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4321208821195714,
+              "plain_tok_s": 24.905886075382668,
+              "speedup": 2.494677337812837,
+              "tok_s": 62.132149570405446,
+              "tokens_per_round": 3.5709281961471104
             }
           },
-          "source": "spec-tune 2026-10-12T00:57:40Z (ninferno-spec-1, 983 s)",
+          "source": "spec-tune 2026-10-27T22:24:34Z (ninferno-spec-1, 795 s)",
           "thinking": {
-            "acceptance": 0.7247942386831275,
+            "acceptance": 0.8030634573304157,
             "config": "mtp:3",
             "drafter": "assistant",
-            "floor_tokens_per_round": 1.6934521399842555,
-            "plain_tok_s": 30.239238412573847,
-            "speedup": 1.866302420090761,
-            "tok_s": 56.435563831088075,
-            "tokens_per_round": 3.174382716049383
+            "floor_tokens_per_round": 1.4321208821195714,
+            "plain_tok_s": 24.905886075382668,
+            "speedup": 2.494677337812837,
+            "tok_s": 62.132149570405446,
+            "tokens_per_round": 3.5709281961471104
           },
           "load": [
             {
-              "lanes": 2,
-              "depth": 1
+              "depth": 1,
+              "lanes": 3
             },
             {
-              "lanes": 6,
-              "depth": 0
+              "depth": 0,
+              "lanes": 5
             }
           ],
-          "load_measured_on": "Tesla V100-SXM2-32GB, gemma-4-31B-it UD-Q4_K_XL 8K, short greedy, fixed MTP depths 0..3 at C=4/8 (C4 depth 1 21.3 tok/s a request, 2 17.0, plain 19.8; C8 plain 14.1, 1 13.2, 2 7.8), 2026-10-14",
-          "revision": "b90ad5529eaf"
+          "load_measured_on": "unsloth/gemma-4-31B-it-GGUF --quant UD-Q4_K_XL --with-drafters artifact (q8 drafters), Quadro GV100, built-in corpus, context 8192, Quadro GV100, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T23:07:47Z",
+          "revision": "05a73f6352a5"
         },
         {
           "applies_to": [],
@@ -2670,6 +2674,88 @@
           ],
           "load_measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), NVIDIA GeForce RTX 5070 Ti, built-in corpus, context 8192, NVIDIA GeForce RTX 5070 Ti, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T19:00:01Z",
           "revision": "c211c7510f81"
+        },
+        {
+          "applies_to": [],
+          "default": {
+            "acceptance": 0.7170111287758346,
+            "config": "mtp:3",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.5217375322943154,
+            "plain_tok_s": 59.38729525828955,
+            "speedup": 2.177291263430321,
+            "tok_s": 129.30343912463076,
+            "tokens_per_round": 3.344887348353553
+          },
+          "gpu": "Quadro GV100",
+          "gpu_class": "gv100",
+          "measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), Quadro GV100, built-in corpus",
+          "measured_at": "2026-10-28",
+          "non_thinking": {
+            "acceptance": 0.6670097786927431,
+            "config": "mtp:3",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.5424562670818809,
+            "plain_tok_s": 59.481671224130416,
+            "speedup": 2.1069537984938957,
+            "tok_s": 125.32513312644663,
+            "tokens_per_round": 3.2344827586206897
+          },
+          "portable": {
+            "default": {
+              "acceptance": 0.7170111287758346,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.5217375322943154,
+              "plain_tok_s": 59.38729525828955,
+              "speedup": 2.177291263430321,
+              "tok_s": 129.30343912463076,
+              "tokens_per_round": 3.344887348353553
+            },
+            "non_thinking": {
+              "acceptance": 0.6670097786927431,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.5424562670818809,
+              "plain_tok_s": 59.481671224130416,
+              "speedup": 2.1069537984938957,
+              "tok_s": 125.32513312644663,
+              "tokens_per_round": 3.2344827586206897
+            },
+            "thinking": {
+              "acceptance": 0.8264788732394366,
+              "config": "mtp:3",
+              "drafter": "assistant",
+              "floor_tokens_per_round": 1.4775855386425374,
+              "plain_tok_s": 59.10595573580896,
+              "speedup": 2.4179172143999574,
+              "tok_s": 142.9133078471744,
+              "tokens_per_round": 3.5691768826619965
+            }
+          },
+          "source": "spec-tune 2026-10-27T19:55:09Z (ninferno-spec-1, 353 s)",
+          "thinking": {
+            "acceptance": 0.8264788732394366,
+            "config": "mtp:3",
+            "drafter": "assistant",
+            "floor_tokens_per_round": 1.4775855386425374,
+            "plain_tok_s": 59.10595573580896,
+            "speedup": 2.4179172143999574,
+            "tok_s": 142.9133078471744,
+            "tokens_per_round": 3.5691768826619965
+          },
+          "load": [
+            {
+              "depth": 1,
+              "lanes": 2
+            },
+            {
+              "depth": 0,
+              "lanes": 5
+            }
+          ],
+          "load_measured_on": "unsloth/gemma-4-12b-it-GGUF --quant Q4_K_M --with-drafters artifact (q8 drafters), Quadro GV100, built-in corpus, context 8192, Quadro GV100, C 2,4,8, temperature 1.0, thinking on, built-in corpus x1, wait spin, 2026-10-27T20:15:22Z",
+          "revision": "f33dcf3fa212"
         },
         {
           "gpu_class": "*",

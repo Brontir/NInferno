@@ -91,6 +91,34 @@ bool rmma_latency_pays() {
     });
 }
 
+// The schedules and decoders with a wide variant (WideOf: the wide-load Q6_K), one token tile.
+template <class Decoder, class Schedule, Epilogue E>
+inline constexpr bool kRmmaWideVariant =
+    Schedule::kNTiles == 1 && !std::is_void_v<typename WideOf<Decoder>::type>;
+
+// Whether this device launches the wide variant (rmma_wide_rule, generic_gemm_internal.h): the
+// board's DRAM bytes per SM cycle and compute capability, and the two kernels' resident CTAs per
+// SM and local memory (spills), read once per device.
+template <class Decoder, class Schedule, Epilogue E>
+bool rmma_wide_pays() {
+    static PerDevice<bool> pays;
+    return pays.get([](int) {
+        using Wide        = typename WideOf<Decoder>::type;
+        const auto& d     = device_class();
+        const void* plain = reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E>);
+        const void* wide  = reinterpret_cast<const void*>(&rmma_kernel<Wide, Schedule, E>);
+        const auto local  = [](const void* kernel) {
+            cudaFuncAttributes attr{};
+            CUDA_CHECK(cudaFuncGetAttributes(&attr, kernel));
+            return attr.localSizeBytes;
+        };
+        return rmma_wide_rule(dram_bytes_per_sm_cycle(), d.major * 10 + d.minor,
+                              kernel_resident_ctas_per_sm(wide, Schedule::kThreads, 0),
+                              kernel_resident_ctas_per_sm(plain, Schedule::kThreads, 0),
+                              local(wide), local(plain));
+    });
+}
+
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
     if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
@@ -103,6 +131,19 @@ void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
         }
         if (pays) {
             launch_rmma_kernel<Decoder, Schedule, E, true>(args, stream);
+            return;
+        }
+    }
+    if constexpr (kRmmaWideVariant<Decoder, Schedule, E>) {
+        // Where the latency variant does not run (it pays on the other side of the bandwidth per
+        // SM); a failed read takes the plain kernel, as above.
+        bool pays = false;
+        try {
+            pays = rmma_wide_pays<Decoder, Schedule, E>();
+        } catch (const std::exception&) {
+        }
+        if (pays) {
+            launch_rmma_kernel<typename WideOf<Decoder>::type, Schedule, E, false>(args, stream);
             return;
         }
     }
