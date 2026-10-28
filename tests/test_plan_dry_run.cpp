@@ -1186,6 +1186,31 @@ void test_rows_at_choice() {
     }
 }
 
+// One price for a quantization whichever facts carry it (product::quant_option_of): a hub row's
+// GGUF header and a start's artifact (its own drafter bundled, its source label in the
+// provenance) give the same bits and decode bytes, the label from either.
+void test_quant_option_one_rule() {
+    pr::PlanSourceFacts gguf;
+    gguf.model                 = qwen27b(16 * kGiB);
+    gguf.model.weight_elements = 27e9;
+    gguf.model.mtp_bytes       = kGiB / 2;
+    pr::PlanSourceFacts artifact = gguf;
+    artifact.model.weight_bytes += 2 * kGiB; // the own DFlash drafter, bundled
+    artifact.model.own_drafter_bytes = 2 * kGiB;
+    artifact.shape.quant_label       = "Q4_K_M";
+    const ninferno::product::choice::QuantOption a = pr::quant_option_of(gguf, "Q4_K_M");
+    const ninferno::product::choice::QuantOption b = pr::quant_option_of(artifact);
+    check(a.label == "Q4_K_M" && b.label == "Q4_K_M", "the artifact's recorded label prices it");
+    check(std::abs(a.bits_per_weight - b.bits_per_weight) < 1e-9 &&
+              std::abs(a.bits_per_weight - 16.0 * kGiB * 8 / 27e9) < 1e-9,
+          "the same bits: the drafter left out, over the same elements");
+    check(a.weight_bytes == b.weight_bytes && a.weight_bytes == static_cast<double>(16 * kGiB - kGiB / 2),
+          "the same decode bytes: the trunk without the MTP layers or the drafter");
+    check(a.int8_route == b.int8_route && a.nvfp4 == b.nvfp4, "the same routes");
+    artifact.shape.quant_label.clear();
+    check(pr::quant_option_of(artifact).label == "the model's weights", "no label: said so");
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -1206,6 +1231,7 @@ int main() {
     test_speculation_order();
     test_properties();
     test_rows_at_choice();
+    test_quant_option_one_rule();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

@@ -522,16 +522,9 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
             choice::ModelFacts model     = choice_model_of(facts);
             const choice::CardFacts card = choice_card_of(inputs.gpu);
-            choice::QuantOption q;
-            q.label           = row.listing.quant;
-            q.weight_bytes    = static_cast<double>(row.weight_bytes);
-            q.bits_per_weight = row.candidate.bits_per_weight;
-            q.nvfp4           = q.label.find("NVFP4") != std::string::npos ||
-                                q.label.find("nvfp4") != std::string::npos;
-            // The ternary and two-bit GGML blocks keep BF16 activations (kept_block_policy).
-            for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
-                if (q.label.find(a16) != std::string::npos) { q.int8_route = false; }
-            }
+            // The quantization as the choice prices it (product::quant_option_of: one rule for a
+            // hub row, the CLI's plan and a start's artifact).
+            const choice::QuantOption q = quant_option_of(facts, row.listing.quant);
             choice::Candidate c;
             c.kv          = row.planned.plan.kv_cache;
             c.state       = row.planned.plan.recurrent;

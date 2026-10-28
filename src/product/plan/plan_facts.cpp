@@ -793,6 +793,9 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         }
     }
     std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0;
+    // The weights' elements the bytes cover, the own drafter's left out: as a GGUF's tensor table
+    // counts the model it converts from (bits_per_weight's denominator on both paths).
+    double elements = 0;
     std::set<std::string> formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
@@ -806,13 +809,24 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         bytes += tensor->bytes;
         formats.insert(tensor->format);
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
-        if (alone && m[Drafter]) { drafter_bytes += tensor->bytes; }
+        if (alone && m[Drafter]) {
+            drafter_bytes += tensor->bytes;
+        } else {
+            double n = tensor->shape.empty() ? 0 : 1;
+            for (const std::uint64_t d : tensor->shape) { n *= static_cast<double>(d); }
+            elements += n;
+        }
     }
     auto out =
         finish(geometry_of_config(text->second.config), bytes, runtime::WeightBasis::Artifact);
     out.model.vision_bytes      = vision_bytes;
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
+    out.model.weight_elements   = elements;
+    // The source quantization the converter recorded (a GGUF file name's label).
+    if (const auto q = dir.provenance.find("quant"); q != dir.provenance.end() && q->is_string()) {
+        out.shape.quant_label = q->get<std::string>();
+    }
     out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
     // A Qwen artifact's own DFlash drafter (its dflash or dflash2 component).
     for (const char* component : {"dflash", "dflash2"}) {
