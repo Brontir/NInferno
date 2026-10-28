@@ -1295,7 +1295,13 @@ async function refreshState() {
 // it moves (another process started or stopped) or another GPU is chosen, every cached "now" is dropped (asked again when its plan is shown: cachedPlan) and the selected
 // model's plans are asked again (the server keeps their idle part; it re-plans only "now").
 const NOW_STEP = 256 * 2 ** 20;
-let nowFree = null, nowGpu = null;
+let nowFree = null, nowGpu = null, nowGen = 0; // nowGen: one step per move of the memory
+// A plan fetched while the memory moved: its "now" is of before (dropped: asked again when shown).
+function keepPlan(key, doc, gen) {
+  if (doc && gen !== nowGen) delete doc.now;
+  planDocs.set(key, doc);
+  if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value);
+}
 function refreshPlanNow() {
   const g = (S.gpus || []).find(x => x.index === gpu);
   if (!g) return;
@@ -1304,6 +1310,7 @@ function refreshPlanNow() {
   const moved = nowFree !== null;
   nowGpu = gpu; nowFree = g.memory_free;
   if (!moved) return;
+  nowGen++;
   for (const doc of planDocs.values()) if (doc) delete doc.now;
   const sel = selected;
   if (!sel) return;
@@ -1319,7 +1326,8 @@ const nowFetching = new Set();
 function askNow(key, sel) {
   if (nowFetching.has(key)) return;
   nowFetching.add(key);
-  api(key).then(doc => { const kept = planDocs.get(key); if (kept && doc) kept.now = doc.now ?? null; })
+  const gen = nowGen;
+  api(key).then(doc => { const kept = planDocs.get(key); if (kept && doc && gen === nowGen) kept.now = doc.now ?? null; })
     .catch(() => {}).finally(() => { nowFetching.delete(key); if (selected === sel) renderBody(); });
 }
 function cachedPlan(key, sel) {
@@ -2109,7 +2117,8 @@ function choiceDocOf(sel, q) {
   if (planDocs.has(key)) return cachedPlan(key, sel);
   if (!choiceFetching.has(key)) {
     choiceFetching.add(key);
-    api(key).then(doc => { planDocs.set(key, doc); if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value); })
+    const gen = nowGen;
+    api(key).then(doc => keepPlan(key, doc, gen))
       .catch(() => {}).finally(() => { choiceFetching.delete(key); if (selected === sel) renderBody(); });
   }
   return null;
@@ -2135,8 +2144,9 @@ function schedulePlan() {
   sel.planBusy = true;
   planTimer = setTimeout(async () => {
     let doc = null, err = "";
+    const gen = nowGen;
     try { doc = await api(q); } catch (e) { err = e.message || String(e); }
-    if (doc) { planDocs.set(q, doc); if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value); }
+    if (doc) { keepPlan(q, doc, gen); if (doc.now === undefined) askNow(q, sel); }
     if (sel !== selected || sel.planQ !== q) return;
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
