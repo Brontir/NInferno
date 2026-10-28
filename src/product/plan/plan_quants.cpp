@@ -184,14 +184,17 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
     if (!inputs.proposal_planned) { return {}; }
     // The quantization's own MTP layers (its subject's components: a repository's quantizations
     // differ), their bytes where the facts count them, else one decoder layer's share of the
-    // weights (a checkpoint keeping mtp.* inside its shards).
+    // weights without the head and the embedding table (a checkpoint keeping mtp.* inside its
+    // shards, a split GGUF's header): an MTP layer is one decoder layer and its projection.
     const bool mtp = inputs.subject != nullptr ? inputs.subject->components.contains("mtp")
                                                : facts.shape.builtin_mtp;
     double mtp_bytes = 0;
     if (mtp) {
         mtp_bytes = m.mtp_bytes != 0 ? static_cast<double>(m.mtp_bytes)
                     : facts.shape.num_hidden_layers != 0
-                        ? static_cast<double>(m.weight_bytes) /
+                        ? static_cast<double>(m.weight_bytes > 2 * m.head_bytes
+                                                  ? m.weight_bytes - 2 * m.head_bytes
+                                                  : m.weight_bytes) /
                               static_cast<double>(facts.shape.num_hidden_layers)
                         : 0;
     }

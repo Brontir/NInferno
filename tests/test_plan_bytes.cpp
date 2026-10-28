@@ -961,17 +961,20 @@ void test_proposal_bytes_per_quant() {
     pr::DryRunInputs at   = none;
     at.device.total_bytes = rt::plan_board_total_bytes(12);
     at.device.free_bytes  = at.device.total_bytes;
-    const auto weights    = [&](SpeculativeBackend backend) {
+    const auto weights    = [&](SpeculativeBackend backend, bool planned) {
         pr::DryRunInputs ask              = at;
+        ask.proposal_planned                 = planned;
         ask.options.speculative.backend      = backend;
         ask.options.speculative.draft_tokens = backend == SpeculativeBackend::None ? 0 : 3;
         ask.ask.automatic                    = false;
         ask.ask.given                        = ask.options.speculative;
         return pr::plan_model(mtp, ask).plan.weight_bytes;
     };
-    check(weights(SpeculativeBackend::Mtp) - weights(SpeculativeBackend::None) ==
+    check(weights(SpeculativeBackend::Mtp, true) - weights(SpeculativeBackend::Mtp, false) ==
               57344ULL * 3360 + 57344ULL * 4,
-          "an MTP plan loads the head, a plain one not");
+          "an MTP plan loads the head");
+    check(weights(SpeculativeBackend::None, true) == weights(SpeculativeBackend::None, false),
+          "a plain plan not");
     // A quantization whose subject has no MTP layers: none of their rows.
     pr::SpeculationSubject plain;
     plain.components = {"text"};
