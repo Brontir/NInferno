@@ -8,7 +8,8 @@ none of them changes what the engine computes.
 
 ## Options
 
-`ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
+`ninferno` and `ninferno-serve` take all of these but the lab tuners (`--dense-tune`, `--moe-tune`,
+`--tune-cache`), which they refuse. `ninferno-perplexity` takes all but
 `--decode-steps` and `--decode-wait`, which it refuses: it scores and runs no decode rounds.
 `ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table`, `--route-dir` and
 `--drafter-registry`, and records them in the profile's settings (and an `--out`'s, which
@@ -107,7 +108,7 @@ that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise
 | `NINFERNO_DECODE_WAIT` | `--decode-wait` |
 | `NINFERNO_ROUTE_TABLE` | `--route-table` |
 | `NINFERNO_ROUTE_DIR` | `--route-dir` |
-| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` |
+| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` (maintainer tools only) |
 | `NINFERNO_DENSE_TUNE_CACHE`, `NINFERNO_MOE_TUNE_CACHE` | `--tune-cache` (one directory for both tuners) |
 | `NINFERNO_QWEN_PREFILL_CUTS` | `--debug-prefill-cuts` |
 | `NINFERNO_DEBUG_POISON`, `NINFERNO_DEBUG_POISON_SKIP` | `--debug-poison`, `--debug-poison-skip` |
