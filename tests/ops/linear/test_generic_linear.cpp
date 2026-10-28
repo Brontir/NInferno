@@ -892,6 +892,74 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
     return failures;
 }
 
+// Volta's tensor-core verify route against an FP64 reference: the HMMA accumulator truncates
+// (Volta: products exact, sums aligned to the largest operand and cut), and Q4_K / Q5_K carry
+// 1024 under every code there (HK45::kBias). Activations of one sign over all of K (mean 1, sd
+// 0.5) keep that bias's error from cancelling, the worst case for it. The error of each output,
+// over the sum of |w x| it reduces, stays within one bf16 ulp (2^-8); STATS prints it.
+int check_volta_hmma_accuracy(const Format& f, std::int32_t k, float mean, std::uint32_t seed) {
+    const std::int32_t rows = 128, t = 8;
+    const HostWeight host   = make_weight(f.qtype, rows, k, seed);
+    DeviceWeight device     = upload_weight(host);
+    std::mt19937 rng(seed + 7U);
+    std::normal_distribution<float> normal(mean, mean != 0.0F ? 0.5F * mean : 1.0F);
+    std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
+    for (auto& v : activation) v = f32_to_bf16(normal(rng));
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceBuffer out(static_cast<std::size_t>(rows) * t * 2);
+    cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+    DeviceArena workspace(256);
+    const generic::Problem problem{f.qtype, ops::LinearPolicy::A16Only, rows, k,
+                                   generic::Epilogue::Store};
+    const generic::Route route = generic::select_route(problem, device.weight, t, false);
+    if (route.family != generic::Family::RegisterMma) {
+        std::cerr << f.name << " Volta HMMA accuracy: T=8 not the register-MMA route
+";
+        return 1;
+    }
+    Tensor tx(x.p, DType::BF16, {k, t});
+    Tensor tout(out.p, DType::BF16, {rows, t});
+    generic::Call call;
+    call.x               = &tx;
+    call.weight          = &device.weight;
+    call.rows            = rows;
+    call.epilogue        = problem.epilogue;
+    call.out[0]          = &tout;
+    call.segment_rows[0] = rows;
+    generic::run_route(route, call, &workspace, nullptr);
+    cuda_check(cudaDeviceSynchronize(), "run");
+    const auto bits = download_bf16(out.p, static_cast<std::size_t>(rows) * t);
+    std::vector<std::int32_t> all(rows);
+    std::iota(all.begin(), all.end(), 0);
+    const std::vector<float> w = weight_rows(host, all);
+    double worst = 0.0, total = 0.0;
+    for (std::int32_t token = 0; token < t; ++token)
+        for (std::int32_t r = 0; r < rows; ++r) {
+            double ref = 0.0, scale = 0.0;
+            for (std::int32_t c = 0; c < k; ++c) {
+                const double wx = static_cast<double>(w[static_cast<std::size_t>(r) * k + c]) *
+                                  bf16_to_f32(activation[static_cast<std::size_t>(token) * k + c]);
+                ref += wx;
+                scale += std::fabs(wx);
+            }
+            const double got =
+                bf16_to_f32(bits[static_cast<std::size_t>(token) * rows + r]);
+            const double e = std::fabs(got - ref) / std::max(scale, 1e-30);
+            worst          = std::max(worst, e);
+            total += e;
+        }
+    const double average = total / (static_cast<double>(rows) * t);
+    std::cout << "VOLTA_HMMA_ACCURACY " << f.name << " k=" << k << " mean=" << mean
+              << " max=" << worst << " avg=" << average << '
+';
+    if (worst <= 1.0 / 256.0) return 0;
+    std::cerr << f.name << " Volta HMMA accuracy k=" << k << ": error " << worst
+              << " of the reduced |w x| above one bf16 ulp
+";
+    return 1;
+}
+
 // An R8 route: every token's output bytes equal those of the same token in a call of any other
 // T <= kR8MaxTokens (at any start), since a token's sums read only its own activation; with the
 // workspace the verify widths of r8_verify_compiled formats read the activation quantized once
@@ -2236,6 +2304,10 @@ int main() {
                 check_volta_hmma_invariance(f, Op::Add, 72, 512, ops::LinearPolicy::AllowA8, 81U);
             failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 768,
                                                     ops::LinearPolicy::A16Only, 83U);
+            for (const std::int32_t k : {4096, 17408}) {
+                failures += check_volta_hmma_accuracy(f, k, 1.0F, 87U);
+                failures += check_volta_hmma_accuracy(f, k, 0.0F, 89U);
+            }
         }
     }
 
