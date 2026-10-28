@@ -1569,20 +1569,56 @@ int main() {
                                 {"RTX 2080 Ti", 5.9, 75, false}, {"RTX 3060", 7.2, 86, false},
                                 {"Tesla V100", 3.4, 70, false},  {"facts unknown", 0.0, 89, false}};
         for (const Board& b : boards) {
-            if (g::rmma_wide_rule(b.bytes, b.cc, 2, 2, 0, 0) != b.wide) {
+            if (g::rmma_wide_rule(b.bytes, b.cc, true, 0, 0) != b.wide) {
                 std::cerr << "rmma_wide_rule: " << b.name << " expected " << b.wide << "\n";
                 ++failures;
             }
         }
-        // Fewer resident CTAs, or a spill the plain kernel lacks: plain, on any board.
-        if (g::rmma_wide_rule(3.1, 89, 1, 2, 0, 0) || g::rmma_wide_rule(3.1, 89, 2, 2, 64, 0)) {
+        // Occupancy lost (rmma_variant_occupancy_rule), or a spill the plain kernel lacks: plain,
+        // on any board.
+        if (g::rmma_wide_rule(3.1, 89, false, 0, 0) || g::rmma_wide_rule(3.1, 89, true, 64, 0)) {
             std::cerr << "rmma_wide_rule: took the wide kernel at lower occupancy or a spill\n";
             ++failures;
         }
-        if (!g::rmma_wide_rule(3.1, 89, 2, 2, 16, 16) || !g::rmma_wide_rule(3.1, 89, 4, 4, 8, 0) ||
-            g::rmma_wide_rule(3.1, 89, 1, 1, 160, 0)) {
+        if (!g::rmma_wide_rule(3.1, 89, true, 16, 16) || !g::rmma_wide_rule(3.1, 89, true, 8, 0) ||
+            g::rmma_wide_rule(3.1, 89, true, 160, 0)) {
             std::cerr << "rmma_wide_rule: refused a spill within the slack or took a large one\n";
             ++failures;
+        }
+    }
+
+    // 0b. A variant kernel's occupancy (rmma_variant_occupancy_rule): fewer resident CTAs per SM
+    // than the plain kernel's cost only where the call's grid takes another wave at them.
+    {
+        namespace g = ops::detail::generic;
+
+        struct Case {
+            std::int64_t grid;
+            int sms;
+            int variant;
+            int plain;
+            bool kept;
+        };
+
+        const Case cases[] = {
+            {256, 70, 4, 4, true},    // as many CTAs: always
+            {256, 70, 3, 4, false},   // 70 SMs, 256 CTAs: one wave at 4 (280), two at 3 (210)
+            {192, 70, 3, 4, true},    // 192 CTAs: one wave at either
+            {600, 70, 3, 4, true},    // three waves at either (280 and 210 a wave)
+            {768, 70, 3, 4, false},   // three waves at 4, four at 3
+            {1088, 128, 2, 3, false}, // 128 SMs, 1088 CTAs: three waves at 3, five at 2
+            {80, 68, 1, 2, true},     // fewer CTAs than SMs: one wave at either
+            {80, 68, 0, 2, false},    // the variant fits no CTA
+            {80, 68, 2, 0, false},    // counts unknown
+            {80, 0, 2, 2, false},     // SMs unknown
+        };
+        for (const Case& c : cases) {
+            if (g::rmma_variant_occupancy_rule(c.grid, c.sms, c.variant, c.plain) != c.kept) {
+                std::cerr << "rmma_variant_occupancy_rule: grid " << c.grid << " on " << c.sms
+                          << " SMs at " << c.variant << " against " << c.plain << " expected "
+                          << c.kept << "\n";
+                ++failures;
+            }
         }
     }
 
