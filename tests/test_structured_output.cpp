@@ -843,6 +843,133 @@ void answer_schema_contract(const ConstraintCompiler& compiler) {
           "an answer schema outside tool-call markup was accepted");
 }
 
+// Whether the whole of `text` is admitted and completes the grammar (the stop token is admitted).
+bool admits(const std::shared_ptr<const CompiledConstraint>& compiled, std::string_view text,
+            bool reasoning = false) {
+    RequestConstraint request(compiled, reasoning);
+    request.commit(bytes_of(text));
+    if (request.violated()) { return false; }
+    std::vector<std::uint32_t> row(request.mask_words());
+    request.fill_round({}, row.data(), row.size());
+    if (!allowed(row.data(), kImEnd)) { return false; }
+    const TokenId stop[] = {kImEnd};
+    request.commit(stop);
+    return request.stats().complete && !request.stats().violated;
+}
+
+std::string object_of(std::initializer_list<const char*> keys, bool spaced = false) {
+    std::string out = "{";
+    bool first      = true;
+    for (const char* key : keys) {
+        out += first ? "" : (spaced ? ",\n  " : ",");
+        out += std::string("\"") + key + "\":" + (spaced ? " " : "") + "\"v" + key + "\"";
+        first = false;
+    }
+    return out + "}";
+}
+
+// Key order of JSON objects (the "schema-order" bug class): optional properties compiled in schema
+// order, each skippable, make every earlier optional key unwritable once a later one is written;
+// the output stays valid JSON and fields silently vanish. An object with optional properties takes
+// them in any order, each at most once; its required ones keep their schema order (an object whose
+// properties are all required, as OpenAI strict mode demands, keeps the documented schema order).
+void key_order_contract(const ConstraintCompiler& compiler) {
+    const Json five = Json::parse(R"({"type":"object","properties":{
+        "A":{"type":"string"},"B":{"type":"string"},"C":{"type":"string"},
+        "D":{"type":"string"},"E":{"type":"string"}},"additionalProperties":false})");
+    for (const bool compact : {true, false}) {
+        const auto compiled   = compiler.compile(schema_spec(five, compact));
+        const std::string tag = compact ? "compact" : "spaced";
+        check(admits(compiled, object_of({"C", "A", "E", "B", "D"}, !compact)),
+              tag + ": optional keys C,A,E,B,D");
+        check(admits(compiled, object_of({"E", "D", "C", "B", "A"}, !compact)),
+              tag + ": optional keys in reverse order");
+        check(admits(compiled, object_of({"D", "A"}, !compact)), tag + ": D then A");
+        check(admits(compiled, object_of({"A", "B", "C", "D", "E"}, !compact)),
+              tag + ": schema order");
+        check(admits(compiled, "{}"), tag + ": empty object");
+        check(!admits(compiled, object_of({"C", "A", "C"}, !compact)), tag + ": duplicate key");
+        check(!admits(compiled, object_of({"C", "F"}, !compact)), tag + ": undeclared key");
+    }
+    {
+        RequestConstraint request(compiler.compile(schema_spec(five)), false);
+        walk_text(request, object_of({"C", "A", "E", "B", "D"}), "walk C,A,E,B,D");
+    }
+    // All required: the schema order is the contract.
+    Json all        = five;
+    all["required"] = Json::array({"A", "B", "C", "D", "E"});
+    const auto ordered = compiler.compile(schema_spec(all));
+    check(admits(ordered, object_of({"A", "B", "C", "D", "E"})), "all required: schema order");
+    check(!admits(ordered, object_of({"C", "A", "E", "B", "D"})),
+          "all required: another order is refused");
+    // Mixed: required A and D in that order, optional B, C, E anywhere.
+    Json mixed        = five;
+    mixed["required"] = Json::array({"A", "D"});
+    const auto spine  = compiler.compile(schema_spec(mixed));
+    check(admits(spine, object_of({"C", "A", "E", "B", "D"})), "mixed: C,A,E,B,D");
+    check(admits(spine, object_of({"A", "D", "E", "C", "B"})), "mixed: optional keys after");
+    check(admits(spine, object_of({"A", "D"})), "mixed: required only");
+    check(!admits(spine, object_of({"D", "A"})), "mixed: required keys keep their order");
+    check(!admits(spine, object_of({"C", "A", "E"})), "mixed: a required key cannot be skipped");
+    check(!admits(spine, object_of({"A", "C", "D", "C"})), "mixed: duplicate optional key");
+    // Additional properties may sit anywhere among the declared ones.
+    Json open                    = five;
+    open["additionalProperties"] = true;
+    const auto extra             = compiler.compile(schema_spec(open));
+    check(admits(extra, object_of({"C", "Z", "A", "Y"})), "additional keys between declared ones");
+    check(!admits(extra, object_of({"C", "A", "C"})), "additional pattern excludes declared keys");
+    // Nested objects, arrays of objects and $ref targets hold the same rule.
+    const Json nested = Json{{"type", "object"},
+                             {"$defs", Json{{"five", five}}},
+                             {"properties", Json{{"inner", five},
+                                                 {"list", Json{{"type", "array"}, {"items", five}}},
+                                                 {"ref", Json{{"$ref", "#/$defs/five"}}}}},
+                             {"required", Json::array({"inner"})},
+                             {"additionalProperties", false}};
+    const auto deep         = compiler.compile(schema_spec(nested));
+    const std::string cae   = object_of({"C", "A", "E"});
+    check(admits(deep, "{\"list\":[" + cae + "," + object_of({"D", "B"}) + "],\"inner\":" + cae +
+                           ",\"ref\":" + object_of({"E", "A"}) + "}"),
+          "nested objects, array items and $ref take optional keys in any order");
+    check(!admits(deep, "{\"list\":[" + cae + "]}"), "nested: required inner cannot be skipped");
+    // Wide objects keep any order (past the tracked width a key may repeat; see serving.md).
+    Json wide = Json::parse(R"({"type":"object","properties":{},"additionalProperties":false})");
+    std::vector<std::string> names;
+    for (char c = 'a'; c <= 'x'; ++c) {
+        names.emplace_back(1, c);
+        wide["properties"][names.back()] = Json{{"type", "integer"}};
+    }
+    const auto start   = std::chrono::steady_clock::now();
+    const auto broad   = compiler.compile(schema_spec(wide));
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    check(elapsed < std::chrono::seconds(5), "24 optional properties compile in time");
+    std::string reverse = "{";
+    for (auto it = names.rbegin(); it != names.rend(); ++it) {
+        reverse += (it == names.rbegin() ? "\"" : ",\"") + *it + "\":1";
+    }
+    check(admits(broad, reverse + "}"), "24 optional properties in reverse order");
+    check(!admits(broad, "{\"a\":1,\"zz\":1}"), "wide: undeclared key");
+    // The constraint opens only after the reasoning ends.
+    OutputConstraintSpec gated = schema_spec(five);
+    gated.follows_reasoning    = true;
+    {
+        RequestConstraint request(compiler.compile(gated), true);
+        request.commit(bytes_of("thinking {\"A\":"));
+        const TokenId close[] = {kThinkClose, kDoubleNewline};
+        request.commit(close);
+        walk_text(request, cae, "after reasoning: C,A,E");
+    }
+    // response_format beside tools: the answer schema takes the same rule.
+    OutputConstraintSpec beside;
+    beside.kind          = OutputConstraintKind::StructuralTag;
+    beside.definition    = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
+        "content":{"type":"json_schema","json_schema":{"type":"object"}},"end":"</t>"}})";
+    beside.compact_json  = true;
+    beside.answer_schema = five.dump();
+    check(admits(compiler.compile(beside), object_of({"C", "A", "E", "B", "D"})),
+          "answer schema beside tools: C,A,E,B,D");
+}
+
 // A strict tool's arguments are one JSON object in every tool-call syntax: the root is held to
 // one (an untyped plain root becomes an object, a combinator root is left to its branches) and
 // another declared type is refused.
@@ -880,6 +1007,7 @@ int main() {
     other_kinds_contract(compiler);
     structural_tag_whitespace_contract(compiler);
     answer_schema_contract(compiler);
+    key_order_contract(compiler);
     speculative_rows_contract(compiler);
     reasoning_gate_contract(compiler);
     self_opened_reasoning_contract();
