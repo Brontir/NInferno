@@ -7,6 +7,7 @@
 //
 //   ninferno_r8_schedule_bench [--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...]
 //                            [--samples 15] [--launches 60] [--tokens 1,2,4,8] [--rmma 1]
+//                            [--span-mib M] [--interleave-mib M] [--interleave-weight FORMAT,N ...]
 //
 // FILE is the NINFERNO_ROUTE_RECORD / ninferno_route_tune format, "<format> <compute> <epilogue>
 // <n> <k>" per line (the compute column is ignored: R8 is the A8 decode route); --problem adds one
@@ -46,6 +47,7 @@
 #include <stdexcept>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -79,6 +81,22 @@ generic::Epilogue parse_epilogue(const std::string& s) {
 // K-quant verify width compares the dispatcher's pick with the other tiles.
 bool g_rmma = false;
 
+// --span-mib M: the weight copies cover at least M MiB (default: four times the L2), so that a run
+// of launches also walks as many distinct pages as a model's step does.
+std::size_t g_span_bytes = 0;
+
+// --interleave-mib M: a memset of M MiB between launches in the graph (a model step runs other
+// kernels between its projections: their data and code leave the L2). The time per launch then
+// includes the memset; profile the graph for the R8 kernel's own duration.
+std::size_t g_interleave_bytes = 0;
+
+// --interleave-weight FORMAT,N: the dispatcher's decode route of another weight (FORMAT, N rows, the
+// problem's K, a fresh copy each launch) runs between launches: other code and only clean lines
+// pass through the L2, as between a model step's projections. Its copies cover four times the L2
+// (not --span-mib).
+// Repeatable: several formats run in turn (their code, too, passes through the instruction caches).
+std::vector<std::pair<std::string, std::int32_t>> g_interleave;
+
 double median(std::vector<double> v) {
     std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
     return v[v.size() / 2];
@@ -102,7 +120,8 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     copies.push_back(std::make_unique<bench::RandomWeight>(
         bench::random_weight(p.qtype, rows, p.k, 7U + p.n + p.k)));
     const std::size_t bytes = copies[0]->parent.geometry.bytes;
-    std::size_t count       = std::max<std::size_t>(2, (4 * l2_bytes + bytes - 1) / bytes);
+    const std::size_t span  = std::max(4 * l2_bytes, g_span_bytes);
+    std::size_t count       = std::max<std::size_t>(2, (span + bytes - 1) / bytes);
     count = std::min<std::size_t>(count, std::max<std::size_t>(2, (3ULL << 30) / bytes));
     for (std::size_t c = 1; c < count; ++c) {
         copies.push_back(std::make_unique<bench::RandomWeight>(bench::clone_weight(*copies[0])));
@@ -197,6 +216,53 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         y.copy_to_host(outputs[i].data(), y.bytes);
     }
 
+    std::unique_ptr<DeviceBuffer> scratch;
+    if (g_interleave_bytes > 0) scratch = std::make_unique<DeviceBuffer>(g_interleave_bytes);
+    // One entry per --interleave-weight: copies of a weight of that format, its output, its route.
+    struct Other {
+        std::vector<std::unique_ptr<bench::RandomWeight>> copies;
+        std::unique_ptr<DeviceBuffer> y;
+        std::unique_ptr<Tensor> ty;
+        generic::Route route{};
+        std::int32_t rows = 0;
+    };
+    std::vector<Other> others(g_interleave.size());
+    for (std::size_t o = 0; o < g_interleave.size(); ++o) {
+        Other& other   = others[o];
+        const QType oq = parse_format(g_interleave[o].first);
+        other.rows     = g_interleave[o].second;
+        other.copies.push_back(std::make_unique<bench::RandomWeight>(
+            bench::random_weight(oq, other.rows, p.k, 5U + p.k + static_cast<unsigned>(o))));
+        const std::size_t obytes = other.copies[0]->parent.geometry.bytes;
+        const std::size_t ocount = std::max<std::size_t>(2, (4 * l2_bytes + obytes - 1) / obytes);
+        for (std::size_t c = 1; c < ocount; ++c) {
+            other.copies.push_back(
+                std::make_unique<bench::RandomWeight>(bench::clone_weight(*other.copies[0])));
+        }
+        other.y  = std::make_unique<DeviceBuffer>(static_cast<std::size_t>(other.rows) * 2);
+        other.ty = std::make_unique<Tensor>(other.y->p, DType::BF16,
+                                            std::initializer_list<std::int32_t>{other.rows, 1});
+        other.route = generic::select_route(
+            generic::Problem{oq, ops::LinearPolicy::AllowA8, other.rows, p.k,
+                             generic::Epilogue::Store},
+            other.copies[0]->weight, 1, false);
+    }
+    // Each interleaved route runs once before the capture (a first call may do work a graph cannot
+    // hold).
+    const auto interleave = [&](int l) {
+        for (const Other& other : others) {
+            generic::Call call;
+            call.x               = &tx1;
+            call.weight          = &other.copies[static_cast<std::size_t>(l) % other.copies.size()]->weight;
+            call.rows            = other.rows;
+            call.epilogue        = generic::Epilogue::Store;
+            call.out[0]          = other.ty.get();
+            call.segment_rows[0] = other.rows;
+            generic::run_route(other.route, call, &workspace, stream);
+        }
+    };
+    interleave(0);
+    CUDA_CHECK(cudaStreamSynchronize(stream));
     std::vector<cudaGraphExec_t> graphs(schedules);
     for (int i = 0; i < schedules; ++i) {
         const generic::Route r = routes[i];
@@ -205,6 +271,10 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         for (int l = 0; l < launches; ++l) {
             const auto& copy = *copies[static_cast<std::size_t>(l) % copies.size()];
             generic::run_route(r, make_call(copy.weight), &workspace, stream);
+            if (scratch) {
+                CUDA_CHECK(cudaMemsetAsync(scratch->p, l & 0xff, g_interleave_bytes, stream));
+            }
+            interleave(l);
         }
         CUDA_CHECK(cudaStreamEndCapture(stream, &graph));
         CUDA_CHECK(cudaGraphInstantiate(&graphs[i], graph, 0));
@@ -287,6 +357,16 @@ int main(int argc, char** argv) {
                 samples = std::stoi(v);
             } else if (a == "--launches") {
                 launches = std::stoi(v);
+            } else if (a == "--interleave-mib") {
+                g_interleave_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
+            } else if (a == "--interleave-weight") {
+                const auto comma = v.find(',');
+                if (comma == std::string::npos) {
+                    throw std::invalid_argument("--interleave-weight: expected FORMAT,N");
+                }
+                g_interleave.emplace_back(v.substr(0, comma), std::stoi(v.substr(comma + 1)));
+            } else if (a == "--span-mib") {
+                g_span_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--rmma") {
                 g_rmma = std::stoi(v) != 0;
             } else if (a == "--tokens") {

@@ -1182,6 +1182,16 @@ int r8_index(int warps, int rows) {
 // the rule now keys on the architecture, with IQ2_XXS/XS joining IQ2_S. Q3_K at K >= 8192 stays at
 // four single-row warps: Qwen3.8's 5120x17408 add is 7-10 % faster so on the 5060 Ti, the
 // RTX 4080 SUPER and the RTX 4070 Ti SUPER (113.2 -> 103.0, 64.8 -> 60.3, 73.0 -> 66.3 us).
+// Whether this tree's R8 kernel is the one-slot form (generic_r8.cuh NINFERNO_R8_ONE_SLOT: an
+// sm_70 build; a tree compiles one architecture).
+constexpr bool r8_one_slot_build() {
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
+    return true;
+#else
+    return false;
+#endif
+}
+
 int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them.
@@ -1199,6 +1209,15 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
         const bool decode_heavy = iq2 || p.qtype == QType::GGML_IQ3_S ||
                                   p.qtype == QType::GGML_IQ3_XXS || p.qtype == QType::GGML_Q3_K;
         if (decode_heavy && p.k >= 5120) return r8_index(8, 2);
+        // Volta (an sm_70 build, whose R8 kernel is the one-slot form: generic_r8.cuh
+        // NINFERNO_R8_ONE_SLOT; a GPU without mma.sync) keeps one row per warp for Q6_K at every N
+        // and K, where the two-slot form took two. With one slot a second row per warp raises the
+        // registers from 137 to 213 (3 CTAs per SM to 2) and the code a cold SM fetches first from
+        // 960 to 1480 instructions. GV100 with ten other kernels between launches, as in a model
+        // step: 4096x12288 add w4r1 88.8 against w4r2 94.7 us, 8192x4096 store 57.9 against 63.3.
+        if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu && r8_one_slot_build() &&
+            !device_class().features.mma_tensor)
+            return r8_index(4, 1);
         if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu &&
             (p.n >= 8192 || p.k >= 4096))
             return r8_index(4, 2);
