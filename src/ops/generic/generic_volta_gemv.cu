@@ -1,7 +1,7 @@
 // Volta's decode GEMV for the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats: a warp per output
 // row, lanes over a superblock (lane l: its values 8 l .. 8 l + 7), codes decoded straight to FP32
 // and summed against FP32 activations. Without tensor mma.sync the register-MMA tiles emulate the
-// MMA fragment layout on FP32 FMAs; at T <= 4 this kernel reads the same bytes in row order.
+// MMA fragment layout on FP32 FMAs; at T <= 8 this kernel reads the same bytes in row order.
 // run_route takes it for a lane-local register-MMA call (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6
 // ms, decode 25.5 -> 28.4 tok/s).
 #include "core/device.h"
@@ -249,8 +249,10 @@ void launch_format(const GemmArgs& args, cudaStream_t stream) {
         volta_kquant_gemv_kernel<Format, E, 1><<<blocks, 256, 0, stream>>>(args);
     } else if (args.tokens == 2) {
         volta_kquant_gemv_kernel<Format, E, 2><<<blocks, 256, 0, stream>>>(args);
-    } else {
+    } else if (args.tokens <= 4) {
         volta_kquant_gemv_kernel<Format, E, 4><<<blocks, 256, 0, stream>>>(args);
+    } else {
+        volta_kquant_gemv_kernel<Format, E, 8><<<blocks, 256, 0, stream>>>(args);
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -273,7 +275,9 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 } // namespace
 
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
-    if (args.lane_local == 0 || args.tokens < 1 || args.tokens > 4 || args.join_previous != 0) {
+    // T <= 8: a speculative round's drafter block and verify width (dflash:7 = 8 columns).
+    constexpr int kMaxTokens = 8;
+    if (args.lane_local == 0 || args.tokens < 1 || args.tokens > kMaxTokens || args.join_previous != 0) {
         return false;
     }
     if (codec == WeightCodec::Bf16) return (args.k % 8) == 0;

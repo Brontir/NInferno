@@ -103,7 +103,7 @@ inline constexpr std::size_t kRmmaWideSpillSlack = 16;
                                   int plain_ctas, std::size_t wide_local_bytes,
                                   std::size_t plain_local_bytes);
 
-// Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 4
+// Volta's warp-per-row GEMV of the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats at T <= 8
 // (generic_volta_gemv.cu), in place of a lane-local register-MMA call.
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args);
 void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
