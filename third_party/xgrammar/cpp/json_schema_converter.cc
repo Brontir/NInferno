@@ -2624,6 +2624,145 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
     );
   }
 
+  // NInferno local change (see README.ninferno.md): optional properties in any order.
+  // The fixed-order rules below compile optional properties in schema order, each skippable, so a
+  // model that writes a later optional key first can never write an earlier one: the output stays
+  // valid JSON and fields silently vanish. Here required properties keep their schema order (an
+  // object whose properties are all required keeps the fixed-order rules, the documented order of
+  // OpenAI strict mode) and each optional property may come at any point, at most once. The rule
+  // state is (required properties written, set of optional properties written); the set is tracked
+  // for the first optional properties while (required + 1) * 2^tracked stays within
+  // kNInfernoMaxOrderStates, and an optional property past them may come at any point, possibly
+  // more than once. Every state rule holds only rule references, so the states add no terminal
+  // positions to the compiled grammar; the separator lives in one shared rule per property.
+  // Counted objects (minProperties/maxProperties) keep the fixed-order rules.
+  {
+    constexpr int64_t kNInfernoMaxOrderStates = 1024;
+    std::vector<size_t> required_indices;
+    std::vector<size_t> optional_indices;
+    for (size_t index = 0; index < properties.size(); ++index) {
+      (required.count(properties[index].name) ? required_indices : optional_indices)
+          .push_back(index);
+    }
+    if (!optional_indices.empty() && min_properties == 0 && max_properties == -1) {
+      int32_t first_separator = NextSeparatorExpression();
+      int32_t middle_separator = NextSeparatorExpression();
+      int32_t last_separator = NextSeparatorExpression(true);
+
+      std::vector<int32_t> property_patterns;
+      for (size_t index = 0; index < properties.size(); ++index) {
+        int32_t value_rule_id =
+            CreateRule(properties[index].schema, rule_name + "_prop_" + std::to_string(index));
+        property_patterns.push_back(FormatProperty(
+            properties[index].name, value_rule_id, rule_name, index, properties[index].schema
+        ));
+      }
+      const size_t required_count = required_indices.size();
+      size_t tracked = 0;
+      while (tracked < optional_indices.size() && tracked < 20 &&
+             static_cast<int64_t>(required_count + 1) * (int64_t{1} << (tracked + 1)) <=
+                 kNInfernoMaxOrderStates) {
+        ++tracked;
+      }
+      // The object's first entry (no separator) and a later one (after the separator).
+      auto first_and_later = [&](int32_t pattern, const std::string& hint) {
+        int32_t first = builder_.AddRuleWithHint(hint, pattern);
+        int32_t later =
+            builder_.AddRuleWithHint(hint + "_next", Sequence({middle_separator, pattern}));
+        return std::make_pair(first, later);
+      };
+      std::vector<std::pair<int32_t, int32_t>> required_rules;
+      for (size_t index = 0; index < required_count; ++index) {
+        required_rules.push_back(first_and_later(
+            property_patterns[required_indices[index]], rule_name + "_req_" + std::to_string(index)
+        ));
+      }
+      std::vector<std::pair<int32_t, int32_t>> tracked_rules;
+      for (size_t index = 0; index < tracked; ++index) {
+        tracked_rules.push_back(first_and_later(
+            property_patterns[optional_indices[index]], rule_name + "_opt_" + std::to_string(index)
+        ));
+      }
+      // Entries that leave the state as it is: untracked optional properties, additional keys.
+      std::vector<int32_t> free_entries;
+      for (size_t index = tracked; index < optional_indices.size(); ++index) {
+        free_entries.push_back(property_patterns[optional_indices[index]]);
+      }
+      if (additional != nullptr) {
+        if (additional_property_override.has_value()) {
+          free_entries.push_back(*additional_property_override);
+        } else {
+          int32_t value_rule_id = CreateRule(additional, rule_name + "_" + additional_suffix);
+          free_entries.push_back(FormatOtherProperty(
+              GetKeyPatternExcluding(properties, rule_name),
+              value_rule_id,
+              rule_name,
+              additional_suffix,
+              additional
+          ));
+        }
+      }
+      std::optional<std::pair<int32_t, int32_t>> free_rules;
+      if (!free_entries.empty()) {
+        free_rules = first_and_later(Choice(free_entries), rule_name + "_free");
+      }
+
+      const size_t masks = size_t{1} << tracked;
+      std::vector<int32_t> state_rules((required_count + 1) * masks);
+      auto state = [&](size_t written, size_t mask) -> int32_t& {
+        return state_rules[written * masks + mask];
+      };
+      for (size_t written = 0; written <= required_count; ++written) {
+        for (size_t mask = 0; mask < masks; ++mask) {
+          state(written, mask) = builder_.AddEmptyRuleWithHint(
+              rule_name + "_state_" + std::to_string(written) + "_" + std::to_string(mask)
+          );
+        }
+      }
+      for (size_t written = 0; written <= required_count; ++written) {
+        for (size_t mask = 0; mask < masks; ++mask) {
+          std::vector<int32_t> choices;
+          if (written == required_count) {
+            choices.push_back(Empty());
+          } else {
+            choices.push_back(Sequence(
+                {RuleRef(required_rules[written].second), RuleRef(state(written + 1, mask))}
+            ));
+          }
+          for (size_t bit = 0; bit < tracked; ++bit) {
+            if ((mask >> bit) & 1U) {
+              continue;
+            }
+            choices.push_back(Sequence(
+                {RuleRef(tracked_rules[bit].second),
+                 RuleRef(state(written, mask | (size_t{1} << bit)))}
+            ));
+          }
+          if (free_rules.has_value()) {
+            choices.push_back(Sequence({RuleRef(free_rules->second), RuleRef(state(written, mask))})
+            );
+          }
+          builder_.UpdateRuleBody(state(written, mask), Choice(choices));
+        }
+      }
+
+      std::vector<int32_t> first_choices;
+      if (required_count != 0) {
+        first_choices.push_back(Sequence({RuleRef(required_rules[0].first), RuleRef(state(1, 0))})
+        );
+      }
+      for (size_t bit = 0; bit < tracked; ++bit) {
+        first_choices.push_back(
+            Sequence({RuleRef(tracked_rules[bit].first), RuleRef(state(0, size_t{1} << bit))})
+        );
+      }
+      if (free_rules.has_value()) {
+        first_choices.push_back(Sequence({RuleRef(free_rules->first), RuleRef(state(0, 0))}));
+      }
+      return Sequence({first_separator, Choice(first_choices), last_separator});
+    }
+  }
+
   int32_t first_separator = NextSeparatorExpression();
   int32_t middle_separator = NextSeparatorExpression();
   int32_t last_separator = NextSeparatorExpression(true);
