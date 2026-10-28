@@ -294,8 +294,14 @@ int main() {
                 if (p.tune.key.gpu != h.gpu) { without.push_back(p); }
             }
             const std::string generation = h.key.chain[2];
-            const auto measured  = sp::pair_choice(registry.pairs(), own_pair.target, "qwen3_5", kinds,
-                                                   4.0, generation, {}, own_pair.drafters, {}, &h.key);
+            // The card's own measurement: its pairs alone (with every card's, two agreeing lab
+            // cards of the generation would answer with the first card's profile).
+            std::vector<sp::MeasuredPair> own_only;
+            for (const auto& p : registry.pairs()) {
+                if (p.tune.key.gpu == h.gpu) { own_only.push_back(p); }
+            }
+            const auto measured  = sp::pair_choice(own_only, own_pair.target, "qwen3_5", kinds, 4.0,
+                                                   generation, {}, own_pair.drafters, {}, &h.key);
             const auto predicted = sp::pair_choice(without, own_pair.target, "qwen3_5", kinds, 4.0,
                                                    generation, {}, own_pair.drafters, {}, &h.key);
             if (!measured || !predicted) {
@@ -314,8 +320,14 @@ int main() {
             expect((predicted->source.find("rounds priced from the weights' bytes") !=
                     std::string::npos) == facts,
                    std::string("the card's rounds are priced by the facts only with eta: ") + h.gpu);
+            // The RTX 5070 Ti's 9B rounds verifying 6-8 rows are cheaper than their facts
+            // (-7..-12 %, DECISIONS 55): its plan's speedup stays low by up to 15 %, the pick right.
+            const double within = h.key.compute_capability == 120 && h.key.sms == 70 ? 0.15 : 0.10;
             if (facts) {
-                expect(near(p, m, 0.10), std::string("speedup without its pair within 10 %: ") + h.gpu);
+                expect(near(p, m, within) && predicted->profile.overall.config ==
+                                                 measured->profile.overall.config,
+                       std::string("speedup without its pair within the bound, the same pick: ") +
+                           h.gpu);
             }
         }
     }

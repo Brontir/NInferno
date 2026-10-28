@@ -22,8 +22,8 @@
 //          small-T kernels reach (kSmallTEta: the only fitted constants, one per generation).
 //
 // Measured against it (docs/maintainer/choice-notes/DECISIONS.md 53, choice-notes/lab/round_cost):
-// Qwen dense within 1 % on average (2-5 % rms), Qwen MoE +1 % (Ada) / +8 % (Blackwell), gpt-oss
-// +12.5 %, at k <= 7 on seven cards of five generations. Where the model does not fit, the estimate
+// Qwen dense within 2 % on average (2-5 % rms), Qwen MoE +1 % (Ada) / +12 % (Blackwell), gpt-oss
+// +7..16 %, at k <= 7 on seven cards of five generations. Where the model does not fit, the estimate
 // is made conservative and says so
 // (round_cost_estimate): the lab card's own measurement of the pair, where it found rounds dearer
 // than their bytes (Gemma 4's verify, Nemotron's MTP, Q8_0 targets, gpt-oss: +10-25 %), scales the estimate
@@ -100,8 +100,9 @@ inline constexpr double kRoutedExpertShare = 0.30;
 //   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:
 //                 hard50 within -3..+4 % and +1..+9 %; gpt-oss +16..19 %, its runs drafted BF16)
 //   gb20x  0.165  RTX 5070 Ti and RTX 5090 (DECISIONS 55: held out, R within +4.3 % / +1.4 % on
-//                 average; the plan's pick for each pair the other card measured is the held-out
-//                 card's measured best, or within 1.5 % of it)
+//                 average; the plan's pick on the other card's pairs is the held-out card's
+//                 measured best or within 1.5 % of it, gpt-oss 4 %; the 5070 Ti's 9B rounds of
+//                 6-8 verify rows cost 7-12 % less than their facts, its speedup predicted low)
 // Each other generation needs a second lab card's registry pairs before it gets a row; until then
 // it has no estimate, and its cards keep the lab-measured profiles (as before the facts). Their
 // one-card fits, for when the second card comes (DECISIONS 53): ga10x 0.197 (RTX 3060), turing

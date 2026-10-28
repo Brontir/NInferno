@@ -125,11 +125,14 @@ WEIGHT = {"code": 7, "math": 4, "prose": 8, "thinking": 1}  # spec/profile.h sec
 
 def sections(pair):
     """{config: {family: (seconds a token, tokens a round)}} of a pair's tune."""
-    out = collections.defaultdict(dict)
+    sums = collections.defaultdict(lambda: [0.0, 0, 0])  # seconds, tokens, rounds
     for m in pair["tune"]["measurements"]:
-        if m["tokens"]:
-            tpr = (m["accepted"] + m["rounds"]) / m["rounds"] if m["rounds"] else 1.0
-            out[m["config"]][m["family"]] = (m["seconds"] / m["tokens"], tpr)
+        a = sums[(m["config"], m["family"])]
+        a[0] += m["seconds"]; a[1] += m["tokens"]; a[2] += m["rounds"]
+    out = collections.defaultdict(dict)
+    for (c, f), (s, t, r) in sums.items():
+        if t:
+            out[c][f] = (s / t, t / r if r else 1.0)
     return out
 
 
