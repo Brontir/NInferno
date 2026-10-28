@@ -1,5 +1,6 @@
 #include "core/weight.h"
 #include "ninferno/ops/gdn_gating_proj.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/segmented_projection.h"
 #include "ninferno/ops/weight_input.h"
 
@@ -722,7 +723,7 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
     };
 
     int failures   = 0;
-    const auto run = [&](std::int32_t tokens) {
+    const auto run = [&](std::int32_t tokens, bool composed = false) {
         const std::string label        = base_label + " T=" + std::to_string(tokens);
         const std::size_t h_elements   = std::size_t(geometry.hidden) * tokens;
         const std::size_t ctl_elements = std::size_t(geometry.heads) * tokens;
@@ -752,9 +753,9 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
                     from_device<float>(device_beta.data(), ctl_elements)};
         failures += verify_normwise(label + " h", from_device_bf16(device_h.data(), h_elements), rh,
                                     kGdnNormOutputBf16);
-        const ReductionCriterion& control = tokens <= ops::kSegmentedFusedControlMaxTokens
-                                                ? kGdnNormControlFp32
-                                                : kSegmentedComposedControl;
+        const ReductionCriterion& control =
+            !composed && tokens <= ops::kSegmentedFusedControlMaxTokens ? kGdnNormControlFp32
+                                                                        : kSegmentedComposedControl;
         failures += verify_normwise(label + " g", {out.g.begin(), out.g.end()}, rg, control);
         failures +=
             verify_normwise(label + " beta", {out.beta.begin(), out.beta.end()}, rb, control);
@@ -780,6 +781,11 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
     }
     for (const std::int32_t tokens : {ops::kSegmentedFusedControlMaxTokens + 1, kMaxT})
         (void)run(tokens);
+    {
+        // The invariant route profile keeps the composed form at every width.
+        const ops::ScopedInvariantRoutes invariant;
+        (void)run(8, true);
+    }
     if (from_device<std::uint16_t>(device_ab.p, ab_bits.size()) != ab_bits) {
         std::cerr << base_label << ": a/b weights were modified\n";
         ++failures;
