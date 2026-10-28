@@ -158,8 +158,20 @@ struct GgufHead {
     std::size_t parts = 1;
 };
 
+// `begin`: the bytes from there instead of the file's first (a window of its header).
 [[nodiscard]] GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
-                                       std::uint64_t bytes, std::size_t part = 0);
+                                       std::uint64_t bytes, std::size_t part = 0,
+                                       std::uint64_t begin = 0);
+
+// Each of `quants`' output head bytes (output.weight of shape [hidden, vocab], else the tied
+// token_embd.weight), from a 1 MiB window of its header around `table_end` (where another
+// quantization's tensor table ends: a repository's quantizations share their metadata but for a few
+// keys), read several at a time; 0 where not found. Kept per commit beside its conversions
+// (<cache>/models--org--name/ninferno/<commit>/gguf_heads.json): a second plan reads none.
+[[nodiscard]] std::map<std::string, std::uint64_t>
+gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
+                       const std::vector<std::string>& quants, std::uint64_t table_end,
+                       std::uint64_t hidden, std::uint64_t vocab);
 
 // The Hugging Face repository a GGUF file names as its base model
 // (gguf_metadata_base_repository of its metadata), if any.

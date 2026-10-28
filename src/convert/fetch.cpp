@@ -1552,7 +1552,7 @@ void check_pinned(const FetchOptions& options, const std::string& repo,
 // `total`: the whole file's bytes as the answer gives them (Content-Range, or the Content-Length
 // of a 200), 0 when it does not; a file shorter than `bytes` is returned whole.
 std::string range_prefix(const std::string& url, const std::vector<std::string>& headers,
-                         std::uint64_t bytes, std::uint64_t& total) {
+                         std::uint64_t bytes, std::uint64_t& total, std::uint64_t begin = 0) {
     struct Sink {
         std::string data;
         std::uint64_t limit = 0;
@@ -1562,7 +1562,8 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         Easy easy;
         Sink sink{.limit = bytes};
         for (const auto& line : lines) { easy.header(line); }
-        easy.header("Range: bytes=0-" + std::to_string(bytes - 1));
+        easy.header("Range: bytes=" + std::to_string(begin) + "-" +
+                    std::to_string(begin + bytes - 1));
         curl_easy_setopt(easy.handle, CURLOPT_URL, from.c_str());
         curl_easy_setopt(easy.handle, CURLOPT_HTTPHEADER, easy.headers);
         curl_easy_setopt(easy.handle, CURLOPT_HEADERFUNCTION, header_callback);
@@ -1608,7 +1609,8 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         total = number(header("content-length"));
     }
     // Enough bytes, or the whole of a shorter file.
-    const bool full = sink.data.size() >= bytes || (total != 0 && sink.data.size() == total);
+    const bool full =
+        sink.data.size() >= bytes || (total != 0 && sink.data.size() + begin == total);
     if ((response.code != CURLE_OK && !(full && response.code == CURLE_WRITE_ERROR)) ||
         (response.status != 200 && response.status != 206) || !full) {
         throw hub_error("reading the first " + std::to_string(bytes) + " bytes of " + url,
@@ -1843,7 +1845,7 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
 }
 
 GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
-                         std::uint64_t bytes, std::size_t part) {
+                         std::uint64_t bytes, std::size_t part, std::uint64_t begin) {
     if (bytes == 0) { throw std::invalid_argument("fetch_gguf_head: no bytes asked for"); }
     const auto root       = options.cache.empty() ? default_hub_cache() : options.cache;
     auto [repo, revision] = split_spec(spec, options);
@@ -1853,8 +1855,10 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     out.repo              = repo;
     const auto read_local = [&](const fs::path& file) {
         out.size = fs::file_size(file);
-        out.bytes.resize(static_cast<std::size_t>(std::min(bytes, out.size)));
+        out.bytes.resize(
+            static_cast<std::size_t>(begin >= out.size ? 0 : std::min(bytes, out.size - begin)));
         std::ifstream stream(file, std::ios::binary);
+        stream.seekg(static_cast<std::streamoff>(begin));
         stream.read(out.bytes.data(), static_cast<std::streamsize>(out.bytes.size()));
         if (stream.gcount() != static_cast<std::streamsize>(out.bytes.size())) {
             throw std::runtime_error("cannot read " + file.string());
@@ -1905,11 +1909,14 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     }
     const auto resolved = hub->resolve(repo, listing.commit, *first);
     out.size            = resolved.size ? resolved.size : first->size;
-    const auto want     = out.size ? std::min(bytes, out.size) : bytes;
+    if (out.size != 0 && begin >= out.size) {
+        throw std::runtime_error(repo + "/" + out.path + ": no bytes from " + std::to_string(begin));
+    }
+    const auto want     = out.size ? std::min(bytes, out.size - begin) : bytes;
     std::uint64_t total = 0;
     out.bytes = range_prefix(resolved.url,
                              resolved.authorized ? hub->credentials() : std::vector<std::string>{},
-                             want, total);
+                             want, total, begin);
     // A listing without sizes: the answer says how large the file is.
     if (out.size == 0) { out.size = total; }
     if (out.size == 0 || out.bytes.size() > out.size) {
@@ -1919,6 +1926,82 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
                           out.path + " (" + human(static_cast<double>(out.size)) + ")");
     return out;
 }
+
+std::map<std::string, std::uint64_t>
+gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
+                       const std::vector<std::string>& quants, std::uint64_t table_end,
+                       std::uint64_t hidden, std::uint64_t vocab) {
+    std::map<std::string, std::uint64_t> out;
+    if (quants.empty() || table_end == 0 || hidden == 0 || vocab == 0) { return out; }
+    // Kept beside the commit's conversions: a commit's files do not change.
+    auto [repo, revision] = split_spec(spec, options);
+    const auto root       = options.cache.empty() ? default_hub_cache() : options.cache;
+    const bool commit     = revision.size() == 40 &&
+                        std::all_of(revision.begin(), revision.end(),
+                                    [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); });
+    std::string hub_revision  = revision;
+    const fs::path cache_file = make_hub(options, hub_revision)->cache_dir(root, repo) /
+                                "ninferno" / revision / "gguf_heads.json";
+    nlohmann::json cached = nlohmann::json::object();
+    if (commit) {
+        try {
+            std::ifstream in(cache_file);
+            if (in) { cached = nlohmann::json::parse(in); }
+        } catch (const std::exception&) { cached = nlohmann::json::object(); }
+    }
+    std::vector<std::string> wanted;
+    for (const auto& q : quants) {
+        if (cached.contains(q) && cached[q].is_number_unsigned()) {
+            out[q] = cached[q].get<std::uint64_t>();
+        } else {
+            wanted.push_back(q);
+        }
+    }
+    // A repository's quantizations share their metadata but for a few keys: each one's head info
+    // lies within a window around the parsed one's tensor table end.
+    constexpr std::uint64_t kWindow = 1ULL << 20;
+    const std::uint64_t begin       = table_end > kWindow / 2 ? table_end - kWindow / 2 : 0;
+    constexpr std::size_t kAtOnce   = 8;
+    std::mutex out_mutex;
+    std::atomic<std::size_t> next{0};
+    std::vector<std::thread> threads;
+    for (std::size_t t = 0; t < std::min(kAtOnce, wanted.size()); ++t) {
+        threads.emplace_back([&] {
+            for (std::size_t i = next++; i < wanted.size(); i = next++) {
+                FetchOptions one = options;
+                one.quant        = wanted[i];
+                std::uint64_t bytes = 0;
+                try {
+                    const auto window = fetch_gguf_head(spec, one, kWindow, 0, begin);
+                    const auto* data  = reinterpret_cast<const std::byte*>(window.bytes.data());
+                    for (const char* name : {"output.weight", "token_embd.weight"}) {
+                        if (const auto found = gguf_tensor_info_bytes(
+                                data, window.bytes.size(), name, {hidden, vocab})) {
+                            bytes = *found;
+                            break;
+                        }
+                    }
+                } catch (const std::exception&) {} // not read: 0
+                std::lock_guard lock(out_mutex);
+                out[wanted[i]] = bytes;
+            }
+        });
+    }
+    for (auto& thread : threads) { thread.join(); }
+    if (commit && !wanted.empty()) {
+        try {
+            for (const auto& q : wanted) {
+                if (out[q] != 0) { cached[q] = out[q]; }
+            }
+            fs::create_directories(cache_file.parent_path());
+            const auto temporary = cache_file.string() + ".tmp" + std::to_string(sys::pid());
+            std::ofstream(temporary) << cached.dump();
+            fs::rename(temporary, cache_file);
+        } catch (const std::exception&) {}
+    }
+    return out;
+}
+
 
 
 // ---- Hub listings for ninferno-ui: quantizations of a repository, search, small files.

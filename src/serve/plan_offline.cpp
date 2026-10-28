@@ -498,9 +498,17 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
             for (auto& q : listing) {
                 if (q.quant == model.quant) { q.head_bytes = model.facts.model.head_bytes; }
             }
-            product::read_head_bytes(
-                listing, model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
-                fetch_options());
+            // Only the rows whose verdict the head could change, read together (and kept).
+            const auto heads = convert::gguf_quants_head_bytes(
+                model.commit.empty() ? model.repo : model.repo + "@" + model.commit,
+                fetch_options(), product::head_rows_to_read(model.facts, listing, planning.inputs),
+                model.facts.model.gguf_data_offset, model.facts.model.hidden,
+                model.facts.model.vocab);
+            for (auto& q : listing) {
+                if (const auto it = heads.find(q.quant); it != heads.end()) {
+                    q.head_bytes = it->second;
+                }
+            }
         }
         quants = product::plan_quants(model.facts, listing, planning.inputs);
         const product::QuantRow* chosen = quants->chosen ? &quants->rows[*quants->chosen] : nullptr;

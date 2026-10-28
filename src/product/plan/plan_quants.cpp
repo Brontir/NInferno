@@ -168,33 +168,6 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
     return out;
 }
 
-void read_head_bytes(std::vector<QuantListing>& listing, const std::string& spec,
-                     convert::FetchOptions fetch) {
-    for (QuantListing& q : listing) {
-        if (q.drafter || q.format != "gguf" || q.head_bytes != 0) { continue; }
-        fetch.quant = q.quant;
-        for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20}) {
-            try {
-                const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
-                const auto file = convert::parse_gguf_head(
-                    reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(),
-                    head.size, head.path);
-                std::uint64_t output = 0, embedding = 0;
-                for (const auto& t : file.tensors) {
-                    if (t.name == "output.weight") { output = t.bytes; }
-                    if (t.name == "token_embd.weight") { embedding = t.bytes; }
-                }
-                q.head_bytes = output != 0 ? output : embedding;
-                break;
-            } catch (const convert::GgufTruncated&) {
-                continue;
-            } catch (const std::exception&) {
-                break; // not read: the parsed header's head stands for it
-            }
-        }
-    }
-}
-
 DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
     DryRunInputs out = inputs;
     out.proposal_row_head_bytes = quant.head_bytes;
@@ -701,6 +674,36 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         out.rows[out.pick->index].largest = true;
     }
     out.rule = quant_rule_line(out, inputs);
+    return out;
+}
+
+std::vector<std::string> head_rows_to_read(const PlanSourceFacts& shape,
+                                           const std::vector<QuantListing>& listing,
+                                           const DryRunInputs& inputs) {
+    std::vector<std::string> out;
+    const double values = static_cast<double>(shape.model.vocab) * shape.model.hidden;
+    if (inputs.proposal_drafter_bytes <= 0 || values <= 0) { return out; }
+    const auto at = [&](double bits) {
+        std::vector<QuantListing> bound = listing;
+        for (auto& q : bound) {
+            if (!q.drafter && q.format == "gguf" && q.head_bytes == 0) {
+                q.head_bytes = static_cast<std::uint64_t>(values * bits / 8);
+            }
+        }
+        return plan_quants(shape, bound, inputs);
+    };
+    const QuantPlan small = at(2.625), large = at(16);
+    std::size_t row = 0;
+    for (const auto& q : listing) {
+        if (q.drafter) { continue; }
+        if (row < small.rows.size() && row < large.rows.size() && q.format == "gguf" &&
+            q.head_bytes == 0 &&
+            (small.rows[row].fit.state != large.rows[row].fit.state ||
+             small.rows[row].largest != large.rows[row].largest)) {
+            out.push_back(q.quant);
+        }
+        ++row;
+    }
     return out;
 }
 
