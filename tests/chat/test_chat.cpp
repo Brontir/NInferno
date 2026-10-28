@@ -730,8 +730,8 @@ int test_structural_tags() {
                     return "<|tool_call>call:weather{" + std::string(run, ' ') +
                            "city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>";
                 };
-                failures += check(grammar_accepts(compiled, spaced(24)) &&
-                                      !grammar_accepts(compiled, spaced(25)),
+                failures += check(grammar_accepts(compiled, spaced(64)) &&
+                                      !grammar_accepts(compiled, spaced(65)),
                                   name + " grammar bounds whitespace inside the arguments");
             }
         }

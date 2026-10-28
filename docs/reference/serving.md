@@ -640,7 +640,8 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then.
-- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema, and
+- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema (in the
+  JSON and Qwen XML call syntaxes; [key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
 - A JSON `response_format` (`json_schema` or `json_object`) beside enabled tools, as Agent SDKs
   send. The answer is the calls or a text answer in that format, nothing else. When a call is
@@ -807,6 +808,48 @@ retain that member order in aggregate and streaming responses, so an unmodified 
 the same ordered tool call. NInferno does not canonicalize semantically equivalent JSON. If a client
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
+
+### Key order under an output constraint
+
+A grammar that holds an object's optional properties to their schema order, each skippable, loses
+fields: once the model writes a later optional key, no earlier one can follow, and the output is
+still valid JSON. NInferno's grammars let the model write keys in its own order:
+
+- An object's optional properties may come in any order, each at most once. Its required
+  properties keep their schema order among themselves (the optional ones may sit before, between or
+  after them), and the object cannot end before all of them are written.
+- An object whose properties are all required keeps its schema order. OpenAI strict mode requires
+  every property to be required and documents that keys come in schema order; such schemas behave
+  the same here.
+- Additional properties, where the schema admits them, may sit anywhere among the declared ones.
+- The same rule holds for nested objects, array items and `$ref` targets.
+- Each at most once is tracked for up to 1024 states per object: ten optional properties with no
+  required one, five with 31 required. Optional properties past those (in schema order) may still
+  come in any order but may repeat (the tool-call parser, like most JSON parsers, keeps the last
+  value).
+- An object with `minProperties` or `maxProperties` keeps its optional properties in schema order;
+  list them in the order the prompt asks for them.
+
+Where each constraint applies, and what it holds:
+
+| Output | Constrained when | Arguments or answer held to |
+|---|---|---|
+| `response_format` `json_schema` | always | the schema, keys as above |
+| `response_format` `json_object` | always | any JSON object |
+| Tool call, JSON syntaxes (Hermes, Mistral, Llama 3, gpt-oss harmony, Granite) | `tool_choice` `required` or named, a `strict` tool, or `parallel_tool_calls: false` | `strict` tool: its schema, keys as above; other tools: any JSON object |
+| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, values free |
+| Tool call, Gemma 4, Pythonic (OLMo 3), ATEM | the same | the call syntax only, `strict` or not: the schema is not applied |
+| A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
+
+The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning
+and the grammar opens there ([reasoning output](#reasoning-output)). Whitespace between JSON tokens
+(and inside Gemma 4 arguments) is bounded to runs of 64 characters, so a model cannot write
+whitespace until `max_tokens`; a pretty-printed object with four-space indents fits it to depth 15,
+and deeper indents are written shorter. Nesting depth is not bounded.
+
+`tools/smoke/serve_key_order.py` measures this against a running server: five optional fields
+asked for out of schema order, constrained and unconstrained, reporting the fields lost per run,
+the share of responses in schema order and near-empty objects that stopped early.
 
 ### Thinking controls
 

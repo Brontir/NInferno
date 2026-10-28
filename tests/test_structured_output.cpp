@@ -794,12 +794,12 @@ void structural_tag_whitespace_contract(const ConstraintCompiler& compiler) {
     spec.definition     = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
         "content":{"type":"json_schema","json_schema":{"type":"object"}},"end":"</t>"}})";
     const auto compiled = compiler.compile(spec);
-    for (const int run : {23, 24}) {
+    for (const int run : {63, 64}) {
         RequestConstraint request(compiled, false);
         request.commit(bytes_of("<t>{" + std::string(static_cast<std::size_t>(run), ' ')));
         std::vector<std::uint32_t> row(request.mask_words());
         request.fill_round({}, row.data(), row.size());
-        check(allowed(row.data(), ' ') == (run < 24) && allowed(row.data(), '}'),
+        check(allowed(row.data(), ' ') == (run < 64) && allowed(row.data(), '}'),
               "structural tag JSON whitespace run of " + std::to_string(run));
     }
 }
@@ -968,6 +968,18 @@ void key_order_contract(const ConstraintCompiler& compiler) {
     beside.answer_schema = five.dump();
     check(admits(compiler.compile(beside), object_of({"C", "A", "E", "B", "D"})),
           "answer schema beside tools: C,A,E,B,D");
+    // A large nested object pretty-printed with four-space indents fits the whitespace bound to
+    // depth 15 (a run of a newline and 60 spaces); nothing bounds the depth itself.
+    const Json node =
+        Json::parse(R"({"type":"object","properties":{"v":{"type":"integer"},
+            "child":{"$ref":"#"}},"additionalProperties":false})");
+    Json value = Json{{"v", 0}};
+    for (int depth = 1; depth <= 15; ++depth) { value = Json{{"v", depth}, {"child", value}}; }
+    check(admits(compiler.compile(schema_spec(node, false)), value.dump(4)),
+          "a 16-level object indented by four spaces");
+    OutputConstraintSpec any;
+    any.kind = OutputConstraintKind::JsonObject;
+    check(admits(compiler.compile(any), value.dump(4)), "json_object: 16 levels indented by four");
 }
 
 // A strict tool's arguments are one JSON object in every tool-call syntax: the root is held to

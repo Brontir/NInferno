@@ -25,7 +25,7 @@ struct CompilerOptions {
     int compile_threads     = 8;
     // Longest insignificant whitespace run between JSON tokens (unless compact_json), and longest
     // leading whitespace run after a reasoning section (follows_reasoning).
-    int json_whitespace_run      = 24;
+    int json_whitespace_run      = 64;
     int reasoning_whitespace_run = 4;
 };
 

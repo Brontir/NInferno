@@ -1416,7 +1416,7 @@ object ::= "{" ws (member (ws "," ws member)*)? ws "}"
 array ::= "[" ws (value (ws "," ws value)*)? ws "]"
 quoted ::= "<|\"|>" qchar* "<|\"|>"
 qchar ::= [^<] | "<" [^|] | "<|" [^\"] | "<|\"" [^|] | "<|\"|" [^>]
-ws ::= [ \t\n]{0,24})GBNF";
+ws ::= [ \t\n]{0,64})GBNF";
 
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
