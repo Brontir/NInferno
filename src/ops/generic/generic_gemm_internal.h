@@ -111,10 +111,10 @@ inline constexpr double kRmmaWideBytes = 5.5;
 // 1.16-1.61 (8 of 8); RTX 4060 Ti (34 SMs), 96..384 CTAs: as many waves 0.98 and 0.99, a wave
 // more 1.02-1.28 (8 of 8). The loss of a wave more lies between the bytes (1.0: the board
 // streams at its bandwidth whatever the residency) and the waves' ratio (a latency-bound CTA
-// takes as long alone), nearer the latter on the latency-bound 5070 Ti; a register more that
-// changed no wave never cost (the old rule refused it: Q5_K w1x4 at 129 registers against 127 on sm_120, 4 -> 3
-// CTAs, one wave -> two on the 256-CTA calls of Qwen3.5-9B, 12-30 % slower). A variant that holds
-// no CTA, or unknown counts (0), never pays.
+// takes as long alone), nearer the latter on the latency-bound 5070 Ti. The CTA count alone
+// decided before: Q5_K's w1x4 latency kernel at 129 registers against 127 (sm_120, 4 -> 3 CTAs
+// per SM) lost 12-30 % on Qwen3.5-9B calls, the 256-CTA ones a wave more at 3. A variant that
+// holds no CTA, or unknown counts (0), never pays.
 [[nodiscard]] bool rmma_variant_occupancy_rule(std::int64_t grid_ctas, int sms, int variant_ctas,
                                                int plain_ctas);
 
