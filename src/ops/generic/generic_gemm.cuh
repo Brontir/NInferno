@@ -3048,18 +3048,7 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
     const bool local       = kLocal && local_tokens <= 4 && a.lane_local != 0;
 #endif
 
-    // w1x16 of one token tile (a call of at most one CTA per SM where clusters do not exist) holds
-    // kDeep steps of its weight in flight per warp, not two: its warps stream a whole row block
-    // from one SM, whose loads in flight bound it (RTX 4070 Ti, BF16 32 x 4096, T = 8: each
-    // further pair of steps per warp cost 0.9 us, L2 cold). The steps a warp sums and their order
-    // stay the two-slot ring's. As many slots as 64 registers of runs hold (BF16: eight, Q8: four).
-    constexpr int kRunRegs = static_cast<int>(sizeof(Run) / 4) * kSets * MT * 2;
-    constexpr int kDeepFit = 64 / kRunRegs >= 8 ? 8 : 64 / kRunRegs >= 4 ? 4 : 2;
-    constexpr int kDeep =
-        WK == 16 && Schedule::kWarpsM == 1 && MT == 1 && NT == 1 && C == 1 && G == 1 && !Latency
-            ? kDeepFit
-            : 2;
-    Run ring[kDeep][kSets][MT][2];
+    Run ring[2][kSets][MT][2];
 
     // A K-quant SwiGLU step of one token tile (the verify widths, T <= 8) also copies its
     // activations ahead, with cp.async into shared memory, each lane the 8-byte chunks its own
@@ -3199,42 +3188,13 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
     }
     // The first step's staged activations: x copied only after that wait.
     if (s_begin + k_warp < steps) stage_act(Slot0{}, s_begin + k_warp);
-    if constexpr (kDeep > 2) {
-        // Slot d holds steps first + d*WKS, first + (d + kDeep)*WKS, ...: each refilled once the
-        // step it held is summed.
-        const int first = s_begin + k_warp;
-        [&]<int... d>(std::integer_sequence<int, d...>) {
-            ((d > 0 && first + d * WKS < steps
-                  ? fetch(std::integral_constant<int, d>{}, first + d * WKS)
-                  : void()),
-             ...);
-        }(std::make_integer_sequence<int, kDeep>{});
 #pragma unroll 1
-        for (int base = first; base < steps; base += kDeep * WKS) {
-            [&]<int... d>(std::integer_sequence<int, d...>) {
-                bool more = true;
-                ((more = more &&
-                         [&] {
-                             const int step = base + d * WKS;
-                             if (step >= steps) return false;
-                             compute(std::integral_constant<int, d>{}, step, false);
-                             if (step + kDeep * WKS < steps) {
-                                 fetch(std::integral_constant<int, d>{}, step + kDeep * WKS);
-                             }
-                             return true;
-                         }()),
-                 ...);
-            }(std::make_integer_sequence<int, kDeep>{});
-        }
-    } else {
-#pragma unroll 1
-        for (int step = s_begin + k_warp; step < steps; step += 2 * WKS) {
-            if (step + WKS < steps) fetch(Slot1{}, step + WKS);
-            compute(Slot0{}, step, step + WKS < steps);
-            if (step + WKS >= steps) break;
-            if (step + 2 * WKS < steps) fetch(Slot0{}, step + 2 * WKS);
-            compute(Slot1{}, step + WKS, step + 2 * WKS < steps);
-        }
+    for (int step = s_begin + k_warp; step < steps; step += 2 * WKS) {
+        if (step + WKS < steps) fetch(Slot1{}, step + WKS);
+        compute(Slot0{}, step, step + WKS < steps);
+        if (step + WKS >= steps) break;
+        if (step + 2 * WKS < steps) fetch(Slot0{}, step + 2 * WKS);
+        compute(Slot1{}, step + WKS, step + 2 * WKS < steps);
     }
 #if NINFERNO_FMA_MMA
     if constexpr (kLocal) {
