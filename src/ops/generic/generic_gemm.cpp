@@ -806,8 +806,9 @@ inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;
 // K-quant SwiGLU at T <= 8 on a board without cp.async (sm_75) whose bytes per SM cycle take the
 // latency variant: four K warps, the CTA whose register cap holds the activation ring of both row
 // sets (kRmmaAheadForm, generic_gemm.cuh; 214-217 registers on sm_75: the eight-warp CTA, whose
-// two CTAs a SM cap it at 128, has no ring form, and its latency kernel without one lost 7-8 %). RTX 2080 Ti (5.9), Qwen3.5-9B gate/up 12288x4096 Q4_K: w1x8 142.4 us (plain,
-// the old pick) against 122.3 us w1x4 with the ring at T = 8, 141.2 -> 118.7 at T = 5.
+// two CTAs a SM cap it at 128, has no ring form, and its latency kernel without one lost 7-8 %).
+// RTX 2080 Ti (5.9), Qwen3.5-9B gate/up 12288x4096 Q4_K: w1x8 142.4 us (plain, the old pick)
+// against 122.3 us w1x4 with the ring at T = 8, 141.2 -> 118.7 at T = 5, 136.5 -> 111.8 at T = 1.
 bool ring_swiglu_four_warps(QType q) {
     // Q4_K and Q5_K: the formats measured (Q3_K and Q6_K SwiGLU keep eight warps until they are).
     if (q != QType::GGML_Q4_K && q != QType::GGML_Q5_K) return false;

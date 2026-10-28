@@ -3012,7 +3012,8 @@ inline constexpr int kRmmaMinBlocks =
         : Schedule::kMinBlocks;
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
-__global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
+__global__
+__launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
     GemmArgs a) {
     constexpr int R        = Decoder::kRun;
