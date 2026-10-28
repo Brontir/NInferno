@@ -1045,7 +1045,8 @@ the master 9c2d8c91 registry, Qwen rounds at k 4..7, each card's own eta):
    Programming Guide's table (at 1024 the 5070 Ti's share is 0.26). The two Ada cards agree (0.57
    and 0.60), which is why the Ada row stands.
 2. **The excess over the bytes is a fixed cost a round** (excess = (R measured - R bytes) x the
-   measured plain step). Partly. In 33 of 45 series (one pair and mode each) it moves by 10 % or
+   measured plain step). Partly. Of the 46 series (one pair and mode each), one is below its bytes (4070 Ti 4B AWQ MTP,
+   -0.7 .. -1.0 ms: no relative growth). In 33 of the other 45 it moves by 10 % or
    less from the smallest k to the largest (median +2 %), it grows with the model (4B about 1.3 ms,
    9B about 4 ms on the 4070 Ti) and falls with the card (9B DFlash: 4070 Ti 3.9 ms, 4090 1.8 ms):
    not launch time (that would not follow the card), but a pass that k does not change, the DFlash

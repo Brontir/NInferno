@@ -32,7 +32,7 @@ def main():
         by[r["board"]["name"]].append(r)
     print("| card | rounds | eta | dp4a share | fixed ms a round per pair and mode: k -> ms |")
     print("|---|---|---|---|---|")
-    growth = []
+    growth, below = [], []
     for name, rs in sorted(by.items()):
         b = rs[0]["board"]
         eta = F.fit(rs)
@@ -51,6 +51,8 @@ def main():
             cells.append(f"{t} {mode}: " + " ".join(f"{k}:{ms:.2f}" for k, ms in v))
             if len(v) >= 2 and v[0][1] > 0:
                 growth.append(v[-1][1] / v[0][1] - 1)
+            elif len(v) >= 2:
+                below.append(f"{name} {t} {mode}")  # at or below its bytes: no relative growth
         print(f"| {name} | {len(rs)} | {eta:.3f} | {share:.2f} | {'; '.join(cells)} |")
     growth.sort()
     within = sum(1 for g in growth if abs(g) <= 0.10)
@@ -58,6 +60,8 @@ def main():
     print(f"residual from the smallest to the largest k, per pair and mode: {within} of {len(growth)} "
           f"series within 10 %; median {100 * growth[len(growth) // 2]:+.0f} %, "
           f"range {100 * growth[0]:+.0f} .. {100 * growth[-1]:+.0f} %")
+    print(f"series at or below their bytes at the smallest k (left out above): {len(below)}: "
+          + "; ".join(below))
 
 
 if __name__ == "__main__":
