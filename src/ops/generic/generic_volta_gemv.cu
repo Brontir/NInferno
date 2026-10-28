@@ -1,8 +1,9 @@
 // Volta's decode GEMV for the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats: a warp per output
 // row, lanes over a superblock (lane l: its values 8 l .. 8 l + 7), codes decoded straight to FP32
 // and summed against FP32 activations. Without tensor mma.sync the register-MMA tiles emulate the
-// MMA fragment layout on FP32 FMAs; at T <= 8 this kernel reads the same bytes in row order.
-// run_route takes it for a lane-local register-MMA call (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6
+// MMA fragment layout on FP32 FMAs; this kernel reads the same bytes in row order. run_route takes
+// it for a register-MMA call outside the invariant profile (GemmArgs::lane_local) at T <= 4, and at
+// T = 5..8 while the activation fits L1 (volta_gemv_takes) (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6
 // ms, decode 25.5 -> 28.4 tok/s).
 #include "core/device.h"
 #include "ops/generic/generic_gemm.cuh"
@@ -276,10 +277,11 @@ void launch_epilogue(Epilogue epilogue, const GemmArgs& args, cudaStream_t strea
 
 bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args) {
     if (args.lane_local == 0 || args.tokens < 1 || args.join_previous != 0) return false;
-    // Each warp of a CTA reads the whole activation, T x K BF16, for its row: up to four tokens
-    // always, five to eight (a speculative round's drafter block and verify, dflash:7 = 8 columns)
-    // while it fits an SM's L1 (128 KiB on sm_70), where the CTA's eight warps share it. Past that
-    // every warp streams it from L2, and the emulated register MMA was faster (GV100, T 6..8 at
+    // Each warp reads the whole activation, T x K BF16, for its row: up to four tokens always,
+    // five to eight (a speculative round's drafter block and verify, dflash:7 = 8 columns) while
+    // it fits an SM's L1 (128 KiB on sm_70, this kernel holds no shared memory), where the warps
+    // resident on the SM re-read it. Past that every warp streams it from L2, and the emulated
+    // register MMA was faster (GV100, T 6..8 at
     // K 12288: Q8 4096 rows 310..399 us against 293; K 32768: 799..1044 against 785).
     constexpr int kAlwaysTokens     = 4;
     constexpr int kMaxTokens        = 8;
