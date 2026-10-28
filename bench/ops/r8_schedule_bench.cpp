@@ -7,7 +7,7 @@
 //
 //   ninferno_r8_schedule_bench [--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...]
 //                            [--samples 15] [--launches 60] [--tokens 1,2,4,8] [--rmma 1]
-//                            [--span-mib M] [--interleave-mib M] [--interleave-weight FORMAT,N]
+//                            [--span-mib M] [--interleave-mib M] [--interleave-weight FORMAT,N ...]
 //
 // FILE is the NINFERNO_ROUTE_RECORD / ninferno_route_tune format, "<format> <compute> <epilogue>
 // <n> <k>" per line (the compute column is ignored: R8 is the A8 decode route); --problem adds one
@@ -46,6 +46,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <tuple>
 #include <vector>
 
@@ -92,8 +93,8 @@ std::size_t g_interleave_bytes = 0;
 // --interleave-weight FORMAT,N: the dispatcher's decode route of another weight (FORMAT, N rows, the
 // problem's K, a fresh copy each launch) runs between launches: other code and only clean lines
 // pass through the L2, as between a model step's projections.
-std::string g_interleave_format;
-std::int32_t g_interleave_rows = 0;
+// Repeatable: several formats run in turn (their code, too, passes through the instruction caches).
+std::vector<std::pair<std::string, std::int32_t>> g_interleave;
 
 double median(std::vector<double> v) {
     std::nth_element(v.begin(), v.begin() + v.size() / 2, v.end());
@@ -216,38 +217,46 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
 
     std::unique_ptr<DeviceBuffer> scratch;
     if (g_interleave_bytes > 0) scratch = std::make_unique<DeviceBuffer>(g_interleave_bytes);
-    std::vector<std::unique_ptr<bench::RandomWeight>> others;
-    std::unique_ptr<DeviceBuffer> other_y;
-    std::unique_ptr<Tensor> other_ty;
-    generic::Route other_route{};
-    if (g_interleave_rows > 0) {
-        const QType oq = parse_format(g_interleave_format);
-        others.push_back(std::make_unique<bench::RandomWeight>(
-            bench::random_weight(oq, g_interleave_rows, p.k, 5U + p.k)));
-        const std::size_t obytes = others[0]->parent.geometry.bytes;
+    // One entry per --interleave-weight: copies of a weight of that format, its output, its route.
+    struct Other {
+        std::vector<std::unique_ptr<bench::RandomWeight>> copies;
+        std::unique_ptr<DeviceBuffer> y;
+        std::unique_ptr<Tensor> ty;
+        generic::Route route{};
+        std::int32_t rows = 0;
+    };
+    std::vector<Other> others(g_interleave.size());
+    for (std::size_t o = 0; o < g_interleave.size(); ++o) {
+        Other& other   = others[o];
+        const QType oq = parse_format(g_interleave[o].first);
+        other.rows     = g_interleave[o].second;
+        other.copies.push_back(std::make_unique<bench::RandomWeight>(
+            bench::random_weight(oq, other.rows, p.k, 5U + p.k + static_cast<unsigned>(o))));
+        const std::size_t obytes = other.copies[0]->parent.geometry.bytes;
         const std::size_t ocount = std::max<std::size_t>(2, (4 * l2_bytes + obytes - 1) / obytes);
         for (std::size_t c = 1; c < ocount; ++c) {
-            others.push_back(
-                std::make_unique<bench::RandomWeight>(bench::clone_weight(*others[0])));
+            other.copies.push_back(
+                std::make_unique<bench::RandomWeight>(bench::clone_weight(*other.copies[0])));
         }
-        other_y  = std::make_unique<DeviceBuffer>(static_cast<std::size_t>(g_interleave_rows) * 2);
-        other_ty = std::make_unique<Tensor>(other_y->p, DType::BF16,
-                                            std::initializer_list<std::int32_t>{g_interleave_rows, 1});
-        other_route = generic::select_route(
-            generic::Problem{oq, ops::LinearPolicy::AllowA8, g_interleave_rows, p.k,
+        other.y  = std::make_unique<DeviceBuffer>(static_cast<std::size_t>(other.rows) * 2);
+        other.ty = std::make_unique<Tensor>(other.y->p, DType::BF16,
+                                            std::initializer_list<std::int32_t>{other.rows, 1});
+        other.route = generic::select_route(
+            generic::Problem{oq, ops::LinearPolicy::AllowA8, other.rows, p.k,
                              generic::Epilogue::Store},
-            others[0]->weight, 1, false);
+            other.copies[0]->weight, 1, false);
     }
     const auto interleave = [&](int l) {
-        if (others.empty()) return;
-        generic::Call call;
-        call.x               = &tx1;
-        call.weight          = &others[static_cast<std::size_t>(l) % others.size()]->weight;
-        call.rows            = g_interleave_rows;
-        call.epilogue        = generic::Epilogue::Store;
-        call.out[0]          = other_ty.get();
-        call.segment_rows[0] = g_interleave_rows;
-        generic::run_route(other_route, call, &workspace, stream);
+        for (const Other& other : others) {
+            generic::Call call;
+            call.x               = &tx1;
+            call.weight          = &other.copies[static_cast<std::size_t>(l) % other.copies.size()]->weight;
+            call.rows            = other.rows;
+            call.epilogue        = generic::Epilogue::Store;
+            call.out[0]          = other.ty.get();
+            call.segment_rows[0] = other.rows;
+            generic::run_route(other.route, call, &workspace, stream);
+        }
     };
     std::vector<cudaGraphExec_t> graphs(schedules);
     for (int i = 0; i < schedules; ++i) {
@@ -347,8 +356,7 @@ int main(int argc, char** argv) {
                 g_interleave_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--interleave-weight") {
                 const auto comma = v.find(',');
-                g_interleave_format = v.substr(0, comma);
-                g_interleave_rows   = std::stoi(v.substr(comma + 1));
+                g_interleave.emplace_back(v.substr(0, comma), std::stoi(v.substr(comma + 1)));
             } else if (a == "--span-mib") {
                 g_span_bytes = static_cast<std::size_t>(std::stoll(v)) << 20;
             } else if (a == "--rmma") {
