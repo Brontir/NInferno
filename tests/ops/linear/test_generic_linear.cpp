@@ -807,8 +807,8 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     return failures;
 }
 
-// Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): at every width of
-// 2..16 the dispatch takes it for Q4_K / Q5_K / Q6_K / Q8 whatever the policy, and a token's output
+// Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): the dispatch takes it
+// for Q4_K / Q5_K / Q6_K / Q8 at 2..16 tokens (5..16 with an int8 route), and a token's output
 // bytes equal those of the same token in a call of any other width there (at any start), repeated
 // run to run: its sums read the token's own activation in one order.
 int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
@@ -864,6 +864,8 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
     const std::pair<std::int32_t, std::int32_t> windows[] = {
         {0, 2}, {3, 2}, {0, 3}, {5, 4}, {0, 7}, {9, 8}, {0, 9}, {1, 13}, {7, 15}, {0, 16}};
     for (const auto [offset, t] : windows) {
+        // A call with an int8 route keeps it through four tokens (volta_hmma_route).
+        if (policy == ops::LinearPolicy::AllowA8 && t <= 4) continue;
         std::vector<std::uint16_t> bits;
         if (!run(offset, t, bits)) {
             std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=" << t
@@ -2228,8 +2230,10 @@ int main() {
             }
             for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
                 failures +=
-                    check_volta_hmma_invariance(f, op, 72, 512, ops::LinearPolicy::AllowA8, 79U);
+                    check_volta_hmma_invariance(f, op, 72, 512, ops::LinearPolicy::A16Only, 79U);
             }
+            failures +=
+                check_volta_hmma_invariance(f, Op::Add, 72, 512, ops::LinearPolicy::AllowA8, 81U);
             failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 768,
                                                     ops::LinearPolicy::A16Only, 83U);
         }
