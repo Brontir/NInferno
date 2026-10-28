@@ -289,6 +289,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
 
 } // namespace
 
+bool is_qwen_family(const ModelFacts& model) noexcept { return qwen_family(model); }
+
 Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationMode activations,
                          const Pins& pins) noexcept {
     Coupled out{KvCacheStorage::BFloat16, RecurrentStateStorage::FP32};

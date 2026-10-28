@@ -310,6 +310,13 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         out.choice.why = activation_refusal(facts, *p.activations);
         return out;
     }
+    // A KV codec pinned that the model does not take: the start refuses it, likewise.
+    if (p.kv) {
+        if (std::string why = kv_refusal(facts, *p.kv); !why.empty()) {
+            out.choice.why = std::move(why);
+            return out;
+        }
+    }
     out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
     out.drafters       = std::move(axis.served);
     out.drafter_options = axis.options;
@@ -349,9 +356,10 @@ std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capab
         device_features_for(compute_capability / 10, compute_capability % 10).mma_fp8;
     const choice::ModelFacts model = choice_model_of(facts);
     const choice::Allowed allowed  = choice::allowed_axes(model, KvCacheStorage::BFloat16);
-    // The Qwen families keep the paged pool (the int8 activations are theirs too).
-    const bool paged = std::find(allowed.activations.begin(), allowed.activations.end(),
-                                 ActivationMode::Int8) != allowed.activations.end();
+    // The Qwen families keep the paged pool, whose target append and attention are 256-wide only
+    // (ops kv_cache_append, causal_softmax_attention: D256): its compact codecs need 256-wide
+    // heads (paged_kv_storage_layout's 128-wide INT8 is the DFlash drafter pool's, not the target's).
+    const bool paged = choice::is_qwen_family(model);
     std::vector<KvOption> out;
     for (const KvCacheStorage kv : codecs) {
         KvOption o;
@@ -372,16 +380,11 @@ std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capab
             o.why_code = "family_codec";
             o.why      = "this model (" + facts.model.model_type +
                     ") keeps keys and values in BF16 or FP8 (--kv-dtype bf16|fp8), not " + name;
-        } else if (paged) {
-            try {
-                (void)paged_kv_storage_layout(kv,
-                                              static_cast<std::int32_t>(facts.model.full_key_dim));
-            } catch (const std::exception&) {
-                o.allowed  = false;
-                o.why_code = "head_width";
-                o.why      = "this model's heads are " + std::to_string(facts.model.full_key_dim) +
-                        " wide: --kv-dtype " + name + " takes 256-wide heads";
-            }
+        } else if (paged && facts.model.full_key_dim != kD256KVCacheHeadDim) {
+            o.allowed  = false;
+            o.why_code = "head_width";
+            o.why      = "this model's heads are " + std::to_string(facts.model.full_key_dim) +
+                    " wide: --kv-dtype " + name + " takes 256-wide heads";
         }
         out.push_back(o);
     }
@@ -396,7 +399,11 @@ std::string kv_refusal(const PlanSourceFacts& facts, KvCacheStorage kv) {
 }
 
 void refuse_unrun_kv_at_start(const std::filesystem::path& artifact, KvCacheStorage kv) {
-    const std::string why = kv_refusal(plan_facts_of_artifact(artifact), kv);
+    // A shape the facts do not name (no context length or geometry in the config) is the
+    // engine's to judge at load: refused here only by the family's codecs and the head width.
+    const PlanSourceFacts facts = plan_facts_of_artifact(artifact);
+    if (!facts.model.known()) { return; }
+    const std::string why = kv_refusal(facts, kv);
     if (!why.empty()) { throw std::invalid_argument(why); }
 }
 
