@@ -177,23 +177,50 @@ DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
     return out;
 }
 
-std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+namespace {
+
+convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     const auto& m = facts.model;
-    if (!inputs.proposal_planned || (inputs.proposal_drafter_bytes <= 0 && m.mtp_bytes == 0)) {
-        return 0;
+    if (!inputs.proposal_planned) { return {}; }
+    // The quantization's own MTP layers (its subject's components: a repository's quantizations
+    // differ), their bytes where the facts count them, else one decoder layer's share of the
+    // weights (a checkpoint keeping mtp.* inside its shards).
+    const bool mtp = inputs.subject != nullptr ? inputs.subject->components.contains("mtp")
+                                               : facts.shape.builtin_mtp;
+    double mtp_bytes = 0;
+    if (mtp) {
+        mtp_bytes = m.mtp_bytes != 0 ? static_cast<double>(m.mtp_bytes)
+                    : facts.shape.num_hidden_layers != 0
+                        ? static_cast<double>(m.weight_bytes) /
+                              static_cast<double>(facts.shape.num_hidden_layers)
+                        : 0;
     }
+    if (inputs.proposal_drafter_bytes <= 0 && mtp_bytes <= 0) { return {}; }
     const double head = static_cast<double>(
         inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
-    return convert::planned_proposal_bytes(head, static_cast<double>(m.weight_bytes),
-                                           static_cast<double>(m.mtp_bytes),
-                                           inputs.proposal_drafter_bytes, m.vocab, m.hidden,
-                                           facts.shape.experts > 0);
+    return convert::planned_proposal(head, static_cast<double>(m.weight_bytes), mtp_bytes,
+                                     inputs.proposal_drafter_bytes, m.vocab, m.hidden,
+                                     facts.shape.experts > 0);
+}
+
+} // namespace
+
+std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    return proposal_at(facts, inputs).bytes;
 }
 
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
-    return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.drafter_bytes + proposal_bytes_at(facts, inputs),
-                                 inputs.drafter_state);
+    // The default proposal head is part of the converted target's weights, loaded only under a
+    // drafter it serves (dry_run_plan's proposal_bytes rule).
+    PlanSourceFacts at = facts;
+    if (const auto proposal = proposal_at(facts, inputs); proposal.bytes != 0) {
+        at.model.weight_bytes += proposal.bytes;
+        at.model.proposal_bytes += proposal.bytes;
+        at.model.proposal_serves_mtp    = proposal.mtp;
+        at.model.proposal_serves_dflash = proposal.dflash;
+    }
+    return plan_with_speculation(at, inputs.device, inputs.options, inputs.subject, inputs.ask,
+                                 inputs.drafter_bytes, inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {

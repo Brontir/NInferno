@@ -620,16 +620,16 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
     }
 }
 
-std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double mtp_bytes,
-                                     double drafter_bytes, std::uint64_t vocab,
-                                     std::uint64_t hidden, bool moe) {
-    if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return 0; }
+PlannedProposal planned_proposal(double head_bytes, double target_bytes, double mtp_bytes,
+                                 double drafter_bytes, std::uint64_t vocab, std::uint64_t hidden,
+                                 bool moe) {
+    if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return {}; }
     // A plan prices many rows and probes: the ranking is read once per vocabulary, each answer
     // kept (the same facts, the same bytes).
     using Key = std::tuple<double, double, double, double, std::uint64_t, std::uint64_t, bool>;
     static std::mutex mutex;
     static std::map<std::uint64_t, std::vector<std::int64_t>> rankings; // by vocabulary
-    static std::map<Key, std::uint64_t> answers;
+    static std::map<Key, PlannedProposal> answers;
     const Key key{head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe};
     std::lock_guard lock(mutex);
     if (const auto it = answers.find(key); it != answers.end()) { return it->second; }
@@ -651,7 +651,7 @@ std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, dou
         }
         ranking = rankings.emplace(vocab, std::move(totals)).first;
     }
-    std::uint64_t out = 0;
+    PlannedProposal out;
     if (!ranking->second.empty()) {
         // An unquantized checkpoint's head: in the round (the share) as its default recipe stores
         // it (Codex on #170: the MoE's recipe stores it Q6, not BF16), its gathered rows the
@@ -670,17 +670,21 @@ std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, dou
         std::uint64_t rows  = 0;
         if (mtp_bytes > 0) {
             const std::int32_t k = spec::kDraftHeadMtpDepth;
-            rows = std::max(
-                rows, spec::draft_head_rows(totals, k * full / (target + k * (mtp_bytes + full)), k).rows);
+            const auto asked =
+                spec::draft_head_rows(totals, k * full / (target + k * (mtp_bytes + full)), k).rows;
+            out.mtp = asked != 0;
+            rows    = std::max(rows, asked);
         }
         if (drafter_bytes > 0) {
-            rows = std::max(rows, spec::draft_head_rows(totals, full / (target + drafter_bytes + full),
-                                                        spec::kDraftHeadDepth)
-                                      .rows);
+            const auto asked = spec::draft_head_rows(totals, full / (target + drafter_bytes + full),
+                                                     spec::kDraftHeadDepth)
+                                   .rows;
+            out.dflash = asked != 0;
+            rows       = std::max(rows, asked);
         }
         // The gathered rows and their int32 token ids (proposal/token_ids).
-        out = static_cast<std::uint64_t>(static_cast<double>(rows) * rows_bytes) +
-              rows * sizeof(std::int32_t);
+        out.bytes = static_cast<std::uint64_t>(static_cast<double>(rows) * rows_bytes) +
+                    rows * sizeof(std::int32_t);
     }
     answers.emplace(key, out);
     return out;

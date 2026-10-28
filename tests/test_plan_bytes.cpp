@@ -921,6 +921,7 @@ void test_proposal_bytes_per_quant() {
     q4.model.vocab         = 248320;
     q4.model.hidden        = 4096;
     q4.model.mtp_bytes     = 0;
+    q4.shape.builtin_mtp   = false; // no MTP layers (the MTP case below has them)
     pr::DryRunInputs inputs;
     inputs.proposal_planned       = true;
     inputs.proposal_drafter_bytes = 1372703744.0;
@@ -948,8 +949,35 @@ void test_proposal_bytes_per_quant() {
     // MTP layers alone: the rows MTP 3 asks for (57,344 on the 9B).
     pr::PlanSourceFacts mtp = q4;
     mtp.model.mtp_bytes     = 1002113024 - 834355200; // the MTP layer without the head it shares
+    mtp.shape.builtin_mtp   = true;
     check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3360 + 57344ULL * 4,
           "MTP layers alone: 57,344 rows and ids");
+    // The plan loads it under MTP and leaves it off plain decode (review on the MTP branch: it
+    // went into the attached drafters' bytes, which built-in MTP never takes).
+    pr::DryRunInputs at   = none;
+    at.device.total_bytes = rt::plan_board_total_bytes(12);
+    at.device.free_bytes  = at.device.total_bytes;
+    const auto weights    = [&](SpeculativeBackend backend) {
+        pr::DryRunInputs ask              = at;
+        ask.options.speculative.backend      = backend;
+        ask.options.speculative.draft_tokens = backend == SpeculativeBackend::None ? 0 : 3;
+        ask.ask.automatic                    = false;
+        ask.ask.given                        = ask.options.speculative;
+        return pr::plan_model(mtp, ask).plan.weight_bytes;
+    };
+    check(weights(SpeculativeBackend::Mtp) - weights(SpeculativeBackend::None) ==
+              57344ULL * 3360 + 57344ULL * 4,
+          "an MTP plan loads the head, a plain one not");
+    // A quantization whose subject has no MTP layers: none of their rows.
+    pr::SpeculationSubject plain;
+    plain.components = {"text"};
+    pr::DryRunInputs of_plain = none;
+    of_plain.subject          = &plain;
+    check(pr::proposal_bytes_at(mtp, of_plain) == 0, "a subject without MTP: no MTP rows");
+    // A checkpoint keeping its MTP layer inside the shards (no mtp_bytes): one layer's share.
+    pr::PlanSourceFacts shards = mtp;
+    shards.model.mtp_bytes     = 0;
+    check(pr::proposal_bytes_at(shards, none) != 0, "MTP inside the shards: rows still planned");
 }
 
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the

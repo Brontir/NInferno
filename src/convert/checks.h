@@ -99,10 +99,22 @@ struct DefaultProposal {
 // none), the vocabulary and width. The rows from the default ranking as default_proposal finds
 // it (the most MTP 3 and DFlash 7 ask for), with their int32 token ids; 0 when it is not found
 // or nothing pays.
-[[nodiscard]] std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
-                                                   double mtp_bytes, double drafter_bytes,
-                                                   std::uint64_t vocab, std::uint64_t hidden,
-                                                   bool moe = false);
+struct PlannedProposal {
+    std::uint64_t bytes = 0;
+    bool mtp            = false; // MTP asks rows (the head serves it)
+    bool dflash         = false; // DFlash asks rows
+};
+[[nodiscard]] PlannedProposal planned_proposal(double head_bytes, double target_bytes,
+                                               double mtp_bytes, double drafter_bytes,
+                                               std::uint64_t vocab, std::uint64_t hidden,
+                                               bool moe = false);
+[[nodiscard]] inline std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
+                                                          double mtp_bytes, double drafter_bytes,
+                                                          std::uint64_t vocab, std::uint64_t hidden,
+                                                          bool moe = false) {
+    return planned_proposal(head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe)
+        .bytes;
+}
 
 // select_shortlist(counts, n, force_include).
 [[nodiscard]] std::vector<std::int64_t> select_shortlist(const std::vector<std::int64_t>& counts,
