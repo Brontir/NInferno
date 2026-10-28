@@ -49,8 +49,7 @@ std::filesystem::path artifact_of(const std::filesystem::path& dir, const std::s
                                   const std::string& format) {
     const auto path = dir / (name + ".ninferno");
     std::ofstream(path) << "x";
-    std::ofstream(path.string() + ".revision") << revision << "
-";
+    std::ofstream(path.string() + ".revision") << revision << "\n";
     std::ofstream report(path.string() + ".conversion.json");
     report << R"({"components": {"text": {"config": {"model_type": "qwen3_5_text"}}}, "methods": [)"
            << R"({"parameters": [)";
