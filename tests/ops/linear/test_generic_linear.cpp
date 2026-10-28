@@ -807,6 +807,89 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     return failures;
 }
 
+// Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): at every width of
+// 2..16 the dispatch takes it for Q4_K / Q5_K / Q6_K / Q8 whatever the policy, and a token's output
+// bytes equal those of the same token in a call of any other width there (at any start), repeated
+// run to run: its sums read the token's own activation in one order.
+int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                                ops::LinearPolicy policy, std::uint32_t seed) {
+    const std::int32_t wide   = 40;
+    const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host     = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device       = upload_weight(host);
+    const auto activation     = make_linear_activation(k, wide, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    const auto residual = make_linear_activation(out_rows, wide, seed + 5U, ActivationCompute::A16);
+    DeviceArena workspace(256);
+    const generic::Problem problem{f.qtype, policy, out_rows, k,
+                                   gated(op)       ? generic::Epilogue::SwiGlu
+                                   : op == Op::Add ? generic::Epilogue::AddResidual
+                                                   : generic::Epilogue::Store};
+    const auto run = [&](std::int32_t offset, std::int32_t t, std::vector<std::uint16_t>& bits) {
+        const generic::Route route = generic::select_route(problem, device.weight, t, false);
+        if (route.family != generic::Family::RegisterMma) return false;
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        if (op == Op::Add) {
+            out.copy_from_host(residual.data() + static_cast<std::size_t>(offset) * out_rows,
+                               out.bytes);
+        } else {
+            cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+        }
+        Tensor tx(static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k,
+                  DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &device.weight;
+        call.rows            = out_rows;
+        call.up_offset       = gated(op) ? out_rows : 0;
+        call.gelu_gate       = op == Op::GeGlu;
+        call.relu2           = op == Op::Relu2;
+        call.epilogue        = problem.epilogue;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = out_rows;
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        bits = download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+        return true;
+    };
+    std::vector<std::uint16_t> reference, again;
+    int failures = 0;
+    if (!run(0, 16, reference) || !run(0, 16, again) || reference != again) {
+        std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=16 not the register-MMA route"
+                  << " or not repeatable\n";
+        return 1;
+    }
+    const std::pair<std::int32_t, std::int32_t> windows[] = {
+        {0, 2}, {3, 2}, {0, 3}, {5, 4}, {0, 7}, {9, 8}, {0, 9}, {1, 13}, {7, 15}, {0, 16}};
+    for (const auto [offset, t] : windows) {
+        std::vector<std::uint16_t> bits;
+        if (!run(offset, t, bits)) {
+            std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=" << t
+                      << " not the register-MMA route\n";
+            ++failures;
+            continue;
+        }
+        for (std::int32_t token = 0; token < t; ++token) {
+            if (offset + token >= 16) break;
+            if (std::memcmp(bits.data() + static_cast<std::size_t>(token) * out_rows,
+                            reference.data() + static_cast<std::size_t>(offset + token) * out_rows,
+                            static_cast<std::size_t>(out_rows) * 2) != 0) {
+                std::cerr << f.name << " " << op_name(op) << " Volta HMMA: window " << offset << "+"
+                          << t << " token " << token << " differs from the T=16 call\n";
+                ++failures;
+                break;
+            }
+        }
+    }
+    if (failures == 0) {
+        std::cout << f.name << " " << op_name(op) << " Volta HMMA [" << rows_n << "," << k
+                  << "]: 10 windows byte-identical\n";
+    }
+    return failures;
+}
+
 // An R8 route: every token's output bytes equal those of the same token in a call of any other
 // T <= kR8MaxTokens (at any start), since a token's sums read only its own activation; with the
 // workspace the verify widths of r8_verify_compiled formats read the activation quantized once
@@ -2133,6 +2216,22 @@ int main() {
     for (const Format& f : kFormats) {
         if (on_build(f) && f.qtype == QType::GGML_IQ3_XXS) {
             failures += check_w4a8_misaligned_signs(f);
+        }
+    }
+
+    // 4b. Volta's tensor-core verify route: token invariance over 2..16 (sm_70 only).
+    if (!device_class().features.mma_tensor) {
+        for (const Format& f : kFormats) {
+            if (!on_build(f) || (f.qtype != QType::GGML_Q4_K && f.qtype != QType::GGML_Q5_K &&
+                                 f.qtype != QType::GGML_Q6_K && f.qtype != QType::Q8_G32_FP16)) {
+                continue;
+            }
+            for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
+                failures +=
+                    check_volta_hmma_invariance(f, op, 72, 512, ops::LinearPolicy::AllowA8, 79U);
+            }
+            failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 768,
+                                                    ops::LinearPolicy::A16Only, 83U);
         }
     }
 
