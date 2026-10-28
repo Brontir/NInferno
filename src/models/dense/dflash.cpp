@@ -50,7 +50,8 @@ std::size_t carved(std::int64_t elements, std::size_t bytes = 2) {
     return static_cast<std::size_t>(elements) * bytes + kAlign;
 }
 
-// One drafter projection under the policy its loader prepared (every activation BF16).
+// One drafter projection under the policy its loader prepared (BF16 activations, A8 where the
+// format verifies a draft block on R8: ops::drafter_linear_policy).
 void project(WorkspaceArena& work, const Tensor& x, const Projection& p, Tensor& out,
              cudaStream_t stream) {
     auto scope = work.scope();

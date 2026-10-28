@@ -14,6 +14,8 @@
 #include "ops/linear/q5/q5_dispatch.h"
 #include "ops/linear/q6/q6_dispatch.h"
 #include "ops/linear/q8/q8_dispatch.h"
+#include "ops/linear_add/q8/q8_linear_add_plan.h"
+#include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -367,6 +369,31 @@ static std::size_t own_linear_workspace_capacity_bytes(QType qtype, std::int32_t
 
 LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept {
     return recorded == LinearPolicy::AllowA4 ? LinearPolicy::AllowA8 : recorded;
+}
+
+LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded, DrafterOp op) {
+    // R8 takes an eight-token block of Q8 only (r8_verify_widest). A Q8 shape the table of the op
+    // that runs it owns keeps that table's A16 kernels at 2..8 tokens (the dispatcher sends only a
+    // one-token call of it to R8), so lifting its policy would change nothing; the segmented
+    // projection reads no table.
+    const bool owned = [&] {
+        switch (op) {
+        case DrafterOp::Linear:
+            return detail::linear_shape_registered(weight.qtype, weight.n, weight.k);
+        case DrafterOp::LinearAdd:
+            return detail::q8_linear_add_registered(weight.n, weight.k);
+        case DrafterOp::LinearSwiGlu:
+            return detail::q8_linear_swiglu_registered(weight.n, weight.k);
+        case DrafterOp::Generic:
+            return false;
+        }
+        return true;
+    }();
+    if (recorded != LinearPolicy::A16Only || weight.qtype != QType::Q8_G32_FP16 || owned ||
+        !detail::generic::r8_takes_block(weight)) {
+        return recorded;
+    }
+    return LinearPolicy::AllowA8;
 }
 
 std::size_t linear_workspace_capacity_bytes(QType qtype, std::int32_t output_rows,

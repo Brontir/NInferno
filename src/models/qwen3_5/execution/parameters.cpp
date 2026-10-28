@@ -1,6 +1,7 @@
 #include "models/qwen3_5/execution/parameters.h"
 
 #include "core/weight_view.h"
+#include "ninferno/ops/linear.h"
 
 #include <algorithm>
 #include <limits>
@@ -57,6 +58,15 @@ public:
             }
             return weight_tensor(view, {axes[0], axes[1], axes[2], axes[3]});
         });
+    }
+
+    // A drafter's projection: A8 where the recorded policy is A16Only and the format verifies a
+    // draft block on R8 (ops::drafter_linear_policy); --activations exact keeps BF16.
+    LinearParameters drafter(LinearParameters p, ops::DrafterOp op) const {
+        if (model_.options().activations != ActivationMode::Exact) {
+            p.policy = ops::drafter_linear_policy(p.weight, p.policy, op);
+        }
+        return p;
     }
 
     DenseParameters dense(const DenseWeights& w) const {
@@ -249,7 +259,7 @@ public:
 
     DraftParameters draft(const DraftWeights& w) const {
         DraftParameters out;
-        out.feature_projection = linear(w.feature_projection);
+        out.feature_projection = drafter(linear(w.feature_projection), ops::DrafterOp::Linear);
         out.context_norm       = tensor(w.context_norm);
         out.final_norm         = tensor(w.final_norm);
         out.output_head        = linear(w.output_head_use);
@@ -267,6 +277,11 @@ public:
                     const std::array<ops::WeightInput, 3> qkv{
                         model_.input(a.query), model_.input(a.key), model_.input(a.value)};
                     result.query_key_value_bank = ops::prepare_segmented_projection_weights(qkv);
+                    for (auto& slice : result.query_key_value_bank.slices) {
+                        slice.policy = drafter(LinearParameters{slice.parent, slice.policy},
+                                               ops::DrafterOp::Generic)
+                                           .policy;
+                    }
                     // The fused Q/K/V kernel reads one RowSplit Q8 parent of its compiled
                     // geometry; a published drafter whose Q/K/V are one parent in another format
                     // (the dflash GGUF's Q4_0 blocks), or another width (Qwen3.5-9B's 4096), runs
@@ -284,11 +299,13 @@ public:
                     result.context_value = linear(a.context_value);
                     result.query_norm    = tensor(a.query_norm);
                     result.key_norm      = tensor(a.key_norm);
-                    result.output        = linear(a.output);
+                    result.output        = drafter(linear(a.output), ops::DrafterOp::LinearAdd);
                     result.mlp           = dense(layer.mlp);
                     if (result.mlp.split_gate_up) {
                         throw std::invalid_argument("draft MLP: gate and up must share one parent");
                     }
+                    result.mlp.gate_up = drafter(result.mlp.gate_up, ops::DrafterOp::LinearSwiGlu);
+                    result.mlp.down    = drafter(result.mlp.down, ops::DrafterOp::LinearAdd);
                     if (layer.attention_conv) {
                         result.attention_conv = convolution(*layer.attention_conv);
                     }

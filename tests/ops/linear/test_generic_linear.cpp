@@ -19,6 +19,9 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/linear/linear_registry.h"
+#include "ops/linear_add/q8/q8_linear_add_plan.h"
+#include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -1580,6 +1583,48 @@ int main() {
             }
         }
     }
+    // 1c. A drafter's A16Only projection takes A8 exactly where R8 verifies an eight-token block
+    // of its format (Q8 on every chip); another recorded policy stays.
+    for (const Format& f : kFormats) {
+        if (!on_build(f)) continue;
+        const Weight w   = cached_weight(f.qtype, 333, 2560, 29U).device->weight;
+        const bool block = generic::r8_verify_widest(f.qtype) >= generic::kR8VerifyTokens &&
+                           generic::r8_takes_block(w);
+        const ops::LinearPolicy want = block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only, ops::DrafterOp::Linear) != want ||
+            ops::drafter_linear_policy(w, ops::LinearPolicy::AllowA4, ops::DrafterOp::Linear) !=
+                ops::LinearPolicy::AllowA4 ||
+            (f.qtype == QType::Q8_G32_FP16 && !block)) {
+            std::cout << "FAIL " << f.name << " drafter_linear_policy" << std::endl;
+            ++failures;
+        }
+    }
+    // A Q8 shape the table of the op that runs it owns keeps its A16 kernels, since that
+    // dispatcher sends only its one-token calls to R8; the segmented projection reads no table.
+    // Gemma 4 31B DFlash's 5376 x 10752 (plain table), the Qwen DFlash down 2048 x 6144 (fused
+    // add table only: lifted through plain linear), unowned shapes.
+    for (const auto& [n, k] : std::initializer_list<std::pair<std::int32_t, std::int32_t>>{
+             {5376, 10752}, {2048, 6144}, {4096, 4096}, {333, 2560}}) {
+        const Weight w   = cached_weight(QType::Q8_G32_FP16, n, k, 31U).device->weight;
+        const bool block = generic::r8_takes_block(w);
+        const auto want  = [&](bool owned) {
+            return !owned && block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+        };
+        const auto got = [&](ops::DrafterOp op) {
+            return ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only, op);
+        };
+        if (got(ops::DrafterOp::Linear) !=
+                want(ops::detail::linear_shape_registered(QType::Q8_G32_FP16, n, k)) ||
+            got(ops::DrafterOp::LinearAdd) != want(ops::detail::q8_linear_add_registered(n, k)) ||
+            got(ops::DrafterOp::LinearSwiGlu) !=
+                want(ops::detail::q8_linear_swiglu_registered(n, k)) ||
+            got(ops::DrafterOp::Generic) != want(false) ||
+            (n == 5376 && got(ops::DrafterOp::Linear) != ops::LinearPolicy::A16Only)) {
+            std::cout << "FAIL Q8 " << n << " x " << k << " drafter_linear_policy" << std::endl;
+            ++failures;
+        }
+    }
+
     // 2a. NVFP4 with A8 allowed and A4 not: W4A8 from 17 tokens, W4A4 kept under AllowA4.
     if (on_build(nvfp4)) failures += check_nvfp4_a8_routes();
 

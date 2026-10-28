@@ -18,7 +18,8 @@ namespace {
 
 std::size_t bf16_bytes(std::int64_t elements) { return static_cast<std::size_t>(elements) * 2; }
 
-// One drafter projection; every activation stays BF16 (the loader prepared no W4A4 route).
+// One drafter projection under its loader's policy (BF16 activations, A8 where the format verifies
+// a draft block on R8: ops::drafter_linear_policy; never W4A4).
 void project(const Tensor& x, const Projection& p, Tensor& out, DeviceArena& work,
              cudaStream_t stream) {
     auto scope = work.scope();
@@ -134,6 +135,26 @@ std::size_t DFlashRound::workspace_bytes(const DFlashDrafter& drafter, std::int3
         op = std::max(op, ops::linear_workspace_capacity_bytes(p->weight.qtype, p->weight.n,
                                                                p->weight.k, p->policy, 1,
                                                                static_cast<std::int32_t>(t)));
+    }
+    // The block pass's projections at the draft block: lifted to A8 (drafter_linear_policy) they
+    // need R8's activation planes.
+    for (const auto& layer : dw.layers) {
+        std::vector<const Projection*> block{&layer.output, &layer.down};
+        if (layer.qkv) {
+            block.push_back(&*layer.qkv);
+        } else {
+            block.insert(block.end(), {&layer.query, &layer.key, &layer.value});
+        }
+        if (layer.gate_up) {
+            block.push_back(&*layer.gate_up);
+        } else {
+            block.insert(block.end(), {&layer.gate, &layer.up});
+        }
+        for (const Projection* p : block) {
+            op = std::max(op, ops::linear_workspace_capacity_bytes(
+                                  p->weight.qtype, p->weight.n, p->weight.k, p->policy,
+                                  static_cast<std::int32_t>(b), static_cast<std::int32_t>(b)));
+        }
     }
     const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(max_context),
                                                 dc.block_size};

@@ -145,6 +145,10 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
     const generic::Problem problem{p.qtype, ops::LinearPolicy::AllowA8, p.n, p.k, p.epilogue};
     const generic::Route picked = generic::select_route(problem, copies[0]->weight, tokens, false);
+    // The dispatcher's route for a BF16-activation call (A16Only: a DFlash drafter's projections).
+    const generic::Problem problem16{p.qtype, ops::LinearPolicy::A16Only, p.n, p.k, p.epilogue};
+    const generic::Route picked16 =
+        generic::select_route(problem16, copies[0]->weight, tokens, false);
 
     // The candidates at T: the R8 schedules, ggml's vector kernel and the dispatcher's route; one
     // the build or the call refuses is left out.
@@ -163,6 +167,7 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     }
     if (tokens > 1) offer(generic::Route{generic::Family::GgmlVec, 0});
     offer(picked);
+    offer(picked16);
     if (g_rmma && tokens <= 8) {
         for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
             if (generic::rmma_schedule_launchable(i) &&
@@ -239,10 +244,11 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
         // FNV-1a of the whole output: one route's bytes compared across builds.
         std::uint64_t hash = 14695981039346656037ULL;
         for (const std::uint8_t c : outputs[i]) hash = (hash ^ c) * 1099511628211ULL;
-        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s h=%016llx\n",
+        std::printf("r8 %s %s n=%d k=%d t=%d %s %.2f us %.1f GB/s same=%d decode=%d%s%s%s h=%016llx\n",
                     fmt, epi, p.n, p.k, tokens, generic::route_name(r).c_str(), med[i],
                     static_cast<double>(bytes) / (med[i] * 1e3), outputs[i] == outputs[0] ? 1 : 0,
                     same_decode ? 1 : 0, r == picked ? " picked" : "", r == rules ? " rules" : "",
+                    r == picked16 ? " a16pick" : "",
                     static_cast<unsigned long long>(hash));
     }
     std::printf("pick %s %s n=%d k=%d t=%d picked=%s %.2f us best=%s %.2f us\n", fmt, epi, p.n,
