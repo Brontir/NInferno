@@ -66,6 +66,19 @@ __device__ __forceinline__ unsigned codes_h2(unsigned bits, unsigned bias_bits) 
     return h2_bits(__hsub2(bits_h2(bits | 0x64006400U), bits_h2(bias_bits)));
 }
 
+// Bits 0..3 and 16..19 of w with the f16 exponent of 1024 above them, (w & 0x000f000f) |
+// 0x64006400, in one LOP3: with both constants immediate the compiler splits it in two.
+__device__ __forceinline__ unsigned nibbles_h2(unsigned w) {
+    unsigned r;
+    asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(w), "n"(0x000f000f), "r"(0x64006400U));
+    return r;
+}
+
+// The f16 pair of biased codes (1024 + code, from nibbles_h2) less `bias_bits`: exact.
+__device__ __forceinline__ unsigned biased_h2(unsigned bits, unsigned bias_bits) {
+    return h2_bits(__hsub2(bits_h2(bits), bits_h2(bias_bits)));
+}
+
 __device__ __forceinline__ float half_bits_f32(unsigned bits) {
     return __half2float(__ushort_as_half(static_cast<unsigned short>(bits)));
 }
@@ -128,7 +141,7 @@ struct HK45 {
         const unsigned words[8] = {qs[0].x, qs[0].y, qs[0].z, qs[0].w,
                                    qs[1].x, qs[1].y, qs[1].z, qs[1].w};
         const unsigned w        = words[wd] >> (4 * run);
-        unsigned lo = w & 0x000f000fU, hi = (w >> 8) & 0x000f000fU;
+        unsigned lo = nibbles_h2(w), hi = nibbles_h2(w >> 8);
         if constexpr (Bits == 5) {
             const unsigned hwords[8] = {qh[0].x, qh[0].y, qh[0].z, qh[0].w,
                                         qh[1].x, qh[1].y, qh[1].z, qh[1].w};
@@ -136,8 +149,8 @@ struct HK45 {
             lo |= (hb << 4) & 0x00100010U;
             hi |= (hb >> 4) & 0x00100010U;
         }
-        a0 = codes_h2(lo, 0x64006400U);
-        a1 = codes_h2(hi, 0x64006400U);
+        a0 = biased_h2(lo, 0x64006400U);
+        a1 = biased_h2(hi, 0x64006400U);
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
