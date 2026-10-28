@@ -319,17 +319,20 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
             for (int i = 0; i < 8; ++i) acc[s][g][i] = 0.0F;
 
-    // The weight stream two superblocks ahead: cur, then nx1 and nx2 in flight.
-    F cur[kSets], nx1[kSets], nx2[kSets];
+    // The weight stream one superblock ahead: cur, and nx in flight. One is enough by Little's law:
+    // a CTA keeps 32 rows of a superblock in flight (SwiGLU: 9.2 KB of Q4_K, 4.6 KB otherwise), three
+    // CTAs an SM 14-28 KB against the ~5.8 KB that 660 GB/s needs over ~1000 cycles of latency
+    // (GV100). A second superblock ahead held 23 more registers a lane (gate/up 160 -> 137) and
+    // added issue work to a loop that is issue-bound: GV100, Qwen3.5-9B Q4_K_M hard50 dflash:7
+    // 207.3 -> 211.3 tok/s, mtp:3 153.3 -> 154.2, answers identical.
+    F cur[kSets], nx[kSets];
 #    pragma unroll
     for (int s = 0; s < kSets; ++s) {
         const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
         cur[s].clear();
-        nx1[s].clear();
-        nx2[s].clear();
+        nx[s].clear();
         if (live) {
             cur[s].load(a, row, 0, q);
-            if (sbs > 1) nx1[s].load(a, row, 1, q);
         }
     }
     uint2 xv[kNTok / 2];
@@ -342,8 +345,8 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         const bool more = sb + 1 < sbs;
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            if (sb + 2 < sbs && live)
-                nx2[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 2, q);
+            if (sb + 1 < sbs && live)
+                nx[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 1, q);
         }
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
@@ -405,8 +408,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         __syncthreads();
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            cur[s] = nx1[s];
-            nx1[s] = nx2[s];
+            cur[s] = nx[s];
         }
     }
 
