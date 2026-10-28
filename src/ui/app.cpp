@@ -44,6 +44,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <future>
 #include <map>
 #include <optional>
 #include <set>
@@ -1097,6 +1098,31 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
             return convert::cached_conversion_with_drafters(root, repo, "", label);
         };
     }
+    // The quantizations' output heads, only where the converter would add the default proposal
+    // head (product::default_proposal_possible: local facts): 1 MiB windows around the parsed
+    // header's tensor table end, read together beside the MTP reads and kept per commit.
+    std::future<std::map<std::string, std::uint64_t>> heads_read;
+    if (gguf && !options_.offline && facts->model.gguf_data_offset != 0 &&
+        product::default_proposal_possible(
+            product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
+            inputs.ask)) {
+        std::vector<std::string> quants;
+        for (const auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && (quant.empty() || q.quant == quant)) {
+                quants.push_back(q.quant);
+            }
+        }
+        convert::FetchOptions fetch;
+        fetch.hub = hub;
+        if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        heads_read = std::async(
+            std::launch::async,
+            [spec = commit.empty() ? repo : repo + "@" + commit, fetch, quants,
+             facts = facts->model] {
+                return convert::gguf_quants_head_bytes(spec, fetch, quants, facts.gguf_data_offset,
+                                                       facts.hidden, facts.vocab);
+            });
+    }
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.
     product::PlannedSubjects::MtpOf mtp_of;
     if (gguf && !options_.offline) {
@@ -1138,22 +1164,9 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         inputs.drafter_state = drafter.state;
     }
     // Each GGUF quantization's own output head where the default proposal head is priced (Codex on
-    // #170: the plan reads them, the UI reused one file's): 1 MiB windows around the parsed
-    // header's tensor table end, read together and kept per commit.
-    if (gguf && !options_.offline && inputs.proposal_drafter_bytes > 0 &&
-        facts->model.gguf_data_offset != 0) {
-        std::vector<std::string> quants;
-        for (const auto& q : listing) {
-            if (!q.drafter && q.format == "gguf" && (quant.empty() || q.quant == quant)) {
-                quants.push_back(q.quant);
-            }
-        }
-        convert::FetchOptions fetch;
-        fetch.hub = hub;
-        if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
-        const auto heads = convert::gguf_quants_head_bytes(
-            commit.empty() ? repo : repo + "@" + commit, fetch, quants,
-            facts->model.gguf_data_offset, facts->model.hidden, facts->model.vocab);
+    // #170: the plan reads them, the UI reused one file's), read beside the MTP reads below.
+    if (heads_read.valid() && inputs.proposal_drafter_bytes > 0) {
+        const auto heads = heads_read.get();
         for (auto& q : listing) {
             if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }
         }

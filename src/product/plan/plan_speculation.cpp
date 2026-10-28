@@ -167,6 +167,8 @@ DeclaredDrafters declared_drafters(const PlannedTarget& target) {
 
 bool default_proposal_possible(const PlannedTarget& target, const SpeculationAsk& ask) {
     if (!target.facts.model.model_type.starts_with("qwen3_5")) { return false; }
+    // A drafter file given (--drafter) drafts in the companion's place.
+    if (!ask.given.drafter.empty()) { return false; }
     if (!ask.automatic && ask.given.backend != SpeculativeBackend::DFlash) { return false; }
     if (!convert::resolve_ranking(convert::kDefaultProposalRanking, std::filesystem::current_path())) {
         return false;
