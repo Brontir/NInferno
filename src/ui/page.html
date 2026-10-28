@@ -2304,7 +2304,7 @@ function renderDetail() {
       <div class="ctxnote" id="ctxnote" aria-live="polite"></div></div>
     <div class="ctl"><div class="row"><span>${t("parallel")}${info(t("parTip") + "\n" + t("parMax"))}</span><output id="parout"></output></div>
       <input type="range" id="par" min="1" max="${MAX_PAR}" step="1" value="${parallel}" aria-label="${esc(t("parallel"))}" data-tip="${esc(t("parMax"))}"></div>
-    <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div>
+    <div class="ctl"><div class="row"><span>${t("kvType")}${info(t("kvTip"))}</span><span class="kvsel" id="kvsel"></span></div></div>
     <div class="ctl"><div class="row"><span>${t("actType")}${info(t("actTip"))}</span><span class="kvsel" id="actsel"></span></div>
 </div></div>
     ${accelBlock(sel)}
