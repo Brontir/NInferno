@@ -66,19 +66,6 @@ __device__ __forceinline__ unsigned codes_h2(unsigned bits, unsigned bias_bits) 
     return h2_bits(__hsub2(bits_h2(bits | 0x64006400U), bits_h2(bias_bits)));
 }
 
-// Bits 0..3 and 16..19 of w with the f16 exponent of 1024 above them, (w & 0x000f000f) |
-// 0x64006400, in one LOP3: with both constants immediate the compiler splits it in two.
-__device__ __forceinline__ unsigned nibbles_h2(unsigned w) {
-    unsigned r;
-    asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(w), "n"(0x000f000f), "r"(0x64006400U));
-    return r;
-}
-
-// The f16 pair of biased codes (1024 + code, from nibbles_h2) less `bias_bits`: exact.
-__device__ __forceinline__ unsigned biased_h2(unsigned bits, unsigned bias_bits) {
-    return h2_bits(__hsub2(bits_h2(bits), bits_h2(bias_bits)));
-}
-
 __device__ __forceinline__ float half_bits_f32(unsigned bits) {
     return __half2float(__ushort_as_half(static_cast<unsigned short>(bits)));
 }
@@ -141,7 +128,7 @@ struct HK45 {
         const unsigned words[8] = {qs[0].x, qs[0].y, qs[0].z, qs[0].w,
                                    qs[1].x, qs[1].y, qs[1].z, qs[1].w};
         const unsigned w        = words[wd] >> (4 * run);
-        unsigned lo = nibbles_h2(w), hi = nibbles_h2(w >> 8);
+        unsigned lo = w & 0x000f000fU, hi = (w >> 8) & 0x000f000fU;
         if constexpr (Bits == 5) {
             const unsigned hwords[8] = {qh[0].x, qh[0].y, qh[0].z, qh[0].w,
                                         qh[1].x, qh[1].y, qh[1].z, qh[1].w};
@@ -149,8 +136,8 @@ struct HK45 {
             lo |= (hb << 4) & 0x00100010U;
             hi |= (hb >> 4) & 0x00100010U;
         }
-        a0 = biased_h2(lo, 0x64006400U);
-        a1 = biased_h2(hi, 0x64006400U);
+        a0 = codes_h2(lo, 0x64006400U);
+        a1 = codes_h2(hi, 0x64006400U);
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
@@ -356,15 +343,14 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
     stage_store<F, kNTok>(act[0], sums[0], xv);
     __syncthreads();
 
-    // One superblock: `use` holds its weights, `fill` takes superblock `ahead` (when there is one)
-    // while it runs. One ahead alternates two sets of registers (two superblocks a trip, no copy
-    // between them); two ahead rotates three.
-    const auto step = [&](F (&use)[kSets], F (&fill)[kSets], int sb, int ahead) {
+#    pragma unroll 1
+    for (int sb = 0; sb < sbs; ++sb) {
         const bool more = sb + 1 < sbs;
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            if (ahead < sbs && live)
-                fill[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), ahead, q);
+            const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
+            if (Ahead == 1 && more && live) nx1[s].load(a, row, sb + 1, q);
+            if (Ahead == 2 && sb + 2 < sbs && live) nx2[s].load(a, row, sb + 2, q);
         }
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
@@ -390,7 +376,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
                 for (int s = 0; s < kSets; ++s) {
                     unsigned a0, a1;
-                    use[s].fragment(m, q, a0, a1);
+                    cur[s].fragment(m, q, a0, a1);
 #    pragma unroll
                     for (int g = 0; g < NG; ++g)
                         mma_m8n8k4_f16(part[s][g], a0, a1, bf[g].x, bf[g].y);
@@ -400,7 +386,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
             for (int s = 0; s < kSets; ++s) {
                 float ds, dm;
-                use[s].scale(q, gr, ds, dm);
+                cur[s].scale(q, gr, ds, dm);
                 const float ds0 = __shfl_sync(0xffffffffU, ds, src_a);
                 const float ds2 = __shfl_sync(0xffffffffU, ds, src_a + 2);
                 float dm0 = 0.0F, dm2 = 0.0F;
@@ -424,23 +410,10 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         }
         if (more) stage_store<F, kNTok>(act[(sb + 1) & 1], sums[(sb + 1) & 1], xv);
         __syncthreads();
-    };
-    if constexpr (Ahead == 1) {
-#    pragma unroll 1
-        for (int sb = 0; sb < sbs; sb += 2) {
-            step(cur, nx1, sb, sb + 1);
-            if (sb + 1 >= sbs) break;
-            step(nx1, cur, sb + 1, sb + 2);
-        }
-    } else {
-#    pragma unroll 1
-        for (int sb = 0; sb < sbs; ++sb) {
-            step(cur, nx2, sb, sb + 2);
 #    pragma unroll
-            for (int s = 0; s < kSets; ++s) {
-                cur[s] = nx1[s];
-                nx1[s] = nx2[s];
-            }
+        for (int s = 0; s < kSets; ++s) {
+            cur[s] = nx1[s];
+            if (Ahead == 2) nx1[s] = nx2[s];
         }
     }
 
