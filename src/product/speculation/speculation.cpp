@@ -44,16 +44,26 @@ bool proposal_head_serves(const std::filesystem::path& artifact, std::string_vie
     }
 }
 
+bool proposal_head_serves_drafters(const artifact::Directory& dir) {
+    const auto& components = dir.components;
+    const auto text        = components.find("text");
+    if (text == components.end() || !text->second.proposal.has_value()) { return false; }
+    // A "+head" choice of any drafter the artifact carries runs with it, so the head must serve
+    // each: one the converter made for DFlash alone (its default) is no MTP's or DFlash2's
+    // "+head" (DFlash drafts with it through model_draft_head).
+    for (const char* component : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(component) &&
+            !dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"})) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool has_proposal_head(const std::filesystem::path& artifact) {
     try {
         const artifact::Reader reader(artifact);
-        const auto& dir        = reader.directory();
-        const auto& components = dir.components;
-        const auto text        = components.find("text");
-        if (text == components.end() || !text->second.proposal.has_value()) { return false; }
-        // A head made for DFlash alone (the converter's default) is no "+head" MTP's.
-        return !components.contains("mtp") ||
-               dir.uses.contains({"proposal/head", std::string("mtp/final_hidden")});
+        return proposal_head_serves_drafters(reader.directory());
     } catch (const std::exception&) {
         return false;
     }

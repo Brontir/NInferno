@@ -784,28 +784,33 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     // "vision/..." parameters bind (a parameter is named <component>/<name>).
     // An object only a component the options may leave unloaded binds: the vision encoder's (under
     // --vision), the MTP layers' (under MTP), the own DFlash drafter's (under DFlash).
-    enum Part : std::uint8_t { Vision, Mtp, Drafter, Other, Parts };
+    enum Part : std::uint8_t { Vision, Mtp, Drafter, Proposal, Other, Parts };
 
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
     for (const auto& [name, binding] : dir.bindings) {
         const Part part = starts_with(name, "vision/")                                    ? Vision
                           : starts_with(name, "mtp/")                                     ? Mtp
                           : starts_with(name, "dflash/") || starts_with(name, "dflash2/") ? Drafter
+                          : starts_with(name, "proposal/")                                ? Proposal
                                                                                           : Other;
         for (const auto& piece : binding.parts) {
             if (piece.object.index < marks.size()) { marks[piece.object.index][part] = true; }
         }
     }
-    std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0;
-    // The weights' elements the bytes cover, the own drafter's left out: as a GGUF's tensor table
-    // counts the model it converts from (bits_per_weight's denominator on both paths).
+    std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0,
+                  proposal_bytes = 0;
+    // The weights' elements the bytes cover, the own drafter and the proposal head left out: as a
+    // GGUF's tensor table counts the model it converts from (bits_per_weight's denominator on both
+    // paths).
     double elements = 0;
     std::set<std::string> formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
         if (tensor == nullptr) { continue; } // resources
         const auto& m    = marks[i];
-        const bool alone = !m[Other] && (int(m[Vision]) + int(m[Mtp]) + int(m[Drafter]) == 1);
+        const bool alone =
+            !m[Other] &&
+            (int(m[Vision]) + int(m[Mtp]) + int(m[Drafter]) + int(m[Proposal]) == 1);
         if (alone && m[Vision]) {
             vision_bytes += tensor->bytes; // off the text plan's weights
             continue;
@@ -815,6 +820,8 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;
+        } else if (alone && m[Proposal]) {
+            proposal_bytes += tensor->bytes;
         } else {
             double n = tensor->shape.empty() ? 0 : 1;
             for (const std::uint64_t d : tensor->shape) { n *= static_cast<double>(d); }
@@ -836,6 +843,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         !(requantized != dir.provenance.end() && requantized->is_boolean() && requantized->get<bool>())) {
         out.shape.quant_label = q->get<std::string>();
     }
+    out.model.proposal_bytes    = proposal_bytes;
     out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
     // A Qwen artifact's own DFlash drafter (its dflash or dflash2 component).
     for (const char* component : {"dflash", "dflash2"}) {

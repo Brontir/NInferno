@@ -117,6 +117,7 @@ namespace detail = ninferno::models::qwen3_5::detail;
 using ninferno::EngineOptions;
 using ninferno::KvCacheStorage;
 using ninferno::RecurrentStateStorage;
+using ninferno::ProposalHead;
 using ninferno::SpeculativeBackend;
 using nlohmann::json;
 
@@ -843,6 +844,35 @@ void test_default_copy_window(const std::vector<Subject>& all) {
     }
 }
 
+// An artifact's proposal head (proposal/*) is on the Device only while it drafts: under DFlash
+// (which drafts with it) or when asked for; plain, MTP and DFlash2 plans leave it off (Codex on
+// #170: the default head counted for every plan, a false 484 MB on the 9B).
+void test_proposal_bytes_only_when_drafting() {
+    rt::PlanDeviceFacts device;
+    device.name               = "RTX 5070 Ti";
+    device.total_bytes        = rt::plan_board_total_bytes(16);
+    device.compute_capability = 120;
+    device.free_bytes         = device.total_bytes;
+    rt::PlanModelFacts facts  = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0).model;
+    facts.weight_bytes        = static_cast<std::uint64_t>(10.20 * kGiB);
+    facts.proposal_bytes      = static_cast<std::uint64_t>(0.45 * kGiB);
+    const auto weights = [&](SpeculativeBackend backend, ProposalHead head) {
+        EngineOptions options;
+        options.speculative.backend       = backend;
+        options.speculative.draft_tokens  = backend == SpeculativeBackend::None ? 0 : 3;
+        options.speculative.proposal_head = head;
+        return rt::dry_run_plan(facts, device, options).weight_bytes;
+    };
+    const std::uint64_t without = facts.weight_bytes - facts.proposal_bytes;
+    check(weights(SpeculativeBackend::None, ProposalHead::Full) == without, "plain: no head");
+    check(weights(SpeculativeBackend::Mtp, ProposalHead::Full) == without, "MTP: no head");
+    check(weights(SpeculativeBackend::DFlash2, ProposalHead::Full) == without, "DFlash2: no head");
+    check(weights(SpeculativeBackend::DFlash, ProposalHead::Full) == facts.weight_bytes,
+          "DFlash: the head");
+    check(weights(SpeculativeBackend::Mtp, ProposalHead::Optimized) == facts.weight_bytes,
+          "an asked-for head");
+}
+
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the
 // replay records, a DFlash drafter's pool and ring (the review's M2: all of them were missing).
 void test_what_the_estimate_missed() {
@@ -1019,6 +1049,7 @@ int main() {
     test_what_the_estimate_missed();
     test_dry_run_basis();
     test_fits_instead();
+    test_proposal_bytes_only_when_drafting();
     std::cout << "rung bytes compared: " << compared << '\n';
     check(compared > 1000, "many rungs compared");
     if (failures != 0) {

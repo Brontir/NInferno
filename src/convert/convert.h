@@ -44,8 +44,8 @@ struct ConvertOptions {
     bool components_auto        = false;
     bool proposal               = false;                                  // --proposal
     std::uint64_t proposal_rows = 131072;
-    // --no-proposal clears it: without --proposal, a Qwen target converted with a DFlash or
-    // DFlash2 drafter gets the proposal head default_proposal chooses (checks.h).
+    // --no-proposal clears it: without --proposal, a Qwen target converted with a DFlash drafter
+    // gets the proposal head default_proposal chooses for DFlash (checks.h).
     bool proposal_default = true;
     std::filesystem::path ranking;         // --ranking (defaults to the repository's ranking)
     std::string ranking_label;             // provenance spelling of the ranking ("": its path)
