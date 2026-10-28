@@ -119,8 +119,20 @@ bool rmma_wide_pays() {
     });
 }
 
+// The schedule with a spread form (GemmArgs::k_partials): sixteen K warps of one CTA, one token
+// tile, and that form, one K warp per CTA on sixteen CTAs (rmma_spread_bytes, generic_gemm.cpp).
+using RmmaSpreadSource = RmmaSchedule<1, 16, 1, 1>;
+using RmmaSpreadForm   = RmmaSchedule<1, 1, 1, 1, 1, kRmmaSpreadCtas>;
+static_assert(RmmaSpreadSource::kWarpsK == RmmaSpreadForm::kWarpsK * RmmaSpreadForm::kKCtas);
+
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
+    if constexpr (std::is_same_v<Schedule, RmmaSpreadSource>) {
+        if (args.k_partials != nullptr) {
+            launch_rmma_kernel<Decoder, RmmaSpreadForm, E, false>(args, stream);
+            return;
+        }
+    }
     if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
         // The choice reads the device's facts and occupancy; where either fails this launch
         // takes the plain kernel (master's), and the next one asks again.
@@ -157,12 +169,12 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     if (grid.y > kMaxGridYZ)
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
     const auto smem = static_cast<std::size_t>(args.spread_smem);
-    if (Schedule::kCluster == 1 &&
+    if (Schedule::kCluster == 1 && Schedule::kKCtas == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
         rmma_kernel<Decoder, Schedule, E, Latency>
             <<<grid, Schedule::kThreads, smem, stream>>>(args);
     } else {
-        cudaLaunchAttribute attributes[2]{};
+        cudaLaunchAttribute attributes[3]{};
         unsigned count = 0;
         if (Schedule::kCluster > 1) {
             attributes[count].id               = cudaLaunchAttributeClusterDimension;
@@ -171,13 +183,19 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
             attributes[count].val.clusterDim.z = Schedule::kCluster;
             ++count;
         }
+        if (Schedule::kKCtas > 1) {
+            // The spread form's CTAs meet at a grid barrier (run_route launches it without PDL).
+            attributes[count].id              = cudaLaunchAttributeCooperative;
+            attributes[count].val.cooperative = 1;
+            ++count;
+        }
         if ((args.join_previous != 0 || args.pdl_prefetch != 0) && pdl::supported()) {
             attributes[count].id = cudaLaunchAttributeProgrammaticStreamSerialization;
             attributes[count].val.programmaticStreamSerializationAllowed = 1;
             ++count;
         }
         cudaLaunchConfig_t config{};
-        config.gridDim  = dim3(grid.x, grid.y, Schedule::kCluster);
+        config.gridDim  = dim3(grid.x, grid.y, Schedule::kCluster * Schedule::kKCtas);
         config.blockDim = dim3(Schedule::kThreads);
         config.dynamicSmemBytes = smem;
         config.stream   = stream;

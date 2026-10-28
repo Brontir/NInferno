@@ -642,6 +642,7 @@ bool mmq_fits(const DeviceArena& workspace, std::size_t bytes) {
 
 std::atomic<std::uint64_t> mmq_fallbacks{0};
 std::atomic<std::uint64_t> route_demotions{0};
+std::atomic<std::uint64_t> rmma_spreads{0};
 
 // A demotion that keeps the bytes: the staged MMA and the NVFP4 tiled route hand a call they
 // cannot read to the register MMA of the same summation order.
@@ -3045,6 +3046,25 @@ std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
 }
 
+std::uint64_t rmma_spread_count() noexcept { return rmma_spreads.load(std::memory_order_relaxed); }
+
+// w1x16 of one token tile is what a call of at most one CTA per SM takes where clusters do not
+// exist (one_wave_split; the stream regime's long K): its CTAs stream the whole weight from as
+// many SMs as the call has row blocks. A call of at most a quarter as many CTAs as SMs (the cluster
+// of eight's bound) leaves most of them idle: the 32-row GDN a/b projections of Qwen3.5 (BF16,
+// K 4096, T 1..8) took 4.65 us on two CTAs of an RTX 4070 Ti (60 SMs) at 11 % of DRAM bandwidth.
+// The spread form puts each CTA's sixteen K warps on sixteen CTAs, which add up in the same order
+// (RmmaSchedule's KCtas): the same bytes, from sixteen times the SMs. Its plane holds every K
+// warp's FP32 partials (kSets x 128 per warp and row block).
+std::size_t rmma_spread_bytes(std::int32_t rows, std::int32_t tokens, Epilogue epilogue) {
+    if (rows <= 0 || tokens <= 0) return 0;
+    const std::int64_t blocks =
+        ((static_cast<std::int64_t>(rows) + 15) / 16) * ((static_cast<std::int64_t>(tokens) + 7) / 8);
+    if (4 * blocks > sm_count()) return 0;
+    const std::int64_t sets = epilogue == Epilogue::SwiGlu ? 2 : 1;
+    return static_cast<std::size_t>(blocks * kRmmaSpreadCtas * sets * 128) * sizeof(float);
+}
+
 std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
     if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
     if (route.family == Family::I8Mma) {
@@ -3196,6 +3216,16 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
                                             problem.epilogue == Epilogue::SwiGlu)
             : 0;
     mmq = std::max(mmq, volta);
+    // w1x16's spread form (rmma_spread_bytes): its plane at the widest call of the interval that
+    // still takes it (the plane grows with the token tiles until the call leaves the form).
+    for (std::int32_t tiles = (max_tokens + 7) / 8; tiles >= (min_tokens + 7) / 8; --tiles) {
+        const std::size_t spread =
+            rmma_spread_bytes(problem.n, std::min(max_tokens, 8 * tiles), problem.epilogue);
+        if (spread != 0) {
+            mmq = std::max(mmq, spread);
+            break;
+        }
+    }
     if (!a8 && !r8_verify) return with_gather(mmq);
     const std::size_t i8 = (problem.qtype == QType::Q4_G64_FP16 ||
                             problem.qtype == QType::Q5_G64_FP16 ||
@@ -3425,6 +3455,27 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             : 0;
     const WeightCodec codec = codec_of(w);
     args.spread_smem        = spread_smem(route, codec, call.epilogue, args);
+    // w1x16's spread form (rmma_spread_bytes) where the workspace holds its plane, in place of a
+    // launch with no programmatic dependency (its grid barrier is a cooperative launch): every
+    // launch on a device without PDL. It neither joins nor releases, so no neighbouring call runs
+    // while it reads the plane; without the plane the one-CTA form gives the same bytes.
+    std::optional<WorkspaceArena::Scope> spread_scope;
+    if (route.family == Family::RegisterMma && route.schedule == rmma_index(1, 16, 1, 1) &&
+        workspace != nullptr &&
+        (!pdl_device() ||
+         (args.join_previous == 0 && args.release_next == 0 && args.pdl_prefetch == 0))) {
+        const std::size_t bytes = rmma_spread_bytes(call.rows, args.tokens, call.epilogue);
+        if (bytes != 0 && mmq_fits(*workspace, bytes)) {
+            spread_scope.emplace(workspace->scope());
+            args.k_partials    = static_cast<float*>(workspace->alloc_bytes(bytes).data);
+            args.join_previous = 0;
+            args.release_next  = 0;
+            args.pdl_prefetch  = 0;
+            args.spread_smem   = 0;
+            if (released != nullptr) *released = false;
+            rmma_spreads.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     switch (route.family) {
     case Family::GgmlMmq: {
         auto scope       = workspace->scope();

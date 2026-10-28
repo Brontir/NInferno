@@ -49,16 +49,24 @@ namespace ninferno::ops::detail::generic {
 // rank r sums K steps [steps*r/C, steps*(r+1)/C), and rank 0 adds the ranks' partials from
 // distributed shared memory in rank order. It is for problems too small to give every SM a CTA
 // (decode of a few dozen rows); the order depends on nothing but the schedule.
-template <int WarpsM, int WarpsK, int MTiles, int NTiles, int Cluster = 1>
+//
+// KCtas > 1 (the spread form of a schedule, generic_gemm_launch.cuh) lays the K warps of one row
+// block over KCtas CTAs of a cooperative grid (grid z): CTA z holds K warps z*WarpsK ..
+// (z+1)*WarpsK - 1 of WarpsK*KCtas, each summing the K steps that K warp sums in the one-CTA
+// schedule, and after the grid barrier K warp 0 adds the others' partials (GemmArgs::k_partials)
+// in K-warp order, as that schedule adds them from shared memory: the same bytes on more SMs.
+template <int WarpsM, int WarpsK, int MTiles, int NTiles, int Cluster = 1, int KCtas = 1>
 struct RmmaSchedule {
     static_assert(WarpsM > 0 && WarpsK > 0 && WarpsM * WarpsK <= 16);
     static_assert(MTiles > 0 && MTiles <= 4 && NTiles > 0 && NTiles <= 8);
     static_assert(Cluster == 1 || Cluster == 2 || Cluster == 4 || Cluster == 8);
+    static_assert(KCtas >= 1 && (Cluster == 1 || KCtas == 1));
     static constexpr int kWarpsM     = WarpsM;
     static constexpr int kWarpsK     = WarpsK;
     static constexpr int kMTiles     = MTiles;
     static constexpr int kNTiles     = NTiles;
     static constexpr int kCluster    = Cluster;
+    static constexpr int kKCtas      = KCtas;
     static constexpr int kThreads    = WarpsM * WarpsK * 32;
     static constexpr int kRowsPerCta = WarpsM * MTiles * 16;
     static constexpr int kTokensPerCta = NTiles * 8;
@@ -2990,6 +2998,10 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
     const int local0 = static_cast<int>(blockIdx.x) * Schedule::kRowsPerCta + warp_m * MT * 16;
     const int token0 = static_cast<int>(blockIdx.y) * (NT * 8);
     constexpr int C  = Schedule::kCluster;
+    // The spread form: this CTA's K warps are k_warp0 .. k_warp0 + WK - 1 of WKS (blockIdx.z).
+    constexpr int G    = Schedule::kKCtas;
+    constexpr int WKS  = WK * G;
+    const int k_warp   = (G == 1 ? 0 : static_cast<int>(blockIdx.z) * WK) + warp_k;
     // This CTA's K steps: all of them, or its cluster rank's share (blockIdx.z is the rank).
     const int all_steps = (a.k + KStep - 1) / KStep;
     const int s_begin   = C == 1 ? 0 : (all_steps * static_cast<int>(blockIdx.z)) / C;
@@ -3165,7 +3177,7 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
 
     using Slot0 = std::integral_constant<int, 0>;
     using Slot1 = std::integral_constant<int, 1>;
-    if (s_begin + warp_k < steps) fetch(Slot0{}, s_begin + warp_k, false);
+    if (s_begin + k_warp < steps) fetch(Slot0{}, s_begin + k_warp, false);
     // GemmArgs::pdl_prefetch: the first step's weights are in flight; x and the output are the
     // previous kernel's to finish. Then the next launch may start: it waits for this one before
     // it reads what this one writes, and a joined call (which reads x without waiting) starts
@@ -3175,14 +3187,14 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
         if (threadIdx.x == 0) pdl::trigger_dependents();
     }
     // The first step's staged activations: x copied only after that wait.
-    if (s_begin + warp_k < steps) stage_act(Slot0{}, s_begin + warp_k);
+    if (s_begin + k_warp < steps) stage_act(Slot0{}, s_begin + k_warp);
 #pragma unroll 1
-    for (int step = s_begin + warp_k; step < steps; step += 2 * WK) {
-        if (step + WK < steps) fetch(Slot1{}, step + WK);
-        compute(Slot0{}, step, step + WK < steps);
-        if (step + WK >= steps) break;
-        if (step + 2 * WK < steps) fetch(Slot0{}, step + 2 * WK);
-        compute(Slot1{}, step + WK, step + 2 * WK < steps);
+    for (int step = s_begin + k_warp; step < steps; step += 2 * WKS) {
+        if (step + WKS < steps) fetch(Slot1{}, step + WKS);
+        compute(Slot0{}, step, step + WKS < steps);
+        if (step + WKS >= steps) break;
+        if (step + 2 * WKS < steps) fetch(Slot0{}, step + 2 * WKS);
+        compute(Slot1{}, step + WKS, step + 2 * WKS < steps);
     }
 #if NINFERNO_FMA_MMA
     if constexpr (kLocal) {
@@ -3206,10 +3218,47 @@ __global__ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedu
     }
 #endif
 
+    // The spread form: every K warp's partial to the call's plane, and after the grid barrier
+    // K warp 0 (CTA z = 0) adds K warps 1 .. WKS - 1 in order, the one-CTA schedule's order below.
+    if constexpr (G > 1) {
+        constexpr int kValues = kSets * MT * NT * 4 * 32;
+        const std::int64_t tile =
+            static_cast<std::int64_t>(blockIdx.y) * gridDim.x + blockIdx.x;
+        float* plane = a.k_partials + (tile * Schedule::kWarpsM + warp_m) * WKS * kValues;
+        const auto at = [&](int w, int s, int m, int n, int e) {
+            return static_cast<std::int64_t>(w) * kValues + (((s * MT + m) * NT + n) * 4 + e) * 32 +
+                   lane;
+        };
+        if (k_warp > 0) {
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int m = 0; m < MT; ++m)
+#pragma unroll
+                    for (int n = 0; n < NT; ++n)
+#pragma unroll
+                        for (int e = 0; e < 4; ++e)
+                            plane[at(k_warp, s, m, n, e)] = acc[s][m][n][e];
+        }
+        cooperative_groups::this_grid().sync();
+        if (k_warp != 0) return;
+#pragma unroll 1
+        for (int w = 1; w < WKS; ++w)
+#pragma unroll
+            for (int s = 0; s < kSets; ++s)
+#pragma unroll
+                for (int m = 0; m < MT; ++m)
+#pragma unroll
+                    for (int n = 0; n < NT; ++n)
+#pragma unroll
+                        for (int e = 0; e < 4; ++e)
+                            acc[s][m][n][e] += __ldcg(plane + at(w, s, m, n, e));
+    }
+
     // Warps with warp_k > 0 hand their partials to warp_k 0; under a cluster they stay (every thread
     // takes part in the cluster barriers) but do no further work.
     bool live = true;
-    if constexpr (WK > 1) {
+    if constexpr (WK > 1 && G == 1) {
         __shared__ float partial[WK - 1][Schedule::kWarpsM][kSets][MT][NT][4][32];
         if (warp_k > 0) {
 #pragma unroll

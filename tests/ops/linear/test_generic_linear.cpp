@@ -934,6 +934,81 @@ int check_r8_schedules_agree(const Format& f, Op op, std::int32_t out_rows, std:
 
 // The invariant route profile (--activations exact): every call through select_route, a single
 // token included and whatever the policy allows, gives a token the bytes of the wide call.
+// The spread form of w1x16 (GemmArgs::k_partials: its sixteen K warps on sixteen CTAs) gives the
+// one-CTA form's bytes: the same call with the workspace that holds its plane and without one.
+int check_k_spread(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                   std::uint32_t seed) {
+    int w1x16 = -1;
+    for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+        const auto s = generic::rmma_schedule_info(i);
+        if (s.warps_m == 1 && s.warps_k == 16 && s.m_tiles == 1 && s.n_tiles == 1 &&
+            s.cluster == 1) {
+            w1x16 = i;
+        }
+    }
+    if (w1x16 < 0 || !rmma_compiled(f.qtype, w1x16, k)) return 0;
+    const generic::Route route{generic::Family::RegisterMma, static_cast<std::uint8_t>(w1x16)};
+    const std::int32_t wide   = 16;
+    const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host     = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device       = upload_weight(host);
+    const auto activation     = make_linear_activation(k, wide, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    const auto residual = make_linear_activation(out_rows, wide, seed + 5U, ActivationCompute::A16);
+    const auto epilogue = gated(op)       ? generic::Epilogue::SwiGlu
+                          : op == Op::Add ? generic::Epilogue::AddResidual
+                                          : generic::Epilogue::Store;
+    DeviceArena workspace(std::max<std::size_t>(
+        generic::rmma_spread_bytes(out_rows, wide, epilogue), 256));
+    const auto run = [&](std::int32_t t, bool spread, std::vector<std::uint16_t>& bits) {
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        if (op == Op::Add) {
+            out.copy_from_host(residual.data(), out.bytes);
+        } else {
+            cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+        }
+        Tensor tx(x.p, DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &device.weight;
+        call.rows            = out_rows;
+        call.up_offset       = gated(op) ? out_rows : 0;
+        call.gelu_gate       = op == Op::GeGlu;
+        call.relu2           = op == Op::Relu2;
+        call.epilogue        = epilogue;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = out_rows;
+        generic::run_route(route, call, spread ? &workspace : nullptr, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        bits = download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+    };
+    int failures = 0;
+    for (const std::int32_t t : {1, 5, 8, 13, 16}) {
+        std::vector<std::uint16_t> one_cta, spread;
+        run(t, false, one_cta);
+        const std::uint64_t before = generic::rmma_spread_count();
+        run(t, true, spread);
+        const bool took = generic::rmma_spread_count() != before;
+        const std::string label = std::string(f.name) + " " + op_name(op) + " [" +
+                                  std::to_string(rows_n) + "," + std::to_string(k) +
+                                  "] T=" + std::to_string(t);
+        if (took != (generic::rmma_spread_bytes(out_rows, t, epilogue) != 0)) {
+            std::cerr << label << ": the spread form " << (took ? "ran" : "did not run")
+                      << " against rmma_spread_bytes
+";
+            ++failures;
+        }
+        if (one_cta != spread) {
+            std::cerr << label << ": the spread form of w1x16 differs from its one-CTA form
+";
+            ++failures;
+        }
+    }
+    return failures;
+}
+
 int check_invariant_profile(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
                             std::uint32_t seed) {
     const std::int32_t wide   = 300;
@@ -2135,6 +2210,17 @@ int main() {
             failures += check_w4a8_misaligned_signs(f);
         }
     }
+
+    // 4b. The spread form of w1x16 on calls of a few row blocks.
+    for (const Format& f : kFormats) {
+        if (!on_build(f)) continue;
+        const std::int32_t k = awkward_k(f);
+        failures += check_k_spread(f, Op::Linear, 32, k, 89U);
+        failures += check_k_spread(f, Op::Add, 48, k, 97U);
+        failures += check_k_spread(f, Op::SwiGlu, 16, k, 101U);
+        failures += check_k_spread(f, Op::Relu2, 32, k, 103U);
+    }
+    failures += check_k_spread(format_of(QType::BF16), Op::Linear, 32, 4096, 107U);
 
     // 5. The invariant route profile: each K split (8, 4 and 1 warps) on every format.
     for (const Format& f : kFormats) {

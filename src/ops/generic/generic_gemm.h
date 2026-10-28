@@ -46,6 +46,8 @@ inline constexpr std::int32_t kW4a8WideMinTokens    = 128;
 // The widest call whose register-MMA launch prefetches under the previous kernel
 // (GemmArgs::pdl_prefetch): decode and speculative verify.
 inline constexpr std::int32_t kPdlPrefetchMaxTokens = 16;
+// The CTAs of the register MMA's spread form (GemmArgs::k_partials): one per K warp of w1x16.
+inline constexpr int kRmmaSpreadCtas = 16;
 
 enum class Epilogue : std::uint8_t {
     Store,       // out = W x (GemmArgs::relu2: relu(W x)^2, one rounding)
@@ -156,6 +158,10 @@ struct GemmArgs {
     // by lane (generic_gemm.cuh mma_step_local), not in the order of a wider call's emulated MMA.
     // run_route sets it outside the invariant profile, whose calls keep one order at every T.
     int lane_local = 0;
+    // Register MMA w1x16 n1: where run_route gives it this plane (rmma_spread_bytes), the launch
+    // takes the schedule's spread form (RmmaSchedule's KCtas, generic_gemm_launch.cuh): its sixteen
+    // K warps on sixteen CTAs, whose partials meet here. Same bytes.
+    float* k_partials = nullptr;
 };
 
 // An activation quantized to int8 per 32 values (the W4A8 quantizer's output): what the W4A8
@@ -597,6 +603,13 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
 // said once on stderr. A demotion that keeps the bytes (staged or NVFP4 tiled to the register MMA
 // of the same order) is not one.
 [[nodiscard]] std::uint64_t route_demotion_count() noexcept;
+// Register-MMA launches that took the spread form of w1x16 (GemmArgs::k_partials), since the
+// process started.
+[[nodiscard]] std::uint64_t rmma_spread_count() noexcept;
+// The plane the spread form of w1x16 reads for a call of `rows` x `tokens` on this device, or 0
+// where the call keeps the one-CTA form (rmma_spread_bytes, generic_gemm.cpp).
+[[nodiscard]] std::size_t rmma_spread_bytes(std::int32_t rows, std::int32_t tokens,
+                                            Epilogue epilogue);
 
 // Capacity for every T in [min_tokens, max_tokens] under the active profile.
 [[nodiscard]] std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weight,
