@@ -34,7 +34,7 @@ constexpr const char* kUsage =
     "       ninferno-convert (--model PATH | --fetch SPEC) [--recipe NAME] [--out PATH]\n"
     "                      [--name NAME] [--resource ROLE=PATH]... [--source NAME=PATH]...\n"
     "                      [--components text[,vision,mtp,dflash,dflash2]]\n"
-    "                      [--proposal] [--proposal-rows N] [--ranking PATH]\n"
+    "                      [--proposal] [--proposal-rows N] [--ranking PATH] [--no-proposal]\n"
     "                      [--device DEV (ignored)] [--rows-per-chunk N] [--max-file-bytes N]\n"
     "                      [--threads N] [--keep-source-cache] [--quiet]\n"
     "                      [--consume-source [--consume-window BYTES]] [--assume-free-bytes N]\n"
@@ -252,6 +252,7 @@ int main(int argc, char** argv) {
                                                                          "--plan-drafters",
                                                                          "--attach-drafters",
                                                                          "--proposal",
+                                                                         "--no-proposal",
                                                                          "--consume-source",
                                                                          "--keep-source-cache",
                                                                          "--round-tiny-scales",
@@ -369,6 +370,8 @@ int main(int argc, char** argv) {
                 throw std::runtime_error("--override runs Python and is not available natively");
             } else if (flag == "--proposal") {
                 options.proposal = true;
+            } else if (flag == "--no-proposal") {
+                options.proposal_default = false;
             } else if (flag == "--proposal-rows") {
                 options.proposal_rows = parse_count(flag, next());
             } else if (flag == "--ranking") {
@@ -402,6 +405,9 @@ int main(int argc, char** argv) {
         // A removed NINFERNO_* decision variable changes nothing: say so once.
         ninferno::warn_removed_environment("ninferno-convert");
         // The proposal head's settings without the head would do nothing.
+        if (options.proposal && !options.proposal_default) {
+            throw std::runtime_error("--proposal and --no-proposal exclude each other");
+        }
         if (!options.proposal) {
             for (const auto& flag : given) {
                 if (flag == "--proposal-rows" || flag == "--ranking") {
@@ -529,6 +535,7 @@ int main(int argc, char** argv) {
                 "--round-tiny-scales",
                 "--maintainer-quantize",
                 "--proposal",
+                "--no-proposal",
                 "--proposal-rows",
                 "--ranking",
                 "--include",

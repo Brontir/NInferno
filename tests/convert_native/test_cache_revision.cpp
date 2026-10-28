@@ -1,7 +1,7 @@
-// Which cached artifacts revisions 4 and 5 convert again: an artifact of any recipe whose DFlash
+// Which cached artifacts revisions 4 to 6 convert again: an artifact of any recipe whose DFlash
 // companion drafter kept its attention projections unquantized (revision 4: qwen3_5_published;
-// revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too); not a text-only one, not one
-// whose drafter is already Q8. A current older artifact is stamped current, so its report is read
+// revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too), and one with a DFlash /
+// DFlash2 companion and no proposal head (revision 6); not a text-only one. A current older artifact is stamped current, so its report is read
 // once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
 
 #include "convert/acquire.h"
@@ -61,17 +61,22 @@ int main() {
     check(cached_revision(bf16) == 3, "and keeps its stamp");
     check(!cache_current(artifact(dir, "bf16-2", 3, "dflash2/layers/1/attention/query", "bf16")),
           "a BF16 DFlash2 drafter too");
-    check(cache_current(artifact(dir, "q8", 3, "dflash2/layers/0/attention/query", "q8_g32_fp16")),
-          "a drafter already in Q8 is current");
+    // Revision 6: a Q8 companion without a proposal head is converted again (it takes one).
+    check(!cache_current(artifact(dir, "q8", 3, "dflash2/layers/0/attention/query", "q8_g32_fp16")),
+          "a Q8 drafter without a proposal head at revision 3 is converted again");
+    check(cache_current(artifact(dir, "q8-head", 3, "proposal/head", "ggml_q6_k")) ,
+          "an artifact with a proposal head and no companion at revision 3 is current");
     // Revision 5: the GGUF dense default (qwen3_5_bf16) left the companion BF16 through
     // revision 4 (unsloth/Qwen3.6-27B-GGUF + z-lab/Qwen3.6-27B-DFlash).
     check(!cache_current(artifact(dir, "gguf4", 4, "dflash/layers/0/attention/query", "bf16")),
           "a BF16 DFlash drafter at revision 4 is converted again");
-    check(cache_current(
+    check(!cache_current(
               artifact(dir, "gguf4-q8", 4, "dflash/layers/0/attention/query", "q8_g32_fp16")),
-          "a Q8 drafter at revision 4 is current");
-    check(cache_current(artifact(dir, "new", 5, "dflash/layers/0/attention/query", "bf16")),
-          "revision 5 is current");
+          "a Q8 drafter without a proposal head at revision 4 is converted again");
+    check(!cache_current(artifact(dir, "rev5", 5, "dflash/layers/0/attention/query", "q8_g32_fp16")),
+          "a companion without a proposal head at revision 5 is converted again");
+    check(cache_current(artifact(dir, "new", 6, "dflash/layers/0/attention/query", "bf16")),
+          "revision 6 is current");
     check(!cache_current(artifact(dir, "old", 2, "text/output_head", "bf16")), "revision 2 is not");
 
     // A checkpoint replaced at the same path changes the stamp of what its conversion read; an

@@ -31,14 +31,20 @@ namespace ninferno::convert {
 //    BF16 ones); only artifacts with such a drafter are converted again (cache_current).
 // 5: every recipe does (qwen3_5_bf16, the dense Qwen3.5 GGUF default, left the companion BF16);
 //    again only artifacts with such a drafter are converted again.
-inline constexpr int kCacheRevision = 5;
+// 6: a Qwen target with a DFlash / DFlash2 companion takes a proposal head by default (its draft
+//    head over the ranked rows default_proposal chooses); only artifacts with such a companion
+//    and no proposal head are converted again.
+inline constexpr int kCacheRevision = 6;
 
 // Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
+// Whether an artifact lacks what revision 6 added: its report binds a DFlash / DFlash2 companion
+// drafter and no proposal head.
+[[nodiscard]] bool companion_without_proposal(const std::filesystem::path& artifact);
 
 // Whether a cached artifact is served as it is: revision kCacheRevision, or revision 3 or 4
-// without the defect revisions 4 and 5 fixed (a text-only artifact, a drafter already in Q8): a
+// without the defect revisions 4 and 5 fixed nor revision 6's addition (a text-only artifact, a drafter already in Q8): a
 // conversion of many minutes is not repeated for a change that did not touch it. Such an older
 // artifact is stamped kCacheRevision (stamp_revision), so its report is read once.
 [[nodiscard]] bool cache_current(const std::filesystem::path& artifact);

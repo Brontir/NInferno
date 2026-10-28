@@ -3,6 +3,7 @@
 #include "product/plan/plan_choice.h"
 
 #include "artifact/reader.h"
+#include "convert/checks.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
@@ -237,7 +238,7 @@ PlanReasonCode plan_reason_code(const runtime::DryRunPlan& plan) {
 AttachedDrafterMemory
 attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
                         std::string_view target_model_type, std::uint32_t target_hidden,
-                        const convert::FetchOptions* fetch) {
+                        const convert::FetchOptions* fetch, const runtime::PlanModelFacts* target) {
     AttachedDrafterMemory out;
     for (const spec::DrafterDecl& d : subject.attached_drafters) {
         std::uint64_t bytes = 0;
@@ -329,6 +330,15 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
+                // A Qwen target converted with a DFlash / DFlash2 companion takes the proposal
+                // head the converter's default_proposal chooses, loaded only to draft with it.
+                const bool qwen = target_model_type.starts_with("qwen3_5");
+                if (target != nullptr && qwen && dflash) {
+                    bytes += convert::planned_proposal_bytes(
+                        static_cast<double>(target->head_bytes),
+                        static_cast<double>(target->weight_bytes), static_cast<double>(bytes),
+                        target->vocab, target->hidden);
+                }
             } else if (!d.quant.empty() && config && !encoded) {
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
                 // (convert.cpp quantize_drafter); the rest takes the kind's quantization. Without

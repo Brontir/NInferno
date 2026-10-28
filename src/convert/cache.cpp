@@ -63,12 +63,33 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
     return false;
 }
 
+bool companion_without_proposal(const std::filesystem::path& artifact) {
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    bool companion = false;
+    try {
+        const OJson report = OJson::parse(stream);
+        const auto methods = report.find("methods");
+        if (methods == report.end() || !methods->is_array()) { return false; }
+        for (const auto& method : *methods) {
+            for (const auto& name : method.value("parameters", OJson::array())) {
+                if (!name.is_string()) { continue; }
+                const auto& text = name.get_ref<const std::string&>();
+                if (text.starts_with("proposal/")) { return false; }
+                companion = companion || text.starts_with("dflash/") || text.starts_with("dflash2/");
+            }
+        }
+    } catch (const std::exception&) { return false; }
+    return companion;
+}
+
 namespace {
 
 // Whether an artifact at `revision` is served as it is (cache_current's rule).
 bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
-           (revision >= 3 && !unquantized_drafter_attention(artifact));
+           (revision >= 3 && !unquantized_drafter_attention(artifact) &&
+            !companion_without_proposal(artifact));
 }
 
 } // namespace

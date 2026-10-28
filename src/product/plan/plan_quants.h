@@ -52,7 +52,9 @@ struct QuantListing {
 // Q8), a DFlash drafter's state from that revision's config.json.
 // One code for every plan of a model not converted yet: ninferno-serve --plan --no-load and its
 // start's memory check, ninferno-ui's /api/plan. `fetch` nullptr (offline): only the target's
-// listing is read. What is not known stays 0 / nullopt.
+// listing is read. What is not known stays 0 / nullopt. `target` (its head, weights, vocabulary
+// and width): a Qwen DFlash companion's bytes include the proposal head the converter adds
+// (convert::planned_proposal_bytes); nullptr leaves it out.
 struct AttachedDrafterMemory {
     std::uint64_t bytes = 0;
     std::optional<models::DrafterStateShape> state;
@@ -60,7 +62,8 @@ struct AttachedDrafterMemory {
 [[nodiscard]] AttachedDrafterMemory
 attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
                         std::string_view target_model_type, std::uint32_t target_hidden,
-                        const convert::FetchOptions* fetch);
+                        const convert::FetchOptions* fetch,
+                        const runtime::PlanModelFacts* target = nullptr);
 
 // The memory of a drafter artifact given with --drafter, which drafts in place of the model's
 // own: its tensors' bytes, and a DFlash drafter's state from its components' config (beside a

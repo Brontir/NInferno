@@ -1132,7 +1132,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
             subject, listing, facts->model.model_type, facts->model.hidden,
-            options_.offline ? nullptr : &fetch);
+            options_.offline ? nullptr : &fetch, &facts->model);
         inputs.drafter_bytes = drafter.bytes;
         inputs.drafter_state = drafter.state;
     }

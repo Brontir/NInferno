@@ -250,6 +250,16 @@ void require_named_tune(const std::filesystem::path& artifact, int device,
 [[nodiscard]] std::filesystem::path model_drafter(const std::filesystem::path& artifact,
                                                   SpeculativeBackend backend);
 
+// The head a backend drafts with: the proposal head (Optimized) when asked for (--lm-head-draft,
+// a "+head" choice), or for DFlash / DFlash2 whenever the artifact carries one: the converter
+// gives a Qwen target with such a drafter the head only where its rows pay (default_proposal,
+// spec/draft_head.h), and the target's verify decides every token, so the output is the same.
+// MTP keeps what it was asked for.
+[[nodiscard]] ProposalHead model_draft_head(bool artifact_has_head, SpeculativeBackend backend,
+                                            ProposalHead given) noexcept;
+[[nodiscard]] ProposalHead model_draft_head(const std::filesystem::path& artifact,
+                                            SpeculativeBackend backend, ProposalHead given);
+
 // What a request runs for an entry of `menu`: its depth (0: plain decode), watchdog floor and the
 // shallower depths a trip steps it down to (SpeculationMenu::step_down).
 [[nodiscard]] RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,

@@ -1,7 +1,11 @@
 #include "convert/checks.h"
+#include "convert/drafters.h"
 
 #include "core/utf8.h"
+#include "core/weight.h"
+#include "spec/draft_head.h"
 #include "spec/fingerprint.h"
+#include "spec/round_cost.h"
 
 #include <algorithm>
 #include <cmath>
@@ -450,8 +454,10 @@ std::vector<std::int64_t> select_shortlist(const std::vector<std::int64_t>& coun
     return selected;
 }
 
-std::vector<std::int64_t> shortlist_ids(const Model& model, const std::filesystem::path& ranking,
-                                        std::uint64_t rows) {
+namespace {
+
+// Row 0 of a ranking file (total counts over the vocabulary), cut to the model's token domain.
+std::vector<std::int64_t> ranking_totals(const Model& model, const std::filesystem::path& ranking) {
     const auto vocab = model.config()["vocab_size"].get<std::uint64_t>();
     const auto size  = std::filesystem::file_size(ranking);
     if (size == 0 || size % (vocab * 8)) {
@@ -464,7 +470,136 @@ std::vector<std::int64_t> shortlist_ids(const Model& model, const std::filesyste
         if (!stream) { throw std::runtime_error("cannot read " + ranking.string()); }
     }
     total.resize(std::min<std::uint64_t>(model.token_count, total.size()));
-    return select_shortlist(total, rows, model.special_token_ids);
+    return total;
+}
+
+// Bits a stored value takes in `format` (codes, high bits and scales together).
+double stored_bits(QType format) {
+    if (format == QType::GGML_Q4_K) { return 4.5; }
+    if (format == QType::GGML_Q5_K) { return 5.5; }
+    if (const auto p = ggml_plane_bytes(format); p.values != 0) {
+        return 8.0 * (p.code + p.high + p.scale) / p.values;
+    }
+    switch (format) {
+    case QType::Q4_G64_FP16: return 4.25;
+    case QType::Q5_G64_FP16: return 5.25;
+    case QType::Q6_G64_FP16: return 6.25;
+    case QType::Q8_G32_FP16: return 8.5;
+    case QType::FP32:
+    case QType::INT32: return 32;
+    case QType::NVFP4: return 4.5;
+    case QType::MXFP4: return 4.25;
+    case QType::FP8_E4M3FN_ROW_BF16:
+    case QType::FP8_E4M3FN_ROW_F32:
+    case QType::FP8_E4M3FN_B128_F32: return 8;
+    case QType::U4_G128_ZP_FP16: return 4.25;
+    case QType::U4_G64_ZP_FP16: return 4.5;
+    case QType::U4_G32_ZP_FP16: return 5;
+    case QType::Q3_G128_FP16: return 3.125;
+    case QType::Q3_G64_FP16: return 3.25;
+    default: return 16;
+    }
+}
+
+// The bytes a parameter is stored in: its published encoding when it has one (kept as
+// published), else the recipe's format.
+double stored_bytes(const Model& model, const Recipe& recipe, std::size_t index) {
+    const Parameter& p = model.parameters[index];
+    double values      = 1;
+    for (const auto d : p.shape) { values *= static_cast<double>(d); }
+    const auto& selection = recipe.selections[index];
+    const SourcePtr& source = selection.source ? selection.source : p.source;
+    QType format            = selection.format;
+    if (source) {
+        if (const auto encoded = source->encoded_format()) { format = *encoded; }
+    }
+    return values * stored_bits(format) / 8.0;
+}
+
+} // namespace
+
+DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
+                                 const std::filesystem::path& ranking) {
+    DefaultProposal out;
+    const auto type = model.config().value("model_type", std::string());
+    if (type != "qwen3_5_text" && type != "qwen3_5_moe_text") { return out; }
+    const std::string drafter = model.components.contains("dflash2") ? "dflash2"
+                                : model.components.contains("dflash") ? "dflash"
+                                                                      : "";
+    if (drafter.empty() || !model.index.contains("text/output_head")) { return out; }
+    // A round as spec/round_cost.h prices it: the target's verify pass over depth + 1 rows (its
+    // routed experts at that width), the drafter's block pass, the draft head.
+    spec::PassFacts target;
+    double drafter_bytes = 0;
+    for (std::size_t i = 0; i < model.parameters.size(); ++i) {
+        const Parameter& p = model.parameters[i];
+        // A parameter bound to another's objects is read once (a tied head is the head's read).
+        if (recipe.alias[i] && p.name != "text/output_head") { continue; }
+        const double bytes = stored_bytes(model, recipe, i);
+        if (p.residency == drafter) {
+            drafter_bytes += bytes;
+        } else if (p.residency == "text" && p.name != "text/token_embedding") {
+            if (p.name.find("/moe/experts/") != std::string::npos) {
+                target.expert_bytes += bytes;
+            } else {
+                target.bytes += bytes;
+            }
+        }
+    }
+    if (target.expert_bytes > 0) {
+        target.experts      = model.config().value("num_experts", std::int32_t{0});
+        target.experts_used = model.config().value("num_experts_per_tok", std::int32_t{0});
+    }
+    const double head  = stored_bytes(model, recipe, model.at("text/output_head"));
+    const double round = target.bytes +
+                         target.expert_bytes * spec::moe_read_fraction(target, spec::kDraftHeadDepth + 1) +
+                         drafter_bytes + head;
+    if (!(round > head && head > 0)) { return out; }
+    const double share = head / round;
+    const auto choice  = spec::draft_head_rows(ranking_totals(model, ranking), share,
+                                               spec::kDraftHeadDepth);
+    std::ostringstream note;
+    note.precision(3);
+    note << "draft head: " << drafter << " round reads the head as " << 100 * share
+         << " % of its bytes; ";
+    if (choice.rows == 0) {
+        note << "no restriction pays, the full head drafts";
+    } else {
+        note << choice.rows << " ranked rows keep " << 100 * choice.coverage
+             << " % of the ranking's tokens (bound at depth " << spec::kDraftHeadDepth << ": "
+             << 100 * choice.gain << " % a round)";
+    }
+    out.rows = choice.rows;
+    out.note = note.str();
+    return out;
+}
+
+std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double drafter_bytes,
+                                     std::uint64_t vocab, std::uint64_t hidden) {
+    if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return 0; }
+    const auto found = resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path());
+    if (!found) { return 0; }
+    std::vector<std::int64_t> totals(vocab);
+    try {
+        if (std::filesystem::file_size(*found) % (vocab * 8) != 0) { return 0; }
+        std::ifstream stream(*found, std::ios::binary);
+        stream.read(reinterpret_cast<char*>(totals.data()), static_cast<std::streamsize>(vocab * 8));
+        if (!stream) { return 0; }
+    } catch (const std::exception&) { return 0; }
+    // A checkpoint's head: BF16 in the round (the share), its gathered rows the recipe's Q4.
+    const double values = static_cast<double>(vocab) * static_cast<double>(hidden);
+    const double full   = head_bytes > 0 ? head_bytes : values * 2;
+    const double rows_bytes =
+        head_bytes > 0 ? head_bytes / static_cast<double>(vocab) : hidden * stored_bits(QType::Q4_G64_FP16) / 8;
+    // The target's weights hold its head already (a GGUF's tensor table counts output.weight).
+    const double round = std::max(target_bytes, full) + drafter_bytes + full;
+    const auto choice  = spec::draft_head_rows(totals, full / round, spec::kDraftHeadDepth);
+    return static_cast<std::uint64_t>(static_cast<double>(choice.rows) * rows_bytes);
+}
+
+std::vector<std::int64_t> shortlist_ids(const Model& model, const std::filesystem::path& ranking,
+                                        std::uint64_t rows) {
+    return select_shortlist(ranking_totals(model, ranking), rows, model.special_token_ids);
 }
 
 std::string declared_architecture(const OJson& config) {

@@ -290,8 +290,9 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
         out.engine.drafter = separate_drafter(primary, resolved);
     }
     out.engine.draft_tokens = static_cast<std::uint32_t>(out.menu.primary.config.k);
-    out.engine.proposal_head =
-        out.menu.proposal_head && head ? ProposalHead::Optimized : ProposalHead::Full;
+    out.engine.proposal_head = model_draft_head(
+        head, out.engine.backend,
+        out.menu.proposal_head && head ? ProposalHead::Optimized : ProposalHead::Full);
     if (out.menu.proposal_head && !head) {
         out.notes.push_back("the artifact has no proposal head; drafting with the full head");
     }
@@ -665,6 +666,22 @@ std::filesystem::path model_drafter(const std::filesystem::path& artifact,
         }
     }
     return {};
+}
+
+ProposalHead model_draft_head(bool artifact_has_head, SpeculativeBackend backend,
+                              ProposalHead given) noexcept {
+    if (given == ProposalHead::Optimized) { return given; }
+    const bool block = backend == SpeculativeBackend::DFlash || backend == SpeculativeBackend::DFlash2;
+    return block && artifact_has_head ? ProposalHead::Optimized : ProposalHead::Full;
+}
+
+ProposalHead model_draft_head(const std::filesystem::path& artifact, SpeculativeBackend backend,
+                              ProposalHead given) {
+    if (given == ProposalHead::Optimized || backend == SpeculativeBackend::None ||
+        backend == SpeculativeBackend::Mtp) {
+        return given;
+    }
+    return model_draft_head(has_proposal_head(artifact), backend, given);
 }
 
 RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,

@@ -443,7 +443,8 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         options.speculative.drafter.empty()
             ? product::attached_drafter_memory(*out.subject, model.listing,
                                                model.facts.model.model_type,
-                                               model.facts.model.hidden, &fetch)
+                                               model.facts.model.hidden, &fetch,
+                                               &model.facts.model)
             : product::supplied_drafter_memory(options.speculative.drafter,
                                                model.facts.model.hidden);
     out.inputs.drafter_bytes = drafter.bytes;

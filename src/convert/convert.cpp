@@ -51,9 +51,6 @@
 
 namespace ninferno::convert {
 
-// The ranking a proposal head is restricted by when --ranking names none
-// (tools/freq_corpus/fixtures/ranking, installed with the registry's rankings).
-constexpr const char* kDefaultRanking = "ranking.train.counts.i64";
 namespace {
 
 using Clock = std::chrono::steady_clock;
@@ -1656,9 +1653,9 @@ ConvertResult convert(const ConvertOptions& options) {
     // beside the binary, the tree it was built from).
     std::filesystem::path ranking = options.ranking;
     if (options.proposal && ranking.empty()) {
-        const auto found = resolve_ranking(kDefaultRanking, std::filesystem::current_path());
+        const auto found = resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path());
         if (!found) {
-            throw std::runtime_error(std::string("the default token ranking ") + kDefaultRanking +
+            throw std::runtime_error(std::string("the default token ranking ") + kDefaultProposalRanking +
                                      " is neither installed (share/ninferno/rankings) nor in a "
                                      "source tree here; pass --ranking");
         }
@@ -1714,8 +1711,26 @@ ConvertResult convert(const ConvertOptions& options) {
     if (share_tied_head(model, recipe)) {
         log("tied output head: bound to the token embedding's objects (one copy)");
     }
-    if (options.proposal && !restricted) {
-        add_official_proposal(model, recipe, ranking, ranking_text, options.proposal_rows);
+    // Without --proposal a Qwen target converted with a DFlash or DFlash2 drafter gets a proposal
+    // head of the rows the bytes/acceptance bound chooses (default_proposal, spec/draft_head.h),
+    // when the default ranking is found; --no-proposal keeps the full head.
+    std::filesystem::path proposal_ranking = ranking;
+    std::string proposal_ranking_text      = ranking_text;
+    std::uint64_t proposal_rows            = options.proposal ? options.proposal_rows : 0;
+    if (!options.proposal && options.proposal_default && !restricted) {
+        if (const auto found = resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
+            const auto chosen = default_proposal(model, recipe, *found);
+            if (!chosen.note.empty()) { log(chosen.note); }
+            if (chosen.rows != 0) {
+                proposal_rows         = chosen.rows;
+                proposal_ranking      = *found;
+                proposal_ranking_text = py_path_str(kDefaultProposalRanking);
+            }
+        }
+    }
+    if (proposal_rows != 0 && !restricted) {
+        add_official_proposal(model, recipe, proposal_ranking, proposal_ranking_text,
+                              proposal_rows);
     }
     // --maintainer-quantize runs the recipe's table as written.
     if (!options.maintainer_quantize) {
@@ -1771,10 +1786,10 @@ ConvertResult convert(const ConvertOptions& options) {
         const auto quant = gguf_quant_label(ninferno::utf8_file_name(base.shard_path(0)));
         if (!quant.empty()) { provenance["quant"] = quant; }
     }
-    if (options.proposal) {
-        provenance["ranking"] = ranking_text;
+    if (options.proposal || (proposal_rows != 0 && !restricted)) {
+        provenance["ranking"] = proposal_ranking_text;
         // The identity takes the ranking by content (artifact/source_identity.h), never its path.
-        provenance["ranking_sha256"] = file_sha256(ranking);
+        provenance["ranking_sha256"] = file_sha256(proposal_ranking);
     }
     // Choices that change the bytes without changing a shape (the content digests cover them too).
     if (options.round_tiny_scales) { provenance["round_tiny_scales"] = true; }
