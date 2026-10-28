@@ -132,7 +132,9 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     out.sliding_attention_width = s.sliding_attention_width;
     out.input_table_params =
         s.tied_embeddings ? 0.0 : static_cast<double>(s.vocab_size) * static_cast<double>(s.hidden_size);
-    out.input_table_bytes = s.tied_embeddings ? 0.0 : static_cast<double>(s.input_table_bytes);
+    // As stored apart from the head (a tied model's converter may keep a table of its own: Gemma 4's
+    // artifact holds a Q8 input table beside its Q6 head); 0 where one object serves both.
+    out.input_table_bytes = static_cast<double>(s.input_table_bytes);
     out.speculation_bytes = static_cast<double>(m.mtp_bytes + m.own_drafter_bytes);
     out.layers            = static_cast<std::uint32_t>(s.num_hidden_layers);
     out.kv_bytes_per_token = [m](KvCacheStorage storage) {

@@ -149,6 +149,11 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     return kPrefillEta[2].eta;
 }
 
+double moe_exact_factor(std::string_view generation, bool& transferred) noexcept {
+    const RouteFactor* row = generation_row_of(kMoeExactFactor, generation, transferred);
+    return row != nullptr ? row->factor : 1.0;
+}
+
 double exact_eta(std::string_view generation, bool& transferred) noexcept {
     const RouteEta* row = generation_row_of(kExactComputeEta, generation, transferred);
     return row != nullptr ? row->eta : kExactComputeEta[0].eta;
@@ -381,7 +386,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // A row's own reads: its KV over the context, its recurrent state (read and written), its ring.
     const double row_bytes = context * kv * kkv + 2 * state + window_rows * ring;
     // The exact route's compute beyond the fast route's (choice_constants.h kExactComputeEta).
-    const double exact = route == Route::Bf16 ? rows * 2 * params /
+    const double exact = route == Route::Bf16 && !model.moe() ? rows * 2 * params /
                                                     (exact_eta(gen, transferred) * peak(card, Route::Int8))
                                               : 0;
     if (route == Route::Fp4) { transferred = true; } // decodes as the int8 route (not measured)
@@ -401,8 +406,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double compute = rows * 2 * params /
                                (k.eta_compute * (route == Route::Int8 ? decode_int8_peak(card) : peak(card, Route::Int8))) *
                                (route == Route::Fp4 ? 0.5 : 1.0); // FP4: twice the int8 rate (not measured)
-        step = k.step_seconds + (weights + rows * row_bytes) / (k.eta_dram * card.dram_bytes_per_s) + compute +
-               exact;
+        // The exact route at kMoeExactFactor times its compute (as fitted; kExactComputeEta is the
+        // dense route's, measured on 9B).
+        const double factor = route == Route::Bf16 ? moe_exact_factor(gen, transferred) : 1.0;
+        step = k.step_seconds + (weights + rows * row_bytes) / (k.eta_dram * card.dram_bytes_per_s) + compute * factor;
     } else {
         // A dense model, from facts (choice_constants.h): the weights a step reads (not the input
         // table, of which it gathers one row, nor the MTP layers or own drafter), at the share of the
@@ -411,14 +418,20 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double table   = model.input_table_bytes > 0 ? model.input_table_bytes
                                                            : model.input_table_params * quant.bits_per_weight / 8;
         const double weights = std::max(0.0, quant.weight_bytes - model.speculation_bytes - table);
-        const LaunchCost* launch = generation_row_of(kLaunchCost, gen, transferred);
+        // A generation without a row: the one whose launches it shares (Volta: Turing's, neither
+        // has PDL nor Ada's L2), else Ada's; transferred either way.
+        const LaunchCost* launch = generation_row_of(kLaunchCost, gen == "volta" ? std::string_view("turing") : gen,
+                                                     transferred);
+        if (gen == "volta") { transferred = true; }
+        // Unknown layers: no launch term, and the estimate says it is not the card's own.
+        if (model.layers == 0) { transferred = true; }
         const double t0          = launch != nullptr ? launch->seconds : 0;
         const double reads = weights / (rows_eta(gen, rows, transferred) * card.dram_bytes_per_s) +
                              rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
         bool prefill_transferred = false;
         const double flops_rate  = linear_prefill(model, card, route, kDefaultChunk, prefill_transferred) * 2 * params;
         const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
-        step = std::max(reads + kDecodeLaunchesPerLayer * model.layers * t0, flops) + exact;
+        step = std::max(reads + kDecodeLaunchesPerLayer * model.layers * t0 + exact, flops);
     }
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
     // A drafter's measured gain over plain decode, while its load table lets these many streams

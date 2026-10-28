@@ -88,14 +88,14 @@ struct DecodeConstants {
 // The share of the DRAM rate a weight read long enough to saturate it reaches: per kernel 0.946-0.952
 // on GDDR6, 6X and 7 (nsys census of Qwen3.5-9B decode, 28.10: RTX 4090, 4070 Ti, 4060 Ti, 5070 Ti;
 // its R8 GEMVs and the Q6_K output head). Volta's row: the Quadro GV100's HBM2 with ECC tops out at
-// 660 of its 870 GB/s (PR #168's census, one card).
+// 660 of its 870 GB/s (PR #168's census, one card): the share its reads reach.
 struct DramEta {
     std::string_view generation;
     double eta;
     int cards;
 };
 inline constexpr double kDramEta = 0.946;
-inline constexpr DramEta kDramEtaOf[] = {{"volta", kDramEta * 660.0 / 870.0, 1}};
+inline constexpr DramEta kDramEtaOf[] = {{"volta", 660.0 / 870.0, 1}};
 
 // The kernels a dense decode step launches a layer (nsys, master 03afc418: Qwen3.5-9B 312 over 32
 // layers, its Q8_0 368, Gemma 4 12B 462 over 48: norms, projections, the mixer, the feed-forward).
@@ -192,13 +192,22 @@ inline constexpr GenerationEta kPrefillAttentionEta[] = {
 // (C 2 P) at this share of the int8 tensor peak, its FP32 state's bytes apart (run_sw.sh, 9B at a
 // 22K prompt, against the fast route at the same KV: exact decode 61.7 against 85.3 tok/s on the
 // RTX 2080 Ti, 69.9 against 80.6 on the 4070 Ti, 127.9 against 150.2 on the 4090: 4.41, 1.79 and
-// 1.11 ms a step). Ada: the mean of the 4070 Ti's 0.0272 and the 4090's 0.0214.
+// 1.11 ms a step, the FP32 state's extra bytes at the old 0.90 DRAM share; at kDramEta the three
+// move by under 0.3 %). Ada: the mean of the 4070 Ti's 0.0272 and the 4090's 0.0214.
 struct RouteEta {
     std::string_view generation;
     double eta;
 };
 
 inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.0243}};
+
+// An MoE's exact route: kMoeDecode's compute times this (the dense route's factor of the earlier
+// fit, kept with kMoeDecode: an MoE's exact decode is not measured).
+struct RouteFactor {
+    std::string_view generation;
+    double factor;
+};
+inline constexpr RouteFactor kMoeExactFactor[] = {{"turing", 4.28}, {"ada", 3.25}};
 
 // What reading a KV codec costs over its bytes (run_sw.sh, 9B at a 22K prompt, against INT8 on the
 // same card): Turing reads BF16 and FP8 without native support. Ada: the mean of the RTX 4070 Ti

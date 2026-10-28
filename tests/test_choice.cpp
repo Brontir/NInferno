@@ -109,8 +109,8 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
 // step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
 // attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
-    double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0;
-    int decodes = 0, prefills = 0;
+    double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
+    int decodes = 0, prefills = 0, moes = 0;
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q     = row.at("quant").get<std::string>();
@@ -126,7 +126,11 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
                                          row.at("context").get<double>(), row.value("prompt", 0U));
         const double d    = s.decode_per_stream / row.at("decode").get<double>() - 1;
-        if (mf.moe() || row.at("concurrency").get<std::uint32_t>() == 1) {
+        if (mf.moe()) {
+            moe_sq += d * d;
+            moe_worst = std::max(moe_worst, std::abs(d));
+            ++moes;
+        } else if (row.at("concurrency").get<std::uint32_t>() == 1) {
             decode_sq += d * d;
             decode_worst = std::max(decode_worst, std::abs(d));
             ++decodes;
@@ -143,8 +147,11 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "decode " << decodes << " points: rms " << decode_rms * 100 << " %, worst "
               << decode_worst * 100 << " %; prefill " << prefills << ": rms " << prefill_rms * 100
               << " %, worst " << prefill_worst * 100 << " %\n";
-    check(decodes == 35 && prefills == 15, "the fixture's decode points and 15 prefill points");
-    check(decode_rms < 0.10 && decode_worst < 0.17, "decode within the model's error");
+    const double moe_rms = std::sqrt(moe_sq / moes);
+    std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
+    check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
+    check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
+    check(moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode within its fit's error");
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
 }
 
