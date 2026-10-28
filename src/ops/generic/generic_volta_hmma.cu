@@ -290,8 +290,14 @@ __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint
     }
 }
 
+#ifndef NINFERNO_HMMA_MIN_CTAS
+#    define NINFERNO_HMMA_MIN_CTAS 1
+#endif
+#ifndef NINFERNO_HMMA_AHEAD
+#    define NINFERNO_HMMA_AHEAD 2
+#endif
 template <class F, Epilogue E, int NG>
-__global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
+__global__ __launch_bounds__(kWarps * 32, NINFERNO_HMMA_MIN_CTAS) void volta_hmma_kernel(GemmArgs a) {
 #if NINFERNO_HMMA884
     constexpr int kSets   = E == Epilogue::SwiGlu ? 2 : 1;
     constexpr int kNTok   = 8 * NG;
@@ -329,7 +335,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         nx2[s].clear();
         if (live) {
             cur[s].load(a, row, 0, q);
-            if (sbs > 1) nx1[s].load(a, row, 1, q);
+            if (NINFERNO_HMMA_AHEAD == 2 && sbs > 1) nx1[s].load(a, row, 1, q);
         }
     }
     uint2 xv[kNTok / 2];
@@ -342,8 +348,10 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
         const bool more = sb + 1 < sbs;
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
-            if (sb + 2 < sbs && live)
+            if (NINFERNO_HMMA_AHEAD == 2 && sb + 2 < sbs && live)
                 nx2[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 2, q);
+            if (NINFERNO_HMMA_AHEAD == 1 && sb + 1 < sbs && live)
+                nx1[s].load(a, a.row_begin + l + (s == 1 ? a.up_offset : 0), sb + 1, q);
         }
         if (more) stage_load<F, kNTok>(a, sb + 1, xv);
 
@@ -406,7 +414,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) {
             cur[s] = nx1[s];
-            nx1[s] = nx2[s];
+            if (NINFERNO_HMMA_AHEAD == 2) nx1[s] = nx2[s];
         }
     }
 
