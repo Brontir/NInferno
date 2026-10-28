@@ -1214,6 +1214,8 @@ void test_quant_option_one_rule() {
           "the artifact's NVFP4 encodings price its route, the source label its accuracy");
     artifact.shape.quant_label.clear();
     check(pr::quant_option_of(artifact).label == "the model's weights", "no label: said so");
+}
+
 // The KV codecs a start takes, from the engine's rules (product::kv_options): the family's codecs,
 // the Qwen paged pool's head width, FP8 in software below sm_89 (allowed, slow); a pinned codec the
 // model does not take is refused by the plan with kv_not_run, never replaced.
