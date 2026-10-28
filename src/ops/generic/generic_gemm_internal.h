@@ -109,6 +109,16 @@ bool volta_gemv_takes(WeightCodec codec, const GemmArgs& args);
 void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream);
 
+// Volta's tensor-core route of the speculative-verify widths (generic_volta_hmma.cu): Q4_K / Q5_K
+// / Q6_K and Q8 G32 at kVoltaHmmaMinTokens..16 tokens, in place of a lane-local register-MMA call
+// (and of ggml's vector kernel, volta_hmma_route).
+inline constexpr std::int32_t kVoltaHmmaMinTokens = 2;
+inline constexpr std::int32_t kVoltaHmmaMaxTokens = 16;
+bool volta_hmma_codec(WeightCodec codec);
+bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args);
+void launch_volta_hmma(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
+                       cudaStream_t stream);
+
 // Tiled A16 (generic_tiled.cu); the codec must be one tiled_supports() admits.
 void launch_tiled(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                   cudaStream_t stream);

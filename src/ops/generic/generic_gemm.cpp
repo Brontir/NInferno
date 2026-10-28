@@ -2689,6 +2689,28 @@ std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy
     return std::nullopt;
 }
 
+namespace {
+// Without tensor mma.sync (Volta) a speculative-verify width (2..16 tokens) of Q4_K / Q5_K / Q6_K
+// or Q8 G32 takes the HMMA kernel (generic_volta_hmma.cu) whatever the policy allows: it runs as a
+// register-MMA route (run_route launches it in place of the emulated tiles, volta_hmma_takes),
+// f16 activations as the tiled route's from 17 tokens. Its alternatives grow with T on Volta's
+// CUDA cores: the register MMA's emulated fragments (FP32 FMAs and shuffles), ggml's vector kernel
+// (dp4a, the activation re-read for every column) and R8 (dp4a); the tensor cores multiply eight
+// or sixteen columns for the price of one, so the call costs the decode of its weight once.
+std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
+                                      std::int32_t tokens) {
+    if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
+        current_features().mma_tensor || !supports(weight) || (weight.k % 256) != 0 ||
+        !volta_hmma_codec(codec_of(weight))) {
+        return std::nullopt;
+    }
+    const Route r{Family::RegisterMma,
+                  static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, false))};
+    if (route_admits(r, weight, problem.policy)) return r;
+    return std::nullopt;
+}
+} // namespace
+
 Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    bool prefill) {
     // The invariant profile: one summation order per problem at every width, BF16 activations
@@ -2726,6 +2748,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         return Route{Family::Scalar, 0};
     }
     if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
+    if (const auto r = volta_hmma_route(problem, weight, tokens)) return *r;
     // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
     // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
     // path's, whose speed bands split K by width (heuristic_rmma: 4, 8, 2 or 1 K-warps from 17
@@ -3539,6 +3562,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
+        if (volta_hmma_takes(codec, args)) {
+            launch_volta_hmma(codec, call.epilogue, args, stream);
+            return;
+        }
         if (!current_features().mma_tensor && volta_gemv_takes(codec, args) &&
             (args.ldx % 8) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 16) == 0) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
