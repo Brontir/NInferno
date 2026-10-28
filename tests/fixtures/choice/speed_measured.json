@@ -23,11 +23,14 @@
    "quants": {
     "Q4_K_M": {
      "bits_per_weight": 5.08,
-     "weight_bytes": 5680522464
+     "weight_bytes": 5680522464,
+     "input_table_bytes": 572129280,
+     "speculation_bytes": 0
     }
    },
    "full_attention_width": 65536.0,
-   "sliding_attention_width": 0.0
+   "sliding_attention_width": 0.0,
+   "layers": 32
   },
   "Qwen3.8-27B": {
    "family": "qwen3_5_text",
@@ -51,15 +54,20 @@
    "quants": {
     "UD-IQ3_XXS": {
      "bits_per_weight": 3.2,
-     "weight_bytes": 10934860704
+     "weight_bytes": 10934860704,
+     "input_table_bytes": 417177600,
+     "speculation_bytes": 351008768
     },
     "UD-Q4_K_XL": {
      "bits_per_weight": 5.14,
-     "weight_bytes": 17559178144
+     "weight_bytes": 17559178144,
+     "input_table_bytes": 715161600,
+     "speculation_bytes": 351008768
     }
    },
    "full_attention_width": 196608.0,
-   "sliding_attention_width": 0.0
+   "sliding_attention_width": 0.0,
+   "layers": 64
   },
   "Qwen3.6-35B-A3B": {
    "family": "qwen3_5_moe_text",

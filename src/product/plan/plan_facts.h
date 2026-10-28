@@ -60,6 +60,10 @@ struct PlanTargetShape {
     double full_attention_width = 0, sliding_attention_width = 0;
     bool builtin_mtp = false; // MTP / NextN layers in the model (GGUF nextn_predict_layers)
     bool tied_embeddings = false; // the output head shares the input table (no separate rows to read)
+    // The untied input table's bytes as stored (a GGUF's token_embd, an artifact's
+    // text/token_embedding the output head does not share): a decode step gathers one row of it, so
+    // the speed estimate leaves it out of the weights a step reads. 0: unknown or tied.
+    std::uint64_t input_table_bytes = 0;
     // The quantized weight formats, as artifact::format_name spells them where known
     // ("ggml_q4_k", "mxfp4", "nvfp4", "bf16"); empty when unknown.
     std::vector<std::string> weight_formats;

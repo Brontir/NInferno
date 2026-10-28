@@ -77,6 +77,13 @@ struct ModelFacts {
     int experts = 0, experts_per_token = 0;
     double routed_expert_params = 0;  // all routed experts' weights (0: dense)
     double input_table_params = 0;    // an untied input embedding table (a step reads one row; 0 when tied)
+    // Its bytes as stored (a GGUF's token_embd may be another format than the average: Qwen3.5-9B
+    // Q4_K_M stores it Q4_K, 4.5 bits against 5.3 on average); 0: unknown, input_table_params at
+    // the average bits stands in.
+    double input_table_bytes = 0;
+    // Weights a plain decode step never reads: the MTP layers, the model's own DFlash drafter.
+    double speculation_bytes = 0;
+    std::uint32_t layers = 0;         // the trunk's layers (a decode step launches kernels per layer)
     // Per-token and per-lane bytes of the state a step reads, by storage
     // (runtime::plan_kv_bytes_per_token, plan_ring_bytes_per_token, plan_state_bytes).
     std::function<std::uint64_t(KvCacheStorage)> kv_bytes_per_token;

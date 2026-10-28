@@ -731,9 +731,11 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         return block;
     };
     double elements = 0;
+    std::uint64_t input_table_bytes = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         elements += static_cast<double>(t.elements());
+        if (t.name == "token_embd.weight") { input_table_bytes = t.bytes; }
         if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
             mtp_bytes += t.bytes;
         }
@@ -757,6 +759,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         out.shape.base_models = {std::move(*base)};
     }
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
+    // The input table apart from the output head (a part that lists output.weight says so).
+    out.shape.input_table_bytes = has_output ? input_table_bytes : 0;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
     out.model.weight_elements = whole ? elements : 0;
     if (!whole && !has_output) { out.model.params = 0; }
@@ -783,6 +787,16 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     enum Part : std::uint8_t { Vision, Mtp, Drafter, Other, Parts };
 
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
+    // The input table's objects that the output head does not share (an untied table: a decode
+    // step gathers one row of it).
+    std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
+    for (const auto& [name, binding] : dir.bindings) {
+        const std::uint8_t bit = name == "text/token_embedding" ? 1 : name == "text/output_head" ? 2 : 0;
+        for (const auto& piece : binding.parts) {
+            if (bit != 0 && piece.object.index < table.size()) { table[piece.object.index] |= bit; }
+        }
+    }
+    std::uint64_t input_table_bytes = 0;
     for (const auto& [name, binding] : dir.bindings) {
         const Part part = starts_with(name, "vision/")                                    ? Vision
                           : starts_with(name, "mtp/")                                     ? Mtp
@@ -805,6 +819,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         }
         bytes += tensor->bytes;
         formats.insert(tensor->format);
+        if (table[i] == 1) { input_table_bytes += tensor->bytes; }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (alone && m[Drafter]) { drafter_bytes += tensor->bytes; }
     }
@@ -813,6 +828,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.vision_bytes      = vision_bytes;
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
+    out.shape.input_table_bytes = input_table_bytes;
     out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
     // A Qwen artifact's own DFlash drafter (its dflash or dflash2 component).
     for (const char* component : {"dflash", "dflash2"}) {
@@ -834,6 +850,7 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
         return static_cast<std::uint64_t>(static_cast<long double>(part) * bytes / whole);
     };
     facts.model.mtp_bytes         = scaled(facts.model.mtp_bytes);
+    facts.shape.input_table_bytes = scaled(facts.shape.input_table_bytes);
     facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;

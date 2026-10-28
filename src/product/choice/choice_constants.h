@@ -63,13 +63,83 @@ enum class Route : std::uint8_t {
 
 // ---- Speed.
 
+// Decode of a dense model, from the chip's and the model's facts (2026-10-28; an MoE keeps
+// kMoeDecode below). A step of C rows at context n reads
+//   W + C (n b_kv k_kv + 2 s + min(n, window) b_ring)
+// bytes: W the weights it reads (every layer and the output head, not the input table a token
+// gathers one row of, nor the MTP layers or own drafter plain decode leaves), b_kv, s and b_ring as
+// above. It takes
+//   t(C) = W / (eta_rows(C) BW) + C (n b_kv k_kv + 2 s + min(n, window) b_ring) / (eta_dram BW)
+//          + L t0
+// and no less than its rows' flops at the prefill route's rate (C 2 P / (eta_prefill peak): a wide
+// batch is compute-bound): eta_dram the share of the DRAM rate a long read reaches, eta_rows(C) the
+// share the weight reads of C rows reach (the T-row routes: ggml's vec kernel at 2-4 rows, the
+// register MMA and MMQ tiles at 5-8), L = kDecodeLaunchesPerLayer x layers the kernels a step
+// launches and t0 the generation's cost of one beyond its bytes (launch, ramp, the small kernels:
+// norms, the recurrent update, attention at a short context). Measured against
+// (choice-notes/lab/speed_model, master 03afc418): Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M,
+// 1/2/4/8 streams, on the RTX 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, 3060 and 2080 Ti.
 struct DecodeConstants {
     double eta_dram     = 0; // the share of the DRAM rate a step's reads reach
     double eta_compute  = 0; // the share of the int8 tensor peak a step's flops reach
     double step_seconds = 0; // a step's fixed time (launches, routing)
 };
 
-inline constexpr DecodeConstants kDenseDecode{0.90, 0.054, 0.0};
+// The share of the DRAM rate a weight read long enough to saturate it reaches: per kernel 0.946-0.952
+// on GDDR6, 6X and 7 (nsys census of Qwen3.5-9B decode, 28.10: RTX 4090, 4070 Ti, 4060 Ti, 5070 Ti;
+// its R8 GEMVs and the Q6_K output head). Volta's row: the Quadro GV100's HBM2 with ECC tops out at
+// 660 of its 870 GB/s (PR #168's census, one card).
+struct DramEta {
+    std::string_view generation;
+    double eta;
+    int cards;
+};
+inline constexpr double kDramEta = 0.946;
+inline constexpr DramEta kDramEtaOf[] = {{"volta", kDramEta * 660.0 / 870.0, 1}};
+
+// The kernels a dense decode step launches a layer (nsys, master 03afc418: Qwen3.5-9B 312 over 32
+// layers, its Q8_0 368, Gemma 4 12B 462 over 48: norms, projections, the mixer, the feed-forward).
+inline constexpr double kDecodeLaunchesPerLayer = 10;
+
+// What a launch costs a step beyond its bytes, by generation: the step time less its bytes at
+// kDramEta over the launches, one plain stream at a short context (choice-notes/lab/speed_model/
+// fit_decode.py on tests/fixtures/choice/decode_measured.json:
+// Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, the mean of the three; the RTX 4070 Ti's Q8_0 left
+// out: its T=1 Q8 GEMV runs at 86 % of the DRAM rate, a kernel deficit). Not one number of SM
+// cycles: Ada and Blackwell ~5,450 at the reference clock, Ampere 6,150, Turing 10,300 (its Q8 and
+// Gemma steps 7.3-7.9 us a launch against 4.8 on 9B Q4_K_M). Ada and Blackwell rest on two cards or
+// more; Ampere and Turing on one (estimates only: neither has a reference card); a generation without
+// a row takes Ada's (transferred).
+struct LaunchCost {
+    std::string_view generation;
+    double seconds;
+    int cards;
+};
+inline constexpr LaunchCost kLaunchCost[] = {
+    {"ada", 2.17e-6, 3},    // RTX 4060 Ti 1.5-2.0, 4070 Ti 2.1-2.2, 4090 2.2-3.1
+    {"gb20x", 2.23e-6, 2},  // RTX 5070 Ti 1.8-2.3, 5090 2.1-2.7
+    {"ga10x", 3.48e-6, 1},  // RTX 3060 2.7-4.1
+    {"turing", 6.69e-6, 1}, // RTX 2080 Ti 4.8-7.9
+};
+
+// The share of the DRAM rate the weight reads of C rows reach (C = 1: kDramEta; between two rows
+// the share is linear in log2 C; beyond the last, the last's): the mean of the three models per
+// generation and row count, the launches at kLaunchCost. Ada (nine points a row count): 2 rows
+// 0.84-0.94, 4 rows 0.82-0.91, 8 rows 0.74-0.88; Blackwell (six): 0.80-0.91, 0.70-0.87, 0.67-0.83;
+// Gemma 4's shapes the lowest, Q8_0 the highest. Ampere, Turing: one card each (Turing's Gemma 4 at
+// 0.71 / 0.59 / 0.57, a kernel deficit). A generation without rows takes Ada's (transferred).
+struct RowsEta {
+    std::string_view generation;
+    double rows;
+    double eta;
+};
+inline constexpr RowsEta kRowsEta[] = {
+    {"ada", 2, 0.886},    {"ada", 4, 0.864},    {"ada", 8, 0.807},
+    {"gb20x", 2, 0.866},  {"gb20x", 4, 0.781},  {"gb20x", 8, 0.754},
+    {"ga10x", 2, 0.885},  {"ga10x", 4, 0.798},  {"ga10x", 8, 0.754},
+    {"turing", 2, 0.829}, {"turing", 4, 0.723}, {"turing", 8, 0.629},
+};
+
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
 // dp4a's int8 rate a SM-clock: a generation without an int8 MMA decodes its int8 route at it
@@ -118,16 +188,17 @@ struct GenerationEta {
 inline constexpr GenerationEta kPrefillAttentionEta[] = {
     {"ada", 0.742}, {"gb20x", 0.740}, {"turing", 0.069}, {"ga10x", 0.497}};
 
-// What the exact route's compute costs a decode step over the int8 route's flops at the int8 peak,
-// its FP32 state's bytes apart (run_sw.sh, 9B at a 22K prompt: exact decode 61.7 against 85.3
-// tok/s on the RTX 2080 Ti; 69.9 against 80.6 on the 4070 Ti, 127.9 against 150.2 on the 4090).
-// Ada: the mean of the 4070 Ti's 2.98 and the 4090's 3.52, the two within 20 %.
-struct RouteFactor {
+// What the exact route's compute adds to a decode step beyond the fast route's: its rows' flops
+// (C 2 P) at this share of the int8 tensor peak, its FP32 state's bytes apart (run_sw.sh, 9B at a
+// 22K prompt, against the fast route at the same KV: exact decode 61.7 against 85.3 tok/s on the
+// RTX 2080 Ti, 69.9 against 80.6 on the 4070 Ti, 127.9 against 150.2 on the 4090: 4.41, 1.79 and
+// 1.11 ms a step). Ada: the mean of the 4070 Ti's 0.0272 and the 4090's 0.0214.
+struct RouteEta {
     std::string_view generation;
-    double factor;
+    double eta;
 };
 
-inline constexpr RouteFactor kExactComputeFactor[] = {{"turing", 4.28}, {"ada", 3.25}};
+inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.0243}};
 
 // What reading a KV codec costs over its bytes (run_sw.sh, 9B at a 22K prompt, against INT8 on the
 // same card): Turing reads BF16 and FP8 without native support. Ada: the mean of the RTX 4070 Ti
@@ -317,7 +388,7 @@ struct ReferenceCard {
     double clock_hz;
     double dram_bytes_per_s;
     bool kv_two_cards;    // kKvReadFactor's rows of the generation fitted on two lab cards
-    bool exact_two_cards; // kExactComputeFactor's row likewise
+    bool exact_two_cards; // kExactComputeEta's row likewise
     std::string_view cards;
 };
 
