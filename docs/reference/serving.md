@@ -827,10 +827,12 @@ still valid JSON. NInferno's grammars let the model write keys in its own order:
   times the set of optional ones written): eight optional properties with no required one, six
   with three required. Optional properties past those (in schema order), and every optional
   property of an object with `patternProperties` or `propertyNames`, may still come in any order
-  but may repeat (the tool-call parser, like most JSON parsers, keeps the last value).
-- An object with `minProperties` or `maxProperties` takes the same rule with an exact count: a key
-  is admitted only while the object stays within `maxProperties` with room for its remaining
-  required properties, and the object ends at `minProperties` or more. The count joins the state
+  but may repeat (the tool-call parsers of every syntax, like most JSON parsers, keep the last
+  value).
+- An object with `minProperties` or `maxProperties` takes the same rule with a counted state: a
+  key is admitted only while the object stays within `maxProperties` with room for its remaining
+  required properties, and the object ends at `minProperties` or more. A key that may repeat (see
+  below) counts each time it is written. The count joins the state
   (keys past the tracked optional ones counted up to the bound); one whose states would pass 256
   keeps its optional properties in schema order, so list them in the order the prompt asks for
   them.
@@ -843,9 +845,9 @@ Where each constraint applies, and what it holds:
 | `response_format` `json_object` | always | any JSON object |
 | Tool call, JSON syntaxes (Hermes, Mistral, Llama 3, gpt-oss harmony, Granite) | `tool_choice` `required` or named, a `strict` tool, or `parallel_tool_calls: false` | `strict` tool: its schema, keys as above; other tools: any JSON object |
 | Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, each value any text up to `</parameter>` |
-| Tool call, Gemma 4 | the same | `strict` tool: its schema, keys as above, in Gemma's value format (keys bare when they are made of letters, digits and `_-.$@`, otherwise `<\|"\|>`-quoted; strings `<\|"\|>`-quoted; numbers, booleans and null bare); other tools: any object in that format |
-| Tool call, Pythonic (OLMo 3) | the same | `strict` tool: its schema, keys as above, as `name=value` keywords with JSON values (a top-level name that is not a Python identifier is refused, `unsupported_schema`); other tools: any text |
-| Tool call, ATEM | the same | `strict` tool: its schema, keys as above, as `<atem:parameter name="K">` blocks, a string as raw text and other values as JSON (a name with a quote mark is refused, `unsupported_schema`); other tools: any text |
+| Tool call, Gemma 4 | the same | `strict` tool: its schema, keys as above, in Gemma's value format (keys bare when they are made of letters, digits and `_-.$@`, otherwise `<\|"\|>`-quoted; strings `<\|"\|>`-quoted; numbers, booleans and null bare; the root must be `{"type": "object"}`); other tools: any object in that format (a bare word as a value, which the parser reads as a string, is not written) |
+| Tool call, Pythonic (OLMo 3) | the same | `strict` tool: its schema, keys as above, as `name=value` keywords with JSON values (refused, `unsupported_schema`: a top-level name that is not a Python identifier, keys by pattern at the top level, a reference back to the root); other tools: any text |
+| Tool call, ATEM | the same | `strict` tool: its schema, keys as above, as `<atem:parameter name="K">` blocks, a string as the raw text between the tags and other values as JSON (refused, `unsupported_schema`: a name with a quote mark, keys by pattern at the top level, a reference back to the root); other tools: any text |
 | A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
 
 The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning

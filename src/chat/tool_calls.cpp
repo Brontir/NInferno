@@ -1556,10 +1556,11 @@ private:
                     key = std::string(trim_format_whitespace(text.substr(pos, colon - pos)));
                     pos = colon;
                 }
-                if (key.empty() || result.contains(key)) { return std::nullopt; }
+                if (key.empty()) { return std::nullopt; }
                 ++pos;  // ':'
                 std::optional<OrderedJson> item = value();
                 if (!item) { return std::nullopt; }
+                // A key written twice keeps its last value, as the JSON and XML parsers do.
                 result[key] = std::move(*item);
                 skip();
                 if (pos < text.size() && text[pos] == ',') {
@@ -1927,13 +1928,14 @@ std::optional<ParsedCall> pythonic_call(std::string_view text, std::size_t& pos)
         while (at < text.size() && python_identifier_byte(text[at], at == key_begin)) { ++at; }
         const std::string key(text.substr(key_begin, at - key_begin));
         skip_format_whitespace(text, at);
-        if (key.empty() || at >= text.size() || text[at] != '=' || object.contains(key)) {
+        if (key.empty() || at >= text.size() || text[at] != '=') {
             return std::nullopt;
         }
         ++at;
         skip_format_whitespace(text, at);
         std::optional<OrderedJson> value = pythonic_value(text, at);
         if (!value) { return std::nullopt; }
+        // A key written twice keeps its last value, as the JSON and XML parsers do.
         object[key] = std::move(*value);
         skip_format_whitespace(text, at);
         if (at >= text.size()) { return std::nullopt; }

@@ -3,7 +3,7 @@
 // of six optional properties, in every call syntax, strict and not.
 // Bounds per syntax: the compile ends within half the default compile timeout, the compiled grammar
 // stays within 1/8 of the default cache, and a token mask along a call costs at most 20 ms (50 ms
-// for free Gemma 4 arguments: a bare key of any name settles no token when the grammar compiles,
+// for free Gemma 4 arguments: a bare key of any identifier name settles no token at compile time,
 // so the mask at a key's start checks every key-like token of the vocabulary at run time, about
 // 0.1 us each, 20-30 ms on a 250k vocabulary; strict keys are the schema's literal names).
 //

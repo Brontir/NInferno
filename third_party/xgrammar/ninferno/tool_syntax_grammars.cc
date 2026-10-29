@@ -86,9 +86,10 @@ bool admits(const std::vector<Range>& ranges, int32_t point) {
 
 // A converter that can spell "a key over these code points, none of these names": the additional
 // keys of an object whose declared keys must not be written a second time through them.
-class KeyedConverter : public JSONSchemaConverter {
+template <class Base>
+class KeyedConverter : public Base {
 public:
-    using JSONSchemaConverter::JSONSchemaConverter;
+    using Base::Base;
 
 protected:
     // `end`: what follows a key, asserted after it so that its tokens settle at compile time.
@@ -120,10 +121,10 @@ protected:
             }
             nodes[at].terminal = true;
         }
-        const int32_t tail = builder_.AddCharacterClassStar(rest);
+        const int32_t tail = this->builder_.AddCharacterClassStar(rest);
         std::vector<int32_t> rules(nodes.size());
         for (std::size_t index = 0; index < nodes.size(); ++index) {
-            rules[index] = builder_.AddEmptyRuleWithHint(hint + "_" + std::to_string(index));
+            rules[index] = this->builder_.AddEmptyRuleWithHint(hint + "_" + std::to_string(index));
         }
         for (std::size_t index = 0; index < nodes.size(); ++index) {
             const Node& node                 = nodes[index];
@@ -133,17 +134,17 @@ protected:
             for (const auto& [point, child] : node.children) {
                 taken.push_back(point);
                 choices.push_back(
-                    Sequence({ByteString(xgrammar::CharToUTF8(point)), RuleRef(rules[child])}));
+                    this->Sequence({this->ByteString(xgrammar::CharToUTF8(point)), this->RuleRef(rules[child])}));
             }
             const std::vector<Range> others = subtract(admitted, taken);
             if (!others.empty()) {
-                choices.push_back(Sequence({builder_.AddCharacterClass(others), tail}));
+                choices.push_back(this->Sequence({this->builder_.AddCharacterClass(others), tail}));
             }
-            if (index != 0 && !node.terminal) { choices.push_back(Empty()); }
-            builder_.UpdateRuleBody(rules[index], Choice(choices));
+            if (index != 0 && !node.terminal) { choices.push_back(this->Empty()); }
+            this->builder_.UpdateRuleBody(rules[index], this->Choice(choices));
         }
-        builder_.UpdateLookaheadAssertion(rules[0], end);
-        return RuleRef(rules[0]);
+        this->builder_.UpdateLookaheadAssertion(rules[0], end);
+        return this->RuleRef(rules[0]);
     }
 
     static std::vector<std::string> names_of(const std::vector<xgrammar::ObjectSpec::Property>& p) {
@@ -179,7 +180,12 @@ std::string gemma_key_text(const std::string& key) {
 
 // A JSON value written the way Gemma 4 writes it.
 std::string gemma_literal(const picojson::value& value) {
-    if (value.is<std::string>()) { return kGemmaQuote + value.get<std::string>() + kGemmaQuote; }
+    if (value.is<std::string>()) {
+        if (value.get<std::string>().find(kGemmaQuote) != std::string::npos) {
+            throw std::invalid_argument("a const or enum string holds Gemma's quote <|\"|>");
+        }
+        return kGemmaQuote + value.get<std::string>() + kGemmaQuote;
+    }
     if (value.is<picojson::array>()) {
         std::string out = "[";
         bool first      = true;
@@ -208,10 +214,11 @@ std::string gemma_literal(const std::string& json) {
     return gemma_literal(value);
 }
 
-class Gemma4Converter final : public KeyedConverter {
+class Gemma4Converter final : public KeyedConverter<JSONSchemaConverter> {
 public:
     Gemma4Converter(int max_whitespace, RefResolver resolver)
-        : KeyedConverter(std::nullopt, std::nullopt, true, max_whitespace, std::move(resolver)) {}
+        : KeyedConverter<JSONSchemaConverter>(std::nullopt, std::nullopt, true, max_whitespace,
+                                              std::move(resolver)) {}
 
 protected:
     void AddBasicRules() override {
@@ -301,10 +308,11 @@ bool python_identifier(const std::string& name) {
 
 // The arguments object is NAME(key=value, ...)'s keyword list (level 1, no braces); every value,
 // objects included, is JSON.
-class PythonicConverter final : public KeyedConverter {
+class PythonicConverter final : public KeyedConverter<JSONSchemaConverter> {
 public:
     PythonicConverter(int max_whitespace, RefResolver resolver)
-        : KeyedConverter(std::nullopt, std::nullopt, true, max_whitespace, std::move(resolver)) {}
+        : KeyedConverter<JSONSchemaConverter>(std::nullopt, std::nullopt, true, max_whitespace,
+                                              std::move(resolver)) {}
 
 protected:
     void AddBasicRules() override {
@@ -388,11 +396,12 @@ const std::string kAtemParameter = "<atem:parameter name=\"";
 const std::string kAtemNameEnd   = "\">";
 const std::string kAtemClose     = "</atem:parameter>";
 
-class AtemConverter final : public xgrammar::XMLToolCallingConverter {
+class AtemConverter final : public KeyedConverter<xgrammar::XMLToolCallingConverter> {
 public:
     AtemConverter(int max_whitespace, RefResolver resolver)
-        : XMLToolCallingConverter(std::nullopt, std::nullopt, true, max_whitespace,
-                                  std::move(resolver), JSONFormat::kMiniMaxXML) {}
+        : KeyedConverter<xgrammar::XMLToolCallingConverter>(
+              std::nullopt, std::nullopt, true, max_whitespace, std::move(resolver),
+              JSONFormat::kMiniMaxXML) {}
 
 protected:
     void AddBasicRules() override {
@@ -432,16 +441,64 @@ protected:
             value_rule_id);
     }
 
+    // An additional key never spells a declared name (that would write it a second time).
+    int32_t GetKeyPatternExcluding(const std::vector<xgrammar::ObjectSpec::Property>& properties,
+                                   const std::string& rule_name) override {
+        if (nested_object_level_ > 1) {
+            return XMLToolCallingConverter::GetKeyPatternExcluding(properties, rule_name);
+        }
+        return keys_excluding(names_of(properties), kIdentifierFirst, kIdentifierRest,
+                              rule_name + "_addl_key", ByteString(kAtemNameEnd));
+    }
+
 private:
     int32_t parameter(int32_t key, int32_t value_rule_id) {
-        // A string value is the raw text up to the close; another value is JSON, spaced freely.
-        if (value_rule_id == builder_.GetRuleId(kXMLString)) {
-            return Sequence({key, RuleRef(value_rule_id), ByteString(kAtemClose)});
-        }
-        return Sequence({key, WhitespaceExpression(), RuleRef(value_rule_id),
-                         WhitespaceExpression(), ByteString(kAtemClose)});
+        // The value is the text between the tags as the parser keeps it (ValueFraming::AsIs): no
+        // whitespace around it, or a constrained string would read back with it.
+        return Sequence({key, RuleRef(value_rule_id), ByteString(kAtemClose)});
     }
 };
+
+// The arguments root every syntax here writes: an object of declared properties. A keyword list
+// (Pythonic) or a parameter list (ATEM) has no braces, so a reference back to the root, or keys by
+// pattern at the root, cannot be written there.
+void check_root(const std::string& schema, bool list_root) {
+    picojson::value value;
+    if (!xgrammar::ParseJSON(value, schema).empty() || !value.is<picojson::object>()) {
+        throw std::invalid_argument("the arguments schema is not a JSON object");
+    }
+    const picojson::object& root = value.get<picojson::object>();
+    const auto type              = root.find("type");
+    if (type == root.end() || !type->second.is<std::string>() ||
+        type->second.get<std::string>() != "object") {
+        throw std::invalid_argument("the arguments schema must be a plain {\"type\": \"object\"}");
+    }
+    if (!list_root) { return; }
+    for (const char* key : {"patternProperties", "propertyNames", "$ref", "anyOf", "oneOf", "allOf"}) {
+        if (root.count(key) != 0) {
+            throw std::invalid_argument(std::string("\"") + key +
+                                        "\" at the arguments root cannot be written");
+        }
+    }
+    const auto self = [](const auto& recurse, const picojson::value& node) -> bool {
+        if (node.is<picojson::array>()) {
+            for (const picojson::value& item : node.get<picojson::array>()) {
+                if (recurse(recurse, item)) { return true; }
+            }
+        } else if (node.is<picojson::object>()) {
+            for (const auto& [key, item] : node.get<picojson::object>()) {
+                if (key == "$ref" && item.is<std::string>() && item.get<std::string>() == "#") {
+                    return true;
+                }
+                if (recurse(recurse, item)) { return true; }
+            }
+        }
+        return false;
+    };
+    if (self(self, value)) {
+        throw std::invalid_argument("a reference to the arguments root (\"$ref\": \"#\")");
+    }
+}
 
 template <class Converter>
 std::string ebnf(const std::string& schema, JSONFormat parse_format, int max_whitespace) {
@@ -456,14 +513,17 @@ std::string ebnf(const std::string& schema, JSONFormat parse_format, int max_whi
 } // namespace
 
 std::string gemma4_arguments_ebnf(const std::string& schema, int max_whitespace) {
+    check_root(schema, false);
     return ebnf<Gemma4Converter>(schema, JSONFormat::kJSON, max_whitespace);
 }
 
 std::string pythonic_arguments_ebnf(const std::string& schema, int max_whitespace) {
+    check_root(schema, true);
     return ebnf<PythonicConverter>(schema, JSONFormat::kJSON, max_whitespace);
 }
 
 std::string atem_arguments_ebnf(const std::string& schema, int max_whitespace) {
+    check_root(schema, true);
     return ebnf<AtemConverter>(schema, JSONFormat::kMiniMaxXML, max_whitespace);
 }
 

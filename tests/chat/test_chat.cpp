@@ -955,11 +955,23 @@ int test_argument_key_order() {
         }
     }
     // A strict schema a syntax cannot write is refused, not silently left unenforced.
-    for (const auto& [format, property] :
-         std::vector<std::pair<ToolCallFormat, std::string>>{
-             {ToolCallFormat::Pythonic, "max-results"}, {ToolCallFormat::Atem, "say \"hi\""}}) {
-        Json refused                      = Json::parse(R"({"type":"object","properties":{}})");
-        refused["properties"][property]   = Json{{"type", "string"}};
+    const auto named = [](const std::string& property) {
+        Json schema                     = Json::parse(R"({"type":"object","properties":{}})");
+        schema["properties"][property] = Json{{"type", "string"}};
+        return schema;
+    };
+    const Json recursive = Json::parse(R"({"type":"object","properties":{
+        "name":{"type":"string"},"children":{"type":"array","items":{"$ref":"#"}}}})");
+    const Json patterned = Json::parse(
+        R"({"type":"object","patternProperties":{"^x":{"type":"string"}}})");
+    for (const auto& [format, refused] : std::vector<std::pair<ToolCallFormat, Json>>{
+             {ToolCallFormat::Pythonic, named("max-results")},
+             {ToolCallFormat::Atem, named("say \"hi\"")},
+             {ToolCallFormat::Pythonic, recursive},
+             {ToolCallFormat::Atem, recursive},
+             {ToolCallFormat::Pythonic, patterned},
+             {ToolCallFormat::Gemma4, Json::parse(R"({"anyOf":[{"type":"object"},{"type":"null"}]})")},
+         }) {
         const std::vector<ToolCallConstraintTool> tools = {
             {.name = "fill", .parameters_json = refused.dump(), .strict = true}};
         ninferno::OutputConstraintSpec spec;
@@ -973,7 +985,64 @@ int test_argument_key_order() {
         } catch (const ninferno::OutputConstraintError& error) { code = error.code(); }
         failures += check(code == "unsupported_schema",
                           std::string(ninferno::chat::tool_call_format_name(format)) +
-                              " strict name '" + property + "' refused: " + code);
+                              " strict schema refused: " + refused.dump() + ": " + code);
+    }
+    // ATEM: a constrained string is the text between the tags, read back as written; an additional
+    // key never spells a declared one.
+    {
+        const Json unit = Json::parse(R"({"type":"object","properties":{
+            "unit":{"enum":["celsius","fahrenheit"]},"days":{"type":"integer"}},
+            "required":["unit"],"additionalProperties":{"type":"string"}})");
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name = "fill", .parameters_json = unit.dump(), .strict = true}};
+        const auto& atem = ninferno::chat::tool_call_syntax(ToolCallFormat::Atem);
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition = atem.structural_tag(tools, ToolCallRequirement::Named, "fill", true);
+        const auto compiled = compiler.compile(spec);
+        const auto call     = [](const std::string& body) {
+            return " to=fill<|message|><atem:function_calls>\n<atem:invoke name=\"fill\">\n" + body +
+                   "</atem:invoke>\n</atem:function_calls>";
+        };
+        const std::string good = call("<atem:parameter name=\"unit\">celsius</atem:parameter>\n"
+                                      "<atem:parameter name=\"note\">x</atem:parameter>\n");
+        failures += check(grammar_accepts(compiled, good), "atem strict enum and additional key");
+        failures += check(
+            !grammar_accepts(compiled, call("<atem:parameter name=\"unit\">\ncelsius\n"
+                                            "</atem:parameter>\n")),
+            "atem strict enum refuses whitespace around the value");
+        failures += check(
+            !grammar_accepts(compiled, call("<atem:parameter name=\"unit\">celsius</atem:parameter>\n"
+                                            "<atem:parameter name=\"days\">1</atem:parameter>\n"
+                                            "<atem:parameter name=\"days\">x</atem:parameter>\n")),
+            "atem additional key cannot spell a declared one");
+        const std::vector<std::string> unit_definitions = {tool_definition("fill", unit)};
+        const auto parsed = atem.parse(
+            good, 64, *ninferno::chat::build_tool_call_output_contract(unit_definitions, true,
+                                                                       ToolCallFormat::Atem));
+        failures += check(parsed.tool_calls.size() == 1 &&
+                              Json::parse(parsed.tool_calls[0].arguments_json).value("unit", "") ==
+                                  "celsius",
+                          "atem parser reads the enum value back");
+    }
+    // Gemma 4 and Pythonic read a repeated key as its last value (a key past the tracked ones may
+    // repeat under the grammar), as the JSON and XML parsers do.
+    {
+        const auto gemma = ninferno::chat::tool_call_syntax(ToolCallFormat::Gemma4)
+                               .parse("<|tool_call>call:fill{A:1,A:2}<tool_call|>", 64,
+                                      *ninferno::chat::build_tool_call_output_contract(
+                                          definitions, true, ToolCallFormat::Gemma4));
+        failures += check(gemma.tool_calls.size() == 1 &&
+                              Json::parse(gemma.tool_calls[0].arguments_json).value("A", 0) == 2,
+                          "gemma4 parser keeps the last of a repeated key");
+        const auto python = ninferno::chat::tool_call_syntax(ToolCallFormat::Pythonic)
+                                .parse("<function_calls>fill(A=1, A=2)</function_calls>", 64,
+                                       *ninferno::chat::build_tool_call_output_contract(
+                                           definitions, true, ToolCallFormat::Pythonic));
+        failures += check(python.tool_calls.size() == 1 &&
+                              Json::parse(python.tool_calls[0].arguments_json).value("A", 0) == 2,
+                          "pythonic parser keeps the last of a repeated key");
     }
     // Gemma 4 writes a key of other characters quoted, and its parser reads it back.
     {
