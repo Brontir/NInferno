@@ -312,9 +312,17 @@ protected:
 
     int32_t GetKeyPatternExcluding(const std::vector<xgrammar::ObjectSpec::Property>& properties,
                                    const std::string& rule_name) override {
-        // Bare keys only: a quoted one could spell a declared name again.
-        const std::vector<Range>& bare = kGemmaBareKey;
-        return keys_excluding(names_of(properties), bare, bare, rule_name + "_addl_key", KeyEnd());
+        // A bare or a quoted key, neither spelling a declared name (whichever way it is written).
+        // A quoted additional key leaves out '<', so it never holds the closing quote.
+        const std::vector<std::string> names = names_of(properties);
+        const std::vector<Range>& bare       = kGemmaBareKey;
+        const std::vector<Range> quoted      = subtract({{0, 0x10FFFF}}, {'<'});
+        return Choice(
+            {keys_excluding(names, bare, bare, rule_name + "_addl_key", KeyEnd()),
+             Sequence({ByteString(kGemmaQuote),
+                       keys_excluding(names, quoted, quoted, rule_name + "_addl_quoted_key",
+                                      ByteString(kGemmaQuote)),
+                       ByteString(kGemmaQuote)})});
     }
 };
 

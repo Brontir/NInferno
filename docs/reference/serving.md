@@ -849,6 +849,11 @@ Where each constraint applies, and what it holds:
 | Tool call, ATEM | the same | `strict` tool: its schema, keys as above, as `<atem:parameter name="K">` blocks, a string as the raw text between the tags and other values as JSON (refused, `unsupported_schema`: a name with a quote mark, keys by pattern at the top level, a reference back to the root, a const/enum string holding `</atem:parameter>`, a top-level string pattern or format that may write `<`); other tools: any text |
 | A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
 
+In Qwen XML and ATEM a parameter's text is untyped: a value whose schema admits a string is read
+back as a string ([parameter conversion](#tool-call-parameter-conversion-qwen)). A strict schema
+that unions a string with another type (`anyOf` of a patterned string and an integer, say) can
+have the other type written and read back as its text.
+
 The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning
 and the grammar opens there ([reasoning output](#reasoning-output)). Whitespace between JSON tokens
 (and inside Gemma 4 arguments) is bounded to runs of 64 characters, so a model cannot write
