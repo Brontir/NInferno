@@ -1345,3 +1345,50 @@ the refilled ring does not buy that back. The rule now takes fewer warps only wh
 their slots (CTAs x warps >= 16 x SMs), which moves no golden board's pick (the 4060 Ti, at 3.8,
 stays on eight and leaves its 2-16 % there). What a nearly full grid gains from the refilled ring
 is the same open question as the tail above.
+
+## 62. A prefill request's fixed cost is the prompt's split passes, not a per-card constant (29.10, open, measured)
+
+**What the kits showed.** The user kits on master ac3a9859 (prompt 2048, chunk 1024) measured the
+prefill under the product's estimate on every lab board but the GV100: Qwen3.5 9B Q4_K_M x0.79
+(RTX 2080 Ti) .. x0.96 (RTX 5070 Ti), Gemma 4 12B Q4_K_M x0.72 .. x0.89, Gemma always 5-9 % below
+Qwen on the same board.
+
+**Why the estimate is high.** `fit_prefill.py` fits a fixed time `c0` per card next to the linears'
+and the attention's rates and the product leaves `c0` out. The fitted `c0` is not a fact: 189 ms on
+the RTX 2080 Ti and 144 ms on the RTX 3060, where the 2080 Ti kit's server log shows one rate from
+1.7K to 8K tokens (2.44k .. 2.51k tok/s). With `c0` dropped from the fit the attention's share of
+the BF16 peak comes out above 1 (Ada 1.09, gb20x 1.40): the fit form misses a term.
+
+**The missing fact (server nsys, RTX 4070 Ti, the kit's flags; prompts of 962 / 1912 / 2862 tokens).**
+The server's `prompt_ms` equals the request's GPU window within 2.5 ms, so the request is GPU-bound.
+Against the prompt length it is a line: Qwen 9B 5880 tok/s plus 25 ms, Gemma 12B 3496 tok/s plus
+16 ms. The intercept is whole-model passes over a few tokens each:
+- Qwen 9B: the prefill splits at the generation prompt's execution boundaries
+  (`inspect_prompt_layout`: the assistant turn's begin, its body, the reasoning open with thinking
+  off), so after the prompt's chunks two more calls run at T = 3 and T = 4. Each reads every weight
+  (`vec_kernel` per linear: 20 ms of the 25), and each boundary copies the GDN states to the host
+  (24 x 1 MiB, about 2 ms a boundary).
+- Gemma 4 12B: after the prompt's chunks, a host pause of about 21 ms and one call of about 50
+  tokens (25 ms, `mul_mat_q` on 60 CTAs: a weight read): about 45 ms a request, 8 % of a 2048-token
+  prefill on the 4070 Ti, which is the gap between Gemma and Qwen above.
+Kernels only (the difference of two prompts, warm-up and the split passes cancelling) the
+product's linear and attention terms land within 1 % on the 4070 Ti for both models (Qwen 6142
+measured against 6204, Gemma 3911 against 3908); the attention alone runs below its share on Gemma
+(51.5 ms over 1900 tokens against 37.4 at `kPrefillAttentionEta`), about 2 % of the request.
+
+**Not the cause.** The prefill route: `ninferno_r8_schedule_bench --tokens 512,1024,2048` with the
+W4A8 tiles and ggml's matrix kernel offered (bench/route-bench-w4a8) puts ggml's kernel 4-20 %
+ahead of the best W4A8 tile on the RTX 5090 and the RTX 4090 for every 9B shape, where
+`kMmqPrefillPays` sends them. One shape picks the W4A8 tile on the 4090 at T = 1024 (Q4_K store
+4096 x 4096: 171 against 153 us), about 1 % of a prefill.
+
+**Open.**
+1. The product's prefill: a request's split passes as a term (passes x the weights over the DRAM
+   rate, plus the boundary copies), the count read from the chat template's execution boundaries
+   after the last message, and `fit_prefill.py` refit with that term in place of `c0`.
+2. The engine: the split passes are there so that a restored checkpoint and a cold prefill sum the
+   GDN recurrence alike. Each costs one decode step's weight read; on a short prompt two of them are
+   a large share of the time to the first token. A pass that reads the weights once for the tail's
+   few tokens whatever its boundaries, or the boundary states taken from the chunk that crosses them,
+   would keep the restore exact without the extra reads.
+3. Gemma's host pause before its tail call (21 ms on the 4070 Ti) is not explained yet.
