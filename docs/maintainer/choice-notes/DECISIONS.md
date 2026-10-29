@@ -1228,3 +1228,48 @@ against the new prediction (the six lab cards' median): mtp:2 x1.062, mtp:3 x1.0
 mtp:5 x1.023, dflash:3 x1.011, dflash:5 x1.020, dflash:7 x1.061: every configuration within the
 kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8 DFlash verify the
 facts overprice on Ada (above).
+## 58. Verify widths stay on the band rule: the register MMA priced as its best one-tile schedule is wrong for the schedule that runs (29.10, #209)
+
+**Decision.** The selector keeps the band rule at verify widths. On the native-MMA boards measured
+here (Ampere, Ada, Blackwell) the K-quant and legacy formats take the vector kernel at T <= 4 and
+the register MMA from 5. This is the fast-activation route with no saved dense route: under
+`--activations exact` `select_route` returns the register-MMA invariant route at every width before
+the band is consulted, and in fast mode a saved `tuned_dense_route` replaces the vector kernel at
+T = 2..4 where one exists (`generic_gemm.cpp`, `select_route`). Other boards keep their own rules: Volta's vector route extends past T = 4
+for formats `volta_hmma_route` does not take (`vec_rule_max_tokens`), and Turing sends codebook
+formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
+0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) stays in the code unused.
+
+- Variants: pick the cheaper of the vector kernel and the register MMA by that price / the band rule.
+- The price of the vector kernel holds (RTX 4070 Ti, Q6_K 3840x15360, T = 5: 117 us predicted,
+  119 measured). The register MMA's price is its best one-tile schedule (w1x4 / w1x8 / w1x16), but
+  heuristic_rmma's schedule is what runs: scored against it (T = 2..4, 889 calls where master takes
+  the vector kernel, six boards) the priced pick moved 556 calls for a geomean time over master's of
+  1.0001, with regressions to 1.55x the time (4070 Ti IQ1_M 4096x4096 T = 3: 13.0 -> 20.1 us on w1x8). The hard50 gains
+  on the 5070 Ti / 5090 / 3060 (+5..9 % dflash:3 and mtp:3, Qwen3.5-9B) did not carry to other shapes.
+- The missing fact: the running schedule's DRAM efficiency. Q6_K 3840x15360 T = 5 on the 4070 Ti
+  streams 57 / 66 / 77 % of DRAM on w1x4 / w1x8 / w1x16 at 16 warps per SM each, 4.2 KB of loads in
+  flight per warp in every schedule (13x the bytes in flight that
+  DRAM bandwidth x latency / SMs asks): not latency. Study open: DRAM row locality
+  (bytes per row activation from each schedule's K interleave) and wave quantization.
+- The Gemma 4 12B MTP round's excess on the 4070 Ti (+1.0..1.3 ms of a 21.07 ms round) is this: its Q6_K down
+  projection on w1x8 (149 us, 96 us of bytes; the vector kernel 119, w1x16 121). It waits for that fact
+  (no dense-tuner stopgap: 55).
+
+## 59. Vector kernel: loads in flight per warp is the fact, source-level hints do not hold it (29.10)
+
+**Decision.** No change to the vector kernel now; the robust fix is each decoder's decode() split
+into load_raw() and convert(), the loads of the next step issued by hand before this step's
+products. Branch kern/vec-prefetch keeps the two attempts for reference.
+
+- The fact: RTX 5070 Ti, Q4_K 4096x4096, T = 2..8 vector 14.6 / 15.2 / 21.0 / 18.2 / 16.7 / 23.0 /
+  26.1 us (repeats within 0.5 %); registers -> CTAs per SM -> rounds does not order them (T = 6, 5
+  CTAs per SM and two rounds, is the fastest from T = 4 on; a rounds term fitted to 3204 calls gains nothing), the
+  stalls are long-scoreboard (77-85 %), and the slice loop's SASS issues 2 / 1 / 2 / 2 / 5 / 2 / 3
+  global loads before the first IDP: the instance the compiler batched most is the fast one.
+- Attempt 1, the next step's slices fetched into registers before this step's products: geomean
+  time over master's 1.043 (5070 Ti) and 1.096 (3060), instances 0.62..1.50.
+- Attempt 2, the next step's codes prefetched to L2 (`prefetch.global.L2`, no registers): geomean time
+  over master's 1.010 on the 5070 Ti, instances 0.68..1.44 (IQ2_S T = 4 22.9 -> 16.1 us, Q5_K T = 8 24.6 -> 35.3).
+- Both re-roll the compiler's per-instance schedule rather than fix it; only explicit load batching
+  holds loads in flight independent of it.
