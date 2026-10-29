@@ -134,6 +134,25 @@ class Rules(unittest.TestCase):
         self.assertIn("R3 unknown", " ".join(r["runs"][0]["notes"]))
         self.assertTrue(metric(r, "decode")["verdict"].startswith("not used: R3 unknown"))
 
+    def test_incomplete_files_are_r0(self):
+        for bad in ({"schema": "ninferno-user-run/1.0", "card": None, "runs": []},
+                    {"schema": "ninferno-user-run/1.0", "card": {}, "runs": None},
+                    {"schema": "ninferno-user-run/1.0", "card": {}, "runs": [None]}):
+            self.assertTrue(validate.validate(bad)["file"].startswith("rejected: R0"))
+
+    def test_unreported_choice_gives_no_verdict(self):
+        d = doc()
+        for p in d["runs"][0]["passes"]:
+            p["served"]["choice"] = None
+        r = validate.validate(d)
+        self.assertTrue(metric(r, "decode")["verdict"].startswith("not used: R1 unknown"))
+
+    def test_lengths_per_request(self):
+        d = doc()
+        for p in d["runs"][0]["passes"]:
+            p["measured"]["decode"]["prompt_tokens_range"] = [7600, 8800]
+        self.assertTrue(metric(validate.validate(d), "decode")["status"].startswith("rejected: R7"))
+
     def test_render(self):
         text = validate.render(validate.validate(copy.deepcopy(doc())))
         self.assertIn("decode: accepted", text)

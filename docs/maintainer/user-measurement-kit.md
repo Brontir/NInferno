@@ -112,15 +112,15 @@ in this version.
 
 | Rule | Rejects | When |
 |---|---|---|
-| R0 schema | the file | a major other than `ninferno-user-run/1`, or no `card` or `runs` |
+| R0 schema | the file | a major other than `ninferno-user-run/1`, or `card` not an object, or `runs` not a list of objects |
 | R1 identity | the file | the plan's device name differs from `nvidia-smi`'s |
-| R1 identity | the run | a start's `choice \|` line names KV or activations other than the plan's, or the passes started with different decision fingerprints |
+| R1 identity | the run | a start's `choice \|` line names KV or activations other than the plan's, or the passes started with different decision fingerprints. A start that reports no choice line or fingerprint is *unknown*: no verdict |
 | R2 other load | the pass | another compute process listed on the card (TCC/Linux only: under WDDM the list holds the desktop's processes and says nothing); the median utilization of the idle window above 5 %; memory used growing more than 256 MiB across it |
 | R3 thermal and slowdown | the pass, for that metric | a sample in the metric's windows with hardware slowdown, hardware or software thermal slowdown, or power brake. A software power cap is recorded only: under load it is the card's stock behaviour, which the model must price. No reason fields, or no sample in a window, is *unknown*: the metric is kept, but no verdict |
 | R4 caps | the file is marked `capped`: kept, never used to confirm | the enforced power limit below the default; application clocks below the default; the applications-clocks event reason active; on battery. Fields N/A on the card are listed as "R4 could not check" |
 | R5 repeats | the metric | the passes' medians more than 5 % apart, or one pass's min..max more than 10 % of its median |
 | R6 completeness | the metric | fewer than 2 usable passes (a pass with an error is not usable) |
-| R7 length | the metric | the measured prompt tokens more than 5 % from the length the plan priced (decode: the depth; prefill: the task's prompt) |
+| R7 length | the metric | a contributing request's prompt tokens more than 5 % from the length the plan priced (decode: the depth; prefill: the task's prompt), or no token count |
 
 These numbers (5 %, 256 MiB, 5 %, 10 %, 5 %, ±10 %) are set at the top of `validate.py`. A change
 goes through this page first.

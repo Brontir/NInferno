@@ -18,6 +18,7 @@ import json
 import os
 import re
 import socket
+import statistics
 import subprocess
 import sys
 import time
@@ -299,9 +300,10 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, device, 
             used = [r for r in rows if r["kind"] == kind and "excluded" not in r]
             tokens = sorted(r["prompt_tokens"] for r in used if r["prompt_tokens"])
             values = sorted(values)
-            return {"median": round(values[len(values) // 2], 2), "min": round(values[0], 2),
+            return {"median": round(statistics.median(values), 2), "min": round(values[0], 2),
                     "max": round(values[-1], 2), "n": len(values),
-                    "prompt_tokens": tokens[len(tokens) // 2] if tokens else None} if values else {}
+                    "prompt_tokens": statistics.median(tokens) if tokens else None,
+                    "prompt_tokens_range": [tokens[0], tokens[-1]] if tokens else None} if values else {}
         prefill = [r["prompt_n"] / (r["prompt_ms"] / 1000) for r in rows
                    if r["kind"] == "prefill" and "excluded" not in r and r["prompt_n"] and r["prompt_ms"]]
         decode = [(r["predicted_n"] - 1) / (r["predicted_ms"] / 1000) for r in rows

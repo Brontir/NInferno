@@ -128,7 +128,9 @@ def validate(doc, tolerance=TOLERANCE):
     report = {"schema": doc.get("schema"), "file": "accepted", "capped": [], "runs": []}
     schema = str(doc.get("schema", ""))
     major = schema.split(".")[0]
-    if major != SCHEMA_MAJOR or "card" not in doc or "runs" not in doc:
+    if (major != SCHEMA_MAJOR or not isinstance(doc.get("card"), dict)
+            or not isinstance(doc.get("runs"), list)
+            or not all(isinstance(r, dict) for r in doc["runs"])):
         report["file"] = "rejected: R0 schema"
         return report
     rejected, capped = card_rules(doc)
@@ -151,16 +153,24 @@ def validate(doc, tolerance=TOLERANCE):
         # R1: every start ran what the plan priced (its storages, as the start's `choice |` line
         # says them) and the same decisions (one fingerprint across the passes).
         chosen = plan.get("chosen") or {}
-        mismatch = None
+        mismatch, identity_unknown = None, False
         for p in passes:
-            line = (p.get("served") or {}).get("choice") or ""
+            if p.get("error"):
+                continue
+            served = p.get("served") or {}
+            line = served.get("choice") or ""
+            # A start that does not say what it chose cannot be held to the plan: no verdict.
+            if not line or not served.get("fingerprint"):
+                identity_unknown = True
             for key, word in (("kv", "KV"), ("activations", "activations")):
                 if line and chosen.get(key) and f"{word} {chosen[key]}" not in line:
                     mismatch = f"R1 the start chose '{line.split('|')[0].strip()}', the plan {key} {chosen[key]}"
-        prints = {(p.get("served") or {}).get("fingerprint") for p in passes if p.get("served")}
+        prints = {(p.get("served") or {}).get("fingerprint") for p in passes if not p.get("error")}
         prints.discard(None)
         if len(prints) > 1:
             mismatch = "R1 the passes started with different decision fingerprints"
+        if identity_unknown:
+            out["notes"].append("R1 unknown: a start did not report its choice or fingerprint")
         if mismatch:
             out["notes"].append(mismatch)
             continue
@@ -207,12 +217,21 @@ def validate(doc, tolerance=TOLERANCE):
             elif spreads and max(spreads) > REPEAT_SPREAD:
                 row["status"] = f"rejected: R5 a pass spans {max(spreads) * 100:.1f} % of its median"
             else:
-                tokens = [metric_values(p, metric)[3] for p in usable]
-                tokens = [t for t in tokens if isinstance(t, (int, float))]
                 want = at[metric]
-                if want and tokens and abs(statistics.median(tokens) - want) / want > DEPTH_MATCH:
-                    row["status"] = (f"rejected: R7 measured at {statistics.median(tokens):.0f} tokens, "
-                                     f"the plan priced {want}")
+                # Every contributing pass at the length the plan priced (each request's range).
+                off = None
+                for p in usable:
+                    m = (p.get("measured") or {}).get(metric) or {}
+                    span = m.get("prompt_tokens_range") or [m.get("prompt_tokens")] * 2
+                    if not want or not all(isinstance(x, (int, float)) for x in span):
+                        off = "no token count"
+                        break
+                    worst = max(abs(x - want) for x in span)
+                    if worst / want > DEPTH_MATCH:
+                        off = f"a request at {span[0] if abs(span[0] - want) == worst else span[1]:.0f} tokens"
+                        break
+                if off:
+                    row["status"] = f"rejected: R7 {off}, the plan priced {want}"
                 else:
                     measured = statistics.median(medians)
                     row["measured"] = round(measured, 2)
@@ -229,6 +248,8 @@ def validate(doc, tolerance=TOLERANCE):
                             row["verdict"] = "not used: the card is capped"
                         elif unknown:
                             row["verdict"] = "not used: R3 unknown (no clock event reasons in a window)"
+                        elif identity_unknown:
+                            row["verdict"] = "not used: R1 unknown (a start did not report its choice)"
                         elif abs(ratio - 1) <= tolerance:
                             row["verdict"] = "confirms " + entry
                         else:
