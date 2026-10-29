@@ -67,14 +67,15 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
 }
 
 bool default_head_outdated(const std::filesystem::path& artifact, int revision) {
-    if (revision >= 7) { return false; }
+    if (revision >= 8) { return false; }
     std::ifstream stream(artifact.string() + ".conversion.json");
     if (!stream) { return false; }
-    bool dflash = false, mtp = false, proposal = false;
+    bool dflash = false, mtp = false, proposal = false, mtp_rows = false;
     try {
         const OJson report = OJson::parse(stream);
         // Only a Qwen target's (default_proposal), and only where this build finds the ranking.
-        const auto& config = report.at("components").at("text").at("config");
+        const auto& text   = report.at("components").at("text");
+        const auto& config = text.at("config");
         const auto type    = config.value("model_type", std::string());
         if ((type != "qwen3_5_text" && type != "qwen3_5_moe_text") ||
             !resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
@@ -85,17 +86,27 @@ bool default_head_outdated(const std::filesystem::path& artifact, int revision) 
         for (const auto& method : *methods) {
             for (const auto& name : method.value("parameters", OJson::array())) {
                 if (!name.is_string()) { continue; }
-                const auto& text = name.get_ref<const std::string&>();
-                proposal = proposal || text.starts_with("proposal/");
-                dflash   = dflash || text.starts_with("dflash/");
-                mtp      = mtp || text.starts_with("mtp/");
+                const auto& text_name = name.get_ref<const std::string&>();
+                proposal = proposal || text_name.starts_with("proposal/");
+                dflash   = dflash || text_name.starts_with("dflash/");
+                mtp      = mtp || text_name.starts_with("mtp/");
             }
+        }
+        // The report records the components as converted (convert.cpp): the head's own rows of
+        // MTP (revision 8) in proposal.drafter_rows.
+        if (const auto head = text.find("proposal"); head != text.end() && head->is_object()) {
+            const auto rows = head->find("drafter_rows");
+            mtp_rows = rows != head->end() && rows->is_object() && rows->contains("mtp");
         }
     } catch (const std::exception&) { return false; }
     // Without a head: one with MTP layers or a DFlash companion takes one now. With one: the
-    // head revision 6 gave served DFlash alone, so one with MTP layers takes MTP's use too.
+    // head revision 6 gave served DFlash alone, so one with MTP layers takes MTP's use too; and a
+    // head made for MTP and DFlash at revisions 6 and 7 has MTP read DFlash's rows, where MTP's
+    // own fewer rows now lead it (revision 8).
     if (!proposal) { return dflash || mtp; }
-    if (revision != 6 || !mtp) { return false; }
+    if (!mtp || revision < 6) { return false; }
+    if (dflash && !mtp_rows) { return true; }
+    if (revision != 6) { return false; }
     try {
         const artifact::Reader reader(artifact);
         return !reader.directory().uses.contains(
