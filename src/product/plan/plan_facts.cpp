@@ -732,15 +732,19 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     };
     double elements = 0;
     std::uint64_t input_table_bytes = 0;
-    std::uint64_t output_bytes = 0, embedding_bytes = 0;
+    std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
         if (t.name == "token_embd.weight") { embedding_bytes = t.bytes; }
         elements += static_cast<double>(t.elements());
         if (t.name == "token_embd.weight") { input_table_bytes = t.bytes; }
-        if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
-            mtp_bytes += t.bytes;
+        const auto block = block_of(t.name);
+        const bool mtp   = g.mtp && block && *block >= g.layers;
+        if (mtp) { mtp_bytes += t.bytes; }
+        // Routed expert banks (ffn_{gate,up,down}_exps; the shared expert is *_shexp).
+        if (block && t.name.find("_exps.") != std::string::npos) {
+            (mtp ? mtp_routed : routed) += t.bytes;
         }
         has_output = has_output || t.name == "output.weight";
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
@@ -768,6 +772,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.input_table_bytes = has_output ? input_table_bytes : 0;
     out.model.head_bytes     = !whole ? 0 : has_output ? output_bytes : embedding_bytes;
     out.model.embedding_bytes = has_output ? embedding_bytes : 0;
+    out.model.token_table_bytes = embedding_bytes;
+    out.model.routed_expert_bytes     = whole ? routed : 0;
+    out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
     out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
     out.model.weight_elements = whole ? elements : 0;
@@ -883,6 +890,19 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     return out;
 }
 
+double params_of_geometry(const PlanSourceFacts& facts, bool tied) {
+    const auto& s = facts.shape;
+    if (!(s.active_params > 0)) { return 0; }
+    // finish: params = active + the routed experts a token does not take + the untied head.
+    const double idle =
+        s.experts > 0 && s.experts_per_token > 0
+            ? s.routed_expert_params * (1.0 - static_cast<double>(s.experts_per_token) /
+                                                  static_cast<double>(s.experts))
+            : 0.0;
+    const double vocab = s.vocab_size > 0 ? s.vocab_size : 152064; // finish's default
+    return s.active_params + idle + (tied ? 0.0 : vocab * static_cast<double>(facts.model.hidden));
+}
+
 PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
                              runtime::WeightBasis basis) {
     // The speculation-only shares at the other quantization: in proportion (a listing names only
@@ -896,6 +916,8 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
     facts.shape.input_table_bytes = scaled(facts.shape.input_table_bytes);
     facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
     facts.model.embedding_bytes   = scaled(facts.model.embedding_bytes);
+    facts.model.routed_expert_bytes     = scaled(facts.model.routed_expert_bytes);
+    facts.model.mtp_routed_expert_bytes = scaled(facts.model.mtp_routed_expert_bytes);
     // Another quantization's weight formats are not this file's: unknown (its label names them).
     if (bytes != facts.model.weight_bytes) {
         facts.shape.weight_formats.clear();

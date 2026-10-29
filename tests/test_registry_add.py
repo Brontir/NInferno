@@ -12,6 +12,7 @@ import struct
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "spec"))
@@ -357,6 +358,119 @@ class RoundFactsTest(unittest.TestCase):
                "tune": {"key": {"gpu": "ad104:60sm"}}}
         out = registry_add.put_pair([old], new)
         self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
+
+def user_run(**profile_extra) -> dict:
+    """A kit file with one spec run validate.py accepts as a registry candidate."""
+    sha = "cd" * 32
+    meas = []
+    for f in ("math", "code", "prose", "thinking"):
+        meas.append({"config": "plain", "family": f, "prompts": 8, "tokens": 1000, "seconds": 20.0,
+                     "rounds": 0, "accepted": 0, "tok_s": 50.0})
+        meas.append({"config": "mtp:3", "family": f, "prompts": 8, "tokens": 1050, "seconds": 9.0,
+                     "rounds": 300, "accepted": 750})
+    profile = {"key": {"gpu": "ad106:34sm", "engine": "ninferno-spec-1"}, "settings": "greedy",
+               "drafters": [{"name": "mtp", "status": "accepted"}], "measurements": meas}
+    profile.update(profile_extra)
+    reasons = ("hw_slowdown", "hw_thermal_slowdown", "hw_power_brake_slowdown", "sw_thermal_slowdown")
+    return {"schema": "ninferno-user-run/1.1", "kit": {"version": "1"}, "created": "2026-10-29T00:00:00Z",
+            "ninferno": {"version": "NInferno 0.1.0"}, "host": {"on_battery": False},
+            "card": {"smi": {"name": "NVIDIA GeForce RTX 4060 Ti", "pci.device_id": "0x280510DE"},
+                     "plan_device": {"name": "NVIDIA GeForce RTX 4060 Ti"}},
+            "runs": [{"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "spec",
+                      "plan": {"speculation": {"round_cost": {"mtp:3": 1.5}, "source": "x"}},
+                      "manifest": {"target": {"engine": "qwen3_5"},
+                                   "drafters": [{"name": "mtp", "kind": "mtp", "status": "embedded"}]},
+                      "target": {"revision": "1" * 40, "weights": [{"sha256": sha, "bytes": 1}]},
+                      "profile": profile, "publish": {"measured_on": "NVIDIA GeForce RTX 4060 Ti user-kit"},
+                      "telemetry": {"t": [0.0], "reason_fields": "clocks_event_reasons",
+                                    "marks": [{"name": "spec-tune", "start": 0, "end": 1}],
+                                    "columns": {f"clocks_event_reasons.{r}": ["Not Active"] for r in reasons}}}]}
+
+
+class UserRun(unittest.TestCase):
+    def test_candidate_becomes_a_user_pair(self):
+        pair = registry_add.user_pair(user_run(), "")
+        self.assertEqual(pair["target"], "cd" * 32)
+        self.assertEqual(pair["target_repo"], "org/m@" + "1" * 40 + " Q4_K_M")
+        self.assertEqual(pair["generation"], "sm89")
+        self.assertEqual(pair["board"], "0x2805")
+        self.assertNotIn("lab_board", pair)  # never a lab board's rates, even of a lab class
+        self.assertEqual(pair["user_kit"]["measured_on"], "NVIDIA GeForce RTX 4060 Ti user-kit")
+
+    def test_not_a_candidate_is_refused(self):
+        with self.assertRaises(SystemExit) as e:
+            registry_add.user_pair(user_run(skipped=["mtp:5"]), "")
+        self.assertIn("not a registry candidate", str(e.exception))
+        bad = user_run()
+        bad["card"]["plan_device"]["name"] = "NVIDIA GeForce RTX 4090"
+        with self.assertRaises(SystemExit):
+            registry_add.user_pair(bad, "")
+
+    def test_user_pairs_are_recorded_apart_and_never_over_a_lab_pair(self):
+        pair = registry_add.user_pair(user_run(), "")
+        reg, user = {"pairs": []}, {}
+        registry_add.put_user_pair(reg, user, pair)
+        registry_add.put_user_pair(reg, user, json.loads(json.dumps(pair)))  # a re-run replaces
+        self.assertEqual(len(user["user_pairs"]), 1)
+        self.assertEqual(reg["pairs"], [])
+        other = json.loads(json.dumps(pair))
+        other["board"] = "0x2803"  # another board of the class is another entry
+        registry_add.put_user_pair(reg, user, other)
+        self.assertEqual(len(user["user_pairs"]), 2)
+        lab = {"target": pair["target"], "tune": {"key": {"gpu": "ad106"}}}
+        with self.assertRaises(SystemExit) as e:
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        self.assertIn("its measurement stands", str(e.exception))
+
+    def test_the_lab_pair_is_found_by_chip_not_board(self):
+        # A user's 2080 Ti Rev. A against a lab pair on the non-A board: one chip, TU102.
+        pair = registry_add.user_pair(user_run(), "")
+        pair["board"], pair["tune"]["key"]["gpu"] = "0x1E07", "tu102:68sm"
+        lab = {"target": pair["target"], "lab_board": "0x1E04", "tune": {"key": {"gpu": "tu102:68sm"}}}
+        with self.assertRaises(SystemExit):
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        # A lab pair keyed by the chip alone ("tu102"), no board.
+        lab = {"target": pair["target"], "tune": {"key": {"gpu": "tu102"}}}
+        with self.assertRaises(SystemExit):
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        # Another chip of the generation is another card.
+        lab = {"target": pair["target"], "lab_board": "0x2504", "tune": {"key": {"gpu": "ga106:28sm"}}}
+        user = {}
+        registry_add.put_user_pair({"pairs": [lab]}, user, pair)
+        self.assertEqual(len(user["user_pairs"]), 1)
+
+    def test_an_unknown_board_is_refused(self):
+        # A board the facts table does not list: its chip is unknown, not the class's.
+        pair = registry_add.user_pair(user_run(), "")
+        pair["board"] = "0xFFFF"
+        with self.assertRaises(SystemExit) as e:
+            registry_add.put_user_pair({"pairs": []}, {}, pair)
+        self.assertIn("chip is unknown", str(e.exception))
+
+    def test_lab_boards_are_their_classes_chips(self):
+        for gpu, board in registry_add.LAB_BOARDS.items():
+            self.assertEqual(registry_add.chip_of_board(board), registry_add.chip(gpu), gpu)
+        self.assertEqual(registry_add.chip_of_board("0x1E04"), "tu102")
+        self.assertEqual(registry_add.chip_of_board("0x2503"), "ga106")
+        self.assertEqual(registry_add.chip_of_board("nonsense"), "")
+
+    def test_cli_needs_accept_user(self):
+        with tempfile.TemporaryDirectory() as d:
+            run, reg, users = Path(d) / "run.json", Path(d) / "reg.json", Path(d) / "user_pairs.json"
+            run.write_text(json.dumps(user_run()), encoding="utf-8")
+            reg.write_text(json.dumps({"version": 7, "models": [], "pairs": []}), encoding="utf-8")
+            argv = ["registry_add.py", "--from-user-run", str(run), "--registry", str(reg),
+                    "--user-pairs", str(users)]
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                with unittest.mock.patch.object(sys, "argv", argv):
+                    registry_add.main()
+            with unittest.mock.patch.object(sys, "argv", argv + ["--accept-user"]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(registry_add.main(), 0)
+            # The registry the engine embeds is untouched; the user pair is in its own file.
+            self.assertEqual(json.loads(reg.read_text(encoding="utf-8"))["version"], 7)
+            written = json.loads(users.read_text(encoding="utf-8"))
+            self.assertEqual((written["version"], len(written["user_pairs"])), (1, 1))
 
 if __name__ == "__main__":
     unittest.main()

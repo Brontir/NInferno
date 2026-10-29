@@ -1,8 +1,9 @@
-// Which cached artifacts revisions 4 to 7 convert again: an artifact of any recipe whose DFlash
+// Which cached artifacts revisions 4 to 8 convert again: an artifact of any recipe whose DFlash
 // companion drafter kept its attention projections unquantized (revision 4: qwen3_5_published;
 // revision 5: qwen3_5_bf16, the dense Qwen3.5 GGUF default, too), and one with a DFlash /
 // DFlash2 companion and no proposal head (revision 6), and one with MTP layers and no head or
-// revision 6's DFlash-only head (revision 7); not a text-only one. A current older artifact is stamped current, so its report is read
+// revision 6's DFlash-only head (revision 7), and one whose head serves MTP and DFlash without
+// MTP's own leading rows (revision 8); not a text-only one. A current older artifact is stamped current, so its report is read
 // once. The stamp of what a conversion read tells a checkpoint replaced at the same path.
 
 #include "convert/acquire.h"
@@ -43,16 +44,18 @@ std::filesystem::path artifact(const std::filesystem::path& dir, const std::stri
     return path;
 }
 
-// The same with several parameters bound, each in `format`.
+// The same with several parameters bound, each in `format`; `proposal`: the text component's
+// proposal record as converted (empty: none).
 std::filesystem::path artifact_of(const std::filesystem::path& dir, const std::string& name,
                                   int revision, const std::vector<std::string>& parameters,
-                                  const std::string& format) {
+                                  const std::string& format, const std::string& proposal = "") {
     const auto path = dir / (name + ".ninferno");
     std::ofstream(path) << "x";
     std::ofstream(path.string() + ".revision") << revision << "\n";
     std::ofstream report(path.string() + ".conversion.json");
-    report << R"({"components": {"text": {"config": {"model_type": "qwen3_5_text"}}}, "methods": [)"
-           << R"({"parameters": [)";
+    report << R"({"components": {"text": {"config": {"model_type": "qwen3_5_text"})"
+           << (proposal.empty() ? std::string() : R"(, "proposal": )" + proposal)
+           << R"(}}, "methods": [)" << R"({"parameters": [)";
     for (std::size_t i = 0; i < parameters.size(); ++i) {
         report << (i ? "," : "") << '"' << parameters[i] << '"';
     }
@@ -99,8 +102,22 @@ int main() {
           "a Q8 drafter without a proposal head at revision 4 is converted again");
     check(!cache_current(artifact(dir, "rev5", 5, "dflash/layers/0/attention/query", "q8_g32_fp16")),
           "a companion without a proposal head at revision 5 is converted again");
-    check(cache_current(artifact(dir, "new", 7, "dflash/layers/0/attention/query", "bf16")),
-          "revision 7 is current");
+    check(cache_current(artifact(dir, "new", 8, "dflash/layers/0/attention/query", "bf16")),
+          "revision 8 is current");
+    // Revision 8: a head serving MTP and DFlash leads with MTP's own rows (drafter_rows).
+    const std::vector<std::string> both{"mtp/layers/0/attention/query",
+                                        "dflash/layers/0/attention/query", "proposal/head"};
+    check(!cache_current(artifact_of(dir, "rev7-both", 7, both, "q8_g32_fp16",
+                                     R"({"domain": "indexed", "rows": 147456})")),
+          "a head serving MTP and DFlash without MTP's rows at revision 7 is converted again");
+    check(cache_current(artifact_of(
+              dir, "rev7-rows", 7, both, "q8_g32_fp16",
+              R"({"domain": "indexed", "rows": 147456, "drafter_rows": {"mtp": 57344}})")),
+          "one with MTP's rows at revision 7 is current");
+    check(cache_current(artifact_of(dir, "rev7-mtp", 7,
+                                    {"mtp/layers/0/attention/query", "proposal/head"},
+                                    "q8_g32_fp16", R"({"domain": "indexed", "rows": 57344})")),
+          "an MTP-only head at revision 7 is current (its rows are MTP's)");
     // Revision 7: MTP layers take the default head too; revision 6's head was DFlash's alone.
     check(!cache_current(artifact(dir, "mtp5", 5, "mtp/layers/0/attention/query", "q8_g32_fp16")),
           "MTP layers without a head at revision 5 are converted again");

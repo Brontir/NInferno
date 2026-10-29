@@ -119,6 +119,10 @@ struct PlanSourceFacts {
 [[nodiscard]] std::optional<models::DrafterStateShape>
 plan_drafter_state_of_config(const nlohmann::json& config, std::uint32_t target_hidden);
 
+// Every weight's parameters by the geometry (finish's count), the token table once more when the
+// head is untied: a split GGUF's, whose part 0 table leaves the tie and so the count unknown
+// (complete_split_gguf_head settles it). 0 without the geometry's active parameters.
+[[nodiscard]] double params_of_geometry(const PlanSourceFacts& facts, bool tied);
 // The same model at another quantization of `bytes` (a hub listing's row): the shape kept, the
 // weights replaced (basis as given), the bits-per-weight of the rule from the parameter count.
 [[nodiscard]] PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
