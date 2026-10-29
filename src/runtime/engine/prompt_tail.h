@@ -12,7 +12,9 @@ namespace ninferno::runtime {
 // recurrence alike, and each piece after the last message is its own call, a decode step's read
 // of every weight (DECISIONS 62). Read from the artifact's own frontend (its chat template and
 // tokenizer, a boundary inside a token dropped): the frontiers of a one-message prompt that keep
-// their distance from its end whatever the message's length; `chat_template` the served
+// their distance from its end whatever the message's length, and one more where the automatic
+// shared prefix at the message's end is captured below it, on the 64-token grid (the remainder's
+// call, prompt_tail.cpp); `chat_template` the served
 // --chat-template, empty for the artifact's own. Throws where the frontend cannot be read.
 [[nodiscard]] std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
                                               const std::filesystem::path& chat_template = {});

@@ -5,6 +5,7 @@
 #include "models/qwen3_5/frontend/frontend.h"
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 #include "models/qwen3_5/load.h"
+#include "models/qwen3_5/program/planning/neutral_frontier.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/hf_text_frontend.h"
 
@@ -14,15 +15,23 @@
 #include <exception>
 #include <iostream>
 #include <set>
+#include <span>
 #include <string>
 #include <vector>
 
 namespace ninferno::runtime {
 namespace {
 
-// The frontiers of a one-message prompt of `words` words, as distances from its end (0 left out:
-// a frontier at the end splits nothing).
-std::set<std::uint32_t> tail_frontiers(const models::qwen3_5::Frontend& frontend, int words) {
+// A one-message prompt of `words` words, as the frontend prepares it with the default cache hints.
+struct Probe {
+    // The rewrite execution frontiers as distances from the prompt's end (0 left out: a frontier
+    // at the end splits nothing).
+    std::set<std::uint32_t> tail;
+    // A cache opportunity the program moves down to the 64-token grid (neutral_frontier.h).
+    bool off_grid_capture = false;
+};
+
+Probe probe(const models::qwen3_5::Frontend& frontend, int words) {
     std::string text;
     for (int i = 0; i < words; ++i) { text += i == 0 ? "word" : " word"; }
     PromptInput input;
@@ -34,20 +43,34 @@ std::set<std::uint32_t> tail_frontiers(const models::qwen3_5::Frontend& frontend
     const models::qwen3_5::PreparedPromptData& prompt =
         models::qwen3_5::PreparedPromptAccess::view(prepared);
     const auto tokens = static_cast<std::uint32_t>(prompt.token_ids.size());
-    std::set<std::uint32_t> out;
-    for (const std::uint32_t f : prompt.identity.rewrite_execution_frontiers) {
-        if (f < tokens) { out.insert(tokens - f); }
+    const std::span<const std::uint32_t> frontiers(prompt.identity.rewrite_execution_frontiers);
+    Probe out;
+    for (const std::uint32_t f : frontiers) {
+        if (f < tokens) { out.tail.insert(tokens - f); }
+    }
+    for (const auto& opportunity : prompt.context_cache.opportunities) {
+        out.off_grid_capture =
+            out.off_grid_capture ||
+            !models::qwen3_5::runtime_support::is_neutral_prefill_frontier(opportunity.frontier,
+                                                                            tokens, frontiers);
     }
     return out;
 }
 
 std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend) {
     // Two message lengths: a frontier inside the generation prompt keeps its distance from the end.
-    const std::set<std::uint32_t> a = tail_frontiers(frontend, 40);
-    const std::set<std::uint32_t> b = tail_frontiers(frontend, 90);
+    const Probe a = probe(frontend, 300);
+    const Probe b = probe(frontend, 701);
     std::vector<std::uint32_t> both;
-    std::set_intersection(a.begin(), a.end(), b.begin(), b.end(), std::back_inserter(both));
-    return static_cast<std::uint32_t>(both.size());
+    std::set_intersection(a.tail.begin(), a.tail.end(), b.tail.begin(), b.tail.end(),
+                          std::back_inserter(both));
+    // The automatic shared prefix at the last message's end (the frontend's EngineObserved
+    // candidate; OpenAI's default automatic boundary in ninferno-serve) is captured at the 64-token
+    // grid point below it, so the prompt's last chunk stops there and the remainder, 17 to 80
+    // tokens, is one more call: a weight read like the tail's. At most one prompt in 64 ends on
+    // the grid.
+    const bool split = a.off_grid_capture || b.off_grid_capture;
+    return static_cast<std::uint32_t>(both.size()) + (split ? 1U : 0U);
 }
 
 } // namespace
