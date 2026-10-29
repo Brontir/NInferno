@@ -2251,12 +2251,13 @@ reference card on two lab cards (today: every one but Ada), the family's default
 logs it before the plan:
 
 ```text
-choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill (2 tail calls), KLD 0.0044 (estimates) | Q4_K_M: every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
+choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill (3 tail calls), KLD 0.0044 (estimates) | Q4_K_M: every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
 ```
 
-The prefill rate prices the whole request: the prompt's tokens, attention, and the tail calls the
-chat template's generation prompt costs (each piece after the last message runs the whole model
-once, so it is priced as one decode step; Qwen 3.5 has two, Gemma 4 three). Pinned flags stay as
+The prefill rate prices the whole request: the prompt's tokens, attention, and its tail calls,
+each a whole-model call of a few tokens priced as one decode step: the chat template's generation
+prompt (Qwen 3.5 two, Gemma 4 three) and the call that ends the message after the prompt cache's
+capture point, 64-token aligned (one). Pinned flags stay as
 given; the line then says what the choice kept. The plan printed beside it
 (its memory, context and KV codec) is of the storages the start takes from the choice for the axes
 left automatic (KV codec, state, rings, activations, widest chunk), not of the family's automatic
