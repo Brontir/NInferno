@@ -7,6 +7,7 @@ before; some fields are N/A on GeForce or under WDDM): each field is probed once
 pass."""
 import os
 import platform
+import re
 import subprocess
 import threading
 import time
@@ -38,8 +39,19 @@ def known_fields():
                                   timeout=30).stdout
         except (OSError, subprocess.SubprocessError):
             text = ""
-        _known = {line.strip().strip('"') for line in text.splitlines() if line.strip().startswith('"')}
+        _known = parse_help(text)
     return _known
+
+
+def parse_help(text):
+    """The field names of `nvidia-smi --help-query-gpu`: each field line names it in quotes, with
+    its aliases (`"name" or "gpu_name"`, `"clocks_event_reasons.active" or
+    "clocks_throttle_reasons.active"`)."""
+    known = set()
+    for line in text.splitlines():
+        if line.lstrip().startswith('"'):
+            known.update(re.findall(r'"([^"]+)"', line))
+    return known
 
 
 def reason_prefix():
@@ -53,7 +65,8 @@ def reason_prefix():
 
 def _value(text):
     text = text.strip()
-    if not text or text.startswith("[N/A]") or text in ("N/A", "[Not Supported]", "Not Supported"):
+    # N/A, [Not Supported], [Requested functionality has been deprecated], ...: not known.
+    if not text or text.startswith("[") or text in ("N/A", "Not Supported"):
         return None
     try:
         return float(text)
@@ -75,7 +88,9 @@ def query(fields, device):
 
 
 def compute_apps(device_bus):
-    """The compute processes nvidia-smi lists on the card (empty or None under WDDM)."""
+    """The compute processes nvidia-smi lists on the card. Under WDDM every process holding a
+    context is listed (the desktop's too), so there the list says nothing about other load (the
+    kit records its count only and R2 reads the idle window)."""
     try:
         out = subprocess.run(["nvidia-smi", "--query-compute-apps=pid,gpu_bus_id,used_memory",
                               "--format=csv,noheader,nounits"], capture_output=True, text=True,

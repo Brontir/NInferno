@@ -6,6 +6,7 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "kit"))
+import gpu  # noqa: E402
 import validate  # noqa: E402
 
 P = "clocks_event_reasons"
@@ -26,13 +27,14 @@ def telemetry(util=1.0, reason=None, at="decode", mem_growth=0.0):
                       {"name": "decode 0", "start": 7, "end": 12}]}
 
 
-def one_pass(decode=50.0, prefill=3000.0, spread=0.02, tokens=8192, **tel):
+def one_pass(decode=50.0, prefill=3000.0, spread=0.02, tokens=8192, prompt=2048, **tel):
     return {"served": {"fingerprint": "nf1-aa", "choice": "KV int8, activations fast, state f16 | ..."},
-            "other_processes": [], "telemetry": telemetry(**tel),
+            "processes_before": {"listed": 1, "others": 0, "informative": True},
+            "telemetry": telemetry(**tel),
             "measured": {"decode": {"median": decode, "min": decode * (1 - spread / 2),
                                     "max": decode * (1 + spread / 2), "prompt_tokens": tokens},
                          "prefill": {"median": prefill, "min": prefill * 0.99, "max": prefill * 1.01,
-                                     "prompt_tokens": tokens}}}
+                                     "prompt_tokens": prompt}}}
 
 
 def doc(passes=None, smi=None):
@@ -43,7 +45,8 @@ def doc(passes=None, smi=None):
             "card": {"smi": card, "plan_device": {"name": "NVIDIA GeForce RTX 4060 Ti"}},
             "runs": [{"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "plain",
                       "plan": {"chosen": {"decode_tok_s_at_depth": 48.0, "prefill_tok_s": 3400.0,
-                                          "depth": 8192, "kv": "int8", "activations": "fast"}},
+                                          "depth": 8192, "kv": "int8", "activations": "fast"},
+                               "prompt": 2048},
                       "passes": passes if passes is not None else [one_pass(), one_pass(decode=50.5)]}]}
 
 
@@ -65,6 +68,10 @@ class Rules(unittest.TestCase):
         bad = doc()
         bad["schema"] = "ninferno-user-run/2.0"
         self.assertTrue(validate.validate(bad)["file"].startswith("rejected: R0"))
+        bad["schema"] = "ninferno-user-run/10.0"
+        self.assertTrue(validate.validate(bad)["file"].startswith("rejected: R0"))
+        bad["schema"] = "ninferno-user-run/1.3"
+        self.assertEqual(validate.validate(bad)["file"], "accepted")
 
     def test_identity(self):
         bad = doc()
@@ -108,6 +115,16 @@ class Rules(unittest.TestCase):
     def test_depth(self):
         r = validate.validate(doc(passes=[one_pass(tokens=4000), one_pass(tokens=4000)]))
         self.assertTrue(metric(r, "decode")["status"].startswith("rejected: R7"))
+        r = validate.validate(doc(passes=[one_pass(prompt=8192), one_pass(prompt=8192)]))
+        self.assertTrue(metric(r, "prefill")["status"].startswith("rejected: R7"))
+
+    def test_wddm_process_list_is_not_load(self):
+        p = [one_pass(), one_pass()]
+        for x in p:
+            x["processes_before"] = {"listed": 20, "others": 19, "informative": False}
+        self.assertEqual(metric(validate.validate(doc(passes=p)), "decode")["status"], "accepted")
+        p[0]["processes_before"]["informative"] = True
+        self.assertIn("R2", " ".join(validate.validate(doc(passes=p))["runs"][0]["notes"]))
 
     def test_unknown_reasons_are_never_a_pass_silently(self):
         d = doc()
@@ -115,10 +132,29 @@ class Rules(unittest.TestCase):
             p["telemetry"]["reason_fields"] = None
         r = validate.validate(d)
         self.assertIn("R3 unknown", " ".join(r["runs"][0]["notes"]))
+        self.assertTrue(metric(r, "decode")["verdict"].startswith("not used: R3 unknown"))
 
     def test_render(self):
         text = validate.render(validate.validate(copy.deepcopy(doc())))
         self.assertIn("decode: accepted", text)
+
+
+class Gpu(unittest.TestCase):
+    def test_help_parse_takes_every_alias(self):
+        text = ('List of valid properties to query for the switch "--query-gpu":\n\n'
+                '"name" or "gpu_name"\nOfficial product name.\n\n'
+                '"clocks_event_reasons.active" or "clocks_throttle_reasons.active"\nBitmask.\n'
+                '"power.limit"\nThe software power limit.\n')
+        known = gpu.parse_help(text)
+        self.assertTrue({"name", "gpu_name", "clocks_event_reasons.active",
+                         "clocks_throttle_reasons.active", "power.limit"} <= known)
+        self.assertNotIn("--query-gpu", known)  # the heading line does not start with a quote
+
+    def test_values(self):
+        self.assertIsNone(gpu._value(" [N/A]"))
+        self.assertIsNone(gpu._value("[Requested functionality has been deprecated]"))
+        self.assertEqual(gpu._value(" 285.00"), 285.0)
+        self.assertEqual(gpu._value("WDDM"), "WDDM")
 
 
 if __name__ == "__main__":

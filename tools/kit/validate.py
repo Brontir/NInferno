@@ -41,10 +41,11 @@ def window_indices(tel, name_prefix):
 
 
 def reasons_in(tel, indices):
-    """The event reasons active at any of the samples."""
+    """The event reasons active at any of the samples; None when unknown (no reason fields, or no
+    sample inside the window): never a pass by itself."""
     prefix = tel.get("reason_fields")
-    if not prefix:
-        return None  # unknown: never a pass by itself
+    if not prefix or not indices:
+        return None
     found = set()
     for reason in REJECT_REASONS + RECORD_REASONS + ("applications_clocks_setting",):
         column = tel["columns"].get(f"{prefix}.{reason}") or []
@@ -60,23 +61,29 @@ def pass_rules(p):
     tel = p.get("telemetry") or {}
     notes = []
     idle = window_indices(tel, "idle")
-    util = [tel["columns"].get("utilization.gpu", [None])[i] for i in idle] if idle else []
-    util = [u for u in util if isinstance(u, float)]
-    mem = [tel["columns"].get("memory.used", [None])[i] for i in idle] if idle else []
-    mem = [m for m in mem if isinstance(m, float)]
-    if p.get("other_processes"):
-        return "R2 another compute process on the card", notes, {}
+    columns = tel.get("columns") or {}
+
+    def column(name):
+        values = columns.get(name) or []
+        return [values[i] for i in idle if i < len(values) and isinstance(values[i], float)]
+    util, mem = column("utilization.gpu"), column("memory.used")
+    # The process list counts under TCC/Linux; under WDDM it lists the desktop's processes too
+    # (informative false): there R2 reads the idle window only.
+    for when in ("processes_before", "processes_after"):
+        apps = p.get(when) or {}
+        if apps.get("informative") and apps.get("others"):
+            return f"R2 {apps['others']} other compute process(es) on the card", notes, {}
     if util and statistics.median(util) > IDLE_UTIL_MAX:
         return f"R2 idle utilization {statistics.median(util):.0f} % > {IDLE_UTIL_MAX:.0f} %", notes, {}
     if len(mem) >= 2 and mem[-1] - mem[0] > IDLE_MEM_GROWTH_MIB:
         return f"R2 memory grew {mem[-1] - mem[0]:.0f} MiB in the idle window", notes, {}
-    if not idle:
-        notes.append("no idle window recorded: R2 by the process list only")
+    if not util:
+        notes.append("no idle samples: R2 by the process list only")
     per_metric = {}
     for metric in ("prefill", "decode"):
         found = reasons_in(tel, window_indices(tel, metric))
         if found is None:
-            notes.append("the driver reports no clock event reasons: R3 unknown")
+            notes.append(f"{metric}: no clock event reasons in its window: R3 unknown")
         per_metric[metric] = found
     return None, notes, per_metric
 
@@ -102,6 +109,16 @@ def card_rules(doc):
     return None, capped
 
 
+def card_unknowns(smi):
+    """What R4 could not check (the fields N/A on this card or driver)."""
+    out = []
+    if not isinstance(smi.get("power.default_limit"), float):
+        out.append("the power limit's default")
+    if not isinstance(smi.get("clocks.default_applications.graphics"), float):
+        out.append("the application clocks")
+    return out
+
+
 def metric_values(p, metric):
     m = (p.get("measured") or {}).get(metric) or {}
     return m.get("median"), m.get("min"), m.get("max"), m.get("prompt_tokens")
@@ -109,7 +126,9 @@ def metric_values(p, metric):
 
 def validate(doc, tolerance=TOLERANCE):
     report = {"schema": doc.get("schema"), "file": "accepted", "capped": [], "runs": []}
-    if not str(doc.get("schema", "")).startswith(SCHEMA_MAJOR) or "card" not in doc or "runs" not in doc:
+    schema = str(doc.get("schema", ""))
+    major = schema.split(".")[0]
+    if major != SCHEMA_MAJOR or "card" not in doc or "runs" not in doc:
         report["file"] = "rejected: R0 schema"
         return report
     rejected, capped = card_rules(doc)
@@ -117,6 +136,7 @@ def validate(doc, tolerance=TOLERANCE):
         report["file"] = "rejected: " + rejected
         return report
     report["capped"] = capped
+    report["unknown"] = card_unknowns(doc["card"].get("smi") or {})
     for run in doc["runs"]:
         out = {"id": run.get("id"), "mode": run.get("mode"), "metrics": [], "notes": []}
         report["runs"].append(out)
@@ -144,7 +164,7 @@ def validate(doc, tolerance=TOLERANCE):
         if mismatch:
             out["notes"].append(mismatch)
             continue
-        kept, rule_of = [], {}
+        kept = []
         for i, p in enumerate(passes):
             rule, notes, per_metric = pass_rules(p)
             out["notes"] += [f"pass {i + 1}: {n}" for n in notes]
@@ -154,11 +174,15 @@ def validate(doc, tolerance=TOLERANCE):
             kept.append((p, per_metric))
         predicted = {"decode": chosen.get("decode_tok_s_at_depth"), "prefill": chosen.get("prefill_tok_s")}
         depth = chosen.get("depth")
+        # The lengths the plan priced: decode at the choice's depth, prefill at its typical prompt.
+        at = {"decode": depth, "prefill": plan.get("prompt")}
         for metric in ("decode", "prefill"):
             row = {"metric": metric, "predicted": predicted[metric]}
-            usable = []
+            usable, unknown = [], False
             for p, per_metric in kept:
-                found = per_metric.get(metric) or set()
+                found = per_metric.get(metric)
+                unknown = unknown or found is None
+                found = found or set()
                 bad = sorted(found & set(REJECT_REASONS))
                 if bad:
                     row.setdefault("notes", []).append("a pass rejected: R3 " + ",".join(bad))
@@ -185,9 +209,10 @@ def validate(doc, tolerance=TOLERANCE):
             else:
                 tokens = [metric_values(p, metric)[3] for p in usable]
                 tokens = [t for t in tokens if isinstance(t, (int, float))]
-                if metric == "decode" and depth and tokens and abs(statistics.median(tokens) - depth) / depth > DEPTH_MATCH:
+                want = at[metric]
+                if want and tokens and abs(statistics.median(tokens) - want) / want > DEPTH_MATCH:
                     row["status"] = (f"rejected: R7 measured at {statistics.median(tokens):.0f} tokens, "
-                                     f"the plan's depth is {depth}")
+                                     f"the plan priced {want}")
                 else:
                     measured = statistics.median(medians)
                     row["measured"] = round(measured, 2)
@@ -195,13 +220,15 @@ def validate(doc, tolerance=TOLERANCE):
                     if isinstance(row["predicted"], (int, float)) and row["predicted"] > 0:
                         ratio = measured / row["predicted"]
                         row["ratio"] = round(ratio, 3)
-                        entry = (f"the speed model's estimate for {doc['card'].get('smi', {}).get('name')}"
-                                 f" ({run.get('repo')} {run.get('quant')}, {metric}, C=1"
-                                 + (f", depth {depth}" if metric == "decode" else "") + ")")
+                        entry = (f"the speed model's estimate for this {doc['card'].get('smi', {}).get('name')}"
+                                 f" ({run.get('repo')} {run.get('quant')}, {metric}, C=1, "
+                                 f"{'depth' if metric == 'decode' else 'prompt'} {want})")
                         if chosen.get("speed_transferred"):
                             entry += ", transferred from another card: tests the transfer rule"
                         if capped:
                             row["verdict"] = "not used: the card is capped"
+                        elif unknown:
+                            row["verdict"] = "not used: R3 unknown (no clock event reasons in a window)"
                         elif abs(ratio - 1) <= tolerance:
                             row["verdict"] = "confirms " + entry
                         else:
@@ -214,6 +241,8 @@ def render(report):
     lines = [f"schema {report['schema']}: {report['file']}"]
     if report["capped"]:
         lines.append("capped (kept for the record, not used to confirm): " + "; ".join(report["capped"]))
+    if report.get("unknown"):
+        lines.append("R4 could not check: " + "; ".join(report["unknown"]))
     for run in report["runs"]:
         lines.append(f"- {run['id']} ({run['mode']})")
         for note in run["notes"]:
