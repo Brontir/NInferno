@@ -167,8 +167,10 @@ int main(int argc, char** argv) {
     if (options.version_requested) { return print_version(); }
     // The prefill's tail calls come from the served frontend (DECISIONS 62).
     ninferno::product::set_prompt_tail_calls_source(
-        [chat_template = options.chat_template_path](const std::filesystem::path& artifact) {
-            return ninferno::runtime::prompt_tail_calls_or_warn(artifact, chat_template);
+        [chat_template = options.chat_template_path,
+         prefix_reuse  = options.allow_prefix_reuse](const std::filesystem::path& artifact) {
+            return ninferno::runtime::prompt_tail_calls_or_warn(artifact, chat_template,
+                                                                prefix_reuse);
         });
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno-serve");

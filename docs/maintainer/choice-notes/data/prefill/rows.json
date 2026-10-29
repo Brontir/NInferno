@@ -76,7 +76,7 @@
    "experts": 0,
    "weight_bytes": 7121861440,
    "params": 11922309120.0,
-   "tail_calls": 2
+   "tail_calls": 3
   },
   "Qwen3.5-9B-GGUF_Q4_K_M": {
    "active_params": 7798259712.0,
@@ -100,7 +100,7 @@
    "experts": 128,
    "weight_bytes": 17010980576,
    "params": 25200000000.0,
-   "tail_calls": 2
+   "tail_calls": 3
   },
   "Qwen3.8-27B-GGUF_UD-Q4_K_XL": {
    "active_params": 25106841600.0,
@@ -124,7 +124,7 @@
    "experts": 0,
    "weight_bytes": 18323733440,
    "params": 30806114304.0,
-   "tail_calls": 2
+   "tail_calls": 3
   },
   "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS": {
    "active_params": 3825434624.0,
@@ -136,7 +136,7 @@
    "experts": 128,
    "weight_bytes": 11416548832,
    "params": 25200000000.0,
-   "tail_calls": 2
+   "tail_calls": 3
   },
   "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M": {
    "active_params": 2838364160.0,

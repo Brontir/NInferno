@@ -73,7 +73,7 @@ Probe probe(const models::qwen3_5::Frontend& frontend, int words) {
     return out;
 }
 
-std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend) {
+std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend, bool prefix_reuse) {
     // Two message lengths: a frontier inside the generation prompt keeps its distance from the end.
     const Probe a = probe(frontend, 300);
     const Probe b = probe(frontend, 701);
@@ -81,18 +81,17 @@ std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend) {
     std::set_intersection(a.tail.begin(), a.tail.end(), b.tail.begin(), b.tail.end(),
                           std::back_inserter(both));
     // The automatic shared prefix at the last message's end (OpenAI's default automatic boundary
-    // in ninferno-serve) is captured at the 64-token
-    // grid point below it, so the prompt's last chunk stops there and the remainder, 17 to 80
-    // tokens, is one more call: a weight read like the tail's. At most one prompt in 64 ends on
-    // the grid.
-    const bool split = a.off_grid_capture || b.off_grid_capture;
+    // in ninferno-serve) is captured at the 64-token grid point below it, so the prompt's last
+    // chunk stops there and the remainder, 17 to 80 tokens, is one more call: a weight read like
+    // the tail's. At most one prompt in 64 ends on the grid; none is captured without prefix reuse.
+    const bool split = prefix_reuse && (a.off_grid_capture || b.off_grid_capture);
     return static_cast<std::uint32_t>(both.size()) + (split ? 1U : 0U);
 }
 
 } // namespace
 
 std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
-                                const std::filesystem::path& chat_template) {
+                                const std::filesystem::path& chat_template, bool prefix_reuse) {
     const std::string type = artifact_model_type(artifact);
     if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
         const artifact::Reader reader(artifact);
@@ -104,7 +103,8 @@ std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
         options.vision_enabled     = false;
         options.vision_component   = reader.directory().components.contains("vision");
         options.max_context        = 4096;
-        return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options));
+        return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options),
+                                prefix_reuse);
     }
     const HfTextFiles files = read_hf_text_files(artifact);
     models::qwen3_5::FrontendResources resources{
@@ -118,13 +118,14 @@ std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
     options.chat_template_path = chat_template;
     models::qwen3_5::apply_hf_text_options(options);
     options.max_context = 4096;
-    return count_tail_calls(models::qwen3_5::make_frontend(resources, options));
+    return count_tail_calls(models::qwen3_5::make_frontend(resources, options), prefix_reuse);
 }
 
 std::optional<std::uint32_t> prompt_tail_calls_or_warn(const std::filesystem::path& artifact,
-                                                       const std::filesystem::path& chat_template) {
+                                                       const std::filesystem::path& chat_template,
+                                                       bool prefix_reuse) {
     try {
-        return prompt_tail_calls(artifact, chat_template);
+        return prompt_tail_calls(artifact, chat_template, prefix_reuse);
     } catch (const std::exception& error) {
         std::cerr << "ninferno: the prefill's tail calls of " << artifact.string()
                   << " are not counted (priced as none): " << error.what() << '\n';

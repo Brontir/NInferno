@@ -1550,8 +1550,8 @@ The two reads are the floor of every dense intercept; the rest (1.2 .. 2.1 x) is
 and the matrix kernels' partial waves at T = 3 and 4 (item 2 removes both). The GV100's Qwen
 intercept (113 ms against 13) is under a server profile.
 
-`fit_prefill.py` now takes the tail as that fact instead of a fitted `c0`. The attention's share
-becomes physical on Ada (0.79) and ga10x (0.72); not on gb20x (1.11), where the RTX 5090 runs 4 ..
+`fit_prefill.py` now takes the tail as that fact instead of a fitted `c0` (its rows ran with `--no-prefix-reuse`: Qwen 2 calls, Gemma 3). The attention's share
+becomes physical on Ada (0.75) and ga10x (0.71); not on gb20x (1.07), where the RTX 5090 runs 4 ..
 14 % below the fit on the dense models and the RTX 5070 Ti 3 .. 8 % above it: one card size's
 partial waves at chunk 1024 (170 SMs against 70) that one rate per generation cannot hold. On Turing
 and Volta one attention share cannot hold Gemma and Qwen together (GV100 Gemma 12B 1476 tok/s at
