@@ -1,5 +1,6 @@
 #include "spec/manifest.h"
 
+#include "artifact/formats.h"
 #include "artifact/reader.h"
 #include "core/hub_revision.h"
 #include "core/sha256.h"
@@ -656,6 +657,21 @@ ProposalRows artifact_proposal_rows(const artifact::Directory& dir) {
     const auto text = dir.components.find("text");
     if (text == dir.components.end() || !text->second.proposal) { return out; }
     const auto& proposal = *text->second.proposal;
+    // A drafter's own prefix is read only where the head's layout has row views (core/weight_view
+    // weight_row_prefix: none for row- or block-scaled FP8 and NVFP4's swizzled scales); elsewhere
+    // it reads all the rows.
+    bool prefixes = true;
+    if (const auto b = dir.bindings.find("proposal/head"); b != dir.bindings.end()) {
+        for (const auto& part : b->second.parts) {
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.object(part.object));
+            if (tensor == nullptr) { continue; }
+            const auto layout = artifact::parse_layout(tensor->layout);
+            if (layout == QuantLayout::RowScale || layout == QuantLayout::BlockScaleK16M128x4 ||
+                layout == QuantLayout::BlockScale128F32) {
+                prefixes = false;
+            }
+        }
+    }
     // The drafters the head takes the final hidden states of (product proposal_head_drafters);
     // DFlash2 keeps the whole domain (its selector reads it).
     for (const char* component : {"mtp", "dflash"}) {
@@ -664,7 +680,8 @@ ProposalRows artifact_proposal_rows(const artifact::Directory& dir) {
             continue;
         }
         const auto own = proposal.drafter_rows.find(component);
-        const std::uint64_t rows = own != proposal.drafter_rows.end() ? own->second : proposal.rows;
+        const std::uint64_t rows =
+            prefixes && own != proposal.drafter_rows.end() ? own->second : proposal.rows;
         if (rows > 0) { out.rows[component] = rows; }
     }
     return out;
