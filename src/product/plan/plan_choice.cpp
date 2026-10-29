@@ -183,11 +183,12 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     choice::QuantOption quant;
     quant.label = label.empty() ? "the model's weights" : label;
     // The target's weights: the model's own DFlash drafter (an artifact's dflash component) is
-    // the drafter's, priced by its round; the bits over the elements the same bytes hold (a GGUF's
-    // tensor table, an artifact's tensors: one measure on both paths).
-    const std::uint64_t target = facts.model.weight_bytes > facts.model.own_drafter_bytes
-                                     ? facts.model.weight_bytes - facts.model.own_drafter_bytes
-                                     : facts.model.weight_bytes;
+    // the drafter's, priced by its round, and the proposal head (proposal/*) the drafters' (read in
+    // their place of the full head, never by a decode step); the bits over the elements the same
+    // bytes hold (a GGUF's tensor table, an artifact's tensors: one measure on both paths).
+    const std::uint64_t aside = facts.model.own_drafter_bytes + facts.model.proposal_bytes;
+    const std::uint64_t target =
+        facts.model.weight_bytes > aside ? facts.model.weight_bytes - aside : facts.model.weight_bytes;
     quant.bits_per_weight = facts.model.bits_per_weight(static_cast<double>(target));
     // What one token's decode step reads: the trunk, not the MTP layers (read by an MTP round
     // only, which the drafter's gain prices).

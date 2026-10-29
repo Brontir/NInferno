@@ -16,6 +16,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::convert {
@@ -99,6 +100,14 @@ struct GgufMetadataPrefix {
 // order llama.cpp's writers keep; the specification orders no keys); nullopt when the read ends
 // before.
 [[nodiscard]] std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix);
+
+// The bytes of the tensor `name` of shape `ne` (ggml order) by its tensor info, found in a window
+// of a GGUF file's tensor table (`data`, any part of the file holding that info whole): its name
+// length and name, then its dimensions, type and offset. nullopt when the window holds none of
+// that shape or its type is unknown.
+[[nodiscard]] std::optional<std::uint64_t>
+gguf_tensor_info_bytes(const std::byte* data, std::size_t size, std::string_view name,
+                       const std::vector<std::uint64_t>& ne);
 
 struct GgufTruncated : std::runtime_error {
     using std::runtime_error::runtime_error;

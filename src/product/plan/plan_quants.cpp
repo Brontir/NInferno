@@ -3,6 +3,7 @@
 #include "product/plan/plan_choice.h"
 
 #include "artifact/reader.h"
+#include "convert/checks.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
@@ -169,15 +170,27 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
 
 DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
     DryRunInputs out = inputs;
+    out.proposal_row_head_bytes = quant.head_bytes;
     if (inputs.subject_of) {
         if (const SpeculationSubject* own = inputs.subject_of(quant)) { out.subject = own; }
     }
     return out;
 }
 
+std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    if (inputs.proposal_drafter_bytes <= 0) { return 0; }
+    const auto& m     = facts.model;
+    const double head = static_cast<double>(
+        inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
+    return convert::planned_proposal_bytes(head, static_cast<double>(m.weight_bytes),
+                                           inputs.proposal_drafter_bytes, m.vocab, m.hidden,
+                                           facts.shape.experts > 0);
+}
+
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.drafter_bytes, inputs.drafter_state);
+                                 inputs.drafter_bytes + proposal_bytes_at(facts, inputs),
+                                 inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
@@ -329,6 +342,12 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
+                // A Qwen target converted with a DFlash companion takes the proposal head the
+                // converter's default_proposal chooses: priced per quantization from that row's
+                // weights (proposal_bytes_at), so here only the companion's bytes it rests on.
+                if (target_model_type.starts_with("qwen3_5") && d.kind == "dflash") {
+                    out.proposal_drafter_bytes = static_cast<double>(bytes);
+                }
             } else if (!d.quant.empty() && config && !encoded) {
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
                 // (convert.cpp quantize_drafter); the rest takes the kind's quantization. Without
@@ -448,6 +467,10 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             shape.model.weight_basis != runtime::WeightBasis::Unknown) {
             row.basis = shape.model.weight_basis;
         }
+        row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_drafter_bytes > 0 &&
+                                    proposal_bytes_at(with_weights(shape, row.weight_bytes,
+                                                                   row.basis),
+                                                      inputs_for(inputs, q)) != 0;
         row.candidate.label      = q.quant;
         row.candidate.bytes      = row.weight_bytes;
         row.candidate.label_bits = q.bits;
@@ -654,6 +677,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     out.rule = quant_rule_line(out, inputs);
     return out;
 }
+
 
 namespace {
 
@@ -940,6 +964,7 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"low_quality",
                          row.candidate.supported && runtime::quant_rank_bits(row.candidate) > 0 &&
                              runtime::quant_rank_bits(row.candidate) < runtime::kPlanLowQualityBits},
+                        {"proposal_head_assumed", row.proposal_head_assumed},
                         {"drafter_bytes", row.planned.plan.weight_bytes > row.weight_bytes
                                               ? row.planned.plan.weight_bytes - row.weight_bytes
                                               : 0},

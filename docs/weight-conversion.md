@@ -183,6 +183,7 @@ speculative backend.
 | `--relayout auto\|published\|frag` | none | Move an existing artifact between layouts. Needs `--target-artifact`; takes no conversion flag. |
 | `--proposal` | off | Add the indexed proposal head for speculative decoding. The ordinary output head is kept. |
 | `--proposal-rows N` | `131072` | Rows of the proposal head. |
+| `--no-proposal` | off | Keep the full draft head. Without `--proposal`, a Qwen target converted with a DFlash drafter gets a proposal head for DFlash only (MTP and DFlash2 keep the full head), whose rows a bytes/acceptance bound chooses (`src/spec/draft_head.h`: 147,456 of 248,320 for Qwen3.5-9B Q4_K_M). |
 | `--ranking PATH` | repository token ranking | Token ranking used by the proposal head. |
 
 ### Performance and files

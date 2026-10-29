@@ -10,6 +10,7 @@
 // served choices, the best the tune measured among those, and they are taken; a
 // choice the family cannot run is never handed to the Engine.
 
+#include "artifact/schema.h"
 #include "ninferno/types.h"
 #include "spec/config.h"
 #include "spec/engine_support.h"
@@ -39,6 +40,9 @@ namespace ninferno::product {
 
 // Whether the artifact carries the proposal head that "+head" configurations draft with.
 [[nodiscard]] bool has_proposal_head(const std::filesystem::path& artifact);
+// has_proposal_head's rule on a directory: a proposal head that serves every drafter component
+// the artifact carries (mtp, dflash, dflash2), so a "+head" choice of any of them can bind it.
+[[nodiscard]] bool proposal_head_serves_drafters(const artifact::Directory& dir);
 
 // The watchdog floor a speculative choice runs with: its measured break-even point, or 1.2 tokens
 // per round when the profile recorded none.
@@ -249,6 +253,25 @@ void require_named_tune(const std::filesystem::path& artifact, int device,
 // is searched for elsewhere.
 [[nodiscard]] std::filesystem::path model_drafter(const std::filesystem::path& artifact,
                                                   SpeculativeBackend backend);
+
+// Whether the artifact's proposal head takes `component`'s final hidden states ("mtp", "dflash",
+// "dflash2"): a head the converter added for DFlash alone serves no other drafter.
+[[nodiscard]] bool proposal_head_serves(const std::filesystem::path& artifact,
+                                        std::string_view component);
+
+// The head a backend drafts with: the proposal head (Optimized) when asked for (--lm-head-draft,
+// a "+head" choice), or for DFlash with the artifact's own drafter whenever its head serves
+// DFlash: the converter gives a Qwen target with a DFlash drafter the head only where its rows
+// pay (convert::default_proposal, spec/draft_head.h), and the target's verify decides every
+// token, so the output is the target's. MTP, DFlash2 and a separate drafter keep what they were
+// asked for. A full-head choice of a profile drafts with the head too (the rule decides it, not
+// the tune); a conversion with --no-proposal keeps the full head.
+[[nodiscard]] ProposalHead model_draft_head(bool head_serves_dflash, SpeculativeBackend backend,
+                                            ProposalHead given) noexcept;
+[[nodiscard]] ProposalHead model_draft_head(const std::filesystem::path& artifact,
+                                            SpeculativeBackend backend,
+                                            const std::filesystem::path& separate_drafter,
+                                            ProposalHead given);
 
 // What a request runs for an entry of `menu`: its depth (0: plain decode), watchdog floor and the
 // shallower depths a trip steps it down to (SpeculationMenu::step_down).

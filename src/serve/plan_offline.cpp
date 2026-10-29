@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <map>
 #include <memory>
 #include <regex>
@@ -373,6 +374,9 @@ struct Planning {
     std::optional<product::SpeculationSubject> subject;
     // A hub model's quantizations' subjects (inputs.subject_of), each made when first asked.
     std::shared_ptr<product::PlannedSubjects> subjects;
+    // A Qwen GGUF table's other quantizations' output heads (convert::gguf_quants_head_bytes),
+    // read beside the MTP reads; invalid when not asked.
+    std::shared_future<std::map<std::string, std::uint64_t>> heads;
 };
 
 // The inputs a server's options give for a model read without its weights.
@@ -421,6 +425,23 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
         for (const auto& q : model.listing) {
             if (!q.drafter && q.format == "gguf" && q.quant != model.quant) { others.push_back(q.quant); }
         }
+        // A Qwen target's default proposal head is priced by each quantization's own head: their
+        // 1 MiB header windows, read at the same time (and kept per commit), only where the
+        // converter would add one.
+        // Only where one is planned (Codex on #170: not for every Qwen table).
+        if (product::default_proposal_possible(
+                product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
+                                       .commit = model.commit},
+                out.inputs.ask)) {
+            out.heads = std::async(std::launch::async, [spec = model.commit.empty()
+                                                                   ? model.repo
+                                                                   : model.repo + "@" + model.commit,
+                                                        others, facts = model.facts.model] {
+                            return convert::gguf_quants_head_bytes(spec, fetch_options(), others,
+                                                                   facts.gguf_data_offset,
+                                                                   facts.hidden, facts.vocab);
+                        }).share();
+        }
         auto read = std::make_shared<const std::map<std::string, std::optional<bool>>>(
             convert::gguf_quants_carry_mtp(
                 model.commit.empty() ? model.repo : model.repo + "@" + model.commit, fetch_options(),
@@ -448,6 +469,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                model.facts.model.hidden);
     out.inputs.drafter_bytes = drafter.bytes;
     out.inputs.drafter_state = drafter.state;
+    out.inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
     // A repository's quantizations each have their weights, and the lab's pairs are of weights:
     // every row of the table resolves its own (the subject above is the one read).
     if (model.listing.size() > 1) { out.inputs.subject_of = out.subjects->lookup(); }
@@ -490,7 +512,24 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     bool planned_at_row = false; // a table row's plan: at the row's choice already
     // A GGUF repository without --quant: every quantization and the largest that fits.
     if (model.kind == "hub" && model.gguf && options.quant.empty()) {
-        quants = product::plan_quants(model.facts, model.listing, planning.inputs);
+        // Each quantization's own output head where a default proposal head is planned: read
+        // from its header (the parsed one's is the header row's).
+        std::vector<product::QuantListing> listing = model.listing;
+        if (planning.inputs.proposal_drafter_bytes > 0) {
+            for (auto& q : listing) {
+                if (q.quant == model.quant) { q.head_bytes = model.facts.model.head_bytes; }
+            }
+            // Every other GGUF row's head, read beside the MTP reads (planning_of).
+            const std::map<std::string, std::uint64_t> heads =
+                planning.heads.valid() ? planning.heads.get()
+                                       : std::map<std::string, std::uint64_t>{};
+            for (auto& q : listing) {
+                if (const auto it = heads.find(q.quant); it != heads.end()) {
+                    q.head_bytes = it->second;
+                }
+            }
+        }
+        quants = product::plan_quants(model.facts, listing, planning.inputs);
         const product::QuantRow* chosen = quants->chosen ? &quants->rows[*quants->chosen] : nullptr;
         if (chosen == nullptr) {
             // Nothing fits: the smallest supported one's plan says why.

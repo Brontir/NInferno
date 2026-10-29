@@ -32,12 +32,38 @@ SpeculativeBackend backend_of(spec::Mode mode) noexcept {
     }
 }
 
+bool proposal_head_serves(const std::filesystem::path& artifact, std::string_view component) {
+    try {
+        const artifact::Reader reader(artifact);
+        const auto& dir = reader.directory();
+        const auto text = dir.components.find("text");
+        return text != dir.components.end() && text->second.proposal.has_value() &&
+               dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"});
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool proposal_head_serves_drafters(const artifact::Directory& dir) {
+    const auto& components = dir.components;
+    const auto text        = components.find("text");
+    if (text == components.end() || !text->second.proposal.has_value()) { return false; }
+    // A "+head" choice of any drafter the artifact carries runs with it, so the head must serve
+    // each: one the converter made for DFlash alone (its default) is no MTP's or DFlash2's
+    // "+head" (DFlash drafts with it through model_draft_head).
+    for (const char* component : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(component) &&
+            !dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"})) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool has_proposal_head(const std::filesystem::path& artifact) {
     try {
         const artifact::Reader reader(artifact);
-        const auto& components = reader.directory().components;
-        const auto text        = components.find("text");
-        return text != components.end() && text->second.proposal.has_value();
+        return proposal_head_serves_drafters(reader.directory());
     } catch (const std::exception&) {
         return false;
     }
@@ -290,8 +316,9 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
         out.engine.drafter = separate_drafter(primary, resolved);
     }
     out.engine.draft_tokens = static_cast<std::uint32_t>(out.menu.primary.config.k);
-    out.engine.proposal_head =
-        out.menu.proposal_head && head ? ProposalHead::Optimized : ProposalHead::Full;
+    out.engine.proposal_head = model_draft_head(
+        subject.artifact, out.engine.backend, out.engine.drafter,
+        out.menu.proposal_head && head ? ProposalHead::Optimized : ProposalHead::Full);
     if (out.menu.proposal_head && !head) {
         out.notes.push_back("the artifact has no proposal head; drafting with the full head");
     }
@@ -665,6 +692,22 @@ std::filesystem::path model_drafter(const std::filesystem::path& artifact,
         }
     }
     return {};
+}
+
+ProposalHead model_draft_head(bool head_serves_dflash, SpeculativeBackend backend,
+                              ProposalHead given) noexcept {
+    if (given == ProposalHead::Optimized) { return given; }
+    return backend == SpeculativeBackend::DFlash && head_serves_dflash ? ProposalHead::Optimized
+                                                                       : ProposalHead::Full;
+}
+
+ProposalHead model_draft_head(const std::filesystem::path& artifact, SpeculativeBackend backend,
+                              const std::filesystem::path& separate_drafter, ProposalHead given) {
+    if (given == ProposalHead::Optimized || backend != SpeculativeBackend::DFlash ||
+        !separate_drafter.empty()) {
+        return given;
+    }
+    return model_draft_head(proposal_head_serves(artifact, "dflash"), backend, given);
 }
 
 RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,

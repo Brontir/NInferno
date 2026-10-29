@@ -201,6 +201,15 @@ struct PlanModelFacts {
     // drafter (an artifact's dflash / dflash2 component: under DFlash only). 0: none or unknown.
     std::uint64_t mtp_bytes         = 0;
     std::uint64_t own_drafter_bytes = 0;
+    // The proposal head's (an artifact's proposal/head and proposal/token_ids), loaded only when
+    // a run drafts with it (ProposalHead::Optimized; DFlash promotes to it, product::
+    // model_draft_head). 0: none or unknown.
+    std::uint64_t proposal_bytes = 0;
+    // The output head's stored bytes (a whole GGUF tensor table's output.weight, or the token
+    // table it is tied to), 0 when unknown: what a proposal head gathered from it is priced by.
+    std::uint64_t head_bytes = 0;
+    // Where a whole GGUF's tensor data starts (its tensor table ends just before), 0: not a GGUF.
+    std::uint64_t gguf_data_offset = 0;
     // A drafter's full-attention KV per token (DFlash's own layers), 0 when none or unknown: the
     // approximate estimate's (the family planner reads state.drafter).
     std::uint64_t drafter_kv_bytes_per_token = 0;

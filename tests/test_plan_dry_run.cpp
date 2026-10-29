@@ -1207,6 +1207,14 @@ void test_quant_option_one_rule() {
     check(a.weight_bytes == b.weight_bytes && a.weight_bytes == static_cast<double>(16 * kGiB - kGiB / 2),
           "the same decode bytes: the trunk without the MTP layers or the drafter");
     check(a.int8_route == b.int8_route && a.nvfp4 == b.nvfp4, "the same routes");
+    // A default proposal head (proposal/*, the drafters' in place of the full head): left out as
+    // the drafter is (Codex on #170: it added ~484 MB to the 9B's bits and decode bytes).
+    pr::PlanSourceFacts with_head = artifact;
+    with_head.model.weight_bytes += kGiB / 4;
+    with_head.model.proposal_bytes = kGiB / 4;
+    const ninferno::product::choice::QuantOption h = pr::quant_option_of(with_head);
+    check(std::abs(h.bits_per_weight - b.bits_per_weight) < 1e-9 && h.weight_bytes == b.weight_bytes,
+          "the proposal head: neither bits nor decode bytes");
     // An artifact's routes are its stored encodings', whatever its source label says.
     pr::PlanSourceFacts nvfp4 = artifact;
     nvfp4.shape.weight_formats = {"nvfp4", "bf16"};

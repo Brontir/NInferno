@@ -390,6 +390,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         engine_options.speculative.drafter =
             product::model_drafter(options_.artifact_path, engine_options.speculative.backend);
     }
+    // DFlash drafts with the artifact's proposal head when it has one for it.
+    engine_options.speculative.proposal_head = product::model_draft_head(
+        options_.artifact_path, engine_options.speculative.backend,
+        engine_options.speculative.drafter, engine_options.speculative.proposal_head);
     // An explicit --spec without --draft-tokens drafts at the depth the model's profile runs that
     // backend with on this GPU (its default for the server's thinking flag), else at the default.
     if (options_.draft_tokens_from_model) {
