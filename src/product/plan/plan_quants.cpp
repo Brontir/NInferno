@@ -1381,6 +1381,11 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
             // the parsed row's); a tied model reads it as its head and counts none.
             if (out.model.embedding_bytes != 0) { out.model.embedding_bytes = *table->token_table_bytes; }
             out.model.token_table_bytes = *table->token_table_bytes;
+            // The untied input table a step leaves unread is this row's own, at its own width
+            // (with_weights scaled the shape's by the file size).
+            if (out.shape.input_table_bytes != 0) {
+                out.shape.input_table_bytes = *table->token_table_bytes;
+            }
         }
     }
     return out;
