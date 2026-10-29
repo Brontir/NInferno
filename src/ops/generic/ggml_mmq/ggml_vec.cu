@@ -496,21 +496,48 @@ __device__ __forceinline__ std::uint32_t fifth_bits(std::uint32_t bits) {
     return (((bits & 0xF) * 0x00204081u) & 0x01010101u) << 4;
 }
 
+// The bytes of one block of a 32-value format as loaded: qs (16), qh (4, when kHigh), and d or
+// (d, m) (2 or 4 bytes of scales).
+struct Raw32 {
+    uint4 q;
+    std::uint32_t qh;
+    half2 dm;
+};
+template <int kCode, int kHigh, int kScale>
+__device__ __forceinline__ void load_raw32(const VecPlanes& p, std::int64_t blk, Raw32& r) {
+    r.q = *reinterpret_cast<const uint4*>(p.codes + blk * kCode);
+    if constexpr (kHigh != 0) r.qh = *reinterpret_cast<const std::uint32_t*>(p.high + blk * kHigh);
+    if constexpr (kScale == 4) {
+        r.dm = *reinterpret_cast<const half2*>(p.scales + blk * kScale);
+    } else {
+        r.dm.x = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+    }
+}
+
 template <>
 struct Decoder<GGML_TYPE_Q4_0> {
     // codes: qs (16: value j low nibble of byte j, value j + 16 its high nibble); scales: d.
     static constexpr int kCode = 16, kHigh = 0, kScale = 2, kTableWords = 0, kBlockValues = 32;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int,
-                                                  const std::uint32_t*, Slice& s) {
-        const uint4 q            = *reinterpret_cast<const uint4*>(p.codes + blk * kCode);
+    using Raw = Raw32;
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int, Raw& r) {
+        load_raw32<kCode, kHigh, kScale>(p, blk, r);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int, const std::uint32_t*, Slice& s) {
+        const uint4 q            = r.q;
         const std::uint32_t v[4] = {q.x, q.y, q.z, q.w};
-        s.f[0]                   = half_at(p.scales + blk * kScale);
+        s.f[0]                   = __half2float(r.dm.x);
 #pragma unroll
         for (int j = 0; j < 4; ++j) {
             s.w[j]     = __vsubss4(int(v[j] & 0x0F0F0F0Fu), 0x08080808);
             s.w[j + 4] = __vsubss4(int((v[j] >> 4) & 0x0F0F0F0Fu), 0x08080808);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0)));
@@ -522,11 +549,14 @@ struct Decoder<GGML_TYPE_Q4_1> {
     // codes: qs (16, as Q4_0); scales: d, m (value d q + m).
     static constexpr int kCode = 16, kHigh = 0, kScale = 4, kTableWords = 0, kBlockValues = 32;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int,
-                                                  const std::uint32_t*, Slice& s) {
-        const uint4 q            = *reinterpret_cast<const uint4*>(p.codes + blk * kCode);
+    using Raw = Raw32;
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int, Raw& r) {
+        load_raw32<kCode, kHigh, kScale>(p, blk, r);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int, const std::uint32_t*, Slice& s) {
+        const uint4 q            = r.q;
         const std::uint32_t v[4] = {q.x, q.y, q.z, q.w};
-        const float2 dm = __half22float2(*reinterpret_cast<const half2*>(p.scales + blk * kScale));
+        const float2 dm = __half22float2(r.dm);
         s.f[0]          = dm.x;
         s.f[1]          = dm.y;
 #pragma unroll
@@ -534,6 +564,12 @@ struct Decoder<GGML_TYPE_Q4_1> {
             s.w[j]     = int(v[j] & 0x0F0F0F0Fu);
             s.w[j + 4] = int((v[j] >> 4) & 0x0F0F0F0Fu);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float sum) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0))) + s.f[1] * sum;
@@ -545,18 +581,27 @@ struct Decoder<GGML_TYPE_Q5_0> {
     // codes: qs (16, as Q4_0); high: qh (4: bit j the fifth bit of value j); scales: d. v - 16.
     static constexpr int kCode = 16, kHigh = 4, kScale = 2, kTableWords = 0, kBlockValues = 32;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int,
-                                                  const std::uint32_t*, Slice& s) {
-        const uint4 q            = *reinterpret_cast<const uint4*>(p.codes + blk * kCode);
+    using Raw = Raw32;
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int, Raw& r) {
+        load_raw32<kCode, kHigh, kScale>(p, blk, r);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int, const std::uint32_t*, Slice& s) {
+        const uint4 q            = r.q;
         const std::uint32_t v[4] = {q.x, q.y, q.z, q.w};
-        const std::uint32_t qh   = *reinterpret_cast<const std::uint32_t*>(p.high + blk * kHigh);
-        s.f[0]                   = half_at(p.scales + blk * kScale);
+        const std::uint32_t qh   = r.qh;
+        s.f[0]                   = __half2float(r.dm.x);
 #pragma unroll
         for (int j = 0; j < 4; ++j) {
             s.w[j] = __vsubss4(int((v[j] & 0x0F0F0F0Fu) | fifth_bits(qh >> (4 * j))), 0x10101010);
             s.w[j + 4] = __vsubss4(
                 int(((v[j] >> 4) & 0x0F0F0F0Fu) | fifth_bits(qh >> (16 + 4 * j))), 0x10101010);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0)));
@@ -568,12 +613,15 @@ struct Decoder<GGML_TYPE_Q5_1> {
     // codes: qs (16); high: qh (4); scales: d, m (value d q + m, q the 5-bit code).
     static constexpr int kCode = 16, kHigh = 4, kScale = 4, kTableWords = 0, kBlockValues = 32;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int,
-                                                  const std::uint32_t*, Slice& s) {
-        const uint4 q            = *reinterpret_cast<const uint4*>(p.codes + blk * kCode);
+    using Raw = Raw32;
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int, Raw& r) {
+        load_raw32<kCode, kHigh, kScale>(p, blk, r);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int, const std::uint32_t*, Slice& s) {
+        const uint4 q            = r.q;
         const std::uint32_t v[4] = {q.x, q.y, q.z, q.w};
-        const std::uint32_t qh   = *reinterpret_cast<const std::uint32_t*>(p.high + blk * kHigh);
-        const float2 dm = __half22float2(*reinterpret_cast<const half2*>(p.scales + blk * kScale));
+        const std::uint32_t qh   = r.qh;
+        const float2 dm = __half22float2(r.dm);
         s.f[0]          = dm.x;
         s.f[1]          = dm.y;
 #pragma unroll
@@ -581,6 +629,12 @@ struct Decoder<GGML_TYPE_Q5_1> {
             s.w[j]     = int((v[j] & 0x0F0F0F0Fu) | fifth_bits(qh >> (4 * j)));
             s.w[j + 4] = int(((v[j] >> 4) & 0x0F0F0F0Fu) | fifth_bits(qh >> (16 + 4 * j)));
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float sum) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0))) + s.f[1] * sum;
@@ -592,17 +646,26 @@ struct Decoder<GGML_TYPE_IQ4_NL> {
     // codes: qs (16, as Q4_0, the nibbles through kvalues_iq4nl); scales: d.
     static constexpr int kCode = 16, kHigh = 0, kScale = 2, kTableWords = 0, kBlockValues = 32;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int,
-                                                  const std::uint32_t*, Slice& s) {
-        const uint4 q            = *reinterpret_cast<const uint4*>(p.codes + blk * kCode);
+    using Raw = Raw32;
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int, Raw& r) {
+        load_raw32<kCode, kHigh, kScale>(p, blk, r);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int, const std::uint32_t*, Slice& s) {
+        const uint4 q            = r.q;
         const std::uint32_t v[4] = {q.x, q.y, q.z, q.w};
-        s.f[0]                   = half_at(p.scales + blk * kScale);
+        s.f[0]                   = __half2float(r.dm.x);
 #pragma unroll
         for (int j = 0; j < 4; ++j) {
             const int2 t = get_int_from_table_16(int(v[j]), kvalues_iq4nl);
             s.w[j]       = t.x;
             s.w[j + 4]   = t.y;
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0)));
