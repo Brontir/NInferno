@@ -5,6 +5,7 @@
 // the speculation report follows the start's order. CPU, no network, no GPU.
 
 #include "convert/drafters.h"
+#include "product/plan/plan_cached.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
@@ -1302,6 +1303,190 @@ void test_kv_options() {
     check(ok_plan.rows.front().candidate.supported, "a pinned INT8 on Qwen plans");
 }
 
+// A row's bytes are its own tensor table where its header was read (product::plan_quants_read):
+// the chosen GGUF row's table is read when unknown and the table planned again with it, so the
+// bytes it shows are the ones its start uploads; a row with no table keeps its file size.
+void test_row_tensor_tables() {
+    pr::PlanSourceFacts qwen;
+    qwen.model = qwen27b(9 * kGiB);
+    pr::DryRunInputs inputs;
+    inputs.device                 = card(24, 89);
+    inputs.gpu                    = pr::gpu_key_of(inputs.device);
+    const pr::LaunchPlanOptions o = pr::launch_options({.max_context = 32768, .spec = "none"});
+    inputs.options                = o.options;
+    inputs.ask                    = o.ask;
+    std::vector<pr::QuantListing> listing = {
+        {.quant = "Q4_K_M", .format = "gguf", .bytes = 16 * kGiB, .bits = 4},
+        {.quant = "Q6_K", .format = "gguf", .bytes = 21 * kGiB, .bits = 6}};
+    int reads = 0;
+    std::string read_quant;
+    const pr::GgufTensorTable table{.tensor_bytes = 21 * kGiB - 9 * (1ULL << 20),
+                                    .mtp_bytes    = 600 * (1ULL << 20)};
+    const pr::QuantPlan plan =
+        pr::plan_quants_read(qwen, listing, inputs, [&](const std::string& quant) {
+            ++reads;
+            read_quant = quant;
+            return std::optional<pr::GgufTensorTable>(table);
+        });
+    check(plan.chosen.has_value(), "a row is chosen (" + plan.rule + ")");
+    const pr::QuantRow& chosen = plan.rows[*plan.chosen];
+    check(reads == 1 && read_quant == chosen.listing.quant, "the chosen row's table read once");
+    check(chosen.weight_bytes == table.tensor_bytes && chosen.basis == rt::WeightBasis::GgufTensors &&
+              chosen.mtp_bytes == table.mtp_bytes,
+          "the chosen row prices its own tensors and NextN share");
+    check(pr::row_facts(qwen, chosen).model.mtp_bytes == table.mtp_bytes &&
+              pr::row_facts(qwen, chosen).model.weight_bytes == table.tensor_bytes,
+          "its facts are the row's (one code for the table, the pick and now)");
+    {
+        pr::PlanSourceFacts with_drafter = qwen;
+        with_drafter.model.own_drafter_bytes = 2 * kGiB; // the shape's (an artifact's) own DFlash
+        check(pr::row_facts(with_drafter, chosen).model.own_drafter_bytes == 0,
+              "a GGUF row's table: no drafter share of the shape's, scaled or not");
+    }
+    for (const pr::QuantRow& r : plan.rows) {
+        if (&r == &chosen) { continue; }
+        check(r.weight_bytes == r.listing.bytes && r.basis == rt::WeightBasis::FileSize &&
+                  !r.mtp_bytes,
+              r.listing.quant + ": no table read, its file size");
+    }
+    // A table known already: not read again.
+    reads                      = 0;
+    const pr::QuantPlan again  = pr::plan_quants_read(qwen, listing, inputs, [&](const std::string&) {
+        ++reads;
+        return std::optional<pr::GgufTensorTable>();
+    });
+    check(reads == 0 && again.rows[*again.chosen].weight_bytes == table.tensor_bytes,
+          "a known table is kept, not read again");
+    // Rows above the pick: one is read; when it does not become the pick, nothing larger is.
+    {
+        std::vector<pr::QuantListing> wide = {
+            {.quant = "Q4_K_M", .format = "gguf", .bytes = 16 * kGiB, .bits = 4},
+            {.quant = "Q8_0", .format = "gguf", .bytes = 29 * kGiB, .bits = 8},
+            {.quant = "BF16", .format = "gguf", .bytes = 54 * kGiB, .bits = 16}};
+        std::vector<std::string> read_rows;
+        const pr::QuantPlan p = pr::plan_quants_read(qwen, wide, inputs, [&](const std::string& quant) {
+            read_rows.push_back(quant);
+            const std::uint64_t file = quant == "Q4_K_M" ? 16 * kGiB : quant == "Q8_0" ? 29 * kGiB : 54 * kGiB;
+            return std::optional<pr::GgufTensorTable>(pr::GgufTensorTable{.tensor_bytes = file - (1ULL << 20)});
+        });
+        check(p.chosen && p.rows[*p.chosen].listing.quant == "Q4_K_M", "Q4_K_M picked on 24 GB");
+        check(read_rows == std::vector<std::string>{"Q4_K_M", "Q8_0"},
+              "the pick and the one row above it are read, not BF16");
+    }
+    // A split pick (read, no whole table): its file size stands and the row above is still read.
+    {
+        std::vector<pr::QuantListing> wide = {
+            {.quant = "Q5_K_M", .format = "gguf", .bytes = 19 * kGiB, .bits = 5},
+            {.quant = "Q6_K", .format = "gguf", .bytes = 47 * kGiB / 2, .bits = 6}};
+        std::vector<std::string> read_rows;
+        (void)pr::plan_quants_read(qwen, wide, inputs, [&](const std::string& quant) {
+            read_rows.push_back(quant);
+            return std::optional<pr::GgufTensorTable>(pr::GgufTensorTable{});
+        });
+        check(read_rows == std::vector<std::string>{"Q5_K_M", "Q6_K"},
+              "a split pick's empty table: the row above is read too (read: " +
+                  [&] { std::string r; for (const auto& q : read_rows) { r += q + " "; } return r; }() + ")");
+    }
+    // An artifact's table: its own drafter is in its bytes, not in its bits.
+    {
+        std::vector<pr::QuantListing> art = {
+            {.quant = "Q4_K_M", .format = "gguf", .bytes = 16 * kGiB, .bits = 4,
+             .table = pr::GgufTensorTable{.tensor_bytes = 18 * kGiB, .mtp_bytes = 0,
+                                          .own_drafter_bytes = 2 * kGiB,
+                                          .basis = rt::WeightBasis::Artifact}}};
+        std::vector<pr::QuantListing> gguf = {
+            {.quant = "Q4_K_M", .format = "gguf", .bytes = 16 * kGiB, .bits = 4,
+             .table = pr::GgufTensorTable{.tensor_bytes = 16 * kGiB}}};
+        const pr::QuantPlan a = pr::plan_quants(qwen, art, inputs);
+        const pr::QuantPlan g = pr::plan_quants(qwen, gguf, inputs);
+        check(a.rows[0].basis == rt::WeightBasis::Artifact && a.rows[0].weight_bytes == 18 * kGiB,
+              "an artifact's table: its bytes, its basis");
+        check(std::abs(a.rows[0].candidate.bits_per_weight - g.rows[0].candidate.bits_per_weight) < 1e-9,
+              "the bits of the target alone");
+    }
+    // A row with no label bits refused only by the width its file size gives: its table is read,
+    // and its tensors at 8 bits or fewer plan it.
+    {
+        pr::DryRunInputs big = inputs;
+        big.device           = card(80, 89);
+        big.gpu              = pr::gpu_key_of(big.device);
+        const double params  = qwen.model.bits_per_weight(1.0) > 0 ? 8.0 / qwen.model.bits_per_weight(1.0) : 0;
+        const auto bytes_at  = [&](double bits) { return static_cast<std::uint64_t>(params * bits / 8.0); };
+        std::vector<pr::QuantListing> one = {
+            {.quant = "Q8_X", .format = "gguf", .bytes = bytes_at(9.5), .bits = 0}};
+        const pr::QuantPlan before = pr::plan_quants(qwen, one, big);
+        check(!before.rows[0].candidate.supported && before.rows[0].unsupported_code == "above_8_bits",
+              "at its file size: above 8 bits");
+        int reads = 0;
+        const pr::QuantPlan after = pr::plan_quants_read(qwen, one, big, [&](const std::string&) {
+            ++reads;
+            return std::optional<pr::GgufTensorTable>(pr::GgufTensorTable{.tensor_bytes = bytes_at(8.4)});
+        });
+        check(reads == 1 && after.rows[0].candidate.supported && after.chosen,
+              "its tensors at 8.4 bits: read and planned");
+    }
+    // From the facts of a head read: a whole file's tensors; a file size is no table.
+    pr::PlanSourceFacts read = pr::with_weights(qwen, 5 * kGiB, rt::WeightBasis::GgufTensors);
+    read.model.mtp_bytes     = 123;
+    check(pr::gguf_tensor_table(read) && pr::gguf_tensor_table(read)->tensor_bytes == 5 * kGiB &&
+              pr::gguf_tensor_table(read)->mtp_bytes == 123,
+          "a head's tensor table");
+    check(!pr::gguf_tensor_table(pr::with_weights(qwen, 5 * kGiB, rt::WeightBasis::FileSize)),
+          "a file size is no tensor table");
+}
+
+// The quantizations a hub cache holds (product::cached_quants: one code for ninferno-serve and
+// ninferno-ui, the root theirs): the downloads in the revision's snapshot (a split file's first
+// part; projectors are not quantizations); where the snapshot was removed, the conversions a start
+// serves in its place; the hub's own directory; an unreadable file leaves the row as it was.
+void test_cached_quants() {
+    namespace fs        = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "ninferno_test_cached_quants";
+    fs::remove_all(root);
+    const std::string commit(40, 'a');
+    const fs::path repo = root / "models--org--Model-GGUF";
+    const fs::path snap = repo / "snapshots" / commit;
+    fs::create_directories(snap);
+    fs::create_directories(repo / "refs");
+    std::ofstream(repo / "refs" / "main") << commit;
+    for (const char* name : {"Model-Q4_K_M.gguf", "Model-Q8_0-00001-of-00002.gguf",
+                             "Model-Q8_0-00002-of-00002.gguf", "mmproj-F16.gguf"}) {
+        std::ofstream(snap / name) << "not a gguf";
+    }
+    const auto cached = pr::cached_quants(root, "huggingface", "org/Model-GGUF", "");
+    check(cached.size() == 2 && cached.contains("Q4_K_M") && cached.contains("Q8_0"),
+          "a download and a split file's first part");
+    check(cached.at("Q8_0").filename() == "Model-Q8_0-00001-of-00002.gguf", "the split file's first part");
+    check(pr::cached_quants(root, "huggingface", "org/Model-GGUF", std::string(40, 'b')).empty(),
+          "another revision's snapshot: none");
+    check(pr::cached_quants(root, "modelscope", "org/Model-GGUF", "").empty(),
+          "another hub's directory: none");
+    const std::string stamp = pr::cached_stamp(cached);
+    std::ofstream(snap / "Model-Q6_K.gguf") << "not a gguf either";
+    check(pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "")) != stamp,
+          "a download here changes the stamp");
+    {
+        const std::string before = pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", ""));
+        std::ofstream(snap / "Model-Q8_0-00002-of-00002.gguf", std::ios::app) << " completed";
+        check(pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "")) != before,
+              "a later part of a split file changing changes the stamp");
+    }
+    std::vector<pr::QuantListing> listing = {
+        {.quant = "Q4_K_M", .format = "gguf", .bytes = 5ULL << 30, .bits = 4,
+         .table = pr::GgufTensorTable{.tensor_bytes = 4ULL << 30}}};
+    pr::tables_of_cached(listing, cached);
+    check(listing.front().table && listing.front().table->tensor_bytes == (4ULL << 30),
+          "an unreadable file here leaves the row's table as it was");
+    // The snapshot removed, its conversion kept (<repo>/ninferno/<commit>/): no complete artifact
+    // in this fixture, so none is served.
+    fs::remove_all(repo / "snapshots");
+    fs::create_directories(repo / "ninferno" / commit);
+    std::ofstream(repo / "ninferno" / commit / "Model-Q4_K_M.r1.ninferno") << "partial";
+    check(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "").empty(),
+          "an incomplete conversion is not served");
+    fs::remove_all(root);
+}
+
 // What a start right now would get (product::plan_now): the idle card's plan at the free memory
 // now; all of it free gives the idle plan, a share held elsewhere less context or no start.
 void test_plan_now() {
@@ -1364,6 +1549,8 @@ int main() {
     test_properties();
     test_rows_at_choice();
     test_quant_option_one_rule();
+    test_row_tensor_tables();
+    test_cached_quants();
     test_kv_options();
     test_plan_now();
     if (failures != 0) {

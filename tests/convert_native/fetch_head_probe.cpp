@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <exception>
 #include <string>
+#include <vector>
 
 int main(int argc, char** argv) {
     if (argc != 5 && argc != 6) {
@@ -38,6 +39,25 @@ int main(int argc, char** argv) {
                                 {"files", q.paths()}});
             }
             std::printf("%s\n", rows.dump().c_str());
+            return 0;
+        }
+        // --heads=Q,Q TABLE_END CACHE HIDDEN:VOCAB[:tied]: gguf_quants_head_bytes as {quant: bytes}.
+        if (const std::string heads = argv[2]; heads.rfind("--heads=", 0) == 0 && argc == 6) {
+            std::vector<std::string> quants;
+            for (std::size_t at = 8; at <= heads.size();) {
+                const std::size_t comma = heads.find(',', at);
+                const std::size_t end   = comma == std::string::npos ? heads.size() : comma;
+                quants.push_back(heads.substr(at, end - at));
+                at = end + 1;
+            }
+            const std::string shape = argv[5];
+            const auto colon        = shape.find(':');
+            const auto hidden       = std::stoull(shape.substr(0, colon));
+            const auto vocab        = std::stoull(shape.substr(colon + 1));
+            const bool tied         = shape.find(":tied") != std::string::npos;
+            nlohmann::json out = ninferno::convert::gguf_quants_head_bytes(
+                argv[1], options, quants, std::stoull(argv[3]), hidden, vocab, tied);
+            std::printf("%s\n", out.dump().c_str());
             return 0;
         }
         if (std::string(argv[2]) == "--holds" || std::string(argv[2]) == "--holds-vision") {

@@ -915,12 +915,16 @@ nlohmann::ordered_json loose_qwen_parameters(const ToolCallConstraintTool& tool)
         const auto declared = schema.find("properties");
         if (declared != schema.end() && declared->is_object()) {
             for (const auto& [name, unused] : declared->items()) {
-                if (qwen_parameter_name(name)) { properties[name] = Ordered::object(); }
+                if (qwen_parameter_name(name)) { properties[name] = Ordered{{"type", "string"}}; }
             }
         }
     }
-    return Ordered{
-        {"type", "object"}, {"properties", std::move(properties)}, {"additionalProperties", true}};
+    // Every value is the raw text up to </parameter> (a "string" in the XML style): the language of
+    // "any value" (that text, a JSON array or a JSON object) minus JSON holding "</parameter>",
+    // whose masks cost up to 50 ms at a value's start on a 262k vocabulary, and under 1 ms here.
+    return Ordered{{"type", "object"},
+                   {"properties", std::move(properties)},
+                   {"additionalProperties", Ordered{{"type", "string"}}}};
 }
 
 // A strict tool's arguments hold to its schema, so every declared name must be one the syntax
@@ -1255,6 +1259,13 @@ std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos
     return std::nullopt;
 }
 
+// Tool-call arguments in a call syntax XGrammar has no style for: the constraint compiler
+// turns this format into that syntax's grammar held to the schema (ninferno/types.h).
+OrderedJson argument_style_format(OrderedJson schema, std::string_view style) {
+    return OrderedJson{
+        {"type", "json_schema"}, {"json_schema", std::move(schema)}, {"style", std::string(style)}};
+}
+
 OrderedJson schema_or_object(const ToolCallConstraintTool& tool) {
     return tool.strict ? OrderedJson::parse(tool.parameters_json)
                        : OrderedJson{{"type", "object"}};
@@ -1403,20 +1414,6 @@ public:
     static constexpr std::string_view kClose = "<tool_call|>";
     static constexpr std::string_view kQuote = "<|\"|>";
     static constexpr std::string_view kCall  = "call:";
-    // Gemma's value syntax as Gemma4Syntax::Reader reads it: bare keys and values never hold
-    // '<', so no marker fits inside the arguments. Whitespace runs between them are bounded like
-    // JSON's (CompilerOptions::json_whitespace_run), so a model cannot write whitespace there until
-    // max_tokens.
-    static constexpr std::string_view kArgumentsGrammar =
-        R"GBNF(root ::= ws (member (ws "," ws member)*)? ws
-member ::= key ws ":" ws value
-key ::= quoted | [^:,{}\[\]<>"\t\n ]+
-value ::= quoted | object | array | [^,{}\[\]<>"\t\n ] [^,{}\[\]<>"\n]*
-object ::= "{" ws (member (ws "," ws member)*)? ws "}"
-array ::= "[" ws (value (ws "," ws value)*)? ws "]"
-quoted ::= "<|\"|>" qchar* "<|\"|>"
-qchar ::= [^<] | "<" [^|] | "<|" [^\"] | "<|\"" [^|] | "<|\"|" [^>]
-ws ::= [ \t\n]{0,64})GBNF";
 
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
@@ -1476,8 +1473,10 @@ ws ::= [ \t\n]{0,64})GBNF";
                                              ToolCallRequirement requirement,
                                              std::string_view named_tool,
                                              bool parallel_tool_calls) const override {
-        // Arguments are Gemma's own value syntax, not JSON: its grammar (kArgumentsGrammar). Free
-        // text up to the close let a model made to call with nothing to call (tool_choice
+        // Arguments are Gemma's own value syntax, not JSON: an object of bare (or <|"|>-quoted)
+        // keys, <|"|>-quoted strings and bare numbers, booleans and null, braces included
+        // (kGemma4ArgumentStyle), held to a strict tool's schema and otherwise any such object.
+        // Free text up to the close let a model made to call with nothing to call (tool_choice
         // "required") open a thought channel inside the arguments, or write on past their brace,
         // and never close the call (gemma-4-26B-A4B-it Q4_0, "Hello there!").
         return calls_structural_tag(
@@ -1485,10 +1484,12 @@ ws ::= [ \t\n]{0,64})GBNF";
             [](const ToolCallConstraintTool& tool) {
                 return OrderedJson{
                     {"type", "tag"},
-                    {"begin", std::string(kOpen) + std::string(kCall) + tool.name + "{"},
-                    {"content",
-                     OrderedJson{{"type", "grammar"}, {"grammar", std::string(kArgumentsGrammar)}}},
-                    {"end", "}" + std::string(kClose)}};
+                    {"begin", std::string(kOpen) + std::string(kCall) + tool.name},
+                    {"content", argument_style_format(tool.strict ? OrderedJson::parse(
+                                                                        tool.parameters_json)
+                                                                  : OrderedJson{{"type", "object"}},
+                                                      kGemma4ArgumentStyle)},
+                    {"end", std::string(kClose)}};
             });
     }
 
@@ -1555,10 +1556,11 @@ private:
                     key = std::string(trim_format_whitespace(text.substr(pos, colon - pos)));
                     pos = colon;
                 }
-                if (key.empty() || result.contains(key)) { return std::nullopt; }
+                if (key.empty()) { return std::nullopt; }
                 ++pos;  // ':'
                 std::optional<OrderedJson> item = value();
                 if (!item) { return std::nullopt; }
+                // A key written twice keeps its last value, as the JSON and XML parsers do.
                 result[key] = std::move(*item);
                 skip();
                 if (pos < text.size() && text[pos] == ',') {
@@ -1926,13 +1928,14 @@ std::optional<ParsedCall> pythonic_call(std::string_view text, std::size_t& pos)
         while (at < text.size() && python_identifier_byte(text[at], at == key_begin)) { ++at; }
         const std::string key(text.substr(key_begin, at - key_begin));
         skip_format_whitespace(text, at);
-        if (key.empty() || at >= text.size() || text[at] != '=' || object.contains(key)) {
+        if (key.empty() || at >= text.size() || text[at] != '=') {
             return std::nullopt;
         }
         ++at;
         skip_format_whitespace(text, at);
         std::optional<OrderedJson> value = pythonic_value(text, at);
         if (!value) { return std::nullopt; }
+        // A key written twice keeps its last value, as the JSON and XML parsers do.
         object[key] = std::move(*value);
         skip_format_whitespace(text, at);
         if (at >= text.size()) { return std::nullopt; }
@@ -1993,12 +1996,16 @@ public:
                                              ToolCallRequirement requirement,
                                              std::string_view named_tool,
                                              bool parallel_tool_calls) const override {
-        // Arguments are Python-style keywords, not a JSON object: no schema can shape them.
+        // Arguments are Python-style keywords: free text, or for a strict tool the keywords held
+        // to its schema (kPythonicArgumentStyle).
         return calls_structural_tag(tools, requirement, named_tool, parallel_tool_calls, kOpen,
                                     "\n", [](const ToolCallConstraintTool& tool) {
             return OrderedJson{{"type", "tag"},
                                {"begin", std::string(kOpen) + tool.name + "("},
-                               {"content", OrderedJson{{"type", "any_text"}}},
+                               {"content", tool.strict
+                                               ? argument_style_format(OrderedJson::parse(tool.parameters_json),
+                                                                       kPythonicArgumentStyle)
+                                               : OrderedJson{{"type", "any_text"}}},
                                {"end", ")" + std::string(kClose)}};
         });
     }
@@ -2154,9 +2161,9 @@ public:
                                              ToolCallRequirement requirement,
                                              std::string_view named_tool,
                                              bool parallel_tool_calls) const override {
-        // Arguments are tagged text, not a JSON object: no schema can shape them. A call right
-        // after the generation prompt continues its "<|start|>assistant" header; later calls
-        // open their own message.
+        // Arguments are tagged text: free, or for a strict tool the parameters held to its schema
+        // (kAtemArgumentStyle). A call right after the generation prompt continues its
+        // "<|start|>assistant" header; later calls open their own message.
         return calls_structural_tag(
             tools, requirement, named_tool, parallel_tool_calls, kOpen,
             std::string(kEom) + std::string(kStart), [](const ToolCallConstraintTool& tool) {
@@ -2165,7 +2172,9 @@ public:
                     {"begin", " " + std::string(kTo) + tool.name + std::string(kMessage) +
                                   std::string(kOpen) + "\n" + std::string(kInvoke) + tool.name +
                                   std::string(kNameEnd) + "\n"},
-                    {"content", OrderedJson{{"type", "any_text"}}},
+                    {"content", tool.strict ? argument_style_format(OrderedJson::parse(tool.parameters_json),
+                                                                    kAtemArgumentStyle)
+                                            : OrderedJson{{"type", "any_text"}}},
                     {"end", std::string(kInvokeClose) + "\n" + std::string(kClose)}};
             });
     }

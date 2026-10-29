@@ -21,6 +21,7 @@
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
+#include "product/plan/plan_cached.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
 #include "artifact/framing.h"
@@ -1012,10 +1013,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
     // The plan of an idle card (cached), and what a start right now would get at the GPU's free
     // memory (product::plan_now, each request: another process's share moves).
-    Json doc = plan_json_idle(repo, hub, gpu, quant, launch);
-    const auto free_now = free_now_of(gpus_->snapshot(), gpu);
     std::shared_ptr<const PlanNowContext> now;
-    {
+    Json doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
+    const auto free_now = free_now_of(gpus_->snapshot(), gpu);
+    if (!now) { // a cached plan: its context kept beside it
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, quant, launch));
             it != plan_now_.end()) {
@@ -1033,17 +1034,22 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
 
 std::string App::plan_key(const std::string& repo, const std::string& hub, int gpu,
                           const std::string& quant, const product::LaunchAsk& launch) const {
+    // A download or conversion here changes what a row prices (product::tables_of_cached).
     return hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
-           "|" + convert::conversions_stamp(hub_root(), repo);
+           "|" + convert::conversions_stamp(hub_root(), repo) + "|" +
+           product::cached_stamp(product::cached_quants(hub_root(), hub, repo, ""));
 }
 
 Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
-                         const std::string& quant, const product::LaunchAsk& launch) {
+                         const std::string& quant, const product::LaunchAsk& launch,
+                         bool read_tables, std::shared_ptr<const PlanNowContext>* now_out) {
     const auto generation = hub_generation();
     const Json list   = listing_of(repo, hub);
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
-    const std::string key = plan_key(repo, hub, gpu, quant, launch);
+    // A plan whose rows were priced without reading a table is kept apart from a user's.
+    const std::string key =
+        plan_key(repo, hub, gpu, quant, launch) + (read_tables ? "" : "|known-tables");
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
@@ -1118,9 +1124,9 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         heads_read = std::async(
             std::launch::async,
             [spec = commit.empty() ? repo : repo + "@" + commit, fetch, quants,
-             facts = facts->model] {
+             facts = facts->model, tied = facts->shape.tied_embeddings] {
                 return convert::gguf_quants_head_bytes(spec, fetch, quants, facts.gguf_data_offset,
-                                                       facts.hidden, facts.vocab);
+                                                       facts.hidden, facts.vocab, tied);
             });
     }
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.
@@ -1169,21 +1175,81 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     if (heads_read.valid() && inputs.proposal_planned) {
         const auto heads = heads_read.get();
         for (auto& q : listing) {
-            if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }
+            // A head not read (0) keeps what the listing knows.
+            if (const auto it = heads.find(q.quant); it != heads.end() && it->second != 0) {
+                q.head_bytes = it->second;
+            }
         }
     }
+    // The facts' own file prices its tensor table (kv_json read its head); the other rows are read
+    // as product::plan_quants_read reads them (the CLI and the start read the same rows): from the
+    // tables kept, and for a user's plan by a header read when not kept.
+    // tables_seen: the repository's tables generation this plan prices (one kept since: not cached).
+    std::uint64_t tables_seen = 0;
+    {
+        const product::QuantListing* smallest = nullptr;
+        for (const auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && (!smallest || q.bytes < smallest->bytes)) {
+                smallest = &q;
+            }
+        }
+        const std::string own_quant = smallest ? smallest->quant : std::string();
+        const auto own              = product::gguf_tensor_table(*facts);
+        {
+        // The kept tables and their generation read together (another request keeps tables).
+        std::lock_guard lock(sizes_mutex_);
+        tables_seen = tables_generation_[hub_key(repo, hub)];
+        for (auto& q : listing) {
+            if (q.drafter || q.format != "gguf") { continue; }
+            if (own && q.quant == own_quant) { q.table = own; }
+            // A plan that reads no header (the catalog, /api/quants): every table kept prices its
+            // row, so an unknown row before it cannot hide it. A user's plan reads the rows the CLI
+            // and the start read (plan_quants_read), its tables taken from what is kept.
+            if (!(read_tables && !options_.offline)) {
+                if (const auto it = gguf_tables_.find(hub_key(repo, hub) + "@" + commit + "|" + q.quant);
+                    it != gguf_tables_.end() && it->second) {
+                    q.table = it->second;
+                }
+            }
+        }
+        }
+        // The quantizations already in this UI's hub cache (the one its servers start with), at
+        // the revision a start takes (main, as the start of `repo` without one): by their own
+        // files, as the start and ninferno-serve --plan --no-load price them.
+        // Outside the lock: a file read.
+        product::tables_of_cached(listing, product::cached_quants(hub_root(), hub, repo, ""));
+    }
+    // A read that failed (a network blip) leaves this plan uncached: the next request reads again.
+    bool table_failed       = false;
+    std::uint64_t own_kept  = 0; // tables this plan's own reads kept (they are in it)
+    const bool may_read = read_tables && !options_.offline;
+    const product::ReadTensorTable read_table =
+        [this, repo, hub, commit, may_read, &table_failed, &own_kept](const std::string& label)
+        -> std::optional<product::GgufTensorTable> {
+        if (!may_read) { // the tables kept only
+            std::lock_guard lock(sizes_mutex_);
+            const auto it = gguf_tables_.find(hub_key(repo, hub) + "@" + commit + "|" + label);
+            return it != gguf_tables_.end() ? it->second : std::nullopt;
+        }
+        TableRead read;
+        auto table   = gguf_table(repo, hub, commit, label, &read);
+        table_failed = table_failed || read.failed;
+        own_kept += read.stored ? 1 : 0;
+        return table;
+    };
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
     std::string planned_label           = quant;
     std::uint32_t launch_context        = 0; // the ceiling a start of the shown row passes
     if (quant.empty()) {
-        const product::QuantPlan plan   = product::plan_quants(*facts, listing, inputs);
+        const product::QuantPlan plan =
+            product::plan_quants_read(*facts, listing, inputs, read_table);
         const product::QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
         product::PlannedSpeculation planned;
         product::PlanSourceFacts at = *facts;
         if (chosen != nullptr) {
             planned = chosen->planned;
-            at      = product::with_weights(*facts, chosen->weight_bytes, chosen->basis);
+            at      = product::row_facts(*facts, *chosen);
         } else {
             planned = product::plan_model(*facts, inputs);
             // Nothing fits or runs: a pinned mode the family does not run says so.
@@ -1201,11 +1267,11 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         for (const auto& q : listing) {
             if (!q.drafter && q.quant == quant) { one.push_back(q); }
         }
-        const product::QuantPlan plan = product::plan_quants(*facts, one, inputs);
+        const product::QuantPlan plan = product::plan_quants_read(*facts, one, inputs, read_table);
         const product::QuantRow& row  = plan.rows.front();
         launch_context                = row.launch_context;
         const product::PlanSourceFacts at =
-            product::with_weights(*facts, row.weight_bytes, row.basis);
+            product::row_facts(*facts, row);
         product::PlannedSpeculation planned =
             row.planned.plan.planned || !row.planned.plan.refused_code.empty()
                 ? row.planned
@@ -1240,7 +1306,10 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         plans_.clear();
         plan_now_.clear();
     }
-    if (generation == hub_generation_) {
+    if (now_out != nullptr) { *now_out = now; }
+    // A table kept by another request while this one planned: this plan is not the latest.
+    if (generation == hub_generation_ && !table_failed &&
+        tables_generation_[hub_key(repo, hub)] == tables_seen + own_kept) {
         plans_[key]     = doc;
         plan_now_[key] = std::move(now);
     }
@@ -2125,6 +2194,65 @@ void App::gguf_mtps(const std::string& repo, const std::string& hub, const std::
     }
 }
 
+std::optional<product::GgufTensorTable> App::gguf_table(const std::string& repo,
+                                                        const std::string& hub,
+                                                        const std::string& commit,
+                                                        const std::string& quant,
+                                                        TableRead* read) {
+    const std::string key = hub_key(repo, hub) + "@" + commit + "|" + quant;
+    {
+        std::lock_guard lock(sizes_mutex_);
+        if (const auto it = gguf_tables_.find(key); it != gguf_tables_.end()) { return it->second; }
+        if (const auto it = gguf_failed_.find(key);
+            it != gguf_failed_.end() &&
+            std::chrono::steady_clock::now() - it->second < std::chrono::minutes(1)) {
+            if (read != nullptr) { read->failed = true; }
+            return std::nullopt;
+        }
+    }
+    convert::FetchOptions fetch;
+    fetch.hub   = hub;
+    fetch.quant = quant;
+    if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+    const std::string spec = commit.empty() ? repo : repo + "@" + commit;
+    for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
+        try {
+            const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
+            const auto file =
+                convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                         head.bytes.size(), head.size, head.path);
+            // A split part's head: read, no whole table (an empty one, kept too: its file size
+            // stands and the rows above it are still read).
+            const product::GgufTensorTable table =
+                product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
+                    .value_or(product::GgufTensorTable{});
+            std::lock_guard lock(sizes_mutex_);
+            gguf_tables_[key] = table;
+            gguf_failed_.erase(key);
+            if (table.tensor_bytes > 0) {
+                ++tables_generation_[hub_key(repo, hub)];
+                if (read != nullptr) { read->stored = true; }
+                // The repository's plans priced before it (the catalog's too) are planned again.
+                const std::string prefix = hub_key(repo, hub) + "|";
+                std::erase_if(plans_, [&](const auto& p) { return p.first.starts_with(prefix); });
+                std::erase_if(plan_now_, [&](const auto& p) { return p.first.starts_with(prefix); });
+            }
+            return table;
+        } catch (const convert::GgufTruncated&) {
+            continue;
+        } catch (const std::exception&) {
+            if (read != nullptr) { read->failed = true; }
+            std::lock_guard lock(sizes_mutex_);
+            gguf_failed_[key] = std::chrono::steady_clock::now();
+            return std::nullopt;
+        }
+    }
+    // Metadata past 128 MiB: read, no table (an empty one, kept: not read again).
+    std::lock_guard lock(sizes_mutex_);
+    gguf_tables_[key] = product::GgufTensorTable{};
+    return product::GgufTensorTable{};
+}
+
 std::optional<bool> App::gguf_mtp(const std::string& repo, const std::string& hub,
                                   const std::string& commit, const std::string& quant) {
     const std::string key = hub_key(repo, hub) + "@" + commit + "|" + quant;
@@ -2703,6 +2831,8 @@ void App::install(httplib::Server& server) {
                 mtp_.clear();
                 kv_failed_.clear();
                 plan_facts_.clear();
+                gguf_tables_.clear();
+                gguf_failed_.clear();
                 plans_.clear();
                 plan_now_.clear();
             }

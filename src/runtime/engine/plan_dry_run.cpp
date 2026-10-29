@@ -478,15 +478,17 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
     // speculation names).
     const SpeculativeBackend backend = options.speculative.backend;
     // The proposal head only when it drafts: asked for, or under MTP or DFlash where it serves
-    // them (they draft with the artifact's head then, product::model_draft_head).
+    // them and no separate drafter drafts in their place (they draft with the artifact's head
+    // then, product::model_draft_head).
     const std::uint64_t unloaded =
         (backend != SpeculativeBackend::Mtp ? model.mtp_bytes : 0) +
         (backend != SpeculativeBackend::DFlash && backend != SpeculativeBackend::DFlash2
              ? model.own_drafter_bytes
              : 0) +
         (options.speculative.proposal_head == ProposalHead::Optimized ||
-                 (backend == SpeculativeBackend::Mtp && model.proposal_serves_mtp) ||
-                 (backend == SpeculativeBackend::DFlash && model.proposal_serves_dflash)
+                 (options.speculative.drafter.empty() &&
+                  ((backend == SpeculativeBackend::Mtp && model.proposal_serves_mtp) ||
+                   (backend == SpeculativeBackend::DFlash && model.proposal_serves_dflash)))
              ? 0
              : model.proposal_bytes);
     out.weight_bytes = (model.weight_bytes > unloaded ? model.weight_bytes - unloaded : 0) +

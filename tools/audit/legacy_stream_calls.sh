@@ -40,7 +40,7 @@ tests/ops/test_gemma4_attention_fp8.cu|4|zero fills on the legacy stream before 
 tests/ops/test_gemma4_fused.cpp|1|H2D of the input before scale_bf16 runs on the legacy stream (stream nullptr), cuda_synchronize before the read
 tests/ops/test_ggml_decode.cu|3|legacy-stream only: upload, fill and launches on the default stream, cudaDeviceSynchronize before the read
 tests/ops/linear/linear_test_common.cpp|1|D2H after the launch stream is synchronized
-tests/ops/linear/test_generic_linear.cpp|8|legacy-stream reference, fills and launches (stream nullptr), cudaDeviceSynchronize before reads
+tests/ops/linear/test_generic_linear.cpp|9|legacy-stream reference, fills and launches (stream nullptr), cudaDeviceSynchronize before reads
 tests/ops/linear/test_side_by_side_projection.cpp|2|poison fills before launches on the legacy stream (stream nullptr), cudaDeviceSynchronize before reads
 tests/ops/linear/test_dense_tune.cpp|1|download(): D2H after the call stream is synchronized
 tests/ops/linear/test_linear_gemma4_shapes.cpp|6|staging on the legacy stream the launches also use

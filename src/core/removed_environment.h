@@ -21,7 +21,7 @@ struct RemovedEnvironmentVariable {
     std::string_view replacement; // empty: removed with no replacement
 };
 
-inline constexpr std::array<RemovedEnvironmentVariable, 16> kRemovedEnvironmentVariables{{
+inline constexpr std::array<RemovedEnvironmentVariable, 17> kRemovedEnvironmentVariables{{
     {"NINFERNO_CUDA_SYNC", "--cuda-sync"},
     {"NINFERNO_DECODE_STEPS", "--decode-steps"},
     {"NINFERNO_DECODE_WAIT", "--decode-wait"},
@@ -40,6 +40,7 @@ inline constexpr std::array<RemovedEnvironmentVariable, 16> kRemovedEnvironmentV
     {"NINFERNO_SPEC_CORPUS", "--corpus (ninferno spec-tune, ninferno-gemma4)"},
     {"NINFERNO_RANKING_DIR", "ninferno-convert --ranking FILE"},
     {"NINFERNO_MMQ_VERIFY", ""},
+    {"NINFERNO_ARTIFACT_DIRECT_IO", "--artifact-io"},
 }};
 
 // One message per removed variable `is_set` reports set, in the table's order.

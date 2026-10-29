@@ -78,6 +78,8 @@ bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions&
         }
     } else if (arg == "--debug-poison") {
         maintainer.debug_poison = parse_debug_poison(value());
+    } else if (arg == "--artifact-io") {
+        maintainer.artifact_io = parse_artifact_io(value());
     } else if (arg == "--debug-poison-skip") {
         maintainer.debug_poison_skip = comma_items(value());
     } else {
@@ -92,7 +94,8 @@ inline constexpr const char* kEngineFlagsUsage =
     "       [--cuda-sync spin|blocking|yield|auto]\n"
     "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
     "       [--route-table FILE] [--route-dir DIR] [--debug-prefill-cuts P1,P2,...]\n"
-    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
+    "       [--artifact-io auto|direct|buffered]\n";
 
 // Without the decode pacing and with the tuners, for a program that only scores
 // (ninferno-perplexity, a tuner host).
@@ -101,7 +104,8 @@ inline constexpr const char* kScoringEngineFlagsUsage =
     "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
     "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
     "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
-    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
+    "       [--artifact-io auto|direct|buffered]\n";
 
 // The decode pacing flags, which a scoring program refuses.
 [[nodiscard]] inline bool is_decode_pacing_flag(std::string_view arg) noexcept {

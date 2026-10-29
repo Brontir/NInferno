@@ -640,8 +640,8 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then.
-- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema (in the
-  JSON and Qwen XML call syntaxes; [key order](#key-order-under-an-output-constraint)), and
+- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
+  call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
 - A JSON `response_format` (`json_schema` or `json_object`) beside enabled tools, as Agent SDKs
   send. The answer is the calls or a text answer in that format, nothing else. When a call is
@@ -827,9 +827,14 @@ still valid JSON. NInferno's grammars let the model write keys in its own order:
   times the set of optional ones written): eight optional properties with no required one, six
   with three required. Optional properties past those (in schema order), and every optional
   property of an object with `patternProperties` or `propertyNames`, may still come in any order
-  but may repeat (the tool-call parser, like most JSON parsers, keeps the last value).
-- An object with `minProperties` or `maxProperties` keeps its optional properties in schema order;
-  list them in the order the prompt asks for them.
+  but may repeat (the tool-call parsers of every syntax, like most JSON parsers, keep the last
+  value).
+- An object with `minProperties` or `maxProperties` takes the same rule with an exact count when
+  every optional property is tracked (above) and it admits no other key: a key is admitted only
+  while the object stays within `maxProperties` with room for its remaining required properties,
+  and the object ends at `minProperties` or more. Any other counted object (a key that may repeat
+  would count twice for one property) keeps its optional properties in schema order, so list them
+  in the order the prompt asks for them.
 
 Where each constraint applies, and what it holds:
 
@@ -838,15 +843,28 @@ Where each constraint applies, and what it holds:
 | `response_format` `json_schema` | always | the schema, keys as above |
 | `response_format` `json_object` | always | any JSON object |
 | Tool call, JSON syntaxes (Hermes, Mistral, Llama 3, gpt-oss harmony, Granite) | `tool_choice` `required` or named, a `strict` tool, or `parallel_tool_calls: false` | `strict` tool: its schema, keys as above; other tools: any JSON object |
-| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, values free |
-| Tool call, Gemma 4, Pythonic (OLMo 3), ATEM | the same | the call syntax only, `strict` or not: the schema is not applied |
+| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, each value any text up to `</parameter>` |
+| Tool call, Gemma 4 | the same | `strict` tool: its schema, keys as above, in Gemma's value format (keys bare when they are made of letters, digits and `_-.$@`, otherwise `<\|"\|>`-quoted; strings `<\|"\|>`-quoted; numbers, booleans and null bare; the root must be `{"type": "object"}`; refused, `unsupported_schema`: a key or const/enum string holding `<\|"\|>`, a string pattern or format that may write `<`); other tools: any object in that format (a bare word as a value, which the parser reads as a string, is not written) |
+| Tool call, Pythonic (OLMo 3) | the same | `strict` tool: its schema, keys as above, as `name=value` keywords with JSON values (refused, `unsupported_schema`: a top-level name that is not a Python identifier, keys by pattern at the top level, a reference back to the root); other tools: any text |
+| Tool call, ATEM | the same | `strict` tool: its schema, keys as above, as `<atem:parameter name="K">` blocks, a string as the raw text between the tags and other values as JSON (refused, `unsupported_schema`: a name with a quote mark, keys by pattern at the top level, a reference back to the root, a const/enum string holding `</atem:parameter>`, a top-level string pattern or format that may write `<`); other tools: any text |
 | A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
+
+In Qwen XML and ATEM a parameter's text is untyped: a value whose schema admits a string is read
+back as a string ([parameter conversion](#tool-call-parameter-conversion-qwen)). A strict schema
+that unions a string with another type (`anyOf` of a patterned string and an integer, say) can
+have the other type written and read back as its text.
 
 The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning
 and the grammar opens there ([reasoning output](#reasoning-output)). Whitespace between JSON tokens
 (and inside Gemma 4 arguments) is bounded to runs of 64 characters, so a model cannot write
 whitespace until `max_tokens`; a pretty-printed object with four-space indents fits it to depth 15,
 and deeper indents are written shorter. Nesting depth is not bounded.
+
+Twenty strict tools compile in about 1.2 s to 35-56 MB on the 248k (Qwen3.5) and 262k (Gemma 4)
+vocabularies, and a token mask along a call costs under 1 ms, in every syntax
+(`ninferno_tool_grammar_budget_test` with `NINFERNO_GRAMMAR_TOKENIZER` naming a tokenizer.json). A
+free Gemma 4 argument key may be any name, so the mask at its start checks the key-like tokens at
+run time: up to 30 ms.
 
 `tools/smoke/serve_key_order.py` measures this against a running server: five optional fields
 asked for out of schema order, constrained and unconstrained, reporting the fields lost per run,
@@ -1796,7 +1814,7 @@ Serve writes human-readable operational records to stderr as
 rung's `max_context`, `kv_tokens`, `cached_device_states`, `prefill_chunk`, `step`, `survival`,
 `bytes` and `needed_bytes`, the device, weight and free bytes, the margins `base_margin_bytes`,
 `reserve_bytes` and `allowance_bytes`, `top_shortfall_bytes`, `next_shortfall_bytes`,
-`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `artifact_io`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
 | `request_start` | protocol, resolved sampler and seed, the plan ladder's rung (`plan_level`), requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
 | `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |

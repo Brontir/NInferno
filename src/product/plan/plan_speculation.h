@@ -186,6 +186,13 @@ struct PlannedSpeculation {
     SpeculationReport speculation;
 };
 
+// The draft head a run of `speculative` drafts with on a target of `model`: the proposal head it
+// holds (an artifact's, or the one its conversion adds: PlanModelFacts::proposal_bytes) under a
+// drafter it serves and no separate drafter, as the start's model_draft_head sets it; else as
+// given. The family planner sizes the restricted head's logits.
+[[nodiscard]] ProposalHead planned_proposal_head(const runtime::PlanModelFacts& model,
+                                                 const SpeculativeOptions& speculative) noexcept;
+
 // Runs the start's order over the dry run: `options` the Engine options the server builds with no
 // speculation chosen yet (its --spec settings in options.speculative for an explicit --spec),
 // `facts` the target's (the drafter's weights are added for a separate drafter when known:

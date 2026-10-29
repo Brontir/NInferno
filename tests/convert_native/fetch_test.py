@@ -14,6 +14,7 @@ architecture refused from config.json before any weight moves, and $HF_HUB_OFFLI
 from __future__ import annotations
 
 import json
+import struct
 import os
 from pathlib import Path
 import random
@@ -86,6 +87,22 @@ def main() -> int:
     ggufhead = {"m-Q4_K_M.gguf": blob(3 * MIB + 5, 50), "m-Q8_0.gguf": blob(2 * MIB, 51)}
     hub.add_repo("org/ggufhead", ggufhead)
     hub.repos["org/ggufhead"]["no_sizes"] = True
+    # A split model whose output.weight lies in its second part (each part's header lists its own
+    # tensors), part 0 holding the token embedding: the head is read from part 2, never the
+    # embedding of an untied model.
+    def tensor_info(name, ne, ggml_type):
+        raw = name.encode()
+        return (struct.pack("<Q", len(raw)) + raw + struct.pack("<I", len(ne)) +
+                b"".join(struct.pack("<Q", n) for n in ne) + struct.pack("<IQ", ggml_type, 0))
+    def with_info(data, at, info):
+        return data[:at] + info + data[at + len(info):]
+    ggufsplit = {
+        "m-Q4_K_M-00001-of-00002.gguf": with_info(blob(2 * MIB, 53), 600 * 1024,
+                                                  tensor_info("token_embd.weight", [256, 1024], 8)),
+        "m-Q4_K_M-00002-of-00002.gguf": with_info(blob(2 * MIB, 54), 4096,
+                                                  tensor_info("output.weight", [256, 1024], 14)),
+    }
+    hub.add_repo("org/ggufsplit", ggufsplit)
     # A CDN that ignores ranges (a 200 for any Range): a window's read drops the leading bytes.
     ggufnorange = {"m-Q4_K_M.gguf": blob(3 * MIB, 52)}
     hub.add_repo("org/ggufnorange", ggufnorange)
@@ -325,6 +342,17 @@ def main() -> int:
             data = ggufhead["m-Q4_K_M.gguf"]
             window = head("Q4_K_M", MIB, begin=MIB + 3)
             case("gguf window", window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
+            # A split model's head from its later part (Q6_K: 210 bytes a 256-value block), not
+            # the Q8_0 embedding in part 0; a tied model's, the embedding.
+            def heads(shape):
+                environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
+                environment["HF_ENDPOINT"] = base
+                result = subprocess.run([str(probe), "org/ggufsplit", "--heads=Q4_K_M", str(600 * 1024),
+                                         str(work / f"cache-split-{shape.replace(':', '-')}"), shape],
+                                        capture_output=True, text=True, env=environment)
+                return json.loads(result.stdout) if result.returncode == 0 else {"error": result.stderr}
+            case("split gguf head from its later part", heads("256:1024") == {"Q4_K_M": 210 * 1024})
+            case("split gguf tied head: the embedding", heads("256:1024:tied") == {"Q4_K_M": 8 * 34 * 1024})
             data = ggufnorange["m-Q4_K_M.gguf"]
             window = head("Q4_K_M", MIB, repo="org/ggufnorange", begin=MIB + 3)
             case("gguf window from a server without ranges",
