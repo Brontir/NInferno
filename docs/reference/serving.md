@@ -640,8 +640,8 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then.
-- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema (in the
-  JSON and Qwen XML call syntaxes; [key order](#key-order-under-an-output-constraint)), and
+- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
+  call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
 - A JSON `response_format` (`json_schema` or `json_object`) beside enabled tools, as Agent SDKs
   send. The answer is the calls or a text answer in that format, nothing else. When a call is
@@ -828,8 +828,12 @@ still valid JSON. NInferno's grammars let the model write keys in its own order:
   with three required. Optional properties past those (in schema order), and every optional
   property of an object with `patternProperties` or `propertyNames`, may still come in any order
   but may repeat (the tool-call parser, like most JSON parsers, keeps the last value).
-- An object with `minProperties` or `maxProperties` keeps its optional properties in schema order;
-  list them in the order the prompt asks for them.
+- An object with `minProperties` or `maxProperties` takes the same rule with an exact count: a key
+  is admitted only while the object stays within `maxProperties` with room for its remaining
+  required properties, and the object ends at `minProperties` or more. The count joins the state
+  (keys past the tracked optional ones counted up to the bound); one whose states would pass 256
+  keeps its optional properties in schema order, so list them in the order the prompt asks for
+  them.
 
 Where each constraint applies, and what it holds:
 
@@ -838,8 +842,10 @@ Where each constraint applies, and what it holds:
 | `response_format` `json_schema` | always | the schema, keys as above |
 | `response_format` `json_object` | always | any JSON object |
 | Tool call, JSON syntaxes (Hermes, Mistral, Llama 3, gpt-oss harmony, Granite) | `tool_choice` `required` or named, a `strict` tool, or `parallel_tool_calls: false` | `strict` tool: its schema, keys as above; other tools: any JSON object |
-| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, values free |
-| Tool call, Gemma 4, Pythonic (OLMo 3), ATEM | the same | the call syntax only, `strict` or not: the schema is not applied |
+| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, each value any text up to `</parameter>` |
+| Tool call, Gemma 4 | the same | `strict` tool: its schema, keys as above, in Gemma's value format (keys bare when they are made of letters, digits and `_-.$@`, otherwise `<\|"\|>`-quoted; strings `<\|"\|>`-quoted; numbers, booleans and null bare); other tools: any object in that format |
+| Tool call, Pythonic (OLMo 3) | the same | `strict` tool: its schema, keys as above, as `name=value` keywords with JSON values (a top-level name that is not a Python identifier is refused, `unsupported_schema`); other tools: any text |
+| Tool call, ATEM | the same | `strict` tool: its schema, keys as above, as `<atem:parameter name="K">` blocks, a string as raw text and other values as JSON (a name with a quote mark is refused, `unsupported_schema`); other tools: any text |
 | A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
 
 The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning
@@ -847,6 +853,12 @@ and the grammar opens there ([reasoning output](#reasoning-output)). Whitespace 
 (and inside Gemma 4 arguments) is bounded to runs of 64 characters, so a model cannot write
 whitespace until `max_tokens`; a pretty-printed object with four-space indents fits it to depth 15,
 and deeper indents are written shorter. Nesting depth is not bounded.
+
+Twenty strict tools compile in about 1.2 s to 35-56 MB on the 248k (Qwen3.5) and 262k (Gemma 4)
+vocabularies, and a token mask along a call costs under 1 ms, in every syntax
+(`ninferno_tool_grammar_budget_test` with `NINFERNO_GRAMMAR_TOKENIZER` naming a tokenizer.json). A
+free Gemma 4 argument key may be any name, so the mask at its start checks the key-like tokens at
+run time: up to 30 ms.
 
 `tools/smoke/serve_key_order.py` measures this against a running server: five optional fields
 asked for out of schema order, constrained and unconstrained, reporting the fields lost per run,

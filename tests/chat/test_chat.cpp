@@ -954,6 +954,46 @@ int test_argument_key_order() {
             }
         }
     }
+    // A strict schema a syntax cannot write is refused, not silently left unenforced.
+    for (const auto& [format, property] :
+         std::vector<std::pair<ToolCallFormat, std::string>>{
+             {ToolCallFormat::Pythonic, "max-results"}, {ToolCallFormat::Atem, "say \"hi\""}}) {
+        Json refused                      = Json::parse(R"({"type":"object","properties":{}})");
+        refused["properties"][property]   = Json{{"type", "string"}};
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name = "fill", .parameters_json = refused.dump(), .strict = true}};
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition             = ninferno::chat::tool_call_syntax(format).structural_tag(
+            tools, ToolCallRequirement::Required, "", true);
+        std::string code = "accepted";
+        try {
+            (void)compiler.compile(spec);
+        } catch (const ninferno::OutputConstraintError& error) { code = error.code(); }
+        failures += check(code == "unsupported_schema",
+                          std::string(ninferno::chat::tool_call_format_name(format)) +
+                              " strict name '" + property + "' refused: " + code);
+    }
+    // Gemma 4 writes a key of other characters quoted, and its parser reads it back.
+    {
+        const Json spaced = Json::parse(
+            R"({"type":"object","properties":{"two words":{"type":"integer"}},"required":["two words"],"additionalProperties":false})");
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name = "fill", .parameters_json = spaced.dump(), .strict = true}};
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition = ninferno::chat::tool_call_syntax(ToolCallFormat::Gemma4)
+                              .structural_tag(tools, ToolCallRequirement::Named, "fill", true);
+        const auto compiled = compiler.compile(spec);
+        failures += check(
+            grammar_accepts(compiled, "<|tool_call>call:fill{<|\"|>two words<|\"|>:3}<tool_call|>"),
+            "gemma4 strict quoted key");
+        failures += check(
+            !grammar_accepts(compiled, "<|tool_call>call:fill{two words:3}<tool_call|>"),
+            "gemma4 strict refuses a bare key with a space");
+    }
     return failures;
 }
 

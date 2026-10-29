@@ -19,8 +19,8 @@ target_include_directories(ninferno_third_party_xgrammar SYSTEM PUBLIC
 target_include_directories(ninferno_third_party_xgrammar PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cpp)
 # XGRAMMAR_LOG_CUSTOMIZE is upstream's logging hook. The NInferno-owned ninferno/log_hook.cc
 # implements LogFatalImpl and LogMessageImpl so a compile-time degradation warning becomes a
-# request error rather than a stderr line. The one upstream source change (object key order in
-# cpp/json_schema_converter.cc) is described in README.ninferno.md.
+# request error rather than a stderr line. The upstream source changes (object key order and a
+# caller-made converter, in cpp/json_schema_converter.*) are described in README.ninferno.md.
 target_compile_definitions(ninferno_third_party_xgrammar PUBLIC
   XGRAMMAR_LOG_CUSTOMIZE=1
   XGRAMMAR_ENABLE_CPPTRACE=0

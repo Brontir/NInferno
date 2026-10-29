@@ -203,8 +203,11 @@ std::optional<std::string> argument_style_grammar(const nlohmann::ordered_json& 
         throw OutputConstraintError("invalid_structural_tag",
                                     "a " + name + " format needs a json_schema object");
     }
+    const std::string normalized = normalize_supported_json_schema(*schema).dump();
     try {
-        return make(normalize_supported_json_schema(*schema).dump(), run);
+        return make(normalized, run);
+    } catch (const OutputConstraintError&) {
+        throw;
     } catch (const std::invalid_argument& error) {
         throw OutputConstraintError("unsupported_schema",
                                     "the " + name + " call syntax cannot hold this schema: " +
