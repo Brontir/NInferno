@@ -126,6 +126,13 @@ ninferno_add_test(ninferno_chat_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../chat/test_chat.cpp"
   LIBRARIES ninferno_chat ninferno_text ninferno_structured ninferno::json)
 
+# Strict tool-call grammars of twenty tools against a real vocabulary: compile time, memory and
+# mask time per call syntax. NINFERNO_GRAMMAR_TOKENIZER names a tokenizer.json; skipped without.
+ninferno_add_test(ninferno_tool_grammar_budget_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../chat/test_tool_grammar_budget.cpp"
+  LIBRARIES ninferno_chat ninferno_text ninferno_structured ninferno::json)
+set_tests_properties(ninferno_tool_grammar_budget_test PROPERTIES SKIP_RETURN_CODE 77)
+
 # YaRN rotary frequencies (core/yarn.h, the converter and --rope-yarn-factor), no GPU.
 ninferno_add_test(ninferno_yarn_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_yarn.cpp"
   LIBRARIES ninferno_core)

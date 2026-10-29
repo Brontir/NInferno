@@ -1,0 +1,481 @@
+// NInferno-owned file (not upstream): see tool_syntax_grammars.h.
+
+#include "tool_syntax_grammars.h"
+
+#include <picojson.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "grammar_functor.h"
+#include "json_schema_converter.h"
+#include "json_schema_converter_ext.h"
+#include "support/encoding.h"
+#include "support/json_parse.h"
+
+namespace ninferno_xgrammar {
+namespace {
+
+using xgrammar::JSONFormat;
+using xgrammar::JSONSchemaConverter;
+using xgrammar::SchemaSpecPtr;
+using Range = xgrammar::GrammarBuilder::CharacterClassElement;
+
+constexpr int32_t kMaxCodepoint = 0x10FFFF;
+
+// Code points of a UTF-8 string; nullopt when it is not valid UTF-8.
+std::optional<std::vector<int32_t>> codepoints(const std::string& text) {
+    std::vector<int32_t> out;
+    for (std::size_t at = 0; at < text.size();) {
+        const auto byte = static_cast<unsigned char>(text[at]);
+        int length      = 0;
+        int32_t value   = 0;
+        if (byte < 0x80) {
+            length = 1;
+            value  = byte;
+        } else if ((byte & 0xE0) == 0xC0) {
+            length = 2;
+            value  = byte & 0x1F;
+        } else if ((byte & 0xF0) == 0xE0) {
+            length = 3;
+            value  = byte & 0x0F;
+        } else if ((byte & 0xF8) == 0xF0) {
+            length = 4;
+            value  = byte & 0x07;
+        } else {
+            return std::nullopt;
+        }
+        if (at + length > text.size()) { return std::nullopt; }
+        for (int i = 1; i < length; ++i) {
+            const auto next = static_cast<unsigned char>(text[at + i]);
+            if ((next & 0xC0) != 0x80) { return std::nullopt; }
+            value = (value << 6) | (next & 0x3F);
+        }
+        out.push_back(value);
+        at += length;
+    }
+    return out;
+}
+
+// `ranges` (sorted, disjoint) without the code points in `removed`.
+std::vector<Range> subtract(const std::vector<Range>& ranges, std::vector<int32_t> removed) {
+    std::sort(removed.begin(), removed.end());
+    std::vector<Range> out;
+    for (const Range& range : ranges) {
+        int32_t lower = range.lower;
+        for (const int32_t point : removed) {
+            if (point < lower || point > range.upper) { continue; }
+            if (point > lower) { out.push_back({lower, point - 1}); }
+            lower = point + 1;
+        }
+        if (lower <= range.upper) { out.push_back({lower, range.upper}); }
+    }
+    return out;
+}
+
+// Every code point except `excluded` (sorted ascending, no repeats).
+std::vector<Range> all_but(std::vector<int32_t> excluded) {
+    return subtract({{0, kMaxCodepoint}}, std::move(excluded));
+}
+
+bool admits(const std::vector<Range>& ranges, int32_t point) {
+    return std::any_of(ranges.begin(), ranges.end(), [point](const Range& range) {
+        return point >= range.lower && point <= range.upper;
+    });
+}
+
+// A converter that can spell "a key over these code points, none of these names": the additional
+// keys of an object whose declared keys must not be written a second time through them.
+class KeyedConverter : public JSONSchemaConverter {
+public:
+    using JSONSchemaConverter::JSONSchemaConverter;
+
+protected:
+    int32_t keys_excluding(const std::vector<std::string>& names, const std::vector<Range>& first,
+                           const std::vector<Range>& rest, const std::string& hint) {
+        struct Node {
+            std::map<int32_t, std::size_t> children;
+            bool terminal = false;
+        };
+        std::vector<Node> nodes(1);
+        for (const std::string& name : names) {
+            const std::optional<std::vector<int32_t>> points = codepoints(name);
+            if (!points || points->empty()) { continue; }
+            bool spellable = true;
+            for (std::size_t i = 0; i < points->size(); ++i) {
+                spellable = spellable && admits(i == 0 ? first : rest, (*points)[i]);
+            }
+            if (!spellable) { continue; }
+            std::size_t at = 0;
+            for (const int32_t point : *points) {
+                const auto found = nodes[at].children.find(point);
+                if (found != nodes[at].children.end()) {
+                    at = found->second;
+                } else {
+                    nodes.emplace_back();
+                    nodes[at].children.emplace(point, nodes.size() - 1);
+                    at = nodes.size() - 1;
+                }
+            }
+            nodes[at].terminal = true;
+        }
+        const int32_t tail = builder_.AddCharacterClassStar(rest);
+        std::vector<int32_t> rules(nodes.size());
+        for (std::size_t index = 0; index < nodes.size(); ++index) {
+            rules[index] = builder_.AddEmptyRuleWithHint(hint + "_" + std::to_string(index));
+        }
+        for (std::size_t index = 0; index < nodes.size(); ++index) {
+            const Node& node                 = nodes[index];
+            const std::vector<Range>& admitted = index == 0 ? first : rest;
+            std::vector<int32_t> choices;
+            std::vector<int32_t> taken;
+            for (const auto& [point, child] : node.children) {
+                taken.push_back(point);
+                choices.push_back(
+                    Sequence({ByteString(xgrammar::CharToUTF8(point)), RuleRef(rules[child])}));
+            }
+            const std::vector<Range> others = subtract(admitted, taken);
+            if (!others.empty()) {
+                choices.push_back(Sequence({builder_.AddCharacterClass(others), tail}));
+            }
+            if (index != 0 && !node.terminal) { choices.push_back(Empty()); }
+            builder_.UpdateRuleBody(rules[index], Choice(choices));
+        }
+        return RuleRef(rules[0]);
+    }
+
+    static std::vector<std::string> names_of(const std::vector<xgrammar::ObjectSpec::Property>& p) {
+        std::vector<std::string> out;
+        out.reserve(p.size());
+        for (const auto& property : p) { out.push_back(property.name); }
+        return out;
+    }
+};
+
+// ---------------------------------------------------------------------------------------------
+// Gemma 4
+
+const std::string kGemmaQuote = "<|\"|>";
+const std::string kGemmaKey   = "ninferno_gemma_key";
+const std::string kGemmaQChar = "ninferno_gemma_qchar";
+
+// Bare keys and bare values never hold these (Gemma4Syntax::Reader, kArgumentsGrammar).
+const std::vector<int32_t> kGemmaBareExcluded = {'\t', '\n', '\r', ' ', '"', ',', ':',
+                                                 '<',  '>',  '[',  ']', '{', '}'};
+
+bool gemma_bare_key(const std::string& key) {
+    if (key.empty()) { return false; }
+    return std::none_of(key.begin(), key.end(), [](char c) {
+        return std::find(kGemmaBareExcluded.begin(), kGemmaBareExcluded.end(),
+                         static_cast<unsigned char>(c)) != kGemmaBareExcluded.end();
+    });
+}
+
+std::string gemma_key_text(const std::string& key) {
+    return gemma_bare_key(key) ? key : kGemmaQuote + key + kGemmaQuote;
+}
+
+// A JSON value written the way Gemma 4 writes it.
+std::string gemma_literal(const picojson::value& value) {
+    if (value.is<std::string>()) { return kGemmaQuote + value.get<std::string>() + kGemmaQuote; }
+    if (value.is<picojson::array>()) {
+        std::string out = "[";
+        bool first      = true;
+        for (const picojson::value& item : value.get<picojson::array>()) {
+            out += (first ? "" : ",") + gemma_literal(item);
+            first = false;
+        }
+        return out + "]";
+    }
+    if (value.is<picojson::object>()) {
+        std::string out = "{";
+        bool first      = true;
+        for (const auto& [key, item] : value.get<picojson::object>()) {
+            out += (first ? "" : ",") + gemma_key_text(key) + ":" + gemma_literal(item);
+            first = false;
+        }
+        return out + "}";
+    }
+    return value.serialize();
+}
+
+std::string gemma_literal(const std::string& json) {
+    picojson::value value;
+    const std::string error = xgrammar::ParseJSON(value, json);
+    if (!error.empty()) { throw std::invalid_argument("a const or enum value is not JSON"); }
+    return gemma_literal(value);
+}
+
+class Gemma4Converter final : public KeyedConverter {
+public:
+    Gemma4Converter(int max_whitespace, RefResolver resolver)
+        : KeyedConverter(std::nullopt, std::nullopt, true, max_whitespace, std::move(resolver)) {}
+
+protected:
+    void AddBasicRules() override {
+        builder_.AddEmptyRule(kGemmaQChar);
+        JSONSchemaConverter::AddBasicRules({kGemmaKey});
+        // A quoted string: anything up to the closing <|"|> (Reader::quoted takes the first one).
+        builder_.UpdateRuleBody(
+            kGemmaQChar,
+            Choice({builder_.AddCharacterClass({{'<', '<'}}, true),
+                    Sequence({ByteString("<"), builder_.AddCharacterClass({{'|', '|'}}, true)}),
+                    Sequence({ByteString("<|"), builder_.AddCharacterClass({{'"', '"'}}, true)}),
+                    Sequence({ByteString("<|\""), builder_.AddCharacterClass({{'|', '|'}}, true)}),
+                    Sequence({ByteString("<|\"|"),
+                              builder_.AddCharacterClass({{'>', '>'}}, true)})}));
+        builder_.UpdateRuleBody(
+            kBasicString,
+            Sequence({ByteString(kGemmaQuote),
+                      Repeat("ninferno_gemma_qchars", RuleRef(kGemmaQChar), 0, -1),
+                      ByteString(kGemmaQuote)}));
+        const std::vector<Range> bare = all_but(kGemmaBareExcluded);
+        builder_.UpdateRuleBody(
+            kGemmaKey,
+            Choice({Sequence({builder_.AddCharacterClass(bare), builder_.AddCharacterClassStar(bare)}),
+                    RuleRef(kBasicString)}));
+    }
+
+    int32_t GenerateString(const xgrammar::StringSpec& spec, const std::string& rule_name) override {
+        if (!spec.pattern.has_value() && !spec.format.has_value() && spec.min_length == 0 &&
+            spec.max_length == -1) {
+            return RuleRef(kBasicString);
+        }
+        int32_t body = -1;
+        if (spec.format.has_value()) {
+            if (const auto regex = JSONFormatToRegexPattern(*spec.format)) {
+                body = RegexExpression(*regex, false, true);
+            }
+        }
+        if (body == -1 && spec.pattern.has_value()) {
+            body = RegexExpression(*spec.pattern, false, true);
+        }
+        if (body == -1) {
+            // Length in code points; '<' is left out so no run of them can form the closing quote.
+            body = Repeat(rule_name + "_characters", builder_.AddCharacterClass({{'<', '<'}}, true),
+                          static_cast<int32_t>(spec.min_length),
+                          static_cast<int32_t>(spec.max_length));
+        }
+        return Sequence({ByteString(kGemmaQuote), body, ByteString(kGemmaQuote)});
+    }
+
+    int32_t GenerateConst(const xgrammar::ConstSpec& spec, const std::string&) override {
+        return ByteString(gemma_literal(spec.json_value));
+    }
+
+    int32_t GenerateEnum(const xgrammar::EnumSpec& spec, const std::string&) override {
+        std::vector<int32_t> values;
+        for (const std::string& value : spec.json_values) {
+            values.push_back(ByteString(gemma_literal(value)));
+        }
+        return Choice(values);
+    }
+
+    int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr&) override {
+        return ByteString(gemma_key_text(key));
+    }
+
+    std::string GetKeyPattern() const override { return kGemmaKey; }
+
+    int32_t GetKeyPatternExcluding(const std::vector<xgrammar::ObjectSpec::Property>& properties,
+                                   const std::string& rule_name) override {
+        // Bare keys only: a quoted one could spell a declared name again.
+        const std::vector<Range> bare = all_but(kGemmaBareExcluded);
+        return keys_excluding(names_of(properties), bare, bare, rule_name + "_addl_key");
+    }
+};
+
+// ---------------------------------------------------------------------------------------------
+// Pythonic
+
+const std::string kPythonIdentifier = "ninferno_python_identifier";
+const std::vector<Range> kIdentifierFirst = {{'A', 'Z'}, {'_', '_'}, {'a', 'z'}};
+const std::vector<Range> kIdentifierRest  = {{'0', '9'}, {'A', 'Z'}, {'_', '_'}, {'a', 'z'}};
+
+bool python_identifier(const std::string& name) {
+    if (name.empty()) { return false; }
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        if (!admits(i == 0 ? kIdentifierFirst : kIdentifierRest,
+                    static_cast<unsigned char>(name[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// The arguments object is NAME(key=value, ...)'s keyword list (level 1, no braces); every value,
+// objects included, is JSON.
+class PythonicConverter final : public KeyedConverter {
+public:
+    PythonicConverter(int max_whitespace, RefResolver resolver)
+        : KeyedConverter(std::nullopt, std::nullopt, true, max_whitespace, std::move(resolver)) {}
+
+protected:
+    void AddBasicRules() override {
+        // The basic rules are values: build them as nested (JSON, with braces).
+        level_ = 1;
+        JSONSchemaConverter::AddBasicRules({kPythonIdentifier});
+        builder_.UpdateRuleBody(kPythonIdentifier,
+                                Sequence({builder_.AddCharacterClass(kIdentifierFirst),
+                                          builder_.AddCharacterClassStar(kIdentifierRest)}));
+        level_ = 0;
+    }
+
+    int32_t GenerateObject(const xgrammar::ObjectSpec& spec, const std::string& rule_name,
+                           bool) override {
+        if (level_ == 0) {
+            for (const auto& property : spec.properties) {
+                if (!python_identifier(property.name)) {
+                    throw std::invalid_argument("argument name '" + property.name +
+                                                "' is not a Python identifier");
+                }
+            }
+        }
+        ++level_;
+        const int32_t result = JSONSchemaConverter::GenerateObject(spec, rule_name, level_ > 1);
+        --level_;
+        return result;
+    }
+
+    // The root is the keyword list: never shared with a JSON object value through the cache.
+    void AddCache(const std::string& key, int32_t rule_id) override {
+        if (level_ > 0) { JSONSchemaConverter::AddCache(key, rule_id); }
+    }
+    std::optional<int32_t> GetCache(const std::string& key) const override {
+        return level_ > 0 ? JSONSchemaConverter::GetCache(key) : std::nullopt;
+    }
+
+    int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr& schema) override {
+        return level_ == 1 ? ByteString(key) : JSONSchemaConverter::FormatPropertyKey(key, schema);
+    }
+
+    int32_t FormatProperty(const std::string& key, int32_t value_rule_id,
+                           const std::string& rule_name, int64_t idx,
+                           const SchemaSpecPtr& schema) override {
+        if (level_ != 1) {
+            return JSONSchemaConverter::FormatProperty(key, value_rule_id, rule_name, idx, schema);
+        }
+        return Sequence({ByteString(key + "="), RuleRef(value_rule_id)});
+    }
+
+    int32_t FormatOtherProperty(int32_t key_pattern_expr, int32_t value_rule_id,
+                                const std::string& rule_name, const std::string& suffix,
+                                const SchemaSpecPtr& schema) override {
+        if (level_ != 1) {
+            return JSONSchemaConverter::FormatOtherProperty(key_pattern_expr, value_rule_id,
+                                                            rule_name, suffix, schema);
+        }
+        return Sequence({key_pattern_expr, ByteString("="), RuleRef(value_rule_id)});
+    }
+
+    std::string GetKeyPattern() const override {
+        return level_ == 1 ? kPythonIdentifier : JSONSchemaConverter::GetKeyPattern();
+    }
+
+    int32_t GetKeyPatternExcluding(const std::vector<xgrammar::ObjectSpec::Property>& properties,
+                                   const std::string& rule_name) override {
+        if (level_ != 1) {
+            return JSONSchemaConverter::GetKeyPatternExcluding(properties, rule_name);
+        }
+        return keys_excluding(names_of(properties), kIdentifierFirst, kIdentifierRest,
+                              rule_name + "_addl_key");
+    }
+
+private:
+    int level_ = 0;
+};
+
+// ---------------------------------------------------------------------------------------------
+// ATEM: MiniMax's XML parameters under the atem: prefix.
+
+const std::string kAtemParameter = "<atem:parameter name=\"";
+const std::string kAtemNameEnd   = "\">";
+const std::string kAtemClose     = "</atem:parameter>";
+
+class AtemConverter final : public xgrammar::XMLToolCallingConverter {
+public:
+    AtemConverter(int max_whitespace, RefResolver resolver)
+        : XMLToolCallingConverter(std::nullopt, std::nullopt, true, max_whitespace,
+                                  std::move(resolver), JSONFormat::kMiniMaxXML) {}
+
+protected:
+    void AddBasicRules() override {
+        XMLToolCallingConverter::AddBasicRules();
+        builder_.UpdateRuleBody(kXMLString, TagDispatch(false, {kAtemClose}));
+    }
+
+    int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr& schema) override {
+        if (nested_object_level_ > 1) {
+            return XMLToolCallingConverter::FormatPropertyKey(key, schema);
+        }
+        if (key.find('"') != std::string::npos) {
+            throw std::invalid_argument("argument name '" + key + "' holds a quote mark");
+        }
+        return ByteString(kAtemParameter + key + kAtemNameEnd);
+    }
+
+    int32_t FormatProperty(const std::string& key, int32_t value_rule_id,
+                           const std::string& rule_name, int64_t idx,
+                           const SchemaSpecPtr& schema) override {
+        if (nested_object_level_ > 1) {
+            return XMLToolCallingConverter::FormatProperty(key, value_rule_id, rule_name, idx,
+                                                           schema);
+        }
+        return parameter(FormatPropertyKey(key, schema), value_rule_id);
+    }
+
+    int32_t FormatOtherProperty(int32_t key_pattern_expr, int32_t value_rule_id,
+                                const std::string& rule_name, const std::string& suffix,
+                                const SchemaSpecPtr& schema) override {
+        if (nested_object_level_ > 1) {
+            return XMLToolCallingConverter::FormatOtherProperty(key_pattern_expr, value_rule_id,
+                                                                rule_name, suffix, schema);
+        }
+        return parameter(
+            Sequence({ByteString(kAtemParameter), key_pattern_expr, ByteString(kAtemNameEnd)}),
+            value_rule_id);
+    }
+
+private:
+    int32_t parameter(int32_t key, int32_t value_rule_id) {
+        // A string value is the raw text up to the close; another value is JSON, spaced freely.
+        if (value_rule_id == builder_.GetRuleId(kXMLString)) {
+            return Sequence({key, RuleRef(value_rule_id), ByteString(kAtemClose)});
+        }
+        return Sequence({key, WhitespaceExpression(), RuleRef(value_rule_id),
+                         WhitespaceExpression(), ByteString(kAtemClose)});
+    }
+};
+
+template <class Converter>
+std::string ebnf(const std::string& schema, JSONFormat parse_format, int max_whitespace) {
+    const xgrammar::Grammar grammar = xgrammar::JSONSchemaToGrammarWithConverter(
+        schema, parse_format, [max_whitespace](JSONSchemaConverter::RefResolver resolver) {
+            return std::unique_ptr<JSONSchemaConverter>(
+                new Converter(max_whitespace, std::move(resolver)));
+        });
+    return xgrammar::GrammarNormalizer::Apply(grammar).ToString();
+}
+
+} // namespace
+
+std::string gemma4_arguments_ebnf(const std::string& schema, int max_whitespace) {
+    return ebnf<Gemma4Converter>(schema, JSONFormat::kJSON, max_whitespace);
+}
+
+std::string pythonic_arguments_ebnf(const std::string& schema, int max_whitespace) {
+    return ebnf<PythonicConverter>(schema, JSONFormat::kJSON, max_whitespace);
+}
+
+std::string atem_arguments_ebnf(const std::string& schema, int max_whitespace) {
+    return ebnf<AtemConverter>(schema, JSONFormat::kMiniMaxXML, max_whitespace);
+}
+
+} // namespace ninferno_xgrammar

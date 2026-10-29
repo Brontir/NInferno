@@ -647,7 +647,8 @@ int test_structural_tags() {
          "<parameter=days>\n2\n</parameter>\n</function>\n</tool_call>",
          ""},
         {ToolCallFormat::Gemma4,
-         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>", ""},
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>",
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:<|\"|>two<|\"|>}<tool_call|>"},
         {ToolCallFormat::MistralJson, "[TOOL_CALLS]weather[ARGS]{\"city\": \"Oslo\", \"days\": 2}",
          "[TOOL_CALLS]weather[ARGS]{\"city\": 2, \"days\": 2}"},
         {ToolCallFormat::Llama3Json,
@@ -659,7 +660,8 @@ int test_structural_tags() {
          "<|start|>assistant<|channel|>commentary to=functions.weather <|constrain|>json"
          "<|message|>{\"city\": 2, \"days\": 2}<|call|>"},
         {ToolCallFormat::Pythonic,
-         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>", ""},
+         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>",
+         "<function_calls>weather(city=\"Oslo\", days=\"two\")</function_calls>"},
         {ToolCallFormat::GraniteJson,
          "<|tool_call|>[{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}]",
          "<|tool_call|>[{\"name\": \"weather\", \"arguments\": {\"city\": 2, \"days\": 2}}]"},
@@ -668,7 +670,10 @@ int test_structural_tags() {
          "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
          "<atem:parameter name=\"days\">2</atem:parameter>\n</atem:invoke>\n"
          "</atem:function_calls>",
-         ""},
+         " to=weather<|message|><atem:function_calls>\n<atem:invoke name=\"weather\">\n"
+         "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
+         "<atem:parameter name=\"days\">two</atem:parameter>\n</atem:invoke>\n"
+         "</atem:function_calls>"},
     };
     for (const Sample& sample : samples) {
         const std::string name(ninferno::chat::tool_call_format_name(sample.format));
@@ -710,6 +715,16 @@ int test_structural_tags() {
                                   name + " grammar bounds the whitespace after the calls");
             }
             if (sample.format == ToolCallFormat::Gemma4) {
+                // Strict arguments refuse an undeclared key; the checks below are of a non-strict
+                // tool's free arguments.
+                failures += check(!grammar_accepts(compiled,
+                                                   "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,"
+                                                   "days:2,tags:[3]}<tool_call|>"),
+                                  name + " strict grammar refuses an undeclared argument");
+                const std::vector<ToolCallConstraintTool> free_tools = {
+                    {.name = "weather", .parameters_json = kWeatherSchema.dump(), .strict = false}};
+                spec.definition = syntax.structural_tag(free_tools, requirement, "weather", true);
+                compiled        = compiler.compile(spec);
                 // Gemma's free-text arguments never hold a turn or channel marker.
                 failures += check(!grammar_accepts(compiled,
                                                    "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>}"
@@ -856,7 +871,7 @@ int test_argument_key_order() {
              }
              return "<|tool_call>call:fill{" + body + "}<tool_call|>";
          },
-         false},
+         true},
         {ToolCallFormat::Pythonic,
          [](const std::vector<std::string>& keys) {
              std::string body;
@@ -865,7 +880,17 @@ int test_argument_key_order() {
              }
              return "<function_calls>fill(" + body + ")</function_calls>";
          },
-         false},
+         true},
+        {ToolCallFormat::Atem,
+         [](const std::vector<std::string>& keys) {
+             std::string body;
+             for (const std::string& key : keys) {
+                 body += "<atem:parameter name=\"" + key + "\">v" + key + "</atem:parameter>\n";
+             }
+             return " to=fill<|message|><atem:function_calls>\n<atem:invoke name=\"fill\">\n" +
+                    body + "</atem:invoke>\n</atem:function_calls>";
+         },
+         true},
     };
     const ninferno::structured::ConstraintCompiler compiler(byte_vocabulary());
     const std::vector<std::string> definitions = {tool_definition("fill", schema)};
@@ -911,6 +936,21 @@ int test_argument_key_order() {
                     }
                 }
                 failures += check(all, label + " parser reads all five keys back");
+                if (!strict || !c.shaped) { continue; }
+                // Required A and D keep their order; the optional keys go anywhere around them.
+                Json mixed        = schema;
+                mixed["required"] = Json::array({"A", "D"});
+                const std::vector<ToolCallConstraintTool> spined = {
+                    {.name = "fill", .parameters_json = mixed.dump(), .strict = true}};
+                spec.definition    = syntax.structural_tag(spined, requirement, "fill", true);
+                const auto ordered = compiler.compile(spec);
+                failures += check(grammar_accepts(ordered, text), label + " mixed: C,A,E,B,D");
+                failures += check(grammar_accepts(ordered, c.call({"A", "D"})),
+                                  label + " mixed: the required keys only");
+                failures += check(!grammar_accepts(ordered, c.call({"D", "A"})),
+                                  label + " mixed: required keys keep their order");
+                failures += check(!grammar_accepts(ordered, c.call({"C", "A", "E"})),
+                                  label + " mixed: a required key cannot be skipped");
             }
         }
     }

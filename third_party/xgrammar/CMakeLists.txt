@@ -4,7 +4,8 @@ file(GLOB NINFERNO_XGRAMMAR_SOURCES CONFIGURE_DEPENDS
   ${CMAKE_CURRENT_SOURCE_DIR}/cpp/support/*.cc)
 
 add_library(ninferno_third_party_xgrammar STATIC ${NINFERNO_XGRAMMAR_SOURCES}
-  ${CMAKE_CURRENT_SOURCE_DIR}/ninferno/log_hook.cc)
+  ${CMAKE_CURRENT_SOURCE_DIR}/ninferno/log_hook.cc
+  ${CMAKE_CURRENT_SOURCE_DIR}/ninferno/tool_syntax_grammars.cc)
 add_library(ninferno::xgrammar ALIAS ninferno_third_party_xgrammar)
 
 target_compile_features(ninferno_third_party_xgrammar PUBLIC cxx_std_17)

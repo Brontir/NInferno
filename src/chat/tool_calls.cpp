@@ -1255,6 +1255,14 @@ std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos
     return std::nullopt;
 }
 
+// A strict tool's arguments in a call syntax XGrammar has no style for: the constraint compiler
+// turns this format into that syntax's grammar held to the schema (ninferno/types.h).
+OrderedJson argument_style_format(const ToolCallConstraintTool& tool, std::string_view style) {
+    return OrderedJson{{"type", "json_schema"},
+                       {"json_schema", OrderedJson::parse(tool.parameters_json)},
+                       {"style", std::string(style)}};
+}
+
 OrderedJson schema_or_object(const ToolCallConstraintTool& tool) {
     return tool.strict ? OrderedJson::parse(tool.parameters_json)
                        : OrderedJson{{"type", "object"}};
@@ -1479,10 +1487,18 @@ ws ::= [ \t\n]{0,64})GBNF";
         // Arguments are Gemma's own value syntax, not JSON: its grammar (kArgumentsGrammar). Free
         // text up to the close let a model made to call with nothing to call (tool_choice
         // "required") open a thought channel inside the arguments, or write on past their brace,
-        // and never close the call (gemma-4-26B-A4B-it Q4_0, "Hello there!").
+        // and never close the call (gemma-4-26B-A4B-it Q4_0, "Hello there!"). A strict tool's
+        // arguments are that syntax held to its schema (kGemma4ArgumentStyle), braces included.
         return calls_structural_tag(
             tools, requirement, named_tool, parallel_tool_calls, kOpen, "",
             [](const ToolCallConstraintTool& tool) {
+                if (tool.strict) {
+                    return OrderedJson{
+                        {"type", "tag"},
+                        {"begin", std::string(kOpen) + std::string(kCall) + tool.name},
+                        {"content", argument_style_format(tool, kGemma4ArgumentStyle)},
+                        {"end", std::string(kClose)}};
+                }
                 return OrderedJson{
                     {"type", "tag"},
                     {"begin", std::string(kOpen) + std::string(kCall) + tool.name + "{"},
@@ -1993,12 +2009,15 @@ public:
                                              ToolCallRequirement requirement,
                                              std::string_view named_tool,
                                              bool parallel_tool_calls) const override {
-        // Arguments are Python-style keywords, not a JSON object: no schema can shape them.
+        // Arguments are Python-style keywords: free text, or for a strict tool the keywords held
+        // to its schema (kPythonicArgumentStyle).
         return calls_structural_tag(tools, requirement, named_tool, parallel_tool_calls, kOpen,
                                     "\n", [](const ToolCallConstraintTool& tool) {
             return OrderedJson{{"type", "tag"},
                                {"begin", std::string(kOpen) + tool.name + "("},
-                               {"content", OrderedJson{{"type", "any_text"}}},
+                               {"content", tool.strict
+                                               ? argument_style_format(tool, kPythonicArgumentStyle)
+                                               : OrderedJson{{"type", "any_text"}}},
                                {"end", ")" + std::string(kClose)}};
         });
     }
@@ -2154,9 +2173,9 @@ public:
                                              ToolCallRequirement requirement,
                                              std::string_view named_tool,
                                              bool parallel_tool_calls) const override {
-        // Arguments are tagged text, not a JSON object: no schema can shape them. A call right
-        // after the generation prompt continues its "<|start|>assistant" header; later calls
-        // open their own message.
+        // Arguments are tagged text: free, or for a strict tool the parameters held to its schema
+        // (kAtemArgumentStyle). A call right after the generation prompt continues its
+        // "<|start|>assistant" header; later calls open their own message.
         return calls_structural_tag(
             tools, requirement, named_tool, parallel_tool_calls, kOpen,
             std::string(kEom) + std::string(kStart), [](const ToolCallConstraintTool& tool) {
@@ -2165,7 +2184,8 @@ public:
                     {"begin", " " + std::string(kTo) + tool.name + std::string(kMessage) +
                                   std::string(kOpen) + "\n" + std::string(kInvoke) + tool.name +
                                   std::string(kNameEnd) + "\n"},
-                    {"content", OrderedJson{{"type", "any_text"}}},
+                    {"content", tool.strict ? argument_style_format(tool, kAtemArgumentStyle)
+                                            : OrderedJson{{"type", "any_text"}}},
                     {"end", std::string(kInvokeClose) + "\n" + std::string(kClose)}};
             });
     }
