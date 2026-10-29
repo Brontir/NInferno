@@ -1201,6 +1201,15 @@ plan's speedup on Turing is predicted high by up to 12 % at mtp:2/3; its pick (d
 unaffected here, dflash rounds agree within 6.4 %. Most of the 12 % is the source being an Ada
 card: against the other non-Ada lab cards (mtp:2 1.53-1.59) Turing is about 5 % dearer.
 
+**For comparison, the facts path (Ada).** The same kit run on the RTX 4060 Ti 16GB (ad106, l4060,
+build 11388484; no lab pair of ad106, so the plan prices the rounds from the facts, ada, eta 0.148;
+591 s). Acceptance confirms the six lab pairs at all 8 configurations. R measured / R facts: mtp:2
+x0.998, mtp:3 x0.995, mtp:4 x0.972, mtp:5 x0.961, dflash:3 x0.949, dflash:5 x0.911, dflash:7 x0.884
+(1.559 against 1.764: contradicts at ±10 %); dflash:11 not priced. The MTP rounds hold the
+facts; the DFlash rounds of 6 and 8 verify rows are 9-12 % cheaper than their facts, the same sign
+and size as the 5070 Ti's in 56 (mismatch 1). Open with it: the facts overprice the T=6-8 verify
+on cards with few SMs (34 here, 70 there), a route fact not yet in the bytes model.
+
 **Open.** Nothing changes from one card: a Turing eta needs a second Turing card in the registry
 (53). Until then two things are wrong in the transfer, not in Turing: the source pair is the first
 current pair in the registry's order (`profile_for_target`'s fallback, `current.front()`), against
