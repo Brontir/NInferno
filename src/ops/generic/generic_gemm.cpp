@@ -954,27 +954,25 @@ std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
     return run >= 128 ? run : 4 * run;
 }
 
-// The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to two facts of
-// the addressing and the grid, never a timing:
-// - the CTA's longest warp walks more K steps of its rows than its load ring holds (two steps,
-//   rmma_kernel's ring; a step is rmma_k_step values): steps / warps rounded up, at least three.
-//   The CTA ends with that warp; with two steps or fewer its ring never refills, every step's
-//   load latency and the cross-warp reduction exposed (Q4_K K = 4096 on sixteen warps, two steps
-//   each, streamed DRAM at 57..70 % of peak on all five lab boards against 71..74 % for the best
-//   split). K = 2560 on eight warps (three steps for half the warps) keeps up: Q6_K 4096x2560 at
-//   T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX 3060 32.4
-//   against 32.9; the shortest warp's count, which would take four warps, lost there;
-// - of the splits that keep it, the one whose grid fills its last round of resident CTAs best:
-//   CTAs / (slots x rounds), slots = SMs x CTAs a SM holds, rounds = CTAs / slots rounded up; a
-//   tie keeps the format's pick (light_ggml_step, the Q6_K rule). RTX 4090 Q4_K 5120x17408 add,
-//   320 CTAs: four warps 0.625 (one round), eight 0.625 (two) — a tie, four kept (75 % of DRAM
-//   against 69 %); RTX 5070 Ti four warps 0.57, eight 0.76 (52 % against 63 %); RTX 4070 Ti four
-//   0.67, eight 0.89 (74 % against 86 %).
-// A one-tile store / add CTA of `w` K warps holds 16 / w a SM: kRmmaMinBlocks caps those kernels
-// at 128 registers a thread, 16 warps of a 64K-register SM. Eight and four warps are the
-// candidates; sixteen hold one CTA a SM, a grid of more CTAs than SMs running in rounds of one CTA
-// a SM whose cross-warp reduction and store run with nothing else resident. The pick unchanged
-// where neither split keeps the ring fact.
+// The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to one fact of
+// the addressing, never a timing: the CTA's longest warp walks more K steps of its rows than its
+// load ring holds (two steps, rmma_kernel's ring; a step is rmma_k_step values): steps / warps
+// rounded up, at least three. The CTA ends with that warp; with two steps or fewer its ring never
+// refills, every step's load latency and the cross-warp reduction exposed (Q4_K K = 4096 on
+// sixteen warps, two steps each, streamed DRAM at 57..70 % of peak on all five lab boards against
+// 71..74 % for the best split). K = 2560 on eight warps (three steps for half the warps) keeps up:
+// Q6_K 4096x2560 at T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX
+// 3060 32.4 against 32.9 (the RTX 5070 Ti ran four warps 11 % faster there: open, see below).
+// A pick that breaks it takes eight warps, else four, whichever keeps it; the pick unchanged
+// where it holds or neither does. Sixteen warps hold one CTA a SM (kRmmaMinBlocks caps a one-tile
+// store / add kernel at 128 registers a thread, so `w` K warps hold 16 / w CTAs a SM): a grid of
+// more CTAs than SMs would run them in rounds of one CTA a SM.
+// Open (DECISIONS): how much a grid's last, partly filled round of resident CTAs costs. Pricing
+// it by its empty slots was wrong on two of four boards (RTX 4090 Q6_K 3840x15360 add: four warps
+// in one half-filled round 65 us, eight warps in one full round 79; RTX 3060 Q4_K 4096x2560:
+// eight warps 8-10 % slower although they fill more) and right on two (RTX 4070 Ti / 5070 Ti
+// light K-quants 6-12 % faster on eight): a round under the warps that saturate DRAM is what
+// costs, and that count is not a fact we hold yet.
 int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::int64_t sms) {
     if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
     const RmmaScheduleInfo info = rmma_schedule_info(index);
@@ -984,28 +982,11 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
     const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
     const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
-    // The last round's fill as the fraction CTAs / (slots x rounds), compared exactly.
-    struct Fill {
-        std::int64_t ctas, cells;
-    };
-    const auto fill = [&](int warps_k) {
-        const std::int64_t slots  = sms * (16 / warps_k);
-        const std::int64_t rounds = (ctas + slots - 1) / slots;
-        return Fill{ctas, slots * rounds};
-    };
-    const auto better = [](Fill a, Fill b) { return a.ctas * b.cells > b.ctas * a.cells; };
-    int best      = info.warps_k;
-    bool kept     = refills(best);
-    Fill best_fill = fill(best);
+    if (refills(info.warps_k)) return index;
     for (const int warps_k : {8, 4}) {
-        if (warps_k == info.warps_k || !refills(warps_k)) continue;
-        if (!kept || better(fill(warps_k), best_fill)) {
-            best      = warps_k;
-            kept      = true;
-            best_fill = fill(warps_k);
-        }
+        if (warps_k != info.warps_k && refills(warps_k)) return rmma_index(1, warps_k, 1, 1);
     }
-    return best == info.warps_k ? index : rmma_index(1, best, 1, 1);
+    return index;
 }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {

@@ -1164,3 +1164,32 @@ accept more than the corpus' prose (50). Master served the same (the 5070 Ti's p
    out; the test bounds it at 15 %), its pick is right.
 2. gpt-oss rounds are 6-10 % dearer than their facts on both cards (MoE routing: 53's +12.5 %).
 3. MTP at depth 3 is 7-9 % dearer than its facts on both cards (the 9B, Gemma 4 12B).
+
+## 61. The decode K split of one-tile calls: the ring fact holds, the last round's cost is open (29.10, open, measured)
+
+**Rule now (`rmma_k_split_fit`).** A one-tile store / add call of more CTAs than SMs (T <= 8) keeps
+its K split where the CTA's longest warp walks more K steps than its two-step load ring holds
+(steps / warps rounded up, at least three; a step is four decoder runs, `rmma_k_step`: 32 values
+for BF16 / Q8, 64 for FP8 / NVFP4 / the 16-value groupwise runs, 128 for the 32-value decoders);
+a split that breaks it takes eight warps, else four. Every one-tile store / add kernel is capped
+at 128 registers a thread (`kRmmaMinBlocks`), so `w` K warps hold 16 / w CTAs a SM as a fact
+(ptxas gave Q2_K w1x4 146-152 registers and Q5_K w1x4 129 on sm_120 before the cap).
+
+**Verified.** Q4_K K = 4096 on sixteen warps (two steps each): 57-70 % of DRAM peak on five lab
+boards against 71-74 % for the best split. Q6_K 4096x2560 on eight warps (three steps for half the
+warps) against four: RTX 4070 Ti 19.6 against 21.1 us, RTX 3060 32.4 against 32.9 (the shortest
+warp's count would have taken four). Against it: the RTX 5070 Ti ran four warps 11 % faster on the
+same shape (10.1 against 11.3 us).
+
+**Open: what a grid's partly filled last round costs.** Pricing it by its empty slots (the fill
+CTAs / (slots x rounds), the better fill winning) was wrong on two of four boards and right on
+two, measured with `ninferno_r8_schedule_bench` against master 8e7db18c:
+- wrong: RTX 4090 Q6_K 3840x15360 add, four warps in one half-filled round 65.3 us, eight warps
+  in a full round 79.0 (x1.21); RTX 3060 Q4_K 4096x2560 / 4096x3072 store, eight warps 4-10 %
+  slower although they fill more;
+- right: RTX 4070 Ti Q4_K 4096x3072 / 5120x5120 store, eight warps 5-8 % faster; RTX 5070 Ti Q4_K
+  5120x5120 store and Q5_K 5120x17408 add, eight warps 6-12 % faster.
+The slot model predicted 17-25 % where the boards showed -10..+8 %: a round with fewer resident
+warps is slow only below the warps that keep DRAM busy, which depends on the bytes each warp has
+in flight (its ring) and the DRAM latency under load. That latency is not a fact we hold; until it
+is, the tail stays out of the rule (no fitted band).
