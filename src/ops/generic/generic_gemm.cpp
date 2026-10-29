@@ -3346,7 +3346,7 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
 // Volta prefill (generic_volta_cutlass.cu): a tiled-route call of kVoltaCutlassMinTokens or more
 // decodes its weight once and multiplies on CUTLASS's sm_70 GEMM; below it one or two token blocks
 // re-decode the weight less than the decoded copy costs to write.
-constexpr std::int32_t kVoltaCutlassMinTokens = 256;
+constexpr std::int32_t kVoltaCutlassMinTokens = 17;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
     static PerDevice<bool> enabled;
