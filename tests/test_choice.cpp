@@ -482,7 +482,7 @@ void weighs_the_quantizations(const json& fixture) {
     check(!quant_term(q).measured && quant_term(q).kld > 0.01925, "a label at other bits: interpolated");
     q.label           = "custom";
     q.bits_per_weight = 5.5;
-    const double mid  = std::exp(std::log(0.01925) + (5.5 - 5.080) / (5.878 - 5.080) * (std::log(0.01061) - std::log(0.01925)));
+    const double mid  = std::exp(std::log(0.01823) + (5.5 - 5.321) / (5.674 - 5.321) * (std::log(0.01132) - std::log(0.01823)));
     check(std::abs(quant_term(q).kld - mid) < 1e-9 && !quant_term(q).measured, "5.5 bits: interpolated");
     q.bits_per_weight = 9.0;
     check(quant_term(q).kld == 0, "above Q8_0's bits: the reference");
