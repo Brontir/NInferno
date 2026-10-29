@@ -1,8 +1,8 @@
 {
  "version": 1,
- "note": "The lab's hard50 runs (tools/bench/hard_set.py, greedy, over eval/corpora/hard50/hard50.json) of each model under plain decode (--spec none, C=1, the start's defaults), one per lab card, campaign m0628 (master of 2026-10-28; Qwen3.5 9B's rows (the user kit on master ac3a9859) and Qwen3.6 35B-A3B-MTP's (master 282f9038) of 2026-10-29, after #167 moved their answers; the Quadro GV100 rows from its kit), with the ids each answered wrong. tools/kit/validate.py holds a user's hard50 run to them; refresh after a change that moves answers (a new quantization path, a kernel's numerics), never to fit a submission.",
+ "note": "The lab's hard50 runs (tools/bench/hard_set.py, greedy, over eval/corpora/hard50/hard50.json) of each model under plain decode (--spec none, C=1, the start's defaults), one per lab card, campaign m0628 (master of 2026-10-28; re-run 2026-10-29 after #167 moved the GDN models' answers: Qwen3.5 9B's rows (the user kit on master ac3a9859), Qwen3.6 35B-A3B-MTP's on the RTX 4090 and 5090, Qwen3.8 27B UD-Q4_K_S's on the RTX 5070 Ti and 4060 Ti and Qwen3.6 35B-A3B UD-Q3_K_S's on the RTX 5070 Ti (master 282f9038; the two 5070 Ti rows unchanged); the Quadro GV100 rows from its kit), with the ids each answered wrong. tools/kit/validate.py holds a user's hard50 run to them; refresh after a change that moves answers (a new quantization path, a kernel's numerics), never to fit a submission.",
  "set_sha256": "5e30ee70bdc4a4da2f352a2af5323091ba73e34444203445c1d894e83e47f874",
- "engine": "NInferno 0.1.0 (master of 2026-10-28)",
+ "engine": "NInferno 0.1.0 (masters of 2026-10-28 and 2026-10-29, see the note)",
  "models": {
   "ggml-org/gpt-oss-20b-GGUF MXFP4": [
    {
