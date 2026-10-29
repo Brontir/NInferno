@@ -393,6 +393,11 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
                 ggml_mmq_call(weight, problem.policy, model_call.rows, t)) {
                 routes.push_back(Route{Family::GgmlMmq, 0});
             }
+            // ggml's vector kernel where the verify price put the register MMA first: the timing
+            // corrects a wrong price.
+            if (base.family == Family::RegisterMma && ggml_vec_tunable(weight, problem.policy, t)) {
+                routes.push_back(Route{Family::GgmlVec, 0});
+            }
             // R8 at a width the format does not take it at by rule: a token's bytes are then R8
             // decode's, which greedy speculation reproduces.
             if (base.family != Family::R8Mma && r8_tunable(weight, problem.policy, t)) {

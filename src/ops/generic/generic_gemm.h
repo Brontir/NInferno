@@ -522,6 +522,9 @@ struct Problem {
 // Whether the dense tuner may time R8 at T tokens: r8_verify_tunable, or a width where the format
 // has R8 but ggml's vector kernel takes it by rule.
 [[nodiscard]] bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// Whether the dense tuner may time ggml's vector kernel at T tokens (a verify width it reads):
+// against the register MMA where verify_pick priced that cheaper.
+[[nodiscard]] bool ggml_vec_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // Whether a call of `rows` rows and T tokens may take ggml's matrix kernel (the dense tuner's
 // candidate at verify widths 5..16).
 [[nodiscard]] bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows,
