@@ -1,6 +1,6 @@
 // Compile cost of strict tool-call grammars with a real vocabulary: twenty strict tools, each with
 // required and optional arguments, a length-bounded string, an enum, an array and a nested object
-// of six optional properties, in every call syntax that holds strict arguments to their schema.
+// of six optional properties, in every call syntax, strict and not.
 // Bounds per syntax: the compile ends within half the default compile timeout, the compiled grammar
 // stays within 1/8 of the default cache, and a token mask along a call costs at most 20 ms.
 //
@@ -135,10 +135,13 @@ int main() {
                          .strict          = true});
     }
     const ninferno::structured::CompilerOptions options;
+    for (const bool strict : {true, false})
     for (const ToolCallFormat format :
          {ToolCallFormat::QwenXml, ToolCallFormat::HermesJson, ToolCallFormat::Harmony,
           ToolCallFormat::Gemma4, ToolCallFormat::Pythonic, ToolCallFormat::Atem}) {
-        const std::string name(ninferno::chat::tool_call_format_name(format));
+        for (ToolCallConstraintTool& tool : tools) { tool.strict = strict; }
+        const std::string name =
+            std::string(ninferno::chat::tool_call_format_name(format)) + (strict ? "" : " free");
         // A compiler per syntax: nothing is shared through its cache.
         const ninferno::structured::ConstraintCompiler compiler(vocabulary, options);
         ninferno::OutputConstraintSpec spec;
