@@ -1574,16 +1574,20 @@ int exercise_vision(ninferno::Engine& engine) {
     }
     // The reused continuation prefills a text-only suffix after the cached multimodal prefix: its
     // positions keep the image's RoPE delta, so it decodes what an uncached prefill decodes.
+    // A wide 512x256 image leaves a large delta (its merged grid is far from square in tokens).
     {
+        const auto wide = gradient_ppm(512, 256);
         ninferno::RequestOptions long_reuse = options(true);
         ninferno::RequestOptions long_fresh = options(false);
         long_reuse.execution.requested_output_tokens = 16;
         long_fresh.execution.requested_output_tokens = 16;
+        const ninferno::GenerationResult wide_first =
+            engine.generate(engine.prepare(first_input(wide)), options(true));
         const ninferno::GenerationResult cached =
-            engine.generate(engine.prepare(followup_input(image_bytes, first)), long_reuse);
+            engine.generate(engine.prepare(followup_input(wide, wide_first)), long_reuse);
         const ninferno::GenerationResult fresh =
-            engine.generate(engine.prepare(followup_input(image_bytes, first)), long_fresh);
-        if (cached.reused_prompt_tokens == 0 ||
+            engine.generate(engine.prepare(followup_input(wide, wide_first)), long_fresh);
+        if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
             cached.generated_token_ids != fresh.generated_token_ids) {
             std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
                          "uncached prefill (RoPE delta lost?): reused="
