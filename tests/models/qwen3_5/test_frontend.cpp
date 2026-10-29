@@ -1992,6 +1992,47 @@ int test_disabled_tool_calls_keep_the_prompt() {
                  "disabled tool calls changed the prompt or still read calls back");
 }
 
+// OpenAI's automatic boundary after the last message's last part is taken at the closed turn's end,
+// an execution frontier of the prompt: the capture adds no prefill split (DECISIONS 63).
+int test_last_part_boundary_at_turn_end() {
+    const Frontend frontend = make_frontend(resources(), false);
+    ninferno::ChatMessage user;
+    user.role = ninferno::ChatRole::User;
+    user.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = "first part", .media = {}});
+    user.parts.push_back(ninferno::MessagePart{
+        .kind = ninferno::MessagePartKind::Text, .text = " and the last part", .media = {}});
+    ninferno::PromptInput input;
+    input.messages.push_back(std::move(user));
+    input.context_cache.allow_engine_automatic_shared_prefixes = false;
+    for (const std::uint32_t parts : {1U, 2U}) {
+        input.context_cache.markers.push_back(ninferno::PromptCacheMarker{
+            .after_message_count      = 1,
+            .kind                     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence                 = ninferno::SharedCandidateEvidence::DefaultAutomatic,
+            .location                 = ninferno::PromptCacheMarkerLocation::MessagePartBoundary,
+            .after_message_part_count = parts,
+        });
+    }
+    const auto prepared   = frontend.prepare(std::move(input));
+    const auto& data      = FrontendFactory::inspect(prepared);
+    const auto& static_at = data.identity.rewrite_execution_frontiers;
+    const auto& found     = data.context_cache.opportunities;
+    const auto at_static  = [&](std::uint32_t frontier) {
+        return std::find(static_at.begin(), static_at.end(), frontier) != static_at.end();
+    };
+    int failures = check(found.size() == 2, "both part boundaries became opportunities");
+    if (found.size() == 2) {
+        const std::uint32_t middle = std::min(found[0].frontier, found[1].frontier);
+        const std::uint32_t last   = std::max(found[0].frontier, found[1].frontier);
+        failures += check(at_static(last) && last < data.token_ids.size(),
+                          "the boundary after the last part is the turn's end, a static frontier");
+        failures += check(!at_static(middle) && middle < last,
+                          "a boundary between parts stays where its part ends");
+    }
+    return failures;
+}
+
 int test_explicit_leading_instruction_cache_boundary() {
     const Frontend frontend           = make_frontend(resources(), false);
     constexpr std::string_view stable = "stable cache section.";
@@ -3301,6 +3342,7 @@ int main() {
     failures += test_image_resize_rejection_policy();
     failures += test_disabled_tool_calls_keep_the_prompt();
     failures += test_explicit_leading_instruction_cache_boundary();
+    failures += test_last_part_boundary_at_turn_end();
     failures += test_media_admission_uses_aggregate_resources(frontend);
     failures += test_multimodal_prompt_over_removed_32k_cap(frontend);
     failures += test_attention_pairs_are_diagnostic(frontend);

@@ -442,7 +442,7 @@ bool exact_vision_frontier(std::uint32_t frontier, std::span<const VisionItem> i
 }
 
 PreparedContextCache prepare_context_cache(
-    ContextCacheHints hints, std::size_t message_count,
+    ContextCacheHints hints, std::size_t message_count, std::span<const std::size_t> message_parts,
     std::span<const std::optional<std::uint32_t>> message_boundaries,
     std::span<const PromptCacheMarker> rendered_markers,
     std::span<const std::optional<std::uint32_t>> cache_boundaries,
@@ -549,12 +549,24 @@ PreparedContextCache prepare_context_cache(
     for (std::size_t index = 0; index < hints.markers.size(); ++index) {
         const PromptCacheMarker marker = hints.markers[index];
         std::optional<std::uint32_t> resolved;
-        if (marker.location == PromptCacheMarkerLocation::MessageBoundary) {
+        // A boundary after a message's last part (OpenAI's automatic one) is taken at the closed
+        // turn's end: the bytes between are the template's, the same in every rendering that
+        // continues the conversation, and the turn's end is an execution frontier where a next
+        // turn opens (prompt_layout.cpp), so the capture needs no prefill split of its own. At
+        // the content's end the program moves it down to the 64-token grid, and the 17 to 80
+        // tokens up to the message's end cost a whole-model call of their own (DECISIONS 63).
+        const bool last_part =
+            marker.location == PromptCacheMarkerLocation::MessagePartBoundary &&
+            marker.after_message_count != 0 && marker.after_message_count <= message_parts.size() &&
+            marker.after_message_part_count == message_parts[marker.after_message_count - 1U];
+        if (marker.location == PromptCacheMarkerLocation::MessageBoundary || last_part) {
             if (marker.after_message_count < message_boundaries.size()) {
                 resolved = message_boundaries[marker.after_message_count];
             }
-        } else {
-            if (index < cache_boundaries.size()) { resolved = cache_boundaries[index]; }
+        }
+        if (!resolved && marker.location != PromptCacheMarkerLocation::MessageBoundary &&
+            index < cache_boundaries.size()) {
+            resolved = cache_boundaries[index];
         }
         if (!resolved) { continue; }
         add_opportunity(marker.kind, marker.evidence, *resolved, static_cast<std::uint32_t>(index));
@@ -1080,7 +1092,12 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
             .after_tool_count = static_cast<std::uint32_t>(options.tool_jsons.size()),
         });
     }
-    const std::size_t message_count       = input.messages.size();
+    const std::size_t message_count = input.messages.size();
+    std::vector<std::size_t> message_parts;
+    message_parts.reserve(message_count);
+    for (const ChatMessage& message : input.messages) {
+        message_parts.push_back(message.parts.size());
+    }
     std::vector<fi::ChatMessage> messages = convert_messages(std::move(input.messages));
     const bool has_media =
         std::any_of(messages.begin(), messages.end(),
@@ -1163,7 +1180,7 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     (void)checked_token_count(result.token_ids.size());
     result.identity.reusable = true;
     result.context_cache     = prepare_context_cache(
-        std::move(cache_hints), message_count, message_boundaries, rendered_markers,
+        std::move(cache_hints), message_count, message_parts, message_boundaries, rendered_markers,
         cache_boundaries, result.vision_items, engine_tool_marker_index, leading_boundary,
         checked_token_count(result.token_ids.size()));
     result.prepare.seconds = std::chrono::duration<double>(Clock::now() - start).count();

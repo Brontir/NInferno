@@ -1506,3 +1506,34 @@ ahead of the best W4A8 tile on the RTX 5090 and the RTX 4090 for every 9B shape 
    (a copy at the DRAM rate, under 1 ms, released to the host in the background) or only the ring's
    filled rows for a prompt shorter than the window would take it off the request; which
    checkpoint to evict is the cache policy's call.
+
+## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
+
+**What the profiles showed.** Every chat request on the RTX 4070 Ti ran one whole-model call more
+than the prompt's chunks and the generation prompt's tail (DECISIONS 62): the embedding's grid gives
+Qwen 9B's calls as 896 | 59 | 3 | 4 for 962 tokens, 1024 + 832 | 49 | 3 | 4 for 1912, and
+1024 + 1024 + 768 | 39 | 3 | 4 for 2862; Gemma 12B the same with 40 tokens. The 39 .. 59-token call
+costs 24 ms (Qwen) and 26 ms (Gemma, its ring checkpoint's copy waiting before it), two decode
+steps' time for a weight read and a few tokens; on the GV100 the same call ran on the FMA tile
+(125 ms).
+
+**Why.** `ninferno-serve` gives an OpenAI chat request a shared-prefix candidate after the last
+message's last part (`openai_common.cpp`, its default automatic boundary). That point lies inside
+the turn, before `<|im_end|>`, off every execution frontier, so the program moves the capture down
+to the 64-token grid point below it (`neutral_frontier.h`: a capture elsewhere would change the
+bytes after it), and the last chunk stops there; the tokens up to the turn's end are a call of
+their own.
+
+**The change.** A boundary after a message's last part resolves to the closed turn's end
+(`message_boundaries`, the rendering's own proof that a continuation of the conversation renders
+the same bytes there), as a message boundary does. The turn's end is where the next turn opens, an
+execution frontier of the prompt (`prompt_layout.cpp`), so the capture needs no split; for the last
+message it is the turn closure checkpoint's frontier, and the two captures are one group. A
+continuation of the conversation renders the turn closed the same way, so it matches the prefix as
+before; a sibling prompt that differs only after the content and before the close could not have
+followed the same messages.
+
+**Checked.** `ninferno_qwen3_5_frontend_test`: the boundary after the last part lands on a static
+frontier, one between parts stays at its part's end. The prefill tail count (`prompt_tail.cpp`,
+DECISIONS 62) reads where the program places the capture, so it drops the call without a change.
+
