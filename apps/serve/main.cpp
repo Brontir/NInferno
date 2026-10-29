@@ -144,8 +144,6 @@ int print_version() {
 } // namespace
 
 int main(int argc, char** argv) {
-    // The prefill's tail calls come from the artifact's frontend (DECISIONS 62).
-    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls_or_warn);
     std::set_terminate(log_terminate);
 #ifdef _WIN32
     // Waits of a millisecond (the scheduler's polls) last the 15.6 ms system tick otherwise.
@@ -167,6 +165,11 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (options.version_requested) { return print_version(); }
+    // The prefill's tail calls come from the served frontend (DECISIONS 62).
+    ninferno::product::set_prompt_tail_calls_source(
+        [chat_template = options.chat_template_path](const std::filesystem::path& artifact) {
+            return ninferno::runtime::prompt_tail_calls_or_warn(artifact, chat_template);
+        });
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno-serve");
     if (!options.drafter_registry.empty()) {

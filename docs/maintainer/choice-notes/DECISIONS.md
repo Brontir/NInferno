@@ -1518,7 +1518,7 @@ Gemma 4 counts 3: its template renders an empty thought channel when thinking is
 three calls (two on `vec_kernel`, one on `r8_kernel`, 51 ms). Gemma's request has a fourth piece the
 count leaves out: its ring checkpoint is captured about 50 tokens before the end, so the prompt's
 last chunk stops there, the stream waits for the copy (item 3) and a call of about 50 tokens follows
-(25 ms on `mul_mat_q`). A `--chat-template` override is not read. The UI does not link the engine,
+(25 ms on `mul_mat_q`). The UI does not link the engine,
 so it prices none: its estimate of a request is short of the server's by those steps (10 .. 50 ms),
 and a near tie between candidates can fall the other way there (a later step: the count written into
 the artifact at conversion, where the UI reads its facts). On the RTX 4070 Ti the 2048-token

@@ -52,17 +52,19 @@ std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend) {
 
 } // namespace
 
-std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact) {
+std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
+                                const std::filesystem::path& chat_template) {
     const std::string type = artifact_model_type(artifact);
     if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
         const artifact::Reader reader(artifact);
         const models::qwen3_5::LoadPlan plan = models::qwen3_5::plan_load(reader);
         // The text frontend the engine makes without --vision (model_instance.cpp load_qwen3_5).
         models::qwen3_5::FrontendOptions options;
-        options.architecture     = plan.config().text.architecture;
-        options.vision_enabled   = false;
-        options.vision_component = reader.directory().components.contains("vision");
-        options.max_context      = 4096;
+        options.chat_template_path = chat_template;
+        options.architecture       = plan.config().text.architecture;
+        options.vision_enabled     = false;
+        options.vision_component   = reader.directory().components.contains("vision");
+        options.max_context        = 4096;
         return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options));
     }
     const HfTextFiles files = read_hf_text_files(artifact);
@@ -74,14 +76,16 @@ std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact) {
     };
     models::qwen3_5::attach_hf_text_tokenizer(resources);
     models::qwen3_5::FrontendOptions options;
+    options.chat_template_path = chat_template;
     models::qwen3_5::apply_hf_text_options(options);
     options.max_context = 4096;
     return count_tail_calls(models::qwen3_5::make_frontend(resources, options));
 }
 
-std::optional<std::uint32_t> prompt_tail_calls_or_warn(const std::filesystem::path& artifact) {
+std::optional<std::uint32_t> prompt_tail_calls_or_warn(const std::filesystem::path& artifact,
+                                                       const std::filesystem::path& chat_template) {
     try {
-        return prompt_tail_calls(artifact);
+        return prompt_tail_calls(artifact, chat_template);
     } catch (const std::exception& error) {
         std::cerr << "ninferno: the prefill's tail calls of " << artifact.string()
                   << " are not counted (priced as none): " << error.what() << '\n';
