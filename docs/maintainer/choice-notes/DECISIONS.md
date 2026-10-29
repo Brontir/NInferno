@@ -1258,9 +1258,9 @@ formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds
 
 ## 59. Vector kernel: loads in flight per warp is the fact, source-level hints do not hold it (29.10)
 
-**Decision.** No change to the vector kernel now; the robust fix is each decoder's decode() split
-into load_raw() and convert(), the loads of the next step issued by hand before this step's
-products. Branch kern/vec-prefetch keeps the two attempts for reference.
+**Decision.** No change to the vector kernel now: neither hints nor a source-level load() /
+convert() split hold loads in flight (kern/vec-prefetch keeps attempts 1-2, kern/vec-raw-split
+attempt 3, for reference).
 
 - The fact: RTX 5070 Ti, Q4_K 4096x4096, T = 2..8 vector 14.6 / 15.2 / 21.0 / 18.2 / 16.7 / 23.0 /
   26.1 us (repeats within 0.5 %); registers -> CTAs per SM -> rounds does not order them (T = 6, 5
@@ -1271,19 +1271,18 @@ products. Branch kern/vec-prefetch keeps the two attempts for reference.
   time over master's 1.043 (5070 Ti) and 1.096 (3060), instances 0.62..1.50.
 - Attempt 2, the next step's codes prefetched to L2 (`prefetch.global.L2`, no registers): geomean time
   over master's 1.010 on the 5070 Ti, instances 0.68..1.44 (IQ2_S T = 4 22.9 -> 16.1 us, Q5_K T = 8 24.6 -> 35.3).
-- Both re-roll the compiler's per-instance schedule rather than fix it; only explicit load batching
-  holds loads in flight independent of it.
-- Attempt 3, that batching in source (kern/vec-raw-split, 29.10): every decoder split into `load()`
-  (all of a slice's global loads, issued together) and `convert()` (none), the kernel loading slice
+- Both re-roll the compiler's per-instance schedule rather than fix it.
+- Attempt 3, the loads batched in source (kern/vec-raw-split, 29.10): every decoder split into `load()`
+  (all of a slice's global loads, written together) and `convert()` (none), the kernel loading slice
   it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
   RTX 5070 Ti (instances 0.67..1.52), 0.99 on the RTX 5090 (0.72..1.29) and 1.01 on the RTX 4090
   (0.85..1.20): the same re-roll.
   ptxas still places the loads: Q4_K's runtime-K slice loop issued 1..8 loads before its first
-  IDP against master's 1..5, and the instances that gained loads ahead were the faster ones (T = 7
-  add -28 %, T = 4 +32 % with one fewer). Source order does not hold them either; what is left is
-  holding them below the compiler (the loads in PTX that ptxas may not sink) or more warps a SM.
+  IDP against master's 1..5, and the instances that gained loads ahead were the faster ones (T = 7,
+  8 loads ahead against 2, Q4_K add 3840x15360 -28 %; T = 4, 1 against 2, +32 %). Source order
+  does not hold them either. Untried: loads fixed in PTX / inline asm, or more warps per SM.
 - A trap on the way: a raw slice that kept the 12 Q4_K / Q5_K scale bytes as a register array,
   indexed by the lane's sub-block at run time, put the whole slice in local memory (96-112 bytes of
-  stack a thread on sm_120, Q4_K 53 % slower than master). The raw slice keeps only the bytes it
+  stack per thread on sm_120, Q4_K 53 % slower than master). The raw slice keeps only the bytes it
   uses, loaded by index from memory; check `cuobjdump -res-usage` STACK before timing a kernel
   change.
