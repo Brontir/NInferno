@@ -16,6 +16,8 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <tuple>
 #include <utility>
 
 namespace ninferno::spec {
@@ -366,6 +368,21 @@ std::map<std::string, double> profile_round_costs(const Profile& profile) {
 
 namespace {
 
+// The records in their own order: GPU class id, generation, then content (the record's JSON, each
+// rendered once), so the registry's order never decides which record is first.
+std::vector<const MeasuredPair*> in_content_order(std::vector<const MeasuredPair*> pairs) {
+    std::vector<std::tuple<std::string, std::string, std::string, const MeasuredPair*>> keyed;
+    for (const auto* p : pairs) {
+        keyed.emplace_back(p->tune.key.gpu, p->generation, pair_json(*p).dump(), p);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+        return std::tie(std::get<0>(a), std::get<1>(a), std::get<2>(a)) <
+               std::tie(std::get<0>(b), std::get<1>(b), std::get<2>(b));
+    });
+    for (std::size_t i = 0; i < keyed.size(); ++i) { pairs[i] = std::get<3>(keyed[i]); }
+    return pairs;
+}
+
 // Per configuration label, the median over `pairs` of each one's round cost (round_costs; an even
 // count: the mean of the middle two).
 std::map<std::string, double> median_round_costs(const std::vector<const MeasuredPair*>& pairs) {
@@ -485,11 +502,7 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                            const GpuKey* gpu, std::string* note) {
     // The records in an order of their own (GPU class id, then content): the registry's order
     // never decides which card's measurement is taken.
-    std::vector<const MeasuredPair*> ordered = measured;
-    std::stable_sort(ordered.begin(), ordered.end(), [](const MeasuredPair* a, const MeasuredPair* b) {
-        if (a->tune.key.gpu != b->tune.key.gpu) { return a->tune.key.gpu < b->tune.key.gpu; }
-        return pair_json(*a).dump() < pair_json(*b).dump();
-    });
+    const std::vector<const MeasuredPair*> ordered = in_content_order(measured);
     std::vector<const MeasuredPair*> current, home;
     std::set<std::string> home_cards; // two cards, not two records of one card
     for (const auto* pair : ordered) {
@@ -611,8 +624,14 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
                                             std::string_view engine, std::string_view kind,
                                             double target_bits) {
     const Mode mode = mode_of_kind(kind);
+    // In content order (in_content_order): which of one card's records of a target stands, and the
+    // group's order, never depend on the registry's.
+    std::vector<const MeasuredPair*> ordered;
+    for (const auto& pair : pairs) { ordered.push_back(&pair); }
+    ordered = in_content_order(std::move(ordered));
     std::vector<const MeasuredPair*> low, high;
-    for (const auto& pair : pairs) {
+    for (const auto* record : ordered) {
+        const MeasuredPair& pair = *record;
         if (pair.engine != engine || !pair_current(pair)) { continue; }
         // That drafter kind, not another of its mode (MTP layers, Gemma's assistant and
         // Nemotron's MTP block all propose as MTP).
@@ -808,8 +827,16 @@ std::optional<MeasuredPair> carried_of(const MeasuredPair& pair, const PairQuery
 
 // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the pair:
 // their runs pooled, so its choice weighs every drafter the card measured. A load table or fit
-// fallback is the one drafter's it was measured with: kept only when the tunes agree.
-std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> measured) {
+// fallback is the one drafter's it was measured with: kept only when the tunes agree. The records
+// are pooled in content order (in_content_order): the pooled measurements, drafters and target
+// fields, each mode's round facts (the first record in that order that has them) and the lab
+// board (the lowest id any record names) never depend on the registry's order; so is the order
+// of the cards (GPU class id).
+std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
+    std::vector<const MeasuredPair*> order;
+    for (const auto& r : records) { order.push_back(&r); }
+    std::vector<MeasuredPair> measured;
+    for (const auto* r : in_content_order(std::move(order))) { measured.push_back(*r); }
     std::vector<MeasuredPair> cards;
     for (auto& p : measured) {
         const auto same = std::find_if(cards.begin(), cards.end(), [&](const MeasuredPair& c) {
@@ -838,7 +865,9 @@ std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> measured) {
                 }
             }
         }
-        if (same->lab_board == 0) { same->lab_board = p.lab_board; }
+        if (p.lab_board != 0 && (same->lab_board == 0 || p.lab_board < same->lab_board)) {
+            same->lab_board = p.lab_board;
+        }
         if (into.load != p.tune.load) { into.load.clear(); }
         if (!into.fit_fallback || !p.tune.fit_fallback ||
             into.fit_fallback->config != p.tune.fit_fallback->config) {

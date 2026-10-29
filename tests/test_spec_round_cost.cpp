@@ -320,6 +320,51 @@ int main() {
                    ab->profile.thinking.config == ba->profile.thinking.config &&
                    std::abs(ab->profile.overall.speedup() - ba->profile.overall.speedup()) < 1e-9,
                "the pooled choice does not depend on the records' order");
+        // Every order of the records gives the same plan: one card's two tunes (one naming no lab
+        // board), three other cards; each card's own, the facts', a transfer's, a sibling's and a
+        // group's choice.
+        auto unboarded      = dflash;
+        unboarded.lab_board = 0;
+        const std::vector<sp::MeasuredPair> records = {mtp, unboarded, pair_of(kQ9, "ad102:128sm"),
+                                                       pair_of(kQ9, "ga106:28sm"),
+                                                       pair_of(kQ9, "gv100:80sm")};
+        const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
+        const auto rtx2080ti = card("tu102:68sm", "tu102", "sm75", 75, 68, 1545, 616);
+        const std::string repo(std::string_view(kQ9).substr(0, std::string_view(kQ9).find(' ')));
+        const auto plan_of = [&](const std::vector<sp::MeasuredPair>& in) {
+            std::string out;
+            const auto add = [&](const std::optional<sp::PairChoice>& c) {
+                out += c ? c->basis + "|" + c->source + "|" + sp::to_json(c->profile).dump() + "\n"
+                         : std::string("none\n");
+            };
+            for (const auto* gpu : {&rtx4060ti, &rtx4070ti, &rtx2080ti}) {
+                add(sp::pair_choice(in, whole.target, "qwen3_5", kinds, 4.0, gpu == &rtx2080ti ? "sm75" : "sm89",
+                                    {}, whole.drafters, {}, gpu));
+            }
+            add(sp::pair_choice(in, "another-quantization", "qwen3_5", kinds, 4.0, "sm89", {},
+                                whole.drafters, repo, &rtx4060ti));
+            const auto group = sp::pair_group(in, "qwen3_5", "dflash", 4.0);
+            std::string cards;
+            for (const auto* p : group) { cards += p->tune.key.gpu + "/" + std::to_string(p->lab_board) + ","; }
+            const auto grouped = sp::profile_for_group(group, "dflash", nullptr);
+            out += cards + "|" + (grouped ? sp::to_json(*grouped).dump() : std::string("none")) + "\n";
+            return out;
+        };
+        const auto reference = plan_of(records);
+        std::vector<std::size_t> idx = {0, 1, 2, 3, 4};
+        bool same = !reference.empty();
+        int orders = 0;
+        do {
+            std::vector<sp::MeasuredPair> shuffled;
+            for (const auto i : idx) { shuffled.push_back(records[i]); }
+            same = same && plan_of(shuffled) == reference;
+            ++orders;
+        } while (same && std::next_permutation(idx.begin(), idx.end()));
+        expect(same && orders == 120, "all 120 orders of the records give the same plans");
+        // One card's two tunes, one naming no lab board: still the card's own measurement.
+        const auto pooled = sp::pair_choice({unboarded, mtp}, whole.target, "qwen3_5", kinds, 4.0, "sm89",
+                                            {}, whole.drafters, {}, &rtx4070ti);
+        expect(pooled && pooled->basis == "measured", "one card's two tunes, one without a board: measured");
     }
     // Pair removal: the plan's speedup on a card with its own pair left out (the facts price the
     // other cards' measurements for it), against that pair's measurement (the same target, its
