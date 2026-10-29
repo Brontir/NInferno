@@ -86,6 +86,10 @@ def main() -> int:
     ggufhead = {"m-Q4_K_M.gguf": blob(3 * MIB + 5, 50), "m-Q8_0.gguf": blob(2 * MIB, 51)}
     hub.add_repo("org/ggufhead", ggufhead)
     hub.repos["org/ggufhead"]["no_sizes"] = True
+    # A CDN that ignores ranges (a 200 for any Range): a window's read drops the leading bytes.
+    ggufnorange = {"m-Q4_K_M.gguf": blob(3 * MIB, 52)}
+    hub.add_repo("org/ggufnorange", ggufnorange)
+    hub.behavior[hub.sha(ggufnorange["m-Q4_K_M.gguf"])] = {"no_range"}
     # A small vision projector without a quantization in its name, beside a model.
     hub.add_repo("org/smallproj", {"m-Q4_0.gguf": blob(MIB, 52), "mmproj-model.gguf": blob(MIB, 53)})
     # File roles by name: a model named iMatrix in the middle and one named DFlash2 are models; an
@@ -301,10 +305,11 @@ def main() -> int:
         if len(sys.argv) > 3:
             probe = Path(sys.argv[3]).resolve()
 
-            def head(quant, count):
+            def head(quant, count, repo="org/ggufhead", begin=None):
                 environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
                 environment["HF_ENDPOINT"] = base
-                result = subprocess.run([str(probe), "org/ggufhead", quant, str(count), str(work / "cache-head")],
+                result = subprocess.run([str(probe), repo, quant, str(count), str(work / "cache-head")]
+                                        + ([str(begin)] if begin is not None else []),
                                         capture_output=True, text=True, env=environment)
                 return json.loads(result.stdout) if result.returncode == 0 else {"error": result.stderr}
 
@@ -315,6 +320,15 @@ def main() -> int:
                  and first.get("bytes") == MIB and ranges == [f"bytes=0-{MIB - 1}"])
             whole = head("Q8_0", 8 * MIB)
             case("gguf head of a short file", whole.get("size") == 2 * MIB and whole.get("bytes") == 2 * MIB)
+            # A window from an offset (gguf_quants_head_bytes): the slice asked for, also from a CDN
+            # that ignores the range and answers 200 with the whole file (Codex on #170).
+            data = ggufhead["m-Q4_K_M.gguf"]
+            window = head("Q4_K_M", MIB, begin=MIB + 3)
+            case("gguf window", window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
+            data = ggufnorange["m-Q4_K_M.gguf"]
+            window = head("Q4_K_M", MIB, repo="org/ggufnorange", begin=MIB + 3)
+            case("gguf window from a server without ranges",
+                 window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
             # --include matching two standalone GGUFs: the model conversion opens (the first) is one
             # part, not a split of both.
             both = head("--include=*.gguf", MIB)

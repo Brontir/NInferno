@@ -1023,51 +1023,194 @@ kSmallTEta подогнан и на этих картах.
 карты не оценивается. Пара без фактов или карта без частот — прежний перенос (generation_round_costs).
 Одна дорожка: pair_choice (сервер, план без весов, GUI).
 
-## 54. Скорость декода из байтов и ядер шага; одна карта поколения — только своя оценка (28.10)
+## 54. Small-T eta (kSmallTEta 0.148): no fact derivation found yet, the value stays (28.10, revision)
 
-Плотный декод (src/product/choice, PR #184): подогнанная доля пика int8 (kDenseDecode) заменена
-измеренными по поколениям эффективностями ядер. Шаг из C строк:
+The owner (28.10): rules come from architecture facts, and measurements only check them.
+`kSmallTEta` (`src/spec/round_cost.h`) is the one fitted constant in the round cost: the share of
+the int8 peak that small-T kernels reach. Two fact hypotheses were checked (`lab/round_cost/eta_facts.py`,
+the master 9c2d8c91 registry, Qwen rounds at k 4..7, each card's own eta):
 
-    t(C) = W / (η_rows(C, класс) · BW) + C · байты_строки / (η_dram · BW) + N_gemv · t_gemv + N_small(C) · t_small
+| card | rounds | eta | 4 x eta = share of the dp4a peak (512 ops a SM-clock) | excess over the bytes, ms a round (9B DFlash, k 5 -> 7) |
+|---|---|---|---|---|
+| RTX 2080 Ti | 2 | 0.099 | 0.40 | 8.5 -> 7.7 |
+| RTX 3060 | 6 | 0.197 | 0.79 | 7.4 -> 8.0 |
+| RTX 4070 Ti | 48 | 0.149 | 0.60 | 3.9 -> 4.0 |
+| RTX 4090 | 12 | 0.144 | 0.57 | 1.7 -> 1.8 |
+| RTX 5070 Ti | 18 | 0.130 | 0.52 | (27B MTP 4.9 -> 4.9) |
+| Quadro GV100 | 6 | 0.651 (Volta's peak is dp4a's) | 0.65 | 6.4 -> 6.8 |
 
-W — веса, которые шаг читает (без входной таблицы, MTP-слоёв и своего драфтера). N_gemv, N_small —
-ядра графа семейства за шаг (nsys, факт графа, kDecodeLaunches): Qwen3.5-9B Q4_K_M 145 + 167
-(9,75 на слой), Q8_0 177 + 191 (11,5), Gemma 4 12B 213 + 249 (9,6) — на всех картах одинаково.
-t_gemv, t_small — измеренный остаток переписи (kKernelCost): время ядра сверх его байтов. Где перепись
-его объясняет: на Ada чистый R8 1,5 мкс запуска + 0,29 мкс зазора графа; эпилоги SwiGLU и residual
-дороже. На Blackwell PDL прячет запуск чистых проекций (медиана 0,2 мкс). η_rows — доля DRAM на
-маршрутах класса весов (K-кванты: vec 2–4 строки, rmma/MMQ 5–8; Q8: R8 везде), по поколению.
-fit_decode.py выводит все строки из двух фикстур (decode_measured.json, decode_census.json).
+1. **The small-T compute runs at the dp4a peak, at one share on every generation.** No: 0.40 to 0.79,
+   and the order follows neither the peak nor the DRAM bytes per SM-clock. Caveats: the 2080 Ti has
+   two rounds; Blackwell's dp4a rate (unified INT32/FP32 lanes) is not checked against the
+   Programming Guide's table (at 1024 the 5070 Ti's share is 0.26). The two Ada cards agree (0.57
+   and 0.60), which is why the Ada row stands.
+2. **The excess over the bytes is a fixed cost a round** (excess = (R measured - R bytes) x the
+   measured plain step). Partly. Of the 46 series (one pair and mode each), one is below its bytes (4070 Ti 4B AWQ MTP,
+   -0.7 .. -1.0 ms: no relative growth). In 33 of the other 45 it moves by 10 % or
+   less from the smallest k to the largest (median +2 %), it grows with the model (4B about 1.3 ms,
+   9B about 4 ms on the 4070 Ti) and falls with the card (9B DFlash: 4070 Ti 3.9 ms, 4090 1.8 ms):
+   not launch time (that would not follow the card), but a pass that k does not change, the DFlash
+   drafter's block (16 rows at every k, q8 since #156). The other 12 series do depend on k
+   (4070 Ti 4B AWQ DFlash +40 %, 9B NVFP4 DFlash +25 %, several 5070 Ti series +19..+30 %; the
+   small MTP residuals swing widely in relative terms): a row-dependent part remains.
+   kappa F today spreads both over the verify and drafter rows at one eta.
 
-Класс весов без переписи (IQ4_NL, IQ*, Q4_0, Q2_K/Q3_K, FP4 — WeightClass::Other) берёт строки
-K-квантов с пометкой «перенесено» и в выборе по полезности не побеждает, пока в ярусе есть измеренный
-класс. Это значит: если в ярусе есть измеренный квант (даже не влезающий), неизмеренные
-выпадают из выбора по полезности, и остаётся пик правила.
+The missing facts: the drafter pass's cost (a 16-row block on its q8 MMA route) from the
+generation's tensor rate and the route's tiles, apart from the verify, and the verify's own
+per-row compute where it is not bound by bytes (NVFP4, AWQ). That is a study of the kernels, not
+cleanup. Until then eta stays the Ada row fitted on two cards (principle 4); the value and the
+behaviour do not change. Other generations keep no estimate (as in 53).
 
-Полоса ничьей между квантами = измеренная ошибка модели на поколении (rms ln(оценка/замер) по
-фикстуре, kDecodePredictionError: Ada 2,5 %, Blackwell 2,0 %; тест пересчитывает). Ошибка внутри
-выборки (η — средние по тем же точкам); вне фикстуры на Q5_K_M/UD-Q5_K_XL/Q6_K — до 2,1 %, то есть
-того же порядка. Читается только строка Ada (опорная карта есть только у неё). Внутри полосы
-побеждает меньший KLD: разница скоростей меньше ошибки оценки — не довод против точности.
+## 55. Tuners only in maintainer tools; the shipped dense-tuner measurements stay as data, with a plan to remove (28.10, cleanup)
 
-Строки одной карты (Turing 2080 Ti, Ampere 3060) остаются: они дают оценку только
-своим картам, помечены «перенесено» (Speed::transferred), ни одно решение их не читает — выбор считает
-на опорной карте поколения (kReferenceCards, только Ada). Пометку снимает вторая карта поколения в
-переписи и кампании декода: для Turing — любая TU10x (RTX 2070/2080, Quadro RTX), для Ampere — вторая
-GA10x (RTX 3070/3080/3090, A4000/A5000). Перепись 3060 (29.10): t_gemv 4,55 мкс, t_small 2,61 мкс;
-ошибка на своих 12 точках 1,8 % rms (на строках Ada было до +18 %). Volta — строки Turing (перенесено).
+**Tuners.** `--dense-tune`, `--moe-tune` and `--tune-cache` time kernels on the machine and keep
+their choices per machine. Under principle 3 (no timing at startup) they belong to the lab. Until
+now `ninferno` and `ninferno-serve` accepted them, and both tuners ran if a user passed `on`. Now
+both refuse them (`product::is_tuner_flag`, `TunerFlags::Refused`). The tuner hosts are:
+- `ninferno-perplexity`: both tuners. It is an Engine, so the MoE tuner runs at its model load and
+  the dense one at the warm-up and the scored prefills.
+- `ninferno-dense` and `ninferno-gemma4`: the dense tuner.
 
-Проверка вне фикстуры (28.10, plain, `--spec none`, 4096 контекст; оценка → замер на поток):
-4070 Ti Q5_K_M 76,9 → 76,7 (1 поток) / 68,3 → 68,9 (4), UD-Q5_K_XL 75,4 → 75,0 / 67,0 → 67,9,
-Q6_K 67,9 → 68,1 / 60,6 → 61,6; 4090 UD-Q5_K_XL 143,5 → 141,4 / 126,3 → 126,6, Q6_K 129,9 → 129,7 /
-114,8 → 117,2. Все в пределах ±2,1 %. Q5_K_M на 4090 не замерен: на диске стенда 4,7 ГБ.
+Nothing changes for a user. The defaults were already `off`, and the GUI never passed the flags.
 
-Умолчания, которые это меняет против master (Ada; план без загрузки, 7 моделей × 3 карты ×
-{умолч., 4 потока, 128K}):
-- Qwen3.5-9B (обе репы) 4060 Ti 128K: Q4_1 → Q4_K_M (Q4_1 — класс без переписи);
-- Qwen3.5-9B-MTP 4060 Ti по умолчанию: IQ4_XS dflash:7 → Q5_K_S mtp:5 (IQ4_XS — класс без
-  переписи; оценка 155 → 112 ток/с, KLD 0,028 → около 0,013);
-- Qwen3.8-27B 4090 4 потока: Q4_0 → UD-Q4_K_XL (Q4_0 — класс без переписи).
-На 4 потоках 4070 Ti и 4090 остаётся Q6_K, как в master: первая версия #184 меняла его на
-Q5_K_M / UD-Q5_K_XL, теперь они в полосе ничьей, и побеждает меньший KLD. Классы IQ4_XS, IQ4_NL,
-Q4_0, Q4_1 вернутся в выбор после переписи их маршрутов декода на двух картах Ada.
+**`routes/tuner/dense_tune.json`, the shipped tuner measurements.** It is read at every load, even
+with `--dense-tune off` (`model_instance.cpp` `enable_dense_tune(true)`). Each entry is keyed by the
+board's exact class id: 356 problems, and in 347 of them the tuned route differs from what the
+selector picked when it was timed (`prefill_base`):
+
+| class | problems | with an override | override points (T bands) |
+|---|---|---|---|
+| ad102:128sm (RTX 4090) | 10 | 8 | 40 |
+| ad104:58sm | 45 | 45 | 462 |
+| ad106:34sm (RTX 4060 Ti) | 102 | 99 | 1006 |
+| ga100:108sm (A100) | 14 | 14 | 192 |
+| gb206:36sm (RTX 5060 Ti) | 102 | 101 | 1191 |
+| gv100:80sm (Quadro GV100) | 12 | 9 | 88 |
+| tu102:68sm (RTX 2080 Ti) | 71 | 71 | 823 |
+
+These are per-board decisions, which principle 1 ("copy facts, never decisions") rules out. They
+also carry nothing over: a board of another SM count (the RTX 4070 Ti is ad104 with 60 SMs) gets
+none of them.
+
+No rule over facts that reproduces them exists yet. Dropping the file would change routes on these
+seven classes, so this PR keeps it and documents it as measured data.
+
+Plan to remove it:
+1. For each class, compare its overrides with the selector's rules (T-band edges against SMs,
+   DRAM bytes per SM-clock, tile waves). This is work for the selector owners in
+   `src/ops/generic`.
+2. Move every override that a rule explains into the selector, and regenerate the selector golden.
+3. Drop those entries.
+4. A/B-measure what is left on its card. Turn it into a rule or drop it.
+5. Once the file is empty, remove the read path (`generic_tune.cpp` `load_cache_locked` under Off).
+
+## 56. Blackwell's eta from two lab cards: gb20x 0.165 (28.10)
+
+53 left Blackwell without a small-T eta: one lab card (RTX 5070 Ti) had registry pairs. The RTX 5090
+(gb202, 170 SMs, 1792 GB/s) now has pairs of the same targets as the 5070 Ti (gb203, 70 SMs, 896
+GB/s): Qwen3.5-9B GGUF and MTP GGUF Q4_K_M, Gemma 4 12B Q4_K_M, gpt-oss-20b MXFP4 (spec-tune at
+325f95ff, the built-in corpus, the pairs' usual settings). The 5070 Ti got the 9B and Gemma 4 12B
+Q4_K_M pairs the same way. Registry 173 -> 180.
+
+**Hold-out first (principle: measurements verify).** `fit_eta.py` item 3 fits each card's eta on
+the generation's other card only and predicts the held-out card's rounds (Qwen, k <= 7):
+
+| held-out card | eta of the other card | R measured / R facts | rms |
+|---|---|---|---|
+| RTX 5070 Ti | 0.184 (5090) | +4.3 % | 8.4 % |
+| RTX 5090 | 0.162 (5070 Ti) | +1.4 % | 4.4 % |
+| (Ada, for scale: 4070 Ti / 4090) | 0.144 / 0.149 | +0.1 % / +0.2 % | 3.7 % / 2.0 % |
+
+The plan's pick for each target the other card measured (its tokens a round, this card's R from
+facts, the mix weights, the conservative raise) against this card's measured best (k <= 7):
+9B and 9B MTP dflash:7 = dflash:7 on both cards; Gemma 4 12B mtp:5 = mtp:5 on the 5090, mtp:4
+against mtp:5 on the 5070 Ti (-1.5 %); gpt-oss dflash:5 against dflash:7 on the 5090 (equal,
+x1.22), dflash:3 against dflash:5 on the 5070 Ti (-4 %, its MoE rounds are dearer than their
+facts on both cards and are raised from the other card's measurement).
+
+**Decision.** The row `{"gb20x", 0.165, 2}` (both cards' rounds fitted together). No fact formula
+for eta exists yet (54); the two cards' own fits differ (0.162 / 0.184, Ada's 0.144 / 0.149), so
+the row is a two-card constant under AGENTS.md, not a derived one. What it buys: a Blackwell card
+or target without its own pair is priced by the facts instead of taking the 5070 Ti's raw
+measurement.
+
+**hard50 (no flags, the branch against master; explicit depths for the measured best).** Served =
+measured best everywhere, to within 1 %:
+
+| card | model | served on this branch | tok/s | measured best | tok/s | predicted x / measured x of the served |
+|---|---|---|---|---|---|---|
+| RTX 5090 | 9B Q4_K_M | dflash:7 | 714 | dflash:7 | 713 | 2.65 / 2.71 |
+| RTX 5090 | 9B MTP Q4_K_M | dflash:7 | 738 | dflash:7 | 738 | 2.66 / 2.76 |
+| RTX 5090 | Gemma 4 12B Q4_K_M | mtp:5 | 564 | mtp:5 | 564 | 3.02 / 3.04 |
+| RTX 5090 | gpt-oss-20b | dflash:5 | 754 | dflash:7 | 761 | 1.77 / 1.64 |
+| RTX 5090 | Qwen3.8-27B UD-Q4_K_S (no 5090 pair: facts) | mtp:3 (non-thinking; mtp:5 thinking) | 226 | mtp:5 | 236 | 2.39 / 2.41 |
+| RTX 5070 Ti | 9B Q4_K_M | dflash:7 | 431 | dflash:7 | 431 | 2.61 / 2.91 |
+| RTX 5070 Ti | 9B MTP Q4_K_M | dflash:7 | 441 | dflash:7 | 441 | 2.61 / 2.94 |
+| RTX 5070 Ti | Gemma 4 12B Q4_K_M | mtp:5 | 325 | mtp:5 | 325 | 2.96 / 3.13 |
+| RTX 5070 Ti | gpt-oss-20b | dflash:7 / 5 by thinking | 429 | dflash:7 | 434 | 1.75 / 1.59 |
+
+Predicted = the run's own tokens a round / R(facts, eta 0.165). The 27B on the 5090 is the real
+hold-out (only the 5070 Ti measured it): R from facts is within -1..+2 % at every depth (mtp:2..5
+x2.14/2.39/2.49/2.51 predicted, x2.10/2.41/2.45/2.52 measured). Its non-thinking pick (mtp:3,
+-4 % against mtp:5 on hard50) comes from the corpus' acceptance, not R: hard50's math rounds
+accept more than the corpus' prose (50). Master served the same (the 5070 Ti's profile).
+
+**Mismatches (the missing facts, open).**
+1. The 5070 Ti's 9B DFlash rounds of 6 and 8 verify rows cost 7-12 % less than the facts (its 9B
+   alone fits eta 0.29); the 5090's agree (-4..+6 %). On both cards dflash:5 and dflash:7 rounds
+   cost no more than dflash:3 (5070 Ti 1.67-1.73, 5090 1.70-1.76 plain steps): the verify of 4
+   rows is dearer per row than of 6-8, a route fact (the T=4 verify kernel), not a byte fact. The
+   plan's speedup on the 5070 Ti is predicted low (x1.89 against x2.16 for the 9B MTP pair held
+   out; the test bounds it at 15 %), its pick is right.
+2. gpt-oss rounds are 6-10 % dearer than their facts on both cards (MoE routing: 53's +12.5 %).
+3. MTP at depth 3 is 7-9 % dearer than its facts on both cards (the 9B, Gemma 4 12B).
+
+## 57. Decode speed from the bytes and the kernels of a step; a generation's one card prices only its own boards (28.10)
+
+The dense decode estimate (src/product/choice, PR #184) had one fitted term, kDenseDecode's share of
+the int8 peak. It is replaced by measured per-generation efficiencies of the kernels a step runs. A
+step of C rows takes:
+
+    t(C) = W / (eta_rows(C, class) * BW) + C * row_bytes / (eta_dram * BW) + N_gemv * t_gemv + N_small(C) * t_small
+
+- W: the weights the step reads. The input table, the MTP layers and the own drafter are left out.
+- N_gemv and N_small: the kernels the family's graph launches a step (nsys, a fact of the graph:
+  `kDecodeLaunches`). They are the same on every card:
+  - Qwen3.5-9B Q4_K_M: 145 + 167 (9.75 a layer);
+  - Q8_0: 177 + 191 (11.5 a layer);
+  - Gemma 4 12B: 213 + 249 (9.6 a layer).
+
+  The output head, the gather, the final norm and the sampling run once a step. They do not scale
+  with another size's layers.
+- t_gemv and t_small (`kKernelCost`): the census's measured residual, a kernel's time beyond its
+  bytes. Where the census explains it:
+  - Ada's plain R8: 1.5 us launch plus the 0.29 us graph gap;
+  - Blackwell: PDL hides the plain projections' launch (0.2 us median).
+- eta_rows: the share of DRAM a weight class's routes reach, by generation:
+  - K-quants: vec at 2-4 rows, rmma/MMQ at 5-8;
+  - Q8: R8 at every width.
+
+`fit_decode.py` derives every row from two fixtures: `decode_measured.json` and `decode_census.json`.
+
+**A weight class without a census** (`WeightClass::Other`: IQ*, Q4_0/1, IQ4_NL, Q2_K/Q3_K, FP4)
+takes the K-quant rows, marked transferred. It does not win by worth while a measured class is in
+the tier (even one that does not fit); then the rule's pick stands.
+
+**The tie band between quantizations** is the model's measured error on the generation:
+`kDecodePredictionError`, rms of ln(estimate/measured), Ada 2.5 %, recomputed by the test.
+- The error is in-sample. Out of the fixture, Q5_K_M, UD-Q5_K_XL, Q6_K, IQ4_NL and UD-Q4_K_XL come
+  within 2.1 %.
+- Only Ada's row is read, because only Ada has a reference card.
+- Inside the band the lower KLD wins: a speed difference smaller than the estimate's error is no
+  argument against accuracy.
+
+**One-card rows** (Turing 2080 Ti, Ampere 3060) stay:
+- They price only their own boards and are marked transferred.
+- No decision reads them: the choice prices on the reference card (Ada only).
+- A second card of the generation in the census and the decode campaign removes the mark: any TU10x
+  for Turing, a second GA10x (RTX 3070/3080/3090, A4000/A5000) for Ampere.
+- The 3060 census (29.10) gives t_gemv 4.55 us and t_small 2.61 us, and 1.8 % rms on its 12 points
+  (up to +18 % on Ada's rows).
+- Volta takes Turing's rows, transferred.
+
+DEFAULTS_PLACEHOLDER

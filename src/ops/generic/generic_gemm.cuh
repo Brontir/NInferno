@@ -729,7 +729,9 @@ using U4ZpG64QuadDecoder = U4ZpQuadDecoder<64>;
 // step is 128 values (half h of a superblock), and MMA j of it covers the step's values
 // 16j .. 16j + 15 (quad q: 16j + 4q .. + 3), so every MMA lies in one scale group (Q4_K/Q5_K:
 // 32 values, MMAs 2g and 2g + 1; Q6_K, Q3_K, Q2_K: 16 values, MMA g) and its FP32 partial takes
-// that group's scale. A run keeps the published words the lane needs; pair() cuts MMA j's four
+// that group's scale (the register MMA's Q4_K/Q5_K decoder, GgmlQ45KQuadDecoder, splits a group
+// between its two MMAs by quad instead: quad q holds values 8q .. 8q + 7 of the group, kQuadRuns).
+// A run keeps the published words the lane needs; pair() cuts MMA j's four
 // codes out of them (one per byte, byte_codes), sub_scale() and sub_min() a group's factors.
 // Word u of a 32-byte span is its bytes 16u + 4q .. 16u + 4q + 3: the lane's codes of the MMAs
 // with j % 2 == u.
@@ -1099,6 +1101,64 @@ struct GgmlQ2KDecoder {
 
 using GgmlQ4KDecoder = GgmlQ45KDecoder<4>;
 using GgmlQ5KDecoder = GgmlQ45KDecoder<5>;
+
+// Q4_K / Q5_K with whole-sector loads (the register MMA's decoder; MoE keeps GgmlQ45KDecoder). The
+// two MMAs of a 32-value sub-block may take its values in any split as long as the activations
+// follow (kQuadRuns: quad q owns values 8q .. 8q + 7 of each sub-block, load_act). Lane q then
+// reads bytes 8q .. 8q + 7 of each 32-byte nibble span, one 8-byte load per span, where
+// GgmlQ45KDecoder reads words q and q + 4 of it, two 4-byte loads at a 16-byte stride: every
+// 32-byte sector was requested by two load instructions, half of it each. Fact, a probe of that
+// pattern against the same bytes in 8- and 16-byte loads (q4pat.cu, rows of 2304 / 6912 bytes):
+// RTX 3060 229-331 against 330-341 GB/s, RTX 4060 Ti 105-130 against 182-217, RTX 5070 Ti
+// 445-620 against 721-778. Q5_K's high bits follow (bytes 8q .. 8q + 7, one 8-byte load).
+// pair(), unpack() and the scales are GgmlQ45KDecoder's: word 2c + e of the run is word e of the
+// lane's 8 bytes of span c, as word 2c + e was word q + 4e of it there.
+template <int Bits>
+struct GgmlQ45KQuadDecoder : GgmlQ45KDecoder<Bits> {
+    using Base                     = GgmlQ45KDecoder<Bits>;
+    using Run                      = typename Base::Run;
+    static constexpr bool kQuadRuns = true;
+    template <bool Raw>
+    __device__ static __forceinline__ Run load_any(const GemmArgs& a, int row, int k0) {
+        const int p  = k0 & 255;
+        const int h  = p >> 7;
+        const int qd = (p >> 5) & 3;
+        const std::uint8_t* b = a.codes + (static_cast<std::int64_t>(row) * a.groups_per_row +
+                                           (k0 >> 8)) * Base::kBlockBytes;
+        const uint4 head = *reinterpret_cast<const uint4*>(b);
+        const std::uint8_t* c = b + Base::kNibbleStart + 64 * h + 8 * qd;
+        const uint2 s0 = *reinterpret_cast<const uint2*>(c);
+        const uint2 s1 = *reinterpret_cast<const uint2*>(c + 32);
+        Run r;
+        r.nib   = make_uint4(s0.x, s0.y, s1.x, s1.y);
+        r.hbits = make_uint2(0, 0);
+        if constexpr (Bits == 5) {
+            const uint2 hb = *reinterpret_cast<const uint2*>(b + 16 + 8 * qd);
+            r.hbits        = Raw ? hb : make_uint2(hb.x >> (4 * h), hb.y >> (4 * h));
+        }
+        if constexpr (Raw) {
+            r.sc = head.y;
+            r.mn = head.z;
+            r.hi = head.w;
+        } else {
+            r.sc = h == 0 ? head.y & 0x3f3f3f3fU
+                          : (head.w & 0x0f0f0f0fU) | ((head.y >> 2) & 0x30303030U);
+            r.mn = h == 0 ? head.z & 0x3f3f3f3fU
+                          : ((head.w >> 4) & 0x0f0f0f0fU) | ((head.z >> 2) & 0x30303030U);
+            r.hi = 0;
+        }
+        r.dd = head.x;
+        return r;
+    }
+    __device__ static __forceinline__ Run load(const GemmArgs& a, int row, int k0) {
+        return load_any<false>(a, row, k0);
+    }
+    __device__ static __forceinline__ Run load_raw(const GemmArgs& a, int row, int k0) {
+        return load_any<true>(a, row, k0);
+    }
+};
+using GgmlQ4KQuadDecoder = GgmlQ45KQuadDecoder<4>;
+using GgmlQ5KQuadDecoder = GgmlQ45KQuadDecoder<5>;
 
 // ---------------------------------------------------------------------------------------------
 // ggml's 32-value block formats and i-quants. Every value they hold is an integer exact in BF16
@@ -2202,7 +2262,19 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
     constexpr int R = Decoder::kRun;
 #pragma unroll
     for (int n = 0; n < NT; ++n) {
-        if constexpr (SpreadOf<Decoder>) {
+        if constexpr (SpreadOf<Decoder> && QuadRunsOf<Decoder>::value && M % 2 == 0) {
+            // A quad-run decoder: quad q owns the group's values 4Mq .. 4Mq + 4M - 1, two MMAs'
+            // worth in one 16-byte load.
+#pragma unroll
+            for (int i = 0; i < M; i += 2) {
+                uint4 w = make_uint4(0, 0, 0, 0);
+                if (col[n] != nullptr) w = load_vec<uint4>(col[n] + k0 + 4 * M * quad + 4 * i);
+                act[n][2 * i]     = w.x;
+                act[n][2 * i + 1] = w.y;
+                act[n][2 * i + 2] = w.z;
+                act[n][2 * i + 3] = w.w;
+            }
+        } else if constexpr (SpreadOf<Decoder>) {
 #pragma unroll
             for (int i = 0; i < M; ++i) {
                 // A quad-run decoder: quad q owns the group's values 4Mq .. 4Mq + 4M - 1.
@@ -2227,6 +2299,18 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
     }
 }
 
+// The offset in a step of a lane's activations of MMA c (four values): 16c + 4q, or for a
+// quad-run decoder (G MMAs a scale group) 16Gg + 4Gq + 4i for MMA c = Gg + i.
+template <class Decoder, int J>
+__device__ __forceinline__ int act_at(int c, int quad) {
+    if constexpr (QuadRunsOf<Decoder>::value) {
+        constexpr int G = J / SplitsOf<Decoder>::value;
+        return 16 * G * (c / G) + 4 * G * quad + 4 * (c % G);
+    } else {
+        return 16 * c + 4 * quad;
+    }
+}
+
 // One K step (base step_k0) of the MT m16 tiles of each row set (runs[s][m][0], [1]: rows g and
 // g + 8) for tokens col[n], shared by the generic and the MoE kernels. A spread decoder runs group
 // by group, loading only the group's activations: the group's MMAs into an FP32 partial per tile,
@@ -2239,7 +2323,7 @@ __device__ __forceinline__ void load_act(unsigned (&act)[NT][2 * M],
 // Staged (rmma_kernel's act_stage): a spread decoder's activations of the step were copied ahead
 // into shared memory, chunk c (MMA c of the step, 8 bytes) of this lane at stage[32 * c].
 // Ahead (rmma_kernel's act_ring): they were loaded into registers with the step's weights, MMA c's
-// B fragment at ahead[2c], ahead[2c + 1] (load_act of the whole step: the same values).
+// B fragment at ahead[2c], ahead[2c + 1] (load_act group by group: the same values).
 template <class Decoder, int NT, int J, int Sets, int MT, bool Staged = false, bool Ahead = false>
 __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                                          const typename Decoder::Run (&runs)[Sets][MT][2],
@@ -2982,7 +3066,7 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 template <class Decoder, class Schedule, Epilogue E>
 inline constexpr bool kRmmaAheadForm =
     StageActsOf<Decoder>::value && SpreadOf<Decoder> && Schedule::kNTiles == 1 &&
-    !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value && !QuadRunsOf<Decoder>::value &&
+    !FinishOf<Decoder>::value && !GroupTailOf<Decoder>::value &&
     Schedule::kWarpsM * Schedule::kWarpsK <= 8 &&
     (E != Epilogue::SwiGlu || Schedule::kThreads <= 128);
 
@@ -3093,8 +3177,7 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
     // comes out of L1, which the quad's weight words hit): they load in the step.
     constexpr bool kRaw      = Latency && UnpackOf<Decoder>::value;
     constexpr bool kActStage = Latency && StageActsOf<Decoder>::value && kSwiGlu && NT == 1 &&
-                               Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value &&
-                               !QuadRunsOf<Decoder>::value;
+                               Schedule::kWarpsM * WK <= 8 && !GroupTailOf<Decoder>::value;
 #if NINFERNO_FMA_MMA || !NINFERNO_HAS_CP_ASYNC
     constexpr bool kStaged = false; // no cp.async (sm_75 copies synchronously, memory.cuh)
 #else
@@ -3114,7 +3197,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
             const __nv_bfloat16* src = x + (live ? static_cast<std::int64_t>(token) * a.ldx : 0);
 #pragma unroll
             for (int c = 0; c < J; ++c) {
-                cp_async_zfill<8>(&act_stage[slot][warp][c][lane], src + base + 16 * c + 4 * quad,
+                cp_async_zfill<8>(&act_stage[slot][warp][c][lane],
+                                  src + base + act_at<Decoder, J>(c, quad),
                                   live ? 8 : 0);
             }
             cp_commit();
@@ -3125,7 +3209,16 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
                 token < a.tokens && step * KStep + quad * R < a.k
                     ? x + static_cast<std::int64_t>(token) * a.ldx
                     : nullptr};
-            load_act<Decoder, 1, J>(act_ring[slot], c, step * KStep, quad);
+            // Group by group, as mma_step loads them (a quad-run decoder's offsets are per group).
+            constexpr int S = SplitsOf<Decoder>::value;
+            constexpr int G = J / S;
+#pragma unroll
+            for (int g = 0; g < S; ++g) {
+                unsigned part[1][2 * G];
+                load_act<Decoder, 1, G>(part, c, step * KStep + 16 * G * g, quad);
+#pragma unroll
+                for (int i = 0; i < 2 * G; ++i) act_ring[slot][0][2 * G * g + i] = part[0][i];
+            }
         }
     };
 

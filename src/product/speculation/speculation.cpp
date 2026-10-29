@@ -32,15 +32,45 @@ SpeculativeBackend backend_of(spec::Mode mode) noexcept {
     }
 }
 
-bool has_proposal_head(const std::filesystem::path& artifact) {
+bool proposal_head_serves(const std::filesystem::path& artifact, std::string_view component) {
     try {
         const artifact::Reader reader(artifact);
-        const auto& components = reader.directory().components;
-        const auto text        = components.find("text");
-        return text != components.end() && text->second.proposal.has_value();
+        const auto& dir = reader.directory();
+        const auto text = dir.components.find("text");
+        return text != dir.components.end() && text->second.proposal.has_value() &&
+               dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"});
     } catch (const std::exception&) {
         return false;
     }
+}
+
+std::set<std::string> proposal_head_drafters(const artifact::Directory& dir) {
+    std::set<std::string> out;
+    const auto& components = dir.components;
+    const auto text        = components.find("text");
+    if (text == components.end() || !text->second.proposal.has_value()) { return out; }
+    // A "+head" choice of a drafter binds the head through its own Use: the converter's default
+    // head serves the drafters whose rows it chose (MTP, DFlash), never DFlash2.
+    for (const char* component : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(component) &&
+            dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"})) {
+            out.insert(component);
+        }
+    }
+    return out;
+}
+
+std::set<std::string> proposal_head_drafters(const std::filesystem::path& artifact) {
+    try {
+        const artifact::Reader reader(artifact);
+        return proposal_head_drafters(reader.directory());
+    } catch (const std::exception&) {
+        return {};
+    }
+}
+
+bool has_proposal_head(const std::filesystem::path& artifact) {
+    return !proposal_head_drafters(artifact).empty();
 }
 
 double watchdog_floor(double measured) noexcept { return measured > 1.0 ? measured : 1.2; }
@@ -115,7 +145,8 @@ std::filesystem::path separate_drafter(const spec::Choice& choice,
 // the artifact has one), else DFlash2 or DFlash 7. (RTX 5090: Qwen3.8 27B IQ3_S converted
 // from the HF GGUF with MTP and DFlash2 decoded 93 tok/s plain under --spec auto, 192 with MTP 3
 // and its head.) Nothing when the artifact carries no drafter.
-void default_for_builtin_drafter(const std::set<std::string>& components, bool proposal_head,
+void default_for_builtin_drafter(const std::set<std::string>& components,
+                                 const std::set<std::string>& head_drafters,
                                  spec::ResolvedSpeculation& resolved) {
     spec::Choice choice;
     if (components.contains("mtp")) {
@@ -134,8 +165,8 @@ void default_for_builtin_drafter(const std::set<std::string>& components, bool p
     } else {
         return;
     }
-    choice.config.proposal_head       = proposal_head;
     choice.drafter                    = spec::mode_name(choice.config.mode);
+    choice.config.proposal_head       = head_drafters.contains(choice.drafter);
     resolved.drafters[choice.drafter] = "component:" + choice.drafter;
     resolved.profile.overall          = choice;
     resolved.profile.thinking         = choice;
@@ -174,8 +205,8 @@ std::optional<spec::ResolvedSpeculation> resolve(const std::filesystem::path& ar
     auto resolved = spec::resolve_speculation(artifact, id, gpu, local_profile);
     spec::require_named_tune(resolved);
     if (!resolved.found()) {
-        default_for_builtin_drafter(artifact_components(artifact), has_proposal_head(artifact),
-                                    resolved);
+        default_for_builtin_drafter(artifact_components(artifact),
+                                    proposal_head_drafters(artifact), resolved);
     }
     return resolved;
 }
@@ -284,21 +315,22 @@ ServedSpeculation served_of(const spec::Profile& profile, const spec::Choice& pr
         return drafter_present(choice, resolved) && can.runs(choice.config);
     });
     if (out.menu.mode == spec::Mode::None) { return out; }
-    const bool head         = subject.proposal_head;
+    const bool head = subject.proposal_drafters.contains(std::string(spec::mode_name(out.menu.mode)));
     out.engine.backend      = backend_of(out.menu.mode);
     if (primary.config.mode == out.menu.mode) {
         out.engine.drafter = separate_drafter(primary, resolved);
     }
     out.engine.draft_tokens = static_cast<std::uint32_t>(out.menu.primary.config.k);
-    out.engine.proposal_head =
-        out.menu.proposal_head && head ? ProposalHead::Optimized : ProposalHead::Full;
+    out.engine.proposal_head = model_draft_head(
+        subject.artifact, out.engine.backend, out.engine.drafter,
+        out.menu.proposal_head && head ? ProposalHead::Optimized : ProposalHead::Full);
     if (out.menu.proposal_head && !head) {
         out.notes.push_back("the artifact has no proposal head; drafting with the full head");
     }
     // A profile measured elsewhere: every entry's and depth's floor at least foreign_floor's there
     // (a shallower-to-fit choice interpolates between raised floors, which can fall below its own;
     // --spec-select thinking serves each entry per request).
-    const bool head_here = subject.proposal_head;
+    const bool head_here = head;
     for (spec::MenuChoice* entry :
          {&out.menu.primary, &out.menu.thinking, &out.menu.non_thinking, &out.menu.overall}) {
         entry->floor = ran_floor(resolved, entry->config, head_here, entry->floor, &out.notes);
@@ -351,14 +383,15 @@ SpeculationSubject speculation_subject(const std::filesystem::path& artifact,
     out.artifact      = artifact;
     out.resolved      = resolve(artifact, gpu, local_profile);
     out.components    = artifact_components(artifact);
-    out.proposal_head = has_proposal_head(artifact);
+    out.proposal_drafters = proposal_head_drafters(artifact);
     out.support       = engine_support(artifact);
     return out;
 }
 
 void apply_builtin_default(SpeculationSubject& subject) {
     if (subject.resolved && !subject.resolved->found()) {
-        default_for_builtin_drafter(subject.components, subject.proposal_head, *subject.resolved);
+        default_for_builtin_drafter(subject.components, subject.proposal_drafters,
+                                    *subject.resolved);
     }
 }
 
@@ -640,7 +673,7 @@ std::optional<ServedSpeculation> served_head_fallback(const SpeculationSubject& 
     }
     spec::ResolvedSpeculation head;
     head.floor_sources = resolved->floor_sources; // the model's own MTP floors, where it has them
-    default_for_builtin_drafter(subject.components, subject.proposal_head, head);
+    default_for_builtin_drafter(subject.components, subject.proposal_drafters, head);
     if (!head.found() || head.profile.overall.config.mode != spec::Mode::Mtp) {
         return std::nullopt;
     }
@@ -665,6 +698,25 @@ std::filesystem::path model_drafter(const std::filesystem::path& artifact,
         }
     }
     return {};
+}
+
+ProposalHead model_draft_head(bool head_serves_backend, SpeculativeBackend backend,
+                              ProposalHead given) noexcept {
+    if (given == ProposalHead::Optimized) { return given; }
+    const bool restricted = backend == SpeculativeBackend::DFlash || backend == SpeculativeBackend::Mtp;
+    return restricted && head_serves_backend ? ProposalHead::Optimized : ProposalHead::Full;
+}
+
+ProposalHead model_draft_head(const std::filesystem::path& artifact, SpeculativeBackend backend,
+                              const std::filesystem::path& separate_drafter, ProposalHead given) {
+    const char* component = backend == SpeculativeBackend::DFlash ? "dflash"
+                            : backend == SpeculativeBackend::Mtp  ? "mtp"
+                                                                  : nullptr;
+    if (given == ProposalHead::Optimized || component == nullptr || !separate_drafter.empty() ||
+        !engine_support(artifact).proposal_head) {
+        return given;
+    }
+    return model_draft_head(proposal_head_serves(artifact, component), backend, given);
 }
 
 RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,

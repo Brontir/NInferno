@@ -1,7 +1,9 @@
 // fetch_gguf_head() for fetch_test.py: the first bytes of the GGUF file a fetch would choose.
 //
-//     fetch_head_probe SPEC QUANT BYTES CACHE
+//     fetch_head_probe SPEC QUANT BYTES CACHE [BEGIN]
 //
+// (BEGIN: the window from that offset, as gguf_quants_head_bytes reads it; "first" then holds its
+// first 8 bytes in hex.)
 // Prints {"commit", "path", "size", "bytes", "cached", "offline", "parts"} as one JSON line (QUANT
 // "--include=GLOB,GLOB": the files those globs choose instead of a quantization); an error on
 // stderr, exit 1. With QUANT --list, prints list_quants(SPEC) instead: [{"quant", "format",
@@ -12,12 +14,13 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <cstdio>
 #include <exception>
 #include <string>
 
 int main(int argc, char** argv) {
-    if (argc != 5) {
+    if (argc != 5 && argc != 6) {
         std::fprintf(stderr, "usage: fetch_head_probe SPEC QUANT BYTES CACHE\n");
         return 2;
     }
@@ -55,12 +58,19 @@ int main(int argc, char** argv) {
         } else {
             options.quant = quant;
         }
+        const std::uint64_t begin = argc == 6 ? std::stoull(argv[5]) : 0;
         const auto head =
-            ninferno::convert::fetch_gguf_head(argv[1], options, std::stoull(argv[3]));
+            ninferno::convert::fetch_gguf_head(argv[1], options, std::stoull(argv[3]), 0, begin);
+        std::string first;
+        for (std::size_t i = 0; i < head.bytes.size() && i < 8; ++i) {
+            char hex[3];
+            std::snprintf(hex, sizeof hex, "%02x", static_cast<unsigned char>(head.bytes[i]));
+            first += hex;
+        }
         const nlohmann::json out{{"commit", head.commit},        {"path", head.path},
                                  {"size", head.size},            {"bytes", head.bytes.size()},
                                  {"cached", head.cached},        {"offline", head.offline},
-                                 {"parts", head.parts}};
+                                 {"parts", head.parts},          {"first", first}};
         std::printf("%s\n", out.dump().c_str());
         return 0;
     } catch (const std::exception& error) {

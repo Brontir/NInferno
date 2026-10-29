@@ -82,8 +82,6 @@ struct ModelFacts {
     // Q4_K_M stores it Q4_K, 4.5 bits against 5.3 on average); 0: unknown, input_table_params at
     // the average bits stands in.
     double input_table_bytes = 0;
-    // Weights a plain decode step never reads: the MTP layers, the model's own DFlash drafter.
-    double speculation_bytes = 0;
     std::uint32_t layers = 0;         // the trunk's layers (a decode step launches kernels per layer)
     // Per-token and per-lane bytes of the state a step reads, by storage
     // (runtime::plan_kv_bytes_per_token, plan_ring_bytes_per_token, plan_state_bytes).
@@ -108,7 +106,7 @@ struct ModelFacts {
 struct QuantOption {
     std::string label;          // as --quant takes it
     double bits_per_weight = 0;
-    double weight_bytes    = 0; // what the Device holds
+    double weight_bytes    = 0; // what one decode step reads (product::quant_option_of)
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
@@ -287,6 +285,8 @@ struct Allowed {
     KvCacheStorage automatic_kv = KvCacheStorage::BFloat16;
 };
 [[nodiscard]] Allowed allowed_axes(const ModelFacts& model, KvCacheStorage automatic_kv);
+// Whether the model is of the Qwen 3.5/3.6 families (their paged KV pool, int8 activations).
+[[nodiscard]] bool is_qwen_family(const ModelFacts& model) noexcept;
 
 [[nodiscard]] Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                             const Allowed& allowed, const Pins& pins, const Task& task,

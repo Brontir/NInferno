@@ -371,4 +371,42 @@ std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix) 
     return closed ? std::optional<bool>(false) : std::nullopt;
 }
 
+std::optional<std::uint64_t> gguf_tensor_info_bytes(const std::byte* data, std::size_t size,
+                                                    std::string_view name,
+                                                    const std::vector<std::uint64_t>& ne) {
+    const auto u64 = [&](std::size_t at) {
+        std::uint64_t v = 0;
+        std::memcpy(&v, data + at, sizeof(v));
+        return v;
+    };
+    const auto u32 = [&](std::size_t at) {
+        std::uint32_t v = 0;
+        std::memcpy(&v, data + at, sizeof(v));
+        return v;
+    };
+    // name length (u64), name, n_dims (u32), ne (u64 each), type (u32), offset (u64)
+    const std::size_t info = 8 + name.size() + 4 + 8 * ne.size() + 4 + 8;
+    for (std::size_t at = 0; at + info <= size; ++at) {
+        if (u64(at) != name.size() ||
+            std::memcmp(data + at + 8, name.data(), name.size()) != 0) {
+            continue;
+        }
+        std::size_t p = at + 8 + name.size();
+        if (u32(p) != ne.size()) { continue; }
+        p += 4;
+        bool same = true;
+        for (const auto n : ne) {
+            same = same && u64(p) == n;
+            p += 8;
+        }
+        if (!same) { continue; }
+        const auto traits = ggml::traits(u32(p));
+        if (!traits || ne[0] % traits->block) { return std::nullopt; }
+        std::uint64_t bytes = ne[0] / traits->block * traits->bytes;
+        for (std::size_t d = 1; d < ne.size(); ++d) { bytes *= ne[d]; }
+        return bytes;
+    }
+    return std::nullopt;
+}
+
 } // namespace ninferno::convert

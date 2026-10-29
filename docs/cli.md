@@ -82,11 +82,12 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--decode-wait auto\|spin\|block` | `auto` | How the host waits for a round's end ([decode round pacing](#decode-round-pacing)). |
 | `--cuda-sync spin\|blocking\|yield\|auto` | `spin` | CUDA device synchronization schedule ([CUDA synchronization](#cuda-synchronization)). |
 
-Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--dense-tune off|on|retune`,
-`--moe-tune off|on|retune`, `--tune-cache DIR`, `--drafter-registry FILE`,
+Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--drafter-registry FILE`,
 `--debug-prefill-cuts P1,P2,...`, `--debug-poison BYTE` and `--debug-poison-skip SITE,...`
 ([maintainer options](maintainer/environment.md)). No environment variable stands in for any of
-them. They and `--cuda-sync` are process-wide: an Engine built while another of the process is
+them. The lab tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time kernels on the machine,
+so `ninferno` refuses them; they run in `ninferno-perplexity` (and the dense tuner in
+`ninferno-dense` and `ninferno-gemma4`). They and `--cuda-sync` are process-wide: an Engine built while another of the process is
 alive must ask for the same values, or it is refused.
 
 ### Speculative decoding

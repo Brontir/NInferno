@@ -1,4 +1,7 @@
 #include "convert/cache.h"
+#include "artifact/reader.h"
+#include "convert/checks.h"
+#include "convert/drafters.h"
 
 #include "convert/acquire.h"
 #include "convert/convert.h"
@@ -63,12 +66,50 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
     return false;
 }
 
+bool default_head_outdated(const std::filesystem::path& artifact, int revision) {
+    if (revision >= 7) { return false; }
+    std::ifstream stream(artifact.string() + ".conversion.json");
+    if (!stream) { return false; }
+    bool dflash = false, mtp = false, proposal = false;
+    try {
+        const OJson report = OJson::parse(stream);
+        // Only a Qwen target's (default_proposal), and only where this build finds the ranking.
+        const auto& config = report.at("components").at("text").at("config");
+        const auto type    = config.value("model_type", std::string());
+        if ((type != "qwen3_5_text" && type != "qwen3_5_moe_text") ||
+            !resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
+            return false;
+        }
+        const auto methods = report.find("methods");
+        if (methods == report.end() || !methods->is_array()) { return false; }
+        for (const auto& method : *methods) {
+            for (const auto& name : method.value("parameters", OJson::array())) {
+                if (!name.is_string()) { continue; }
+                const auto& text = name.get_ref<const std::string&>();
+                proposal = proposal || text.starts_with("proposal/");
+                dflash   = dflash || text.starts_with("dflash/");
+                mtp      = mtp || text.starts_with("mtp/");
+            }
+        }
+    } catch (const std::exception&) { return false; }
+    // Without a head: one with MTP layers or a DFlash companion takes one now. With one: the
+    // head revision 6 gave served DFlash alone, so one with MTP layers takes MTP's use too.
+    if (!proposal) { return dflash || mtp; }
+    if (revision != 6 || !mtp) { return false; }
+    try {
+        const artifact::Reader reader(artifact);
+        return !reader.directory().uses.contains(
+            {std::string("proposal/head"), std::string("mtp/final_hidden")});
+    } catch (const std::exception&) { return false; }
+}
+
 namespace {
 
 // Whether an artifact at `revision` is served as it is (cache_current's rule).
 bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
-           (revision >= 3 && !unquantized_drafter_attention(artifact));
+           (revision >= 3 && !unquantized_drafter_attention(artifact) &&
+            !default_head_outdated(artifact, revision));
 }
 
 } // namespace

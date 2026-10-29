@@ -78,6 +78,23 @@ void test_metadata_and_tensors() {
     const auto bytes = w.finish();
     const auto file  = parse(bytes);
     check(file.version == 3, "version");
+    // A tensor's bytes by its info in a window of the header (gguf_tensor_info_bytes): the plan's
+    // read of another quantization's head. Any window holding the info whole finds it; a shape
+    // the file has not is none.
+    {
+        using ninferno::convert::gguf_tensor_info_bytes;
+        const auto* data = reinterpret_cast<const std::byte*>(bytes.data());
+        const std::size_t end = static_cast<std::size_t>(file.data_offset);
+        check(gguf_tensor_info_bytes(data, end, "blk.0.ffn_up.weight", {32, 2}) ==
+                  std::optional<std::uint64_t>(2 * 34),
+              "a Q8_0 tensor info found in the header: two 34-byte blocks");
+        check(gguf_tensor_info_bytes(data + 16, end - 16, "blk.0.ffn_up.weight", {32, 2}) ==
+                  std::optional<std::uint64_t>(2 * 34),
+              "and in a window that starts inside the metadata");
+        check(!gguf_tensor_info_bytes(data, end, "blk.0.ffn_up.weight", {32, 4}),
+              "a shape the file has not: none");
+        check(!gguf_tensor_info_bytes(data, end, "output.weight", {32, 2}), "a name it has not: none");
+    }
     check(file.alignment == 64 && file.data_offset % 64 == 0, "general.alignment is honoured");
     check(file.metadata.at("general.architecture") == "qwen35", "string value");
     check(file.metadata.at("qwen35.block_count") == 3, "u32 value");

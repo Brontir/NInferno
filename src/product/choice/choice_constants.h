@@ -143,7 +143,7 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
 // Turing: the projections 4.2-8.3 us, one card. A row of one card prices only its own boards'
 // estimate (marked transferred; no decision reads it: the choice prices on a reference card's
-// generation; DECISIONS 54); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
+// generation; DECISIONS 57); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
 // one card): its projections 3.1-5.5 us, no PDL, no Ada L2.
 struct KernelCost {
     std::string_view generation;
@@ -189,7 +189,7 @@ inline constexpr RowsEta kRowsEta[] = {
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
 // measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
 // not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)
-// differ by less are a tie: the lower KLD wins (DECISIONS 54).
+// differ by less are a tie: the lower KLD wins (DECISIONS 57).
 struct PredictionError {
     std::string_view generation;
     double rms;

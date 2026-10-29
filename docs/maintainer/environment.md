@@ -8,7 +8,8 @@ none of them changes what the engine computes.
 
 ## Options
 
-`ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
+`ninferno` and `ninferno-serve` take all of these but the lab tuners (`--dense-tune`, `--moe-tune`,
+`--tune-cache`), which they refuse. `ninferno-perplexity` takes all but
 `--decode-steps` and `--decode-wait`, which it refuses: it scores and runs no decode rounds.
 `ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table`, `--route-dir` and
 `--drafter-registry`, and records them in the profile's settings (and an `--out`'s, which
@@ -23,7 +24,10 @@ measured with other tables. The family tools
 process as an Engine does: the dense tuner is on for the loaded model whatever `--dense-tune` says,
 so `off` reads the release's `routes/tuner/dense_tune.json` as `ninferno` and `ninferno-serve` do.
 They refuse `--moe-tune`: the MoE schedule tuner runs in an Engine's model load (every family's),
-which neither tool goes through. `ninferno-gemma4 spec-tune` names in its profile's settings the
+which neither tool goes through. The tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time
+kernels on the machine, so `ninferno` and `ninferno-serve` refuse them: the tuner hosts are
+`ninferno-perplexity` (an Engine: both tuners, the MoE one at its model load, the dense one at the
+warm-up and the scored prefills) and the family tools above (the dense tuner). `ninferno-gemma4 spec-tune` names in its profile's settings the
 `--cuda-sync`, `--dense-tune`, `--route-table` and `--route-dir` it ran with, when not the
 release's. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
 carry them for the Engine API.
@@ -104,7 +108,7 @@ that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise
 | `NINFERNO_DECODE_WAIT` | `--decode-wait` |
 | `NINFERNO_ROUTE_TABLE` | `--route-table` |
 | `NINFERNO_ROUTE_DIR` | `--route-dir` |
-| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` |
+| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` (maintainer tools only) |
 | `NINFERNO_DENSE_TUNE_CACHE`, `NINFERNO_MOE_TUNE_CACHE` | `--tune-cache` (one directory for both tuners) |
 | `NINFERNO_QWEN_PREFILL_CUTS` | `--debug-prefill-cuts` |
 | `NINFERNO_DEBUG_POISON`, `NINFERNO_DEBUG_POISON_SKIP` | `--debug-poison`, `--debug-poison-skip` |

@@ -19,6 +19,12 @@
 
 namespace ninferno::product {
 
+// The quantization as the choice prices it, from the facts: its label (`label`, else the facts'
+// quant_label: an artifact's recorded source), the bits per weight over the target's elements (its
+// own DFlash drafter left out), the bytes one decode step reads (the trunk: neither the MTP layers
+// nor the own drafter), its activation routes. One rule for a hub row, the CLI's plan and a start.
+[[nodiscard]] choice::QuantOption quant_option_of(const PlanSourceFacts& facts,
+                                                  const std::string& label = "");
 // The choice's facts of a model (its shape, the bytes a step reads per storage) and of a card.
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
@@ -36,6 +42,19 @@ struct DrafterAxis {
 };
 [[nodiscard]] DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk& ask);
 
+// One KV codec as a start of this model would take it (--kv-dtype): allowed or why not, from the
+// engine's own rules: the family's codecs (choice::allowed_axes; the ring decoders, Gemma 4 and
+// Nemotron-H keep BF16 or FP8: validate_state_storage) and, for the Qwen paged pool, the head
+// width its layout takes (core/paged_kv_storage.h paged_kv_storage_layout). `slow_on_card`: the
+// codec runs, but this card widens FP8 codes in software (no E4M3 instructions below sm_89).
+struct KvOption {
+    KvCacheStorage codec = KvCacheStorage::BFloat16;
+    bool allowed         = true;
+    std::string why_code; // "" | family_codec | head_width | shape_unknown
+    std::string why;      // English, "" when allowed
+    bool slow_on_card = false;
+};
+
 struct ServedChoice {
     // The drafter axis's options (their gains, measured or not), beside `drafters`.
     std::vector<choice::DrafterOption> drafter_options;
@@ -51,6 +70,8 @@ struct ServedChoice {
     std::vector<ServedSpeculation> drafters;
     // The activation modes the model's family runs (choice::allowed_axes), pinned or not.
     std::vector<ActivationMode> allowed_activations;
+    // Every KV codec a start of this model takes or refuses, and why (kv_options on this card).
+    std::vector<KvOption> kv_options;
 };
 
 // How a choice plans each candidate's memory: its exact own context per stream (the longest it
@@ -88,10 +109,60 @@ struct StartAxes {
 // A start of `artifact` with --activations `mode` given: throws std::invalid_argument with
 // activation_refusal's words when the model's family does not run it (before any weight loads).
 void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, ActivationMode mode);
-// A plan whose pinned activations (inputs.pins.activations) the family does not run: refused
-// (fits false, refused_code "activations_not_run", the reason in words). Unchanged otherwise.
-void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
-                              PlannedSpeculation& planned);
+
+// Every --kv-dtype codec in kKvCacheStorageNames' order, on a card of `compute_capability` (0:
+// no card: no slow flag).
+[[nodiscard]] std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capability);
+// Why a start refuses KV codec `kv` for this model ("" when it runs).
+[[nodiscard]] std::string kv_refusal(const PlanSourceFacts& facts, KvCacheStorage kv);
+// A start of `artifact` with --kv-dtype `kv` given: throws std::invalid_argument with
+// kv_refusal's words when the model does not run it (before any weight loads).
+void refuse_unrun_kv_at_start(const std::filesystem::path& artifact, KvCacheStorage kv);
+
+// What a start refuses of the pins (inputs.pins: --activations, --kv-dtype) for this model:
+// {code, words}, code "" when it runs them. Codes: activations_not_run, kv_not_run.
+struct PinRefusal {
+    std::string code;
+    std::string why;
+};
+[[nodiscard]] PinRefusal pin_refusal(const PlanSourceFacts& facts, const DryRunInputs& inputs);
+// A plan whose pins the model does not run (pin_refusal): refused (fits false, refused_code the
+// refusal's code, the reason in words). Unchanged otherwise.
+void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                       PlannedSpeculation& planned);
+
+// The free memory a start would find now from what NVML reports free outside any process: less
+// the CUDA context the start itself creates first (runtime::kPlanIdleContextBytes, the idle plan's
+// rule), as ninferno-serve's free_now is read after its context exists (cudaMemGetInfo).
+[[nodiscard]] std::uint64_t plan_free_now_of_nvml(std::uint64_t nvml_free_bytes) noexcept;
+// The plan a start right now would get: `inputs` (an idle card's plan inputs) with the device's
+// free memory now, at the storages and drafter the choice (`served`, nullptr: none) takes, the pins
+// a start refuses refused. The configuration choice itself stays the idle card's (choose_at_weights:
+// the KV codec, activations and drafter do not move with another process's share); the ladder's
+// rung and the context do. One code for ninferno-serve's plan without the weights and ninferno-ui.
+[[nodiscard]] PlannedSpeculation plan_now(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                                          const ServedChoice* served, const ChoicePins& pins,
+                                          std::uint64_t free_now_bytes);
+// plan_now as JSON: free_now_bytes, fits_now, context_now (each stream's, 0 when it does not
+// fit), rung_now and rungs, private_contexts_now, reason_now and reason_code_now.
+[[nodiscard]] nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_now_bytes);
+
+// The plan without the weights of an artifact on disk, as its start plans it: the artifact's facts
+// and speculation subject (`spec_profile`: a tune named, else none), `inputs`' device, GPU key,
+// options, ask and pins; the pins a start refuses refused; the configuration choice for the axes
+// left automatic and the plan at its storages and drafter. One code for the CLI's --plan
+// --no-load and ninferno-ui's /api/plan?artifact= ("My models": a start again, planned first).
+struct ArtifactPlan {
+    PlanSourceFacts facts;
+    std::unique_ptr<SpeculationSubject> subject; // what inputs.subject points to
+    DryRunInputs inputs;
+    PlannedSpeculation planned;
+    std::optional<ServedChoice> served;
+};
+[[nodiscard]] ArtifactPlan plan_artifact(const std::filesystem::path& artifact, DryRunInputs inputs,
+                                         const std::filesystem::path& spec_profile = {});
+// Its ninferno-dry-plan/1 document (source the artifact's path) with the choice.
+[[nodiscard]] nlohmann::json artifact_plan_document(const ArtifactPlan& plan, const std::string& source);
 
 // The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
 // activations and widest chunk, the axes the user left automatic; not the drafter).

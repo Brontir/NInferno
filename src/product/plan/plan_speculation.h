@@ -125,6 +125,13 @@ struct SpeculationAsk {
     bool depth_from_profile = false;
 };
 
+// Whether the converter would add its default proposal head to the target (convert::
+// default_proposal): a Qwen 3.5 target with the default ranking found, and its MTP layers under a
+// speculation that may draft with MTP (auto, or MTP asked), or a DFlash companion the registry
+// declares under one that may draft with DFlash.
+// Local facts only: the plan reads the quantizations' heads only when one is planned.
+[[nodiscard]] bool default_proposal_possible(const PlannedTarget& target, const SpeculationAsk& ask);
+
 // Whether the plan runs each request at its own thinking flag's choice: --spec-select's, or,
 // left to the profile, per_request_pays for `subject` (as GenerationService decides it).
 [[nodiscard]] bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject);

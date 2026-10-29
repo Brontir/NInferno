@@ -224,8 +224,22 @@ private:
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
     // --no-load --json would print it for an idle card of that GPU. Throws when the repository's
     // shape cannot be read.
+    // The plan of a model converted here (My models), as its start plans it (product::plan_artifact).
+    nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
+                                      const product::LaunchAsk& launch);
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
+    // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);
+    // the catalog's plans (no network) price the tables known. `now_out`: the "now" context of
+    // this plan (also when it is not cached).
+    struct PlanNowContext;
+    nlohmann::json plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
+                                  const std::string& quant, const product::LaunchAsk& launch,
+                                  bool read_tables = false,
+                                  std::shared_ptr<const PlanNowContext>* now_out = nullptr);
+    [[nodiscard]] std::string plan_key(const std::string& repo, const std::string& hub, int gpu,
+                                       const std::string& quant,
+                                       const product::LaunchAsk& launch) const;
     // The facts of a repository's model (kv_json reads them from the same header); nullopt
     // offline or unreadable.
     std::optional<product::PlanSourceFacts>
@@ -277,6 +291,18 @@ private:
     // (convert::gguf_carries_mtp), read once; nullopt when it cannot be read.
     std::optional<bool> gguf_mtp(const std::string& repo, const std::string& hub,
                                  const std::string& commit, const std::string& quant);
+    // A GGUF quantization's own tensor table (its header read by HTTP ranges; nullopt: not read,
+    // a split part, metadata past 128 MiB), kept by hub key, commit and quantization. A read that
+    // failed (the network) is not kept and sets `failed`; one kept sets `stored`.
+    struct TableRead {
+        bool failed = false;
+        bool stored = false;
+    };
+    std::optional<product::GgufTensorTable> gguf_table(const std::string& repo,
+                                                       const std::string& hub,
+                                                       const std::string& commit,
+                                                       const std::string& quant,
+                                                       TableRead* read = nullptr);
     // The same for each of `quants` not read yet, read together.
     void gguf_mtps(const std::string& repo, const std::string& hub, const std::string& commit,
                    const std::vector<std::string>& quants);
@@ -313,11 +339,20 @@ private:
     // Whether a GGUF quantization's file carries MTP layers (gguf_mtp), by hub key, commit and
     // quantization.
     std::map<std::string, std::optional<bool>> mtp_;
+    // gguf_table's reads (nullopt: read, no whole table; a read that failed is tried again), and
+    // their generation: one step per table kept (a plan begun before it is not cached).
+    std::map<std::string, std::optional<product::GgufTensorTable>> gguf_tables_;
+    std::map<std::string, std::uint64_t> tables_generation_; // by hub key
+    // A table read that failed (the network): not tried again for a minute.
+    std::map<std::string, std::chrono::steady_clock::time_point> gguf_failed_;
     // hub_key -> the plan facts kv_json read with it (product/plan/plan_facts.h)
     std::map<std::string, product::PlanSourceFacts> plan_facts_;
     // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
     // bounded: plan_json clears it beyond kMaxKeptPlans)
     std::map<std::string, nlohmann::json> plans_;
+    // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
+    // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
+    std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
     // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
     std::map<std::string, nlohmann::json> configs_;
     // hub_key -> when a header or config read last failed (tried again after a minute)

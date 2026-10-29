@@ -25,6 +25,12 @@
 //                   K-quant and codebook formats the A16 side pays: 5070 Ti ISTA T 17..32 1.20 -> 1.04)
 //   mmq_candidate   ggml's matrix kernel is a cost-model candidate (not on the full-rate row,
 //                   where its microbenchmark win and the 24K prefill A/B, -15 %, disagree)
+//   attention_chain the Gemma 4 chained prefill attention tile runs near the plain tile's speed in
+//                   full waves, so chaining a mostly idle last wave pays
+//                   (ops/softmax_attention/gemma4/launch.cu chain_pays): measured on gb20x (RTX
+//                   5090 31B T=4096 -2.2 %, RTX 5080 26B at 16K keys +5.5 %); on Ada the chained
+//                   tile runs 25-35 % slower even in whole waves (RTX 4090, 4080 SUPER); the other
+//                   generations are unmeasured and keep the plain launch
 
 #include <iterator>
 
@@ -41,10 +47,11 @@ struct GenerationRow {
     double w4a8_eff_scale  = 1.0;
     double a16_cost_scale  = 1.0;
     bool mmq_candidate     = false;
+    bool attention_chain   = false;
 };
 
 inline constexpr GenerationRow kGenerations[] = {
-    //  major minor     name       bf16    s8      full   w4a8  a16   mmq
+    //  major minor     name       bf16    s8      full   w4a8  a16   mmq    chain
     {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
     {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
@@ -53,7 +60,7 @@ inline constexpr GenerationRow kGenerations[] = {
     {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {11, 0, 9, "thor", 512.0, 2048.0, false, 1.0, 1.11, true},
-    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true},
+    {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true},
 };
 
 // The row of compute capability major.minor: a later generation than the table knows takes its

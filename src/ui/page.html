@@ -308,7 +308,7 @@ const T = {
     kvType:"KV cache",kvTip:"How the context cache is stored\nfewer bytes hold more context and more requests, at a small cost in accuracy on long texts",
     kv_bf16:"BF16: 2 bytes, exact",kv_int8:"INT8: half the memory, nearly exact",kv_fp8:"FP8: half the memory, RTX 40/50",
     kv_nvfp4:"NVFP4: a quarter of the memory, loses more on long contexts",kv_k8v4:"Keys FP8, values NVFP4: about 40 % of BF16",
-    kvNeeds256:"not for this model: compact KV takes 256-wide heads",kvNeedsFp8:"needs an RTX 40 or 50 (FP8)",
+    
     memTip:"Memory the launch takes: weights, drafter, KV cache, recurrent states, buffers and CUDA",
     bits:"Bits",ctxAll:"Context, total",gen:"Generation",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Decode",decode1:"Decode, 1 request",decodeAll:"Decode, total",
     decodeAllTip:"All parallel requests together\nnot N times one request: they share the card's bandwidth, and a MoE reads more experts for more requests; scaled by our measurements",
@@ -320,8 +320,8 @@ const T = {
     noFitAt:"does not fit at {ctx} × {par}", tooBig:"weights alone do not fit",
     estNote:"≈ — estimates from the card (memory, bandwidth, clock) and the model's shape, with speculation from the registry profile of this GPU; not measurements. Red rows do not fit the chosen context × requests.",
     toDark:"Dark theme",toLight:"Light theme",avail:"available",memWeights:"weights",memDrafter:"drafter",
-    memStates:"states",memRuntime:"workspace and CUDA",noSpec:"without speculation",estBasis:"Estimate of the configuration choice (src/product/choice): the card's rates and the model's bytes and flops, the kernels' efficiencies measured on the lab's cards (decode 2-3 % rms on Ada and Blackwell, worst 9 %, 6 % on Turing; prefill 6-8 % rms from 7K tokens on, worst 19 %); not a measurement",choiceHead:"Engine's choice",choiceLine:"KV {kv}, activations {act}{state}: {sec} s for a {p} + {a} token request, KLD {kld}",choiceState:"state {s}",choiceDrafter:"speculation {d}",lambdaLine:"Accuracy against speed: λ {l}, so 0.001 KLD is worth {pct} % of a request's time; where two cost about the same, the more accurate wins",lambdaTip:"KLD: how far the answers' token probabilities move from the exact model (0: the same). On Qwen 3.5 9B, 0.001 KLD cost about 0.04 points of MMLU-Pro: one point is worth about ×1.87 of a request's time at λ 25 (the lab's calibration: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: {time} % more time per request for {kld} less KLD; λ {l}: 0.001 KLD is worth {pct} % of a request's time",choiceAlt:"What another value would change",colAxis:"Setting",colValue:"Value",colOwn:"Context each",colDecode:"Decode",colPrefill:"Prefill",colTime:"Request time",colWhy:"Why not",ax_kv:"KV cache",ax_activations:"Activations",ax_chunk:"Prefill chunk",ax_drafter:"Speculation",choiceNoFit:"does not fit",why_no_fit:"does not hold the asked context",why_lower_worth:"slower or less accurate on balance",why_default:"the family's default (the lab constants behind this choice are not yet confirmed on two cards)",why_default_drafter:"the speculation profile's choice stands (the lab constants for this card's generation are still to come)",why_unmeasured:"the speculation profile's choice stands: this drafter's gain is not measured on this card",why_coupled:"follows the KV cache and the activations (its own flag pins it)",why_tie_context:"the same worth: the chosen keeps more context per stream",why_tie_order:"the same in every respect: the listing order",ax_state:"Recurrent state",ax_ring:"Window rings",notMeasured:"not measured: the axis's worst",transferred:"measured on Qwen 3.5",busyNow:"Now only {free} is free: other processes hold the rest",
-    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this model: the reason is below",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",diskLabel:"Model from disk",diskPlace:"a .gguf file or a Hugging Face checkpoint folder on this machine",diskBad:"Cannot run it: {reason}",hfAs:"Hugging Face: {account}",hfNone:"No Hugging Face token: gated models (Llama, Gemma originals) need one",hfPlace:"hf_… read token",hfSave:"Save",hfRemove:"Remove",hfGet:"Get a token",hfEnv:"set by {source} (change it there)",hfBad:"Token not accepted: {error}",hfFile:"kept in {path}, as `hf auth login` keeps it",sup_token:"Needs a Hugging Face token\nthe repository is gated: accept its terms on the hub and set HF_TOKEN",supShort_token:"needs a token",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",kvUnknownHead:"the model's head size is unknown: BF16 only",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
+    memStates:"states",memRuntime:"workspace and CUDA",noSpec:"without speculation",estBasis:"Estimate of the configuration choice (src/product/choice): the card's rates and the model's bytes and flops, the kernels' efficiencies measured on the lab's cards (decode 2-3 % rms on Ada and Blackwell, worst 9 %, 6 % on Turing; prefill 6-8 % rms from 7K tokens on, worst 19 %); not a measurement",choiceHead:"Engine's choice",choiceLine:"KV {kv}, activations {act}{state}: {sec} s for a {p} + {a} token request, KLD {kld}",choiceState:"state {s}",choiceDrafter:"speculation {d}",lambdaLine:"Accuracy against speed: λ {l}, so 0.001 KLD is worth {pct} % of a request's time; where two cost about the same, the more accurate wins",lambdaTip:"KLD: how far the answers' token probabilities move from the exact model (0: the same). On Qwen 3.5 9B, 0.001 KLD cost about 0.04 points of MMLU-Pro: one point is worth about ×1.87 of a request's time at λ 25 (the lab's calibration: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: {time} % more time per request for {kld} less KLD; λ {l}: 0.001 KLD is worth {pct} % of a request's time",choiceAlt:"What another value would change",colAxis:"Setting",colValue:"Value",colOwn:"Context each",colDecode:"Decode",colPrefill:"Prefill",colTime:"Request time",colWhy:"Why not",ax_kv:"KV cache",ax_activations:"Activations",ax_chunk:"Prefill chunk",ax_drafter:"Speculation",choiceNoFit:"does not fit",why_no_fit:"does not hold the asked context",why_lower_worth:"slower or less accurate on balance",why_default:"the family's default (the lab constants behind this choice are not yet confirmed on two cards)",why_default_drafter:"the speculation profile's choice stands (the lab constants for this card's generation are still to come)",why_unmeasured:"the speculation profile's choice stands: this drafter's gain is not measured on this card",why_coupled:"follows the KV cache and the activations (its own flag pins it)",why_tie_context:"the same worth: the chosen keeps more context per stream",why_tie_order:"the same in every respect: the listing order",ax_state:"Recurrent state",ax_ring:"Window rings",notMeasured:"not measured: the axis's worst",transferred:"measured on Qwen 3.5",
+    s_downloads:"↓ Downloads",s_likes:"♥ Likes",s_lastModified:"Updated",s_trendingScore:"Trending",onlyFull:"Fully supported only",sup_full:"Fully supported\nthe engine runs this architecture: download and run",sup_drafter:"Speculative drafter\nruns beside its model, not alone",sup_none:"Not supported\nthe engine does not run this model: the reason is below",sup_unknown:"Architecture unknown\nthe hub does not say what the weights are",diskLabel:"Model from disk",diskPlace:"a .gguf file or a Hugging Face checkpoint folder on this machine",diskBad:"Cannot run it: {reason}",hfAs:"Hugging Face: {account}",hfNone:"No Hugging Face token: gated models (Llama, Gemma originals) need one",hfPlace:"hf_… read token",hfSave:"Save",hfRemove:"Remove",hfGet:"Get a token",hfEnv:"set by {source} (change it there)",hfBad:"Token not accepted: {error}",hfFile:"kept in {path}, as `hf auth login` keeps it",sup_token:"Needs a Hugging Face token\nthe repository is gated: accept its terms on the hub and set HF_TOKEN",supShort_token:"needs a token",supShort_full:"fully supported",supShort_drafter:"drafter",supShort_none:"not supported",supShort_unknown:"architecture unknown",archLabel:"Architecture",tested:"tested",testedTip:"Measured by us\nspeed and speculation are known for this repository",measuredTip:"Decode of one request with speculation, measured by us on this card",depthNote:"Speeds at a quarter of the context filled: {depth} of {ctx} per request. An empty context flatters decode.",ctxReq:"Context",ctxReqTip:"The context you chose for each request\nhover a value for the most this card holds",prefillCol:"Prefill, tok/s",decodeCol:"Decode, tok/s",decodeOne:"one request",decodeTot:"Decode total, tok/s",genTip2:"Decode of one request\nat {depth} of context filled (a quarter of {ctx}), with speculation when it is on",basisLoad:"Over requests: measured on the {gpu} ({run})",basisKind:"Over requests: the mean of the measured {kind} models (RTX 4090)",dense:"dense",extrap:"Past the measured numbers of requests: extrapolated",speedLine:"Decode at {depth} of context: ≈ {one} tok/s per request, {all} tok/s for {n}",ctxTimes:"{ctx} × {par}",recNone:"Nothing fits at {ctx} × {par}: lower the context or the number of requests",selected:"Selected",unsupportedRun:"The engine does not run this architecture",launching:"Starting…",maxCtx:"max",speedLine1:"Decode at {depth} of context: ≈ {one} tok/s",visionProj:"image projector"},
   ru:{tabModels:"Мои модели",tabFind:"Найти",tabDownloads:"Загрузки",myModels:"Мои модели",arch:"Архитектура",params:"Параметры",publisher:"Автор",model:"Модель",
     quant:"Квант",size:"Размер",modified:"Изменена",run:"Запустить",chat:"Чат",stop:"Стоп",log:"Лог",del:"Удалить",delq:"Удалить?",yes:"Да",no:"Нет",
     calibrate:"Калибровать спекуляцию",original:"оригинал",delOriginals:"Удалить оригиналы",originalsKept:"оригиналы хранятся",
@@ -345,7 +345,7 @@ const T = {
     kvType:"KV-кеш",kvTip:"Как хранится кеш контекста\nменьше байт — больше контекста и потоков, ценой небольшой точности на длинных текстах",
     kv_bf16:"BF16: 2 байта, без потерь",kv_int8:"INT8: вдвое меньше памяти, почти без потерь",kv_fp8:"FP8: вдвое меньше памяти, RTX 40/50",
     kv_nvfp4:"NVFP4: вчетверо меньше памяти, на длинном контексте потери заметнее",kv_k8v4:"Ключи FP8, значения NVFP4: около 40 % от BF16",
-    kvNeeds256:"не для этой модели: компактный KV только для голов размера 256",kvNeedsFp8:"нужна RTX 40 или 50 (FP8)",
+    
     memTip:"Сколько видеопамяти займёт запуск: веса, черновик, KV-кеш, состояния, буферы и CUDA",
     bits:"Бит",ctxAll:"Контекст, всего",gen:"Генерация",prompt:"Промпт",perSec:"ток/с",prefill:"Префилл",decode:"Декод",decode1:"Декод, 1 поток",decodeAll:"Декод, всего",
     decodeAllTip:"Все параллельные запросы вместе\nне N × один запрос: запросы делят полосу памяти карты, а MoE на большем числе запросов читает больше экспертов; масштаб — по нашим замерам",
@@ -357,8 +357,8 @@ const T = {
     noFitAt:"не влезает при {ctx} × {par}", tooBig:"не влезают даже веса",
     estNote:"≈ — оценка по карте (память, полоса, такты) и форме модели, со спекуляцией по профилю реестра для этой карты; не замер. Красные строки не влезают при выбранном контексте × числе запросов.",
     toDark:"Тёмная тема",toLight:"Светлая тема",avail:"доступно",memWeights:"веса",memDrafter:"черновик",
-    memStates:"состояния",memRuntime:"буферы и CUDA",noSpec:"без спекуляции",estBasis:"Оценка модели выбора (src/product/choice): скорость карты, байты и операции модели, эффективность ядер замерена на картах стендов (ошибка декода 2–3 % на Ada и Blackwell, худшая 9 %, на Turing 6 %; префилла 6–8 % от 7K токенов, худшая 19 %); не замер",choiceHead:"Выбор движка",choiceLine:"KV {kv}, активации {act}{state}: {sec} с на запрос {p} + {a} токенов, KLD {kld}",choiceState:"состояние {s}",choiceDrafter:"спекуляция {d}",lambdaLine:"Точность против скорости: λ {l}, то есть 0,001 KLD стоит {pct} % времени запроса; при почти равной цене побеждает более точный",lambdaTip:"KLD — насколько вероятности токенов ответа отходят от точной модели (0 — то же самое). На Qwen 3.5 9B 0,001 KLD стоили около 0,04 пункта MMLU-Pro: один пункт при λ 25 стоит примерно ×1,87 времени запроса (калибровка на стендах: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: на {time} % дольше на запрос ради KLD меньше на {kld}; λ {l}: 0,001 KLD стоит {pct} % времени запроса",choiceAlt:"Что изменится при другом значении",colAxis:"Настройка",colValue:"Значение",colOwn:"Контекст на поток",colDecode:"Декод",colPrefill:"Префилл",colTime:"Время запроса",colWhy:"Почему не выбрано",ax_kv:"KV-кэш",ax_activations:"Активации",ax_chunk:"Чанк префилла",ax_drafter:"Спекуляция",choiceNoFit:"не влезает",why_no_fit:"не держит нужный контекст",why_lower_worth:"в сумме медленнее или менее точно",why_default:"умолчание семейства (константы со стендов для этого выбора ещё не подтверждены на двух картах)",why_default_drafter:"остаётся выбор профиля спекуляции (константы со стендов для поколения этой карты ещё впереди)",why_unmeasured:"остаётся выбор профиля спекуляции: выигрыш этого драфтера на этой карте не замерен",why_coupled:"следует за KV-кэшем и активациями (закрепляется своим флагом)",why_tie_context:"та же полезность: выбранный оставляет больше контекста на поток",why_tie_order:"всё одинаково: решает порядок перечисления",ax_state:"Состояние",ax_ring:"Кольца окна",notMeasured:"нет замера: худшее по оси",transferred:"замер на Qwen 3.5",busyNow:"Сейчас свободно только {free}: остальное занято другими процессами",
-    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nдвижок не запускает эту модель: причина ниже",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",diskLabel:"Модель с диска",diskPlace:"файл .gguf или папка чекпойнта Hugging Face на этой машине",diskBad:"Запустить нельзя: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Нет токена Hugging Face: закрытым моделям (оригиналы Llama, Gemma) он нужен",hfPlace:"hf_… токен для чтения",hfSave:"Сохранить",hfRemove:"Удалить",hfGet:"Получить токен",hfEnv:"задан в {source} (меняйте там)",hfBad:"Токен не принят: {error}",hfFile:"хранится в {path}, как его хранит `hf auth login`",sup_token:"Нужен токен Hugging Face\nрепозиторий закрыт: примите условия на хабе и задайте HF_TOKEN",supShort_token:"нужен токен",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",kvUnknownHead:"размер головы модели неизвестен: только BF16",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
+    memStates:"состояния",memRuntime:"буферы и CUDA",noSpec:"без спекуляции",estBasis:"Оценка модели выбора (src/product/choice): скорость карты, байты и операции модели, эффективность ядер замерена на картах стендов (ошибка декода 2–3 % на Ada и Blackwell, худшая 9 %, на Turing 6 %; префилла 6–8 % от 7K токенов, худшая 19 %); не замер",choiceHead:"Выбор движка",choiceLine:"KV {kv}, активации {act}{state}: {sec} с на запрос {p} + {a} токенов, KLD {kld}",choiceState:"состояние {s}",choiceDrafter:"спекуляция {d}",lambdaLine:"Точность против скорости: λ {l}, то есть 0,001 KLD стоит {pct} % времени запроса; при почти равной цене побеждает более точный",lambdaTip:"KLD — насколько вероятности токенов ответа отходят от точной модели (0 — то же самое). На Qwen 3.5 9B 0,001 KLD стоили около 0,04 пункта MMLU-Pro: один пункт при λ 25 стоит примерно ×1,87 времени запроса (калибровка на стендах: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: на {time} % дольше на запрос ради KLD меньше на {kld}; λ {l}: 0,001 KLD стоит {pct} % времени запроса",choiceAlt:"Что изменится при другом значении",colAxis:"Настройка",colValue:"Значение",colOwn:"Контекст на поток",colDecode:"Декод",colPrefill:"Префилл",colTime:"Время запроса",colWhy:"Почему не выбрано",ax_kv:"KV-кэш",ax_activations:"Активации",ax_chunk:"Чанк префилла",ax_drafter:"Спекуляция",choiceNoFit:"не влезает",why_no_fit:"не держит нужный контекст",why_lower_worth:"в сумме медленнее или менее точно",why_default:"умолчание семейства (константы со стендов для этого выбора ещё не подтверждены на двух картах)",why_default_drafter:"остаётся выбор профиля спекуляции (константы со стендов для поколения этой карты ещё впереди)",why_unmeasured:"остаётся выбор профиля спекуляции: выигрыш этого драфтера на этой карте не замерен",why_coupled:"следует за KV-кэшем и активациями (закрепляется своим флагом)",why_tie_context:"та же полезность: выбранный оставляет больше контекста на поток",why_tie_order:"всё одинаково: решает порядок перечисления",ax_state:"Состояние",ax_ring:"Кольца окна",notMeasured:"нет замера: худшее по оси",transferred:"замер на Qwen 3.5",
+    s_downloads:"↓ Скачивания",s_likes:"♥ Лайки",s_lastModified:"Свежие",s_trendingScore:"В тренде",onlyFull:"Только с полной поддержкой",sup_full:"Полная поддержка\nдвижок запускает эту архитектуру: скачать и запустить",sup_drafter:"Черновик для спекуляции\nработает вместе со своей моделью, не сам по себе",sup_none:"Не поддерживается\nдвижок не запускает эту модель: причина ниже",sup_unknown:"Архитектура неизвестна\nхаб не сообщает, что это за веса",diskLabel:"Модель с диска",diskPlace:"файл .gguf или папка чекпойнта Hugging Face на этой машине",diskBad:"Запустить нельзя: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Нет токена Hugging Face: закрытым моделям (оригиналы Llama, Gemma) он нужен",hfPlace:"hf_… токен для чтения",hfSave:"Сохранить",hfRemove:"Удалить",hfGet:"Получить токен",hfEnv:"задан в {source} (меняйте там)",hfBad:"Токен не принят: {error}",hfFile:"хранится в {path}, как его хранит `hf auth login`",sup_token:"Нужен токен Hugging Face\nрепозиторий закрыт: примите условия на хабе и задайте HF_TOKEN",supShort_token:"нужен токен",supShort_full:"полная поддержка",supShort_drafter:"черновик",supShort_none:"не поддерживается",supShort_unknown:"архитектура неизвестна",archLabel:"Архитектура",tested:"проверена",testedTip:"Измерена нами\nдля этого репозитория известны скорость и спекуляция",measuredTip:"Декод одного запроса со спекуляцией, наш замер на этой карте",depthNote:"Скорости — при заполнении контекста на четверть: {depth} из {ctx} на запрос. На пустом контексте декод выглядит лучше, чем будет на деле.",ctxReq:"Контекст",ctxReqTip:"Контекст, который вы выбрали на каждый запрос\nнаведите на число — увидите, сколько карта вмещает максимум",prefillCol:"Префилл, ток/с",decodeCol:"Декод, ток/с",decodeOne:"один запрос",decodeTot:"Декод всего, ток/с",genTip2:"Декод одного запроса\nпри заполненном контексте {depth} (четверть от {ctx}), со спекуляцией, если она включена",basisLoad:"По числу запросов: замер на {gpu} ({run})",basisKind:"По числу запросов: среднее измеренных {kind}-моделей (RTX 4090)",dense:"плотных",extrap:"Дальше измеренного числа запросов: экстраполяция",speedLine:"Декод при {depth} контекста: ≈ {one} ток/с на запрос, {all} ток/с на {n}",ctxTimes:"{ctx} × {par}",recNone:"Ничего не влезает при {ctx} × {par}: уменьшите контекст или число запросов",selected:"Выбран",unsupportedRun:"Эту архитектуру движок не запускает",launching:"Запуск…",maxCtx:"макс",speedLine1:"Декод при {depth} контекста: ≈ {one} ток/с",visionProj:"проектор картинок"}};
 // New words of every language; a language without a word falls back to English.
 Object.assign(T.en, {
   
@@ -406,7 +406,7 @@ T.uk = {
   kvType:"KV-кеш",kvTip:"Як зберігається кеш контексту\nменше байтів — більше контексту й потоків, ціною невеликої точності на довгих текстах",
   kv_bf16:"BF16: 2 байти, без втрат",kv_int8:"INT8: удвічі менше пам'яті, майже без втрат",kv_fp8:"FP8: удвічі менше пам'яті, RTX 40/50",
   kv_nvfp4:"NVFP4: учетверо менше пам'яті, на довгому контексті втрати помітніші",kv_k8v4:"Ключі FP8, значення NVFP4: близько 40 % від BF16",
-  kvNeeds256:"не для цієї моделі: компактний KV лише для голів розміру 256",kvNeedsFp8:"потрібна RTX 40 або 50 (FP8)",kvUnknownHead:"розмір голови моделі невідомий: лише BF16",
+  
   memTip:"Скільки відеопам'яті займе запуск: ваги, чернетка, KV-кеш, стани, буфери і CUDA",
   bits:"Біт",prefill:"Префіл",decode:"Декод",perSec:"ток/с",
   decodeAllTip:"Усі паралельні запити разом\nне N × один запит: запити ділять смугу пам'яті карти, а MoE на більшій кількості запитів читає більше експертів; масштаб — за нашими замірами",
@@ -414,7 +414,7 @@ T.uk = {
   noFitAt:"не вміщується при {ctx} × {par}",tooBig:"не вміщуються навіть ваги",
   estNote:"≈ — оцінка за картою (пам'ять, смуга, такти) і формою моделі, зі спекуляцією за профілем реєстру для цієї карти; не замір. Червоні рядки не вміщуються при вибраних контексті × кількості запитів.",
   toDark:"Темна тема",toLight:"Світла тема",avail:"доступно",memWeights:"ваги",memDrafter:"чернетка",memStates:"стани",memRuntime:"буфери і CUDA",
-  noSpec:"без спекуляції",estBasis:"Оцінка моделі вибору (src/product/choice): швидкість карти, байти й операції моделі, ефективність ядер заміряно на картах стендів; не замір",choiceHead:"Вибір рушія",choiceLine:"KV {kv}, активації {act}{state}: {sec} с на запит {p} + {a} токенів, KLD {kld}",choiceState:"стан {s}",choiceDrafter:"спекуляція {d}",lambdaLine:"Точність проти швидкості: λ {l}, тобто 0,001 KLD вартує {pct} % часу запиту; за майже рівної ціни перемагає точніший",lambdaTip:"KLD — наскільки ймовірності токенів відповіді відходять від точної моделі (0 — те саме). На Qwen 3.5 9B 0,001 KLD коштували близько 0,04 пункту MMLU-Pro: один пункт при λ 25 вартує приблизно ×1,87 часу запиту (калібрування на стендах: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: на {time} % довше на запит заради KLD меншого на {kld}; λ {l}: 0,001 KLD вартує {pct} % часу запиту",choiceAlt:"Що зміниться за іншого значення",colAxis:"Налаштування",colValue:"Значення",colOwn:"Контекст на потік",colDecode:"Декод",colPrefill:"Префіл",colTime:"Час запиту",colWhy:"Чому ні",ax_kv:"KV-кеш",ax_activations:"Активації",ax_chunk:"Чанк префілу",ax_drafter:"Спекуляція",choiceNoFit:"не вміщується",why_no_fit:"не тримає потрібний контекст",why_lower_worth:"загалом повільніше або менш точно",why_default:"типове значення сімейства (константи зі стендів для цього вибору ще не підтверджено на двох картах)",why_default_drafter:"лишається вибір профілю спекуляції (константи зі стендів для покоління цієї карти ще попереду)",why_unmeasured:"лишається вибір профілю спекуляції: виграш цього драфтера на цій карті не заміряно",why_coupled:"слідує за KV-кешем і активаціями (закріплюється своїм прапорцем)",why_tie_context:"та сама корисність: вибраний залишає більше контексту на потік",why_tie_order:"усе однакове: вирішує порядок переліку",ax_state:"Стан",ax_ring:"Кільця вікна",notMeasured:"немає заміру: найгірше по осі",transferred:"замір на Qwen 3.5",busyNow:"Зараз вільно лише {free}: решту займають інші процеси",
+  noSpec:"без спекуляції",estBasis:"Оцінка моделі вибору (src/product/choice): швидкість карти, байти й операції моделі, ефективність ядер заміряно на картах стендів; не замір",choiceHead:"Вибір рушія",choiceLine:"KV {kv}, активації {act}{state}: {sec} с на запит {p} + {a} токенів, KLD {kld}",choiceState:"стан {s}",choiceDrafter:"спекуляція {d}",lambdaLine:"Точність проти швидкості: λ {l}, тобто 0,001 KLD вартує {pct} % часу запиту; за майже рівної ціни перемагає точніший",lambdaTip:"KLD — наскільки ймовірності токенів відповіді відходять від точної моделі (0 — те саме). На Qwen 3.5 9B 0,001 KLD коштували близько 0,04 пункту MMLU-Pro: один пункт при λ 25 вартує приблизно ×1,87 часу запиту (калібрування на стендах: docs/maintainer/configuration-choice.md)",ruleTrade:"{largest}: на {time} % довше на запит заради KLD меншого на {kld}; λ {l}: 0,001 KLD вартує {pct} % часу запиту",choiceAlt:"Що зміниться за іншого значення",colAxis:"Налаштування",colValue:"Значення",colOwn:"Контекст на потік",colDecode:"Декод",colPrefill:"Префіл",colTime:"Час запиту",colWhy:"Чому ні",ax_kv:"KV-кеш",ax_activations:"Активації",ax_chunk:"Чанк префілу",ax_drafter:"Спекуляція",choiceNoFit:"не вміщується",why_no_fit:"не тримає потрібний контекст",why_lower_worth:"загалом повільніше або менш точно",why_default:"типове значення сімейства (константи зі стендів для цього вибору ще не підтверджено на двох картах)",why_default_drafter:"лишається вибір профілю спекуляції (константи зі стендів для покоління цієї карти ще попереду)",why_unmeasured:"лишається вибір профілю спекуляції: виграш цього драфтера на цій карті не заміряно",why_coupled:"слідує за KV-кешем і активаціями (закріплюється своїм прапорцем)",why_tie_context:"та сама корисність: вибраний залишає більше контексту на потік",why_tie_order:"усе однакове: вирішує порядок переліку",ax_state:"Стан",ax_ring:"Кільця вікна",notMeasured:"немає заміру: найгірше по осі",transferred:"замір на Qwen 3.5",
   s_downloads:"↓ Завантаження",s_likes:"♥ Вподобання",s_lastModified:"Свіжі",s_trendingScore:"У тренді",hideNone:"Сховати непідтримувані",
   sup_full:"Повна підтримка\nрушій запускає цю архітектуру: завантажити й запустити",
   
@@ -548,7 +548,7 @@ Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",del
   kvTip:"Wie der Kontext-Cache gespeichert wird\nweniger Bytes fassen mehr Kontext und mehr Anfragen, bei etwas Genauigkeitsverlust in langen Texten",
   kv_bf16:"BF16: 2 Bytes, exakt",kv_int8:"INT8: halber Speicher, fast exakt",kv_fp8:"FP8: halber Speicher, RTX 40/50",
   kv_nvfp4:"NVFP4: ein Viertel des Speichers, verliert mehr bei langem Kontext",kv_k8v4:"Schlüssel FP8, Werte NVFP4: etwa 40 % von BF16",
-  kvNeeds256:"nicht für dieses Modell: kompakter KV braucht 256 breite Köpfe",kvNeedsFp8:"braucht eine RTX 40 oder 50 (FP8)",
+  
   memTip:"Speicher, den der Start belegt: Gewichte, Entwurfsmodell, KV-Cache, rekurrente Zustände, Puffer und CUDA",
   ctxAll:"Kontext, gesamt",gen:"Generierung",prompt:"Prompt",perSec:"Tok/s",prefill:"Prefill",decode:"Decode",decode1:"Decode, 1 Anfrage",decodeAll:"Decode, gesamt",
   decodeAllTip:"Alle parallelen Anfragen zusammen\nnicht N-mal eine Anfrage: sie teilen sich die Bandbreite der Karte, und ein MoE liest für mehr Anfragen mehr Experten; skaliert nach den Messungen der Prüfstände",
@@ -559,14 +559,14 @@ Object.assign(T.de, {calibrate:"Spekulation kalibrieren",original:"Original",del
   noFitAt:"passt nicht bei {ctx} × {par}",tooBig:"schon die Gewichte passen nicht",
   estNote:"≈ — Schätzungen aus der Karte (Speicher, Bandbreite, Takt) und der Form des Modells, Spekulation aus dem Registry-Profil dieser GPU; keine Messungen. Rote Zeilen passen nicht in Kontext × Anfragen.",
   avail:"verfügbar",memWeights:"Gewichte",memDrafter:"Entwurfsmodell",memStates:"Zustände",memRuntime:"Arbeitsspeicher und CUDA",noSpec:"ohne Spekulation",
-  busyNow:"Gerade sind nur {free} frei: andere Prozesse belegen den Rest",onlyFull:"Nur voll unterstützte",
+  onlyFull:"Nur voll unterstützte",
   sup_full:"Voll unterstützt\ndie Engine führt diese Architektur aus: herunterladen und starten",
   sup_drafter:"Spekulatives Entwurfsmodell\nläuft neben seinem Modell, nicht allein",
   sup_none:"Nicht unterstützt\ndie Engine führt dieses Modell nicht aus: der Grund steht unten",
   sup_unknown:"Architektur unbekannt\nder Hub sagt nicht, was die Gewichte sind",diskLabel:"Modell von der Platte",diskPlace:"eine .gguf-Datei oder ein Hugging-Face-Checkpoint-Ordner auf diesem Rechner",diskBad:"Nicht ausführbar: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Kein Hugging-Face-Token: geschützte Modelle (Llama-, Gemma-Originale) brauchen einen",hfPlace:"hf_… Lese-Token",hfSave:"Speichern",hfRemove:"Entfernen",hfGet:"Token holen",hfEnv:"gesetzt in {source} (dort ändern)",hfBad:"Token nicht angenommen: {error}",hfFile:"liegt in {path}, wie `hf auth login` ihn ablegt",sup_token:"Hugging-Face-Token nötig\ndas Repository ist geschützt: Bedingungen auf dem Hub annehmen und HF_TOKEN setzen",supShort_token:"Token nötig",archLabel:"Architektur",
   testedTip:"Auf unseren Prüfständen gemessen\nGeschwindigkeit und Spekulation sind für dieses Repository bekannt",
   measuredTip:"Decode einer Anfrage mit Spekulation, auf unseren Prüfständen mit dieser Karte gemessen",
-  kvUnknownHead:"Kopfgröße des Modells unbekannt: nur BF16",
+  
   depthNote:"Geschwindigkeiten bei einem Viertel gefülltem Kontext: {depth} von {ctx} pro Anfrage. Ein leerer Kontext schönt den Decode.",
   ctxReqTip:"Der gewählte Kontext pro Anfrage\nfahren Sie über einen Wert für das Maximum dieser Karte",
   genTip2:"Decode einer Anfrage\nbei {depth} gefülltem Kontext (ein Viertel von {ctx}), mit Spekulation, wenn sie an ist",
@@ -602,7 +602,7 @@ Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",de
   kvTip:"Comment le cache de contexte est stocké\nmoins d'octets tiennent plus de contexte et de requêtes, au prix d'un peu de précision sur les longs textes",
   kv_bf16:"BF16 : 2 octets, exact",kv_int8:"INT8 : moitié de mémoire, presque exact",kv_fp8:"FP8 : moitié de mémoire, RTX 40/50",
   kv_nvfp4:"NVFP4 : un quart de la mémoire, perd plus sur les longs contextes",kv_k8v4:"Clés FP8, valeurs NVFP4 : environ 40 % de BF16",
-  kvNeeds256:"pas pour ce modèle : le KV compact demande des têtes de largeur 256",kvNeedsFp8:"demande une RTX 40 ou 50 (FP8)",
+  
   memTip:"Mémoire prise par le lancement : poids, brouillon, cache KV, états récurrents, tampons et CUDA",
   ctxAll:"Contexte, total",gen:"Génération",prompt:"Prompt",perSec:"tok/s",prefill:"Préremplissage",decode:"Décodage",decode1:"Décodage, 1 requête",decodeAll:"Décodage, total",
   decodeAllTip:"Toutes les requêtes parallèles ensemble\npas N fois une requête : elles partagent la bande passante de la carte, et un MoE lit plus d'experts pour plus de requêtes ; mis à l'échelle par les mesures des bancs",
@@ -613,14 +613,14 @@ Object.assign(T.fr, {calibrate:"Calibrer la spéculation",original:"original",de
   noFitAt:"ne tient pas à {ctx} × {par}",tooBig:"les poids seuls ne tiennent pas",
   estNote:"≈ — estimations à partir de la carte (mémoire, bande passante, fréquence) et de la forme du modèle, spéculation selon le profil du registre pour ce GPU ; pas des mesures. Les lignes rouges ne tiennent pas au contexte × requêtes choisis.",
   avail:"disponible",memWeights:"poids",memDrafter:"brouillon",memStates:"états",memRuntime:"espace de travail et CUDA",noSpec:"sans spéculation",
-  busyNow:"Seuls {free} sont libres : d'autres processus occupent le reste",onlyFull:"Pleinement pris en charge seulement",
+  onlyFull:"Pleinement pris en charge seulement",
   sup_full:"Pleinement pris en charge\nle moteur exécute cette architecture : téléchargez et lancez",
   sup_drafter:"Brouillon spéculatif\ntourne à côté de son modèle, pas seul",
   sup_none:"Non pris en charge\nle moteur n'exécute pas ce modèle : la raison est ci-dessous",
   sup_unknown:"Architecture inconnue\nle hub ne dit pas ce que sont les poids",diskLabel:"Modèle sur le disque",diskPlace:"un fichier .gguf ou un dossier de checkpoint Hugging Face sur cette machine",diskBad:"Impossible de le lancer : {reason}",hfAs:"Hugging Face : {account}",hfNone:"Pas de jeton Hugging Face : les modèles protégés (originaux Llama, Gemma) en demandent un",hfPlace:"hf_… jeton de lecture",hfSave:"Enregistrer",hfRemove:"Supprimer",hfGet:"Obtenir un jeton",hfEnv:"défini par {source} (à changer là)",hfBad:"Jeton refusé : {error}",hfFile:"rangé dans {path}, comme le fait `hf auth login`",sup_token:"Jeton Hugging Face requis\nle dépôt est protégé : acceptez ses conditions sur le hub et définissez HF_TOKEN",supShort_token:"jeton requis",archLabel:"Architecture",
   testedTip:"Mesuré sur nos bancs\nvitesse et spéculation connues pour ce dépôt",
   measuredTip:"Décodage d'une requête avec spéculation, mesuré sur nos bancs avec cette carte",
-  kvUnknownHead:"taille de tête du modèle inconnue : BF16 seulement",
+  
   depthNote:"Vitesses à un quart du contexte rempli : {depth} sur {ctx} par requête. Un contexte vide flatte le décodage.",
   ctxReqTip:"Le contexte choisi pour chaque requête\nsurvolez une valeur pour le maximum de cette carte",
   genTip2:"Décodage d'une requête\nà {depth} de contexte rempli (un quart de {ctx}), avec spéculation si elle est active",
@@ -656,7 +656,7 @@ Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",d
   kvTip:"Cómo se guarda la caché de contexto\nmenos bytes caben más contexto y más solicitudes, con una pequeña pérdida de precisión en textos largos",
   kv_bf16:"BF16: 2 bytes, exacto",kv_int8:"INT8: mitad de memoria, casi exacto",kv_fp8:"FP8: mitad de memoria, RTX 40/50",
   kv_nvfp4:"NVFP4: un cuarto de la memoria, pierde más en contextos largos",kv_k8v4:"Claves FP8, valores NVFP4: alrededor del 40 % de BF16",
-  kvNeeds256:"no para este modelo: el KV compacto requiere cabezas de 256",kvNeedsFp8:"requiere una RTX 40 o 50 (FP8)",
+  
   memTip:"Memoria que ocupa el arranque: pesos, borrador, caché KV, estados recurrentes, búferes y CUDA",
   ctxAll:"Contexto, total",gen:"Generación",prompt:"Prompt",perSec:"tok/s",prefill:"Prellenado",decode:"Decodificación",decode1:"Decodificación, 1 solicitud",decodeAll:"Decodificación, total",
   decodeAllTip:"Todas las solicitudes paralelas juntas\nno N veces una solicitud: comparten el ancho de banda de la tarjeta, y un MoE lee más expertos con más solicitudes; escalado según las mediciones de los bancos",
@@ -667,14 +667,14 @@ Object.assign(T.es, {calibrate:"Calibrar la especulación",original:"original",d
   noFitAt:"no cabe con {ctx} × {par}",tooBig:"solo los pesos ya no caben",
   estNote:"≈ — estimaciones a partir de la tarjeta (memoria, ancho de banda, reloj) y la forma del modelo, especulación según el perfil del registro para esta GPU; no son mediciones. Las filas rojas no caben en el contexto × solicitudes elegidos.",
   avail:"disponible",memWeights:"pesos",memDrafter:"borrador",memStates:"estados",memRuntime:"espacio de trabajo y CUDA",noSpec:"sin especulación",
-  busyNow:"Ahora solo quedan {free} libres: otros procesos ocupan el resto",onlyFull:"Solo con soporte completo",
+  onlyFull:"Solo con soporte completo",
   sup_full:"Soporte completo\nel motor ejecuta esta arquitectura: descargar y ejecutar",
   sup_drafter:"Borrador especulativo\nfunciona junto a su modelo, no solo",
   sup_none:"No soportado\nel motor no ejecuta este modelo: el motivo está abajo",
   sup_unknown:"Arquitectura desconocida\nel hub no dice qué son los pesos",diskLabel:"Modelo del disco",diskPlace:"un archivo .gguf o una carpeta de checkpoint de Hugging Face en esta máquina",diskBad:"No se puede ejecutar: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Sin token de Hugging Face: los modelos restringidos (originales de Llama, Gemma) lo necesitan",hfPlace:"hf_… token de lectura",hfSave:"Guardar",hfRemove:"Quitar",hfGet:"Obtener un token",hfEnv:"definido en {source} (cámbialo allí)",hfBad:"Token no aceptado: {error}",hfFile:"guardado en {path}, como lo guarda `hf auth login`",sup_token:"Se necesita un token de Hugging Face\nel repositorio es restringido: acepta sus condiciones en el hub y define HF_TOKEN",supShort_token:"requiere token",archLabel:"Arquitectura",
   testedTip:"Medido en nuestros bancos\nse conocen la velocidad y la especulación de este repositorio",
   measuredTip:"Decodificación de una solicitud con especulación, medida en nuestros bancos con esta tarjeta",
-  kvUnknownHead:"tamaño de cabeza del modelo desconocido: solo BF16",
+  
   depthNote:"Velocidades con un cuarto del contexto lleno: {depth} de {ctx} por solicitud. Un contexto vacío embellece la decodificación.",
   ctxReqTip:"El contexto elegido para cada solicitud\npase el cursor por un valor para ver el máximo de esta tarjeta",
   genTip2:"Decodificación de una solicitud\ncon {depth} de contexto lleno (un cuarto de {ctx}), con especulación si está activa",
@@ -710,7 +710,7 @@ Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",de
   kvTip:"Come viene memorizzata la cache di contesto\nmeno byte contengono più contesto e più richieste, con una piccola perdita di precisione sui testi lunghi",
   kv_bf16:"BF16: 2 byte, esatto",kv_int8:"INT8: metà memoria, quasi esatto",kv_fp8:"FP8: metà memoria, RTX 40/50",
   kv_nvfp4:"NVFP4: un quarto della memoria, perde di più sui contesti lunghi",kv_k8v4:"Chiavi FP8, valori NVFP4: circa il 40 % di BF16",
-  kvNeeds256:"non per questo modello: il KV compatto richiede teste larghe 256",kvNeedsFp8:"richiede una RTX 40 o 50 (FP8)",
+  
   memTip:"Memoria occupata all'avvio: pesi, bozza, cache KV, stati ricorrenti, buffer e CUDA",
   ctxAll:"Contesto, totale",gen:"Generazione",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Decodifica",decode1:"Decodifica, 1 richiesta",decodeAll:"Decodifica, totale",
   decodeAllTip:"Tutte le richieste parallele insieme\nnon N volte una richiesta: condividono la banda della scheda, e un MoE legge più esperti con più richieste; scalato dalle misure dei banchi",
@@ -721,14 +721,14 @@ Object.assign(T.it, {calibrate:"Calibra la speculazione",original:"originale",de
   noFitAt:"non entra con {ctx} × {par}",tooBig:"già i soli pesi non entrano",
   estNote:"≈ — stime dalla scheda (memoria, banda, clock) e dalla forma del modello, speculazione dal profilo del registro per questa GPU; non misure. Le righe rosse non entrano nel contesto × richieste scelti.",
   avail:"disponibile",memWeights:"pesi",memDrafter:"bozza",memStates:"stati",memRuntime:"spazio di lavoro e CUDA",noSpec:"senza speculazione",
-  busyNow:"Ora sono liberi solo {free}: altri processi occupano il resto",onlyFull:"Solo pienamente supportati",
+  onlyFull:"Solo pienamente supportati",
   sup_full:"Pienamente supportato\nil motore esegue questa architettura: scarica ed esegui",
   sup_drafter:"Bozza speculativa\ngira accanto al suo modello, non da sola",
   sup_none:"Non supportato\nil motore non esegue questo modello: il motivo è sotto",
   sup_unknown:"Architettura sconosciuta\nl'hub non dice cosa siano i pesi",diskLabel:"Modello dal disco",diskPlace:"un file .gguf o una cartella di checkpoint Hugging Face su questa macchina",diskBad:"Impossibile avviarlo: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Nessun token Hugging Face: i modelli riservati (originali Llama, Gemma) ne richiedono uno",hfPlace:"hf_… token di lettura",hfSave:"Salva",hfRemove:"Rimuovi",hfGet:"Ottieni un token",hfEnv:"impostato in {source} (cambialo lì)",hfBad:"Token non accettato: {error}",hfFile:"conservato in {path}, come fa `hf auth login`",sup_token:"Serve un token Hugging Face\nil repository è riservato: accetta le condizioni sull'hub e imposta HF_TOKEN",supShort_token:"serve un token",archLabel:"Architettura",
   testedTip:"Misurato sui nostri banchi\nvelocità e speculazione note per questo repository",
   measuredTip:"Decodifica di una richiesta con speculazione, misurata sui nostri banchi con questa scheda",
-  kvUnknownHead:"dimensione delle teste sconosciuta: solo BF16",
+  
   depthNote:"Velocità con un quarto del contesto pieno: {depth} di {ctx} per richiesta. Un contesto vuoto abbellisce la decodifica.",
   ctxReqTip:"Il contesto scelto per ogni richiesta\npassa sopra un valore per il massimo di questa scheda",
   genTip2:"Decodifica di una richiesta\ncon {depth} di contesto pieno (un quarto di {ctx}), con la speculazione se attiva",
@@ -764,7 +764,7 @@ Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOr
   kvTip:"Jak przechowywana jest pamięć podręczna kontekstu\nmniej bajtów mieści więcej kontekstu i zapytań, kosztem niewielkiej dokładności w długich tekstach",
   kv_bf16:"BF16: 2 bajty, dokładnie",kv_int8:"INT8: połowa pamięci, prawie dokładnie",kv_fp8:"FP8: połowa pamięci, RTX 40/50",
   kv_nvfp4:"NVFP4: ćwierć pamięci, traci więcej na długich kontekstach",kv_k8v4:"Klucze FP8, wartości NVFP4: około 40 % BF16",
-  kvNeeds256:"nie dla tego modelu: kompaktowe KV wymaga głowic o szerokości 256",kvNeedsFp8:"wymaga RTX 40 lub 50 (FP8)",
+  
   memTip:"Pamięć zajęta przy starcie: wagi, model szkicu, pamięć KV, stany rekurencyjne, bufory i CUDA",
   ctxAll:"Kontekst, łącznie",gen:"Generowanie",prompt:"Prompt",perSec:"tok/s",prefill:"Prefill",decode:"Dekodowanie",decode1:"Dekodowanie, 1 zapytanie",decodeAll:"Dekodowanie, łącznie",
   decodeAllTip:"Wszystkie równoległe zapytania razem\nnie N razy jedno zapytanie: dzielą przepustowość karty, a MoE czyta więcej ekspertów przy większej liczbie zapytań; skalowane według pomiarów stanowisk",
@@ -775,14 +775,14 @@ Object.assign(T.pl, {calibrate:"Kalibruj spekulację",original:"oryginał",delOr
   noFitAt:"nie mieści się przy {ctx} × {par}",tooBig:"same wagi się nie mieszczą",
   estNote:"≈ — szacunki z karty (pamięć, przepustowość, taktowanie) i kształtu modelu, spekulacja z profilu rejestru dla tego GPU; nie pomiary. Czerwone wiersze nie mieszczą się w wybranym kontekście × zapytaniach.",
   avail:"dostępne",memWeights:"wagi",memDrafter:"model szkicu",memStates:"stany",memRuntime:"przestrzeń robocza i CUDA",noSpec:"bez spekulacji",
-  busyNow:"Teraz wolne jest tylko {free}: resztę zajmują inne procesy",onlyFull:"Tylko w pełni obsługiwane",
+  onlyFull:"Tylko w pełni obsługiwane",
   sup_full:"W pełni obsługiwany\nsilnik uruchamia tę architekturę: pobierz i uruchom",
   sup_drafter:"Model szkicu do spekulacji\ndziała obok swojego modelu, nie sam",
   sup_none:"Nieobsługiwany\nsilnik nie uruchamia tego modelu: powód poniżej",
   sup_unknown:"Architektura nieznana\nhub nie mówi, czym są wagi",diskLabel:"Model z dysku",diskPlace:"plik .gguf lub folder checkpointu Hugging Face na tym komputerze",diskBad:"Nie można uruchomić: {reason}",hfAs:"Hugging Face: {account}",hfNone:"Brak tokenu Hugging Face: zamknięte modele (oryginały Llama, Gemma) go wymagają",hfPlace:"hf_… token do odczytu",hfSave:"Zapisz",hfRemove:"Usuń",hfGet:"Zdobądź token",hfEnv:"ustawiony w {source} (zmień go tam)",hfBad:"Token nie przyjęty: {error}",hfFile:"zapisany w {path}, jak robi to `hf auth login`",sup_token:"Wymagany token Hugging Face\nrepozytorium jest zamknięte: zaakceptuj warunki na hubie i ustaw HF_TOKEN",supShort_token:"wymaga tokenu",archLabel:"Architektura",
   testedTip:"Zmierzone na naszych stanowiskach\nszybkość i spekulacja są znane dla tego repozytorium",
   measuredTip:"Dekodowanie jednego zapytania ze spekulacją, zmierzone na naszych stanowiskach z tą kartą",
-  kvUnknownHead:"rozmiar głowic modelu nieznany: tylko BF16",
+  
   depthNote:"Szybkości przy kontekście wypełnionym w jednej czwartej: {depth} z {ctx} na zapytanie. Pusty kontekst upiększa dekodowanie.",
   ctxReqTip:"Kontekst wybrany dla każdego zapytania\nnajedź na wartość, by zobaczyć maksimum tej karty",
   genTip2:"Dekodowanie jednego zapytania\nprzy {depth} wypełnionego kontekstu (jedna czwarta z {ctx}), ze spekulacją, gdy jest włączona",
@@ -818,7 +818,7 @@ Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOrigina
   kvTip:"上下文缓存的存储方式\n字节越少，能容纳越多上下文和请求，长文本精度略有损失",
   kv_bf16:"BF16：2 字节，精确",kv_int8:"INT8：一半内存，几乎精确",kv_fp8:"FP8：一半内存，RTX 40/50",
   kv_nvfp4:"NVFP4：四分之一内存，长上下文损失更大",kv_k8v4:"键 FP8、值 NVFP4：约为 BF16 的 40 %",
-  kvNeeds256:"不适用于此模型：紧凑 KV 需要宽度为 256 的头",kvNeedsFp8:"需要 RTX 40 或 50（FP8）",
+  
   memTip:"启动占用的显存：权重、草稿模型、KV 缓存、循环状态、缓冲区和 CUDA",
   ctxAll:"上下文，合计",gen:"生成",prompt:"提示",perSec:"tok/s",prefill:"预填充",decode:"解码",decode1:"解码，1 个请求",decodeAll:"解码，合计",
   decodeAllTip:"所有并行请求合计\n不是单个请求的 N 倍：它们共享显卡带宽，MoE 在更多请求下读取更多专家；按测试台测量值缩放",
@@ -829,14 +829,14 @@ Object.assign(T.zh, {calibrate:"校准推测解码",original:"原始",delOrigina
   noFitAt:"在 {ctx} × {par} 下放不下",tooBig:"仅权重就放不下",
   estNote:"≈ — 基于显卡（显存、带宽、频率）和模型结构的估算，推测解码取自该 GPU 的注册配置；并非实测。红色行在所选上下文 × 请求数下放不下。",
   avail:"可用",memWeights:"权重",memDrafter:"草稿模型",memStates:"状态",memRuntime:"工作区和 CUDA",noSpec:"不使用推测解码",
-  busyNow:"当前仅有 {free} 空闲：其余被其他进程占用",onlyFull:"仅完全支持",
+  onlyFull:"仅完全支持",
   sup_full:"完全支持\n引擎可运行此架构：下载即可运行",
   sup_drafter:"推测解码草稿模型\n与其主模型一起运行，不能单独运行",
   sup_none:"不支持\n引擎不运行此模型：原因见下",
   sup_unknown:"架构未知\nhub 未说明权重是什么",diskLabel:"磁盘上的模型",diskPlace:"本机上的 .gguf 文件或 Hugging Face 检查点文件夹",diskBad:"无法运行：{reason}",hfAs:"Hugging Face：{account}",hfNone:"没有 Hugging Face 令牌：受限模型（Llama、Gemma 原版）需要它",hfPlace:"hf_… 读取令牌",hfSave:"保存",hfRemove:"删除",hfGet:"获取令牌",hfEnv:"由 {source} 设置（请在那里修改）",hfBad:"令牌未被接受：{error}",hfFile:"保存在 {path}，与 `hf auth login` 相同",sup_token:"需要 Hugging Face 令牌\n该仓库受限：在 hub 上接受条款并设置 HF_TOKEN",supShort_token:"需要令牌",archLabel:"架构",
   testedTip:"在我们的测试台上测量过\n该仓库的速度和推测解码已知",
   measuredTip:"在我们的测试台上用这张卡测得的单请求带推测解码的解码速度",
-  kvUnknownHead:"模型的头大小未知：仅 BF16",
+  
   depthNote:"速度按上下文填满四分之一计算：每个请求 {depth} / {ctx}。空上下文会让解码看起来更快。",
   ctxReqTip:"为每个请求选择的上下文\n悬停数值可查看这张卡的最大值",
   genTip2:"单个请求的解码\n上下文已填 {depth}（{ctx} 的四分之一），开启时包含推测解码",
@@ -872,7 +872,7 @@ Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジ
   kvTip:"コンテキストキャッシュの保存形式\nバイト数が少ないほど多くのコンテキストとリクエストを保持でき、長文で精度がわずかに下がります",
   kv_bf16:"BF16：2 バイト、正確",kv_int8:"INT8：メモリ半分、ほぼ正確",kv_fp8:"FP8：メモリ半分、RTX 40/50",
   kv_nvfp4:"NVFP4：メモリ 4 分の 1、長いコンテキストで劣化が大きい",kv_k8v4:"キー FP8、値 NVFP4：BF16 の約 40 %",
-  kvNeeds256:"このモデルには不可：コンパクト KV は幅 256 のヘッドが必要",kvNeedsFp8:"RTX 40 または 50 が必要（FP8）",
+  
   memTip:"起動時に使うメモリ：重み、ドラフトモデル、KV キャッシュ、再帰状態、バッファ、CUDA",
   ctxAll:"コンテキスト合計",gen:"生成",prompt:"プロンプト",perSec:"tok/s",prefill:"プリフィル",decode:"デコード",decode1:"デコード、1 リクエスト",decodeAll:"デコード合計",
   decodeAllTip:"並列リクエストすべての合計\n1 リクエストの N 倍ではありません：カードの帯域を共有し、MoE はリクエストが多いほど多くのエキスパートを読み込みます。テスト環境の測定値で補正",
@@ -883,14 +883,14 @@ Object.assign(T.ja, {calibrate:"投機デコードを校正",original:"オリジ
   noFitAt:"{ctx} × {par} では収まりません",tooBig:"重みだけで収まりません",
   estNote:"≈ — カード（メモリ、帯域、クロック）とモデル構造からの推定値。投機デコードはこの GPU のレジストリプロファイルによる。実測値ではありません。赤い行は選択したコンテキスト × リクエスト数に収まりません。",
   avail:"利用可能",memWeights:"重み",memDrafter:"ドラフトモデル",memStates:"状態",memRuntime:"作業領域と CUDA",noSpec:"投機デコードなし",
-  busyNow:"現在空きは {free} のみ：残りは他のプロセスが使用中",onlyFull:"完全対応のみ",
+  onlyFull:"完全対応のみ",
   sup_full:"完全対応\nエンジンはこのアーキテクチャを実行できます：ダウンロードして実行",
   sup_drafter:"投機デコード用ドラフトモデル\n本体モデルと一緒に動作し、単独では動きません",
   sup_none:"未対応\nエンジンはこのモデルを実行しません：理由は下記",
   sup_unknown:"アーキテクチャ不明\nhub が重みの種類を示していません",diskLabel:"ディスク上のモデル",diskPlace:"このマシン上の .gguf ファイルまたは Hugging Face チェックポイントのフォルダ",diskBad:"実行できません：{reason}",hfAs:"Hugging Face：{account}",hfNone:"Hugging Face のトークンがありません：制限付きモデル（Llama、Gemma の原本）に必要です",hfPlace:"hf_… 読み取りトークン",hfSave:"保存",hfRemove:"削除",hfGet:"トークンを取得",hfEnv:"{source} で設定済み（そちらで変更）",hfBad:"トークンが受け付けられません：{error}",hfFile:"{path} に保存（`hf auth login` と同じ）",sup_token:"Hugging Face のトークンが必要\nリポジトリは制限付きです：hub で条件に同意し HF_TOKEN を設定してください",supShort_token:"トークンが必要",archLabel:"アーキテクチャ",
   testedTip:"当社のテスト環境で測定済み\nこのリポジトリの速度と投機デコードは既知です",
   measuredTip:"当社のテスト環境でこのカードを使って測定した、投機デコードありの 1 リクエストのデコード",
-  kvUnknownHead:"モデルのヘッドサイズが不明：BF16 のみ",
+  
   depthNote:"速度はコンテキストが 4 分の 1 埋まった状態で表示：リクエストあたり {ctx} 中 {depth}。空のコンテキストではデコードが実際より速く見えます。",
   ctxReqTip:"各リクエストに選択したコンテキスト\n値にカーソルを合わせるとこのカードの最大値を表示",
   genTip2:"1 リクエストのデコード\nコンテキスト {depth} 使用時（{ctx} の 4 分の 1）、有効時は投機デコード込み",
@@ -1076,27 +1076,27 @@ for (const code of ["de", "fr", "es", "it", "pl", "zh", "ja"]) if (T[code]) dele
 // Activation precision (ninferno-serve --activations): a choice the user may pin; Auto is the
 // configuration choice's. The modes offered are the ones the plan's choice says the model runs.
 for (const [code, words] of Object.entries({
-  en:{actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
+  en:{replayContext:"Planned again for this card now: the context each request gets is {now}, not {was} as last time",replayNoFit:"By the plan for this card now it does not fit ({why}): the start may fail",replayRun:"Run with this",replayAnyway:"Run anyway",replayAuto:"Run with Auto for it",nowNoStart:"Right now only {free} is free: a start would not fit ({why})",nowLess:"Right now {free} is free: a start gets {ctx} per request, not {was}",nowTip:"What a start right now would get: the same plan at the memory other processes leave free now (the server decides the same way at start); the line before is the card when nothing else runs",actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
       act_exact:"16-bit",act_fast:"mixed (fast)",act_int8:"8-bit everywhere",
       actTip_exact:"exact: 16-bit (BF16) inputs on every multiply: the closest to the original model, the slowest prompt reading",
       actTip_fast:"fast (the default): 8 bits (4 for NVFP4 weights) on wide calls such as prompt reading and speculative checks, 16 bits when generating",
       actTip_int8:"int8: 8 bits on every call that has an 8-bit route, never 4 (ternary and 2-bit blocks keep 16); Qwen models only",
       actNotHere:"Not available for this model",actAgainst:"against Auto ({v}): decode {d}, request time {t}, KLD {k}",actTime:"time",actNoFit:"does not hold the context",
-      actDropped:"{m} is not available for this model: Auto is used",reason_activations_not_run:"the chosen activations are not run by this model's family: pick Auto, 16-bit or mixed",unsup_activations_not_run:"this model's family does not run the chosen activations"},
-  ru:{actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
+      actDropped:"{m} is not available for this model: Auto is used",reason_activations_not_run:"the chosen activations are not run by this model's family: pick Auto, 16-bit or mixed",kvWhy_family_codec:"this model keeps its cache in BF16 or FP8 only",kvWhy_head_width:"this model's heads are not 256 wide: this compact cache takes 256-wide heads",kvWhy_shape_unknown:"the model's shape is not read yet: only BF16 can be checked",kvNotRead:"waiting for the plan: which formats this model takes",kvSlowCard:"runs, but this card converts FP8 in software: a smaller cache, a slower step",kvPinRefused:"KV {kv} is chosen but this model does not take it: {why}",kvUseAuto:"Use Auto",reason_kv_not_run:"the chosen KV cache format is not taken by this model: pick Auto or another format",unsup_kv_not_run:"this model does not take the chosen KV cache format",unsup_activations_not_run:"this model's family does not run the chosen activations"},
+  ru:{replayContext:"План заново для этой карты сейчас: контекст на запрос {now}, а не {was}, как в прошлый раз",replayNoFit:"По плану для этой карты сейчас не помещается ({why}): запуск может не удаться",replayRun:"Запустить так",replayAnyway:"Всё равно запустить",replayAuto:"Запустить с Авто для этого",nowNoStart:"Сейчас свободно только {free}: запуск не поместится ({why})",nowLess:"Сейчас свободно {free}: запуск получит {ctx} на запрос, а не {was}",nowTip:"Что получит запуск прямо сейчас: тот же план при памяти, которую оставляют свободной другие процессы (сервер при старте решает так же); строка перед этим — карта, когда больше ничего не запущено",actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
       act_exact:"16 бит",act_fast:"смешанный (быстро)",act_int8:"8 бит везде",
       actTip_exact:"exact: входы 16 бит (BF16) на каждом умножении: ближе всего к исходной модели, самое медленное чтение промпта",
       actTip_fast:"fast (по умолчанию): 8 бит (4 для весов NVFP4) на широких вызовах — чтение промпта и проверка спекуляции, 16 бит при генерации",
       actTip_int8:"int8: 8 бит на каждом вызове, где есть 8-битный маршрут, никогда 4 (тернарные и 2-битные блоки остаются 16); только модели Qwen",
       actNotHere:"Недоступно для этой модели",actAgainst:"против Авто ({v}): декод {d}, время запроса {t}, KLD {k}",actTime:"время",actNoFit:"не держит контекст",
-      actDropped:"{m}: недоступно для этой модели, используется Авто",reason_activations_not_run:"семейство этой модели не запускает выбранные активации: выберите Авто, 16 бит или смешанный",unsup_activations_not_run:"семейство этой модели не запускает выбранные активации"},
-  uk:{actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
+      actDropped:"{m}: недоступно для этой модели, используется Авто",reason_activations_not_run:"семейство этой модели не запускает выбранные активации: выберите Авто, 16 бит или смешанный",kvWhy_family_codec:"эта модель хранит кеш только в BF16 или FP8",kvWhy_head_width:"головы этой модели не шириной 256: этот компактный кеш только для голов 256",kvWhy_shape_unknown:"форма модели ещё не прочитана: проверить можно только BF16",kvNotRead:"ждём план: какие форматы берёт эта модель",kvSlowCard:"работает, но эта карта переводит FP8 программно: кеш меньше, шаг медленнее",kvPinRefused:"Выбран KV {kv}, но эта модель его не берёт: {why}",kvUseAuto:"Взять Авто",reason_kv_not_run:"эта модель не берёт выбранный формат KV-кеша: выберите Авто или другой формат",unsup_kv_not_run:"эта модель не берёт выбранный формат KV-кеша",unsup_activations_not_run:"семейство этой модели не запускает выбранные активации"},
+  uk:{replayContext:"План заново для цієї карти зараз: контекст на запит {now}, а не {was}, як минулого разу",replayNoFit:"За планом для цієї карти зараз не вміщується ({why}): запуск може не вдатися",replayRun:"Запустити так",replayAnyway:"Усе одно запустити",replayAuto:"Запустити з Авто для цього",nowNoStart:"Зараз вільно лише {free}: запуск не вміститься ({why})",nowLess:"Зараз вільно {free}: запуск отримає {ctx} на запит, а не {was}",nowTip:"Що отримає запуск просто зараз: той самий план за пам'яті, яку залишають вільною інші процеси (сервер під час старту вирішує так само); рядок перед цим — карта, коли більше нічого не запущено",actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
       act_exact:"16 біт",act_fast:"змішаний (швидко)",act_int8:"8 біт скрізь",
       actTip_exact:"exact: входи 16 біт (BF16) на кожному множенні: найближче до вихідної моделі, найповільніше читання промпту",
       actTip_fast:"fast (типово): 8 біт (4 для ваг NVFP4) на широких викликах — читання промпту й перевірка спекуляції, 16 біт під час генерації",
       actTip_int8:"int8: 8 біт на кожному виклику, де є 8-бітний маршрут, ніколи 4 (тернарні та 2-бітні блоки лишаються 16); лише моделі Qwen",
       actNotHere:"Недоступно для цієї моделі",actAgainst:"проти Авто ({v}): декод {d}, час запиту {t}, KLD {k}",actTime:"час",actNoFit:"не тримає контекст",
-      actDropped:"{m}: недоступно для цієї моделі, використовується Авто",reason_activations_not_run:"сімейство цієї моделі не запускає вибрані активації: виберіть Авто, 16 біт або змішаний",unsup_activations_not_run:"сімейство цієї моделі не запускає вибрані активації"},
+      actDropped:"{m}: недоступно для цієї моделі, використовується Авто",reason_activations_not_run:"сімейство цієї моделі не запускає вибрані активації: виберіть Авто, 16 біт або змішаний",kvWhy_family_codec:"ця модель зберігає кеш лише в BF16 або FP8",kvWhy_head_width:"голови цієї моделі не шириною 256: цей компактний кеш лише для голів 256",kvWhy_shape_unknown:"форму моделі ще не прочитано: перевірити можна лише BF16",kvNotRead:"чекаємо на план: які формати бере ця модель",kvSlowCard:"працює, але ця карта перетворює FP8 програмно: кеш менший, крок повільніший",kvPinRefused:"Вибрано KV {kv}, але ця модель його не бере: {why}",kvUseAuto:"Взяти Авто",reason_kv_not_run:"ця модель не бере вибраний формат KV-кешу: виберіть Авто або інший формат",unsup_kv_not_run:"ця модель не бере вибраний формат KV-кешу",unsup_activations_not_run:"сімейство цієї моделі не запускає вибрані активації"},
 })) { if (T[code]) Object.assign(T[code], words); }
 const LANGS = [
   ["en", "English", '<svg viewBox="0 0 60 30"><rect width="60" height="30" fill="#012169"/><path d="M0,0L60,30M60,0L0,30" stroke="#fff" stroke-width="6"/><path d="M0,0L60,30M60,0L0,30" stroke="#C8102E" stroke-width="2"/><path d="M30,0V30M0,15H60" stroke="#fff" stroke-width="10"/><path d="M30,0V30M0,15H60" stroke="#C8102E" stroke-width="6"/></svg>'],
@@ -1288,7 +1288,52 @@ async function refreshState() {
       ${runs}</div>`;
   }).join("");
   renderDownloads();
+  refreshPlanNow();
   if (logId) refreshLog();
+}
+// The cached plans' "now" (what a start right now would get) follows the card's free memory: when
+// it moves (another process started or stopped) or another GPU is chosen, every cached "now" is dropped (asked again when its plan is shown: cachedPlan) and the selected
+// model's plans are asked again (the server keeps their idle part; it re-plans only "now").
+const NOW_STEP = 256 * 2 ** 20;
+let nowFree = null, nowGpu = null, nowGen = 0; // nowGen: one step per move of the memory
+// A plan fetched while the memory moved: its "now" is of before (dropped: asked again when shown).
+function keepPlan(key, doc, gen) {
+  if (doc && gen !== nowGen) delete doc.now;
+  planDocs.set(key, doc);
+  if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value);
+}
+function refreshPlanNow() {
+  const g = (S.gpus || []).find(x => x.index === gpu);
+  if (!g) return;
+  if (nowGpu === gpu && nowFree !== null && Math.abs(g.memory_free - nowFree) < NOW_STEP) return;
+  // Another GPU chosen counts too: its cached plans' "now" may be from long ago.
+  const moved = nowFree !== null;
+  nowGpu = gpu; nowFree = g.memory_free;
+  if (!moved) return;
+  nowGen++;
+  for (const doc of planDocs.values()) if (doc) delete doc.now;
+  const sel = selected;
+  if (!sel) return;
+  for (const key of [...planDocs.keys()]) {
+    const q = new URLSearchParams(key.split("?")[1] || "");
+    if (q.get("repo") !== sel.repo || q.get("gpu") !== String(gpu)) continue;
+    askNow(key, sel);
+  }
+  renderBody();
+}
+// A cached plan whose "now" was dropped (the memory moved since): asked again when it is shown.
+const nowFetching = new Set();
+function askNow(key, sel) {
+  if (nowFetching.has(key)) return;
+  nowFetching.add(key);
+  const gen = nowGen;
+  api(key).then(doc => { const kept = planDocs.get(key); if (kept && doc && gen === nowGen) kept.now = doc.now ?? null; })
+    .catch(() => {}).finally(() => { nowFetching.delete(key); if (selected === sel) renderBody(); });
+}
+function cachedPlan(key, sel) {
+  const doc = planDocs.get(key);
+  if (doc && doc.now === undefined) askNow(key, sel);
+  return doc;
 }
 function shortName(m) {
   const base = m.split("/").pop();
@@ -1327,6 +1372,23 @@ function setTab(name) {
 
 // ---- my models ------------------------------------------------------------------------------
 let mine = [];
+// A start again from My models that the plan for this card and load changes or refuses: what it
+// says, by artifact, until the user answers.
+const replayNotes = {};
+// A start again of My models' `m` with `saved` settings, planned first for this card and its load
+// now: started when nothing differs, else what differs is said (replayNotes) and the user answers.
+async function replayPlanned(m, saved, el) {
+  el.disabled = true; el.textContent = t("planning");
+  let doc = null;
+  try {
+    doc = await api(artifactPlanQuery(m.artifact, {gpu, ctx: saved.ctx, par: saved.par, kv: saved.kv || "auto",
+                                                   spec: planSpecOf(saved.spec), act: saved.act || "auto"}));
+  } catch (e) { replayNotes[m.artifact] = {refused: null, nofit: e.message, changes: [], cap: 0, saved}; refreshMine(); return; }
+  const r = replayDiff(saved, doc, planTr);
+  if (!r.refused && !r.nofit && !r.changes.length) { launch(m.artifact, "", el, {...saved, cap: r.cap}, [m.artifact]); return; }
+  replayNotes[m.artifact] = {...r, saved};
+  refreshMine();
+}
 const confirming = new Set();
 // Converted hub models whose branch the hub now names at another commit and that the user has not
 // kept (/api/moved, asked at most every 10 minutes, every 5 s while an update runs): artifact path
@@ -1421,7 +1483,13 @@ async function refreshMine() {
       <td>${m.quant ? `<span class="chip">${esc(m.quant)}</span>` : ""}</td>
       <td class="num">${m.size_gib.toFixed(1)} GiB</td>
       <td class="muted">${esc(ago(m.modified))}</td>
-      <td><div class="acts">${m.running ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
+      <td>${(() => { const n = replayNotes[m.artifact]; if (!n) return "";
+          const lines = n.refused ? [n.refused.why] : n.nofit ? [fill(t("replayNoFit"), {why: n.nofit})]
+            : n.changes.map(c => fill(t("replayContext"), {was: c.was ? planTok(c.was) : t("ctxAutoWord"), now: c.now ? planTok(c.now) : t("ctxAutoWord")}));
+          return `<div class="sub ${n.refused || n.nofit ? "err" : "lowq"}">${lines.map(esc).join("<br>")}</div><div class="acts">` +
+            (n.refused ? `<button class="primary" data-runauto="${esc(m.artifact)}">${t("replayAuto")}</button>` : `<button class="primary" data-runnow="${esc(m.artifact)}">${t(n.nofit ? "replayAnyway" : "replayRun")}</button>`) +
+            `<button class="ghost" data-runno="${esc(m.artifact)}">${t("no")}</button></div>`; })()}
+        <div class="acts">${m.running || replayNotes[m.artifact] ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
         <button class="ghost" data-tune="${i}" title="${t("calibrate")}">⚙</button>${del}</div></td></tr>`;
   }).join("");
   refreshMoved();
@@ -1764,8 +1832,8 @@ function launchContextOf(row, ask) {
   const p = row && row.plan;
   return (ask.par || 1) > 1 && planStateOf(row) === "own" && p && p.context > 0 ? p.context : 0;
 }
-const REASON_CODES = ["shape_unknown", "weights_too_big", "smallest_plan_short", "survival_only", "activations_not_run"];
-const UNSUPPORTED_CODES = ["drafter_file", "converted_size_unknown", "above_8_bits", "nvfp4_card", "activations_not_run"];
+const REASON_CODES = ["shape_unknown", "weights_too_big", "smallest_plan_short", "survival_only", "activations_not_run", "kv_not_run"];
+const UNSUPPORTED_CODES = ["drafter_file", "converted_size_unknown", "above_8_bits", "nvfp4_card", "activations_not_run", "kv_not_run"];
 const RULE_TIERS = ["own", "own_stepped", "shared", "own_below_floor", "shared_below_floor", "desktop"];
 // A plan's reason in words: its reason_code with the numbers, else the server's text.
 function reasonText(p, tr) {
@@ -1948,6 +2016,68 @@ function launchSettingsOf(saved) {
           kv: typeof s.kv === "string" ? s.kv : "", spec: typeof s.spec === "string" && s.spec ? s.spec : "auto",
           act: ACT_MODES.includes(s.act) ? s.act : ""};
 }
+// Why a start right now does not fit, in words with its numbers (the now plan's code and params).
+function nowReasonText(n, tr) {
+  return reasonText({reason_code: n.reason_code_now, reason_params: n.reason_params_now, reason: n.reason_now}, tr);
+}
+// What a start right now would get (/api/plan's "now": product::plan_now at the GPU's free memory),
+// said only where it differs from the idle card's plan `idle` (the row's plan): {cls, text}, or null.
+function nowLine(doc, idle, tr) {
+  const n = doc && doc.now;
+  if (!n || typeof n.free_now_bytes !== "number") return null;
+  const free = planGiB(n.free_now_bytes);
+  if (!n.fits_now) {
+    const why = nowReasonText(n, tr);
+    return {cls: "err", text: tr("nowNoStart", {free, why})};
+  }
+  const ctx = n.context_now || 0, was = idle && idle.context || 0;
+  if (ctx && was && ctx < was) return {cls: "lowq", text: tr("nowLess", {free, ctx: planTok(ctx), was: planTok(was)})};
+  return null;
+}
+// serve's --kv-dtype codecs, in the selector's order (kKvCacheStorageNames).
+const KV_CODECS = ["bf16", "int8", "fp8", "nvfp4", "k8v4"];
+// The KV selector from a plan document's choice (choice.kv_options: the engine's own rules,
+// product::kv_options): {codec: {allowed, why_code, why, slow}}; null without a document that says.
+function kvOptionsOf(doc) {
+  const list = doc && doc.choice && doc.choice.kv_options;
+  if (!Array.isArray(list) || !list.length) return null;
+  const out = {};
+  for (const o of list) out[o.codec] = {allowed: !!o.allowed, why_code: o.why_code || "", why: o.why || "", slow: !!o.slow_on_card};
+  return out;
+}
+// Why a codec is not taken, in words: its why_code's, else the server's English.
+const KV_WHY_CODES = ["family_codec", "head_width", "shape_unknown"];
+function kvWhyText(o, tr) {
+  if (!o || o.allowed) return "";
+  return KV_WHY_CODES.includes(o.why_code) ? tr("kvWhy_" + o.why_code) : o.why;
+}
+// The /api/plan request of a model converted here (My models), by its artifact path, at an ask
+// {gpu, ctx, par, kv, spec, act} as planQuery's.
+function artifactPlanQuery(artifact, a) {
+  return planQuery({...a, repo: ""}).replace(/^\/api\/plan\?repo=&hub=[^&]*/, "/api/plan?artifact=" + encodeURIComponent(artifact));
+}
+// A start again from "My models", planned first for the card and load now (/api/plan?artifact=):
+// what differs from the settings saved with the last start. {refused: the pin a start refuses
+// (its code and words), nofit: the plan's reason when it does not fit, changes: [{field, was,
+// now}] (the automatic context's ceiling, planned again), cap: the ceiling a start now passes}.
+function replayDiff(saved, doc, tr) {
+  const s = saved || {}, p = doc && doc.plan;
+  if (!p) return {refused: null, nofit: tr("planFailed"), changes: [], cap: 0};
+  if (["kv_not_run", "activations_not_run"].includes(p.reason_code))
+    return {refused: {code: p.reason_code, why: reasonText(p, tr)}, nofit: "", changes: [], cap: 0};
+  if (!p.fits) return {refused: null, nofit: reasonText(p, tr), changes: [], cap: 0};
+  // What a start right now would get (another model may hold the card).
+  const n = doc.now;
+  if (n && n.fits_now === false) return {refused: null, nofit: nowReasonText(n, tr), changes: [], cap: 0};
+  const changes = [];
+  let cap = 0;
+  if (!(s.ctx > 0)) {
+    cap = launchContextOf(planRowOf(doc, ""), {ctx: 0, par: s.par || 1});
+    if (n && n.fits_now && n.context_now && cap && n.context_now < cap) cap = n.context_now;
+    if ((s.cap || 0) !== cap) changes.push({field: "context", was: s.cap || 0, now: cap});
+  }
+  return {refused: null, nofit: "", changes, cap};
+}
 // The activation modes (ninferno-serve --activations), in the selector's order.
 const ACT_MODES = ["exact", "fast", "int8"];
 // The activation selector from a plan document's choice (src/product/plan/plan_choice.h): the modes
@@ -2036,10 +2166,11 @@ function choiceDocOf(sel, q) {
   if (!sel || !q) return null;
   if (choiceFor(sel.plan, q.quant)) return sel.plan;
   const key = planQuery(planAsk(sel, q.quant));
-  if (planDocs.has(key)) return planDocs.get(key);
+  if (planDocs.has(key)) return cachedPlan(key, sel);
   if (!choiceFetching.has(key)) {
     choiceFetching.add(key);
-    api(key).then(doc => { planDocs.set(key, doc); if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value); })
+    const gen = nowGen;
+    api(key).then(doc => keepPlan(key, doc, gen))
       .catch(() => {}).finally(() => { choiceFetching.delete(key); if (selected === sel) renderBody(); });
   }
   return null;
@@ -2053,7 +2184,7 @@ const planDocs = new Map(), PLAN_CACHE = 48;
 let planTimer = 0;
 function planAsk(sel, quant) {
   return {repo: sel.repo, hub: sel.hubName, gpu, quant: quant || "", ctx: ctxValue, par: parallel,
-          kv: kvChosen && !kvWhyNot(kvType, sel.kv) ? kvType : "auto", spec: planSpecOf(specMode), act: actAsk(sel)};
+          kv: kvChosen ? kvType : "auto", spec: planSpecOf(specMode), act: actAsk(sel)};
 }
 function schedulePlan() {
   const sel = selected;
@@ -2061,12 +2192,13 @@ function schedulePlan() {
   const q = planQuery(planAsk(sel));
   if (q === sel.planQ) return;
   sel.planQ = q; clearTimeout(planTimer);
-  if (planDocs.has(q)) { sel.plan = planDocs.get(q); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
+  if (planDocs.has(q)) { sel.plan = cachedPlan(q, sel); sel.planErr = ""; sel.planBusy = false; accelAfterPlan(); return; }
   sel.planBusy = true;
   planTimer = setTimeout(async () => {
     let doc = null, err = "";
+    const gen = nowGen;
     try { doc = await api(q); } catch (e) { err = e.message || String(e); }
-    if (doc) { planDocs.set(q, doc); if (planDocs.size > PLAN_CACHE) planDocs.delete(planDocs.keys().next().value); }
+    if (doc) { keepPlan(q, doc, gen); if (doc.now === undefined) askNow(q, sel); }
     if (sel !== selected || sel.planQ !== q) return;
     sel.planBusy = false; sel.planErr = err;
     if (doc) sel.plan = doc; else sel.plan = null;
@@ -2114,9 +2246,6 @@ function ctxEff() {
   const r = quantSel ? rowPlan(quantSel) : null;
   return r && r.plan && r.plan.context > 0 ? r.plan.context : Math.min(32768, nativeCtx());
 }
-// serve's --kv-dtype: bytes per element of a 256-wide head with its scales (core/paged_kv_storage.h),
-// relative to BF16 for the speed estimate.
-const KV = {bf16: 2, int8: 264 / 256, fp8: 258 / 256, nvfp4: 144 / 256, k8v4: 402 / 512};
 // The KV storage: the one the user picked, else Auto (the codec the plan resolves for the family
 // and the card).
 let kvType = "bf16", kvChosen = false;
@@ -2128,25 +2257,9 @@ const actAsk = sel => actAskOf(actMode, actAllowedOf(sel));
 function kvPlanned() {
   const r = quantSel ? rowPlan(quantSel) : null;
   const k = r && r.plan && r.plan.kv_dtype || selected && selected.plan && selected.plan.plan && selected.plan.plan.kv_dtype || "";
-  return KV[k] ? k : "";
-}
-function kvNow() { return kvChosen && !kvWhyNot(kvType, selected && selected.kv) ? kvType : kvPlanned() || "bf16"; }
-// Why a codec cannot be chosen: FP8 takes any head width (the server resolves it) but the E4M3 MMA
-// of an RTX 40 or 50; INT8, NVFP4 and K8V4 hold 256-wide heads only.
-function kvWhyNot(type, kv) {
-  if (type === "bf16") return "";
-  const g = gpuOf();
-  if ((type === "fp8" || type === "k8v4") && g && parseFloat(g.cc) < 8.9) return t("kvNeedsFp8");
-  if (type === "fp8") return "";
-  if (!kv || !kv.known) return t("kvUnknownHead");
-  if (kv.kv_head_dim !== 256) return t("kvNeeds256");
-  return "";
+  return KV_CODECS.includes(k) ? k : "";
 }
 // What other processes hold on the card now is said apart, not counted: the plan is about the card.
-function busyNote(needGib) {
-  const g = gpuOf();
-  return g && g.memory_free < needGib * GiB ? fill(t("busyNow"), {free: gib(g.memory_free)}) : "";
-}
 // Rough estimates from the card and the model's shape (catalog.h KvModel), not measurements.
 const capLabel = n => n >= 1048576 && n % 1048576 === 0 ? n / 1048576 + "M" : n >= 1024 ? Math.floor(n / 1024) + "K" : String(n);
 const gib = b => (b / GiB).toFixed(1) + " GiB";
@@ -2355,14 +2468,26 @@ function memTipOf(mem) {
 }
 function renderKv() {
   // Auto's codec: the plan's while Auto is on; under a chosen codec, the one Auto last planned.
-  const kv = selected.kv;
   if (!kvChosen && kvPlanned()) selected.kvAuto = kvPlanned();
   const planned = kvChosen ? selected.kvAuto || "" : kvPlanned();
+  // Which codecs a start takes, from the server (the engine's rules for this model and card); the
+  // last document's while the next is planned, none before the first: nothing is guessed here.
+  const doc = planStale() ? null : quantSel ? choiceDocOf(selected, quantSel) : selected.plan;
+  const fresh = kvOptionsOf(doc);
+  if (fresh) selected.kvOptions = fresh;
+  const opts = selected.kvOptions || null;
   const auto = `<span data-tip="${esc(t("kvAutoTip"))}"><button data-kv="auto" class="${kvChosen ? "" : "on"}">${esc(t("kvAuto"))}${planned ? " (" + esc(planned.toUpperCase()) + ")" : ""}</button></span>`;
-  $("kvsel").innerHTML = auto + Object.keys(KV).map(k => {
-    const why = kvWhyNot(k, kv);
-    return `<span data-tip="${esc(t("kv_" + k) + (why ? "\n" + why : ""))}"><button data-kv="${k}" class="${kvChosen && k === kvType && !why ? "on" : ""}" ${why ? "disabled" : ""}>${k.toUpperCase()}</button></span>`;
-  }).join("");
+  const pinned = kvChosen && opts && opts[kvType] && !opts[kvType].allowed ? opts[kvType] : null;
+  $("kvsel").innerHTML = auto + KV_CODECS.map(k => {
+    const o = opts ? opts[k] : null;
+    const usable = k === "bf16" || (o && o.allowed);
+    const why = !opts && k !== "bf16" ? t("kvNotRead") : kvWhyText(o, planTr);
+    const tip = [t("kv_" + k), why, o && o.slow ? t("kvSlowCard") : ""].filter(Boolean).join("\n");
+    // A pinned codec the model does not take stays shown as chosen (it is what the plan was asked
+    // for and refuses): never silently replaced.
+    const on = kvChosen && k === kvType;
+    return `<span data-tip="${esc(tip)}"><button data-kv="${k}" class="${on ? (usable ? "on" : "on err") : ""}" ${usable || on ? "" : "disabled"}>${k.toUpperCase()}${o && o.slow ? " ⚠" : ""}</button></span>`;
+  }).join("") + (pinned ? `<div class="sub err">${esc(fill(t("kvPinRefused"), {kv: kvType.toUpperCase(), why: kvWhyText(pinned, planTr)}))} <button data-kv="auto">${esc(t("kvUseAuto"))}</button></div>` : "");
 }
 // The activation selector: Auto (the mode the choice takes) and each mode the model runs, with what it
 // would change against Auto (the choice's estimates of the last plan under Auto).
@@ -2507,7 +2632,7 @@ function renderBody() {
         <div class="big">${st.star ? '<span class="star">★</span> ' : ""}${esc(quantLabel(q, sel.repo))} · ${q.size_gib.toFixed(1)} GiB</div>
         <div class="sub">${status}</div>
         ${warns ? `<div class="sub">${warns}</div>` : ""}
-        <div class="sub">${mem ? `<span data-tip="${esc(memTipOf(mem))}">${t("need")} ≈ ${need.toFixed(1)} ${t("of")} ${gib(mem.free)}</span> · ` : ""}${stale ? "" : `<span data-tip="${esc(t("ctxPlanTip") + (st.ctxTip ? "\n" + st.ctxTip : ""))}">${esc(st.ctxText)}</span>`}${mem && busyNote(need) ? ` · <span class="err">${esc(busyNote(need))}</span>` : ""}</div>
+        <div class="sub">${mem ? `<span data-tip="${esc(memTipOf(mem))}">${t("need")} ≈ ${need.toFixed(1)} ${t("of")} ${gib(mem.free)}</span> · ` : ""}${stale ? "" : `<span data-tip="${esc(t("ctxPlanTip") + (st.ctxTip ? "\n" + st.ctxTip : ""))}">${esc(st.ctxText)}</span>`}${(() => { const n = stale ? null : nowLine(cdoc || sel.plan, selRow && selRow.plan, planTr); return n ? ` · <span class="${n.cls}" data-tip="${esc(t("nowTip"))}">${esc(n.text)}</span>` : ""; })()}</div>
         ${one ? `<div class="sub" data-tip="${esc(t("estBasis"))}">${fill(t(parallel > 1 ? "speedLine" : "speedLine1"), {depth: ctxLabel(est.depth), one: rate(one), all: rate(one * parallel), n: nReq(parallel)})}${(() => { const l = loadOf(), lc = loadHere(l) && q.quant === l.quant ? llamaReq(est.depth, parallel) : 0; return lc > 0 ? ` · llama.cpp ≈ ${rate(lc)}` : ""; })()} · ${t("prefill")} ≈ ${rate(est.prefill_tok_s)} ${t("perSec")}</div>` : ""}</div>
         <span style="flex:1"></span>
         <div class="pickacts">
@@ -2732,7 +2857,7 @@ function detailLaunchSettings() {
   const planned = launchContextOf(quantSel ? rowPlan(quantSel) : null, {ctx: ctxValue, par: parallel});
   return {ctx: ctxValue > 0 ? planned : 0, cap: ctxValue > 0 ? 0 : planned,
           par: Math.min(Math.max(parallel, 1), MAX_PAR),
-          kv: kvChosen && selected && !kvWhyNot(kvType, selected.kv) ? kvType : "", spec: specMode,
+          kv: kvChosen ? kvType : "", spec: specMode,
           act: selected && actAsk(selected) !== "auto" ? actAsk(selected) : ""};
 }
 async function launch(model, quant, button, settings, keys) {
@@ -2755,7 +2880,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-act],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
+  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-runnow],[data-runauto],[data-runno],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-act],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.fitctx !== undefined) {
@@ -2778,10 +2903,29 @@ document.addEventListener("click", async ev => {
   else if (d.stop) { api("/api/stop", {id:+d.stop}).then(refreshState).catch(e => showError(e.message)); }
   else if (d.gpu !== undefined) { gpu = +d.gpu; catalogCache = {}; refreshState(); if (selected) loadRepo(); }
   else if (d.run !== undefined) {
-    // My models: the model's own last settings, not the ones of the model open in "Find".
+    // My models: the model's own last settings, not the ones of the model open in "Find", planned
+    // again for this card and its load first: what differs is said before it starts, nothing is
+    // changed silently.
     const m = mine[+d.run];
-    launch(m.artifact, "", el, savedLaunchOf(m), [m.artifact]);
+    await replayPlanned(m, savedLaunchOf(m), el);
   }
+  else if (d.runnow !== undefined) {
+    // The start as planned now (the changes said), or anyway where the estimate says it may fail.
+    const m = mine.find(x => x.artifact === d.runnow), n = m && replayNotes[m.artifact];
+    if (!n) return;
+    delete replayNotes[m.artifact];
+    launch(m.artifact, "", el, {...n.saved, cap: n.saved.ctx > 0 ? 0 : n.cap}, [m.artifact]);
+  }
+  else if (d.runauto !== undefined) {
+    // A refused pin: the start with that setting on Auto, said on the button.
+    // Planned again with it on Auto first: that start may differ too, and it is said the same way.
+    const m = mine.find(x => x.artifact === d.runauto), n = m && replayNotes[m.artifact];
+    if (!n) return;
+    delete replayNotes[m.artifact];
+    await replayPlanned(m, {...n.saved, kv: n.refused.code === "kv_not_run" ? "" : n.saved.kv,
+                            act: n.refused.code === "activations_not_run" ? "" : n.saved.act}, el);
+  }
+  else if (d.runno !== undefined) { delete replayNotes[d.runno]; refreshMine(); }
   else if (d.tune !== undefined) { try { const j = await api("/api/tune", {artifact: mine[+d.tune].artifact, gpu}); openLog(j.id, t("calibrate")); } catch (e) { showError(e.message); } }
   else if (d.del !== undefined) { confirming.add(mine[+d.del].artifact); refreshMine(); }
   else if (d.delno !== undefined) { confirming.delete(mine[+d.delno].artifact); refreshMine(); }

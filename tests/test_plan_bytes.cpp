@@ -16,6 +16,7 @@
 // the copy window (automatic as a server's default options leave it, and off). CPU, no GPU, no
 // files.
 
+#include "spec/round_cost.h"
 #include "models/dense/program_family.h"
 #include "models/gemma4/program_family.h"
 #include "models/nemotron_h/program_family.h"
@@ -117,6 +118,7 @@ namespace detail = ninferno::models::qwen3_5::detail;
 using ninferno::EngineOptions;
 using ninferno::KvCacheStorage;
 using ninferno::RecurrentStateStorage;
+using ninferno::ProposalHead;
 using ninferno::SpeculativeBackend;
 using nlohmann::json;
 
@@ -843,6 +845,171 @@ void test_default_copy_window(const std::vector<Subject>& all) {
     }
 }
 
+// An artifact's proposal head (proposal/*) is on the Device only while it drafts: under MTP or
+// DFlash (which draft with it) or when asked for; plain and DFlash2 plans leave it off (Codex on
+// #170: the default head counted for every plan, a false 484 MB on the 9B).
+void test_proposal_bytes_only_when_drafting() {
+    rt::PlanDeviceFacts device;
+    device.name               = "RTX 5070 Ti";
+    device.total_bytes        = rt::plan_board_total_bytes(16);
+    device.compute_capability = 120;
+    device.free_bytes         = device.total_bytes;
+    rt::PlanModelFacts facts  = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0).model;
+    facts.weight_bytes        = static_cast<std::uint64_t>(10.20 * kGiB);
+    facts.proposal_bytes      = static_cast<std::uint64_t>(0.45 * kGiB);
+    facts.proposal_serves_mtp    = true;
+    facts.proposal_serves_dflash = true;
+    const auto weights = [&](SpeculativeBackend backend, ProposalHead head) {
+        EngineOptions options;
+        options.speculative.backend       = backend;
+        options.speculative.draft_tokens  = backend == SpeculativeBackend::None ? 0 : 3;
+        options.speculative.proposal_head = head;
+        return rt::dry_run_plan(facts, device, options).weight_bytes;
+    };
+    const std::uint64_t without = facts.weight_bytes - facts.proposal_bytes;
+    check(weights(SpeculativeBackend::None, ProposalHead::Full) == without, "plain: no head");
+    check(weights(SpeculativeBackend::Mtp, ProposalHead::Full) == facts.weight_bytes,
+          "MTP: the head");
+    check(weights(SpeculativeBackend::DFlash2, ProposalHead::Full) == without, "DFlash2: no head");
+    check(weights(SpeculativeBackend::DFlash, ProposalHead::Full) == facts.weight_bytes,
+          "DFlash: the head");
+    check(weights(SpeculativeBackend::DFlash2, ProposalHead::Optimized) == facts.weight_bytes,
+          "an asked-for head");
+    // A head that does not serve MTP (revision 6's DFlash-only head) stays off an MTP plan.
+    facts.proposal_serves_mtp = false;
+    check(weights(SpeculativeBackend::Mtp, ProposalHead::Full) == without,
+          "MTP: no head that does not serve it");
+}
+
+// The plan reads the quantizations' heads only where the converter would add the default proposal
+// head (Codex on #170: not for every Qwen table): a declared DFlash companion, a speculation that
+// may draft with DFlash.
+void test_default_proposal_possible() {
+    pr::PlannedTarget nine{.repo = "unsloth/Qwen3.5-9B-GGUF",
+                           .facts = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0),
+                           .gguf  = true};
+    nine.facts.shape.hidden_size       = 4096;
+    nine.facts.shape.num_hidden_layers = 32;
+    nine.facts.shape.vocab_size        = 248320;
+    nine.facts.shape.base_models       = {"Qwen/Qwen3.5-9B"};
+    pr::SpeculationAsk automatic;
+    check(pr::default_proposal_possible(nine, automatic), "9B, --spec auto: the companion's head");
+    pr::SpeculationAsk none{.automatic = false};
+    check(!pr::default_proposal_possible(nine, none), "--spec none: no head to price");
+    pr::SpeculationAsk mtp{.automatic = false};
+    mtp.given.backend = SpeculativeBackend::Mtp;
+    nine.facts.shape.builtin_mtp = false;
+    check(!pr::default_proposal_possible(nine, mtp), "--spec mtp without MTP layers: no head");
+    nine.facts.shape.builtin_mtp = true;
+    check(pr::default_proposal_possible(nine, mtp), "--spec mtp with MTP layers: the head");
+    pr::SpeculationAsk dflash{.automatic = false};
+    dflash.given.backend = SpeculativeBackend::DFlash;
+    check(pr::default_proposal_possible(nine, dflash), "--spec dflash: the head");
+    pr::PlannedTarget other = nine;
+    other.facts.shape.base_models       = {};
+    other.facts.shape.hidden_size       = 1234;
+    other.repo                          = "someone/unknown-qwen";
+    other.facts.shape.builtin_mtp       = false;
+    check(!pr::default_proposal_possible(other, automatic), "no companion declared: none");
+    pr::PlannedTarget llama = nine;
+    llama.facts.model.model_type = "dense_decoder";
+    check(!pr::default_proposal_possible(llama, automatic), "not Qwen 3.5: none");
+}
+
+// The default proposal head a Qwen conversion with a DFlash companion adds, per quantization:
+// each row's own head where its header was read, else the parsed one's as it is (Codex on #170:
+// GGUF quantizations often share one Q6_K output.weight while their layers differ).
+void test_proposal_bytes_per_quant() {
+    pr::PlanSourceFacts q4 = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0);
+    q4.model.weight_bytes  = 5117970432;
+    q4.model.head_bytes    = 834355200;
+    q4.model.vocab         = 248320;
+    q4.model.hidden        = 4096;
+    q4.model.mtp_bytes     = 0;
+    q4.shape.builtin_mtp   = false; // no MTP layers (the MTP case below has them)
+    pr::DryRunInputs inputs;
+    inputs.proposal_planned       = true;
+    inputs.proposal_drafter_bytes = 1372703744.0;
+    // Q5_K_M: larger layers, the same Q6_K head (its header read).
+    pr::PlanSourceFacts q5 = q4;
+    q5.model.weight_bytes  = 6033000000;
+    pr::QuantListing row_q4{.quant = "Q4_K_M", .format = "gguf", .bytes = q4.model.weight_bytes};
+    pr::QuantListing row_q5{.quant = "Q5_K_M", .format = "gguf", .bytes = q5.model.weight_bytes};
+    row_q4.head_bytes = 834355200;
+    row_q5.head_bytes = 834355200;
+    const std::uint64_t at_q4 = pr::proposal_bytes_at(q4, pr::inputs_for(inputs, row_q4));
+    const std::uint64_t at_q5 = pr::proposal_bytes_at(q5, pr::inputs_for(inputs, row_q5));
+    check(at_q4 == 147456ULL * 3360 + 147456ULL * 4, "Q4_K_M: 147,456 rows of its Q6_K head");
+    check(at_q5 % (3360 + 4) == 0 && at_q5 / (3360 + 4) >= 147456,
+          "Q5_K_M: rows of the same 3,360-byte Q6_K head (a smaller share: no fewer rows)");
+    // A row whose header was not read: the parsed head as it is, not scaled by the weights.
+    pr::QuantListing unread{.quant = "Q8_0", .format = "gguf", .bytes = 2 * q4.model.weight_bytes};
+    pr::PlanSourceFacts q8 = q4;
+    q8.model.weight_bytes  = unread.bytes;
+    const std::uint64_t at_q8 = pr::proposal_bytes_at(q8, pr::inputs_for(inputs, unread));
+    check(at_q8 % (3360 + 4) == 0, "an unread row's rows are the parsed head's 3,360 bytes each");
+    pr::DryRunInputs none = inputs;
+    none.proposal_drafter_bytes = 0;
+    check(pr::proposal_bytes_at(q4, none) == 0, "no companion and no MTP layers: no head");
+    // MTP layers alone: the rows MTP 3 asks for (57,344 on the 9B).
+    pr::PlanSourceFacts mtp = q4;
+    mtp.model.mtp_bytes     = 1002113024 - 834355200; // the MTP layer without the head it shares
+    mtp.shape.builtin_mtp   = true;
+    check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3360 + 57344ULL * 4,
+          "MTP layers alone: 57,344 rows and ids");
+    // The plan loads it under MTP and leaves it off plain decode (review on the MTP branch: it
+    // went into the attached drafters' bytes, which built-in MTP never takes).
+    pr::DryRunInputs at   = none;
+    at.device.total_bytes = rt::plan_board_total_bytes(12);
+    at.device.free_bytes  = at.device.total_bytes;
+    const auto weights    = [&](SpeculativeBackend backend, bool planned) {
+        pr::DryRunInputs ask              = at;
+        ask.proposal_planned                 = planned;
+        ask.options.speculative.backend      = backend;
+        ask.options.speculative.draft_tokens = backend == SpeculativeBackend::None ? 0 : 3;
+        ask.ask.automatic                    = false;
+        ask.ask.given                        = ask.options.speculative;
+        return pr::plan_model(mtp, ask).plan.weight_bytes;
+    };
+    check(weights(SpeculativeBackend::Mtp, true) - weights(SpeculativeBackend::Mtp, false) ==
+              57344ULL * 3360 + 57344ULL * 4,
+          "an MTP plan loads the head");
+    check(weights(SpeculativeBackend::None, true) == weights(SpeculativeBackend::None, false),
+          "a plain plan not");
+    // A quantization whose subject has no MTP layers: none of their rows.
+    pr::SpeculationSubject plain;
+    plain.components = {"text"};
+    pr::DryRunInputs of_plain = none;
+    of_plain.subject          = &plain;
+    check(pr::proposal_bytes_at(mtp, of_plain) == 0, "a subject without MTP: no MTP rows");
+    // A checkpoint keeping its MTP layer inside the shards (no mtp_bytes): one layer's share.
+    pr::PlanSourceFacts shards = mtp;
+    shards.model.mtp_bytes     = 0;
+    check(pr::proposal_bytes_at(shards, none) != 0, "MTP inside the shards: rows still planned");
+    // A MoE MTP layer reads its routed experts as one row routes them (Codex on #192): priced as
+    // the dense layer of that read, as the converter's default_proposal prices it.
+    pr::PlanSourceFacts moe = mtp;
+    moe.model.params               = 35e9;
+    moe.shape.experts              = 256;
+    moe.shape.experts_per_token    = 8;
+    moe.shape.routed_expert_params = 32e9;
+    moe.model.mtp_bytes            = 4 * mtp.model.mtp_bytes;
+    ninferno::spec::PassFacts routed;
+    routed.experts      = 256;
+    routed.experts_used = 8;
+    const double share  = 32e9 / 35e9;
+    const double read   = static_cast<double>(moe.model.mtp_bytes) *
+                        (1 - share + share * ninferno::spec::moe_read_fraction(routed, 1));
+    pr::PlanSourceFacts dense_read = moe;
+    dense_read.shape.experts       = 0;
+    dense_read.model.mtp_bytes     = static_cast<std::uint64_t>(read);
+    pr::PlanSourceFacts dense_all  = moe;
+    dense_all.shape.experts        = 0;
+    check(pr::proposal_bytes_at(moe, none) == pr::proposal_bytes_at(dense_read, none) &&
+              pr::proposal_bytes_at(moe, none) != pr::proposal_bytes_at(dense_all, none),
+          "MoE MTP: priced at its routed read");
+}
+
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the
 // replay records, a DFlash drafter's pool and ring (the review's M2: all of them were missing).
 void test_what_the_estimate_missed() {
@@ -1019,6 +1186,9 @@ int main() {
     test_what_the_estimate_missed();
     test_dry_run_basis();
     test_fits_instead();
+    test_proposal_bytes_only_when_drafting();
+    test_proposal_bytes_per_quant();
+    test_default_proposal_possible();
     std::cout << "rung bytes compared: " << compared << '\n';
     check(compared > 1000, "many rungs compared");
     if (failures != 0) {

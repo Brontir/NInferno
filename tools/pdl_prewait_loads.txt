@@ -52,9 +52,11 @@ q5_a16_direct_simt_kernel<.*Q5GdnProjectionEpilogue.*, true>$ 0,8,16,24,40,48,56
 # cannot tell that path from the one without pdl_prefetch, where the wait is skipped and nothing
 # is a producer's (a plain launch; a joined call as above), so x (0, 8, 12) is listed for every
 # epilogue. 160 and 164 (release_next, pdl_prefetch) reach a table-staging address only through the
-# thread index the release predicate is combined with.
-generic::rmma_kernel<.*Epilogue\)0> 0,8,12,24,32,40,48,52,64,72,76,168,172,?
-generic::rmma_kernel<.*Epilogue\)[12]> 0,8,12,24,32,40,48,52,64,72,76,80,84,168,172,?
+# thread index the release predicate is combined with. The kernel's last template argument is the
+# latency variant (#158, cuobjdump prints it as false / true); the latency kernels' activation
+# ring loads x only after the wait, as the staged SwiGLU copy does (#171).
+generic::rmma_kernel<.*Epilogue\)0, (false|true)> 0,8,12,24,32,40,48,52,64,72,76,168,172,?
+generic::rmma_kernel<.*Epilogue\)[12], (false|true)> 0,8,12,24,32,40,48,52,64,72,76,80,84,168,172,?
 
 # Generic R8 (W8A8 decode, generic_r8.cuh), Store epilogue: joins like the register MMA above and
 # waits as its last instruction. It quantizes x (0; token stride 8, K 12) into shared memory and

@@ -56,7 +56,7 @@ ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)
 
-# Which cached artifacts conversion revisions 4 and 5 convert again (convert/cache.h cache_current).
+# Which cached artifacts conversion revisions 4 to 7 convert again (convert/cache.h cache_current).
 ninferno_add_test(ninferno_convert_cache_revision_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_cache_revision.cpp"
   LIBRARIES ninferno_convert)
