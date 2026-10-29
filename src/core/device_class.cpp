@@ -612,6 +612,20 @@ const DeviceClass* substituted_device_class() noexcept { return t_substitute; }
 
 const std::string* substituted_device_class_key() noexcept { return t_substitute_key; }
 
+bool substituted_foreign_class() noexcept {
+    if (t_substitute_key == nullptr) return false;
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return true;
+    }
+    try {
+        return device_class_key(device_class(device)) != *t_substitute_key;
+    } catch (const std::exception&) {
+        return true;
+    }
+}
+
 std::string device_class_key(const DeviceClass& d) {
     const auto& f = d.features;
     const auto& m = d.facts;
