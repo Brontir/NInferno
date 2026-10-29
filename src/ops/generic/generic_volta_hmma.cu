@@ -27,11 +27,12 @@
 // group's activation sum) is applied in FP32 after it. Q4_K / Q5_K leave the 1024 the f16 bit
 // trick puts under each code in the operand and take 1024 d times the group's activation sum off
 // with the min, which already reads that sum (HK45::kBias): one FFMA a group instead of an HSUB2 a
-// code pair, at FP32 rounding of the 1024-scaled sum. No weight value is ever rounded to f16,
-// whatever its scale. The
-// groups add in K order, the quad-pairs' sums meet at the end in a fixed order
-// ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only, never on the call's T or
-// its other tokens, and repeat run to run.
+// code pair. The price is the HMMA accumulator's rounding of a sum ~2^7 larger (Volta's tensor
+// cores align to the largest addend and truncate): within a bf16 ulp of the reduced |w x| even
+// with activations of one sign over all of K (check_volta_hmma_accuracy). No weight value is ever
+// rounded to f16, whatever its scale. The groups add in K order, the quad-pairs' sums meet at the
+// end in a fixed order ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only,
+// never on the call's T or its other tokens, and repeat run to run.
 #include "core/device.h"
 #include "core/device_class.h"
 #include "ops/common/mma.cuh"
@@ -73,15 +74,7 @@ __device__ __forceinline__ unsigned nibbles_h2(unsigned w) {
     return r;
 }
 
-// (a & imm) | c in one LOP3, c a register (one SASS LOP3 takes a single immediate).
-template <unsigned Imm>
-__device__ __forceinline__ unsigned and_or(unsigned a, unsigned c) {
-    unsigned r;
-    asm("lop3.b32 %0, %1, %2, %3, 0xEA;" : "=r"(r) : "r"(a), "n"(Imm), "r"(c));
-    return r;
-}
-
-// The f16 pair of biased codes (1024 + code, from nibbles_h2 / and_or) less `bias_bits`: exact.
+// The f16 pair of biased codes (1024 + code, as nibbles_h2 makes them) less `bias_bits`: exact.
 __device__ __forceinline__ unsigned biased_h2(unsigned bits, unsigned bias_bits) {
     return h2_bits(__hsub2(bits_h2(bits), bits_h2(bias_bits)));
 }
@@ -213,9 +206,8 @@ struct HK6 {
         const unsigned w     = lw[wd] >> (4 * run);
         const unsigned hb    = hw[wd] >> (2 * (q & 1) + 4 * run);
         // Low four bits from ql, the two above from qh, under the exponent of 1024, then 1024 + 32
-        // off (the zero point). Two LOP3s a pair through and_or (622 -> 595 loop instructions) lost
-        // 4 us on the 128-CTA Q6_K add: one CTA an SM issues each warp's chain back to back, and
-        // and_or chains the two masks where the compiler's four instructions run side by side.
+        // off (the zero point). Two LOP3s a pair (622 -> 595 loop instructions) measured 4 us
+        // slower on the 128-CTA Q6_K add (GV100), so the plain expression stays.
         const unsigned lo =
             ((w & 0x000f000fU) | ((hb << 4) & 0x00300030U)) | 0x64006400U;
         const unsigned hi =
