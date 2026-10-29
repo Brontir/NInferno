@@ -1217,43 +1217,47 @@ the tier (even one that does not fit); then the rule's pick stands.
   (up to +18 % on Ada's rows).
 - Volta takes Turing's rows, transferred.
 
-**The defaults this changes against master 8bbf2e72.** Ada; plan without load, 7 models x 3 cards
-x {default, 4 streams, 128K}. The measurements are on the RTX 4060 Ti:
-- speed: plain decode per stream at 1 / 4 streams;
-- KLD: `--quick` against a fresh Q8_0 reference that gives Q4_K_M 0.0192, as kQuantKld has it.
+**One-card KLD points are recorded, not priced.** The fresh Q8_0 reference (it reproduces Q4_K_M at
+0.0192) measured these on one card each:
 
-| model, ask | master | this PR | why |
+| quant | KLD |
+|---|---|
+| UD-Q5_K_XL | 0.00936 |
+| IQ4_NL | 0.0284 |
+| UD-Q4_K_XL | 0.0182 |
+| Q5_K_S | 0.0113 |
+| Q4_K_S | 0.0227 |
+| Q4_1 (not added) | 0.0242 |
+| Q4_0 (not added) | 0.0509 |
+
+Like a speed row of one card, such a point decides nothing until a second card measures it
+(`QuantKldPoint::curve`).
+
+Priced, these points moved the 9B-MTP default on the 4060 Ti (UD-Q4_K_XL mtp:3 to Q5_K_S nvfp4
+mtp:5) on a speculation gain the measurement did not confirm. On the mixed workload at one stream
+(decode tok/s; plan's estimate in brackets):
+
+| mode | UD-Q4_K_XL mtp:3 | Q5_K_S mtp:5 | plain |
 |---|---|---|---|
-| Qwen3.5-9B, 128K | Q4_1 | Q4_K_M | Q4_1 is unmeasured (Other) |
-| Qwen3.5-9B-MTP, 128K | Q4_0 mtp:3 | Q4_K_S mtp:4 | Q4_0 is unmeasured (Other) |
-| Qwen3.5-9B / -MTP, 4 streams | UD-Q4_K_XL nvfp4 | Q4_K_S k8v4 / IQ4_NL k8v4 | worth with the measured KLDs and IQ4 rows |
-| Qwen3.5-9B-MTP, default | UD-Q4_K_XL int8 mtp:3 (40,640) | Q5_K_S nvfp4 mtp:5 (34,176) | worth with the measured KLDs, plus the one-stream plan fix below |
+| thinking | 99.1 (98) | 101.9 (113) | 48.8 / 46.7 |
+| non-thinking | 84.9 | 81.2 | — |
 
-The measured numbers behind those rows:
+- The KV codec (nvfp4 against int8) changed nothing: 81.2 against 80.7.
+- The term that is off is mtp:5's gain over the sibling registry entry:
+  - Q5_K_S at depth 5 in thinking mode: estimated x2.45, measured x2.18 (4.15 tokens a round, 40.7 ms
+    a round against 21.4 ms a plain step).
+  - mtp:3 on UD-Q4_K_XL: estimated x2.0, measured x2.03.
+- The round cost leaves out the graph's kernel launches, which grow with the depth. That is the open
+  #214, the same t0 as the decode census here.
 
-| quant | KLD (curve before) | 1 / 4 streams, tok/s |
-|---|---|---|
-| Q4_1 | 0.0242 | 50.5 / 45.9 |
-| Q4_K_M | 0.0192 | 51.1 / 45.7 |
-| Q4_0 | 0.0509 | 54.4 / 49.3 |
-| Q4_K_S | 0.0227 (0.028) | 54.0 / 47.9 |
-| IQ4_NL | 0.0284 | 53.2 / 47.9 |
-| UD-Q4_K_XL | 0.0182 (0.0160) | 48.5 / 43.6 |
-| Q5_K_S | 0.0113 (about 0.013) | 46.4 / 41.7 |
+**The defaults this changes against master 8e7db18c.** Ada; plan without load, 7 models x
+{default, 4 streams, 128K}. Both changed rows have an unmeasured (Other) loser. Measured on the
+RTX 4060 Ti, per stream at 1 / 4 streams:
 
-**The default row** goes from an estimated 98 to 113 tok/s.
-- Measured on essays at one stream: UD-Q4_K_XL mtp:3 71 tok/s, Q5_K_S mtp:5 62. The worth still
-  favours Q5_K_S: ln(71/62) = 0.14 < 25 x 0.0069 = 0.17.
-- The one-stream plan fix: a one-stream pick by worth was scored at the target context with its
-  drafter, then launched at the longest context that fits. On 8 GB that context drops the drafter
-  (Q5_K_S plain, 46 tok/s). The launch now keeps the scored context where the drafter returns there.
+| model, 4060 Ti 128K | master | this PR | measured |
+|---|---|---|---|
+| Qwen3.5-9B | Q4_1 | Q4_K_M | Q4_1 50.5 / 45.9 tok/s, KLD 0.0242; Q4_K_M 51.1 / 45.7, KLD 0.0192 |
+| Qwen3.5-9B-MTP | Q4_0 mtp:3 | Q4_K_S mtp:4 | Q4_0 54.4 / 49.3, KLD 0.0509; Q4_K_S 54.0 / 47.9, KLD 0.0227 |
 
-**Qwen3.8-27B on the 4090** changes too:
-- 128K: UD-Q4_K_XL to UD-Q5_K_S;
-- 4 streams: UD-Q4_K_XL to UD-Q4_K_M.
-
-Both follow from the measured KLD points moving the curve. They are not measured on 27B: the 4090
-stand's disk has 4.7 GB free.
-
-IQ4_XS on the 4060 Ti is a measured class now: plain 55.0 / 49.4 tok/s, KLD 0.0286, and dflash:7 on
-essays 85.8 tok/s.
+IQ4_XS on the 4060 Ti, now a measured class: plain 55.0 / 49.4 tok/s, KLD 0.0286, dflash:7 85.8 tok/s
+on essays.
