@@ -1,5 +1,7 @@
 #include "convert/planner.h"
 
+#include "core/weight_view.h"
+
 #include "artifact/routed_experts.h"
 #include "artifact/formats.h"
 #include "convert/expert_layout.h"
@@ -21,53 +23,6 @@ bool is_direct(QType format) {
     return format == QType::BF16 || format == QType::FP32 || format == QType::INT32;
 }
 
-QuantLayout default_layout(QType format) {
-    switch (format) {
-    case QType::BF16:
-    case QType::FP32:
-    case QType::INT32:
-        return QuantLayout::Contiguous;
-    case QType::FP8_E4M3FN_ROW_BF16:
-    case QType::FP8_E4M3FN_ROW_F32:
-        return QuantLayout::RowScale;
-    case QType::FP8_E4M3FN_B128_F32:
-        return QuantLayout::BlockScale128F32;
-    case QType::NVFP4:
-        return QuantLayout::BlockScaleK16M128x4;
-    case QType::MXFP4:
-        return QuantLayout::BlockScaleK32E8M0;
-    case QType::U4_G128_ZP_FP16:
-    case QType::U4_G32_ZP_FP16:
-    case QType::U4_G64_ZP_FP16:
-        return QuantLayout::RowGroupZp;
-    case QType::GGML_Q4_K:
-    case QType::GGML_Q5_K:
-        return QuantLayout::GgmlBlocks;
-    case QType::GGML_Q6_K:
-    case QType::GGML_Q3_K:
-    case QType::GGML_Q2_K:
-    case QType::GGML_IQ4_XS:
-    case QType::GGML_IQ3_XXS:
-    case QType::GGML_IQ3_S:
-    case QType::GGML_Q4_0:
-    case QType::GGML_Q4_1:
-    case QType::GGML_Q5_0:
-    case QType::GGML_Q5_1:
-    case QType::GGML_IQ4_NL:
-    case QType::GGML_IQ2_XXS:
-    case QType::GGML_IQ2_XS:
-    case QType::GGML_IQ2_S:
-    case QType::GGML_IQ1_S:
-    case QType::GGML_IQ1_M:
-    case QType::GGML_TQ1_0:
-    case QType::GGML_TQ2_0:
-    case QType::GGML_Q1_0:
-    case QType::GGML_Q2_0:
-        return QuantLayout::GgmlPlanes;
-    default:
-        return QuantLayout::RowSplit;
-    }
-}
 
 std::string numbered(const char* prefix, std::size_t index) {
     char buffer[32];
@@ -238,7 +193,7 @@ private:
         job.id         = numbered("weight", jobs_.size());
         job.format     = selection.format;
         job.method     = selection.method;
-        job.layout     = default_layout(selection.format);
+        job.layout     = default_weight_layout(selection.format);
         job.parameters = names;
         job.sources    = sources;
         job.shape      = parent_shape(sources, selection.format);

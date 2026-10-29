@@ -52,6 +52,11 @@ struct WeightGeometry {
     std::uint64_t order_offset        = 0; // RowGroupZpOrdered: the K int32 column indices
 };
 
+// The layout the converter stores a matrix of `format` in (convert/planner.cpp): the layout an
+// artifact's weight of that format has, and what a weight descriptor without bytes assumes
+// (ops/generic/route_query.h).
+[[nodiscard]] QuantLayout default_weight_layout(QType format) noexcept;
+
 [[nodiscard]] WeightGeometry weight_geometry(QType format, QuantLayout layout,
                                              std::span<const std::uint64_t> shape,
                                              std::uint64_t divisors = 1);
