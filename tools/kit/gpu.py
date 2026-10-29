@@ -87,6 +87,18 @@ def query(fields, device):
     return {f: _value(v) for f, v in zip(usable, values)}
 
 
+def smi_id_of_cuda(ordinal):
+    """The nvidia-smi target (its PCI bus id) of CUDA device `ordinal` under
+    CUDA_DEVICE_ORDER=PCI_BUS_ID: the ordinal-th card by bus id. nvidia-smi's own index can
+    follow another order, so every nvidia-smi call names the card by its bus id."""
+    out = subprocess.run(["nvidia-smi", "--query-gpu=pci.bus_id", "--format=csv,noheader"],
+                         capture_output=True, text=True, timeout=60)
+    buses = sorted(line.strip() for line in out.stdout.splitlines() if line.strip())
+    if not 0 <= ordinal < len(buses):
+        raise SystemExit(f"no GPU {ordinal}: nvidia-smi lists {len(buses)}")
+    return buses[ordinal]
+
+
 def compute_apps(device_bus):
     """The compute processes nvidia-smi lists on the card. Under WDDM every process holding a
     context is listed (the desktop's too), so there the list says nothing about other load (the

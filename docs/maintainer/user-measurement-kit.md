@@ -14,7 +14,7 @@ constant.
         [--passes 2] [--hard50] [--spec-tune SECONDS] [--out FILE] [--yes]
 
 - **`--bin DIR`** holds `ninferno-serve`, plus `ninferno` when `--spec-tune` is given: a release or a build.
-- **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device` is `nvidia-smi`'s index.
+- **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device N` is the N-th card by PCI bus id. Every `nvidia-smi` call names that card by its bus id, never by nvidia-smi's own index, which can follow another order.
 - **Downloads:**
   - The models are fetched first through `ninferno-serve --prepare-only` into the user's hub cache.
   - The kit states what it will fetch and asks first (`--yes` skips the question).

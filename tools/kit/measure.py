@@ -233,7 +233,7 @@ def apps_info(bus, wddm, server_pid):
     return {"listed": len(apps), "others": len(others), "informative": not wddm}
 
 
-def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, device, workdir, tag, wddm):
+def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, smi_id, workdir, tag, wddm):
     """One start: an idle window, a warm-up and the template's overhead, then `prompts` decode
     requests at the plan's depth and `prompts` prefill requests at the choice's prompt length,
     each timed by the server's own timings (prefill = prompt_n / prompt_ms; decode = (predicted_n
@@ -245,9 +245,9 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, device, 
         out["start_s"] = round(server.wait(), 1)
         out["served"] = server.meta()
         out["served"]["choice"] = server.choice_line()
-        bus = gpu.query(["pci.bus_id"], device).get("pci.bus_id")
+        bus = smi_id
         out["processes_before"] = apps_info(bus, wddm, server.proc.pid)
-        sampler = gpu.Sampler(device).start()
+        sampler = gpu.Sampler(smi_id).start()
         t0 = sampler.now()
         time.sleep(5)  # the idle window (R2)
         sampler.mark("idle", t0, sampler.now())
@@ -406,7 +406,8 @@ def main():
 
     created = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     version = subprocess.run([serve, "--version"], capture_output=True, text=True).stdout.strip()
-    card = {"smi": gpu.card_facts(args.device)}
+    smi_id = gpu.smi_id_of_cuda(args.device)  # the same card for nvidia-smi as for the engine
+    card = {"smi": gpu.card_facts(smi_id)}
     wddm = str(card["smi"].get("driver_model.current") or "").upper() == "WDDM"
     doc = {"schema": SCHEMA, "kit": {"version": KIT_VERSION, "models_version": models_doc["version"],
                                      "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16]},
@@ -482,7 +483,7 @@ def main():
                               f"{depth}, prefill at {prompt_len} tokens)")
                 started = time.time()
                 result = measure_pass(serve, model, flags, args.port, depth, prompt_len, args.prompts,
-                                      args.device, workdir, f"{model['id']}.plain.{p + 1}", wddm)
+                                      smi_id, workdir, f"{model['id']}.plain.{p + 1}", wddm)
                 progress.spend(time.time() - started)
                 run["passes"].append(result)
                 m = result.get("measured") or {}
