@@ -121,9 +121,11 @@ StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double ro
     if (row == nullptr) { row = find(kDecodeLaunches[0].family, weights); }
     if (row == nullptr) { row = &kDecodeLaunches[0]; }
     if (model.layers == 0) { transferred = true; } // unknown layers: the census model's
+    // The layers' share scales with the model's layers; the once-a-step kernels do not.
     const double scale = model.layers > 0 ? model.layers / row->layers : 1.0;
     const int at       = rows <= 1 ? 0 : rows <= 4 ? 1 : 2;
-    return {row->gemv * scale, row->small[at] * scale};
+    return {row->fixed_gemv + (row->gemv - row->fixed_gemv) * scale,
+            row->fixed_small + (row->small[at] - row->fixed_small) * scale};
 }
 
 const PrefillEta* prefill_row(bool moe, std::string_view generation, Route route) noexcept {
