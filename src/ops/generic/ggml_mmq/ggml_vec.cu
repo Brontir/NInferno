@@ -659,7 +659,19 @@ __launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
 #pragma unroll
             for (int j = 0; j < T; ++j) acc[r][j] = 0.0f;
         }
-        const auto slice = [&](int it) {
+        // The weight slices of the next step are fetched (loaded and decoded) before this step's
+        // products: each warp keeps a step's weight loads in flight under the step before (one
+        // or two loads before their first use otherwise, by the compiler's choice per instance:
+        // RTX 5070 Ti Q4_K 4096x4096, T = 2..8 vector 14.6 / 15.2 / 21.0 / 18.2 / 16.7 / 23.0 /
+        // 26.1 us with 2 / 1 / 2 / 2 / 5 / 2 / 3 loads before the first use in SASS).
+        const auto fetch = [&](int it, Slice (&sl)[kRows]) {
+#pragma unroll
+            for (int r = 0; r < kRows; ++r) {
+                D::decode(r == 0 ? p.first : second, base[r] + std::int64_t(32 / kPerBlock) * it, sub,
+                          table, sl[r]);
+            }
+        };
+        const auto use = [&](int it, const Slice (&sl)[kRows]) {
             const int s = lane + 32 * it;
             int a[T][8];
             float d[T], sum[T];
@@ -675,19 +687,35 @@ __launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
             }
 #pragma unroll
             for (int r = 0; r < kRows; ++r) {
-                Slice sl;
-                D::decode(r == 0 ? p.first : second, base[r] + std::int64_t(32 / kPerBlock) * it, sub,
-                          table, sl);
 #pragma unroll
-                for (int j = 0; j < T; ++j) acc[r][j] += D::dot(sl, a[j], d[j], sum[j]);
+                for (int j = 0; j < T; ++j) acc[r][j] += D::dot(sl[r], a[j], d[j], sum[j]);
             }
         };
         if constexpr (KS != 0) {
             static_assert(KS % 1024 == 0);
+            Slice cur[kRows];
+            fetch(0, cur);
 #pragma unroll
-            for (int it = 0; it < KS / 1024; ++it) slice(it);
-        } else {
-            for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
+            for (int it = 0; it < KS / 1024; ++it) {
+                Slice next[kRows];
+                if (it + 1 < KS / 1024) fetch(it + 1, next);
+                use(it, cur);
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) cur[r] = next[r];
+            }
+        } else if (lane < slices) {
+            // This lane's steps: lane + 32 it < slices. The fetch past the last re-reads the last
+            // (no branch in the loop body).
+            const int last = (slices - 1 - lane) / 32;
+            Slice cur[kRows];
+            fetch(0, cur);
+            for (int it = 0; it <= last; ++it) {
+                Slice next[kRows];
+                fetch(min(it + 1, last), next);
+                use(it, cur);
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) cur[r] = next[r];
+            }
         }
 #pragma unroll
         for (int r = 0; r < kRows; ++r) {
