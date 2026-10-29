@@ -87,10 +87,11 @@ struct Launch {
     bool stream_k      = false;
     int blocks         = 0;
     bool fixup         = false;
+    int k_vram         = 0; // the config's K_vram: a stream-k block's unit of work along k
 };
 
 template <ggml_type type>
-Launch select_launch(int rows, int columns) {
+Launch select_launch(int rows, int columns, int k) {
     const DeviceFacts& device = device_facts();
     Launch best;
     int best_tiles = INT_MAX;
@@ -102,6 +103,7 @@ Launch select_launch(int rows, int columns) {
         const int tiles = (columns + J - 1) / J;
         if (tiles < best_tiles) {
             best_tiles    = tiles;
+            best.k_vram   = config.K_vram;
             best.J        = J;
             best.I        = config.I;
             best.threads  = config.nthreads;
@@ -117,7 +119,10 @@ Launch select_launch(int rows, int columns) {
     if (best.stream_k) {
         const int waves      = (tiles + device.sm_count - 1) / device.sm_count;
         const int efficiency = 100 * tiles / (device.sm_count * waves);
-        best.blocks          = efficiency >= 90 ? tiles : device.sm_count;
+        // A block beyond the call's work units (an output tile times its K_vram steps) has nothing
+        // to do and lengthens the fixup's scan (llama.cpp #30553).
+        const int work = tiles * ((k + best.k_vram - 1) / best.k_vram);
+        best.blocks    = efficiency >= 90 ? tiles : std::min(device.sm_count, work);
         best.fixup           = tiles % best.blocks != 0;
     } else {
         best.blocks = tiles;
@@ -126,8 +131,8 @@ Launch select_launch(int rows, int columns) {
 }
 
 template <ggml_type type>
-std::size_t fixup_bytes_impl(int rows, int columns) {
-    const Launch l = select_launch<type>(rows, columns);
+std::size_t fixup_bytes_impl(int rows, int columns, int k) {
+    const Launch l = select_launch<type>(rows, columns, k);
     return l.fixup ? std::size_t(l.blocks) * l.J * l.I * sizeof(float) : 0;
 }
 
@@ -177,7 +182,7 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
     if (k % 256 != 0 || rows % kRowMultiple != 0 || blocks_per_row < k / qk) {
         throw std::invalid_argument("ggml mmq: unsupported geometry");
     }
-    const Launch l = select_launch<type>(rows, columns);
+    const Launch l = select_launch<type>(rows, columns, k);
     const auto* x  = static_cast<const char*>(w.codes);
     const ggml_planes planes{static_cast<const char*>(w.high), static_cast<const char*>(w.scales)};
     const auto* y = static_cast<const int*>(activation);
@@ -203,7 +208,7 @@ void product_impl(const Planes& w, int blocks_per_row, int rows, int k, const vo
 } // namespace ninferno::ops::ggml_mmq::detail
 
 #define NINFERNO_GGML_MMQ_INSTANCE(TYPE)                                                           \
-    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int);        \
+    template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int);        \
     template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                             \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)
