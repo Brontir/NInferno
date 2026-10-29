@@ -984,7 +984,15 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
     if (refills(info.warps_k)) return index;
     for (const int warps_k : {8, 4}) {
-        if (warps_k != info.warps_k && refills(warps_k)) return rmma_index(1, warps_k, 1, 1);
+        if (warps_k == info.warps_k || !refills(warps_k)) continue;
+        // Fewer warps a CTA keep the warps a SM holds only on a grid that fills its 16 / w CTA
+        // slots: below that the split trades resident warps (the loads in flight) for ring refills.
+        // K = 1024 (2048 rows, 128 CTAs) on four warps against eight: RTX 5070 Ti (1.8 CTAs a SM)
+        // 20-37 % slower, RTX 5090 (0.75) 18-38 % slower, RTX 4070 Ti (2.1) within 3 %; the RTX
+        // 4060 Ti (3.8, just under its four slots) ran four warps 2-16 % faster, which this
+        // leaves on eight (DECISIONS 61).
+        if (warps_k < info.warps_k && ctas * warps_k < 16 * sms) continue;
+        return rmma_index(1, warps_k, 1, 1);
     }
     return index;
 }
