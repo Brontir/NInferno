@@ -300,10 +300,21 @@ class RoundFactsTest(unittest.TestCase):
                   "b.weight_packed": {"dtype": "U8", "shape": [4], "data_offsets": [36, 40]},
                   "b.weight_scale": {"dtype": "F8_E4M3", "shape": [1], "data_offsets": [40, 41]},
                   "c.weight": {"dtype": "BF16", "shape": [3], "data_offsets": [41, 47]}}
-        tensors, elems = round_facts.parse_safetensors_header(header, 4)
+        tensors, elems, shapes = round_facts.parse_safetensors_header(header, 4)
         self.assertEqual(elems, {"a.qweight": 64, "a.scales": 0, "b.weight_packed": 8, "b.weight_scale": 0,
                                  "c.weight": 3})
         self.assertEqual(tensors["a.scales"], 4)
+        self.assertEqual(shapes["a.qweight"], ["int4", [4, 2]])
+        self.assertEqual(shapes["b.weight_packed"], ["nvfp4", [4]])
+        self.assertEqual(shapes["b.weight_scale"], ["fp8", [1]])
+        self.assertEqual(shapes["c.weight"], ["bf16", [3]])
+        # compressed-tensors MXFP4: the same uint8 weight_packed, its block scales E8M0 (uint8).
+        mx = {"d.weight_packed": {"dtype": "U8", "shape": [512, 128], "data_offsets": [0, 65536]},
+              "d.weight_scale": {"dtype": "U8", "shape": [512, 8], "data_offsets": [65536, 69632]}}
+        _, elems, shapes = round_facts.parse_safetensors_header(mx, 4)
+        self.assertEqual(shapes["d.weight_packed"], ["mxfp4", [512, 128]])
+        self.assertEqual(round_facts.linear_shape("d.weight_packed", "mxfp4", [512, 128],
+                                                  elems["d.weight_packed"], "compressed-tensors"), (512, 256, 1))
 
     def test_gguf_sizes_from_offsets(self):
         def s(text):
@@ -312,9 +323,166 @@ class RoundFactsTest(unittest.TestCase):
         buf = b"GGUF" + struct.pack("<IQQ", 3, 2, 0)
         buf += s("x") + struct.pack("<I", 1) + struct.pack("<Q", 64) + struct.pack("<IQ", 99, 0)
         buf += s("y") + struct.pack("<I", 1) + struct.pack("<Q", 32) + struct.pack("<IQ", 1, 96)
-        _, tensors, elems = round_facts.parse_gguf(buf)
+        _, tensors, elems, shapes = round_facts.parse_gguf(buf)
         self.assertEqual(tensors, {"x": 96, "y": 64})  # x (an unknown type) by the next offset
         self.assertEqual(elems, {"x": 64, "y": 32})
+        self.assertEqual(shapes, {"x": ["gguf:type99", [64]], "y": ["gguf:F16", [32]]})
+
+    def test_a_table_read_on_a_later_try_is_no_longer_unread(self):
+        # Two pairs share a drafter table: the first pair's read fails, the second's succeeds.
+        pair = lambda target: {"target_repo": f"org/{target}@1 Q4_K_M", "target": "a",
+                               "drafters": {"dflash": "z/d@2"}}
+        registry = {"pairs": [pair("t1"), pair("t2")]}
+        calls = []
+
+        def read(at, files, shas):
+            calls.append(at)
+            if at == "z/d@2" and calls.count("z/d@2") == 1:
+                raise OSError("HTTP 503")
+            return {"meta": {}, "tensors": {"w": 1}, "elems": {"w": 1}, "shapes": {"w": ["bf16", [1]]}}
+
+        saved = []
+        with contextlib.redirect_stderr(io.StringIO()):
+            failed = round_facts.refresh_tables(registry, {}, read, lambda t: saved.append(len(t)))
+        self.assertEqual(failed, set())  # read on the second pair's try
+        self.assertEqual(calls.count("z/d@2"), 2)
+        self.assertEqual(saved[-1], 3)  # both targets and the drafter, saved after each read
+
+    def test_only_measured_modes_need_their_tables(self):
+        # A pair measured with DFlash advertises an untested DFlash2: only DFlash's table is consumed.
+        pair = {"target_repo": "org/t@1 NVFP4", "target": "a",
+                "drafters": {"dflash": "z/d@2", "dflash2": "z/d2@3"},
+                "tune": {"measurements": [{"config": "plain"}, {"config": "dflash:7"}], "drafters": []}}
+        keys = round_facts.consumed_tables({"pairs": [pair]}, pair)
+        self.assertEqual(keys, {"org/t@1 NVFP4", "drafter:z/d@2"})
+        # MTP from the target's own layers reads no drafter table; a separate MTP drafter's is read.
+        pair["tune"] = {"measurements": [{"config": "mtp:3"}], "drafters": [{"kind": "gemma4_assistant"}]}
+        pair["drafters"] = {"gemma4_assistant": "g/a@4"}
+        self.assertEqual(round_facts.consumed_tables({"pairs": [pair]}, pair),
+                         {"org/t@1 NVFP4", "drafter:g/a@4"})
+
+    def test_nested_untied_head_is_the_head(self):
+        # dense.cpp head_tensor accepts language_model.lm_head.weight: the head, not body; the
+        # embedding then is no tied head.
+        self.assertEqual(round_facts.tensor_class("language_model.lm_head.weight", False, 0, 0), "head")
+        self.assertEqual(round_facts.tensor_class("lm_head.weight", False, 0, 0), "head")
+        table = {"meta": {}, "tensors": {"model.embed_tokens.weight": 100, "language_model.lm_head.weight": 100},
+                 "elems": {"model.embed_tokens.weight": 50, "language_model.lm_head.weight": 50}}
+        b, _, _, _ = round_facts.classes(table)
+        self.assertEqual((b["head"], b["embed"]), (100, 100))
+        self.assertNotIn("body", b)
+
+    def test_autoround_qweight_is_read_as_its_packing(self):
+        # AutoRound names its layout in packing_format (formats.cpp): GPTQ's words by default.
+        self.assertEqual(round_facts.qweight_method({"quant_method": "auto-round"}), "gptq")
+        self.assertEqual(round_facts.qweight_method({"quant_method": "intel/auto-round",
+                                                     "packing_format": "auto_round:auto_awq"}), "awq")
+        meta, _ = round_facts._config_meta({"quantization_config": {"quant_method": "auto-round",
+                                                                    "packing_format": "auto_round:auto_awq"}})
+        self.assertEqual(meta["packing_format"], "auto_round:auto_awq")
+        # A GPTQ-packed [k/8, n] qweight of 4096x1024 from an AutoRound checkpoint is a linear.
+        shapes = {"model.layers.0.mlp.up_proj.qweight": ["int4", [512, 4096]]}
+        table = {"meta": {"quant_method": "auto-round"}, "tensors": {}, "shapes": shapes,
+                 "elems": {"model.layers.0.mlp.up_proj.qweight": 4096 * 4096}}
+        got = round_facts.linears(table, ("body",))
+        self.assertEqual([(g["n"], g["k"]) for g in got], [(4096, 4096)])
+
+    def test_nested_quantization_and_newer_ggml_types(self):
+        meta, bits = round_facts._config_meta({"text_config": {"quantization_config": {"quant_method": "gptq",
+                                                                                       "bits": 4}}})
+        self.assertEqual((meta["quant_method"], bits), ("gptq", 4))
+        self.assertEqual(round_facts.GGML_NAMES[40], "NVFP4")
+        self.assertEqual(round_facts.GGML_BLOCKS[40], (64, 36))
+
+    def test_norms_by_role_and_int8(self):
+        # Nemotron-H's grouped SSM norm is 2-D, no linear; compressed-tensors W8A16 reads int8.
+        self.assertIsNone(round_facts.linear_shape("blk.0.ssm_norm.weight", "gguf:F32", [512, 8], 4096, ""))
+        self.assertIsNone(round_facts.linear_shape("model.layers.0.mixer.norm.weight", "bf16", [8, 512], 4096, ""))
+        self.assertEqual(round_facts.safetensors_format("a.weight", "I8", 8), "int8")
+        self.assertEqual(round_facts.linear_shape("a.weight", "int8", [512, 256], 131072, "compressed-tensors"),
+                         (512, 256, 1))
+
+    @staticmethod
+    def shaped(shapes: dict, meta: dict | None = None, bytes_per: float = 1.0) -> dict:
+        """A table from {name: [format, dims, parameters]}: `bytes_per` bytes a parameter."""
+        return {"meta": meta or {}, "tensors": {n: int(e * bytes_per) for n, (f, d, e) in shapes.items()},
+                "elems": {n: e for n, (f, d, e) in shapes.items()},
+                "shapes": {n: [f, d] for n, (f, d, e) in shapes.items()}}
+
+    def test_gguf_linears_tied_head_experts_and_mtp(self):
+        meta = {"general.architecture": "qwen35moe", "qwen35moe.block_count": 2,
+                "qwen35moe.nextn_predict_layers": 1}
+        target = self.shaped({
+            "token_embd.weight": ["gguf:Q6_K", [256, 1000], 256000],
+            "blk.0.attn_q.weight": ["gguf:Q4_K", [256, 512], 131072],
+            "blk.0.attn_k.weight": ["gguf:Q4_K", [256, 64], 16384],
+            "blk.0.ssm_conv1d.weight": ["gguf:F32", [4, 512], 2048],  # a convolution: no linear
+            "blk.0.attn_norm.weight": ["gguf:F32", [256], 256],
+            "blk.0.ffn_up_exps.weight": ["gguf:Q4_K", [256, 128, 8], 262144],
+            "blk.1.nextn.eh_proj.weight": ["gguf:Q8_0", [512, 256], 131072],
+            "blk.1.ffn_up_exps.weight": ["gguf:Q4_K", [256, 128, 8], 262144]}, meta)
+        facts = round_facts.round_facts(self.pair(["mtp:3"]), {"org/t@1 Q4_K_M": target}, {})
+        head = {"format": "gguf:Q6_K", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}
+        self.assertEqual(facts["target"]["linears"], [
+            {"format": "gguf:Q4_K", "n": 64, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q4_K", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "gguf:Q8_0", "n": 256, "k": 512, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+
+    def test_checkpoint_linears_as_published_and_converted(self):
+        target = self.shaped({
+            "model.embed_tokens.weight": ["bf16", [1000, 256], 256000],
+            "lm_head.weight": ["nvfp4", [1000, 128], 256000],
+            "model.layers.0.self_attn.q_proj.weight": ["nvfp4", [512, 128], 131072],
+            "model.layers.0.self_attn.q_proj.weight_scale": ["fp8", [512, 16], 0],
+            "model.layers.0.mlp.experts.gate_up_blocks": ["mxfp4", [8, 128, 8, 16], 262144],
+            "model.layers.0.mlp.experts.down_proj": ["bf16", [8, 256, 128], 262144],
+            "model.layers.0.linear_attn.conv1d.weight": ["bf16", [512, 1, 4], 2048],
+            "model.layers.0.mlp.gate.weight": ["bf16", [8, 256], 2048]},
+            {"expert_count": 8, "expert_used_count": 2}, 0.5)
+        drafter = self.shaped({"layers.0.mlp.up_proj.weight": ["bf16", [512, 256], 131072],
+                               "layers.0.conv.base_kernel": ["bf16", [2, 2, 256], 1024]},
+                              {"block_size": 8}, 2)
+        registry = {"kinds": {"dflash": {"quant": "q8"}}}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
+        facts = round_facts.round_facts(self.pair(["dflash:7"], {"dflash": "z/d@2"}), tables, registry)
+        head = {"format": "nvfp4", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}
+        self.assertEqual(facts["target"]["linears"], [
+            {"format": "bf16", "n": 8, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "nvfp4", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "bf16", "n": 256, "k": 128, "count": 8, "head": False, "expert": True},
+            {"format": "mxfp4", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+        dflash = facts["drafters"]["dflash"]
+        self.assertEqual(dflash["linears"],
+                         [{"format": "conv:q8", "n": 512, "k": 256, "count": 1, "head": False, "expert": False}])
+        self.assertEqual(dflash["head"]["linears"], [head])
+
+    def test_awq_and_gptq_qweight_orientation(self):
+        # AWQ: qweight [k, n / 8]; GPTQ: [k / 8, n]; compressed-tensors weight_packed: [n, k / 8].
+        self.assertEqual(round_facts.linear_shape("a.qweight", "int4", [256, 64], 256 * 512, "awq"), (512, 256, 1))
+        self.assertEqual(round_facts.linear_shape("a.qweight", "int4", [32, 512], 256 * 512, "gptq"), (512, 256, 1))
+        self.assertEqual(round_facts.linear_shape("a.weight_packed", "int4", [512, 32], 256 * 512,
+                                                  "compressed-tensors"), (512, 256, 1))
+        # A qweight of a method whose orientation is not known: no linear rather than a guess.
+        self.assertIsNone(round_facts.linear_shape("a.qweight", "int4", [256, 64], 256 * 512, "auto-round"))
+        # A dense MXFP4 weight's blocks [n, k / 32, 16].
+        self.assertEqual(round_facts.linear_shape("a.weight_blocks", "mxfp4", [512, 8, 16], 512 * 256, ""),
+                         (512, 256, 1))
+
+    def test_a_sidecar_without_a_head_runs_the_targets(self):
+        meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.block_count": 1,
+                "nemotron_h_moe.nextn_predict_layers": 1}
+        target = self.shaped({"output.weight": ["gguf:Q6_K", [256, 1000], 256000],
+                              "blk.0.attn_q.weight": ["gguf:Q4_0", [256, 256], 65536]})
+        side = self.shaped({"blk.0.attn_q.weight": ["gguf:Q4_0", [256, 512], 131072]}, meta)
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "m"}]}]}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:b/g@3:m.gguf": side}, registry)
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "gguf:Q4_0", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q6_K", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}])
 
     def test_embeddings_by_role_and_the_sidecar_first(self):
         meta = {"expert_count": 8, "expert_used_count": 2}
@@ -341,6 +509,21 @@ class RoundFactsTest(unittest.TestCase):
         # q8 projection (65536 x 34/32), the norm kept (64), the head's 100 of 400 rows in BF16.
         self.assertEqual(facts["drafters"]["mtp"], {"bytes": 69632 + 64 + 2 * 100 * 256,
                                                     "params": 65536 + 32 + 100 * 256, "rows": 1, "per_draft": True})
+
+    def test_assistant_linears_converted_and_its_head_over_proposal_rows(self):
+        assistant = self.shaped({"model.layers.0.mlp.up_proj.weight": ["bf16", [256, 256], 65536],
+                                 "model.layers.0.input_layernorm.weight": ["bf16", [256], 256],
+                                 "model.embed_tokens.weight": ["bf16", [400, 256], 102400]},
+                                {"vocab_size": 400}, 2)
+        registry = {"kinds": {"gemma4_assistant": {"quant": "q8", "proposal_rows": 100}},
+                    "models": [{"drafters": [{"kind": "gemma4_assistant", "repo": "g/a"}]}]}
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        facts = round_facts.round_facts(self.pair(["mtp:3"], {"gemma4_assistant": "g/a@1"}, ("gemma4_assistant",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:g/a@1": assistant}, registry)
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "conv:q8", "n": 256, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "bf16", "n": 100, "k": 256, "count": 1, "head": True, "expert": False}])
+        self.assertNotIn("linears", facts["target"])  # a table without shapes lists none
 
     def test_stale_facts_are_not_kept(self):
         old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
