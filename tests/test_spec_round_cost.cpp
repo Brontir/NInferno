@@ -243,8 +243,9 @@ int main() {
                    "launches not counted for the plain step: none added");
             const auto ada = sp::card_rates_of_board(0x2782);
             expect(near(ada.launch_bytes(), 1.5e-6 * 0.946 * ada.dram_bytes_per_s, 1e-12) &&
-                       sp::card_rates_of_board(0x2503).launch_bytes() == 0,
-                   "Ada's launch time; Ampere has none (one lab card)");
+                       sp::card_rates_of_board(0x2503).launch_bytes() == 0 &&
+                       sp::card_rates_of_board(0x2C05).launch_bytes() == 0,
+                   "Ada's launch time; Ampere and gb20x none (not fitted)");
         }
         // A tune's graph kernels round-trip, and an estimate prices them: more kernels a round,
         // a dearer round.
