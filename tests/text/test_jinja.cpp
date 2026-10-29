@@ -141,13 +141,16 @@ int language_semantics() {
          "{{ s|unique(case_sensitive=true)|join(',') }}|{{ s|unique(true)|list|length }}|"
          "{{ r|unique(attribute='id')|join(attribute='v') }}|"
          "{{ r|unique(case_sensitive=true, attribute='id')|join(attribute='v') }}|"
-         "{{ m|unique|list|length }}|{{ []|unique|list|length }}",
+         "{{ m|unique|list|length }}|{{ []|unique|list|length }}|"
+         "{{ p|unique(attribute=0)|map(attribute=1)|join(',') }}",
          {{"n", Json::array({3, 1, 3, 2, 1})},
           {"s", Json::array({"a", "A", "b", "B", "a"})},
           {"r", Json::array({Json{{"id", "x"}, {"v", 1}}, Json{{"id", "X"}, {"v", 2}},
                              Json{{"id", "x"}, {"v", 3}}})},
-          {"m", Json::array({1, 1.0, 2, "a", "a"})}},
-         "3,1,2|a,b|a,A,b,B|4|1|12|3|0"},
+          {"m", Json::array({1, 1.0, 2, "a", "a"})},
+          {"p", Json::array({Json::array({"x", 1}), Json::array({"y", 2}),
+                             Json::array({"x", 3})})}},
+         "3,1,2|a,b|a,A,b,B|4|1|12|3|0|1,2"},
         // llama.cpp #30929: \xHH escapes, two digits, code point HH as UTF-8.
         {"{{ message.content | replace(\"\\x00\", \"\") }}|{{ '\\xE9' }}|{{ '\\x414' }}|"
          "{{ '\\\\xE9' }}",

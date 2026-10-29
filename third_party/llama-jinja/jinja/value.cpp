@@ -1003,7 +1003,11 @@ const func_builtins& value_array_t::get_builtins() const {
              std::vector<value> seen;
              for (const auto& item : val->as_array()) {
                  value key = item;
-                 if (!attribute->is_undefined()) {
+                 if (is_val<value_int>(attribute)) {
+                     // An index into each item, as map / sort / join take one.
+                     key = is_val<value_array>(item) ? item->at(attribute->as_int(), undef)
+                                                     : undef;
+                 } else if (!attribute->is_undefined()) {
                      key = is_val<value_object>(item) ? item->at(attribute, undef) : undef;
                  }
                  if (!case_sensitive && is_val<value_string>(key)) {
