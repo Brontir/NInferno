@@ -123,6 +123,10 @@ class List {
     XGRAMMAR_DCHECK(0 < node && node < node_pool_.Size());
     int next = node_pool_[node].next;
     Unlink(node);
+    // NInferno (xgrammar #1003): destroy the erased value now; NodePool::Deallocate only recycles
+    // the slot, so values evicted from an LRU built on List (RuleLevelCache token masks) stayed
+    // alive after their size left the cache budget.
+    node_pool_[node].value = Value();
     node_pool_.Deallocate(node);
     return iterator(next, *this);
   }
