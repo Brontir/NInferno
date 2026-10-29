@@ -25,7 +25,7 @@ ROOT = Path(__file__).resolve().parents[5]
 ETA = 0.946
 CENSUS_CONTEXT = 160
 GEN = {(7, 0): "volta", (7, 5): "turing", (8, 6): "ga10x", (8, 9): "ada", (12, 0): "gb20x"}
-CLASS = {"Q8_0": "q8"}  # else K-quants
+CLASS = {"Q8_0": "q8", "IQ4_XS": "iq4", "IQ4_NL": "iq4"}  # else K-quants
 
 
 def weights(m, quant):
