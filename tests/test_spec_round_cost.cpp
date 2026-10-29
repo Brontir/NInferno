@@ -4,6 +4,8 @@
 // is left out, against that pair's measurement. It is no hold-out of the fit (kSmallTEta rests on
 // these cards' rounds); the hold-out evidence is fit_eta.py's cross-fit (DECISIONS 53). No GPU.
 
+#include "artifact/schema.h"
+#include "spec/manifest.h"
 #include "spec/pairs.h"
 #include "spec/registry.h"
 #include "spec/round_cost.h"
@@ -90,8 +92,10 @@ int main() {
         } catch (const std::runtime_error&) { refused = true; }
         expect(refused, "experts with none used are refused");
         expect(q9.round_facts->drafters.at("dflash").head.has_value() &&
-                   !q9.round_facts->drafters.at("mtp").head.has_value(),
-               "DFlash prices the target's head over the drafted rows apart; MTP within its pass");
+                   q9.round_facts->drafters.at("mtp").head.has_value() &&
+                   q9.round_facts->drafters.at("mtp").head->linears ==
+                       q9.round_facts->drafters.at("dflash").head->linears,
+               "the target's head apart: DFlash's over the drafted rows, MTP's per draft");
         // The linears: the target's matrices hold nearly all its parameters (norms, convolutions
         // and gates left), one output head among them, the one DFlash runs over the drafted rows.
         const auto& facts = *q9.round_facts;
@@ -182,6 +186,101 @@ int main() {
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
+    }
+    // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
+    // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
+    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti (l4060):
+    // +9.4 / +12.9 / +16.5 / +19.6 % at mtp:2..5.
+    {
+        const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
+        const double k4060 = sp::card_rates_of_board(0x2805).kappa();
+        const sp::ProposalRows before{{{"mtp", 147456}}}, after{{{"mtp", 57344}}};
+        const double measured[] = {0.094, 0.129, 0.165, 0.196};
+        for (int k = 2; k <= 5; ++k) {
+            const auto config = sp::SpecConfig::parse("mtp:" + std::to_string(k));
+            const auto r0     = sp::round_cost(facts, config, k4060, before);
+            const auto r1     = sp::round_cost(facts, config, k4060, after);
+            expect(r0 && r1 && std::abs(*r0 / *r1 - 1 - measured[k - 2]) < 0.007,
+                   "the MTP head's rows: rounds/s gain within 0.7 pp of hard50's at mtp:" +
+                       std::to_string(k));
+        }
+        const auto config = sp::SpecConfig::parse("mtp:3");
+        expect(sp::round_cost(facts, config, k4060) ==
+                       sp::round_cost(facts, config, k4060, sp::ProposalRows{{{"dflash", 1024}}}) &&
+                   sp::round_cost(facts, config, k4060) ==
+                       sp::round_cost(facts, config, k4060, sp::ProposalRows{{{"mtp", 1u << 30}}}),
+               "another mode's rows, or rows past the head's, leave the full head");
+        const auto dflash = sp::SpecConfig::parse("dflash:7");
+        expect(*sp::round_cost(facts, dflash, k4060, sp::ProposalRows{{{"dflash", 147456}}}) <
+                   *sp::round_cost(facts, dflash, k4060),
+               "DFlash's head over the k drafts reads the proposal rows too");
+        // A checkpoint's head (BF16 here): its proposal rows are stored Q4_G64_FP16 (4.25 bits a
+        // value), a GGUF's in the head's own format (its bytes' share, above).
+        {
+            sp::RoundFacts f;
+            f.target = sp::PassFacts{.bytes = 1000, .params = 1000};
+            sp::DraftFacts d;
+            d.pass = sp::PassFacts{.bytes = 100, .params = 100};
+            d.head = sp::PassFacts{.bytes = 2.0 * 1000 * 64, .params = 1000.0 * 64};
+            d.head->linears = {{.format = "bf16", .n = 1000, .k = 64, .count = 1, .head = true}};
+            f.drafters["mtp"] = d;
+            const auto c = sp::SpecConfig::parse("mtp:2");
+            const auto r = sp::round_cost(f, c, 0.0, sp::ProposalRows{{{"mtp", 100}}});
+            expect(r && near(*r, (1000 + 2 * (100 + 100 * 64 * 4.25 / 8)) / 1000, 1e-12),
+                   "a checkpoint's proposal rows at Q4_G64_FP16's 4.25 bits");
+        }
+        // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
+        // refused.
+        auto pair                            = pair_of(kQ9, "ad104:60sm");
+        pair.tune.proposal_rows              = after;
+        const auto again                     = sp::parse_pair(sp::pair_json(pair));
+        expect(again.tune.proposal_rows == after, "a tune's proposal rows round-trip");
+        auto zero                            = sp::pair_json(pair);
+        zero["tune"]["proposal_rows"]["mtp"] = 0;
+        bool refused                         = false;
+        try {
+            (void)sp::parse_pair(zero);
+        } catch (const std::runtime_error&) { refused = true; }
+        expect(refused, "zero proposal rows are refused");
+        // The lab card's own rounds at its rows, the card's at its artifact's: a lab artifact of
+        // the full head and a card's of MTP's prefix price the card's MTP rounds cheaper.
+        const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        const auto lab       = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti);
+        const auto mine      = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti, &after);
+        expect(lab.known && mine.known && mine.cost.at("mtp:3") < lab.cost.at("mtp:3") &&
+                   mine.cost.at("dflash:7") == lab.cost.at("dflash:7"),
+               "the card's artifact rows price its MTP rounds; DFlash's (not named) stay");
+        // A tune's "mtp:3" drafted with the full head whatever rows its artifact had: its own
+        // rounds priced so (only a "+head" label drafted through the rows).
+        const auto plain_labels = sp::round_cost_estimate(pair, rtx4060ti);
+        expect(plain_labels.known && plain_labels.cost.at("mtp:3") == lab.cost.at("mtp:3"),
+               "a configuration without +head was measured with the full head");
+        // An artifact's rows: its proposal head where a Use binds it to the drafter, MTP its
+        // own prefix (drafter_rows), DFlash all of them; DFlash2 none (the whole domain).
+        namespace art = ninferno::artifact;
+        art::Directory dir;
+        for (const char* c : {"text", "mtp", "dflash", "dflash2"}) { dir.components[c] = {}; }
+        dir.components["text"].proposal =
+            art::Proposal{.indexed = true, .rows = 147456, .drafter_rows = {{"mtp", 57344}}};
+        for (const char* c : {"mtp", "dflash", "dflash2"}) {
+            dir.uses[{"proposal/head", std::string(c) + "/final_hidden"}] = {};
+        }
+        expect(sp::artifact_proposal_rows(dir) == sp::ProposalRows{{{"mtp", 57344}, {"dflash", 147456}}},
+               "an artifact's proposal rows: MTP its prefix, DFlash all, DFlash2 none");
+        // A head without row views (row-scaled FP8 here): MTP reads all its rows.
+        art::TensorObject fp8;
+        fp8.id     = "head";
+        fp8.layout = "row_scale_v1";
+        dir.objects.push_back(fp8);
+        dir.bindings["proposal/head"].parts.push_back({.object = {.index = 0}, .begin = 0, .end = 1});
+        expect(sp::artifact_proposal_rows(dir).of("mtp") == 147456,
+               "a head with no row views: MTP reads all its rows");
+        dir.bindings.clear();
+        dir.objects.clear();
+        dir.uses.erase({"proposal/head", "mtp/final_hidden"});
+        expect(sp::artifact_proposal_rows(dir).of("mtp") == 0, "a head not bound to MTP: its full head");
+        dir.components["text"].proposal.reset();
+        expect(sp::artifact_proposal_rows(dir).empty(), "no proposal head: the full head");
     }
     // A card nobody measured the pair on: the facts price its rounds, the lab card's measurement
     // raising them where it found rounds dearer than their bytes, and say so.

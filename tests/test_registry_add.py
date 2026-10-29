@@ -269,7 +269,8 @@ class RoundFactsTest(unittest.TestCase):
         tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
         facts = round_facts.round_facts(self.pair(["mtp:3", "dflash:7"], {"dflash": "z/d@2"}), tables, {})
         self.assertEqual(facts["target"], {"bytes": 200, "params": 800})
-        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 110, "params": 440, "rows": 1, "per_draft": True})
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 10, "params": 40, "rows": 1, "per_draft": True,
+                                                    "head": {"bytes": 100, "params": 400}})
         self.assertEqual(facts["drafters"]["dflash"],
                          {"bytes": 30, "params": 15, "rows": 16, "per_draft": False,
                           "head": {"bytes": 100, "params": 400}})
@@ -429,7 +430,8 @@ class RoundFactsTest(unittest.TestCase):
             {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
         self.assertEqual(facts["drafters"]["mtp"]["linears"], [
             {"format": "gguf:Q8_0", "n": 256, "k": 512, "count": 1, "head": False, "expert": False},
-            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}])
+        self.assertEqual(facts["drafters"]["mtp"]["head"]["linears"], [head])  # per draft, apart
 
     def test_checkpoint_linears_as_published_and_converted(self):
         target = self.shaped({

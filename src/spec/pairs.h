@@ -110,7 +110,11 @@ struct RoundCostEstimate {
     bool known = false;
     std::string note; // how it was priced, for the choice's source
 };
-[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu);
+// `head_rows`: the draft head rows the card's artifact reads (nullptr: the lab artifact's,
+// pair.tune.proposal_rows for a "+head" configuration, the full head for any other: spec-tune
+// drafts those with the full head); the lab card's own rounds are priced at the lab's.
+[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu,
+                                                    const ProposalRows* head_rows = nullptr);
 
 // What a round costs in a profile's measurements, by configuration label: per corpus section the
 // seconds a round over plain decode's seconds a token, the mean over the sections both measured
