@@ -278,8 +278,7 @@ void prefills_pay_tail_calls(const json& fixture) {
     const double d2 = ch::request_seconds(two, cf, q, drafted, task);
     check(std::abs((d2 - d0) - 2 * step) < 1e-9 * d2, "a drafted candidate's tail calls are plain decode steps");
     std::cout << "tail calls: a decode step " << step * 1e3 << " ms, 2K prefill " << prompt / t0 << " -> "
-              << prompt / t2 << " tok/s
-";
+              << prompt / t2 << " tok/s\n";
 }
 
 // Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of the
