@@ -267,6 +267,26 @@ int main() {
             const auto without = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060);
             expect(with.known && without.known && with.cost.at("mtp:3") != without.cost.at("mtp:3"),
                    "counted launches enter the estimate");
+            // Each section counts once, as in its measured cost: a section of other kernel
+            // counts that ran ten times the rounds moves nothing.
+            const std::string first = counted.tune.measurements.front().family;
+            auto mixed              = counted;
+            for (auto& m : mixed.tune.measurements) {
+                if (m.family != first) { m.graph_kernels += 200 * m.graph_rounds; }
+            }
+            auto longer = mixed;
+            for (auto& m : longer.tune.measurements) {
+                if (m.family == first) {
+                    m.graph_kernels *= 10;
+                    m.graph_rounds *= 10;
+                }
+            }
+            const auto a = sp::round_cost_estimate(mixed, rtx4060);
+            const auto b = sp::round_cost_estimate(longer, rtx4060);
+            expect(std::any_of(mixed.tune.measurements.begin(), mixed.tune.measurements.end(),
+                               [&](const auto& m) { return m.family != first; }) &&
+                       a.known && b.known && near(a.cost.at("mtp:3"), b.cost.at("mtp:3"), 1e-12),
+                   "launch counts average over the sections, not their rounds");
         }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.

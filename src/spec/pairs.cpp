@@ -432,26 +432,36 @@ std::vector<const MeasuredPair*> one_per_card(const std::vector<const MeasuredPa
 
 
 // The kernels a round's graphs launched by configuration label (Measurement::graph_kernels over
-// its rounds) and a plain step's (over plain decode's tokens), pooled over the sections; a label
-// without counts, or a tune whose plain decode has none, is left out.
+// its rounds) and a plain step's (over plain decode's tokens), per section and then averaged over
+// the sections the way round_costs() averages their costs: each section that priced the label
+// (plain decode timed and counted there) one share, whatever its rounds. A label without counts
+// in such a section is left out.
 std::map<std::string, RoundLaunches> round_launches(const Profile& tune) {
-    double step_kernels = 0, steps = 0;
-    std::map<std::string, std::pair<double, double>> rounds; // kernels, launches
+    using Pooled = std::pair<double, double>; // kernels, rounds or steps
+    std::map<std::string, Pooled> steps;      // by section
+    std::map<std::string, double> timed;      // plain decode's seconds by section
+    std::map<std::pair<std::string, std::string>, Pooled> rounds; // by label and section
     for (const auto& m : tune.measurements) {
+        if (!m.config.enabled() && m.tokens > 0) { timed[m.family] += m.seconds; }
         if (m.graph_kernels <= 0 || m.graph_rounds <= 0) { continue; }
-        if (!m.config.enabled()) {
-            step_kernels += double(m.graph_kernels);
-            steps += double(m.graph_rounds);
-        } else {
-            auto& r = rounds[m.config.label()];
-            r.first += double(m.graph_kernels);
-            r.second += double(m.graph_rounds);
-        }
+        auto& r = m.config.enabled() ? rounds[{m.config.label(), m.family}] : steps[m.family];
+        r.first += double(m.graph_kernels);
+        r.second += double(m.graph_rounds);
+    }
+    std::map<std::string, std::pair<RoundLaunches, double>> sums; // by label: sums, sections
+    for (const auto& [key, r] : rounds) {
+        const auto s = steps.find(key.second);
+        const auto t = timed.find(key.second);
+        if (s == steps.end() || t == timed.end() || t->second <= 0) { continue; }
+        auto& sum = sums[key.first];
+        sum.first.round += r.first / r.second;
+        sum.first.step += s->second.first / s->second.second;
+        sum.second += 1;
     }
     std::map<std::string, RoundLaunches> out;
-    if (steps <= 0) { return out; }
-    for (const auto& [label, r] : rounds) {
-        out[label] = RoundLaunches{.round = r.first / r.second, .step = step_kernels / steps};
+    for (const auto& [label, sum] : sums) {
+        out[label] = RoundLaunches{.round = sum.first.round / sum.second,
+                                   .step  = sum.first.step / sum.second};
     }
     return out;
 }
