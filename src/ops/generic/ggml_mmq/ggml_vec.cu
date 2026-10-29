@@ -69,14 +69,24 @@ __device__ __forceinline__ int sum4(const int* a) {
     return acc;
 }
 
-// The 6-bit scale and min of sub-block j of a Q4_K / Q5_K block (ggml's get_scale_min_k4).
-__device__ __forceinline__ void scale_min_k4(const std::uint8_t* s, int j, int& sc, int& m) {
+// The bytes sub-block j's 6-bit scale and min come from in the 12 scale bytes `s` of a Q4_K /
+// Q5_K block: s[j % 4], s[j % 4 + 4], s[j % 4 + 8]. A raw slice keeps these three, loaded by index
+// from memory: indexing a register copy of the 12 bytes by the lane's j would put it in local
+// memory.
+struct ScaleMinK4 {
+    std::uint8_t lo, mid, hi;
+};
+__device__ __forceinline__ ScaleMinK4 load_scale_min_k4(const std::uint8_t* s, int j) {
+    return {s[j & 3], s[(j & 3) + 4], s[(j & 3) + 8]};
+}
+// The 6-bit scale and min of sub-block j from those bytes (ggml's get_scale_min_k4).
+__device__ __forceinline__ void scale_min_k4(const ScaleMinK4& b, int j, int& sc, int& m) {
     if (j < 4) {
-        sc = s[j] & 63;
-        m  = s[j + 4] & 63;
+        sc = b.lo & 63;
+        m  = b.mid & 63;
     } else {
-        sc = (s[j + 4] & 0xF) | ((s[j - 4] >> 6) << 4);
-        m  = (s[j + 4] >> 4) | ((s[j] >> 6) << 4);
+        sc = (b.hi & 0xF) | ((b.lo >> 6) << 4);
+        m  = (b.hi >> 4) | ((b.mid >> 6) << 4);
     }
 }
 
@@ -136,17 +146,14 @@ struct Decoder<GGML_TYPE_Q4_K> {
     // The slice's bytes as loaded: d and dmin, the 12 scale bytes, its 32 code bytes.
     struct Raw {
         half2 dm;
-        std::uint32_t scale[3];
+        ScaleMinK4 scale;
         uint4 a0, a1;
     };
     __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
                                                 Raw& r) {
         const std::uint8_t* b  = p.codes + blk * kCode;
         r.dm                   = *reinterpret_cast<const half2*>(b);
-        const auto* sw         = reinterpret_cast<const std::uint32_t*>(b + 4);
-        r.scale[0]             = sw[0];
-        r.scale[1]             = sw[1];
-        r.scale[2]             = sw[2];
+        r.scale                = load_scale_min_k4(b + 4, u);
         const uint4* qs        = reinterpret_cast<const uint4*>(b + 16 + 32 * (u / 2));
         r.a0                   = qs[0];
         r.a1                   = qs[1];
@@ -155,7 +162,7 @@ struct Decoder<GGML_TYPE_Q4_K> {
                                                    Slice& s) {
         const float2 dm = __half22float2(r.dm);
         int sc, m;
-        scale_min_k4(reinterpret_cast<const std::uint8_t*>(r.scale), u, sc, m);
+        scale_min_k4(r.scale, u, sc, m);
         s.f[0]          = dm.x * float(sc);
         s.f[1]          = dm.y * float(m);
         const int shift = 4 * (u & 1);
@@ -183,17 +190,14 @@ struct Decoder<GGML_TYPE_Q5_K> {
     // The slice's bytes as loaded: d and dmin, the 12 scale bytes, qh (32), its 32 qs bytes.
     struct Raw {
         half2 dm;
-        std::uint32_t scale[3];
+        ScaleMinK4 scale;
         uint4 h0, h1, l0, l1;
     };
     __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
                                                 Raw& r) {
         const std::uint8_t* b = p.codes + blk * kCode;
         r.dm                  = *reinterpret_cast<const half2*>(b);
-        const auto* sw        = reinterpret_cast<const std::uint32_t*>(b + 4);
-        r.scale[0]            = sw[0];
-        r.scale[1]            = sw[1];
-        r.scale[2]            = sw[2];
+        r.scale               = load_scale_min_k4(b + 4, u);
         const uint4* qh       = reinterpret_cast<const uint4*>(b + 16);
         const uint4* ql       = reinterpret_cast<const uint4*>(b + 48 + 32 * (u / 2));
         r.h0                  = qh[0];
@@ -205,7 +209,7 @@ struct Decoder<GGML_TYPE_Q5_K> {
                                                    Slice& s) {
         const float2 dm = __half22float2(r.dm);
         int sc, m;
-        scale_min_k4(reinterpret_cast<const std::uint8_t*>(r.scale), u, sc, m);
+        scale_min_k4(r.scale, u, sc, m);
         s.f[0]          = dm.x * float(sc);
         s.f[1]          = dm.y * float(m);
         const std::uint32_t hv[8] = {r.h0.x, r.h0.y, r.h0.z, r.h0.w, r.h1.x, r.h1.y, r.h1.z, r.h1.w};
@@ -423,24 +427,27 @@ struct Decoder<GGML_TYPE_Q3_K> {
     // Slice u is the 2-bit field 2 (u % 4) of the half u / 4 of qs with hmask bit u: v - 4.
     static constexpr int kCode = 96, kHigh = 12, kScale = 2, kTableWords = 0, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static int scale(const std::uint8_t* sc, int i) {
-        return int(((sc[i % 8] >> (4 * (i / 8))) & 0xF) | (((sc[8 + i % 4] >> (2 * (i / 4))) & 3) << 4)) -
-               32;
+    // Sub-block i's 6-bit scale from its low byte (scales[i % 8]) and high byte (scales[8 + i % 4]).
+    __device__ __forceinline__ static int scale(std::uint32_t low, std::uint32_t high, int i) {
+        return int(((low >> (4 * (i / 8))) & 0xF) | (((high >> (2 * (i / 4))) & 3) << 4)) - 32;
     }
-    // The slice's bytes as loaded: d, the 12 scale bytes, hmask (32), its half's 32 qs bytes.
+    // The slice's bytes as loaded: d, the low and high bytes of its two scales (sub-blocks
+    // i = 8 h + 2 j and i + 1: bytes i % 8 and 8 + i % 4), hmask (32), its half's 32 qs bytes.
     struct Raw {
         half d;
-        std::uint32_t scale[3];
+        std::uint8_t low[2], high[2];
         uint4 m0, m1, q0, q1;
     };
     __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
                                                 Raw& r) {
         const int h           = u / 4;
         r.d                   = *reinterpret_cast<const half*>(p.scales + blk * kScale);
-        const auto* sw        = reinterpret_cast<const std::uint32_t*>(p.high + blk * kHigh);
-        r.scale[0]            = sw[0];
-        r.scale[1]            = sw[1];
-        r.scale[2]            = sw[2];
+        const std::uint8_t* sc = p.high + blk * kHigh;
+        const int i            = 8 * h + 2 * (u % 4);
+        r.low[0]               = sc[i % 8];
+        r.low[1]               = sc[(i + 1) % 8];
+        r.high[0]              = sc[8 + i % 4];
+        r.high[1]              = sc[8 + (i + 1) % 4];
         const std::uint8_t* b = p.codes + blk * kCode;
         const uint4* hm       = reinterpret_cast<const uint4*>(b);
         const uint4* qs       = reinterpret_cast<const uint4*>(b + 32 + 32 * h);
@@ -453,9 +460,9 @@ struct Decoder<GGML_TYPE_Q3_K> {
                                                    Slice& s) {
         const int h = u / 4, j = u % 4;
         const float d          = __half2float(r.d);
-        const auto* sc         = reinterpret_cast<const std::uint8_t*>(r.scale);
-        s.f[0]                 = d * float(scale(sc, 8 * h + 2 * j));
-        s.f[1]                 = d * float(scale(sc, 8 * h + 2 * j + 1));
+        const int i            = 8 * h + 2 * j;
+        s.f[0]                 = d * float(scale(r.low[0], r.high[0], i));
+        s.f[1]                 = d * float(scale(r.low[1], r.high[1], i + 1));
         const std::uint32_t mv[8] = {r.m0.x, r.m0.y, r.m0.z, r.m0.w, r.m1.x, r.m1.y, r.m1.z, r.m1.w};
         const std::uint32_t qv[8] = {r.q0.x, r.q0.y, r.q0.z, r.q0.w, r.q1.x, r.q1.y, r.q1.z, r.q1.w};
 #pragma unroll
@@ -862,11 +869,13 @@ struct Decoder<GGML_TYPE_IQ1_M> {
     }
     __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
                                                    Slice& s) {
-        const auto* sc = reinterpret_cast<const std::uint16_t*>(&r.sc);
+        const std::uint32_t sc[4] = {r.sc.x & 0xFFFF, r.sc.x >> 16, r.sc.y & 0xFFFF, r.sc.y >> 16};
         const auto bits = static_cast<unsigned short>((sc[0] >> 12) | ((sc[1] >> 8) & 0x00F0) |
                                                       ((sc[2] >> 4) & 0x0F00) | (sc[3] & 0xF000));
         const float d          = __half2float(__ushort_as_half(bits));
-        const std::uint32_t sb = sc[u / 2] >> (6 * (u % 2));
+        // Word u / 2 by shifts: a runtime index into sc would put it in local memory.
+        const std::uint32_t word = ((u / 2) < 2 ? r.sc.x : r.sc.y) >> (16 * ((u / 2) & 1));
+        const std::uint32_t sb   = (word & 0xFFFF) >> (6 * (u % 2));
         s.f[0]                 = d * float(2 * (sb & 7) + 1);
         s.f[1]                 = d * float(2 * ((sb >> 3) & 7) + 1);
         const std::uint32_t qs = r.qs;
