@@ -21,7 +21,7 @@ class logger;
 
 namespace ninferno::serve {
 
-inline constexpr int kRequestLogSchemaVersion        = 31;
+inline constexpr int kRequestLogSchemaVersion        = 32;
 inline constexpr const char* kRequestLogArtifactType = "ninferno_serve_request_log";
 
 struct ServerLogEnvironment {

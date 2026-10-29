@@ -130,6 +130,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--default-max-tokens N` | `8192` | output limit when the request gives none |
 | `--no-thinking` | the template's default | disable thinking by default |
 | `--default-thinking-budget N` | unset | cap on thinking tokens, where the chat template can end thinking (Qwen, Gemma 4; not gpt-oss) |
+| `--no-answer-room` | room kept | without a budget, thinking may take the whole output limit (by default it closes at three quarters, leaving the rest for the answer) |
 | `--no-prefix-reuse` | reuse on | disable prefix caching |
 | `--cors` | off | permissive browser CORS headers |
 | `--request-log-jsonl FILE` | off | machine-readable request log |

@@ -486,6 +486,7 @@ ninferno::RequestOptions to_request_options(const GenerationRequest& request,
     if (semantics.enable_thinking != false) {
         options.execution.thinking.budget =
             request.thinking_budget ? request.thinking_budget : server.default_thinking_budget;
+        options.execution.thinking.answer_room = server.answer_room;
     }
     options.execution.sampling             = resolve_sampling_overrides(request.sampling, server);
     options.output.raw                     = false;
