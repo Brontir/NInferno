@@ -630,14 +630,16 @@ std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilo
 // formats both read): the payload's DRAM time tb and its warp instructions' issue time ti (four
 // schedulers a SM issuing one instruction each a clock: every SM from Volta on), combined as
 // sqrt(tb^2 + (ti / u)^2), plus a launch each (the vector kernel two: its activation quantizer).
-// tb takes kVerifyDramFraction of the bandwidth: the best one-tile calls of 14 shapes on seven
-// boards streamed 89-95 % of it. Of the issue rate a call reaches kVerifyIssueFraction, u: the
-// vector kernel on the RTX 3060 (the fewest issue slots a byte of the seven boards) reached 63 %.
-// The exponent and u are what the counts and the bandwidth do not give: the choice's loss over the
-// better of the two kernels (19 formats, 13 shapes, seven boards, T = 2..8) is flat in u = 0.4..0.8
-// and the exponent 1.5..3 (1.026..1.027). kVerifyLaunchSeconds: a launch on a back-to-back stream
-// (RTX 4090 decode graph, without PDL: 1.5 us). nullopt where the device has no roofline or its
-// instruction set no counts.
+// Fitted constants, each on six cards of three generations (RTX 3060; 4060 Ti, 4070 Ti, 4090;
+// 5070 Ti, 5090), 3204 timed calls (vector and one-tile register MMA, T = 2..8, 19 formats):
+// - kVerifyDramFraction (FITTED): the p90 DRAM share of those calls, 0.89..0.94 on every card.
+// - kVerifyIssueFraction, u (FITTED): the best u under this combination per generation is 0.65 on
+//   sm_89 (three cards), 0.60 on sm_120 (two), 0.65 on sm_86 (one card: it takes the others').
+// - the combination (FITTED form): rms of log(measured / predicted) 0.118 for sqrt(tb^2 + ui^2)
+//   against 0.144 for max (full overlap, under-predicts 5.5 %) and 0.190 for the sum (no overlap,
+//   over-predicts 13 %). The choice's loss over the better kernel is 1.025..1.031 for all three.
+// - kVerifyLaunchSeconds: a launch on a back-to-back stream (RTX 4090 decode graph, no PDL).
+// nullopt where the device has no roofline or its instruction set no counts.
 inline constexpr double kVerifyDramFraction  = 0.93;
 inline constexpr double kVerifyIssueFraction = 0.6;
 inline constexpr double kVerifyLaunchSeconds = 1.5e-6;
