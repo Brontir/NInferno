@@ -153,12 +153,102 @@ __device__ __forceinline__ float code_f32(unsigned w, unsigned sel) {
     return __uint_as_float(__byte_perm(w, 0x4B000000U, sel)) - 8388608.0F;
 }
 
-// R rows a warp (R > 1 for a call of many rows: the LM head): the activation's words, their FP32
+template <class Format, Epilogue E, int NT>
+__global__ __launch_bounds__(256) void volta_kquant_gemv_kernel(GemmArgs a) {
+    constexpr int kSets = E == Epilogue::SwiGlu ? 2 : 1;
+    const int lane      = static_cast<int>(threadIdx.x) & 31;
+    const int l         = static_cast<int>(blockIdx.x) * 8 + (static_cast<int>(threadIdx.x) >> 5);
+    if (l >= a.rows) return;
+    const auto* x = static_cast<const __nv_bfloat16*>(a.x);
+    const int sb  = (a.k + 255) >> 8;
+    float acc[kSets][NT];
+#pragma unroll
+    for (int s = 0; s < kSets; ++s)
+#pragma unroll
+        for (int n = 0; n < NT; ++n) acc[s][n] = 0.0F;
+
+#pragma unroll
+    for (int s = 0; s < kSets; ++s) {
+        const int row = a.row_begin + l + (s == 1 ? a.up_offset : 0);
+        Format cur;
+        cur.load(a, row, 0, lane);
+#pragma unroll 1
+        for (int b = 0; b < sb; ++b) {
+            Format nxt = cur;
+            if (b + 1 < sb) nxt.load(a, row, b + 1, lane);
+            const int k0 = 256 * b + 8 * lane;
+            if constexpr (kDirectOf<Format>) {
+                float w[8];
+                cur.weights(w);
+#pragma unroll
+                for (int n = 0; n < NT; ++n) {
+                    if (n >= a.tokens || k0 >= a.k) break;
+                    const uint4 xv = *reinterpret_cast<const uint4*>(
+                        x + static_cast<std::int64_t>(n) * a.ldx + k0);
+                    const unsigned xw[4] = {xv.x, xv.y, xv.z, xv.w};
+#pragma unroll
+                    for (int i = 0; i < 4; ++i) {
+                        acc[s][n] = fmaf(w[2 * i], __uint_as_float(xw[i] << 16), acc[s][n]);
+                        acc[s][n] =
+                            fmaf(w[2 * i + 1], __uint_as_float(xw[i] & 0xffff0000U), acc[s][n]);
+                    }
+                }
+                cur = nxt;
+                continue;
+            }
+            const LaneCodes c = cur.codes(lane);
+            float q[8];
+            q[0] = code_f32(c.q0, 0x7540U);
+            q[1] = code_f32(c.q0, 0x7541U);
+            q[2] = code_f32(c.q0, 0x7542U);
+            q[3] = code_f32(c.q0, 0x7543U);
+            q[4] = code_f32(c.q1, 0x7540U);
+            q[5] = code_f32(c.q1, 0x7541U);
+            q[6] = code_f32(c.q1, 0x7542U);
+            q[7] = code_f32(c.q1, 0x7543U);
+#pragma unroll
+            for (int n = 0; n < NT; ++n) {
+                if (n >= a.tokens) break;
+                const uint4 xv =
+                    *reinterpret_cast<const uint4*>(x + static_cast<std::int64_t>(n) * a.ldx + k0);
+                const unsigned xw[4] = {xv.x, xv.y, xv.z, xv.w};
+                float sqx = 0.0F, sx = 0.0F;
+#pragma unroll
+                for (int i = 0; i < 4; ++i) {
+                    const float xl = __uint_as_float(xw[i] << 16);
+                    const float xh = __uint_as_float(xw[i] & 0xffff0000U);
+                    sqx            = fmaf(q[2 * i], xl, sqx);
+                    sqx            = fmaf(q[2 * i + 1], xh, sqx);
+                    sx += xl + xh;
+                }
+                acc[s][n] = fmaf(c.ds, sqx, fmaf(-c.dm, sx, acc[s][n]));
+            }
+            cur = nxt;
+        }
+    }
+#pragma unroll
+    for (int s = 0; s < kSets; ++s)
+#pragma unroll
+        for (int n = 0; n < NT; ++n)
+#pragma unroll
+            for (int o = 16; o > 0; o >>= 1)
+                acc[s][n] += __shfl_xor_sync(0xffffffffU, acc[s][n], o);
+    if (lane != 0) return;
+#pragma unroll
+    for (int n = 0; n < NT; ++n) {
+        if (n >= a.tokens) break;
+        float value = acc[0][n];
+        if constexpr (E == Epilogue::SwiGlu) value = generic_gate(a, value) * acc[kSets - 1][n];
+        store_output<E>(a, l, n, value);
+    }
+}
+
+// R rows a warp, for a call of many rows (the LM head; launch_format): the activation's words, their FP32
 // values and their sum (the min's factor) are a function of the superblock and the token only,
 // so a warp takes them once for its R rows instead of once a row. Each row's sums run in the
 // same order either way: the bytes do not depend on R.
 template <class Format, Epilogue E, int NT, int R>
-__global__ __launch_bounds__(256) void volta_kquant_gemv_kernel(GemmArgs a) {
+__global__ __launch_bounds__(256) void volta_kquant_gemv_rows_kernel(GemmArgs a) {
     constexpr int kSets = E == Epilogue::SwiGlu ? 2 : 1;
     const int lane      = static_cast<int>(threadIdx.x) & 31;
     const int l0 =
@@ -284,12 +374,20 @@ __global__ __launch_bounds__(256) void volta_kquant_gemv_kernel(GemmArgs a) {
 template <class Format, Epilogue E, int R>
 void launch_rows(const GemmArgs& args, cudaStream_t stream) {
     const unsigned blocks = static_cast<unsigned>((args.rows + 8 * R - 1) / (8 * R));
-    if (args.tokens == 1) {
-        volta_kquant_gemv_kernel<Format, E, 1, R><<<blocks, 256, 0, stream>>>(args);
+    if constexpr (R == 1) {
+        if (args.tokens == 1) {
+            volta_kquant_gemv_kernel<Format, E, 1><<<blocks, 256, 0, stream>>>(args);
+        } else if (args.tokens == 2) {
+            volta_kquant_gemv_kernel<Format, E, 2><<<blocks, 256, 0, stream>>>(args);
+        } else {
+            volta_kquant_gemv_kernel<Format, E, 4><<<blocks, 256, 0, stream>>>(args);
+        }
+    } else if (args.tokens == 1) {
+        volta_kquant_gemv_rows_kernel<Format, E, 1, R><<<blocks, 256, 0, stream>>>(args);
     } else if (args.tokens == 2) {
-        volta_kquant_gemv_kernel<Format, E, 2, R><<<blocks, 256, 0, stream>>>(args);
+        volta_kquant_gemv_rows_kernel<Format, E, 2, R><<<blocks, 256, 0, stream>>>(args);
     } else {
-        volta_kquant_gemv_kernel<Format, E, 4, R><<<blocks, 256, 0, stream>>>(args);
+        volta_kquant_gemv_rows_kernel<Format, E, 4, R><<<blocks, 256, 0, stream>>>(args);
     }
     CUDA_CHECK(cudaGetLastError());
 }
