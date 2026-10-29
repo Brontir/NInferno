@@ -1511,10 +1511,23 @@ ahead of the best W4A8 tile on the RTX 5090 and the RTX 4090 for every 9B shape 
 frontend (`runtime::prompt_tail_calls`: the execution boundaries a one-message prompt's tail
 carries, the same at two prompt lengths); the choice prices each as one decode step of the
 candidate without its drafter, in the prefill rate and in a task's time, and its line says
-`prefill (2 tail calls)`. Qwen 3.5 and Gemma 4 count 2. The UI does not link the engine, so it
-prices none: its estimate of a request is short of the server's by the two steps (10 .. 40 ms), and a
-near tie between candidates can fall the other way there (a later step: the count written into the
-artifact at conversion, where the UI reads its facts). Clean server sweeps (`prompt_ms` at 962 .. 7612 tokens, three repeats, the kit's flags)
+`prefill (2 tail calls)`. Qwen 3.5 counts 2 with thinking on or off (`<|im_start|>assistant
+`
+and the reasoning block; the boundary after `<think>
+` falls at the end or inside a token). Gemma 4
+counts 3: its template renders an empty thought channel when thinking is off, its default
+(`<|turn>model
+`, `<|channel>thought
+`, `<channel|>`), and the RTX 4070 Ti profile shows those
+three calls (two on `vec_kernel`, one on `r8_kernel`, 51 ms). Gemma's request has a fourth piece the
+count leaves out: its ring checkpoint is captured about 50 tokens before the end, so the prompt's
+last chunk stops there, the stream waits for the copy (item 3) and a call of about 50 tokens follows
+(25 ms on `mul_mat_q`). A `--chat-template` override is not read. The UI does not link the engine,
+so it prices none: its estimate of a request is short of the server's by those steps (10 .. 50 ms),
+and a near tie between candidates can fall the other way there (a later step: the count written into
+the artifact at conversion, where the UI reads its facts). On the RTX 4070 Ti the 2048-token
+estimate moves from 6204 to 5799 tok/s for Qwen 9B (the sweep: 5448) and to 3578 for Gemma 12B (the
+kit's 1913-token requests: 3157, 3416 without the checkpoint's pause and call). Clean server sweeps (`prompt_ms` at 962 .. 7612 tokens, three repeats, the kit's flags)
 against two weight reads over the DRAM rate:
 
 | card | model | slope tok/s | intercept ms | 2 x weights / DRAM ms |
