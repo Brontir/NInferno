@@ -1259,12 +1259,11 @@ std::optional<std::size_t> json_value_end(std::string_view text, std::size_t pos
     return std::nullopt;
 }
 
-// A strict tool's arguments in a call syntax XGrammar has no style for: the constraint compiler
+// Tool-call arguments in a call syntax XGrammar has no style for: the constraint compiler
 // turns this format into that syntax's grammar held to the schema (ninferno/types.h).
-OrderedJson argument_style_format(const ToolCallConstraintTool& tool, std::string_view style) {
-    return OrderedJson{{"type", "json_schema"},
-                       {"json_schema", OrderedJson::parse(tool.parameters_json)},
-                       {"style", std::string(style)}};
+OrderedJson argument_style_format(OrderedJson schema, std::string_view style) {
+    return OrderedJson{
+        {"type", "json_schema"}, {"json_schema", std::move(schema)}, {"style", std::string(style)}};
 }
 
 OrderedJson schema_or_object(const ToolCallConstraintTool& tool) {
@@ -1415,25 +1414,6 @@ public:
     static constexpr std::string_view kClose = "<tool_call|>";
     static constexpr std::string_view kQuote = "<|\"|>";
     static constexpr std::string_view kCall  = "call:";
-    // Gemma's value syntax as Gemma4Syntax::Reader reads it: bare keys and values never hold
-    // '<', so no marker fits inside the arguments; a quoted string is any text up to the closing
-    // <|"|>. The string is a tag dispatch and the bare runs end on a lookahead of what may follow
-    // them, so most tokens are settled when the grammar compiles (without, a mask at the start of
-    // a value took up to 100 ms on Gemma 4's 262k vocabulary; tool_grammar_budget_test). Whitespace
-    // runs between them are bounded like JSON's (CompilerOptions::json_whitespace_run), so a model
-    // cannot write whitespace there until max_tokens.
-    static constexpr std::string_view kArgumentsGrammar =
-        R"GBNF(root ::= ws (member (ws "," ws member)*)? ws
-member ::= key ws ":" ws value
-key ::= quoted | bare_key
-bare_key ::= [^:,{}\[\]<>"\t\n ]+ (= [ \t\n:])
-value ::= quoted | object | array | bare_value
-bare_value ::= [^,{}\[\]<>"\t\n ] [^,{}\[\]<>"\n]* (= [,}\]\n])
-object ::= "{" ws (member (ws "," ws member)*)? ws "}"
-array ::= "[" ws (value (ws "," ws value)*)? ws "]"
-quoted ::= "<|\"|>" qtext "<|\"|>"
-qtext ::= TagDispatch(loop_after_dispatch=false, excludes=("<|\"|>"))
-ws ::= [ \t\n]{0,64})GBNF";
 
 
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
@@ -1493,27 +1473,23 @@ ws ::= [ \t\n]{0,64})GBNF";
                                              ToolCallRequirement requirement,
                                              std::string_view named_tool,
                                              bool parallel_tool_calls) const override {
-        // Arguments are Gemma's own value syntax, not JSON: its grammar (kArgumentsGrammar). Free
-        // text up to the close let a model made to call with nothing to call (tool_choice
+        // Arguments are Gemma's own value syntax, not JSON: an object of bare (or <|"|>-quoted)
+        // keys, <|"|>-quoted strings and bare numbers, booleans and null, braces included
+        // (kGemma4ArgumentStyle), held to a strict tool's schema and otherwise any such object.
+        // Free text up to the close let a model made to call with nothing to call (tool_choice
         // "required") open a thought channel inside the arguments, or write on past their brace,
-        // and never close the call (gemma-4-26B-A4B-it Q4_0, "Hello there!"). A strict tool's
-        // arguments are that syntax held to its schema (kGemma4ArgumentStyle), braces included.
+        // and never close the call (gemma-4-26B-A4B-it Q4_0, "Hello there!").
         return calls_structural_tag(
             tools, requirement, named_tool, parallel_tool_calls, kOpen, "",
             [](const ToolCallConstraintTool& tool) {
-                if (tool.strict) {
-                    return OrderedJson{
-                        {"type", "tag"},
-                        {"begin", std::string(kOpen) + std::string(kCall) + tool.name},
-                        {"content", argument_style_format(tool, kGemma4ArgumentStyle)},
-                        {"end", std::string(kClose)}};
-                }
                 return OrderedJson{
                     {"type", "tag"},
-                    {"begin", std::string(kOpen) + std::string(kCall) + tool.name + "{"},
-                    {"content",
-                     OrderedJson{{"type", "grammar"}, {"grammar", std::string(kArgumentsGrammar)}}},
-                    {"end", "}" + std::string(kClose)}};
+                    {"begin", std::string(kOpen) + std::string(kCall) + tool.name},
+                    {"content", argument_style_format(tool.strict ? OrderedJson::parse(
+                                                                        tool.parameters_json)
+                                                                  : OrderedJson{{"type", "object"}},
+                                                      kGemma4ArgumentStyle)},
+                    {"end", std::string(kClose)}};
             });
     }
 
@@ -2025,7 +2001,8 @@ public:
             return OrderedJson{{"type", "tag"},
                                {"begin", std::string(kOpen) + tool.name + "("},
                                {"content", tool.strict
-                                               ? argument_style_format(tool, kPythonicArgumentStyle)
+                                               ? argument_style_format(OrderedJson::parse(tool.parameters_json),
+                                                                       kPythonicArgumentStyle)
                                                : OrderedJson{{"type", "any_text"}}},
                                {"end", ")" + std::string(kClose)}};
         });
@@ -2193,7 +2170,8 @@ public:
                     {"begin", " " + std::string(kTo) + tool.name + std::string(kMessage) +
                                   std::string(kOpen) + "\n" + std::string(kInvoke) + tool.name +
                                   std::string(kNameEnd) + "\n"},
-                    {"content", tool.strict ? argument_style_format(tool, kAtemArgumentStyle)
+                    {"content", tool.strict ? argument_style_format(OrderedJson::parse(tool.parameters_json),
+                                                                    kAtemArgumentStyle)
                                             : OrderedJson{{"type", "any_text"}}},
                     {"end", std::string(kInvokeClose) + "\n" + std::string(kClose)}};
             });
