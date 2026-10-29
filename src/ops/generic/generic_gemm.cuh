@@ -2357,89 +2357,112 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     for (int h = 0; h < 2; ++h) ring[s][m][h] = Decoder::finish(ring[s][m][h]);
         }
         const Run(&ready)[Sets][MT][2] = runs;
+        // The groups of the step. A group-tail decoder checks each group against the row's end
+        // only in a step that crosses it: behind that check a group's activation load could not
+        // move above the previous group's branch, so every group waited for its own (SASS sm_89:
+        // LDG.64, ~50 decode instructions, the HMMA reading it, per group; ncu RTX 4090, IQ4_NL
+        // add 5120x17408 w1x4 at T = 8: 17 long-scoreboard stalls per issue against IQ4_XS's 6
+        // on the same weight loads). A whole step (every step of a K of whole steps) of one token
+        // tile runs the groups unchecked, as a decoder without a tail does. Several tiles keep the
+        // check: their hoisted loads take the registers of a CTA per SM (sm_86, IQ4_NL add
+        // 5120x17408 m1.n4.w1x8: 109 -> 154 registers, 2 -> 1 CTAs, T = 8 332 -> 453 us).
+        const auto groups = [&](auto tail_tag) {
+            constexpr bool kTail = decltype(tail_tag)::value;
 #pragma unroll
-        for (int g = 0; g < S; ++g) {
-            if constexpr (GroupTailOf<Decoder>::value) {
-                if (step_k0 + 16 * G * g >= k) break; // the row's end: warp-uniform
-            }
-            unsigned act[NT][2 * G];
-            if constexpr (kFinish) {
-#pragma unroll
-                for (int n = 0; n < NT; ++n)
-#pragma unroll
-                    for (int i = 0; i < 2 * G; ++i) act[n][i] = early[g][n][i];
-            } else if constexpr (Staged) {
-#pragma unroll
-                for (int i = 0; i < G; ++i) {
-                    const uint2 w     = stage[32 * (g * G + i)];
-                    act[0][2 * i]     = w.x;
-                    act[0][2 * i + 1] = w.y;
+            for (int g = 0; g < S; ++g) {
+                if constexpr (kTail) {
+                    if (step_k0 + 16 * G * g >= k) break; // the row's end: warp-uniform
                 }
-            } else if constexpr (Ahead) {
-#pragma unroll
-                for (int i = 0; i < 2 * G; ++i) act[0][i] = ahead[2 * G * g + i];
-            } else {
-                load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
-            }
-            act_operands<Decoder, NT, G>(act);
-            float sums[NT][4];
-            if constexpr (MinTermOf<Decoder>::value) {
-                // 1.0, twice: BF16, or FP16 for an F16Of decoder.
-                constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
-#pragma unroll
-                for (int n = 0; n < NT; ++n) {
-                    sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
-#pragma unroll
-                    for (int i = 0; i < G; ++i)
-                        mma_operands<F16Of<Decoder>::value>(sums[n][0], sums[n][1], sums[n][2],
-                                                            sums[n][3], kOnes, kOnes, kOnes, kOnes,
-                                                            act[n][2 * i], act[n][2 * i + 1]);
-                }
-            }
-#pragma unroll
-            for (int s = 0; s < Sets; ++s) {
-#pragma unroll
-                for (int m = 0; m < MT; ++m) {
-                    const auto& r0 = ready[s][m][0];
-                    const auto& r1 = ready[s][m][1];
-                    float part[NT][4];
+                unsigned act[NT][2 * G];
+                if constexpr (kFinish) {
 #pragma unroll
                     for (int n = 0; n < NT; ++n)
-                        part[n][0] = part[n][1] = part[n][2] = part[n][3] = 0.0F;
+#pragma unroll
+                        for (int i = 0; i < 2 * G; ++i) act[n][i] = early[g][n][i];
+                } else if constexpr (Staged) {
 #pragma unroll
                     for (int i = 0; i < G; ++i) {
-                        unsigned a0, a1, a2, a3;
-                        Decoder::pair(r0, g * G + i, a0, a2);
-                        Decoder::pair(r1, g * G + i, a1, a3);
-#pragma unroll
-                        for (int n = 0; n < NT; ++n)
-                            mma_operands<F16Of<Decoder>::value>(part[n][0], part[n][1], part[n][2],
-                                                                part[n][3], a0, a1, a2, a3,
-                                                                act[n][2 * i], act[n][2 * i + 1]);
+                        const uint2 w     = stage[32 * (g * G + i)];
+                        act[0][2 * i]     = w.x;
+                        act[0][2 * i + 1] = w.y;
                     }
-                    const float s0 = Decoder::sub_scale(r0, g);
-                    const float s1 = Decoder::sub_scale(r1, g);
-                    auto& c        = acc[s][m];
+                } else if constexpr (Ahead) {
+#pragma unroll
+                    for (int i = 0; i < 2 * G; ++i) act[0][i] = ahead[2 * G * g + i];
+                } else {
+                    load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
+                }
+                act_operands<Decoder, NT, G>(act);
+                float sums[NT][4];
+                if constexpr (MinTermOf<Decoder>::value) {
+                    // 1.0, twice: BF16, or FP16 for an F16Of decoder.
+                    constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
 #pragma unroll
                     for (int n = 0; n < NT; ++n) {
-                        c[n][0] = fmaf(part[n][0], s0, c[n][0]);
-                        c[n][1] = fmaf(part[n][1], s0, c[n][1]);
-                        c[n][2] = fmaf(part[n][2], s1, c[n][2]);
-                        c[n][3] = fmaf(part[n][3], s1, c[n][3]);
+                        sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
+#pragma unroll
+                        for (int i = 0; i < G; ++i)
+                            mma_operands<F16Of<Decoder>::value>(
+                                sums[n][0], sums[n][1], sums[n][2], sums[n][3], kOnes, kOnes, kOnes,
+                                kOnes, act[n][2 * i], act[n][2 * i + 1]);
                     }
-                    if constexpr (MinTermOf<Decoder>::value) {
-                        const float m0 = Decoder::sub_min(r0, g);
-                        const float m1 = Decoder::sub_min(r1, g);
+                }
+#pragma unroll
+                for (int s = 0; s < Sets; ++s) {
+#pragma unroll
+                    for (int m = 0; m < MT; ++m) {
+                        const auto& r0 = ready[s][m][0];
+                        const auto& r1 = ready[s][m][1];
+                        float part[NT][4];
+#pragma unroll
+                        for (int n = 0; n < NT; ++n)
+                            part[n][0] = part[n][1] = part[n][2] = part[n][3] = 0.0F;
+#pragma unroll
+                        for (int i = 0; i < G; ++i) {
+                            unsigned a0, a1, a2, a3;
+                            Decoder::pair(r0, g * G + i, a0, a2);
+                            Decoder::pair(r1, g * G + i, a1, a3);
+#pragma unroll
+                            for (int n = 0; n < NT; ++n)
+                                mma_operands<F16Of<Decoder>::value>(
+                                    part[n][0], part[n][1], part[n][2], part[n][3], a0, a1, a2, a3,
+                                    act[n][2 * i], act[n][2 * i + 1]);
+                        }
+                        const float s0 = Decoder::sub_scale(r0, g);
+                        const float s1 = Decoder::sub_scale(r1, g);
+                        auto& c        = acc[s][m];
 #pragma unroll
                         for (int n = 0; n < NT; ++n) {
-                            c[n][0] = fmaf(-sums[n][0], m0, c[n][0]);
-                            c[n][1] = fmaf(-sums[n][1], m0, c[n][1]);
-                            c[n][2] = fmaf(-sums[n][2], m1, c[n][2]);
-                            c[n][3] = fmaf(-sums[n][3], m1, c[n][3]);
+                            c[n][0] = fmaf(part[n][0], s0, c[n][0]);
+                            c[n][1] = fmaf(part[n][1], s0, c[n][1]);
+                            c[n][2] = fmaf(part[n][2], s1, c[n][2]);
+                            c[n][3] = fmaf(part[n][3], s1, c[n][3]);
+                        }
+                        if constexpr (MinTermOf<Decoder>::value) {
+                            const float m0 = Decoder::sub_min(r0, g);
+                            const float m1 = Decoder::sub_min(r1, g);
+#pragma unroll
+                            for (int n = 0; n < NT; ++n) {
+                                c[n][0] = fmaf(-sums[n][0], m0, c[n][0]);
+                                c[n][1] = fmaf(-sums[n][1], m0, c[n][1]);
+                                c[n][2] = fmaf(-sums[n][2], m1, c[n][2]);
+                                c[n][3] = fmaf(-sums[n][3], m1, c[n][3]);
+                            }
                         }
                     }
                 }
             }
+        };
+        if constexpr (GroupTailOf<Decoder>::value && NT > 1) {
+            groups(std::true_type{});
+        } else if constexpr (GroupTailOf<Decoder>::value) {
+            if (step_k0 + 16 * G * S > k) {
+                groups(std::true_type{});
+            } else {
+                groups(std::false_type{});
+            }
+        } else {
+            groups(std::false_type{});
         }
     } else {
         static_assert(!FinishOf<Decoder>::value, "a finish decoder is a spread one");
