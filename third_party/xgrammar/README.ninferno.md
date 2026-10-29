@@ -16,7 +16,7 @@ Bundled third-party headers, unchanged:
   see `3rdparty/dlpack/LICENSE`.
 
 The committed `include/` and `cpp/` files (including `cpp/support/`) are upstream files, unchanged
-but for one local change (below).
+but for two local changes (below).
 Python bindings (`python/`, `cpp/tvm_ffi/`), the web and Swift packages, documentation, tests,
 googletest and cpptrace are intentionally omitted. The local `CMakeLists.txt` builds the same
 static library source set as upstream's `xgrammar` target, without network access at configure
@@ -35,10 +35,21 @@ optional key can be written any more: the output stays valid JSON and fields sil
 block lets an object's optional properties and additional keys come in any order, an optional
 property at most once (tracked up to 256 rule states per object, none with patternProperties; past
 that, the remaining optional properties may repeat), while its required properties keep their
-schema order. An object with only required properties and no other keys, or with
-minProperties/maxProperties, keeps upstream's rules. `any_order` (non-strict Qwen XML tool
-arguments) is untouched. When updating, re-apply the block and run `ninferno_structured_output_test`
-and `ninferno_chat_test` (their key-order contracts fail without it).
+schema order. An object with minProperties/maxProperties counts its entries in the state when all
+its optional properties are tracked and it admits no other key (a repeatable key would count twice
+for one property); any other counted object keeps upstream's rules, as does an object with
+only required properties and no other keys. `any_order` (non-strict Qwen XML tool arguments) is
+untouched. When updating, re-apply the block and run `ninferno_structured_output_test` and
+`ninferno_chat_test` (their key-order contracts fail without it).
+
+Local change: `JSONSchemaToGrammarWithConverter` (declared in `cpp/json_schema_converter.h`, defined
+after `JSONSchemaToGrammar` in `cpp/json_schema_converter.cc`, both marked "NInferno local change")
+parses a schema as `JSONSchemaToGrammar` does and converts it with a converter the caller makes.
+The NInferno-owned `ninferno/tool_syntax_grammars.{h,cc}` uses it for the tool-call argument formats
+XGrammar has no style for (Gemma 4, Pythonic, ATEM), with converters derived from
+`JSONSchemaConverter` and `XMLToolCallingConverter`; they rely on the converter's protected hooks.
+When updating, re-apply the function and run `ninferno_chat_test` and, with a tokenizer,
+`ninferno_tool_grammar_budget_test`.
 
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new
 tag, keep this file and `CMakeLists.txt`, and re-run the structured-output unit tests

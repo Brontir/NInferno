@@ -59,8 +59,8 @@
 // is one JSON object on stdout.
 // Maintainer options (docs/maintainer/environment.md): --cuda-sync, --route-table FILE,
 // --route-dir DIR, --dense-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE,
-// --debug-poison-skip SITES and --drafter-registry FILE, applied to the process as an Engine
-// applies them; --moe-tune is refused (no MoE schedule tuner runs here).
+// --debug-poison-skip SITES, --artifact-io MODE and --drafter-registry FILE, applied to the process
+// as an Engine applies them; --moe-tune is refused (no MoE schedule tuner runs here).
 //
 // <artifact>, --drafter and --dflash also accept a Hugging Face checkpoint directory. It is
 // converted once, in-process, with the official recipe for its architecture, into
@@ -137,7 +137,7 @@ Arguments parse(int argc, char** argv) {
         // --activations exact once ran the default profile unnoticed).
         static const std::set<std::string> known = {
             "a16",         "a16-full",    "acceptance-floor",
-            "applies-to",  "block",       "budget-seconds",
+            "applies-to",  "artifact-io", "block",       "budget-seconds",
             "chunk",       "configs",     "consume-source",
             "context",     "corpus",      "cuda-sync",   "cuts",
             "debug-poison", "debug-poison-skip", "dense-tune",

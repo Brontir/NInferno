@@ -166,6 +166,8 @@ int main() {
                                               "nan",
                                               "--debug-poison-skip",
                                               "kv,state",
+                                              "--artifact-io",
+                                              "buffered",
                                               "--drafter-registry",
                                               "registry.json"});
     failures += check(lab.pacing.steps == 4 && lab.pacing.wait == ninferno::DecodeWait::Block &&
@@ -176,6 +178,7 @@ int main() {
                   lab.maintainer.debug_prefill_cuts == std::vector<std::uint64_t>{700, 900} &&
                   lab.maintainer.debug_poison == std::uint8_t{0xFF} &&
                   lab.maintainer.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
+                  lab.maintainer.artifact_io == ninferno::ArtifactIo::Buffered &&
                   lab.drafter_registry == "registry.json",
               "maintainer options were not parsed");
     failures += check(

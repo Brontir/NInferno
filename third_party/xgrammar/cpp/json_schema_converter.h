@@ -540,6 +540,16 @@ Grammar JSONSchemaToGrammar(
     JSONFormat json_format = JSONFormat::kJSON
 );
 
+// NInferno local change (see README.ninferno.md): converts a JSON schema with a converter the
+// caller makes, for tool-call argument formats that have no JSONFormat (Gemma 4, Pythonic, ATEM).
+// The schema is parsed as JSONSchemaToGrammar parses it, in strict mode, with parse_format.
+using JSONSchemaConverterFactory = std::function<std::unique_ptr<JSONSchemaConverter>(
+    JSONSchemaConverter::RefResolver ref_resolver
+)>;
+Grammar JSONSchemaToGrammarWithConverter(
+    const std::string& schema, JSONFormat parse_format, const JSONSchemaConverterFactory& make
+);
+
 // ==================== Public API functions (backward compatible) ====================
 
 /*!

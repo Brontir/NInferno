@@ -1,5 +1,6 @@
 #include "ninferno/engine.h"
 
+#include "artifact/file_io.h"
 #include "core/debug_poison.h"
 #include "core/host_cpu_quota.h"
 #include "core/device.h"
@@ -66,6 +67,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
     ops::set_moe_tune(m.moe_tune, m.tune_cache);
     models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
     set_debug_poison(m.debug_poison, m.debug_poison_skip);
+    artifact::set_artifact_io(m.artifact_io);
 }
 
 DeviceContext initialize_device(const EngineOptions& options, ProcessOptionsLease& lease) {

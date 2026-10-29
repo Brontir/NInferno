@@ -439,6 +439,9 @@ struct MaintainerOptions {
     std::optional<std::uint8_t> debug_poison;
     // --debug-poison-skip SITE,...: sites left unpoisoned (kv, ingress, state, weights).
     std::vector<std::string> debug_poison_skip;
+    // --artifact-io auto|direct|buffered: how the weights are read at load (O_DIRECT or the page
+    // cache). An I/O mode, not a decision: the bytes read are the same.
+    ArtifactIo artifact_io = ArtifactIo::Auto;
 
     bool operator==(const MaintainerOptions&) const = default;
 };
@@ -689,6 +692,13 @@ struct ToolCallConstraintTool {
     std::string parameters_json;
     bool strict = false;
 };
+
+// Styles of a structural tag's json_schema format for a strict tool's arguments in call syntaxes
+// XGrammar has no style for (Gemma 4, Pythonic, ATEM). The constraint compiler turns such a
+// format into the grammar of that syntax's arguments held to the schema.
+inline constexpr std::string_view kGemma4ArgumentStyle   = "ninferno_gemma4";
+inline constexpr std::string_view kPythonicArgumentStyle = "ninferno_pythonic";
+inline constexpr std::string_view kAtemArgumentStyle     = "ninferno_atem";
 
 struct OutputConstraintSpec {
     OutputConstraintKind kind = OutputConstraintKind::JsonObject;

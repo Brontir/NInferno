@@ -1124,9 +1124,9 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         heads_read = std::async(
             std::launch::async,
             [spec = commit.empty() ? repo : repo + "@" + commit, fetch, quants,
-             facts = facts->model] {
+             facts = facts->model, tied = facts->shape.tied_embeddings] {
                 return convert::gguf_quants_head_bytes(spec, fetch, quants, facts.gguf_data_offset,
-                                                       facts.hidden, facts.vocab);
+                                                       facts.hidden, facts.vocab, tied);
             });
     }
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.
@@ -1175,7 +1175,10 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     if (heads_read.valid() && inputs.proposal_planned) {
         const auto heads = heads_read.get();
         for (auto& q : listing) {
-            if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }
+            // A head not read (0) keeps what the listing knows.
+            if (const auto it = heads.find(q.quant); it != heads.end() && it->second != 0) {
+                q.head_bytes = it->second;
+            }
         }
     }
     // The facts' own file prices its tensor table (kv_json read its head); the other rows are read
