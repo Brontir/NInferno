@@ -751,7 +751,10 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
         }
         formats.insert(format_of_ggml(t.type));
-        if (t.name != "token_embd.weight" && t.name != "output.weight") { layer_formats.insert(format_of_ggml(t.type)); }
+        // The trunk's layers: not the tables, not the NextN blocks (priced apart, off plain decode).
+        if (t.name != "token_embd.weight" && t.name != "output.weight" && !mtp) {
+            layer_formats.insert(format_of_ggml(t.type));
+        }
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
     // its own tensors, so the listed file sizes stand for the rest.
