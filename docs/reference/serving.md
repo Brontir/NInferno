@@ -882,6 +882,13 @@ the share of responses in schema order and near-empty objects that stopped early
   Where the prompt starts the thinking (Qwen), the cap counts from the first output token; where the
   model opens it itself (Gemma 4 writes `<|channel>thought`), it counts from the token after that
   opener, and an answer that begins without one is not capped.
+- **Room for the answer.** A thinking request without a budget (none in the request, no
+  `--default-thinking-budget`) gets one: three quarters of its output limit (the request's
+  `max_tokens`, or less where the context leaves less), so the thinking closes in time for an
+  answer of at least a quarter of the limit. Without it a long thinking could spend the whole limit
+  and return no answer. Only where the template can end thinking early (not gpt-oss), and not
+  where the limit is too small for the closing tokens and an answer. `--no-answer-room` turns it
+  off; a request's own budget, or the server's default, always wins.
 - **At the cap.** The Engine first honors a natural `</think>`, stop condition, cancellation, or
   total output/context limit. If thinking remains open, it commits the template's early-close
   control (Qwen's canonical guidance and close marker; Gemma 4's channel close) to the same model sequence without sampling, streams the guidance as a
@@ -1744,6 +1751,7 @@ not take at startup.
 |---|---|---:|
 | `--default-max-tokens N` | output limit when omitted by a request | `8192` |
 | `--default-thinking-budget N` | positive thinking cap inherited by thinking-enabled requests | unset |
+| `--no-answer-room` | a thinking request without a budget may think up to its whole output limit, instead of three quarters of it (the rest kept for the answer) | room kept |
 | `--repetition-stop N` | end an output whose last N tokens (16..65536) repeat one period of at most 64 tokens four or more times: finish_reason `length` (Anthropic `max_tokens`, Responses `incomplete`), `repetition` in the request log | `0` (off) |
 | `--repetition-thinking stop\|conclude` | `conclude`: a loop `--repetition-stop` finds while the thinking is still open closes the thinking (the control suffix a thinking budget injects, once) and the answer follows; `thinking_loop_concluded` in the request log. A loop in the answer, with no room left for the suffix, or on a template without a thinking-budget control (gpt-oss), still ends the output | `stop` |
 | `--vision` | enable media input and load Vision GPU allocations | off |

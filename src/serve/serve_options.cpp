@@ -61,7 +61,8 @@ std::string serve_usage_text(const char* argv0) {
            "[--spec auto [--spec-select fixed|thinking]] [--spec-load LANES:DEPTH,...|none] "
            "[--spec-profile TUNE.json] "
            "[--spec-shared-floor F] "
-           "[--default-max-tokens N] [--default-thinking-budget N] [--repetition-stop N] "
+           "[--default-max-tokens N] [--default-thinking-budget N] [--no-answer-room] "
+           "[--repetition-stop N] "
            "[--repetition-thinking stop|conclude] "
            "[--vision] [--no-cuda-graph] [--no-prefix-reuse] [--concurrent-prefill] "
            "[--chat-template FILE] [--lm-head-draft] [--no-thinking] [--preserve-thinking] "
@@ -178,6 +179,8 @@ std::string serve_usage_text(const char* argv0) {
            "--host-kv-mib uses MiB\n"
            "       --default-thinking-budget caps model-origin thinking for enabled requests; "
            "control tokens count toward the request output limit\n"
+           "       without a budget, thinking closes early enough to leave a quarter of the output "
+           "limit for the answer; --no-answer-room lets it take the whole limit\n"
            "       --repetition-stop N ends an output whose last N tokens repeat one period of at "
            "most " +
            std::to_string(kRepetitionMaximumPeriod) + " tokens " +
@@ -484,6 +487,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--default-thinking-budget is out of range");
             }
             options.default_thinking_budget = static_cast<std::uint32_t>(budget);
+        } else if (arg == "--no-answer-room") {
+            options.answer_room = false;
         } else if (arg == "--repetition-stop") {
             const std::uint64_t window =
                 parse_u64(require_value("--repetition-stop"), "repetition-stop");
