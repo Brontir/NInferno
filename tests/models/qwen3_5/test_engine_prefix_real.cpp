@@ -1572,6 +1572,25 @@ int exercise_vision(ninferno::Engine& engine) {
                   << '\n';
         return 1;
     }
+    // The reused continuation prefills a text-only suffix after the cached multimodal prefix: its
+    // positions keep the image's RoPE delta, so it decodes what an uncached prefill decodes.
+    {
+        ninferno::RequestOptions long_reuse = options(true);
+        ninferno::RequestOptions long_fresh = options(false);
+        long_reuse.execution.requested_output_tokens = 16;
+        long_fresh.execution.requested_output_tokens = 16;
+        const ninferno::GenerationResult cached =
+            engine.generate(engine.prepare(followup_input(image_bytes, first)), long_reuse);
+        const ninferno::GenerationResult fresh =
+            engine.generate(engine.prepare(followup_input(image_bytes, first)), long_fresh);
+        if (cached.reused_prompt_tokens == 0 ||
+            cached.generated_token_ids != fresh.generated_token_ids) {
+            std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
+                         "uncached prefill (RoPE delta lost?): reused="
+                      << cached.reused_prompt_tokens << '\n';
+            return 1;
+        }
+    }
 
     std::vector<std::uint8_t> second_image = image_bytes;
     second_image.back() ^= 0x5aU;
