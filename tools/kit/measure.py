@@ -228,7 +228,8 @@ def apps_info(bus, wddm, server_pid):
     apps = gpu.compute_apps(bus)
     if apps is None:
         return {"listed": None}
-    others = [a for a in apps if a.get("pid") != server_pid]
+    ours = gpu.process_tree(server_pid)  # the server and its engine child (Windows dispatch)
+    others = [a for a in apps if a.get("pid") not in ours]
     # Under WDDM every process holding a context is listed: only the count is kept.
     return {"listed": len(apps), "others": len(others), "informative": not wddm}
 

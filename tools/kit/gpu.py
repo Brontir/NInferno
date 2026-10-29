@@ -99,6 +99,51 @@ def smi_id_of_cuda(ordinal):
     return buses[ordinal]
 
 
+def process_tree(pid):
+    """`pid` and every process under it (ninferno-serve on Windows dispatches to an engine child:
+    that child is the one nvidia-smi lists). Linux: /proc; Windows: a Toolhelp snapshot."""
+    parents = {}
+    if os.name == "nt":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class Entry(ctypes.Structure):
+                _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD),
+                            ("pid", wintypes.DWORD), ("heap", ctypes.c_void_p),
+                            ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
+                            ("ppid", wintypes.DWORD), ("priority", ctypes.c_long),
+                            ("flags", wintypes.DWORD), ("exe", ctypes.c_char * 260)]
+            k32 = ctypes.windll.kernel32
+            k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+            snap = k32.CreateToolhelp32Snapshot(2, 0)  # TH32CS_SNAPPROCESS
+            entry = Entry()
+            entry.size = ctypes.sizeof(Entry)
+            ok = k32.Process32First(snap, ctypes.byref(entry))
+            while ok:
+                parents[entry.pid] = entry.ppid
+                ok = k32.Process32Next(snap, ctypes.byref(entry))
+            k32.CloseHandle(snap)
+        except (OSError, AttributeError):
+            pass
+    else:
+        for name in os.listdir("/proc") if os.path.isdir("/proc") else []:
+            if name.isdigit():
+                try:
+                    with open(f"/proc/{name}/stat", encoding="utf-8") as f:
+                        parents[int(name)] = int(f.read().rsplit(")", 1)[1].split()[1])
+                except (OSError, ValueError, IndexError):
+                    continue
+    tree, grew = {pid}, True
+    while grew:
+        grew = False
+        for child, parent in parents.items():
+            if parent in tree and child not in tree:
+                tree.add(child)
+                grew = True
+    return tree
+
+
 def compute_apps(device_bus):
     """The compute processes nvidia-smi lists on the card. Under WDDM every process holding a
     context is listed (the desktop's too), so there the list says nothing about other load (the
