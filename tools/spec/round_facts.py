@@ -125,7 +125,7 @@ GGML_NAMES = {0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1", 8:
               10: "Q2_K", 11: "Q3_K", 12: "Q4_K", 13: "Q5_K", 14: "Q6_K", 15: "Q8_K", 16: "IQ2_XXS",
               17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S", 20: "IQ4_NL", 21: "IQ3_S", 22: "IQ2_S",
               23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64", 29: "IQ1_M",
-              30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4"}
+              30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4", 40: "NVFP4", 41: "Q1_0", 42: "Q2_0"}
 NORM = re.compile(r"norm[^.]*\.weight$")  # a normalization's weights by role (Nemotron-H's grouped ssm_norm [512, 8])
 WEIGHT_SUFFIX = (".weight", "qweight", "weight_packed", "_blocks")
 FUSED_EXPERTS = re.compile(r"\.experts\.\w+_proj$")  # a checkpoint's experts as one [E, n, k] tensor
@@ -347,7 +347,8 @@ GGML_BLOCKS = {0: (1, 4), 1: (1, 2), 2: (32, 18), 3: (32, 20), 6: (32, 22), 7: (
                14: (256, 210), 15: (256, 292), 16: (256, 66), 17: (256, 74), 18: (256, 98),
                19: (256, 50), 20: (32, 18), 21: (256, 110), 22: (256, 82), 23: (256, 136), 24: (1, 1),
                25: (1, 2), 26: (1, 4), 27: (1, 8), 28: (1, 8), 29: (256, 56), 30: (1, 2), 34: (256, 54),
-               35: (256, 66), 36: (256, 66), 37: (256, 66), 38: (256, 66), 39: (32, 17)}
+               35: (256, 66), 36: (256, 66), 37: (256, 66), 38: (256, 66), 39: (32, 17), 40: (64, 36),
+               41: (128, 18), 42: (64, 18)}  # convert/ggml_quants.cpp traits
 
 
 def _open(req, tries: int = 8) -> bytes:
@@ -488,7 +489,7 @@ def _config_meta(cfg: dict) -> tuple[dict, int]:
     block = cfg.get("block_size") or (cfg.get("dflash_config") or {}).get("block_size")
     if block:
         meta["block_size"] = block
-    q = cfg.get("quantization_config") or {}
+    q = cfg.get("quantization_config") or text.get("quantization_config") or {}
     if q.get("quant_method"):
         meta["quant_method"] = q["quant_method"]
     bits = q.get("bits") or q.get("w_bit")
@@ -529,6 +530,16 @@ def fetch(repo_at: str, files: list[str] | None = None, shas: list[str] | None =
     return {"meta": meta, "tensors": tensors, "elems": elems, "shapes": shapes}
 
 
+def wanted_tables(registry: dict, pair: dict) -> list[tuple]:
+    """(key, org/name@revision, files, LFS SHA-256s) of the tables a pair's facts read."""
+    out = [(pair["target_repo"], pair["target_repo"].split(" ")[0], None, pair["target"].split(","))]
+    for kind in (pair.get("drafters") or {}):
+        key = drafter_key(registry, pair, kind)
+        parts = key[len("drafter:"):].split(":")
+        out.append((key, parts[0], parts[1:] or None, None))
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--registry", type=Path, default=REGISTRY)
@@ -538,21 +549,18 @@ def main() -> int:
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
     before = copy.deepcopy(registry)
     tables = json.loads(args.tables.read_text(encoding="utf-8")) if args.tables and args.tables.exists() else {}
+    failed: set[str] = set()  # tables a refresh could not read: their pairs keep the facts they have
     if args.fetch:
         for p in registry.get("pairs", []):
-            wanted = [(p["target_repo"], p["target_repo"].split(" ")[0], None, p["target"].split(","))]
-            for kind in (p.get("drafters") or {}):
-                key = drafter_key(registry, p, kind)
-                parts = key[len("drafter:"):].split(":")
-                wanted.append((key, parts[0], parts[1:] or None, None))
-            for key, at, files, shas in wanted:
+            for key, at, files, shas in wanted_tables(registry, p):
                 if key in tables and "shapes" in tables[key]:
                     continue  # the cache: read before (a table without shapes is read again)
                 try:
                     tables[key] = fetch(at, files, shas)
                     print(f"{key}: {len(tables[key]['tensors'])} tensors", file=sys.stderr)
-                except Exception as error:  # noqa: BLE001 - one model's failure skips it
+                except Exception as error:  # noqa: BLE001 - one model's failure skips its pairs
                     print(f"{key}: {error}", file=sys.stderr)
+                    failed.add(key)
                     continue
                 if args.tables:  # whole or not at all: a crash mid-write keeps the cache
                     part = args.tables.with_name(args.tables.name + ".part")
@@ -563,6 +571,11 @@ def main() -> int:
         board = LAB_BOARDS.get(p["tune"]["key"]["gpu"])
         if board:
             p["lab_board"] = board
+        missing = failed & {key for key, *_ in wanted_tables(registry, p)}
+        if missing:
+            print(f"{p['target_repo']}: {sorted(missing)} not read, its facts kept as they are", file=sys.stderr)
+            done += "round_facts" in p
+            continue
         facts = round_facts(p, tables, registry)
         if facts:
             p["round_facts"] = facts
