@@ -1217,4 +1217,26 @@ the tier (even one that does not fit); then the rule's pick stands.
   (up to +18 % on Ada's rows).
 - Volta takes Turing's rows, transferred.
 
-DEFAULTS_PLACEHOLDER
+**The defaults this changes against master 8bbf2e72** (Ada; plan without load, 7 models x 3 cards x
+{default, 4 streams, 128K}). Measured on the RTX 4060 Ti: plain decode per stream at 1 / 4 streams;
+KLD `--quick` against a fresh Q8_0 reference that gives Q4_K_M 0.0192, as kQuantKld has it.
+- Qwen3.5-9B, 4060 Ti 128K: Q4_1 -> Q4_K_M. Q4_1 runs 50.5 / 45.9 tok/s at KLD 0.0242; Q4_K_M runs
+  51.1 / 45.7 at 0.0192. Q4_1 is an unmeasured class (Other).
+- Qwen3.5-9B-MTP, 4060 Ti 128K: Q4_0 mtp:3 -> Q4_K_S mtp:4. Q4_0 runs 54.4 / 49.3 at KLD 0.0509;
+  Q4_K_S runs 54.0 / 47.9 at 0.0227. Q4_0 is Other.
+- Qwen3.5-9B-MTP, 4060 Ti default: UD-Q4_K_XL int8 mtp:3 (context 40,640) -> Q5_K_S nvfp4 mtp:5
+  (34,176), estimated 98 -> 113 tok/s. The cause is the measured KLDs: UD-Q4_K_XL 0.0182 (the curve
+  said 0.0160) and Q5_K_S 0.0113 (the curve said about 0.013).
+  - On essays at one stream: UD-Q4_K_XL mtp:3 71 tok/s, Q5_K_S mtp:5 62. Even at those speeds the
+    worth still favours Q5_K_S: ln(71/62) = 0.14 < 25 x 0.0069 = 0.17.
+  - This needed a plan fix. With one stream, a pick by worth was scored at the target context with
+    its drafter, but launched at the longest context that fits, where an 8 GB card drops the drafter
+    (Q5_K_S plain, 46 tok/s). Now the launch keeps the scored context when the drafter returns
+    there.
+- Qwen3.8-27B, 4090 128K: UD-Q4_K_XL -> UD-Q5_K_S, inside the tie band (lower KLD). Not measured: the
+  4090 stand's disk has 4.7 GB free.
+- IQ4_XS on the 4060 Ti is a measured class now:
+  - plain 55.0 / 49.4 tok/s, KLD 0.0286;
+  - dflash:7 on essays 85.8 tok/s, against Q5_K_S mtp:5 at 61.7.
+
+  The default there stays master's choice.
