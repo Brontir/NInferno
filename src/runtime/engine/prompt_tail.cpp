@@ -22,7 +22,8 @@
 namespace ninferno::runtime {
 namespace {
 
-// A one-message prompt of `words` words, as the frontend prepares it with the default cache hints.
+// A one-message prompt of `words` words, as ninferno-serve prepares an OpenAI chat request's: its
+// default automatic cache boundary after the message's last part (serve/openai_common.cpp).
 struct Probe {
     // The rewrite execution frontiers as distances from the prompt's end (0 left out: a frontier
     // at the end splits nothing).
@@ -39,6 +40,14 @@ Probe probe(const models::qwen3_5::Frontend& frontend, int words) {
     message.role = ChatRole::User;
     message.parts.push_back(MessagePart{.kind = MessagePartKind::Text, .text = std::move(text)});
     input.messages.push_back(std::move(message));
+    input.context_cache.allow_engine_automatic_shared_prefixes = false;
+    input.context_cache.markers.push_back(PromptCacheMarker{
+        .after_message_count      = 1,
+        .kind                     = PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence                 = SharedCandidateEvidence::DefaultAutomatic,
+        .location                 = PromptCacheMarkerLocation::MessagePartBoundary,
+        .after_message_part_count = 1,
+    });
     const models::qwen3_5::PreparedPrompt prepared = frontend.prepare(std::move(input));
     const models::qwen3_5::PreparedPromptData& prompt =
         models::qwen3_5::PreparedPromptAccess::view(prepared);
@@ -64,8 +73,8 @@ std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend) {
     std::vector<std::uint32_t> both;
     std::set_intersection(a.tail.begin(), a.tail.end(), b.tail.begin(), b.tail.end(),
                           std::back_inserter(both));
-    // The automatic shared prefix at the last message's end (the frontend's EngineObserved
-    // candidate; OpenAI's default automatic boundary in ninferno-serve) is captured at the 64-token
+    // The automatic shared prefix at the last message's end (OpenAI's default automatic boundary
+    // in ninferno-serve) is captured at the 64-token
     // grid point below it, so the prompt's last chunk stops there and the remainder, 17 to 80
     // tokens, is one more call: a weight read like the tail's. At most one prompt in 64 ends on
     // the grid.
