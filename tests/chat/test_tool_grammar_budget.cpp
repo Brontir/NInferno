@@ -165,12 +165,14 @@ int main() {
         double mask_total = 0;
         double mask_max   = 0;
         int masks         = 0;
+        std::size_t slowest = 0;
         bool accepted     = true;
         for (const char c : call_text(format)) {
             const auto mask_start = Clock::now();
             matcher.fill_mask(row.data());
             const double took = std::chrono::duration<double>(Clock::now() - mask_start).count();
             mask_total += took;
+            if (took > mask_max) { slowest = static_cast<std::size_t>(masks); }
             mask_max = std::max(mask_max, took);
             ++masks;
             if (!matcher.accept_bytes(std::string_view(&c, 1))) {

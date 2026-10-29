@@ -1412,7 +1412,9 @@ public:
     static constexpr std::string_view kQuote = "<|\"|>";
     static constexpr std::string_view kCall  = "call:";
     // Gemma's value syntax as Gemma4Syntax::Reader reads it: bare keys and values never hold
-    // '<', so no marker fits inside the arguments. Whitespace runs between them are bounded like
+    // '<', so no marker fits inside the arguments; a quoted string is any text up to the closing
+    // <|"|> (a tag dispatch, so its masks take XGrammar's fast path: a character-by-character
+    // rule cost up to 70 ms per mask on a 262k vocabulary). Whitespace runs between them are bounded like
     // JSON's (CompilerOptions::json_whitespace_run), so a model cannot write whitespace there until
     // max_tokens.
     static constexpr std::string_view kArgumentsGrammar =
@@ -1422,8 +1424,8 @@ key ::= quoted | [^:,{}\[\]<>"\t\n ]+
 value ::= quoted | object | array | [^,{}\[\]<>"\t\n ] [^,{}\[\]<>"\n]*
 object ::= "{" ws (member (ws "," ws member)*)? ws "}"
 array ::= "[" ws (value (ws "," ws value)*)? ws "]"
-quoted ::= "<|\"|>" qchar* "<|\"|>"
-qchar ::= [^<] | "<" [^|] | "<|" [^\"] | "<|\"" [^|] | "<|\"|" [^>]
+quoted ::= "<|\"|>" qtext "<|\"|>"
+qtext ::= TagDispatch(loop_after_dispatch=false, excludes=("<|\"|>"))
 ws ::= [ \t\n]{0,64})GBNF";
 
 
