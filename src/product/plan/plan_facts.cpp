@@ -751,7 +751,10 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
         }
         formats.insert(format_of_ggml(t.type));
-        if (t.name != "token_embd.weight" && t.name != "output.weight") { layer_formats.insert(format_of_ggml(t.type)); }
+        // The trunk's layers: not the tables, not the NextN blocks (priced apart, off plain decode).
+        if (t.name != "token_embd.weight" && t.name != "output.weight" && !mtp) {
+            layer_formats.insert(format_of_ggml(t.type));
+        }
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
     // its own tensors, so the listed file sizes stand for the rest.
@@ -811,7 +814,25 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             if (bit != 0 && piece.object.index < table.size()) { table[piece.object.index] |= bit; }
         }
     }
+    // The untied input table's bytes: the embedding binding's own element range of each object
+    // the head does not share (a packed object holds other parameters' elements too).
     std::uint64_t input_table_bytes = 0;
+    if (const auto embedding = dir.bindings.find("text/token_embedding");
+        embedding != dir.bindings.end()) {
+        for (const auto& piece : embedding->second.parts) {
+            const std::size_t i = piece.object.index;
+            if (i >= dir.objects.size() || table[i] != 1) { continue; }
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
+            if (tensor == nullptr) { continue; }
+            double n = tensor->shape.empty() ? 0 : 1;
+            for (const std::uint64_t d : tensor->shape) { n *= static_cast<double>(d); }
+            const double share =
+                piece.end > piece.begin && n > 0
+                    ? std::min(1.0, static_cast<double>(piece.end - piece.begin) / n)
+                    : 1.0;
+            input_table_bytes += static_cast<std::uint64_t>(share * static_cast<double>(tensor->bytes));
+        }
+    }
     for (const auto& [name, binding] : dir.bindings) {
         const Part part = starts_with(name, "vision/")                                    ? Vision
                           : starts_with(name, "mtp/")                                     ? Mtp
@@ -845,7 +866,6 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         if (table[i] == 0 && !(alone && (m[Mtp] || m[Drafter] || m[Proposal]))) {
             layer_formats.insert(tensor->format); // the trunk's layers
         }
-        if (table[i] == 1) { input_table_bytes += tensor->bytes; }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;

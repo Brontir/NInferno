@@ -63,6 +63,14 @@ struct Measurement {
     // Greedy parity with plain decode over the same prompts: tokens compared and the identical
     // prefix before the first difference (summed over prompts).
     std::int64_t compared = 0, identical = 0;
+    // The kernels its decode launched through the captured graphs (core/decode_graph.h
+    // graph_kernels_launched; 0: not recorded) and the launches they belong to (graph_rounds: its
+    // rounds and the fallback steps that replay the round's graph; a plain decode's steps): a
+    // round's (or a plain step's) kernels, each paying the generation's launch time
+    // (spec/round_cost.h). Requests whose watchdog tripped, that decoded plain steps or ran rounds
+    // without their graph are left out of both.
+    std::int64_t graph_kernels = 0;
+    std::int64_t graph_rounds  = 0;
 
     [[nodiscard]] double tok_s() const noexcept { return seconds > 0 ? tokens / seconds : 0.0; }
     [[nodiscard]] double tokens_per_round() const noexcept {

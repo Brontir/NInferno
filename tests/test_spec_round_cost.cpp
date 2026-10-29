@@ -230,6 +230,65 @@ int main() {
             expect(r && near(*r, (1000 + 2 * (100 + 100 * 64 * 4.25 / 8)) / 1000, 1e-12),
                    "a checkpoint's proposal rows at Q4_G64_FP16's 4.25 bits");
         }
+        // Each kernel a round's graphs launch, and a plain step's, at the card's launch time:
+        // R = (C_round + L n_round) / (C_step + L n_step), L = t0 x eta_dram x BW.
+        {
+            sp::RoundFacts f;
+            f.target          = sp::PassFacts{.bytes = 1000, .params = 1000};
+            f.drafters["mtp"] = sp::DraftFacts{.pass = sp::PassFacts{.bytes = 100, .params = 100}};
+            const auto c      = sp::SpecConfig::parse("mtp:2");
+            const auto r = sp::round_cost(f, c, 0.0, {}, 2.0, sp::RoundLaunches{.round = 50, .step = 30});
+            expect(r && near(*r, (1000 + 200 + 2.0 * 50) / (1000 + 2.0 * 30), 1e-12),
+                   "a round's kernel launches and a plain step's");
+            expect(sp::round_cost(f, c, 0.0, {}, 2.0, sp::RoundLaunches{.round = 50}) ==
+                       sp::round_cost(f, c, 0.0),
+                   "launches not counted for the plain step: none added");
+            const auto ada = sp::card_rates_of_board(0x2782);
+            expect(near(ada.launch_bytes(), 1.5e-6 * 0.946 * ada.dram_bytes_per_s, 1e-12) &&
+                       sp::card_rates_of_board(0x2503).launch_bytes() == 0 &&
+                       sp::card_rates_of_board(0x2C05).launch_bytes() == 0,
+                   "Ada's launch time; Ampere and gb20x none (not fitted)");
+        }
+        // A tune's graph kernels round-trip, and an estimate prices them: more kernels a round,
+        // a dearer round.
+        {
+            auto counted = pair_of(kQ9, "ad104:60sm");
+            for (auto& m : counted.tune.measurements) {
+                m.graph_rounds  = std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
+                m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
+            }
+            const auto again = sp::parse_pair(sp::pair_json(counted));
+            expect(again.tune.measurements.front().graph_kernels ==
+                           counted.tune.measurements.front().graph_kernels &&
+                       again.tune.measurements.front().graph_rounds ==
+                           counted.tune.measurements.front().graph_rounds,
+                   "graph kernels and their launches round-trip");
+            const auto rtx4060 = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+            const auto with    = sp::round_cost_estimate(counted, rtx4060);
+            const auto without = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060);
+            expect(with.known && without.known && with.cost.at("mtp:3") != without.cost.at("mtp:3"),
+                   "counted launches enter the estimate");
+            // Each section counts once, as in its measured cost: a section of other kernel
+            // counts that ran ten times the rounds moves nothing.
+            const std::string first = counted.tune.measurements.front().family;
+            auto mixed              = counted;
+            for (auto& m : mixed.tune.measurements) {
+                if (m.family != first) { m.graph_kernels += 200 * m.graph_rounds; }
+            }
+            auto longer = mixed;
+            for (auto& m : longer.tune.measurements) {
+                if (m.family == first) {
+                    m.graph_kernels *= 10;
+                    m.graph_rounds *= 10;
+                }
+            }
+            const auto a = sp::round_cost_estimate(mixed, rtx4060);
+            const auto b = sp::round_cost_estimate(longer, rtx4060);
+            expect(std::any_of(mixed.tune.measurements.begin(), mixed.tune.measurements.end(),
+                               [&](const auto& m) { return m.family != first; }) &&
+                       a.known && b.known && near(a.cost.at("mtp:3"), b.cost.at("mtp:3"), 1e-12),
+                   "launch counts average over the sections, not their rounds");
+        }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.
         auto pair                            = pair_of(kQ9, "ad104:60sm");

@@ -1228,6 +1228,7 @@ against the new prediction (the six lab cards' median): mtp:2 x1.062, mtp:3 x1.0
 mtp:5 x1.023, dflash:3 x1.011, dflash:5 x1.020, dflash:7 x1.061: every configuration within the
 kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8 DFlash verify the
 facts overprice on Ada (above).
+
 ## 58. Verify widths stay on the band rule: the register MMA priced as its best one-tile schedule is wrong for the schedule that runs (29.10, #209)
 
 **Decision.** The selector keeps the band rule at verify widths. On the native-MMA boards measured
@@ -1258,9 +1259,9 @@ formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds
 
 ## 59. Vector kernel: loads in flight per warp is the fact, source-level hints do not hold it (29.10)
 
-**Decision.** No change to the vector kernel now; the robust fix is each decoder's decode() split
-into load_raw() and convert(), the loads of the next step issued by hand before this step's
-products. Branch kern/vec-prefetch keeps the two attempts for reference.
+**Decision.** No change to the vector kernel now: neither hints nor a source-level load() /
+convert() split hold loads in flight (kern/vec-prefetch keeps attempts 1-2, kern/vec-raw-split
+attempt 3, for reference).
 
 - The fact: RTX 5070 Ti, Q4_K 4096x4096, T = 2..8 vector 14.6 / 15.2 / 21.0 / 18.2 / 16.7 / 23.0 /
   26.1 us (repeats within 0.5 %); registers -> CTAs per SM -> rounds does not order them (T = 6, 5
@@ -1271,8 +1272,26 @@ products. Branch kern/vec-prefetch keeps the two attempts for reference.
   time over master's 1.043 (5070 Ti) and 1.096 (3060), instances 0.62..1.50.
 - Attempt 2, the next step's codes prefetched to L2 (`prefetch.global.L2`, no registers): geomean time
   over master's 1.010 on the 5070 Ti, instances 0.68..1.44 (IQ2_S T = 4 22.9 -> 16.1 us, Q5_K T = 8 24.6 -> 35.3).
-- Both re-roll the compiler's per-instance schedule rather than fix it; only explicit load batching
-  holds loads in flight independent of it.
+- Both re-roll the compiler's per-instance schedule rather than fix it.
+- Attempt 3, the loads batched in source (kern/vec-raw-split, 29.10): every decoder split into `load()`
+  (all of a slice's global loads, written together) and `convert()` (none), the kernel loading slice
+  it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
+  RTX 5070 Ti (instances 0.67..1.52), 0.99 on the RTX 5090 (0.72..1.29), 1.01 on the RTX 4090
+  (0.85..1.20) and 1.00 on the RTX 2080 Ti (0.80..1.24): the same re-roll. Measured with `ninferno_r8_schedule_bench --shapes
+  docs/maintainer/choice-notes/data/vec/raw_split.shapes --tokens 2,3,4,5,6,7,8 --samples 7 --launches 30 --rmma 1`, the vector route's
+  time at T = 2..8 on the 44 of the file's 46 shapes the vector kernel takes (each of the 18 ggml
+  formats at 4096x4096 store and 12288x4096 SwiGLU, Q6_K add 3840x15360 / 5120x17408 / 4096x12288 /
+  2048x6144 / 4096x4096, Q4_K add 3840x15360 / 5120x17408, Q5_K add 5120x17408): 308 instances,
+  master and branch builds interleaved twice, the median of each instance's two runs.
+  ptxas still places the loads: Q4_K's runtime-K slice loop issued 1..8 loads before its first
+  IDP against master's 1..5, and the instances that gained loads ahead were the faster ones (T = 7,
+  8 loads ahead against 2, Q4_K add 3840x15360 -28 %; T = 4, 1 against 2, +32 %). Source order
+  does not hold them either. Untried: loads fixed in PTX / inline asm, or more warps per SM.
+- A trap on the way: a raw slice that kept the 12 Q4_K / Q5_K scale bytes as a register array,
+  indexed by the lane's sub-block at run time, put the whole slice in local memory (96-112 bytes of
+  stack per thread on sm_120, Q4_K 53 % slower than master). The raw slice keeps only the bytes it
+  uses, loaded by index from memory; check `cuobjdump -res-usage` STACK before timing a kernel
+  change.
 
 ## 60. Decode speed from the bytes and the kernels of a step; a generation's one card prices only its own boards (28.10)
 
@@ -1326,47 +1345,97 @@ the tier (even one that does not fit); then the rule's pick stands.
   (up to +18 % on Ada's rows).
 - Volta takes Turing's rows, transferred.
 
-**One-card KLD points are recorded, not priced.** The fresh Q8_0 reference (it reproduces Q4_K_M at
-0.0192) measured these on one card each:
+**The defaults this changes against master 8bbf2e72.** Ada; plan without load, 7 models x 3 cards
+x {default, 4 streams, 128K}. The measurements are on the RTX 4060 Ti:
+- speed: plain decode per stream at 1 / 4 streams;
+- KLD: `--quick` against a fresh Q8_0 reference that gives Q4_K_M 0.0192, as kQuantKld has it.
 
-| quant | KLD |
-|---|---|
-| UD-Q5_K_XL | 0.00936 |
-| IQ4_NL | 0.0284 |
-| UD-Q4_K_XL | 0.0182 |
-| Q5_K_S | 0.0113 |
-| Q4_K_S | 0.0227 |
-| Q4_1 (not added) | 0.0242 |
-| Q4_0 (not added) | 0.0509 |
-
-Like a speed row of one card, such a point decides nothing until a second card measures it
-(`QuantKldPoint::curve`).
-
-Priced, these points moved the 9B-MTP default on the 4060 Ti (UD-Q4_K_XL mtp:3 to Q5_K_S nvfp4
-mtp:5) on a speculation gain the measurement did not confirm. On the mixed workload at one stream
-(decode tok/s; plan's estimate in brackets):
-
-| mode | UD-Q4_K_XL mtp:3 | Q5_K_S mtp:5 | plain |
+| model, ask | master | this PR | why |
 |---|---|---|---|
-| thinking | 99.1 (98) | 101.9 (113) | 48.8 / 46.7 |
-| non-thinking | 84.9 | 81.2 | — |
+| Qwen3.5-9B, 128K | Q4_1 | Q4_K_M | Q4_1 is unmeasured (Other) |
+| Qwen3.5-9B-MTP, 128K | Q4_0 mtp:3 | Q4_K_S mtp:4 | Q4_0 is unmeasured (Other) |
+| Qwen3.5-9B / -MTP, 4 streams | UD-Q4_K_XL nvfp4 | Q4_K_S k8v4 / IQ4_NL k8v4 | worth with the measured KLDs and IQ4 rows |
+| Qwen3.5-9B-MTP, default | UD-Q4_K_XL int8 mtp:3 (40,640) | Q5_K_S nvfp4 mtp:5 (34,176) | worth with the measured KLDs, plus the one-stream plan fix below |
 
-- The KV codec (nvfp4 against int8) changed nothing: 81.2 against 80.7.
-- The term that is off is mtp:5's gain over the sibling registry entry:
-  - Q5_K_S at depth 5 in thinking mode: estimated x2.45, measured x2.18 (4.15 tokens a round, 40.7 ms
-    a round against 21.4 ms a plain step).
-  - mtp:3 on UD-Q4_K_XL: estimated x2.0, measured x2.03.
-- The round cost leaves out the graph's kernel launches, which grow with the depth. That is the open
-  #214, the same t0 as the decode census here.
+The measured numbers behind those rows (KLD on the RTX 4060 Ti and 4070 Ti, each against its own
+Q8_0 reference under the exact route: the same file gives the same KLD to six digits on both):
 
-**The defaults this changes against master 8e7db18c.** Ada; plan without load, 7 models x
-{default, 4 streams, 128K}. Both changed rows have an unmeasured (Other) loser. Measured on the
-RTX 4060 Ti, per stream at 1 / 4 streams:
+| quant | KLD (curve before) | 1 / 4 streams, tok/s |
+|---|---|---|
+| Q4_1 | 0.0242 | 50.5 / 45.9 |
+| Q4_K_M | 0.0192 | 51.1 / 45.7 |
+| Q4_0 | 0.0509 | 54.4 / 49.3 |
+| Q4_K_S | 0.0225 (0.028) | 54.0 / 47.9 |
+| IQ4_NL | 0.0287 | 53.2 / 47.9 |
+| UD-Q4_K_XL | 0.0183 (0.0160) | 48.5 / 43.6 |
+| Q5_K_S | 0.0110 (about 0.013) | 46.4 / 41.7 |
 
-| model, 4060 Ti 128K | master | this PR | measured |
-|---|---|---|---|
-| Qwen3.5-9B | Q4_1 | Q4_K_M | Q4_1 50.5 / 45.9 tok/s, KLD 0.0242; Q4_K_M 51.1 / 45.7, KLD 0.0192 |
-| Qwen3.5-9B-MTP | Q4_0 mtp:3 | Q4_K_S mtp:4 | Q4_0 54.4 / 49.3, KLD 0.0509; Q4_K_S 54.0 / 47.9, KLD 0.0227 |
+**The default row** goes from an estimated 98 to 113 tok/s.
+- Measured on essays at one stream: UD-Q4_K_XL mtp:3 71 tok/s, Q5_K_S mtp:5 62. The worth still
+  favours Q5_K_S: ln(71/62) = 0.14 < 25 x 0.0073 = 0.18.
+- The one-stream plan fix: a one-stream pick by worth was scored at the target context with its
+  drafter, then launched at the longest context that fits. On 8 GB that context drops the drafter
+  (Q5_K_S plain, 46 tok/s). The launch now keeps the scored context where the drafter returns there.
 
-IQ4_XS on the 4060 Ti, now a measured class: plain 55.0 / 49.4 tok/s, KLD 0.0286, dflash:7 85.8 tok/s
-on essays.
+**Qwen3.8-27B on the 4090** changes too:
+- 128K: UD-Q4_K_XL to UD-Q5_K_S;
+- 4 streams: UD-Q4_K_XL to UD-Q4_K_M.
+
+Both follow from the measured KLD points moving the curve. They are not measured on 27B: the 4090
+stand's disk has 4.7 GB free.
+
+IQ4_XS on the 4060 Ti is a measured class now: plain 55.0 / 49.4 tok/s, KLD 0.0286, and dflash:7 on
+essays 85.8 tok/s.
+
+## 61. The decode K split of one-tile calls: the ring fact holds, the last round's cost is open (29.10, open, measured)
+
+**Rule now (`rmma_k_split_fit`).** A one-tile store / add call of more CTAs than SMs (T <= 8) keeps
+its K split where the CTA's longest warp walks more K steps than its two-step load ring holds
+(steps / warps rounded up, at least three; a step is four decoder runs, `rmma_k_step`: 32 values
+for BF16 / Q8, 64 for FP8 / NVFP4 / the 16-value groupwise runs, 128 for the 32-value decoders);
+an eight-warp split that breaks it takes four warps where four keep it and the grid fills their
+CTA slots (CTAs x 4 >= 16 x SMs), else it stands. The split's one-tile store / add kernels (one
+warp along M) are capped at 128 registers a thread (`kRmmaMinBlocks`), so `w` K warps hold 16 / w
+CTAs a SM as a fact (ptxas gave Q2_K w1x4 146-152 registers and Q5_K w1x4 129 on sm_120 before the
+cap; capped, no rmma kernel gains stack or local memory on sm_75 / sm_89 / sm_120 — the cap first
+reached the two-warp-M U4Zp w2x2 too, 159 registers to 128 and 16 bytes of stack on sm_75, and was
+narrowed to one warp along M).
+
+**Verified.** Q4_K K = 4096 on sixteen warps (two steps each): 57-70 % of DRAM peak on five lab
+boards against 71-74 % for the best split. Q6_K 4096x2560 on eight warps (three steps for half the
+warps) against four: RTX 4070 Ti 19.6 against 21.1 us, RTX 3060 32.4 against 32.9 (the shortest
+warp's count would have taken four). Against it: the RTX 5070 Ti and RTX 2080 Ti ran four warps
+faster on the same shape (10.1 against 11.3 us; 22.5 against 23.9), so at K = 2560 the rounded-up
+count keeps master's eight warps without the boards agreeing on it (two each way).
+
+**Open: what a grid's partly filled last round costs.** Pricing it by its empty slots (the fill
+CTAs / (slots x rounds), the better fill winning) was wrong on two of four boards and right on
+two, measured with `ninferno_r8_schedule_bench` against master 8e7db18c:
+- wrong: RTX 4090 Q6_K 3840x15360 add, four warps in one half-filled round 65.3 us, eight warps
+  in a full round 79.0 (x1.21); RTX 3060 Q4_K 4096x2560 / 4096x3072 store, eight warps 4-10 %
+  slower although they fill more;
+- right: RTX 4070 Ti Q4_K 4096x3072 / 5120x5120 store, eight warps 5-8 % faster; RTX 5070 Ti Q4_K
+  5120x5120 store and Q5_K 5120x17408 add, eight warps 6-12 % faster; RTX 2080 Ti Q4_K / Q5_K
+  5120x17408 add, eight warps 19 % faster (135.3 -> 109.5 us, 161.0 -> 130.8).
+The light K-quants' four-warp start (`light_ggml_step`, measured on one board, the RTX 5080) is
+itself what these rows question: eight warps won on four of five boards past two CTAs a SM.
+The slot model predicted 17-25 % where the boards showed -10..+8 %: a round with fewer resident
+warps is slow only below the warps that keep DRAM busy, which depends on the bytes each warp has
+in flight (its ring) and the DRAM latency under load. That latency is not a fact we hold; until it
+is, the tail stays out of the rule (no fitted band).
+
+**K = 1024: the ring fact alone was wrong on the boards it moved (29.10, measured).** Against master
+the rule above changed one shape on every golden board with more CTAs than SMs: 2048x1024 groupwise
+Q4 / Q5 / Q6, FP8 and NVFP4 store / add (128 CTAs, 16 steps of 64 values), eight warps (two steps
+each, the ring never refills) to four. Four against eight, every rmma one-tile route timed at
+T = 1..8, three repeats (`ninferno_r8_schedule_bench`):
+- RTX 5070 Ti (70 SMs, 1.8 CTAs a SM): four warps 20-37 % slower (Q4 x1.20, Q5 x1.22, Q6 x1.37);
+- RTX 5090 (170, 0.75): 18-38 % slower; RTX 4070 Ti (60, 2.1): within 3 % (Q6 3.5 % slower);
+- RTX 2080 Ti (68, 1.9): mixed, NVFP4 8 % slower, Q4 within 1 %, Q5 2 % and Q6 6 % faster;
+- RTX 4060 Ti (34, 3.8): four warps 2-16 % faster (Q4 x0.98, Q5 x0.90, Q6 x0.93, NVFP4 x0.84).
+With the 128-register cap a SM holds two eight-warp CTAs or four four-warp ones, so on a grid of
+fewer than four CTAs a SM the split halves the warps a SM holds, and the loads in flight with them;
+the refilled ring does not buy that back. The rule now takes fewer warps only where the grid fills
+their slots (CTAs x warps >= 16 x SMs), which moves no golden board's pick (the 4060 Ti, at 3.8,
+stays on eight and leaves its 2-16 % there). What a nearly full grid gains from the refilled ring
+is the same open question as the tail above.

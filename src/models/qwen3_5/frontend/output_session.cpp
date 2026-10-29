@@ -539,6 +539,7 @@ public:
         prefix_execution.tracking     = starts_in_reasoning;
         semantic.budget               = thinking.budget;
         configured_thinking_budget    = thinking.budget;
+        answer_room_budget            = thinking.budget && thinking.answer_room;
         // The semantic tracker counts model-origin thinking tokens whenever the response starts
         // in thinking or the model opens it at the output start, capped or not: the count is
         // reported per request, and it must not depend on the presentation decoder, which raw
@@ -560,6 +561,7 @@ public:
     SemanticThinkingState semantic;
     SemanticThinkingState preview_semantic;
     std::optional<std::uint32_t> configured_thinking_budget;
+    bool answer_room_budget = false;
     PrefixExecutionTracker prefix_execution;
     PrefixExecutionTracker preview_prefix_execution;
     std::optional<std::uint32_t> preview_execution_split_after;
@@ -968,6 +970,7 @@ ThinkingBudgetStats OutputSession::thinking_stats() const noexcept {
     if (impl_ == nullptr) { return {}; }
     return ThinkingBudgetStats{
         .configured_budget     = impl_->configured_thinking_budget,
+        .answer_room           = impl_->answer_room_budget,
         .model_thinking_tokens = impl_->semantic.model_thinking_tokens,
         .injected_tokens       = impl_->semantic.injected_tokens,
         .applied               = impl_->semantic.applied,

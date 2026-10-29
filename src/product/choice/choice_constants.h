@@ -427,34 +427,35 @@ struct QuantKldPoint {
     double bits_per_weight;
     double kld;
     std::string_view label;
-    // Measured on two cards: it prices the choice (its own file by label and bits, others by
-    // interpolation). false: one card, recorded only; a second card's run makes it decide.
-    bool curve = true;
+    int cards; // lab cards the point is measured on; below kQuantKldCards it informs, never decides
 };
 
 inline constexpr std::string_view kQuantKldSource =
-    "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean";
+    "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean; "
+    "UD-Q5_K_XL, Q5_K_S, UD-Q4_K_XL, Q4_K_S and IQ4_NL on the RTX 4060 Ti and RTX 4070 Ti (2026-10-29)";
 inline constexpr int kQuantKldCards = 2;
 // Bits per weight as the plan counts them: the weight bytes over the GGUF tensor table's
 // elements (8 953 803 264 for Qwen3.5-9B); the two cards'
-// KLD (within 2 % at every point: the exact route's bytes do not depend on the card), perplexity
+// KLD (within 2 % at every point, the same file's identical to six digits on the RTX 4060 Ti and
+// 4070 Ti against each card's own reference: the exact route's bytes do not depend on the card;
+// unsloth's MTP repository quantizes UD-Q4_K_XL / IQ4_NL differently, 0.0178 / 0.0259), perplexity
 // and top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD
 // 0.068 above 0.028).
 inline constexpr QuantKldPoint kQuantKld[] = {
-    {8.516, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
-    {6.665, 0.00629, "Q6_K"},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
-    {6.016, 0.00936, "UD-Q5_K_XL", false}, // one card (WORKLOG 24.10); the curve gives 0.00985 at its bits
-    {5.878, 0.01061, "Q5_K_M"},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
-    {5.674, 0.01132, "Q5_K_S", false},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference)
-    {5.321, 0.01823, "UD-Q4_K_XL", false}, // one card: RTX 4070 Ti, 2026-10-29 (the fresh Q8_0 reference)
-    {5.080, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
-    {4.810, 0.02268, "Q4_K_S", false},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference; Q4_0 0.0509 there)
-    {4.789, 0.02840, "IQ4_NL", false},     // one card: RTX 4070 Ti, 2026-10-29 (fresh Q8_0 reference, Q4_K_M 0.01920 on it), top-1 0.9407
-    {4.617, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
-    {4.174, 0.06812, "Q3_K_M"},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
-    {3.584, 0.10710, "UD-IQ3_XXS"}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
-    {3.259, 0.16145, "UD-IQ2_M"},   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
-    {2.855, 0.33460, "UD-IQ2_XXS"}, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
+    {8.516, 0.00000, "Q8_0", 2},       // ppl 4.9651, the reference
+    {6.665, 0.00629, "Q6_K", 2},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
+    {6.016, 0.00940, "UD-Q5_K_XL", 2}, // 0.009399 on both (29.10); the curve gives 0.00985 at its bits
+    {5.878, 0.01061, "Q5_K_M", 2},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
+    {5.674, 0.01103, "Q5_K_S", 2},     // 0.011029 on both (29.10), top-1 0.9670
+    {5.321, 0.01828, "UD-Q4_K_XL", 2}, // 0.018277 on both (29.10), top-1 0.9559
+    {5.080, 0.01925, "Q4_K_M", 2},     // 0.01930 / 0.01920 (0.019188 on both, 29.10), ppl 4.9997, top-1 0.9512
+    {4.810, 0.02248, "Q4_K_S", 2},     // 0.022480 on both (29.10), top-1 0.9462
+    {4.789, 0.02867, "IQ4_NL", 2},     // 0.028670 on both (29.10), top-1 0.9408
+    {4.617, 0.02845, "IQ4_XS", 2},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
+    {4.174, 0.06812, "Q3_K_M", 2},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
+    {3.584, 0.10710, "UD-IQ3_XXS", 2}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
+    {3.259, 0.16145, "UD-IQ2_M", 2},   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
+    {2.855, 0.33460, "UD-IQ2_XXS", 2}, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
 };
 
 // ---- The trade.

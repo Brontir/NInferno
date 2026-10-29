@@ -302,9 +302,10 @@ double quant_kld(double bits, std::string_view label, bool same_family, bool& me
     double reference_bits = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
-        // A point of one card is recorded, not priced: like a speed row of one card, it decides
-        // nothing until a second card measures it (DECISIONS 60).
-        if (!p.curve) { continue; }
+        // A point on fewer cards than kQuantKldCards is neither the label's value nor a curve
+        // point: an output-affecting choice rests on two cards (AGENTS.md). The reference is 0 by
+        // definition.
+        if (p.kld > 0 && p.cards < kQuantKldCards) { continue; }
         if (p.kld <= 0 && p.label == label) {
             measured = same_family && std::abs(p.bits_per_weight - bits) < 0.05;
             return 0;

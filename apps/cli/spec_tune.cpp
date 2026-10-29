@@ -14,6 +14,7 @@
 
 #include "artifact/reader.h"
 #include "core/clock.h"
+#include "core/decode_graph.h"
 #include "core/sha256.h"
 #include "core/paged_kv_cache.h"
 #include "ninferno/engine.h"
@@ -904,7 +905,22 @@ int run_spec_tune(int argc, char** argv) {
             for (const auto& p : corpus.prompts) {
                 if (p.family != family) { continue; }
                 for (int r = 0; r < repeat; ++r) {
-                    const auto result = run(p);
+                    const std::uint64_t kernels = graph_kernels_launched();
+                    const auto result           = run(p);
+                    // The kernels its graphs launched, a round's (its rounds and the fallback
+                    // steps replaying the round's graph) or a plain step's; a request that tripped
+                    // its watchdog, decoded plain steps or ran rounds ungraphed is left out.
+                    const auto& s = result.speculative;
+                    if (!s.watchdog_tripped && s.plain_steps == 0 && s.ungraphed_rounds == 0) {
+                        m.graph_kernels +=
+                            static_cast<std::int64_t>(graph_kernels_launched() - kernels);
+                        m.graph_rounds += config.enabled()
+                                              ? static_cast<std::int64_t>(s.rounds + s.fallback_steps)
+                                              : static_cast<std::int64_t>(
+                                                    result.generated_token_ids.empty()
+                                                        ? 0
+                                                        : result.generated_token_ids.size() - 1);
+                    }
                     const auto& ids   = result.generated_token_ids;
                     // The first token comes from the prefill; decode time covers the rest.
                     m.prompts += 1;

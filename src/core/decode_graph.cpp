@@ -5,9 +5,11 @@
 #include "core/nvtx.h"
 #include "core/units.h"
 
+#include <atomic>
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ninferno {
 namespace {
@@ -26,6 +28,36 @@ void destroy_graph(cudaGraph_t& graph) noexcept {
     }
 }
 
+std::atomic<std::uint64_t> g_graph_kernels{0};
+
+// The kernel nodes of a captured graph (0 when CUDA cannot list them).
+std::uint32_t count_kernel_nodes(cudaGraph_t graph) noexcept {
+    std::size_t n = 0;
+    if (graph == nullptr) { return 0; }
+    if (cudaGraphGetNodes(graph, nullptr, &n) != cudaSuccess) {
+        (void)cudaGetLastError(); // its own failure only
+        std::fprintf(stderr, "warning: a decode graph's nodes could not be listed (not counted)\n");
+        return 0;
+    }
+    if (n == 0) { return 0; }
+    std::vector<cudaGraphNode_t> nodes(n);
+    if (cudaGraphGetNodes(graph, nodes.data(), &n) != cudaSuccess) {
+        (void)cudaGetLastError();
+        std::fprintf(stderr, "warning: a decode graph's nodes could not be listed (not counted)\n");
+        return 0;
+    }
+    std::uint32_t kernels = 0;
+    for (std::size_t i = 0; i < n; ++i) {
+        cudaGraphNodeType type{};
+        if (cudaGraphNodeGetType(nodes[i], &type) != cudaSuccess) {
+            (void)cudaGetLastError();
+            continue;
+        }
+        if (type == cudaGraphNodeTypeKernel) { ++kernels; }
+    }
+    return kernels;
+}
+
 void discard_capture(cudaStream_t stream) noexcept {
     cudaGraph_t discard = nullptr;
     log_cuda_error("cudaStreamEndCapture(discard)", cudaStreamEndCapture(stream, &discard));
@@ -37,17 +69,20 @@ void discard_capture(cudaStream_t stream) noexcept {
 DecodeGraphDefinition::~DecodeGraphDefinition() { reset(); }
 
 DecodeGraphDefinition::DecodeGraphDefinition(DecodeGraphDefinition&& other) noexcept
-    : graph_(other.graph_) {
-    other.graph_ = nullptr;
+    : graph_(other.graph_), kernel_nodes_(other.kernel_nodes_) {
+    other.graph_        = nullptr;
+    other.kernel_nodes_ = 0;
 }
 
 DecodeGraphDefinition& DecodeGraphDefinition::operator=(DecodeGraphDefinition&& other) noexcept {
     if (this == &other) { return *this; }
 
     reset();
-    graph_ = other.graph_;
+    graph_        = other.graph_;
+    kernel_nodes_ = other.kernel_nodes_;
 
-    other.graph_ = nullptr;
+    other.graph_        = nullptr;
+    other.kernel_nodes_ = 0;
     return *this;
 }
 
@@ -72,26 +107,33 @@ void DecodeGraphDefinition::capture(cudaStream_t stream, const std::function<voi
         CUDA_CHECK(err);
     }
 
-    graph_ = graph;
+    graph_        = graph;
+    kernel_nodes_ = count_kernel_nodes(graph_);
 }
 
 bool DecodeGraphDefinition::ready() const noexcept { return graph_ != nullptr; }
 
-void DecodeGraphDefinition::reset() noexcept { destroy_graph(graph_); }
+void DecodeGraphDefinition::reset() noexcept {
+    destroy_graph(graph_);
+    kernel_nodes_ = 0;
+}
 
 DecodeGraphExecutable::~DecodeGraphExecutable() { reset(); }
 
 DecodeGraphExecutable::DecodeGraphExecutable(DecodeGraphExecutable&& other) noexcept
-    : exec_(other.exec_) {
-    other.exec_ = nullptr;
+    : exec_(other.exec_), kernel_nodes_(other.kernel_nodes_) {
+    other.exec_         = nullptr;
+    other.kernel_nodes_ = 0;
 }
 
 DecodeGraphExecutable& DecodeGraphExecutable::operator=(DecodeGraphExecutable&& other) noexcept {
     if (this == &other) { return *this; }
 
     reset();
-    exec_       = other.exec_;
-    other.exec_ = nullptr;
+    exec_               = other.exec_;
+    kernel_nodes_       = other.kernel_nodes_;
+    other.exec_         = nullptr;
+    other.kernel_nodes_ = 0;
     return *this;
 }
 
@@ -127,7 +169,8 @@ void DecodeGraphExecutable::instantiate(const DecodeGraphDefinition& definition)
         }
         throw std::runtime_error(message);
     }
-    exec_ = exec;
+    exec_         = exec;
+    kernel_nodes_ = definition.kernel_nodes_;
 }
 
 namespace {
@@ -166,6 +209,7 @@ void DecodeGraphExecutable::update(const DecodeGraphDefinition& definition) {
             "CUDA Graph executable update failed: " + std::string(cudaGetErrorName(err)) +
             " (update result " + std::to_string(static_cast<int>(result.result)) + ")");
     }
+    kernel_nodes_ = definition.kernel_nodes_;
 }
 
 bool DecodeGraphExecutable::try_update(const DecodeGraphDefinition& definition) {
@@ -181,6 +225,7 @@ bool DecodeGraphExecutable::try_update(const DecodeGraphDefinition& definition) 
         throw CudaError(err, "CUDA Graph executable update failed: " +
                                  std::string(cudaGetErrorName(err)));
     }
+    kernel_nodes_ = definition.kernel_nodes_;
     return true;
 }
 
@@ -195,10 +240,18 @@ void DecodeGraphExecutable::launch(cudaStream_t stream) {
     nvtx::ScopedRange launch_range(nvtx::Name::CudaGraphLaunch, nvtx::Category::Graph);
     if (!ready()) { throw std::logic_error("cannot launch an empty CUDA Graph executable"); }
     CUDA_CHECK(cudaGraphLaunch(exec_, stream));
+    g_graph_kernels.fetch_add(kernel_nodes_, std::memory_order_relaxed);
+}
+
+std::uint64_t graph_kernels_launched() noexcept {
+    return g_graph_kernels.load(std::memory_order_relaxed);
 }
 
 bool DecodeGraphExecutable::ready() const noexcept { return exec_ != nullptr; }
 
-void DecodeGraphExecutable::reset() noexcept { destroy_graph_exec(exec_); }
+void DecodeGraphExecutable::reset() noexcept {
+    destroy_graph_exec(exec_);
+    kernel_nodes_ = 0;
+}
 
 } // namespace ninferno
