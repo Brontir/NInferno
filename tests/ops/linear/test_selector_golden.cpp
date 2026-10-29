@@ -179,10 +179,10 @@ std::string dump_board(const GoldenBoard& b) {
                                 // The pure query (a weight described by format and shape, the
                                 // board by its class) answers as the selector does; a difference
                                 // shows in the dump and so fails the comparison.
-                                const auto q = generic::route_shape(d, qtype, policy, epilogue,
+                                const auto q = generic::route_query(d, qtype, policy, epilogue,
                                                                     rows, shape.k, t, prefill);
-                                if (!q || !(q->route == r)) {
-                                    what += q ? " query=" + generic::route_name(q->route)
+                                if (!q || !(*q == r)) {
+                                    what += q ? " query=" + generic::route_name(*q)
                                               : std::string(" query=none");
                                 }
                             } catch (const std::exception& error) {
