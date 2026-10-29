@@ -227,6 +227,21 @@ int main() {
         expect(!note.empty() && shallow(priced),
                "an unmeasured Ada card: facts, no deeper than kPortableDepth: " +
                    priced.thinking.config.label());
+        // What the plan reports as "round_cost" (spec::profile_round_costs of the resolved
+        // profile) is, for a profile priced by the facts, the facts' R(k) itself: the user kit
+        // holds a measured R(k) to it (tools/kit/validate.py).
+        {
+            std::string one_note;
+            const auto one   = sp::profile_for_target({&ada}, "sm89", {}, nullptr, &rtx4060ti, &one_note);
+            const auto facts = sp::round_cost_estimate(ada, rtx4060ti);
+            const auto costs = sp::profile_round_costs(one);
+            bool same = !one_note.empty() && facts.known && costs.size() == facts.cost.size();
+            for (const auto& [label, cost] : costs) {
+                const auto it = facts.cost.find(label);
+                same = same && it != facts.cost.end() && near(cost, it->second, 1e-9);
+            }
+            expect(same, "the priced profile's round costs are the facts' estimate");
+        }
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
         std::string own_note;
         const auto own = sp::profile_for_target(both, "sm89", {}, nullptr, &rtx4070ti, &own_note);

@@ -313,13 +313,13 @@ class Spec(unittest.TestCase):
     def test_prediction_kinds_are_said(self):
         own = judge(spec_run(source="registry pair org/m (2 lab card(s))"),
                     pairs=[lab_pair(), lab_pair("ad106:34sm")])
-        self.assertIn("the lab's measurement of this GPU class", row(own, "round cost mtp:3")["verdict"])
+        self.assertIn("a lab measurement, not the facts", row(own, "round cost mtp:3")["verdict"])
         raised = judge(spec_run(source="registry pair org/m; rounds priced from the weights' bytes and this "
                                        "card's rates (ada, eta 0.148); conservative where the lab card "
                                        "measured rounds dearer than their bytes: mtp:3 +12 %"))
         self.assertIn("raised to a lab card's measurement", row(raised, "round cost mtp:3")["verdict"])
         other = judge(spec_run(source="registry sibling org/m Q8_0 (2 lab card(s))"))
-        self.assertIn("another card's measurement", row(other, "round cost mtp:3")["verdict"])
+        self.assertIn("registry sibling", row(other, "round cost mtp:3")["verdict"])
 
     def test_throttle_rejects_round_cost_not_acceptance(self):
         run = spec_run()
@@ -355,6 +355,33 @@ class Spec(unittest.TestCase):
         run = spec_run()
         run["profile"]["measurements"] = measurements(configs=("mtp:3+head",))
         self.assertIn("proposal head", row(judge(run), "acceptance mtp:3+head")["verdict"])
+
+    def test_lab_pairs_of_other_menus_are_left_out(self):
+        # The registry's pairs of one target need not share a menu: one without the label is no
+        # reference for it (and no crash).
+        third = lab_pair("gb203:70sm")
+        third["tune"]["measurements"] = measurements(configs=("dflash:7",))
+        out = judge(spec_run(), pairs=[lab_pair(), lab_pair("ad102:128sm", t=3.45), third])
+        self.assertIn("lab cards 2", " ".join(row(out, "acceptance mtp:3")["notes"]))
+        lone = judge(spec_run(), pairs=[lab_pair(), third])
+        self.assertIn("fewer than 2 lab cards", row(lone, "acceptance mtp:3")["verdict"])
+        none = judge(spec_run(), pairs=[third, third])
+        self.assertIn("the lab measured no mtp:3", row(none, "acceptance mtp:3")["verdict"])
+
+    def test_a_configuration_without_rounds_is_no_candidate(self):
+        run = spec_run()
+        for m in run["profile"]["measurements"]:
+            if m["config"] == "mtp:3" and m["family"] == "prose":
+                m["rounds"] = m["accepted"] = 0
+        out = judge(run)
+        self.assertTrue(row(out, "acceptance mtp:3")["status"].startswith("rejected: S1"))
+        self.assertEqual(out["candidate"], "no: a configuration without a round in a section")
+
+    def test_registry_is_a_parameter(self):
+        d, registry = spec_doc(spec_run())
+        r = validate.validate(d, registry=registry)
+        self.assertEqual(r["runs"][0]["candidate"], "yes")
+        self.assertTrue(r["runs"][0]["metrics"][0]["verdict"].startswith("confirms"))
 
     def test_wait_mode_is_not_an_acceptance_setting(self):
         out = judge(spec_run(), pairs=[lab_pair(settings=SETTINGS.replace("spin", "block")),
@@ -463,6 +490,12 @@ class Kit(unittest.TestCase):
             self.assertEqual(got["revision"], rev)
             self.assertEqual([w["sha256"] for w in got["weights"]], [hashlib.sha256(b"weights").hexdigest()])
             self.assertIsNone(measure.target_identity(str(Path(root) / "x.ninferno")))
+            # A split model: every part, by the artifact named after the model or its first part.
+            for i in (1, 2):
+                (model / "snapshots" / rev / f"B-Q4_K_M-0000{i}-of-00002.gguf").write_bytes(b"p%d" % i)
+            for name in ("B-Q4_K_M.qwen3_5_bf16.ninferno", "B-Q4_K_M-00001-of-00002.qwen3_5_bf16.ninferno"):
+                got = measure.target_identity(str(model / "ninferno" / rev / name))
+                self.assertEqual(len(got["weights"]), 2, name)
 
 if __name__ == "__main__":
     unittest.main()

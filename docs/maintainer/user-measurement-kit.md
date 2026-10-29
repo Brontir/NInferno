@@ -143,8 +143,9 @@ A spec-tune measures two things, and they are judged apart:
 What the plan's round cost is, from its `source`, is said in every verdict, and only the first is a test of the facts:
 - **the facts' R(k)**: the source says the rounds were priced from the weights' bytes and this card's rates;
 - **the facts raised to a lab card's measurement**: a configuration the source lists after "conservative where the lab card measured rounds dearer" (part measurement);
-- **the lab's measurement of this GPU class**: a lab pair of this target on the same chip (the verdict tests that it reproduces on this board);
-- **another card's measurement**: any other source (a generation ratio, a sibling quantization, the agreeing lab cards).
+- **a lab measurement, not the facts**: any other source, quoted (this class's own pair, a generation's agreeing lab cards, a sibling quantization, a generation's ratio). The verdict then tests that a lab measurement carries to this board.
+
+The round costs are the resolved profile's: a configuration of a drafter whose profile the plan did not resolve, or deeper than the portable depth, has no prediction.
 
 | Rule | Rejects | When |
 |---|---|---|
@@ -152,10 +153,10 @@ What the plan's round cost is, from its `source`, is said in every verdict, and 
 | S2 identity | no reference | the target's weights not recorded (no pair can be named); the lab pairs of the target (by the weights' SHA-256) of another engine key (`key.engine`); settings other than the pairs' (context, chunk, KV, greedy; the wait mode moves the clock, never a token); a separate drafter other than the pair's (repo@revision) |
 | S3 load and slowdown | round cost | another compute process listed on the card during or after the tune (TCC/Linux); a slowdown, thermal or power-brake sample in the `spec-tune` window. Unknown reasons, a capped card (R4) or an unknown power source: kept, no verdict. Acceptance is token counts and survives all of these |
 | S4 steady plain | round cost | the tune's plain decode across its sections more than 5 % apart (the card's speed moved during the tune) |
-| S5 acceptance | the configuration | the tokens a round pooled over the sections ((accepted + rounds) / rounds) more than 10 % from the median of the lab cards' over the same sections and prompts: **contradicts** the registry pairs' acceptance (a broken drafter, conversion or kernel on this card); within: **confirms**. The worst section is reported beside it. Fewer than 2 lab cards with the configuration (a `+head` one included: the lab measures no proposal head): no reference |
+| S5 acceptance | the configuration | the tokens a round pooled over the sections ((accepted + rounds) / rounds) more than 10 % from the median of the lab cards' over the same sections and prompt counts (lab pairs of another menu, other sections or another drafter are left out, each said): **contradicts** the registry pairs' acceptance (a broken drafter, conversion or kernel on this card); within: **confirms**. The worst section is reported beside it. Fewer than 2 lab cards with the configuration (a `+head` one included: the lab measures no proposal head): no reference |
 | S6 round cost | the configuration | the measured R(k) more than 10 % from the plan's `round_cost`: **contradicts** that prediction (of the kind said above); within: **confirms**. A configuration the plan does not price (deeper than the portable depth): no prediction |
 
-A spec run is a **registry candidate** when the file and the run are accepted, every drafter was tested and no configuration was skipped, the target's identity and the manifest are recorded, no configuration's acceptance contradicts the lab pairs, and the settings are the pairs' (when there are pairs). Being a candidate says only that `registry_add.py --from-user-run` will take it.
+A spec run is a **registry candidate** when the file and the run are accepted, every drafter was tested and no configuration was skipped or ran a section without a round, the target's identity and the manifest are recorded, no configuration's acceptance contradicts the lab pairs, and the settings are the pairs' (when there are pairs). Being a candidate says only that `registry_add.py --from-user-run` will take it.
 
 ## Judging hard50 (`hard50` runs)
 
@@ -173,12 +174,12 @@ The reference is refreshed by hand from the stands' `q_hard` runs after a change
 
     python tools/spec/registry_add.py --from-user-run RUN.json --accept-user [--run ID] [--registry PATH]
 
-It validates the file again (the same `validate.py`) and refuses unless the spec run is a registry candidate, or without `--accept-user`: a submission is evidence, and an entry is made only by a maintainer who read the validator's report. It builds the pair as `--pair` does, from what the run recorded (the tune, the manifest, the target's revision and weights), and:
+It validates the file again (the same `validate.py`, against `--registry`) and refuses unless the spec run is a registry candidate, or without `--accept-user`: a submission is evidence, and an entry is made only by a maintainer who read the validator's report. It builds the pair as `--pair` does, from what the run recorded (the tune, the manifest, the target's revision and weights), and:
 - marks it `user_kit` `{kit, schema, created, ninferno, card, measured_on}`, and gives it the user's `board` (the PCI device id) instead of a `lab_board`;
-- puts it into the registry's `user_pairs`, which the engine does not read: a user's pair is recorded, never served. Served, it would count as a lab card wherever the selector counts cards (two agreeing cards, the facts' template card, a generation's ratio, a group's choice), so serving it waits for the selector to tell user pairs apart (serving its own board only, after the lab's);
-- refuses a target the lab measured on the same chip (the lab's measurement stands); a second run of the same class and board replaces the first.
+- puts it into `tools/spec/user_pairs.json` (`--user-pairs FILE`), not the registry: the engine embeds the registry, and its hash is in every manifest, so a user's pair there would make every manifest stale. A user's pair is recorded, never served. Served, it would count as a lab card wherever the selector counts cards (two agreeing cards, the facts' template card, a generation's ratio, a group's choice), so serving it waits for the selector to tell user pairs apart (serving its own board only, after the lab's);
+- refuses a target the lab measured on the same chip in the registry (the lab's measurement stands); a second run of the same class and board replaces the first.
 
-The tool changes the registry file in the working tree and stamps it (`write_registry`); the change reaches the main branch only through a maintainer's PR, never automatically.
+The tool changes the file in the working tree (and its `version`); the change reaches the main branch only through a maintainer's PR, never automatically.
 
 ## Not yet (later PRs)
 

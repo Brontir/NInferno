@@ -607,7 +607,10 @@ def target_identity(artifact):
     weights = []
     for f in sorted(snapshot.glob("*.gguf")):
         base = re.sub(r"-\d{5}-of-\d{5}$", "", f.stem)
-        if not path.name.startswith(base + ".") or "mmproj" in f.name.lower():
+        # A split model's artifact is named after its first part or after the model.
+        first = re.sub(r"-\d{5}-of-(\d{5})$", r"-00001-of-\1", f.stem)
+        named = path.name.startswith(base + ".") or path.name.startswith(first + ".")
+        if not named or "mmproj" in f.name.lower():
             continue
         entry = {"sha256": sha256_of(f), "bytes": f.stat().st_size}
         try:
@@ -649,15 +652,16 @@ def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wd
     manifest and the target's identity (validate.py judges it; registry_add.py --from-user-run
     takes an accepted one)."""
     run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "spec"}
-    sampler = None
+    sampler = proc = None
     try:
+        artifact, error = prepare(serve, model, with_drafters=True)
+        if not artifact:
+            raise RuntimeError(error or "no artifact")
+        # Planned after the drafters are fetched: the plan resolves the profile from their manifest.
         plan, error = plan_json(serve, model, run_flags(model, device, spec="auto"))
         run["plan"] = {"chosen": ((plan or {}).get("choice") or {}).get("chosen"), "error": error,
                        "speculation": {k: v for k, v in (((plan or {}).get("plan") or {})
                                                          .get("speculation") or {}).items() if k in SPEC_KEEP}}
-        artifact, error = prepare(serve, model, with_drafters=True)
-        if not artifact:
-            raise RuntimeError(error or "no artifact")
         run["manifest"] = manifest_of(artifact)
         print("    hashing the target's weight files (the registry's key) ...", flush=True)
         run["target"] = target_identity(artifact)
@@ -677,7 +681,7 @@ def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wd
         if smi_id:
             time.sleep(5)  # the tune has loaded its first model by then
             run["processes_before"] = apps_info(smi_id, wddm, proc.pid)
-        stdout, stderr = proc.communicate()
+        stdout, stderr = proc.communicate(timeout=3 * seconds + 900)
         if sampler:
             sampler.mark("spec-tune", t0, sampler.now())
             run["processes_after"] = apps_info(smi_id, wddm, proc.pid)
@@ -689,6 +693,10 @@ def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wd
     except Exception as e:  # noqa: BLE001
         run["error"] = scrub(e)
     finally:
+        # Never a tune left running on the card (an error, a timeout, Ctrl-C).
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+            proc.wait()
         if sampler:
             run["telemetry"] = sampler.stop()
     return run

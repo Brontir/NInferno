@@ -246,16 +246,15 @@ def lab_pairs(registry, run):
 
 def prediction_kind(speculation, label, pairs, user_class):
     """What the plan's round cost for `label` is: the facts, the facts raised by a lab card's
-    measurement, the lab's measurement of this GPU class, or another card's transferred."""
+    measurement, or a lab measurement (which card's, the source says: this class's own pair, a
+    generation's agreeing cards, a sibling quantization or a generation ratio)."""
     source = str((speculation or {}).get("source") or "")
     if FACTS_WORDS in source:
         raised = source.split("bytes:", 1)[1] if "bytes:" in source else ""
         if any(part.strip().split(" ")[0] == label for part in raised.split(",")):
             return "the facts' R(k) raised to a lab card's measurement (" + raised.strip() + ")"
         return "the facts' R(k)"
-    if any(chip_of(((p.get("tune") or {}).get("key") or {}).get("gpu")) == chip_of(user_class) for p in pairs):
-        return "the lab's measurement of this GPU class (not the facts: tests that it reproduces here)"
-    return "another card's measurement (" + (source or "no source") + "; not the facts)"
+    return "a lab measurement, not the facts (" + (source or "no source") + ")"
 
 
 def spec_speed_gate(doc, run, capped):
@@ -315,19 +314,30 @@ def judge_spec(doc, run, out, capped, registry, tolerance):
     predicted_costs = speculation.get("round_cost") or {}
     measured_costs = round_costs(measurements)
     user_class = (profile.get("key") or {}).get("gpu")
-    contradicted = False
+    contradicted = unmeasured = False
     for label in labels:
         row = {"metric": f"acceptance {label}", "status": "accepted"}
         user_t = pooled_tokens_per_round(measurements, label, sections)
-        refs = [p for p in same_settings if drafter_matches(p, run.get("manifest"), label)
-                and sections_of((p.get("tune") or {}).get("measurements") or []) == sections]
+        measured_it = [p for p in same_settings
+                       if pooled_tokens_per_round(p["tune"]["measurements"], label, sections_of(p["tune"]["measurements"]))]
+        same_drafter = [p for p in measured_it if drafter_matches(p, run.get("manifest"), label)]
+        refs = [p for p in same_drafter if sections_of(p["tune"]["measurements"]) == sections
+                and pooled_tokens_per_round(p["tune"]["measurements"], label, sections)]
         lab_t = [pooled_tokens_per_round(p["tune"]["measurements"], label, sections) for p in refs]
-        lab_t = [t for t in lab_t if t]
         if user_t is None:
             row["status"] = "rejected: S1 a section without a round"
+            unmeasured = True
         elif len(lab_t) < ACCEPT_MIN_CARDS:
-            why = ("the lab measured no " + label + (" (it measures no proposal head)" if "+head" in label else "")
-                   if pairs and same_settings and not lab_t else "fewer than 2 lab cards")
+            if not pairs or not same_settings:
+                why = "no lab pair to compare with"
+            elif not measured_it:
+                why = "the lab measured no " + label + (" (it measures no proposal head)" if "+head" in label else "")
+            elif not same_drafter:
+                why = "the lab measured " + label + " with another drafter (repo@revision)"
+            elif len(lab_t) < len(same_drafter):
+                why = "the lab measured other sections or prompt counts"
+            else:
+                why = f"fewer than {ACCEPT_MIN_CARDS} lab cards"
             row["status"] = "accepted"
             row["verdict"] = f"no reference: {why}"
             row["measured"] = round(user_t, 3)
@@ -358,7 +368,8 @@ def judge_spec(doc, run, out, capped, registry, tolerance):
             row["status"] = "accepted"
             row["measured"] = round(measured, 3)
             if not isinstance(row["predicted"], (int, float)) or row["predicted"] <= 0:
-                row["verdict"] = "no prediction: the plan does not price " + label
+                row["verdict"] = ("no prediction: the plan's resolved profile does not price " + label
+                                  + " (deeper than the portable depth, or another drafter's profile)")
             else:
                 ratio = measured / row["predicted"]
                 row["ratio"] = round(ratio, 3)
@@ -375,6 +386,8 @@ def judge_spec(doc, run, out, capped, registry, tolerance):
         out["candidate"] = "no: partial tune"
     elif not target.get("weights") or not run.get("manifest"):
         out["candidate"] = "no: the target's identity or the manifest was not recorded"
+    elif unmeasured:
+        out["candidate"] = "no: a configuration without a round in a section"
     elif contradicted:
         out["candidate"] = "no: an acceptance contradicts the lab pairs"
     elif pairs and not same_settings:
@@ -422,7 +435,9 @@ def judge_hard50(run, out, reference):
                       if below else "consistent with " + entry)
 
 
-def validate(doc, tolerance=TOLERANCE):
+def validate(doc, tolerance=TOLERANCE, registry=None):
+    """The report of `doc`; `registry` the drafter registry its spec runs are held to (the
+    in-tree one when None)."""
     report = {"schema": doc.get("schema"), "file": "accepted", "capped": [], "runs": []}
     schema = str(doc.get("schema", ""))
     major = schema.split(".")[0]
@@ -437,7 +452,7 @@ def validate(doc, tolerance=TOLERANCE):
         return report
     report["capped"] = capped
     report["unknown"] = card_unknowns(doc["card"].get("smi") or {})
-    registry = reference = None
+    reference = None
     for run in doc["runs"]:
         out = {"id": run.get("id"), "mode": run.get("mode"), "metrics": [], "notes": []}
         report["runs"].append(out)

@@ -408,36 +408,37 @@ class UserRun(unittest.TestCase):
 
     def test_user_pairs_are_recorded_apart_and_never_over_a_lab_pair(self):
         pair = registry_add.user_pair(user_run(), "")
-        reg = {"pairs": []}
-        registry_add.put_user_pair(reg, pair)
-        registry_add.put_user_pair(reg, json.loads(json.dumps(pair)))  # a re-run replaces
-        self.assertEqual(len(reg["user_pairs"]), 1)
-        self.assertEqual(reg["pairs"], [])  # the engine reads "pairs" only
+        reg, user = {"pairs": []}, {}
+        registry_add.put_user_pair(reg, user, pair)
+        registry_add.put_user_pair(reg, user, json.loads(json.dumps(pair)))  # a re-run replaces
+        self.assertEqual(len(user["user_pairs"]), 1)
+        self.assertEqual(reg["pairs"], [])
         other = json.loads(json.dumps(pair))
         other["board"] = "0x2803"  # another board of the class is another entry
-        registry_add.put_user_pair(reg, other)
-        self.assertEqual(len(reg["user_pairs"]), 2)
+        registry_add.put_user_pair(reg, user, other)
+        self.assertEqual(len(user["user_pairs"]), 2)
         lab = {"target": pair["target"], "tune": {"key": {"gpu": "ad106"}}}
         with self.assertRaises(SystemExit) as e:
-            registry_add.put_user_pair({"pairs": [lab]}, pair)
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
         self.assertIn("its measurement stands", str(e.exception))
 
     def test_cli_needs_accept_user(self):
         with tempfile.TemporaryDirectory() as d:
-            run, reg = Path(d) / "run.json", Path(d) / "reg.json"
+            run, reg, users = Path(d) / "run.json", Path(d) / "reg.json", Path(d) / "user_pairs.json"
             run.write_text(json.dumps(user_run()), encoding="utf-8")
             reg.write_text(json.dumps({"version": 7, "models": [], "pairs": []}), encoding="utf-8")
-            argv = ["registry_add.py", "--from-user-run", str(run), "--registry", str(reg)]
+            argv = ["registry_add.py", "--from-user-run", str(run), "--registry", str(reg),
+                    "--user-pairs", str(users)]
             with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
                 with unittest.mock.patch.object(sys, "argv", argv):
                     registry_add.main()
             with unittest.mock.patch.object(sys, "argv", argv + ["--accept-user"]), \
                     contextlib.redirect_stdout(io.StringIO()):
                 self.assertEqual(registry_add.main(), 0)
-            written = json.loads(reg.read_text(encoding="utf-8"))
-            self.assertEqual(written["version"], 8)
-            self.assertEqual(len(written["user_pairs"]), 1)
-            self.assertEqual(written["pairs"], [])
+            # The registry the engine embeds is untouched; the user pair is in its own file.
+            self.assertEqual(json.loads(reg.read_text(encoding="utf-8"))["version"], 7)
+            written = json.loads(users.read_text(encoding="utf-8"))
+            self.assertEqual((written["version"], len(written["user_pairs"])), (1, 1))
 
 if __name__ == "__main__":
     unittest.main()
