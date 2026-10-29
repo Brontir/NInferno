@@ -556,6 +556,119 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
+// Warp instructions a KB of weight payload: the vector kernel's a + b T at T columns (its dp4a and
+// activation loads grow with T, its decode does not) and the one-tile register MMA's (flat: its
+// MMAs take eight columns at any T), store / AddResidual and SwiGLU. Counted, not fitted: ncu
+// smsp__inst_executed.sum over the payload bytes, 4096x4096 store and 12288x4096 SwiGLU at T = 2,
+// 4 and 8 (a and b from T = 2 and 8; T = 4 lies on the line within 3 %), the register MMA the mean
+// of its w1x4 and w1x8 kernels. sm_8x: RTX 3060 (sm_86; the RTX 4090's sm_89 kernels count the
+// same to 1 %); sm_12x: RTX 5070 Ti (sm_120, the RTX 5090's alike). Turing has none: its BF16 MMA is
+// emulated, and from five tokens ggml's matrix kernel, not the register MMA, is the vector kernel's
+// rival there (mmq_verify_rule), so it keeps the band rule.
+struct VerifyCount {
+    double vec_a, vec_b, rmma;
+};
+struct VerifyCounts {
+    QType qtype;
+    VerifyCount store, swiglu;
+};
+constexpr VerifyCounts kVerifyCountsSm8x[] = {
+    {QType::GGML_Q4_K, {111, 59.0, 293}, {89, 51.5, 278}},
+    {QType::GGML_Q5_K, {122, 48.5, 278}, {121, 42.4, 267}},
+    {QType::GGML_Q6_K, {198, 37.4, 212}, {184, 34.2, 206}},
+    {QType::GGML_Q2_K, {183, 113.4, 666}, {169, 101.9, 597}},
+    {QType::GGML_Q3_K, {326, 68.3, 469}, {282, 60.6, 446}},
+    {QType::GGML_IQ4_XS, {216, 54.8, 419}, {202, 49.4, 399}},
+    {QType::GGML_IQ3_XXS, {319, 78.4, 711}, {331, 66.2, 676}},
+    {QType::GGML_IQ3_S, {308, 66.2, 587}, {298, 56.8, 549}},
+    {QType::GGML_IQ2_XXS, {440, 109.1, 1053}, {413, 97.2, 988}},
+    {QType::GGML_IQ2_XS, {379, 109.8, 1004}, {405, 90.7, 930}},
+    {QType::GGML_IQ2_S, {348, 98.7, 925}, {339, 81.7, 862}},
+    {QType::GGML_IQ1_S, {360, 155.1, 1107}, {353, 131.6, 998}},
+    {QType::GGML_IQ1_M, {423, 215.5, 1217}, {416, 190.0, 1115}},
+    {QType::GGML_Q4_0, {208, 52.1, 219}, {213, 43.7, 192}},
+    {QType::GGML_Q4_1, {54, 50.5, 252}, {56, 42.5, 208}},
+    {QType::GGML_Q5_0, {191, 43.3, 239}, {188, 36.4, 213}},
+    {QType::GGML_Q5_1, {89, 42.8, 264}, {90, 36.8, 233}},
+    {QType::GGML_IQ4_NL, {159, 53.3, 350}, {161, 44.9, 321}},
+};
+constexpr VerifyCounts kVerifyCountsSm12x[] = {
+    {QType::GGML_Q4_K, {104, 51.7, 279}, {91, 49.7, 262}},
+    {QType::GGML_Q5_K, {127, 41.9, 258}, {104, 42.8, 249}},
+    {QType::GGML_Q6_K, {176, 34.9, 210}, {167, 33.9, 187}},
+    {QType::GGML_Q2_K, {161, 109.4, 638}, {148, 101.1, 577}},
+    {QType::GGML_Q3_K, {262, 70.3, 455}, {224, 61.4, 428}},
+    {QType::GGML_IQ4_XS, {210, 52.1, 430}, {194, 50.3, 403}},
+    {QType::GGML_IQ3_XXS, {327, 69.4, 739}, {305, 65.2, 693}},
+    {QType::GGML_IQ3_S, {330, 61.6, 596}, {300, 56.7, 557}},
+    {QType::GGML_IQ2_XXS, {434, 103.1, 1076}, {400, 94.7, 1022}},
+    {QType::GGML_IQ2_XS, {413, 98.5, 1012}, {368, 91.5, 943}},
+    {QType::GGML_IQ2_S, {408, 86.7, 939}, {336, 82.4, 871}},
+    {QType::GGML_IQ1_S, {422, 139.9, 1125}, {326, 132.6, 1012}},
+    {QType::GGML_IQ1_M, {460, 194.2, 1170}, {386, 185.9, 1075}},
+    {QType::GGML_Q4_0, {181, 47.6, 215}, {174, 43.3, 181}},
+    {QType::GGML_Q4_1, {48, 47.2, 232}, {41, 43.2, 193}},
+    {QType::GGML_Q5_0, {178, 39.2, 233}, {171, 34.9, 212}},
+    {QType::GGML_Q5_1, {91, 39.6, 244}, {80, 35.6, 223}},
+    {QType::GGML_IQ4_NL, {171, 47.3, 367}, {163, 43.2, 331}},
+};
+std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilogue epilogue) {
+    std::span<const VerifyCounts> table;
+    if (d.major == 8) {
+        table = kVerifyCountsSm8x;
+    } else if (d.major == 12) {
+        table = kVerifyCountsSm12x;
+    }
+    for (const auto& row : table) {
+        if (row.qtype == qtype) return epilogue == Epilogue::SwiGlu ? row.swiglu : row.store;
+    }
+    return std::nullopt;
+}
+
+constexpr double kVerifyDramFraction  = 0.93; // see verify_route_seconds
+constexpr double kVerifyIssueFraction = 0.6;
+constexpr double kVerifyLaunchSeconds = 1.5e-6;
+
+} // namespace
+
+// NOT USED BY THE SELECTOR. The register MMA is priced here as the best one-tile schedule
+// (w1x4 / w1x8 / w1x16 at the bytes and the counted instructions), which is wrong for the
+// schedule heuristic_rmma actually runs: on long-K shapes that schedule streams DRAM at 57..77 %
+// (RTX 4070 Ti, Q6_K 3840x15360 T = 5: w1x4 171 us, w1x8 149, w1x16 121 against 108 priced) for
+// a reason not yet known (its bytes in flight are 13x Little's law). Verify picks stay the band
+// rule until the schedule's own efficiency is a fact.
+//
+// A verify call's time on the vector kernel or on the one-tile register MMA (T = 2..8, the ggml
+// formats both read): the payload's DRAM time tb and its warp instructions' issue time ti (four
+// schedulers a SM issuing one instruction each a clock: every SM from Volta on), combined as
+// sqrt(tb^2 + (ti / u)^2), plus a launch each (the vector kernel two: its activation quantizer).
+// Fitted constants, each on six cards of three generations (RTX 3060; 4060 Ti, 4070 Ti, 4090;
+// 5070 Ti, 5090), 3204 timed calls (vector and one-tile register MMA, T = 2..8, 19 formats):
+// - kVerifyDramFraction (FITTED): the p90 DRAM share of those calls, 0.89..0.94 on every card.
+// - kVerifyIssueFraction, u (FITTED): the best u under this combination per generation is 0.65 on
+//   sm_89 (three cards), 0.60 on sm_120 (two), 0.65 on sm_86 (one card); one 0.6 serves all.
+// - the combination (FITTED form): rms of log(measured / predicted) 0.118 for sqrt(tb^2 + ui^2)
+//   against 0.144 for max (full overlap, under-predicts 5.5 %) and 0.190 for the sum (no overlap,
+//   over-predicts 13 %). The choice's loss over the better kernel is 1.025..1.031 for all three.
+// - kVerifyLaunchSeconds: a launch on a back-to-back stream (RTX 4090 decode graph, no PDL).
+// nullopt where the device has no roofline or its instruction set no counts.
+
+std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
+                                           Epilogue epilogue, double payload_bytes,
+                                           std::int32_t tokens) {
+    if (d.sms <= 0 || !d.facts.has_roofline() || payload_bytes <= 0) return std::nullopt;
+    const auto c = verify_count(d, qtype, epilogue);
+    if (!c) return std::nullopt;
+    const double per_kb = vector ? c->vec_a + c->vec_b * tokens : c->rmma;
+    const double tb     = payload_bytes / (kVerifyDramFraction * d.facts.dram_bytes_per_s());
+    const double ti =
+        per_kb * payload_bytes / 1024.0 / (4.0 * d.sms * d.facts.reference_clock_hz());
+    const double ui = ti / kVerifyIssueFraction;
+    return std::sqrt(tb * tb + ui * ui) + (vector ? 2.0 : 1.0) * kVerifyLaunchSeconds;
+}
+
+namespace {
+
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
 // capacity bound counts it too, or a workspace sized to the bound ran the call A16 (a vector call
 // of 200 rows x 8 tokens: 11520 bytes needed and given).

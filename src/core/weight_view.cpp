@@ -372,6 +372,54 @@ Tensor weight_tensor(const WeightView& view, std::initializer_list<std::int32_t>
     return out;
 }
 
+QuantLayout default_weight_layout(QType format) noexcept {
+    switch (format) {
+    case QType::BF16:
+    case QType::FP32:
+    case QType::INT32:
+        return QuantLayout::Contiguous;
+    case QType::FP8_E4M3FN_ROW_BF16:
+    case QType::FP8_E4M3FN_ROW_F32:
+        return QuantLayout::RowScale;
+    case QType::FP8_E4M3FN_B128_F32:
+        return QuantLayout::BlockScale128F32;
+    case QType::NVFP4:
+        return QuantLayout::BlockScaleK16M128x4;
+    case QType::MXFP4:
+        return QuantLayout::BlockScaleK32E8M0;
+    case QType::U4_G128_ZP_FP16:
+    case QType::U4_G32_ZP_FP16:
+    case QType::U4_G64_ZP_FP16:
+        return QuantLayout::RowGroupZp;
+    case QType::GGML_Q4_K:
+    case QType::GGML_Q5_K:
+        return QuantLayout::GgmlBlocks;
+    case QType::GGML_Q6_K:
+    case QType::GGML_Q3_K:
+    case QType::GGML_Q2_K:
+    case QType::GGML_IQ4_XS:
+    case QType::GGML_IQ3_XXS:
+    case QType::GGML_IQ3_S:
+    case QType::GGML_Q4_0:
+    case QType::GGML_Q4_1:
+    case QType::GGML_Q5_0:
+    case QType::GGML_Q5_1:
+    case QType::GGML_IQ4_NL:
+    case QType::GGML_IQ2_XXS:
+    case QType::GGML_IQ2_XS:
+    case QType::GGML_IQ2_S:
+    case QType::GGML_IQ1_S:
+    case QType::GGML_IQ1_M:
+    case QType::GGML_TQ1_0:
+    case QType::GGML_TQ2_0:
+    case QType::GGML_Q1_0:
+    case QType::GGML_Q2_0:
+        return QuantLayout::GgmlPlanes;
+    default:
+        return QuantLayout::RowSplit;
+    }
+}
+
 Weight native_weight(const WeightView& view, float input_divisor) {
     const auto region = contiguous_weight_region(view);
     const auto& g     = region.parent->geometry;
