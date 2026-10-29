@@ -16,6 +16,7 @@
 // the copy window (automatic as a server's default options leave it, and off). CPU, no GPU, no
 // files.
 
+#include "spec/round_cost.h"
 #include "models/dense/program_family.h"
 #include "models/gemma4/program_family.h"
 #include "models/nemotron_h/program_family.h"
@@ -985,17 +986,27 @@ void test_proposal_bytes_per_quant() {
     pr::PlanSourceFacts shards = mtp;
     shards.model.mtp_bytes     = 0;
     check(pr::proposal_bytes_at(shards, none) != 0, "MTP inside the shards: rows still planned");
-    // A MoE MTP layer reads its routed experts as one row routes them (Codex on #192): a smaller
-    // pass than its bytes, a larger head share, no fewer rows than the same bytes dense.
+    // A MoE MTP layer reads its routed experts as one row routes them (Codex on #192): priced as
+    // the dense layer of that read, as the converter's default_proposal prices it.
     pr::PlanSourceFacts moe = mtp;
     moe.model.params               = 35e9;
     moe.shape.experts              = 256;
     moe.shape.experts_per_token    = 8;
     moe.shape.routed_expert_params = 32e9;
     moe.model.mtp_bytes            = 4 * mtp.model.mtp_bytes;
-    pr::PlanSourceFacts dense_same = moe;
-    dense_same.shape.experts       = 0;
-    check(pr::proposal_bytes_at(moe, none) > pr::proposal_bytes_at(dense_same, none),
+    ninferno::spec::PassFacts routed;
+    routed.experts      = 256;
+    routed.experts_used = 8;
+    const double share  = 32e9 / 35e9;
+    const double read   = static_cast<double>(moe.model.mtp_bytes) *
+                        (1 - share + share * ninferno::spec::moe_read_fraction(routed, 1));
+    pr::PlanSourceFacts dense_read = moe;
+    dense_read.shape.experts       = 0;
+    dense_read.model.mtp_bytes     = static_cast<std::uint64_t>(read);
+    pr::PlanSourceFacts dense_all  = moe;
+    dense_all.shape.experts        = 0;
+    check(pr::proposal_bytes_at(moe, none) == pr::proposal_bytes_at(dense_read, none) &&
+              pr::proposal_bytes_at(moe, none) != pr::proposal_bytes_at(dense_all, none),
           "MoE MTP: priced at its routed read");
 }
 
