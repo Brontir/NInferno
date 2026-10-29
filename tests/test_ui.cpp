@@ -1163,7 +1163,7 @@ void test_http() {
     // offline the repository's shape cannot be read (502 with the reason, never a guess).
     for (const char* query : {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9",
                               "/api/plan?repo=a/b&par=0", "/api/plan?repo=a/b&kv=fp16",
-                              "/api/plan?repo=a/b&spec=eagle", "/api/plan?repo=a/b&act=fp4",
+                              "/api/plan?repo=a/b&spec=eagle", "/api/plan?artifact=%2Fetc%2Fpasswd", "/api/plan?repo=a/b&act=fp4",
                               "/api/quants?repo=a/b&gpu=0&ctx=-5",
                               "/api/catalog?gpu=0&ctx=abc", "/api/catalog?gpu=0&par=12"}) {
         res = client.Get(query);

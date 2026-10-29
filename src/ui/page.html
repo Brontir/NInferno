@@ -1076,21 +1076,21 @@ for (const code of ["de", "fr", "es", "it", "pl", "zh", "ja"]) if (T[code]) dele
 // Activation precision (ninferno-serve --activations): a choice the user may pin; Auto is the
 // configuration choice's. The modes offered are the ones the plan's choice says the model runs.
 for (const [code, words] of Object.entries({
-  en:{nowNoStart:"Right now only {free} is free: a start would not fit ({why})",nowLess:"Right now {free} is free: a start gets {ctx} per request, not {was}",nowTip:"What a start right now would get: the same plan at the memory other processes leave free now (the server decides the same way at start); the line before is the card when nothing else runs",actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
+  en:{replayContext:"Planned again for this card now: the context each request gets is {now}, not {was} as last time",replayNoFit:"By the plan for this card now it does not fit ({why}): the start may fail",replayRun:"Run with this",replayAnyway:"Run anyway",replayAuto:"Run with Auto for it",nowNoStart:"Right now only {free} is free: a start would not fit ({why})",nowLess:"Right now {free} is free: a start gets {ctx} per request, not {was}",nowTip:"What a start right now would get: the same plan at the memory other processes leave free now (the server decides the same way at start); the line before is the card when nothing else runs",actType:"Activations",actTip:"The precision of the inputs the matrix multiplies take.\nAuto: the engine's choice for this model, card, context and streams (the server decides the same way at start).\nOn each button: what it changes against Auto, from the configuration choice's estimates (not a measurement). KLD: how far the answers move from the exact model (lower is closer)",
       act_exact:"16-bit",act_fast:"mixed (fast)",act_int8:"8-bit everywhere",
       actTip_exact:"exact: 16-bit (BF16) inputs on every multiply: the closest to the original model, the slowest prompt reading",
       actTip_fast:"fast (the default): 8 bits (4 for NVFP4 weights) on wide calls such as prompt reading and speculative checks, 16 bits when generating",
       actTip_int8:"int8: 8 bits on every call that has an 8-bit route, never 4 (ternary and 2-bit blocks keep 16); Qwen models only",
       actNotHere:"Not available for this model",actAgainst:"against Auto ({v}): decode {d}, request time {t}, KLD {k}",actTime:"time",actNoFit:"does not hold the context",
       actDropped:"{m} is not available for this model: Auto is used",reason_activations_not_run:"the chosen activations are not run by this model's family: pick Auto, 16-bit or mixed",kvWhy_family_codec:"this model keeps its cache in BF16 or FP8 only",kvWhy_head_width:"this model's heads are not 256 wide: this compact cache takes 256-wide heads",kvWhy_shape_unknown:"the model's shape is not read yet: only BF16 can be checked",kvNotRead:"waiting for the plan: which formats this model takes",kvSlowCard:"runs, but this card converts FP8 in software: a smaller cache, a slower step",kvPinRefused:"KV {kv} is chosen but this model does not take it: {why}",kvUseAuto:"Use Auto",reason_kv_not_run:"the chosen KV cache format is not taken by this model: pick Auto or another format",unsup_kv_not_run:"this model does not take the chosen KV cache format",unsup_activations_not_run:"this model's family does not run the chosen activations"},
-  ru:{nowNoStart:"Сейчас свободно только {free}: запуск не поместится ({why})",nowLess:"Сейчас свободно {free}: запуск получит {ctx} на запрос, а не {was}",nowTip:"Что получит запуск прямо сейчас: тот же план при памяти, которую оставляют свободной другие процессы (сервер при старте решает так же); строка перед этим — карта, когда больше ничего не запущено",actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
+  ru:{replayContext:"План заново для этой карты сейчас: контекст на запрос {now}, а не {was}, как в прошлый раз",replayNoFit:"По плану для этой карты сейчас не помещается ({why}): запуск может не удаться",replayRun:"Запустить так",replayAnyway:"Всё равно запустить",replayAuto:"Запустить с Авто для этого",nowNoStart:"Сейчас свободно только {free}: запуск не поместится ({why})",nowLess:"Сейчас свободно {free}: запуск получит {ctx} на запрос, а не {was}",nowTip:"Что получит запуск прямо сейчас: тот же план при памяти, которую оставляют свободной другие процессы (сервер при старте решает так же); строка перед этим — карта, когда больше ничего не запущено",actType:"Активации",actTip:"Точность входов умножений матриц.\nАвто: выбор движка для этой модели, карты, контекста и потоков (сервер при старте решает так же).\nНа кнопках — что изменится против Авто, по оценкам модели выбора (не замер). KLD — насколько ответы отходят от точной модели (меньше — ближе)",
       act_exact:"16 бит",act_fast:"смешанный (быстро)",act_int8:"8 бит везде",
       actTip_exact:"exact: входы 16 бит (BF16) на каждом умножении: ближе всего к исходной модели, самое медленное чтение промпта",
       actTip_fast:"fast (по умолчанию): 8 бит (4 для весов NVFP4) на широких вызовах — чтение промпта и проверка спекуляции, 16 бит при генерации",
       actTip_int8:"int8: 8 бит на каждом вызове, где есть 8-битный маршрут, никогда 4 (тернарные и 2-битные блоки остаются 16); только модели Qwen",
       actNotHere:"Недоступно для этой модели",actAgainst:"против Авто ({v}): декод {d}, время запроса {t}, KLD {k}",actTime:"время",actNoFit:"не держит контекст",
       actDropped:"{m}: недоступно для этой модели, используется Авто",reason_activations_not_run:"семейство этой модели не запускает выбранные активации: выберите Авто, 16 бит или смешанный",kvWhy_family_codec:"эта модель хранит кеш только в BF16 или FP8",kvWhy_head_width:"головы этой модели не шириной 256: этот компактный кеш только для голов 256",kvWhy_shape_unknown:"форма модели ещё не прочитана: проверить можно только BF16",kvNotRead:"ждём план: какие форматы берёт эта модель",kvSlowCard:"работает, но эта карта переводит FP8 программно: кеш меньше, шаг медленнее",kvPinRefused:"Выбран KV {kv}, но эта модель его не берёт: {why}",kvUseAuto:"Взять Авто",reason_kv_not_run:"эта модель не берёт выбранный формат KV-кеша: выберите Авто или другой формат",unsup_kv_not_run:"эта модель не берёт выбранный формат KV-кеша",unsup_activations_not_run:"семейство этой модели не запускает выбранные активации"},
-  uk:{nowNoStart:"Зараз вільно лише {free}: запуск не вміститься ({why})",nowLess:"Зараз вільно {free}: запуск отримає {ctx} на запит, а не {was}",nowTip:"Що отримає запуск просто зараз: той самий план за пам'яті, яку залишають вільною інші процеси (сервер під час старту вирішує так само); рядок перед цим — карта, коли більше нічого не запущено",actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
+  uk:{replayContext:"План заново для цієї карти зараз: контекст на запит {now}, а не {was}, як минулого разу",replayNoFit:"За планом для цієї карти зараз не вміщується ({why}): запуск може не вдатися",replayRun:"Запустити так",replayAnyway:"Усе одно запустити",replayAuto:"Запустити з Авто для цього",nowNoStart:"Зараз вільно лише {free}: запуск не вміститься ({why})",nowLess:"Зараз вільно {free}: запуск отримає {ctx} на запит, а не {was}",nowTip:"Що отримає запуск просто зараз: той самий план за пам'яті, яку залишають вільною інші процеси (сервер під час старту вирішує так само); рядок перед цим — карта, коли більше нічого не запущено",actType:"Активації",actTip:"Точність входів множень матриць.\nАвто: вибір рушія для цієї моделі, карти, контексту й потоків (сервер під час старту вирішує так само).\nНа кнопках — що зміниться проти Авто, за оцінками моделі вибору (не замір). KLD — наскільки відповіді відходять від точної моделі (менше — ближче)",
       act_exact:"16 біт",act_fast:"змішаний (швидко)",act_int8:"8 біт скрізь",
       actTip_exact:"exact: входи 16 біт (BF16) на кожному множенні: найближче до вихідної моделі, найповільніше читання промпту",
       actTip_fast:"fast (типово): 8 біт (4 для ваг NVFP4) на широких викликах — читання промпту й перевірка спекуляції, 16 біт під час генерації",
@@ -1372,6 +1372,23 @@ function setTab(name) {
 
 // ---- my models ------------------------------------------------------------------------------
 let mine = [];
+// A start again from My models that the plan for this card and load changes or refuses: what it
+// says, by artifact, until the user answers.
+const replayNotes = {};
+// A start again of My models' `m` with `saved` settings, planned first for this card and its load
+// now: started when nothing differs, else what differs is said (replayNotes) and the user answers.
+async function replayPlanned(m, saved, el) {
+  el.disabled = true; el.textContent = t("planning");
+  let doc = null;
+  try {
+    doc = await api(artifactPlanQuery(m.artifact, {gpu, ctx: saved.ctx, par: saved.par, kv: saved.kv || "auto",
+                                                   spec: planSpecOf(saved.spec), act: saved.act || "auto"}));
+  } catch (e) { replayNotes[m.artifact] = {refused: null, nofit: e.message, changes: [], cap: 0, saved}; refreshMine(); return; }
+  const r = replayDiff(saved, doc, planTr);
+  if (!r.refused && !r.nofit && !r.changes.length) { launch(m.artifact, "", el, {...saved, cap: r.cap}, [m.artifact]); return; }
+  replayNotes[m.artifact] = {...r, saved};
+  refreshMine();
+}
 const confirming = new Set();
 // Converted hub models whose branch the hub now names at another commit and that the user has not
 // kept (/api/moved, asked at most every 10 minutes, every 5 s while an update runs): artifact path
@@ -1466,7 +1483,13 @@ async function refreshMine() {
       <td>${m.quant ? `<span class="chip">${esc(m.quant)}</span>` : ""}</td>
       <td class="num">${m.size_gib.toFixed(1)} GiB</td>
       <td class="muted">${esc(ago(m.modified))}</td>
-      <td><div class="acts">${m.running ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
+      <td>${(() => { const n = replayNotes[m.artifact]; if (!n) return "";
+          const lines = n.refused ? [n.refused.why] : n.nofit ? [fill(t("replayNoFit"), {why: n.nofit})]
+            : n.changes.map(c => fill(t("replayContext"), {was: c.was ? planTok(c.was) : t("ctxAutoWord"), now: c.now ? planTok(c.now) : t("ctxAutoWord")}));
+          return `<div class="sub ${n.refused || n.nofit ? "err" : "lowq"}">${lines.map(esc).join("<br>")}</div><div class="acts">` +
+            (n.refused ? `<button class="primary" data-runauto="${esc(m.artifact)}">${t("replayAuto")}</button>` : `<button class="primary" data-runnow="${esc(m.artifact)}">${t(n.nofit ? "replayAnyway" : "replayRun")}</button>`) +
+            `<button class="ghost" data-runno="${esc(m.artifact)}">${t("no")}</button></div>`; })()}
+        <div class="acts">${m.running || replayNotes[m.artifact] ? "" : `<button class="primary" data-run="${i}">${t("run")}</button>`}
         <button class="ghost" data-tune="${i}" title="${t("calibrate")}">⚙</button>${del}</div></td></tr>`;
   }).join("");
   refreshMoved();
@@ -2025,6 +2048,33 @@ const KV_WHY_CODES = ["family_codec", "head_width", "shape_unknown"];
 function kvWhyText(o, tr) {
   if (!o || o.allowed) return "";
   return KV_WHY_CODES.includes(o.why_code) ? tr("kvWhy_" + o.why_code) : o.why;
+}
+// The /api/plan request of a model converted here (My models), by its artifact path, at an ask
+// {gpu, ctx, par, kv, spec, act} as planQuery's.
+function artifactPlanQuery(artifact, a) {
+  return planQuery({...a, repo: ""}).replace(/^\/api\/plan\?repo=&hub=[^&]*/, "/api/plan?artifact=" + encodeURIComponent(artifact));
+}
+// A start again from "My models", planned first for the card and load now (/api/plan?artifact=):
+// what differs from the settings saved with the last start. {refused: the pin a start refuses
+// (its code and words), nofit: the plan's reason when it does not fit, changes: [{field, was,
+// now}] (the automatic context's ceiling, planned again), cap: the ceiling a start now passes}.
+function replayDiff(saved, doc, tr) {
+  const s = saved || {}, p = doc && doc.plan;
+  if (!p) return {refused: null, nofit: tr("planFailed"), changes: [], cap: 0};
+  if (["kv_not_run", "activations_not_run"].includes(p.reason_code))
+    return {refused: {code: p.reason_code, why: reasonText(p, tr)}, nofit: "", changes: [], cap: 0};
+  if (!p.fits) return {refused: null, nofit: reasonText(p, tr), changes: [], cap: 0};
+  // What a start right now would get (another model may hold the card).
+  const n = doc.now;
+  if (n && n.fits_now === false) return {refused: null, nofit: nowReasonText(n, tr), changes: [], cap: 0};
+  const changes = [];
+  let cap = 0;
+  if (!(s.ctx > 0)) {
+    cap = launchContextOf(planRowOf(doc, ""), {ctx: 0, par: s.par || 1});
+    if (n && n.fits_now && n.context_now && cap && n.context_now < cap) cap = n.context_now;
+    if ((s.cap || 0) !== cap) changes.push({field: "context", was: s.cap || 0, now: cap});
+  }
+  return {refused: null, nofit: "", changes, cap};
 }
 // The activation modes (ninferno-serve --activations), in the selector's order.
 const ACT_MODES = ["exact", "fast", "int8"];
@@ -2828,7 +2878,7 @@ async function prepare(model, quant) {
   catch (e) { showError(e.message); }
 }
 document.addEventListener("click", async ev => {
-  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-act],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
+  const el = ev.target.closest("[data-fitctx],[data-tab],[data-gpu],[data-log],[data-stop],[data-chat],[data-run],[data-runnow],[data-runauto],[data-runno],[data-tune],[data-del],[data-delyes],[data-delno],[data-delorig],[data-mvkeep],[data-mvget],[data-hub],[data-repo],[data-kv],[data-act],[data-qi],[data-get],[data-go],[data-sort],[data-ctx],[data-hubsel],[data-rts]");
   if (!el || el.disabled) return;
   const d = el.dataset;
   if (d.fitctx !== undefined) {
@@ -2851,10 +2901,29 @@ document.addEventListener("click", async ev => {
   else if (d.stop) { api("/api/stop", {id:+d.stop}).then(refreshState).catch(e => showError(e.message)); }
   else if (d.gpu !== undefined) { gpu = +d.gpu; catalogCache = {}; refreshState(); if (selected) loadRepo(); }
   else if (d.run !== undefined) {
-    // My models: the model's own last settings, not the ones of the model open in "Find".
+    // My models: the model's own last settings, not the ones of the model open in "Find", planned
+    // again for this card and its load first: what differs is said before it starts, nothing is
+    // changed silently.
     const m = mine[+d.run];
-    launch(m.artifact, "", el, savedLaunchOf(m), [m.artifact]);
+    await replayPlanned(m, savedLaunchOf(m), el);
   }
+  else if (d.runnow !== undefined) {
+    // The start as planned now (the changes said), or anyway where the estimate says it may fail.
+    const m = mine.find(x => x.artifact === d.runnow), n = m && replayNotes[m.artifact];
+    if (!n) return;
+    delete replayNotes[m.artifact];
+    launch(m.artifact, "", el, {...n.saved, cap: n.saved.ctx > 0 ? 0 : n.cap}, [m.artifact]);
+  }
+  else if (d.runauto !== undefined) {
+    // A refused pin: the start with that setting on Auto, said on the button.
+    // Planned again with it on Auto first: that start may differ too, and it is said the same way.
+    const m = mine.find(x => x.artifact === d.runauto), n = m && replayNotes[m.artifact];
+    if (!n) return;
+    delete replayNotes[m.artifact];
+    await replayPlanned(m, {...n.saved, kv: n.refused.code === "kv_not_run" ? "" : n.saved.kv,
+                            act: n.refused.code === "activations_not_run" ? "" : n.saved.act}, el);
+  }
+  else if (d.runno !== undefined) { delete replayNotes[d.runno]; refreshMine(); }
   else if (d.tune !== undefined) { try { const j = await api("/api/tune", {artifact: mine[+d.tune].artifact, gpu}); openLog(j.id, t("calibrate")); } catch (e) { showError(e.message); } }
   else if (d.del !== undefined) { confirming.add(mine[+d.del].artifact); refreshMine(); }
   else if (d.delno !== undefined) { confirming.delete(mine[+d.delno].artifact); refreshMine(); }

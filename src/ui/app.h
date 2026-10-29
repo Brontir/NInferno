@@ -224,6 +224,9 @@ private:
     // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
     // --no-load --json would print it for an idle card of that GPU. Throws when the repository's
     // shape cannot be read.
+    // The plan of a model converted here (My models), as its start plans it (product::plan_artifact).
+    nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
+                                      const product::LaunchAsk& launch);
     nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
                              const std::string& quant, const product::LaunchAsk& launch);
     nlohmann::json plan_json_idle(const std::string& repo, const std::string& hub, int gpu,

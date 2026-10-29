@@ -342,10 +342,6 @@ int main(int argc, char** argv) {
                     cli.device, true, ninferno::runtime::plan_automatic_fit(engine_options));
                 gpu    = ninferno::spec::gpu_identity(cli.device).key;
             }
-            const product::PlanSourceFacts facts =
-                product::plan_facts_of_artifact(cli.artifact_path);
-            const product::SpeculationSubject subject =
-                product::speculation_subject(cli.artifact_path, gpu, cli.spec_profile);
             product::DryRunInputs inputs;
             inputs.device              = device;
             inputs.gpu                 = gpu;
@@ -354,34 +350,24 @@ int main(int argc, char** argv) {
                                                                  .given     = cli.speculative,
                                                                  .thinking  = cli.enable_thinking.value_or(true)};
             inputs.options.speculative = cli.speculative;
-            inputs.subject                            = &subject;
-            inputs.pins                               = {.kv          = cli.kv_cache.has_value(),
-                                                         .activations = cli.activations_given,
-                                                         .state       = cli.recurrent_state.has_value(),
-                                                         .ring        = cli.sliding_kv_given,
-                                                         .chunk       = true};
-            product::PlannedSpeculation planned = product::plan_model(facts, inputs);
-            product::refuse_unrun_pins(facts, inputs, planned);
-            const std::string source                  = cli.artifact_path.string();
-            // The configuration choice for the axes left automatic, as a start would take it.
-            const ninferno::product::ChoicePins pins{.kv          = cli.kv_cache.has_value(),
-                                                     .activations = cli.activations_given,
-                                                     .state       = cli.recurrent_state.has_value(),
-                                                     .ring        = cli.sliding_kv_given,
-                                                     .chunk       = true}; // the CLI's chunk is fixed
-            const auto served = product::choose_at_weights(facts, inputs, pins);
-            // A run serves the choice's drafter: the plan shown is of it, as the server's.
-            if (served) { planned = product::plan_at_choice(facts, inputs, *served, pins, planned); }
+            // The configuration choice for the axes left automatic, as a start would take it (the
+            // CLI's chunk is fixed); the plan at its storages and drafter (product::plan_artifact).
+            inputs.pins = {.kv          = cli.kv_cache.has_value(),
+                           .activations = cli.activations_given,
+                           .state       = cli.recurrent_state.has_value(),
+                           .ring        = cli.sliding_kv_given,
+                           .chunk       = true};
+            const product::ArtifactPlan plan =
+                product::plan_artifact(cli.artifact_path, inputs, cli.spec_profile);
+            const std::string source = cli.artifact_path.string();
             if (cli.plan_json) {
-                nlohmann::json doc =
-                    product::dry_plan_document(facts, source, "artifact", inputs, planned, nullptr);
-                if (served) { doc["choice"] = product::choice_json(*served); }
-                std::cout << doc.dump(1) << '\n';
+                std::cout << product::artifact_plan_document(plan, source).dump(1) << '\n';
             } else {
-                std::cout << product::render_dry_plan_text(facts, source, inputs, planned, nullptr);
-                if (served) { std::cout << product::choice_line(*served) << '\n'; }
+                std::cout << product::render_dry_plan_text(plan.facts, source, plan.inputs,
+                                                           plan.planned, nullptr);
+                if (plan.served) { std::cout << product::choice_line(*plan.served) << '\n'; }
             }
-            return planned.plan.fits ? 0 : 2;
+            return plan.planned.plan.fits ? 0 : 2;
         }
         // The axes the user left to the engine: the configuration choice for this artifact on this
         // GPU (product/plan/plan_choice.h), as ninferno-serve's start takes it, the drafter with

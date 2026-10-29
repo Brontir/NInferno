@@ -978,6 +978,35 @@ std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int 
 
 } // namespace
 
+Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::LaunchAsk& launch) {
+    const auto stats  = gpus_->snapshot();
+    const auto device = plan_device(stats, gpu);
+    if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
+    product::DryRunInputs inputs;
+    inputs.device = *device;
+    inputs.gpu    = product::gpu_key_of(*device);
+    for (const auto& stat : stats) {
+        if (stat.index != gpu) { continue; }
+        if (const auto key = product::gpu_key_of_bus(stat.bus_id)) { inputs.gpu = *key; }
+    }
+    const product::LaunchPlanOptions options = product::launch_options(launch);
+    inputs.options = options.options;
+    inputs.ask     = options.ask;
+    inputs.pins    = product::ChoicePins{
+           .kv = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
+           .activations = launch.activations_pinned()};
+    const product::ArtifactPlan plan = product::plan_artifact(artifact, inputs);
+    Json doc = product::artifact_plan_document(plan, artifact.string());
+    // What a start right now would get (a second model may hold the card): the replay says it.
+    if (const auto free_now = free_now_of(stats, gpu)) {
+        doc["now"] = product::plan_now_json(
+            product::plan_now(plan.facts, plan.inputs, plan.served ? &*plan.served : nullptr,
+                              plan.inputs.pins, *free_now),
+            *free_now);
+    }
+    return doc;
+}
+
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
     // The plan of an idle card (cached), and what a start right now would get at the GPU's free
@@ -2358,6 +2387,24 @@ void App::install(httplib::Server& server) {
     // every quantization and the largest that fits), ctx (tokens or "auto"), par (streams), kv
     // (auto or a codec), spec (auto, none, mtp, dflash, dflash2), precision (exact).
     server.Get("/api/plan", [this](const httplib::Request& req, httplib::Response& res) {
+        // A model converted here (My models: a start again is planned first), by its path: only
+        // an artifact this UI lists (/api/local), never any path.
+        if (req.has_param("artifact")) {
+            try {
+                const fs::path artifact = fs::path(req.get_param_value("artifact"));
+                const Json local        = local_json();
+                const bool listed = std::any_of(
+                    local["models"].begin(), local["models"].end(), [&](const Json& m) {
+                        return m.value("artifact", std::string()) == req.get_param_value("artifact");
+                    });
+                if (!listed) { return reply_error(res, 400, "not a model listed here"); }
+                reply_json(res, artifact_plan_json(artifact, int_param(req, "gpu", 0),
+                                                   launch_ask_of(req)));
+            } catch (const std::invalid_argument& error) {
+                reply_error(res, 400, error.what());
+            } catch (const std::exception& error) { reply_error(res, 502, error.what()); }
+            return;
+        }
         const auto [repo, tag] = split_model_tag(req.get_param_value("repo"));
         if (!convert::is_repository_spec(repo)) {
             return reply_error(res, 400, "repo must be org/name");

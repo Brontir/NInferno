@@ -22,7 +22,7 @@ const from = html.indexOf(BEGIN), to = html.indexOf(END);
 assert.ok(from >= 0 && to > from, "the plan helpers block is marked in the page");
 const NAMES = ["parseCtxText", "planTok", "ctxInput", "ctxNoteText", "planSpecOf", "planQuery", "catalogQuery", "planStateOf",
                "planRowOf", "launchContextOf", "reasonText", "unsupportedText", "cardGbOf", "cardGbText", "ruleText", "planRowState",
-               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
+               "runGate", "rowEstimate", "choiceFor", "choiceRows", "quantChangeNotice", "busyGpuModels", "planMemory", "planSpecSummary", "specVariantsLine", "specBasisText", "launchSettingsOf", "actOptions", "actAskOf", "ACT_MODES", "artifactPlanQuery", "replayDiff", "nowLine", "nowReasonText", "kvOptionsOf", "kvWhyText", "KV_CODECS", "KV_WHY_CODES",
                "REASON_CODES", "UNSUPPORTED_CODES", "RULE_TIERS", "SPEC_BASES"];
 const ctx = vm.createContext({});
 vm.runInContext(html.slice(from, to) + `\n;globalThis.H = {${NAMES.join(", ")}};`, ctx);
@@ -501,6 +501,28 @@ eq(H.nowLine({now: {free_now_bytes: 8 * 2 ** 30, fits_now: true, context_now: 65
   whole(RU("nowNoStart", {free: "1.0 GiB", why: "x"}), "nowNoStart ru");
 }
 for (const lang of ["en", "ru", "uk"]) for (const k of ["nowNoStart", "nowLess", "nowTip"])
+  ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
+
+// ---- a start again from My models, planned first (/api/plan?artifact=) ----
+ok(H.artifactPlanQuery("/hf/m/Q4.ninferno", {gpu: 1, ctx: 0, par: 2, kv: "fp8", spec: "auto", act: "auto"})
+   .startsWith("/api/plan?artifact=%2Fhf%2Fm%2FQ4.ninferno&gpu=1&ctx=auto&par=2&kv=fp8&spec=auto"), "the artifact's plan query");
+{
+  const fits = {plan: {planned: true, fits: true, context: 49152, private_contexts: true, reason_code: ""}};
+  eq(H.replayDiff({ctx: 0, cap: 49152, par: 2}, fits, tr).changes, [], "the same ceiling: nothing to say");
+  const moved = H.replayDiff({ctx: 0, cap: 131072, par: 2}, fits, tr);
+  eq(moved.changes, [{field: "context", was: 131072, now: 49152}], "another card: the ceiling planned again, said");
+  eq(moved.cap, 49152, "the start passes the new ceiling");
+  eq(H.replayDiff({ctx: 65536, par: 1}, fits, tr).changes, [], "a typed context is the user's: kept");
+  const refused = H.replayDiff({ctx: 0, par: 1, kv: "int8"}, {plan: {planned: true, fits: false, reason_code: "kv_not_run", reason: "x"}}, tr);
+  ok(refused.refused && refused.refused.code === "kv_not_run", "a refused pin: said, never relaxed by itself");
+  const nofit = H.replayDiff({ctx: 262144, par: 1}, {plan: {planned: true, fits: false, reason_code: "weights_too_big", reason_params: {}}}, tr);
+  ok(!nofit.refused && nofit.nofit.length > 0, "no fit: the reason");
+  const busy = H.replayDiff({ctx: 0, par: 1}, {...fits, now: {free_now_bytes: 2 ** 30, fits_now: false, reason_code_now: "weights_too_big", reason_now: "x"}}, tr);
+  ok(!busy.refused && busy.nofit.length > 0, "the card fits but not with what another model holds now: said");
+  const less = H.replayDiff({ctx: 0, cap: 49152, par: 2}, {...fits, now: {free_now_bytes: 9 * 2 ** 30, fits_now: true, context_now: 16384}}, tr);
+  eq(less.cap, 16384, "a start now gets less: the ceiling now, said");
+}
+for (const lang of ["en", "ru", "uk"]) for (const k of ["replayContext", "replayNoFit", "replayRun", "replayAnyway", "replayAuto"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
 console.log(`test_page_plan: ${checks} checks passed`);

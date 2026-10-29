@@ -464,6 +464,33 @@ nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_n
             {"reason_params_now", plan_reason_code(p).params}};
 }
 
+ArtifactPlan plan_artifact(const std::filesystem::path& artifact, DryRunInputs inputs,
+                           const std::filesystem::path& spec_profile) {
+    ArtifactPlan out;
+    out.facts         = plan_facts_of_artifact(artifact);
+    out.subject       = std::make_unique<SpeculationSubject>(
+        speculation_subject(artifact, inputs.gpu, spec_profile));
+    inputs.subject    = out.subject.get();
+    inputs.subject_of = {};
+    out.inputs        = inputs;
+    out.planned       = plan_model(out.facts, out.inputs);
+    refuse_unrun_pins(out.facts, out.inputs, out.planned);
+    out.served = choose_at_weights(out.facts, out.inputs, out.inputs.pins);
+    // A start serves the choice's storages and drafter: the plan shown is of them.
+    if (out.served && out.planned.plan.refused_code.empty()) {
+        out.planned = plan_at_choice(out.facts, out.inputs, *out.served, out.inputs.pins,
+                                     std::move(out.planned));
+    }
+    return out;
+}
+
+nlohmann::json artifact_plan_document(const ArtifactPlan& plan, const std::string& source) {
+    nlohmann::json doc =
+        dry_plan_document(plan.facts, source, "artifact", plan.inputs, plan.planned, nullptr);
+    if (plan.served) { doc["choice"] = choice_json(*plan.served); }
+    return doc;
+}
+
 DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
                               const ChoicePins& pins) {
     const StartAxes axes = start_axes(served, pins);
