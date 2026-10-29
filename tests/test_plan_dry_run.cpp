@@ -1436,9 +1436,9 @@ void test_row_tensor_tables() {
 }
 
 // The quantizations a hub cache holds (product::cached_quants: one code for ninferno-serve and
-// ninferno-ui, the root theirs): a download, or the artifact converted from one where the download
-// was removed; later parts of a split file and projectors are not quantizations; an unreadable file
-// leaves the row as it was.
+// ninferno-ui, the root theirs): the downloads in the revision's snapshot (a split file's first
+// part; projectors are not quantizations); where the snapshot was removed, the conversions a start
+// serves in its place; the hub's own directory; an unreadable file leaves the row as it was.
 void test_cached_quants() {
     namespace fs        = std::filesystem;
     const fs::path root = fs::temp_directory_path() / "ninferno_test_cached_quants";
@@ -1446,28 +1446,38 @@ void test_cached_quants() {
     const std::string commit(40, 'a');
     const fs::path repo = root / "models--org--Model-GGUF";
     const fs::path snap = repo / "snapshots" / commit;
-    fs::create_directories(snap / ".ninferno-cache");
+    fs::create_directories(snap);
     fs::create_directories(repo / "refs");
     std::ofstream(repo / "refs" / "main") << commit;
     for (const char* name : {"Model-Q4_K_M.gguf", "Model-Q8_0-00001-of-00002.gguf",
                              "Model-Q8_0-00002-of-00002.gguf", "mmproj-F16.gguf"}) {
         std::ofstream(snap / name) << "not a gguf";
     }
-    std::ofstream(snap / ".ninferno-cache" / "Model-Q6_K.r1.ninferno") << "not an artifact";
-    const auto cached = pr::cached_quants(root, "org/Model-GGUF", "");
-    check(cached.size() == 3 && cached.contains("Q4_K_M") && cached.contains("Q8_0") &&
-              cached.contains("Q6_K"),
-          "a download, a split file's first part, a converted artifact");
+    const auto cached = pr::cached_quants(root, "huggingface", "org/Model-GGUF", "");
+    check(cached.size() == 2 && cached.contains("Q4_K_M") && cached.contains("Q8_0"),
+          "a download and a split file's first part");
     check(cached.at("Q8_0").filename() == "Model-Q8_0-00001-of-00002.gguf", "the split file's first part");
-    check(pr::cached_quants(root, "org/Model-GGUF", std::string(40, 'b')).empty(),
+    check(pr::cached_quants(root, "huggingface", "org/Model-GGUF", std::string(40, 'b')).empty(),
           "another revision's snapshot: none");
-    check(pr::cached_quants(root / "elsewhere", "org/Model-GGUF", "").empty(), "another root: none");
+    check(pr::cached_quants(root, "modelscope", "org/Model-GGUF", "").empty(),
+          "another hub's directory: none");
+    const std::string stamp = pr::cached_stamp(cached);
+    std::ofstream(snap / "Model-Q6_K.gguf") << "not a gguf either";
+    check(pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "")) != stamp,
+          "a download here changes the stamp");
     std::vector<pr::QuantListing> listing = {
         {.quant = "Q4_K_M", .format = "gguf", .bytes = 5ULL << 30, .bits = 4,
          .table = pr::GgufTensorTable{.tensor_bytes = 4ULL << 30}}};
     pr::tables_of_cached(listing, cached);
     check(listing.front().table && listing.front().table->tensor_bytes == (4ULL << 30),
           "an unreadable file here leaves the row's table as it was");
+    // The snapshot removed, its conversion kept (<repo>/ninferno/<commit>/): no complete artifact
+    // in this fixture, so none is served.
+    fs::remove_all(repo / "snapshots");
+    fs::create_directories(repo / "ninferno" / commit);
+    std::ofstream(repo / "ninferno" / commit / "Model-Q4_K_M.r1.ninferno") << "partial";
+    check(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "").empty(),
+          "an incomplete conversion is not served");
     fs::remove_all(root);
 }
 

@@ -1034,8 +1034,10 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
 
 std::string App::plan_key(const std::string& repo, const std::string& hub, int gpu,
                           const std::string& quant, const product::LaunchAsk& launch) const {
+    // A download or conversion here changes what a row prices (product::tables_of_cached).
     return hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
-           "|" + convert::conversions_stamp(hub_root(), repo);
+           "|" + convert::conversions_stamp(hub_root(), repo) + "|" +
+           product::cached_stamp(product::cached_quants(hub_root(), hub, repo, ""));
 }
 
 Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
@@ -1203,11 +1205,10 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
                 }
             }
         }
-        // The quantizations already in this UI's hub cache (the one its servers start with): by
-        // their own files, as the start and ninferno-serve --plan --no-load price them.
-        if (hub == "huggingface") {
-            product::tables_of_cached(listing, product::cached_quants(hub_root(), repo, commit));
-        }
+        // The quantizations already in this UI's hub cache (the one its servers start with), at
+        // the revision a start takes (main, as the start of `repo` without one): by their own
+        // files, as the start and ninferno-serve --plan --no-load price them.
+        product::tables_of_cached(listing, product::cached_quants(hub_root(), hub, repo, ""));
         std::lock_guard lock(sizes_mutex_);
         tables_seen = tables_generation_[hub_key(repo, hub)];
     }

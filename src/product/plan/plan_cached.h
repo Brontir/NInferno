@@ -23,14 +23,19 @@ namespace ninferno::product {
 [[nodiscard]] convert::GgufFile read_local_head(const std::filesystem::path& path);
 // Every part of a split GGUF beside `path` ("x-00001-of-00003.gguf"), or the file alone.
 [[nodiscard]] std::uint64_t local_gguf_bytes(const std::filesystem::path& path);
-// The GGUF quantizations of hub repository `repo` at `revision` ("": main) in the hub cache at
-// `hub_root`, each with its file: a downloaded GGUF (the first part of a split one), or the
-// artifact converted from one (<snapshot>/.ninferno-cache/<gguf stem>.<recipe>.ninferno).
+// The GGUF quantizations of hub repository `repo` on `hub` ("huggingface" | "modelscope") at
+// `revision` ("": main, as a start without a revision) in the hub cache at `hub_root`, each with
+// its file: a downloaded GGUF (the first part of a split one) in the revision's snapshot; where
+// the snapshot was removed, the conversion a start serves in its place (convert::kept_artifact).
 [[nodiscard]] std::map<std::string, std::filesystem::path>
-cached_quants(const std::filesystem::path& hub_root, const std::string& repo,
-              const std::string& revision);
+cached_quants(const std::filesystem::path& hub_root, const std::string& hub,
+              const std::string& repo, const std::string& revision);
+// What cached_quants found as a key (labels, files, sizes, times): a plan of the repository
+// priced by them is planned again when a download or conversion changes it.
+[[nodiscard]] std::string cached_stamp(const std::map<std::string, std::filesystem::path>& cached);
 // A quantization here: its own tensor table (nullopt: unreadable, a split part). A GGUF's from its
-// header; a converted artifact's from its tensors with its own drafter and MTP layers.
+// header; a converted artifact's from its tensors with its own drafter and MTP layers. Read once
+// per file as it is (path, size, time).
 [[nodiscard]] std::optional<GgufTensorTable> local_tensor_table(const std::filesystem::path& path);
 // The listing's quantizations that are here priced by their own files (over a hub header's).
 void tables_of_cached(std::vector<QuantListing>& listing,

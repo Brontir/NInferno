@@ -69,7 +69,8 @@ using product::tables_of_cached;
 // fetch and a start take: convert::default_hub_cache, HF_HUB_CACHE).
 std::map<std::string, fs::path> cached_quants(const std::string& repo,
                                               const std::string& revision) {
-    return product::cached_quants(convert::default_hub_cache(), repo, revision);
+    return product::cached_quants(convert::default_hub_cache(), fetch_options().hub, repo,
+                                  revision);
 }
 
 std::uint64_t safetensors_bytes(const fs::path& dir) {
