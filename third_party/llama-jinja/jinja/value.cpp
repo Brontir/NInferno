@@ -207,7 +207,11 @@ static value select_or_reject(const func_args& args) {
             func_args test_args(args.ctx);
             test_args.push_back(val);
             for (size_t i = test_pos + 1; i < args.count(); i++) {
-                test_args.push_back(args.get_pos(i));
+                // A named test argument (select('divisibleby', num=2)) reaches the test as its
+                // value: the built-in tests take their operands by position.
+                const value arg = args.get_pos(i);
+                test_args.push_back(is_val<value_kwarg>(arg) ? cast_val<value_kwarg>(arg)->val
+                                                             : arg);
             }
             is_selected = test_it->second(test_args)->as_bool();
         }

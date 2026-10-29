@@ -126,6 +126,7 @@ int language_semantics() {
         // rejectattr an attribute and then a test.
         {"{{ n|select('odd')|join(',') }}|{{ n|reject('odd')|join(',') }}|"
          "{{ v|select|join(',') }}|{{ n|select('divisibleby', 2)|join(',') }}|"
+         "{{ n|select('divisibleby', num=2)|join(',') }}|"
          "{% for p in t|selectattr('type', 'defined') %}{{ p.type }} {% endfor %}|"
          "{{ t|rejectattr('type', 'defined')|list|length }}|"
          "{% for p in o|selectattr('odd', 'even') %}{{ p.odd }} {% endfor %}",
@@ -134,7 +135,7 @@ int language_semantics() {
           {"t", Json::array({Json{{"type", "string"}}, Json{{"enum", Json::array({1})}},
                              Json{{"type", "integer"}}})},
           {"o", Json::array({Json{{"odd", 1}}, Json{{"odd", 2}}, Json{{"odd", 4}}})}},
-         "1,3,5|2,4|1,a|2,4|string integer |1|2 4 "},
+         "1,3,5|2,4|1,a|2,4|2,4|string integer |1|2 4 "},
         // llama.cpp #30819: unique, first of each value in order; strings fold case unless
         // case_sensitive (as jinja2).
         {"{{ n|unique|join(',') }}|{{ s|unique|join(',') }}|"
