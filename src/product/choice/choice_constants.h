@@ -271,8 +271,11 @@ struct GenerationEta {
     double eta;
 };
 
+// Turing's row: the census of the RTX 2080 Ti's prefill (int8_kv_tiled_mma_kernel: 111 ms of a 6.8K
+// prompt, 11.5 ms of a 2K one: 0.167 / 0.143; one card); the former 0.069 was fitted together with
+// the int8 row at 22K and priced the attention 2.4x slow while the linears ran fast.
 inline constexpr GenerationEta kPrefillAttentionEta[] = {
-    {"ada", 0.742}, {"gb20x", 0.740}, {"turing", 0.069}, {"ga10x", 0.497}};
+    {"ada", 0.742}, {"gb20x", 0.740}, {"turing", 0.160}, {"ga10x", 0.497}};
 
 // What the exact route's compute adds to a decode step beyond the fast route's: its rows' flops
 // (C 2 P) at this share of the int8 tensor peak, its FP32 state's bytes apart (run_sw.sh, 9B at a
