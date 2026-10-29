@@ -248,6 +248,11 @@ int main() {
         expect(lab.known && mine.known && mine.cost.at("mtp:3") < lab.cost.at("mtp:3") &&
                    mine.cost.at("dflash:7") == lab.cost.at("dflash:7"),
                "the card's artifact rows price its MTP rounds; DFlash's (not named) stay");
+        // A tune's "mtp:3" drafted with the full head whatever rows its artifact had: its own
+        // rounds priced so (only a "+head" label drafted through the rows).
+        const auto plain_labels = sp::round_cost_estimate(pair, rtx4060ti);
+        expect(plain_labels.known && plain_labels.cost.at("mtp:3") == lab.cost.at("mtp:3"),
+               "a configuration without +head was measured with the full head");
         // An artifact's rows: its proposal head where a Use binds it to the drafter, MTP its
         // own prefix (drafter_rows), DFlash all of them; DFlash2 none (the whole domain).
         namespace art = ninferno::artifact;
