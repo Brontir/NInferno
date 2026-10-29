@@ -1512,7 +1512,9 @@ frontend (`runtime::prompt_tail_calls`: the execution boundaries a one-message p
 carries, the same at two prompt lengths); the choice prices each as one decode step of the
 candidate without its drafter, in the prefill rate and in a task's time, and its line says
 `prefill (2 tail calls)`. Qwen 3.5 and Gemma 4 count 2. The UI does not link the engine, so it
-prices none. Clean server sweeps (`prompt_ms` at 962 .. 7612 tokens, three repeats, the kit's flags)
+prices none: its estimate of a request is short of the server's by the two steps (10 .. 40 ms), and a
+near tie between candidates can fall the other way there (a later step: the count written into the
+artifact at conversion, where the UI reads its facts). Clean server sweeps (`prompt_ms` at 962 .. 7612 tokens, three repeats, the kit's flags)
 against two weight reads over the DRAM rate:
 
 | card | model | slope tok/s | intercept ms | 2 x weights / DRAM ms |
