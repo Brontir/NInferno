@@ -505,6 +505,39 @@
      "mmlu_pro_philosophy:436"
     ],
     "date": "2026-10-29"
+   },
+   {
+    "card": "NVIDIA GeForce RTX 5090",
+    "correct": 29,
+    "by_dataset": {
+     "gsm8k": 14,
+     "math_500": 10,
+     "mmlu_pro": 5
+    },
+    "wrong": [
+     "gsm8k_main:1035",
+     "gsm8k_main:12",
+     "gsm8k_main:147",
+     "gsm8k_main:163",
+     "gsm8k_main:205",
+     "gsm8k_main:835",
+     "math_500_Level 3:83",
+     "math_500_Level 4:22",
+     "math_500_Level 4:25",
+     "math_500_Level 4:82",
+     "math_500_Level 5:131",
+     "math_500_Level 5:33",
+     "math_500_Level 5:40",
+     "math_500_Level 5:42",
+     "math_500_Level 5:46",
+     "math_500_Level 5:70",
+     "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
+     "mmlu_pro_history:50",
+     "mmlu_pro_philosophy:436",
+     "mmlu_pro_psychology:150"
+    ],
+    "date": "2026-10-29"
    }
   ],
   "unsloth/Qwen3.8-27B-GGUF UD-Q4_K_S": [
