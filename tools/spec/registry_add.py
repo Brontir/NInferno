@@ -383,7 +383,8 @@ def user_pair(doc: dict, run_id: str, registry: dict | None = None) -> dict:
                          "validate.py RUN.json says why")
     target, manifest = run["target"], run["manifest"]
     tune = json.loads(json.dumps(run["profile"]))
-    measured = {m.get("config", "plain").split(":")[0] for m in tune.get("measurements", [])} - {"plain"}
+    measured = {k for m in tune.get("measurements", []) if m.get("config", "plain") != "plain"
+                for k in validate.kinds_of(m["config"])}
     drafters = []
     for d in manifest.get("drafters", []):
         if d.get("kind") in measured and d.get("repo") == "other":

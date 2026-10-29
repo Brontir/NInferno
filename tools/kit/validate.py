@@ -221,17 +221,37 @@ def chip_of(gpu_class):
     return str(gpu_class or "").split(":")[0].lower()
 
 
+# The drafter kinds a configuration's mode drafts with (spec::drafter_kind_mode, pairs.cpp): an
+# "mtp:K" label runs a Gemma 4 assistant or a NemotronH sidecar where the target has one.
+MODE_KINDS = {"mtp": ("mtp", "gemma4_assistant", "nemotron_h_mtp")}
+
+
+def kinds_of(label):
+    mode = str(label).split(":")[0]
+    return MODE_KINDS.get(mode, (mode,))
+
+
 def drafter_matches(pair, manifest, label):
-    """The pair drafted `label` with the drafter the user's manifest attached: a separate drafter
-    by the same repo@revision (an embedded MTP head is the target's own)."""
-    kind = label.split(":")[0]
-    wanted = (pair.get("drafters") or {}).get(kind)
-    if not wanted:
-        return True
-    for d in (manifest or {}).get("drafters", []):
-        if d.get("kind") == kind and d.get("repo") not in (None, "", "other"):
-            return f"{d['repo']}@{d.get('revision', '')}" == wanted
-    return False
+    """The pair drafted `label` with the drafter the user's manifest attached: each separate
+    drafter of the label's mode by the same repo@revision (an embedded MTP head is the target's
+    own)."""
+    for kind in kinds_of(label):
+        wanted = (pair.get("drafters") or {}).get(kind)
+        if not wanted:
+            continue
+        mine = [d for d in (manifest or {}).get("drafters", []) if d.get("kind") == kind
+                and d.get("repo") not in (None, "", "other")]
+        if not any(f"{d['repo']}@{d.get('revision', '')}" == wanted for d in mine):
+            return False
+    return True
+
+
+def unrecordable_drafters(manifest, labels):
+    """The measured modes' separate drafters the manifest could not name (a repository the
+    registry does not declare: recorded as "other")."""
+    kinds = {k for label in labels for k in kinds_of(label)}
+    return sorted({d.get("kind") for d in (manifest or {}).get("drafters", [])
+                   if d.get("kind") in kinds and d.get("repo") == "other"})
 
 
 def lab_pairs(registry, run):
@@ -388,6 +408,9 @@ def judge_spec(doc, run, out, capped, registry, tolerance):
         out["candidate"] = "no: the target's identity or the manifest was not recorded"
     elif unmeasured:
         out["candidate"] = "no: a configuration without a round in a section"
+    elif unrecordable_drafters(run.get("manifest"), labels):
+        out["candidate"] = ("no: a measured drafter the registry does not declare ("
+                            + ", ".join(unrecordable_drafters(run.get("manifest"), labels)) + ")")
     elif contradicted:
         out["candidate"] = "no: an acceptance contradicts the lab pairs"
     elif pairs and not same_settings:

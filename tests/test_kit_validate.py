@@ -402,6 +402,19 @@ class Spec(unittest.TestCase):
             p["drafters"] = {"dflash": "z/D@r2"}
         self.assertTrue(row(judge(run, good), "acceptance dflash:7")["verdict"].startswith("no reference"))
 
+    def test_gemma_assistant_is_the_mtp_labels_drafter(self):
+        run = spec_run()
+        run["manifest"]["drafters"] = [{"name": "assistant", "kind": "gemma4_assistant", "status": "attached",
+                                        "repo": "g/A", "revision": "r1"}]
+        pairs = [lab_pair(drafters={"gemma4_assistant": "g/A@r1"}),
+                 lab_pair("ad102:128sm", drafters={"gemma4_assistant": "g/A@r1"})]
+        self.assertTrue(row(judge(run, pairs), "acceptance mtp:3")["verdict"].startswith("confirms"))
+        for p in pairs:
+            p["drafters"] = {"gemma4_assistant": "g/A@r2"}
+        self.assertIn("another drafter", row(judge(run, pairs), "acceptance mtp:3")["verdict"])
+        run["manifest"]["drafters"][0]["repo"] = "other"
+        self.assertTrue(judge(run)["candidate"].startswith("no: a measured drafter the registry does not declare"))
+
     def test_partial_or_unidentified_tunes_are_no_candidates(self):
         run = spec_run()
         run["profile"]["skipped"] = ["dflash:7"]
