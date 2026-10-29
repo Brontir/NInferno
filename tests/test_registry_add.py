@@ -497,18 +497,5 @@ class RoundFactsTest(unittest.TestCase):
         out = registry_add.put_pair([old], new)
         self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
 
-class ProposalRowsTest(unittest.TestCase):
-    """registry_add.proposal_rows_of: the draft head rows the lab artifact's drafters read."""
-
-    def test_rows_by_drafter(self):
-        components = {"text": {"proposal": {"domain": "indexed", "rows": 147456, "drafter_rows": {"mtp": 57344}}},
-                      "mtp": {}, "dflash": {}, "dflash2": {}}
-        uses = [{"parameter": "proposal/head", "input": f"{c}/final_hidden"} for c in ("mtp", "dflash", "dflash2")]
-        self.assertEqual(registry_add.proposal_rows_of(components, uses), {"mtp": 57344, "dflash": 147456})
-        self.assertEqual(registry_add.proposal_rows_of(components, uses[1:]), {"dflash": 147456})
-        components["text"]["proposal"] = {"domain": "full"}
-        self.assertEqual(registry_add.proposal_rows_of(components, uses), {})
-
-
 if __name__ == "__main__":
     unittest.main()

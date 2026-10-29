@@ -14,6 +14,9 @@ namespace {
 
 using Json = nlohmann::json;
 
+// Q4_G64_FP16: 4-bit codes and a binary16 scale a 64 values (convert stored_bits).
+constexpr double kProposalQ4BitsPerValue = 4.25;
+
 Json pass_json(const PassFacts& p) {
     Json out{{"bytes", p.bytes}, {"params", p.params}};
     if (p.experts > 0) {
@@ -72,20 +75,29 @@ double pass_cost(const PassFacts& p, std::int32_t rows, double kappa) {
     return bytes + kappa * ops;
 }
 
-// A head's facts over `rows` of its rows (0: all): its bytes and parameters in the share its head
-// linears' rows give (unscaled when it lists none, or `rows` covers them).
+// A head's facts over `rows` of its rows (0: all), as the converter stores a proposal head
+// (convert/checks.cpp add_official_proposal, planned_proposal_bytes): a GGUF target's rows in its
+// head's own format (its bytes' share; measured, RTX 4070 Ti: the Q6_K rows' GEMV 1038.5 / 405.7 us
+// at 147,456 / 57,344 rows, 94 % of the DRAM rate both), a checkpoint's gathered rows re-encoded
+// Q4_G64_FP16 (4.25 bits a value). Unchanged when its facts list no head linear, or `rows` covers
+// them.
 PassFacts head_over_rows(const PassFacts& head, std::uint64_t rows) {
     std::int64_t all = 0;
+    bool gguf        = true;
     for (const auto& g : head.linears) {
-        if (g.head) { all += g.n; }
+        if (!g.head) { continue; }
+        all += g.n;
+        gguf = gguf && g.format.starts_with("gguf:");
     }
     if (rows == 0 || all <= 0 || rows >= std::uint64_t(all)) { return head; }
     const double share = double(rows) / double(all);
     PassFacts out      = head;
-    out.bytes *= share;
     out.params *= share;
+    out.bytes = gguf ? head.bytes * share : out.params * kProposalQ4BitsPerValue / 8;
     for (auto& g : out.linears) {
-        if (g.head) { g.n = std::max<std::int64_t>(1, std::int64_t(std::llround(double(g.n) * share))); }
+        if (!g.head) { continue; }
+        g.n = std::max<std::int64_t>(1, std::int64_t(std::llround(double(g.n) * share)));
+        if (!gguf) { g.format = "conv:q4_g64"; }
     }
     return out;
 }

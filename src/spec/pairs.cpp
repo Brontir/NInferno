@@ -132,11 +132,6 @@ nlohmann::json pair_json(const MeasuredPair& pair) {
              {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
     if (!pair.drafters.empty()) { out["drafters"] = pair.drafters; }
     if (pair.round_facts) { out["round_facts"] = round_facts_json(*pair.round_facts); }
-    if (!pair.proposal_rows.empty()) {
-        Json rows = Json::object();
-        for (const auto& [mode, n] : pair.proposal_rows.rows) { rows[mode] = n; }
-        out["proposal_rows"] = std::move(rows);
-    }
     if (pair.lab_board != 0) {
         char id[16];
         std::snprintf(id, sizeof id, "0x%04X", pair.lab_board);
@@ -160,15 +155,7 @@ MeasuredPair parse_pair(const nlohmann::json& doc) {
         if (const auto it = doc.find("round_facts"); it != doc.end()) {
             out.round_facts = parse_round_facts(*it);
         }
-        if (const auto it = doc.find("proposal_rows"); it != doc.end()) {
-            for (const auto& [mode, n] : it->items()) {
-                const auto rows = n.get<std::uint64_t>();
-                if (rows == 0) {
-                    throw std::runtime_error("speculation pair: proposal_rows of " + mode + " is 0");
-                }
-                out.proposal_rows.rows[mode] = rows;
-            }
-        }
+
         if (const auto it = doc.find("lab_board"); it != doc.end()) {
             const auto text = it->get<std::string>();
             char* end       = nullptr;
@@ -423,8 +410,9 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
         const auto config = SpecConfig::parse(label);
         if (!config.enabled() || config.k > kPortableDepth) { continue; }
         const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
-                                      head_rows != nullptr ? *head_rows : pair.proposal_rows);
-        const auto there = round_cost(*pair.round_facts, config, home.kappa(), pair.proposal_rows);
+                                      head_rows != nullptr ? *head_rows : pair.tune.proposal_rows);
+        const auto there =
+            round_cost(*pair.round_facts, config, home.kappa(), pair.tune.proposal_rows);
         if (!here || !there || *there <= 0) { continue; }
         double cost = *here;
         // What the bytes do not show, as the lab card measured it: scales the estimate up only.

@@ -451,6 +451,20 @@ void resolve_manifest_profile(const SpeculationManifest& manifest,
 // out.other_kinds (ResolvedSpeculation::other_kinds): its lab measurement (pair_choice over that
 // kind: its pair, a sibling's, its group's), else the published profile for this GPU where that
 // drafts with it. `label`, `weights`, `quant` and `repo` as for the profile itself.
+// The selection options of a target at `artifact`: its rounds priced with the draft head rows it
+// reads (artifact_proposal_rows); where it does not read (a target not converted yet, a hub
+// label), the lab artifact's (the pair's own, SelectOptions::proposal_rows absent).
+SelectOptions rows_of(const std::filesystem::path& artifact) {
+    SelectOptions out;
+    std::error_code ec;
+    if (artifact.empty() || !std::filesystem::is_regular_file(artifact, ec)) { return out; }
+    try {
+        out.proposal_rows = artifact_proposal_rows(artifact::Reader(artifact).directory());
+    } catch (const std::exception&) {
+    }
+    return out;
+}
+
 void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesystem::path& label,
                          const GpuKey& gpu, std::string_view weights, std::string_view quant,
                          std::string_view repo, ResolvedSpeculation& out) {
@@ -469,7 +483,7 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
         alone.fallback = out.fallback;
         if (!registry.pairs().empty() && manifest.source != "bundle") {
             if (auto choice = pair_choice(registry.pairs(), weights, manifest.engine, {d.kind},
-                                          label_bits(quant), gpu_generation(gpu), {},
+                                          label_bits(quant), gpu_generation(gpu), rows_of(label),
                                           attached_identities(manifest), repo, &gpu)) {
                 attach_drafters(manifest, choice->profile, alone);
                 std::string origin;
@@ -518,15 +532,8 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     for (const auto& d : manifest.drafters) {
         if (d.usable()) { kinds.push_back(d.kind); }
     }
-    // Its rounds priced with the draft head rows this artifact reads.
-    SelectOptions options;
-    try {
-        options.proposal_rows = artifact_proposal_rows(artifact::Reader(artifact).directory());
-    } catch (const std::exception&) {
-        // Unreadable here: the lab artifact's rows (the pair's).
-    }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu), options,
+                              label_bits(quant), gpu_generation(gpu), rows_of(artifact),
                               attached_identities(manifest), hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
@@ -564,7 +571,7 @@ bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& co
         if (components.contains(kind)) { kinds.emplace_back(kind); }
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu), {}, {},
+                              label_bits(quant), gpu_generation(gpu), rows_of(artifact), {},
                               hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {

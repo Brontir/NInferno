@@ -172,6 +172,11 @@ struct ServedChoices {
 struct Profile {
     ProfileKey key;
     std::string artifact;
+    // The draft head rows the tuned artifact's drafters read ("proposal_rows": {"mtp": 57344},
+    // spec::artifact_proposal_rows): what the measured rounds paid for the head. Empty: the full
+    // head (no proposal head; a tune before it was recorded, all of them before #170's default
+    // proposal head).
+    ProposalRows proposal_rows;
     std::string created;
     std::string settings; // engine settings the tune ran with (context, chunk, KV codec)
     double tune_seconds = 0;

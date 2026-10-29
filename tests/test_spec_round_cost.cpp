@@ -212,18 +212,42 @@ int main() {
         expect(*sp::round_cost(facts, dflash, k4060, sp::ProposalRows{{{"dflash", 147456}}}) <
                    *sp::round_cost(facts, dflash, k4060),
                "DFlash's head over the k drafts reads the proposal rows too");
-        // A pair's lab rows round-trip; zero rows are refused.
-        auto pair                    = pair_of(kQ9, "ad104:60sm");
-        pair.proposal_rows           = after;
-        const auto again             = sp::parse_pair(sp::pair_json(pair));
-        expect(again.proposal_rows == after, "a pair's proposal rows round-trip");
-        auto zero                    = sp::pair_json(pair);
-        zero["proposal_rows"]["mtp"] = 0;
-        bool refused                 = false;
+        // A checkpoint's head (BF16 here): its proposal rows are stored Q4_G64_FP16 (4.25 bits a
+        // value), a GGUF's in the head's own format (its bytes' share, above).
+        {
+            sp::RoundFacts f;
+            f.target = sp::PassFacts{.bytes = 1000, .params = 1000};
+            sp::DraftFacts d;
+            d.pass = sp::PassFacts{.bytes = 100, .params = 100};
+            d.head = sp::PassFacts{.bytes = 2.0 * 1000 * 64, .params = 1000.0 * 64};
+            d.head->linears = {{.format = "bf16", .n = 1000, .k = 64, .count = 1, .head = true}};
+            f.drafters["mtp"] = d;
+            const auto c = sp::SpecConfig::parse("mtp:2");
+            const auto r = sp::round_cost(f, c, 0.0, sp::ProposalRows{{{"mtp", 100}}});
+            expect(r && near(*r, (1000 + 2 * (100 + 100 * 64 * 4.25 / 8)) / 1000, 1e-12),
+                   "a checkpoint's proposal rows at Q4_G64_FP16's 4.25 bits");
+        }
+        // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
+        // refused.
+        auto pair                            = pair_of(kQ9, "ad104:60sm");
+        pair.tune.proposal_rows              = after;
+        const auto again                     = sp::parse_pair(sp::pair_json(pair));
+        expect(again.tune.proposal_rows == after, "a tune's proposal rows round-trip");
+        auto zero                            = sp::pair_json(pair);
+        zero["tune"]["proposal_rows"]["mtp"] = 0;
+        bool refused                         = false;
         try {
             (void)sp::parse_pair(zero);
         } catch (const std::runtime_error&) { refused = true; }
         expect(refused, "zero proposal rows are refused");
+        // The lab card's own rounds at its rows, the card's at its artifact's: a lab artifact of
+        // the full head and a card's of MTP's prefix price the card's MTP rounds cheaper.
+        const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        const auto lab       = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti);
+        const auto mine      = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti, &after);
+        expect(lab.known && mine.known && mine.cost.at("mtp:3") < lab.cost.at("mtp:3") &&
+                   mine.cost.at("dflash:7") == lab.cost.at("dflash:7"),
+               "the card's artifact rows price its MTP rounds; DFlash's (not named) stay");
         // An artifact's rows: its proposal head where a Use binds it to the drafter, MTP its
         // own prefix (drafter_rows), DFlash all of them; DFlash2 none (the whole domain).
         namespace art = ninferno::artifact;
