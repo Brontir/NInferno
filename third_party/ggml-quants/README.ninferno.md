@@ -27,3 +27,5 @@ copy as vendored (commit `e200e9d9a`).
   `vec_dot_q8_1_q8_1_impl` multiply the block scales in FP32 on every architecture. Upstream's
   FAST_FP16 branch multiplied them in FP16: an offset `m` times an activation-block sum overflows to
   inf on large activations (ggml-org/llama.cpp#30950, the same fix). The DP4A tile path calls them.
+  Still FP16: `mmq-load-tiles.cuh`'s Q2_K tile loader multiplies a scale by a 4-bit code with
+  `__hmul2` (at most 15 times the scale, far from the FP16 limit), kept as upstream has it.
