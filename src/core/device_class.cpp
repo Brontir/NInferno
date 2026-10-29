@@ -592,17 +592,25 @@ bool device_has_kernel_image(int device) {
 }
 
 namespace {
-thread_local const DeviceClass* t_substitute = nullptr;
+thread_local const DeviceClass* t_substitute       = nullptr;
+thread_local const std::string* t_substitute_key   = nullptr;
 } // namespace
 
 ScopedDeviceClass::ScopedDeviceClass(DeviceClass substitute)
-    : substitute_(std::move(substitute)), previous_(t_substitute) {
-    t_substitute = &substitute_;
+    : substitute_(std::move(substitute)), key_(device_class_key(substitute_)),
+      previous_(t_substitute), previous_key_(t_substitute_key) {
+    t_substitute     = &substitute_;
+    t_substitute_key = &key_;
 }
 
-ScopedDeviceClass::~ScopedDeviceClass() { t_substitute = previous_; }
+ScopedDeviceClass::~ScopedDeviceClass() {
+    t_substitute     = previous_;
+    t_substitute_key = previous_key_;
+}
 
 const DeviceClass* substituted_device_class() noexcept { return t_substitute; }
+
+const std::string* substituted_device_class_key() noexcept { return t_substitute_key; }
 
 std::string device_class_key(const DeviceClass& d) {
     const auto& f = d.features;

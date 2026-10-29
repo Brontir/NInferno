@@ -43,13 +43,13 @@ class PerDevice {
 public:
     template <class Make>
     const T& get(Make&& make) {
-        if (const DeviceClass* substitute = substituted_device_class()) {
+        if (const std::string* substitute = substituted_device_class_key()) {
             int device = -1;
             if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) {
                 (void)cudaGetLastError();
                 device = -1;
             }
-            const std::string key = std::to_string(device) + '|' + device_class_key(*substitute);
+            const std::string key = std::to_string(device) + '|' + *substitute;
             std::lock_guard lock(substituted_mutex_);
             auto it = substituted_.find(key);
             if (it == substituted_.end()) {

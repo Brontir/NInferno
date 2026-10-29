@@ -278,11 +278,15 @@ public:
 
 private:
     DeviceClass substitute_;
+    std::string key_;
     const DeviceClass* previous_;
+    const std::string* previous_key_;
 };
 
-// The substitute this thread's device_class() answers (ScopedDeviceClass), or null.
+// The substitute this thread's device_class() answers (ScopedDeviceClass), or null; and its
+// device_class_key, computed once when the substitution began (null without one).
 [[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+[[nodiscard]] const std::string* substituted_device_class_key() noexcept;
 
 // Every field of a class that a decision may read, as one string: two classes with the same key
 // answer every query alike. A cache keyed by it holds one entry per distinct substitute.

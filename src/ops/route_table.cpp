@@ -499,10 +499,23 @@ std::mutex g_substituted_mutex;
 std::map<std::string, std::unique_ptr<DeviceTables>> g_substituted;
 
 // The calling thread's device, or device 0 where none is current (a table inspected or loaded
-// before any device is set); a substituted class's own.
+// before any device is set); a substituted class's own, except that a substitute equal to the
+// current device's own class reads that device's tables (an explicit --route-table included), so
+// the pure query asked of the engine's own board answers as the engine selects.
 DeviceTables& here() {
-    if (const DeviceClass* substitute = substituted_device_class()) {
-        const std::string key = device_class_key(*substitute);
+    if (const std::string* substitute = substituted_device_class_key()) {
+        int device = 0;
+        if (cudaGetDevice(&device) == cudaSuccess && device >= 0 && device < kMaxDevices) {
+            try {
+                if (device_class_key(device_class(device)) == *substitute) {
+                    return g_devices[static_cast<std::size_t>(device)];
+                }
+            } catch (const std::exception&) {
+            }
+        } else {
+            (void)cudaGetLastError();
+        }
+        const std::string& key = *substitute;
         std::lock_guard lock(g_substituted_mutex);
         auto& slot = g_substituted[key];
         if (!slot) slot = std::make_unique<DeviceTables>();
