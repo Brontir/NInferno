@@ -210,7 +210,9 @@ def text_blob():
 def prompt_of(blob, chars, i, nonce):
     """A slice of the long text at its own offset, after a nonce line (a probe and its timed
     request share no reusable prefix beyond the chat template's head), and the question."""
-    offset = (i * 7919 * 13 + i * 104729) % max(1, len(blob) - 4 * chars)
+    # The offset is the slice's own, whatever its length (a probe and its timed request read the
+    # same text): within the first half of the text, the second half left for the length.
+    offset = (i * 7919 * 13 + i * 104729) % max(1, len(blob) // 2)
     return f"[{nonce}]\n" + blob[offset:offset + chars] + QUESTION
 
 
