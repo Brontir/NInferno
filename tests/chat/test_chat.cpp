@@ -971,6 +971,9 @@ int test_argument_key_order() {
              {ToolCallFormat::Atem, recursive},
              {ToolCallFormat::Pythonic, patterned},
              {ToolCallFormat::Gemma4, Json::parse(R"({"anyOf":[{"type":"object"},{"type":"null"}]})")},
+             {ToolCallFormat::Gemma4, named("a<|\"|>b")},
+             {ToolCallFormat::Atem,
+              Json::parse(R"({"type":"object","properties":{"v":{"enum":["a</atem:parameter>b"]}}})")},
          }) {
         const std::vector<ToolCallConstraintTool> tools = {
             {.name = "fill", .parameters_json = refused.dump(), .strict = true}};
@@ -986,6 +989,25 @@ int test_argument_key_order() {
         failures += check(code == "unsupported_schema",
                           std::string(ninferno::chat::tool_call_format_name(format)) +
                               " strict schema refused: " + refused.dump() + ": " + code);
+    }
+    // A root typed ["object"] is the same object root.
+    for (const ToolCallFormat format :
+         {ToolCallFormat::Gemma4, ToolCallFormat::Pythonic, ToolCallFormat::Atem}) {
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name            = "fill",
+             .parameters_json = R"({"type":["object"],"properties":{"a":{"type":"integer"}}})",
+             .strict          = true}};
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition             = ninferno::chat::tool_call_syntax(format).structural_tag(
+            tools, ToolCallRequirement::Required, "", true);
+        bool compiled = true;
+        try {
+            (void)compiler.compile(spec);
+        } catch (const std::exception&) { compiled = false; }
+        failures += check(compiled, std::string(ninferno::chat::tool_call_format_name(format)) +
+                                        " accepts a root typed [\"object\"]");
     }
     // ATEM: a constrained string is the text between the tags, read back as written; an additional
     // key never spells a declared one.
