@@ -1,0 +1,775 @@
+{
+ "about": "Prefill (prompt tokens a second, the server's timings) of one request of `prompt` tokens, max_tokens 1, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model); prompts of 3K tokens and more (below, a request's fixed time the model leaves out dominates).",
+ "models": {
+  "Qwen3.5-9B-MTP": {
+   "family": "qwen3_5_text",
+   "params": 8815378432.0,
+   "active_params": 7798259712.0,
+   "experts": 0,
+   "experts_per_token": 0,
+   "routed_expert_params": 0,
+   "input_table_params": 1017118720,
+   "layers": 32,
+   "recurrent": true,
+   "kv_bytes_per_token": {
+    "bf16": 32768,
+    "fp8": 16512,
+    "int8": 16896,
+    "k8v4": 12864,
+    "nvfp4": 9216
+   },
+   "state_bytes": {
+    "f16": 26345472,
+    "f32": 52690944
+   },
+   "full_attention_width": 65536.0,
+   "sliding_attention_width": 0.0,
+   "quants": {
+    "Q4_K_M": {
+     "bits_per_weight": 5.095,
+     "weight_bytes": 5857857536,
+     "input_table_bytes": 572129280,
+     "speculation_bytes": 167757824
+    },
+    "Q8_0": {
+     "bits_per_weight": 8.503,
+     "weight_bytes": 9775091712,
+     "input_table_bytes": 1080688640,
+     "speculation_bytes": 258557952
+    }
+   }
+  }
+ },
+ "cards": {
+  "RTX 4060 Ti": {
+   "major": 8,
+   "minor": 9,
+   "sms": 34,
+   "clock_hz": 2535000000.0,
+   "dram_bytes_per_s": 288000000000.0,
+   "fp4": false
+  },
+  "RTX 4070 Ti": {
+   "major": 8,
+   "minor": 9,
+   "sms": 60,
+   "clock_hz": 2610000000.0,
+   "dram_bytes_per_s": 504000000000.0,
+   "fp4": false
+  },
+  "RTX 4090": {
+   "major": 8,
+   "minor": 9,
+   "sms": 128,
+   "clock_hz": 2520000000.0,
+   "dram_bytes_per_s": 1008000000000.0,
+   "fp4": false
+  },
+  "RTX 3060": {
+   "major": 8,
+   "minor": 6,
+   "sms": 28,
+   "clock_hz": 1777000000.0,
+   "dram_bytes_per_s": 360000000000.0,
+   "fp4": false
+  },
+  "RTX 2080 Ti": {
+   "major": 7,
+   "minor": 5,
+   "sms": 68,
+   "clock_hz": 1545000000.0,
+   "dram_bytes_per_s": 616000000000.0,
+   "fp4": false
+  },
+  "RTX 5070 Ti": {
+   "major": 12,
+   "minor": 0,
+   "sms": 70,
+   "clock_hz": 2452000000.0,
+   "dram_bytes_per_s": 896000000000.0,
+   "fp4": true
+  },
+  "RTX 5090": {
+   "major": 12,
+   "minor": 0,
+   "sms": 170,
+   "clock_hz": 2407000000.0,
+   "dram_bytes_per_s": 1792000000000.0,
+   "fp4": true
+  }
+ },
+ "rows": [
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 3331.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 3296.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 3361.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 3360.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 3286.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 3292.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 2112.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 2087.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 2135.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 2136.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 2125.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 2125.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 5754.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 5696.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 5839.3,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 5836.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 5715.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 5736.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 4176.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 4133.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 4265.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 4260.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 4226.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 4231.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 11676.1,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 11422.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 12007.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 11958.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 11788.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 11817.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 8775.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 8670.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 8980.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 8978.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 8917.3,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 8928.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 2066.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 2044.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 2064.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 2066.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 2016.1,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 2020.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 2009.1,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 1989.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 2014.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 2013.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 1971.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 1974.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 2516.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 2489.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 2516.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 2519.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 2425.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 2426.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 1828.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 1811.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 1819.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 1819.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 1778.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 1779.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 6988.5,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 6911.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 7057.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 7056.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 6937.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 6944.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 6360.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 6288.3,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 6407.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 6409.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 6336.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 6316.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3203,
+   "prefill": 14797.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 3160,
+   "prefill": 14614.1,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6877,
+   "prefill": 14958.9,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 6629,
+   "prefill": 14993.3,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 14390,
+   "prefill": 14727.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "prompt": 13923,
+   "prefill": 14741.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3203,
+   "prefill": 13401.7,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 3160,
+   "prefill": 13259.6,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6877,
+   "prefill": 13680.4,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 6629,
+   "prefill": 13630.0,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 14390,
+   "prefill": 13444.2,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "prompt": 13923,
+   "prefill": 13514.8,
+   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  }
+ ]
+}

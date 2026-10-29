@@ -110,8 +110,10 @@ struct QuantOption {
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
-    // The decode routes its weights take (weight_class_of): an Other's speed is transferred and it
-    // wins no decision on worth (plan_quants).
+    // The routes its weights take (weight_class_of): Q8 prefills on the generic int8 tiles, not
+    // ggml's MMQ (a GGUF's Q8_0 converts to q8_g32_fp16, which the int8 tiers take: ops/generic
+    // q8_prefill_a8); an Other's decode speed is transferred and it wins no decision on worth
+    // (plan_quants).
     WeightClass weights = WeightClass::KQuant;
 };
 
