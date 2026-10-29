@@ -46,4 +46,10 @@ void debug_device_fault_point() noexcept;
 // file is one error. Unset, one cached check.
 void debug_transient_cuda_error_point();
 
+// Debug-only out-of-vocabulary token. When the file named by NINFERNO_DEBUG_TOKEN_DOMAIN_FILE
+// exists, debug_token_domain_point() removes it and returns true: the caller replaces one sampled
+// token with one outside the public vocabulary, as a faulty draft or sampler would. Each new file is
+// one token. Unset, one cached check.
+[[nodiscard]] bool debug_token_domain_point();
+
 } // namespace ninferno

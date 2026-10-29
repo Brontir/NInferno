@@ -24,7 +24,7 @@ extern "C" void ggml_abort(const char* file, int line, const char* fmt, ...) {
 }
 
 #define NINFERNO_GGML_MMQ_EXTERN(TYPE)                                                             \
-    extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int); \
+    extern template std::size_t ninferno::ops::ggml_mmq::detail::fixup_bytes_impl<TYPE>(int, int, int); \
     extern template void ninferno::ops::ggml_mmq::detail::product_impl<TYPE>(                      \
         const ninferno::ops::ggml_mmq::Planes&, int, int, int, const void*, int, float*,           \
         std::int64_t, void*, cudaStream_t)
