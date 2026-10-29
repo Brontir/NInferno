@@ -97,7 +97,7 @@ def tensor_class(name: str, gguf: bool, nextn: int, blocks: int) -> str | None:
         return "mtp_experts" if ".experts" in name else "mtp"
     if ("embed" in name and not in_layer) or name.split(".")[-2:-1] in (["wte"], ["tok_embeddings"]):
         return "embed"
-    if name.startswith("lm_head"):
+    if re.search(r"(^|\.)lm_head\.", name):  # lm_head.weight, language_model.lm_head.weight (dense.cpp head_tensor)
         return "head"
     return "experts" if ".experts" in name else "body"
 
@@ -193,6 +193,15 @@ def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) 
     return n, k, count
 
 
+def qweight_method(meta: dict) -> str:
+    """The qweight layout a checkpoint stores, as src/convert/formats.cpp normalizes it: AutoRound
+    ("auto-round", "intel/auto-round") names it in packing_format (awq in it: AWQ's words, else GPTQ's)."""
+    method = str(meta.get("quant_method", ""))
+    if method in ("auto-round", "intel/auto-round"):
+        return "awq" if "awq" in str(meta.get("packing_format", "auto_round:auto_gptq")) else "gptq"
+    return method
+
+
 def linears(table: dict, wanted: tuple[str, ...], quant: str = "", head_rows: int = 0) -> list[dict]:
     """The linears of a table's classes in `wanted` grouped as {format, n, k, count, head, expert}:
     a pass's matrices as published (a tied head: the input table's), "conv:q8" where the converter
@@ -201,7 +210,7 @@ def linears(table: dict, wanted: tuple[str, ...], quant: str = "", head_rows: in
     if not shapes:
         return []
     gguf, nextn, blocks, _, _ = _layout(table)
-    method = str(table.get("meta", {}).get("quant_method", ""))
+    method = qweight_method(table.get("meta", {}))
     convert = quant == "q8" and not gguf
     has_head = any(tensor_class(t, gguf, nextn, blocks) == "head" for t in shapes)
     groups: dict[tuple, int] = {}
@@ -504,6 +513,8 @@ def _config_meta(cfg: dict) -> tuple[dict, int]:
     q = cfg.get("quantization_config") or text.get("quantization_config") or {}
     if q.get("quant_method"):
         meta["quant_method"] = q["quant_method"]
+    if q.get("packing_format"):
+        meta["packing_format"] = q["packing_format"]
     bits = q.get("bits") or q.get("w_bit")
     for group in (q.get("config_groups") or {}).values():
         bits = bits or (group.get("weights") or {}).get("num_bits")
@@ -552,6 +563,24 @@ def wanted_tables(registry: dict, pair: dict) -> list[tuple]:
     return out
 
 
+def consumed_tables(registry: dict, pair: dict) -> set[str]:
+    """The table keys round_facts() reads for a pair: the target's, and a drafter's only for a mode
+    the pair measured (MTP: the separate MTP drafter it ran, else none). A failed read of any other
+    table (an advertised drafter without rounds) leaves the pair's facts to be regenerated."""
+    keys = {pair["target_repo"]}
+    modes = {m["config"].split(":")[0] for m in pair["tune"]["measurements"] if m["config"] != "plain"}
+    kinds = {d.get("kind") for d in pair["tune"].get("drafters", [])}
+    for mode in modes:
+        if mode == "mtp":
+            for kind in ("nemotron_h_mtp", "gemma4_assistant"):
+                if kind in kinds:
+                    keys.add(drafter_key(registry, pair, kind))
+                    break
+        elif mode in (pair.get("drafters") or {}):
+            keys.add(drafter_key(registry, pair, mode))
+    return keys
+
+
 def refresh_tables(registry: dict, tables: dict, read=None, save=None) -> set[str]:
     """Reads the pairs' missing tables (and ones without shapes) into `tables` with `read` (fetch),
     calling `save` after each; returns the keys still unread at the end (their pairs keep the facts
@@ -597,7 +626,7 @@ def main() -> int:
         board = LAB_BOARDS.get(p["tune"]["key"]["gpu"])
         if board:
             p["lab_board"] = board
-        missing = failed & {key for key, *_ in wanted_tables(registry, p)}
+        missing = failed & consumed_tables(registry, p)
         if missing:
             print(f"{p['target_repo']}: {sorted(missing)} not read, its facts kept as they are", file=sys.stderr)
             done += "round_facts" in p
