@@ -1232,7 +1232,10 @@ facts overprice on Ada (above).
 
 **Decision.** The selector keeps the band rule at verify widths. On the native-MMA boards measured
 here (Ampere, Ada, Blackwell) the K-quant and legacy formats take the vector kernel at T <= 4 and
-the register MMA from 5. Other boards keep their own rules: Volta's vector route extends past T = 4
+the register MMA from 5. This is the fast-activation route with no saved dense route: under
+`--activations exact` `select_route` returns the register-MMA invariant route at every width before
+the band is consulted, and in fast mode a saved `tuned_dense_route` replaces the vector kernel at
+T = 2..4 where one exists (`generic_gemm.cpp`, `select_route`). Other boards keep their own rules: Volta's vector route extends past T = 4
 for formats `volta_hmma_route` does not take (`vec_rule_max_tokens`), and Turing sends codebook
 formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
 0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) stays in the code unused.
