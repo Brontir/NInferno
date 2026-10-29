@@ -31,6 +31,7 @@
 // tiles: up to +60 %) are not estimated away from the lab card at all.
 
 #include "core/cost_constants.h"
+#include "spec/moe_routed_share.h"
 #include "spec/config.h"
 
 #include <nlohmann/json.hpp>
@@ -84,7 +85,7 @@ struct RoundFacts {
 [[nodiscard]] RoundFacts parse_round_facts(const nlohmann::json& doc);
 
 // The share of a pass's routed-expert bytes `rows` rows read: k/E for one row, towards the experts
-// any of them routes to (1 - (1 - k/E)^rows) at kMoeRoutedShare (core/cost_constants.h) of
+// any of them routes to (1 - (1 - k/E)^rows) at kMoeRoutedShare (spec/moe_routed_share.h) of
 // independent routing.
 [[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept;
 
