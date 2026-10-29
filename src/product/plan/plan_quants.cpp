@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <set>
 #include <iomanip>
 #include <cstdio>
 #include <iomanip>
@@ -513,21 +514,29 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.weight_bytes = q.converted_bytes.value_or(q.bytes);
         row.basis        = q.format == "ninferno" ? runtime::WeightBasis::Artifact
                                                   : runtime::WeightBasis::FileSize;
+        // A GGUF whose header was read: its tensors, as its start uploads them.
+        if (q.format == "gguf" && q.table && q.table->tensor_bytes > 0) {
+            row.weight_bytes = q.table->tensor_bytes;
+            row.basis        = q.table->basis;
+            row.mtp_bytes    = q.table->mtp_bytes;
+        }
         // One size source per quantization: the shape's own file keeps the header's tensor
         // bytes; every other the listed file sizes.
-        if (!row.converted && shape.model.weight_bytes == q.bytes &&
+        if (!row.converted && !row.mtp_bytes && shape.model.weight_bytes == q.bytes &&
             shape.model.weight_basis != runtime::WeightBasis::Unknown) {
             row.basis = shape.model.weight_basis;
         }
         row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_planned &&
-                                    proposal_bytes_at(with_weights(shape, row.weight_bytes,
-                                                                   row.basis),
-                                                      inputs_for(inputs, q)) != 0;
+                                    proposal_bytes_at(row_facts(shape, row), inputs_for(inputs, q)) != 0;
         row.candidate.label      = q.quant;
         row.candidate.bytes      = row.weight_bytes;
         row.candidate.label_bits = q.bits;
+        // The bits of the target alone (an artifact table's own drafter left out, as the choice's
+        // quant_option_of prices it).
+        const std::uint64_t own_drafter =
+            row.mtp_bytes && q.table ? std::min(q.table->own_drafter_bytes, row.weight_bytes) : 0;
         row.candidate.bits_per_weight =
-            shape.model.bits_per_weight(static_cast<double>(row.weight_bytes));
+            shape.model.bits_per_weight(static_cast<double>(row.weight_bytes - own_drafter));
         const Unsupported why   = unsupported(q, row.candidate.bits_per_weight, inputs.device);
         row.unsupported_code    = why.code;
         row.why_unsupported     = why.text;
@@ -541,7 +550,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         if (row.candidate.supported && (inputs.pins.activations || inputs.pins.kv)) {
             // A pin the model does not run (--activations, --kv-dtype): the start refuses it; the
             // row's plan says so (refused, not a fit at a setting that never runs).
-            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const PlanSourceFacts facts = row_facts(shape, row);
             if (const PinRefusal refusal = pin_refusal(facts, inputs); !refusal.code.empty()) {
                 row.candidate.supported = false;
                 row.unsupported_code    = refusal.code;
@@ -551,12 +560,12 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             }
         }
         if (row.candidate.supported) {
-            served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+            served = choose_at_weights(row_facts(shape, row),
                                        inputs_for(inputs, q), inputs.pins, q.quant);
             if (served) { row_axes = start_axes(*served, inputs.pins); }
         }
         if (row.candidate.supported) {
-            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const PlanSourceFacts facts = row_facts(shape, row);
             const DryRunInputs own      = inputs_for(inputs, q);
             const PlanAt served_plan = [&](const DryRunInputs& asked) {
                 if (!served) { return plan_model(facts, asked); }
@@ -583,7 +592,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         }
         if (row.candidate.supported && row.planned.plan.planned) {
             // The speed of a typical request at the storages this row's plan serves with.
-            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const PlanSourceFacts facts = row_facts(shape, row);
             choice::ModelFacts model     = choice_model_of(facts);
             const choice::CardFacts card = choice_card_of(inputs.gpu);
             // The quantization as the choice prices it (product::quant_option_of: one rule for a
@@ -651,7 +660,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 out.pick->below_floor != runtime::below_quality_floor(row.candidate)) {
                 continue;
             }
-            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+            const auto bound = choose_at_weights(row_facts(shape, row),
                                                  inputs_for(inputs, row.listing), pins,
                                                  row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
@@ -667,7 +676,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         for (const auto& [bound, i] : bounds) {
             if (best && bound < best_worth - choice::kWorthTie) { break; }
             const QuantRow& row = out.rows[i];
-            const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+            const auto served = choose_at_weights(row_facts(shape, row),
                                                   inputs_for(inputs, row.listing), pins,
                                                   row.listing.quant, OwnContext::Steps);
             if (!served || !served->choice.chosen ||
@@ -687,7 +696,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         if (best && *best != out.pick->index) {
             // The largest at its own choice: what the trade was against.
             const QuantRow& largest = out.rows[out.pick->index];
-            if (const auto at = choose_at_weights(with_weights(shape, largest.weight_bytes, largest.basis),
+            if (const auto at = choose_at_weights(row_facts(shape, largest),
                                                   inputs_for(inputs, largest.listing), pins,
                                                   largest.listing.quant, OwnContext::Steps);
                 at && at->choice.chosen && best_scored.decision_seconds > 0) {
@@ -708,7 +717,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             if (ask.automatic && ask.concurrency > 1 && best_context != 0 &&
                 !own_plan(row.planned.plan) && row.launch_context != best_context) {
                 row.launch_context          = best_context;
-                const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+                const PlanSourceFacts facts = row_facts(shape, row);
                 const DryRunInputs own      = inputs_for(inputs, row.listing);
                 const DryRunInputs capped   = under_context_cap(own, best_context);
                 if (const auto served = choose_at_weights(facts, own, pins, row.listing.quant)) {
@@ -1212,6 +1221,89 @@ DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context
     out.options.max_context           = context;
     out.options.max_context_automatic = true;
     return out;
+}
+
+std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
+    if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
+        facts.model.weight_bytes == 0) {
+        return std::nullopt;
+    }
+    return GgufTensorTable{.tensor_bytes      = facts.model.weight_bytes,
+                           .mtp_bytes         = facts.model.mtp_bytes,
+                           .own_drafter_bytes = facts.model.own_drafter_bytes};
+}
+
+PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
+    PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // A row's own table: its NextN share and its own drafter as the table counts them (none for a
+    // GGUF; an artifact's own), never the shape's scaled.
+    if (row.mtp_bytes) {
+        out.model.mtp_bytes         = *row.mtp_bytes;
+        out.model.own_drafter_bytes = row.listing.table ? row.listing.table->own_drafter_bytes : 0;
+    }
+    return out;
+}
+
+QuantPlan plan_quants_read(const PlanSourceFacts& shape, std::vector<QuantListing>& listing,
+                           const DryRunInputs& inputs, const ReadTensorTable& read_table) {
+    // A table can move the choice (the bits cross the floor, the worth changes): read again until
+    // the chosen row has its own table or it cannot be read; each row at most once.
+    QuantPlan plan = plan_quants(shape, listing, inputs);
+    std::set<std::string> tried; // each row read at most once
+    // A row still at its file size, supported or refused only by the width the file size gives
+    // (no label bits: header and padding counted, its tensors may be 8 bits or fewer).
+    const auto unread = [&](const QuantRow& r) {
+        const bool by_file_width = r.unsupported_code == "above_8_bits" && r.listing.bits == 0;
+        return r.listing.format == "gguf" && !r.listing.table &&
+               (r.candidate.supported || by_file_width) && !tried.contains(r.listing.quant);
+    };
+    for (std::size_t step = 0; step <= listing.size() && read_table; ++step) {
+        const QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
+        // The row to read: the chosen one without its table, else the one ranked next above it
+        // still at its file size; nothing chosen: the lowest-ranked one at its file size (it may
+        // fit by its tensors).
+        const QuantRow* next = nullptr;
+        if (chosen == nullptr) {
+            for (const QuantRow& r : plan.rows) {
+                if (unread(r) && (next == nullptr ||
+                                  runtime::quant_ranks_above(next->candidate, r.candidate))) {
+                    next = &r;
+                }
+            }
+        } else if (chosen->listing.format == "gguf" && !chosen->listing.table) {
+            next = chosen;
+        } else {
+            for (const QuantRow& r : plan.rows) {
+                if (!unread(r) || !runtime::quant_ranks_above(r.candidate, chosen->candidate)) {
+                    continue;
+                }
+                if (next == nullptr || runtime::quant_ranks_above(next->candidate, r.candidate)) {
+                    next = &r;
+                }
+            }
+        }
+        if (next == nullptr || tried.contains(next->listing.quant)) { break; }
+        const std::string quant = next->listing.quant;
+        tried.insert(quant);
+        const auto table = read_table(quant);
+        // A read that fails leaves the file size, and nothing larger is read.
+        if (!table) { break; }
+        const bool above = chosen != nullptr && next != chosen;
+        for (auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && q.quant == quant) { q.table = table; }
+        }
+        // Read, no whole table (a split file's part): its file size stands; the next row is read.
+        if (table->tensor_bytes == 0) {
+            plan = plan_quants(shape, listing, inputs); // the rows carry the listing as read
+            continue;
+        }
+        plan = plan_quants(shape, listing, inputs);
+        // The lowest does not fit by its tensors, or the row above did not become the pick: the
+        // rows above it are larger and fit no better.
+        if (!plan.chosen) { break; }
+        if (above && plan.rows[*plan.chosen].listing.quant != quant) { break; }
+    }
+    return plan;
 }
 
 } // namespace ninferno::product
