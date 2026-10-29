@@ -33,23 +33,28 @@ std::atomic<std::uint64_t> g_graph_kernels{0};
 // The kernel nodes of a captured graph (0 when CUDA cannot list them).
 std::uint32_t count_kernel_nodes(cudaGraph_t graph) noexcept {
     std::size_t n = 0;
-    if (graph == nullptr || cudaGraphGetNodes(graph, nullptr, &n) != cudaSuccess || n == 0) {
-        (void)cudaGetLastError();
+    if (graph == nullptr) { return 0; }
+    if (cudaGraphGetNodes(graph, nullptr, &n) != cudaSuccess) {
+        (void)cudaGetLastError(); // its own failure only
+        std::fprintf(stderr, "warning: a decode graph's nodes could not be listed (not counted)\n");
         return 0;
     }
+    if (n == 0) { return 0; }
     std::vector<cudaGraphNode_t> nodes(n);
     if (cudaGraphGetNodes(graph, nodes.data(), &n) != cudaSuccess) {
         (void)cudaGetLastError();
+        std::fprintf(stderr, "warning: a decode graph's nodes could not be listed (not counted)\n");
         return 0;
     }
     std::uint32_t kernels = 0;
     for (std::size_t i = 0; i < n; ++i) {
         cudaGraphNodeType type{};
-        if (cudaGraphNodeGetType(nodes[i], &type) == cudaSuccess && type == cudaGraphNodeTypeKernel) {
-            ++kernels;
+        if (cudaGraphNodeGetType(nodes[i], &type) != cudaSuccess) {
+            (void)cudaGetLastError();
+            continue;
         }
+        if (type == cudaGraphNodeTypeKernel) { ++kernels; }
     }
-    (void)cudaGetLastError();
     return kernels;
 }
 

@@ -143,7 +143,14 @@ inline constexpr SmallTEta kSmallTEta[] = {
 // Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, every kernel within 2 %:
 // t0 1.5 us without PDL, eta_dram 0.946; sm_120 launches chain with PDL, t0 0.5 us). A round pays
 // t0 for each kernel its graphs launch (Measurement::graph_kernels, counted from the captured
-// graphs), a plain step for each of its own: R(k) adds them, in bytes at eta_dram x BW.
+// graphs), a plain step for each of its own: R(k) adds them, in bytes at eta_dram x BW (the
+// bytes term's convention; kappa converts operations at the full BW, ~5 % apart, immaterial here).
+// Kernel nodes only (a memset or copy node is not counted), and kernels launched outside the graphs
+// (a plain multi-step's token feed between replays) are not counted. Ampere and Turing have no row:
+// their graph gaps were measured (RTX 2080 Ti 0.38 us a kernel, RTX 3060 ~0) but no intercept was
+// fitted, and each has one lab card (a generation constant rests on two, as kSmallTEta does).
+// gb20x's 0.5 us and its eta_dram are provisional: a one-generation transfer (RTX 5070 Ti / 5090
+// spec-tunes cannot tell 0.5 from 1.5 us: within +-1.5 % of R either way).
 struct LaunchTime {
     std::string_view generation;
     double seconds;

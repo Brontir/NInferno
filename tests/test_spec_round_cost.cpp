@@ -251,13 +251,15 @@ int main() {
         {
             auto counted = pair_of(kQ9, "ad104:60sm");
             for (auto& m : counted.tune.measurements) {
-                m.graph_kernels = m.config.enabled() ? 500 * std::max<std::int64_t>(m.rounds, 1)
-                                                     : 311 * std::max<std::int64_t>(m.tokens, 1);
+                m.graph_rounds  = std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
+                m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
             }
             const auto again = sp::parse_pair(sp::pair_json(counted));
             expect(again.tune.measurements.front().graph_kernels ==
-                       counted.tune.measurements.front().graph_kernels,
-                   "graph kernels round-trip");
+                           counted.tune.measurements.front().graph_kernels &&
+                       again.tune.measurements.front().graph_rounds ==
+                           counted.tune.measurements.front().graph_rounds,
+                   "graph kernels and their launches round-trip");
             const auto rtx4060 = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
             const auto with    = sp::round_cost_estimate(counted, rtx4060);
             const auto without = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060);

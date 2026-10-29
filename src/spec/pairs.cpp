@@ -405,16 +405,16 @@ namespace {
 // without counts, or a tune whose plain decode has none, is left out.
 std::map<std::string, RoundLaunches> round_launches(const Profile& tune) {
     double step_kernels = 0, steps = 0;
-    std::map<std::string, std::pair<double, double>> rounds; // kernels, rounds
+    std::map<std::string, std::pair<double, double>> rounds; // kernels, launches
     for (const auto& m : tune.measurements) {
-        if (m.graph_kernels <= 0) { continue; }
+        if (m.graph_kernels <= 0 || m.graph_rounds <= 0) { continue; }
         if (!m.config.enabled()) {
             step_kernels += double(m.graph_kernels);
-            steps += double(m.tokens);
-        } else if (m.rounds > 0) {
+            steps += double(m.graph_rounds);
+        } else {
             auto& r = rounds[m.config.label()];
             r.first += double(m.graph_kernels);
-            r.second += double(m.rounds);
+            r.second += double(m.graph_rounds);
         }
     }
     std::map<std::string, RoundLaunches> out;
@@ -443,8 +443,13 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
         // with the full head (spec-tune: ProposalHead::Full); a start drafts through the head
         // wherever its artifact's serves the drafter (product model_draft_head), whatever the label.
         const ProposalRows lab      = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
+        // Launches priced on both cards or on neither (a lab card of a generation without a
+        // launch time would leave them in the measured excess, counting them twice).
         const auto it               = launches.find(label);
-        const RoundLaunches counted = it != launches.end() ? it->second : RoundLaunches{};
+        const RoundLaunches counted = it != launches.end() && card.launch_bytes() > 0 &&
+                                              home.launch_bytes() > 0
+                                          ? it->second
+                                          : RoundLaunches{};
         const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
                                       head_rows != nullptr ? *head_rows : lab, card.launch_bytes(),
                                       counted);
