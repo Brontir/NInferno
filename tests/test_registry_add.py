@@ -327,6 +327,14 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(elems, {"x": 64, "y": 32})
         self.assertEqual(shapes, {"x": ["gguf:type99", [64]], "y": ["gguf:F16", [32]]})
 
+    def test_norms_by_role_and_int8(self):
+        # Nemotron-H's grouped SSM norm is 2-D, no linear; compressed-tensors W8A16 reads int8.
+        self.assertIsNone(round_facts.linear_shape("blk.0.ssm_norm.weight", "gguf:F32", [512, 8], 4096, ""))
+        self.assertIsNone(round_facts.linear_shape("model.layers.0.mixer.norm.weight", "bf16", [8, 512], 4096, ""))
+        self.assertEqual(round_facts.safetensors_format("a.weight", "I8", 8), "int8")
+        self.assertEqual(round_facts.linear_shape("a.weight", "int8", [512, 256], 131072, "compressed-tensors"),
+                         (512, 256, 1))
+
     @staticmethod
     def shaped(shapes: dict, meta: dict | None = None, bytes_per: float = 1.0) -> dict:
         """A table from {name: [format, dims, parameters]}: `bytes_per` bytes a parameter."""

@@ -126,6 +126,7 @@ GGML_NAMES = {0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1", 8:
               17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S", 20: "IQ4_NL", 21: "IQ3_S", 22: "IQ2_S",
               23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64", 29: "IQ1_M",
               30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4"}
+NORM = re.compile(r"norm[^.]*\.weight$")  # a normalization's weights by role (Nemotron-H's grouped ssm_norm [512, 8])
 WEIGHT_SUFFIX = (".weight", "qweight", "weight_packed", "_blocks")
 FUSED_EXPERTS = re.compile(r"\.experts\.\w+_proj$")  # a checkpoint's experts as one [E, n, k] tensor
 
@@ -133,7 +134,7 @@ FUSED_EXPERTS = re.compile(r"\.experts\.\w+_proj$")  # a checkpoint's experts as
 def safetensors_format(name: str, dtype: str, bits: int) -> str:
     """A safetensors weight's published format: nvfp4 (ModelOpt's uint8 weight, compressed-tensors'
     weight_packed; mxfp4 where its weight_scale is E8M0, parse_safetensors_header), mxfp4 (_blocks), int<bits> (AWQ / GPTQ qweight, compressed-tensors' int32
-    weight_packed), fp8, else its dtype (bf16, f16, f32)."""
+    weight_packed), fp8, int8 (compressed-tensors int-quantized), else its dtype (bf16, f16, f32)."""
     if dtype == "U8" and "_blocks" in name:
         return "mxfp4"
     if dtype == "U8" and name.endswith((".weight", "weight_packed")):
@@ -142,6 +143,8 @@ def safetensors_format(name: str, dtype: str, bits: int) -> str:
         return f"int{bits}"
     if dtype.startswith("F8"):
         return "fp8"
+    if dtype == "I8":
+        return "int8"  # compressed-tensors int-quantized W8A16 (the converter's name)
     return dtype.lower()
 
 
@@ -153,7 +156,7 @@ def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) 
     [k, n packed], GPTQ's [k packed, n] (a qweight of another method: None). A fused expert bank
     (no .weight) is read as HF Qwen3-MoE stores it, [E, n, k]; banks stored [E, k, n] (gpt-oss's
     BF16 gate_up_proj, Llama 4) would read transposed: none in the registry, add a rule with one."""
-    if not elems or not dims:
+    if not elems or not dims or NORM.search(name):
         return None
     if fmt.startswith("gguf:"):
         if not name.endswith(".weight") or len(dims) < 2:
