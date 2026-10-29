@@ -12,6 +12,7 @@ import argparse
 import json
 import statistics
 import sys
+from pathlib import Path
 
 SCHEMA_MAJOR = "ninferno-user-run/1"
 # The stated rules' numbers (the design note's table; change them there first).
@@ -135,7 +136,331 @@ def metric_values(p, metric):
     return m.get("median"), m.get("min"), m.get("max"), m.get("prompt_tokens")
 
 
-def validate(doc, tolerance=TOLERANCE):
+# --- Speculation (S1-S6) and hard50 (H1-H3): the design note's tables; change them there first. ---
+
+HERE = Path(__file__).resolve().parent
+REGISTRY = HERE.parents[1] / "src/spec/data/drafter_registry.json"
+HARD_REFERENCE = HERE / "hard50_reference.json"
+ACCEPT_TOLERANCE = 0.10   # pooled tokens a round against the lab cards' median (S5)
+ACCEPT_MIN_CARDS = 2      # lab cards a configuration's reference needs (S5)
+ROUND_TOLERANCE = 0.10    # measured R(k) against the plan's round_cost (S6)
+PLAIN_STEADY = 0.05       # the tune's plain decode across its sections (S4)
+HARD_SDS = 2.0            # binomial standard deviations below the lab's lowest card (H3)
+HARD_MIN_CARDS = 3        # lab cards the item-by-item comparison needs (H3)
+FACTS_WORDS = "priced from the weights' bytes"
+
+
+def load_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def settings_items(text):
+    """A tune's settings ("max context 4096, prefill chunk 1024, KV bf16, greedy, wait spin") as a
+    set of items; `acceptance` drops the wait mode (it moves the clock, never a token)."""
+    return {s.strip() for s in str(text or "").split(",") if s.strip()}
+
+
+def acceptance_settings(text):
+    return {s for s in settings_items(text) if not s.startswith("wait")}
+
+
+def sections_of(measurements):
+    """The corpus sections plain decode measured, with their prompt counts."""
+    return {m.get("family"): m.get("prompts") for m in measurements
+            if m.get("config") == "plain" and (m.get("tokens") or 0) > 0}
+
+
+def pooled_tokens_per_round(measurements, label, sections):
+    """Tokens a round of `label` over `sections`, pooled ((accepted + rounds) / rounds, as
+    spec::aggregate); None when a section is missing or has no round."""
+    accepted = rounds = 0
+    for family in sections:
+        rows = [m for m in measurements if m.get("config") == label and m.get("family") == family]
+        if not rows or not sum(m.get("rounds") or 0 for m in rows):
+            return None
+        accepted += sum(m.get("accepted") or 0 for m in rows)
+        rounds += sum(m.get("rounds") or 0 for m in rows)
+    return (accepted + rounds) / rounds if rounds else None
+
+
+def section_tokens_per_round(measurements, label, family):
+    return pooled_tokens_per_round(measurements, label, [family])
+
+
+def round_costs(measurements):
+    """What a round costs by configuration label, in plain decode steps: per section a round's
+    seconds over plain decode's seconds a token, the mean over the sections plain decode measured
+    too (spec::profile_round_costs, src/spec/pairs.cpp)."""
+    plain, rounds = {}, {}
+    for m in measurements:
+        if m.get("config") == "plain":
+            if (m.get("tokens") or 0) > 0:
+                s = plain.setdefault(m.get("family"), [0.0, 0.0])
+                s[0] += m.get("seconds") or 0
+                s[1] += m.get("tokens") or 0
+        elif (m.get("rounds") or 0) > 0:
+            r = rounds.setdefault((m.get("config"), m.get("family")), [0.0, 0.0])
+            r[0] += m.get("seconds") or 0
+            r[1] += m.get("rounds") or 0
+    sums = {}
+    for (label, family), (seconds, n) in rounds.items():
+        p = plain.get(family)
+        if not p or p[0] <= 0:
+            continue
+        s = sums.setdefault(label, [0.0, 0])
+        s[0] += (seconds / n) / (p[0] / p[1])
+        s[1] += 1
+    return {label: s[0] / s[1] for label, s in sums.items()}
+
+
+def chip_of(gpu_class):
+    return str(gpu_class or "").split(":")[0].lower()
+
+
+# The drafter kinds a configuration's mode drafts with (spec::drafter_kind_mode, pairs.cpp): an
+# "mtp:K" label runs a Gemma 4 assistant or a NemotronH sidecar where the target has one.
+MODE_KINDS = {"mtp": ("mtp", "gemma4_assistant", "nemotron_h_mtp")}
+
+
+def kinds_of(label):
+    mode = str(label).split(":")[0]
+    return MODE_KINDS.get(mode, (mode,))
+
+
+def drafter_matches(pair, manifest, label):
+    """The pair drafted `label` with the drafter the user's manifest attached: each separate
+    drafter of the label's mode by the same repo@revision (an embedded MTP head is the target's
+    own)."""
+    for kind in kinds_of(label):
+        wanted = (pair.get("drafters") or {}).get(kind)
+        if not wanted:
+            continue
+        mine = [d for d in (manifest or {}).get("drafters", []) if d.get("kind") == kind
+                and d.get("repo") not in (None, "", "other")]
+        if not any(f"{d['repo']}@{d.get('revision', '')}" == wanted for d in mine):
+            return False
+    return True
+
+
+def unrecordable_drafters(manifest, labels):
+    """The measured modes' separate drafters the manifest could not name (a repository the
+    registry does not declare: recorded as "other")."""
+    kinds = {k for label in labels for k in kinds_of(label)}
+    return sorted({d.get("kind") for d in (manifest or {}).get("drafters", [])
+                   if d.get("kind") in kinds and d.get("repo") == "other"})
+
+
+def lab_pairs(registry, run):
+    """The lab's pairs of the run's target (by its weights' SHA-256), of the tune's engine key."""
+    weights = ((run.get("target") or {}).get("weights")) or []
+    key = ",".join(sorted(w.get("sha256", "") for w in weights))
+    engine = ((run.get("profile") or {}).get("key") or {}).get("engine")
+    return [p for p in (registry or {}).get("pairs", [])
+            if key and p.get("target") == key and not p.get("user_kit")
+            and ((p.get("tune") or {}).get("key") or {}).get("engine") == engine]
+
+
+def prediction_kind(speculation, label, pairs, user_class):
+    """What the plan's round cost for `label` is: the facts, the facts raised by a lab card's
+    measurement, or a lab measurement (which card's, the source says: this class's own pair, a
+    generation's agreeing cards, a sibling quantization or a generation ratio)."""
+    source = str((speculation or {}).get("source") or "")
+    if FACTS_WORDS in source:
+        raised = source.split("bytes:", 1)[1] if "bytes:" in source else ""
+        if any(part.strip().split(" ")[0] == label for part in raised.split(",")):
+            return "the facts' R(k) raised to a lab card's measurement (" + raised.strip() + ")"
+        return "the facts' R(k)"
+    return "a lab measurement, not the facts (" + (source or "no source") + ")"
+
+
+def spec_speed_gate(doc, run, capped):
+    """S2-S4 for the round cost: None when it may be judged, else why not (rejected or not used)."""
+    profile = run.get("profile") or {}
+    plain = [m.get("tok_s") for m in profile.get("measurements", [])
+             if m.get("config") == "plain" and isinstance(m.get("tok_s"), (int, float)) and m["tok_s"] > 0]
+    if len(plain) >= 2 and (max(plain) - min(plain)) / min(plain) > PLAIN_STEADY:
+        return f"rejected: S4 the tune's plain decode {(max(plain) - min(plain)) / min(plain) * 100:.1f} % apart across its sections"
+    for when in ("processes_before", "processes_after"):
+        apps = run.get(when) or {}
+        if apps.get("informative") and apps.get("others"):
+            return f"rejected: S3 {apps['others']} other compute process(es) on the card"
+    tel = run.get("telemetry") or {}
+    found = reasons_in(tel, window_indices(tel, "spec-tune"))
+    if found and found & set(REJECT_REASONS):
+        return "rejected: S3 " + ",".join(sorted(found & set(REJECT_REASONS))) + " during the tune"
+    if capped:
+        return "not used: the card is capped"
+    if found is None:
+        return "not used: S3 unknown (no clock event reasons in the tune's window)"
+    if power_unknown(doc):
+        return "not used: the power source (AC or battery) is unknown"
+    return None
+
+
+def judge_spec(doc, run, out, capped, registry, tolerance):
+    profile, publish = run.get("profile"), run.get("publish")
+    if not isinstance(profile, dict) or not isinstance(publish, dict):
+        out["notes"].append("rejected: S1 no tune (spec-tune did not publish)")
+        out["candidate"] = "no: no tune"
+        return
+    measurements = profile.get("measurements") or []
+    sections = sections_of(measurements)
+    labels = sorted({m.get("config") for m in measurements if m.get("config") not in (None, "plain")})
+    partial = [d.get("name") for d in profile.get("drafters", []) if d.get("status") == "untested"]
+    skipped = profile.get("skipped") or []
+    if partial or skipped:
+        out["notes"].append("S1 partial tune (judged on what it measured, no registry candidate): "
+                            + "; ".join(([f"untested {', '.join(partial)}"] if partial else [])
+                                        + ([f"skipped {', '.join(skipped)}"] if skipped else [])))
+    pairs = lab_pairs(registry, run)
+    target = run.get("target") or {}
+    if not target.get("weights"):
+        out["notes"].append("S2 the target's weights were not recorded: no lab pair can be named")
+    elif not pairs:
+        out["notes"].append("S5 no lab pair of this target (its weights) and engine key: no reference")
+    if any(w.get("blob_matches") is False for w in target.get("weights", [])):
+        out["notes"].append("S2 a weight file's bytes differ from its hub blob name (a modified or "
+                            "corrupted download): judged by its own bytes")
+    same_settings = [p for p in pairs if acceptance_settings((p.get("tune") or {}).get("settings"))
+                     == acceptance_settings(profile.get("settings"))]
+    if pairs and not same_settings:
+        out["notes"].append("S2 the tune's settings differ from the lab pairs': no reference")
+    gate = spec_speed_gate(doc, run, capped)
+    speculation = (run.get("plan") or {}).get("speculation") or {}
+    predicted_costs = speculation.get("round_cost") or {}
+    measured_costs = round_costs(measurements)
+    user_class = (profile.get("key") or {}).get("gpu")
+    contradicted = unmeasured = False
+    for label in labels:
+        row = {"metric": f"acceptance {label}", "status": "accepted"}
+        user_t = pooled_tokens_per_round(measurements, label, sections)
+        measured_it = [p for p in same_settings
+                       if pooled_tokens_per_round(p["tune"]["measurements"], label, sections_of(p["tune"]["measurements"]))]
+        same_drafter = [p for p in measured_it if drafter_matches(p, run.get("manifest"), label)]
+        refs = [p for p in same_drafter if sections_of(p["tune"]["measurements"]) == sections
+                and pooled_tokens_per_round(p["tune"]["measurements"], label, sections)]
+        lab_t = [pooled_tokens_per_round(p["tune"]["measurements"], label, sections) for p in refs]
+        if user_t is None:
+            row["status"] = "rejected: S1 a section without a round"
+            unmeasured = True
+        elif len(lab_t) < ACCEPT_MIN_CARDS:
+            if not pairs or not same_settings:
+                why = "no lab pair to compare with"
+            elif not measured_it:
+                why = "the lab measured no " + label + (" (it measures no proposal head)" if "+head" in label else "")
+            elif not same_drafter:
+                why = "the lab measured " + label + " with another drafter (repo@revision)"
+            elif len(lab_t) < len(same_drafter):
+                why = "the lab measured other sections or prompt counts"
+            else:
+                why = f"fewer than {ACCEPT_MIN_CARDS} lab cards"
+            row["status"] = "accepted"
+            row["verdict"] = f"no reference: {why}"
+            row["measured"] = round(user_t, 3)
+        else:
+            ref = statistics.median(lab_t)
+            ratio = user_t / ref
+            row.update({"predicted": round(ref, 3), "measured": round(user_t, 3), "ratio": round(ratio, 3)})
+            worst = max(abs(section_tokens_per_round(measurements, label, f)
+                            / statistics.median([section_tokens_per_round(p["tune"]["measurements"], label, f)
+                                                 for p in refs]) - 1) for f in sections)
+            row.setdefault("notes", []).append(f"lab cards {len(lab_t)}, {min(lab_t):.3f}..{max(lab_t):.3f}; "
+                                               f"worst section {worst * 100:.1f} % off")
+            entry = f"the registry pairs' acceptance ({run.get('repo')} {run.get('quant')}, {label}, tokens a round)"
+            if abs(ratio - 1) <= ACCEPT_TOLERANCE:
+                row["verdict"] = "confirms " + entry
+            else:
+                row["verdict"] = "contradicts " + entry
+                contradicted = True
+        out["metrics"].append(row)
+    for label in labels:
+        row = {"metric": f"round cost {label}", "predicted": predicted_costs.get(label)}
+        measured = measured_costs.get(label)
+        if gate and gate.startswith("rejected"):
+            row["status"] = gate
+        elif measured is None:
+            row["status"] = "rejected: S6 no section with both plain decode and rounds"
+        else:
+            row["status"] = "accepted"
+            row["measured"] = round(measured, 3)
+            if not isinstance(row["predicted"], (int, float)) or row["predicted"] <= 0:
+                row["verdict"] = ("no prediction: the plan's resolved profile does not price " + label
+                                  + " (deeper than the portable depth, or another drafter's profile)")
+            else:
+                ratio = measured / row["predicted"]
+                row["ratio"] = round(ratio, 3)
+                entry = (f"{prediction_kind(speculation, label, pairs, user_class)} for this "
+                         f"{doc['card'].get('smi', {}).get('name')} ({run.get('repo')} {run.get('quant')}, {label})")
+                if gate:
+                    row["verdict"] = gate
+                elif abs(ratio - 1) <= tolerance:
+                    row["verdict"] = "confirms " + entry
+                else:
+                    row["verdict"] = "contradicts " + entry
+        out["metrics"].append(row)
+    if partial or skipped:
+        out["candidate"] = "no: partial tune"
+    elif not target.get("weights") or not run.get("manifest"):
+        out["candidate"] = "no: the target's identity or the manifest was not recorded"
+    elif unmeasured:
+        out["candidate"] = "no: a configuration without a round in a section"
+    elif unrecordable_drafters(run.get("manifest"), labels):
+        out["candidate"] = ("no: a measured drafter the registry does not declare ("
+                            + ", ".join(unrecordable_drafters(run.get("manifest"), labels)) + ")")
+    elif contradicted:
+        out["candidate"] = "no: an acceptance contradicts the lab pairs"
+    elif pairs and not same_settings:
+        out["candidate"] = "no: the tune's settings differ from the lab pairs'"
+    else:
+        out["candidate"] = "yes"
+
+
+def judge_hard50(run, out, reference):
+    h = run.get("hard50") or {}
+    if h.get("questions") != 50 or (h.get("errors") or 0) > 0 or not isinstance(h.get("correct"), int):
+        out["metrics"].append({"metric": "hard50", "status": "rejected: H1 not 50 answered questions "
+                               f"({h.get('questions')} questions, {h.get('errors')} errors)"})
+        return
+    row = {"metric": "hard50", "status": "accepted", "measured": h["correct"]}
+    out["metrics"].append(row)
+    if not reference or run.get("set_sha256") != reference.get("set_sha256"):
+        row["verdict"] = "no reference: H2 the question set differs from the reference's (or was not recorded)"
+        return
+    lab = ((reference.get("models") or {}).get(f"{run.get('repo')} {run.get('quant')}")) or []
+    if not lab:
+        row["verdict"] = "no reference: the lab has no hard50 run of this model"
+        return
+    counts = [r["correct"] for r in lab]
+    p = statistics.median(counts) / 50
+    sd = (50 * p * (1 - p)) ** 0.5
+    low = min(counts) - HARD_SDS * sd
+    row["predicted"] = statistics.median(counts)
+    row.setdefault("notes", []).append(f"lab {len(counts)} card(s), {min(counts)}..{max(counts)} of 50; "
+                                       f"below the lab under {low:.1f}")
+    below = h["correct"] < low
+    wrong = h.get("wrong")
+    if isinstance(wrong, list) and len(lab) >= HARD_MIN_CARDS and all("wrong" in r for r in lab):
+        union = set().union(*(set(r["wrong"]) for r in lab))
+        flips = sorted(set(wrong) - union)
+        lab_flips = [len(set(r["wrong"]) - set().union(*(set(o["wrong"]) for o in lab if o is not r)))
+                     for r in lab]
+        limit = 2 * max(lab_flips) + 2
+        row["notes"].append(f"{len(flips)} question(s) every lab card answered right answered wrong "
+                            f"here (a lab card against the others: at most {max(lab_flips)}; below the lab "
+                            f"over {limit})")
+        below = below or len(flips) > limit
+    entry = f"the lab's hard50 of {run.get('repo')} {run.get('quant')}"
+    row["verdict"] = ("below " + entry + ": a gross failure (a broken kernel, template or download)"
+                      if below else "consistent with " + entry)
+
+
+def validate(doc, tolerance=TOLERANCE, registry=None):
+    """The report of `doc`; `registry` the drafter registry its spec runs are held to (the
+    in-tree one when None)."""
     report = {"schema": doc.get("schema"), "file": "accepted", "capped": [], "runs": []}
     schema = str(doc.get("schema", ""))
     major = schema.split(".")[0]
@@ -150,11 +475,22 @@ def validate(doc, tolerance=TOLERANCE):
         return report
     report["capped"] = capped
     report["unknown"] = card_unknowns(doc["card"].get("smi") or {})
+    reference = None
     for run in doc["runs"]:
         out = {"id": run.get("id"), "mode": run.get("mode"), "metrics": [], "notes": []}
         report["runs"].append(out)
         if run.get("error"):
             out["notes"].append("R6 " + str(run["error"]))
+            if run.get("mode") == "spec":
+                out["candidate"] = "no: the run failed"
+            continue
+        if run.get("mode") == "spec":
+            registry = registry if registry is not None else (load_json(REGISTRY) or {})
+            judge_spec(doc, run, out, capped, registry, tolerance)
+            continue
+        if run.get("mode") == "hard50":
+            reference = reference if reference is not None else (load_json(HARD_REFERENCE) or {})
+            judge_hard50(run, out, reference)
             continue
         if run.get("mode") != "plain":
             out["notes"].append("recorded, not validated in this version (" + str(run.get("mode")) + ")")
@@ -285,10 +621,13 @@ def render(report):
         lines.append(f"- {run['id']} ({run['mode']})")
         for note in run["notes"]:
             lines.append(f"    note: {note}")
+        if run.get("candidate"):
+            lines.append(f"    registry candidate: {run['candidate']}")
         for m in run["metrics"]:
             text = f"    {m['metric']}: {m['status']}"
             if "measured" in m:
-                text += f"; predicted {m['predicted']}, measured {m['measured']}"
+                text += (f"; predicted {m['predicted']}, measured {m['measured']}"
+                         if m.get("predicted") is not None else f"; measured {m['measured']}")
             if "ratio" in m:
                 text += f" (x{m['ratio']})"
             lines.append(text)

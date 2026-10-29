@@ -214,5 +214,301 @@ class Gpu(unittest.TestCase):
         self.assertEqual(gpu._value("WDDM"), "WDDM")
 
 
+# --- Speculation (S1-S6) and hard50 (H1-H3) -----------------------------------------------------
+
+SHA = "ab" * 32
+SECTIONS = ("math", "code", "prose", "thinking")
+SETTINGS = "max context 4096, prefill chunk 1024, KV bf16, greedy, wait spin"
+
+
+def measurements(t=3.5, plain_s=0.02, round_cost=1.5, configs=("mtp:3",), plain_scale=None):
+    """A tune's measurements: plain decode at `plain_s` seconds a token in every section, each
+    configuration `t` tokens a round at `round_cost` plain steps a round."""
+    out = []
+    for i, f in enumerate(SECTIONS):
+        s = plain_s * ((plain_scale or {}).get(f, 1.0))
+        out.append({"config": "plain", "family": f, "prompts": 8, "tokens": 1000, "seconds": 1000 * s,
+                    "rounds": 0, "accepted": 0, "tok_s": 1 / s})
+        for c in configs:
+            rounds = 300
+            out.append({"config": c, "family": f, "prompts": 8, "tokens": int(rounds * t),
+                        "rounds": rounds, "accepted": int(rounds * (t - 1)),
+                        "seconds": rounds * round_cost * s})
+    return out
+
+
+def lab_pair(gpu="ad104:60sm", t=3.5, drafters=None, settings=SETTINGS, engine="ninferno-spec-1"):
+    return {"target": SHA, "target_repo": "org/m@" + "1" * 40 + " Q4_K_M", "engine": "qwen3_5",
+            "generation": "sm89", "drafters": drafters or {},
+            "tune": {"key": {"gpu": gpu, "engine": engine}, "settings": settings,
+                     "measurements": measurements(t=t)}}
+
+
+def spec_run(t=3.5, round_cost=1.5, predicted=1.5, source="registry pair org/m (2 lab card(s)); rounds "
+             "priced from the weights' bytes and this card's rates (ada, eta 0.148)", **extra):
+    run = {"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "spec",
+           "plan": {"speculation": {"basis": "measured", "source": source,
+                                    "round_cost": {"mtp:3": predicted}}},
+           "manifest": {"target": {"engine": "qwen3_5"},
+                        "drafters": [{"name": "mtp", "kind": "mtp", "status": "embedded"}]},
+           "target": {"revision": "1" * 40, "weights": [{"sha256": SHA, "bytes": 1}]},
+           "profile": {"key": {"gpu": "ad106:34sm", "engine": "ninferno-spec-1"}, "settings": SETTINGS,
+                       "drafters": [{"name": "mtp", "status": "accepted"}],
+                       "measurements": measurements(t=t, round_cost=round_cost)},
+           "publish": {"measured_on": "NVIDIA GeForce RTX 4060 Ti user-kit"},
+           "processes_before": {"listed": 1, "others": 0, "informative": True},
+           "telemetry": {"t": [0.0, 1.0], "reason_fields": P, "marks": [{"name": "spec-tune", "start": 0, "end": 2}],
+                         "columns": {f"{P}.{r}": ["Not Active"] * 2 for r in validate.REJECT_REASONS}}}
+    run.update(extra)
+    return run
+
+
+def spec_doc(run, pairs=None):
+    d = doc(passes=[])
+    d["runs"] = [run]
+    d["card"]["smi"]["pci.device_id"] = "0x280510DE"
+    return d, {"pairs": pairs if pairs is not None else [lab_pair(), lab_pair("ad102:128sm", t=3.45)]}
+
+
+def judge(run, pairs=None):
+    d, registry = spec_doc(run, pairs)
+    out = {"id": run["id"], "mode": "spec", "metrics": [], "notes": []}
+    validate.judge_spec(d, run, out, [], registry, validate.TOLERANCE)
+    return out
+
+
+def row(out, name):
+    return next(m for m in out["metrics"] if m["metric"] == name)
+
+
+class Spec(unittest.TestCase):
+    def test_clean_tune_confirms_both_and_is_a_candidate(self):
+        out = judge(spec_run())
+        a, r = row(out, "acceptance mtp:3"), row(out, "round cost mtp:3")
+        self.assertTrue(a["verdict"].startswith("confirms the registry pairs' acceptance"), a)
+        self.assertTrue(r["verdict"].startswith("confirms the facts' R(k)"), r)
+        self.assertAlmostEqual(r["measured"], 1.5, places=3)
+        self.assertEqual(out["candidate"], "yes")
+
+    def test_round_cost_mirrors_the_engine(self):
+        # Per section a round's seconds over plain's seconds a token, the mean over the sections
+        # (tests/test_spec_pairs.cpp holds the C++ to the same numbers).
+        m = [{"config": "plain", "family": "math", "tokens": 100, "seconds": 10.0},
+             {"config": "plain", "family": "code", "tokens": 100, "seconds": 5.0},
+             {"config": "mtp:3", "family": "math", "rounds": 20, "seconds": 4.0},
+             {"config": "mtp:3", "family": "code", "rounds": 20, "seconds": 3.0},
+             {"config": "mtp:3", "family": "prose", "rounds": 20, "seconds": 3.0}]
+        self.assertEqual(validate.round_costs(m), {"mtp:3": 2.5})
+
+    def test_acceptance_off_contradicts_and_blocks_the_candidate(self):
+        out = judge(spec_run(t=2.9))
+        self.assertTrue(row(out, "acceptance mtp:3")["verdict"].startswith("contradicts"))
+        self.assertEqual(out["candidate"], "no: an acceptance contradicts the lab pairs")
+
+    def test_round_cost_off_contradicts_the_facts(self):
+        out = judge(spec_run(round_cost=1.8))
+        self.assertTrue(row(out, "round cost mtp:3")["verdict"].startswith("contradicts the facts' R(k)"))
+        self.assertEqual(out["candidate"], "yes")  # speed is evidence about the model, not the entry
+
+    def test_prediction_kinds_are_said(self):
+        own = judge(spec_run(source="registry pair org/m (2 lab card(s))"),
+                    pairs=[lab_pair(), lab_pair("ad106:34sm")])
+        self.assertIn("a lab measurement, not the facts", row(own, "round cost mtp:3")["verdict"])
+        raised = judge(spec_run(source="registry pair org/m; rounds priced from the weights' bytes and this "
+                                       "card's rates (ada, eta 0.148); conservative where the lab card "
+                                       "measured rounds dearer than their bytes: mtp:3 +12 %"))
+        self.assertIn("raised to a lab card's measurement", row(raised, "round cost mtp:3")["verdict"])
+        other = judge(spec_run(source="registry sibling org/m Q8_0 (2 lab card(s))"))
+        self.assertIn("registry sibling", row(other, "round cost mtp:3")["verdict"])
+
+    def test_throttle_rejects_round_cost_not_acceptance(self):
+        run = spec_run()
+        run["telemetry"]["columns"][f"{P}.hw_thermal_slowdown"] = ["Active", "Not Active"]
+        out = judge(run)
+        self.assertTrue(row(out, "round cost mtp:3")["status"].startswith("rejected: S3"))
+        self.assertTrue(row(out, "acceptance mtp:3")["verdict"].startswith("confirms"))
+
+    def test_other_process_and_unsteady_plain(self):
+        out = judge(spec_run(processes_after={"listed": 2, "others": 1, "informative": True}))
+        self.assertTrue(row(out, "round cost mtp:3")["status"].startswith("rejected: S3"))
+        run = spec_run()
+        run["profile"]["measurements"] = measurements(plain_scale={"code": 1.08})
+        self.assertTrue(row(judge(run), "round cost mtp:3")["status"].startswith("rejected: S4"))
+
+    def test_unknown_reasons_keep_round_cost_without_verdict(self):
+        run = spec_run()
+        run["telemetry"]["columns"] = {f"{P}.{r}": [None, None] for r in validate.REJECT_REASONS}
+        r = row(judge(run), "round cost mtp:3")
+        self.assertEqual(r["status"], "accepted")
+        self.assertTrue(r["verdict"].startswith("not used: S3 unknown"))
+
+    def test_no_reference_cases(self):
+        # Another target, another engine key, other settings, one lab card, a +head configuration.
+        self.assertIn("no lab pair", " ".join(judge(spec_run(), pairs=[]).get("notes")))
+        out = judge(spec_run(), pairs=[lab_pair(engine="ninferno-spec-2"), lab_pair("ad102:128sm", engine="x")])
+        self.assertTrue(row(out, "acceptance mtp:3")["verdict"].startswith("no reference"))
+        out = judge(spec_run(), pairs=[lab_pair(settings="max context 8192, greedy"), lab_pair("ad102:128sm", settings="x")])
+        self.assertTrue(row(out, "acceptance mtp:3")["verdict"].startswith("no reference"))
+        self.assertTrue(out["candidate"].startswith("no: the tune's settings"))
+        self.assertTrue(row(judge(spec_run(), pairs=[lab_pair()]), "acceptance mtp:3")["verdict"]
+                        .startswith("no reference: fewer than 2 lab cards"))
+        run = spec_run()
+        run["profile"]["measurements"] = measurements(configs=("mtp:3+head",))
+        self.assertIn("proposal head", row(judge(run), "acceptance mtp:3+head")["verdict"])
+
+    def test_lab_pairs_of_other_menus_are_left_out(self):
+        # The registry's pairs of one target need not share a menu: one without the label is no
+        # reference for it (and no crash).
+        third = lab_pair("gb203:70sm")
+        third["tune"]["measurements"] = measurements(configs=("dflash:7",))
+        out = judge(spec_run(), pairs=[lab_pair(), lab_pair("ad102:128sm", t=3.45), third])
+        self.assertIn("lab cards 2", " ".join(row(out, "acceptance mtp:3")["notes"]))
+        lone = judge(spec_run(), pairs=[lab_pair(), third])
+        self.assertIn("fewer than 2 lab cards", row(lone, "acceptance mtp:3")["verdict"])
+        none = judge(spec_run(), pairs=[third, third])
+        self.assertIn("the lab measured no mtp:3", row(none, "acceptance mtp:3")["verdict"])
+
+    def test_a_configuration_without_rounds_is_no_candidate(self):
+        run = spec_run()
+        for m in run["profile"]["measurements"]:
+            if m["config"] == "mtp:3" and m["family"] == "prose":
+                m["rounds"] = m["accepted"] = 0
+        out = judge(run)
+        self.assertTrue(row(out, "acceptance mtp:3")["status"].startswith("rejected: S1"))
+        self.assertEqual(out["candidate"], "no: a configuration without a round in a section")
+
+    def test_registry_is_a_parameter(self):
+        d, registry = spec_doc(spec_run())
+        r = validate.validate(d, registry=registry)
+        self.assertEqual(r["runs"][0]["candidate"], "yes")
+        self.assertTrue(r["runs"][0]["metrics"][0]["verdict"].startswith("confirms"))
+
+    def test_wait_mode_is_not_an_acceptance_setting(self):
+        out = judge(spec_run(), pairs=[lab_pair(settings=SETTINGS.replace("spin", "block")),
+                                       lab_pair("ad102:128sm", settings=SETTINGS.replace("spin", "block"))])
+        self.assertTrue(row(out, "acceptance mtp:3")["verdict"].startswith("confirms"))
+
+    def test_separate_drafter_must_be_the_pairs(self):
+        run = spec_run()
+        run["manifest"]["drafters"].append({"name": "dflash", "kind": "dflash", "status": "embedded",
+                                            "repo": "z/D", "revision": "r1"})
+        run["profile"]["measurements"] = measurements(configs=("dflash:7",))
+        run["plan"]["speculation"]["round_cost"] = {"dflash:7": 1.5}
+        good = [lab_pair(drafters={"dflash": "z/D@r1"}), lab_pair("ad102:128sm", drafters={"dflash": "z/D@r1"})]
+        for p in good:
+            p["tune"]["measurements"] = measurements(configs=("dflash:7",))
+        self.assertTrue(row(judge(run, good), "acceptance dflash:7")["verdict"].startswith("confirms"))
+        for p in good:
+            p["drafters"] = {"dflash": "z/D@r2"}
+        self.assertTrue(row(judge(run, good), "acceptance dflash:7")["verdict"].startswith("no reference"))
+
+    def test_gemma_assistant_is_the_mtp_labels_drafter(self):
+        run = spec_run()
+        run["manifest"]["drafters"] = [{"name": "assistant", "kind": "gemma4_assistant", "status": "attached",
+                                        "repo": "g/A", "revision": "r1"}]
+        pairs = [lab_pair(drafters={"gemma4_assistant": "g/A@r1"}),
+                 lab_pair("ad102:128sm", drafters={"gemma4_assistant": "g/A@r1"})]
+        self.assertTrue(row(judge(run, pairs), "acceptance mtp:3")["verdict"].startswith("confirms"))
+        for p in pairs:
+            p["drafters"] = {"gemma4_assistant": "g/A@r2"}
+        self.assertIn("another drafter", row(judge(run, pairs), "acceptance mtp:3")["verdict"])
+        run["manifest"]["drafters"][0]["repo"] = "other"
+        self.assertTrue(judge(run)["candidate"].startswith("no: a measured drafter the registry does not declare"))
+
+    def test_partial_or_unidentified_tunes_are_no_candidates(self):
+        run = spec_run()
+        run["profile"]["skipped"] = ["dflash:7"]
+        self.assertEqual(judge(run)["candidate"], "no: partial tune")
+        run = spec_run()
+        run["profile"]["drafters"].append({"name": "dflash", "status": "untested"})
+        self.assertEqual(judge(run)["candidate"], "no: partial tune")
+        self.assertTrue(judge(spec_run(target=None))["candidate"].startswith("no: the target's identity"))
+
+    def test_failed_tune_through_validate(self):
+        d, _ = spec_doc({"id": "q9", "mode": "spec", "error": "spec-tune failed"})
+        r = validate.validate(d)
+        self.assertEqual(r["runs"][0]["candidate"], "no: the run failed")
+        d, _ = spec_doc({"id": "q9", "mode": "spec"})
+        self.assertIn("S1", validate.render(validate.validate(d)))
+
+
+REF = {"set_sha256": "s" * 64, "models": {"org/m Q4_K_M": [
+    {"card": f"c{i}", "correct": c, "wrong": w} for i, (c, w) in enumerate(
+        [(27, ["a", "b"]), (26, ["a", "c"]), (27, ["b", "d"]), (25, ["a", "b", "c"])])]}}
+
+
+def hard(correct=27, wrong=("a", "b"), **extra):
+    run = {"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "hard50", "set_sha256": "s" * 64,
+           "hard50": {"questions": 50, "correct": correct, "errors": 0, "wrong": list(wrong)}}
+    run.update(extra)
+    out = {"metrics": [], "notes": []}
+    validate.judge_hard50(run, out, REF)
+    return out["metrics"][0]
+
+
+class Hard50(unittest.TestCase):
+    def test_within_the_lab(self):
+        self.assertTrue(hard()["verdict"].startswith("consistent with the lab's hard50"))
+
+    def test_count_far_below(self):
+        # lab 25..27, median 26.5: p 0.53, sd 3.53, below the lab under 17.9
+        self.assertTrue(hard(correct=17)["verdict"].startswith("below"))
+        self.assertTrue(hard(correct=18)["verdict"].startswith("consistent"))
+
+    def test_items_every_lab_card_got_right(self):
+        # A lab card misses at most one question the others all got right (the third: d): m = 1,
+        # so more than 2 m + 2 = 4 such questions here is below the lab.
+        self.assertTrue(hard(wrong=("a", "x1", "x2", "x3", "x4"))["verdict"].startswith("consistent"))
+        self.assertTrue(hard(wrong=("a", "x1", "x2", "x3", "x4", "x5"))["verdict"].startswith("below"))
+
+    def test_rejections_and_no_reference(self):
+        self.assertTrue(hard(hard50={"questions": 50, "correct": 20, "errors": 2})["status"].startswith("rejected: H1"))
+        self.assertTrue(hard(hard50={"questions": 49, "correct": 20, "errors": 0})["status"].startswith("rejected: H1"))
+        self.assertTrue(hard(set_sha256="t" * 64)["verdict"].startswith("no reference: H2"))
+        self.assertTrue(hard(repo="org/other")["verdict"].startswith("no reference"))
+
+    def test_reference_file_is_well_formed(self):
+        ref = validate.load_json(validate.HARD_REFERENCE)
+        self.assertEqual(ref["set_sha256"], measure.sha256_of(measure.HARD_SET))
+        for key, runs in ref["models"].items():
+            self.assertEqual(len(key.split(" ")), 2, key)
+            for r in runs:
+                self.assertEqual(r["correct"], 50 - len(r["wrong"]), (key, r["card"]))
+
+
+class Kit(unittest.TestCase):
+    def test_lab_configs_are_the_pairs_menu(self):
+        import json
+        registry = json.loads(measure.REGISTRY.read_text(encoding="utf-8"))
+        pair = next(p for p in registry["pairs"] if p["target_repo"].endswith(" Q4_K_M")
+                    and "Qwen3.5-9B-MTP-GGUF@" in p["target_repo"])
+        labels = measure.lab_configs({"repo": "unsloth/Qwen3.5-9B-MTP-GGUF", "quant": "Q4_K_M"})
+        self.assertTrue({m["config"] for m in pair["tune"]["measurements"]} - {"plain"} <= set(labels))
+        self.assertFalse(any("+head" in label for label in labels))
+        self.assertEqual(measure.lab_configs({"repo": "nobody/none", "quant": "Q4_K_M"}), [])
+
+    def test_target_identity_hashes_the_snapshot_file(self):
+        import hashlib
+        import tempfile
+        with tempfile.TemporaryDirectory() as root:
+            rev = "c" * 40
+            model = Path(root) / "models--org--m"
+            (model / "ninferno" / rev).mkdir(parents=True)
+            (model / "snapshots" / rev).mkdir(parents=True)
+            (model / "snapshots" / rev / "M-Q4_K_M.gguf").write_bytes(b"weights")
+            (model / "snapshots" / rev / "M-Q8_0.gguf").write_bytes(b"other")
+            (model / "snapshots" / rev / "mmproj-M-Q4_K_M.gguf").write_bytes(b"vision")
+            art = model / "ninferno" / rev / "M-Q4_K_M.qwen3_5_bf16.ninferno"
+            got = measure.target_identity(str(art))
+            self.assertEqual(got["revision"], rev)
+            self.assertEqual([w["sha256"] for w in got["weights"]], [hashlib.sha256(b"weights").hexdigest()])
+            self.assertIsNone(measure.target_identity(str(Path(root) / "x.ninferno")))
+            # A split model: every part, by the artifact named after the model or its first part.
+            for i in (1, 2):
+                (model / "snapshots" / rev / f"B-Q4_K_M-0000{i}-of-00002.gguf").write_bytes(b"p%d" % i)
+            for name in ("B-Q4_K_M.qwen3_5_bf16.ninferno", "B-Q4_K_M-00001-of-00002.qwen3_5_bf16.ninferno"):
+                got = measure.target_identity(str(model / "ninferno" / rev / name))
+                self.assertEqual(len(got["weights"]), 2, name)
+
 if __name__ == "__main__":
     unittest.main()

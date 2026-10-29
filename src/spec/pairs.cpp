@@ -360,6 +360,10 @@ std::map<std::string, double> round_costs(const Profile& tune) {
 
 } // namespace
 
+std::map<std::string, double> profile_round_costs(const Profile& profile) {
+    return round_costs(profile);
+}
+
 RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
                                        std::string_view from, std::string_view to) {
     std::map<std::string, std::vector<double>> ratios;
