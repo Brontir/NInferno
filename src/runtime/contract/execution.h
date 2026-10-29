@@ -50,9 +50,14 @@ struct BeginSummary {
     [[nodiscard]] friend constexpr bool operator==(BeginSummary, BeginSummary) noexcept = default;
 };
 
+// A row's fault in a round (row_faults): the request ends with a numerical failure, the Engine
+// and the other rows go on.
+inline constexpr std::uint8_t kRowFaultNonFinite  = 1; // a NaN or an infinity in its final hidden
+inline constexpr std::uint8_t kRowFaultTokenDomain = 2; // a token outside the public vocabulary
+
 struct GeneratedRound {
     std::span<const TokenId> tokens;
-    // Per row, nonzero when the round computed a NaN or an infinity for it (empty: none).
+    // Per row, a kRowFault* when the round faulted for it (empty: none).
     std::span<const std::uint8_t> row_faults;
 };
 
