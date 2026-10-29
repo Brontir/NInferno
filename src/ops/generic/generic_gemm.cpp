@@ -2788,6 +2788,8 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
         const Route r{Family::RegisterMma,
                       static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, false))};
         if (route_admits(r, weight, problem.policy)) return r;
+        // No register-MMA schedule admits this shape: the band rule's route, as before pricing.
+        if (tokens <= kVecRuleMaxTokens) return Route{Family::GgmlVec, 0};
         break;
     }
     case VerifyPick::None:
