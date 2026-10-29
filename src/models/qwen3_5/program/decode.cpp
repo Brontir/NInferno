@@ -931,6 +931,7 @@ void ProgramImpl::collect_ordinary(const LaunchRows& part, double seconds, std::
                 tokens[step] = ordinary_host_egress->step_tokens[step * kMaximumConcurrency + row];
             }
             tokens[steps - 1U] = ordinary_host_egress->sampled_tokens[row];
+            if (debug_token_domain_point()) { tokens[steps - 1U] = model.traits().public_tokens; }
             if (!license_tokens(std::span<TokenId>(tokens, steps))) {
                 domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
             }
