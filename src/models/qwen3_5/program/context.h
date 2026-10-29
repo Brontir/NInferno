@@ -78,6 +78,9 @@ struct PrefillContext {
     std::uint32_t mtp_proposal_extent                          = 0;
     std::int32_t dflash_kv_table_row                           = 0;
     qwen3_5::DFlashPrefillIngress* dflash_prefill_host_ingress = nullptr;
+    // The RoPE position offset a cached multimodal prefix leaves (the sequence's): a text-only
+    // suffix or forced tokens continue it in fresh cards, which would otherwise start at 0.
+    std::int32_t rope_delta = 0;
 };
 
 struct OrdinaryBatchContext {

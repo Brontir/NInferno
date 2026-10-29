@@ -381,6 +381,7 @@ runtime::ExecutionTiming ProgramImpl::append_forced_tokens(
                     sequence.kv->backend ? backend_kv_addresses->bound_row(*sequence.kv->backend)
                                          : 0,
                     dflash_prefill_host_ingress};
+                schedule_state.rope_delta = sequence.rope_delta;
                 mark_workspace_usage(drafting && speculative_backend == SpeculativeBackend::Mtp
                                          ? workspace_plan.mtp_prefill
                                          : workspace_plan.text_prefill);
