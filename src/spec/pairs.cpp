@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -16,6 +17,8 @@
 #include <map>
 #include <set>
 #include <stdexcept>
+#include <string>
+#include <tuple>
 #include <utility>
 
 namespace ninferno::spec {
@@ -367,6 +370,41 @@ std::map<std::string, double> profile_round_costs(const Profile& profile) {
 
 namespace {
 
+// A card: its GPU class id and the board its record names (two boards of one class are two cards,
+// each priced by its own rates; pool_cards).
+std::string card_of(const MeasuredPair& pair) {
+    return pair.tune.key.gpu + "/" + std::to_string(pair.lab_board);
+}
+
+// How many physical cards `pairs` were measured on: a named board is a card of its class; a record
+// naming no board is its class's card, a card of its own only where no record of its class names
+// one.
+std::size_t card_count(const std::vector<const MeasuredPair*>& pairs) {
+    std::map<std::string, std::set<std::uint32_t>> boards; // by class: the named boards
+    for (const auto* p : pairs) { boards[p->tune.key.gpu]; }
+    for (const auto* p : pairs) {
+        if (p->lab_board != 0) { boards[p->tune.key.gpu].insert(p->lab_board); }
+    }
+    std::size_t n = 0;
+    for (const auto& [gpu, named] : boards) { n += std::max<std::size_t>(named.size(), 1); }
+    return n;
+}
+
+// The records in their own order: GPU class id, generation, then content (the record's JSON, each
+// rendered once), so the registry's order never decides which record is first.
+std::vector<const MeasuredPair*> in_content_order(std::vector<const MeasuredPair*> pairs) {
+    std::vector<std::tuple<std::string, std::string, std::string, const MeasuredPair*>> keyed;
+    for (const auto* p : pairs) {
+        keyed.emplace_back(p->tune.key.gpu, p->generation, pair_json(*p).dump(), p);
+    }
+    std::stable_sort(keyed.begin(), keyed.end(), [](const auto& a, const auto& b) {
+        return std::tie(std::get<0>(a), std::get<1>(a), std::get<2>(a)) <
+               std::tie(std::get<0>(b), std::get<1>(b), std::get<2>(b));
+    });
+    for (std::size_t i = 0; i < keyed.size(); ++i) { pairs[i] = std::get<3>(keyed[i]); }
+    return pairs;
+}
+
 // Per configuration label, the median over `pairs` of each one's round cost (round_costs; an even
 // count: the mean of the middle two).
 std::map<std::string, double> median_round_costs(const std::vector<const MeasuredPair*>& pairs) {
@@ -421,11 +459,18 @@ const MeasuredPair& base_of(const std::vector<const MeasuredPair*>& pairs,
 }
 
 // One record per card (its GPU class id), the first in `pairs`' order.
+// A card is its class and board (card_of); a record naming no board is its class's card, left out
+// where a record of its class names one (card_count).
 std::vector<const MeasuredPair*> one_per_card(const std::vector<const MeasuredPair*>& pairs) {
+    std::set<std::string> named;
+    for (const auto* pair : pairs) {
+        if (pair->lab_board != 0) { named.insert(pair->tune.key.gpu); }
+    }
     std::vector<const MeasuredPair*> out;
     std::set<std::string> cards;
     for (const auto* pair : pairs) {
-        if (cards.insert(pair->tune.key.gpu).second) { out.push_back(pair); }
+        if (pair->lab_board == 0 && named.contains(pair->tune.key.gpu)) { continue; }
+        if (cards.insert(card_of(*pair)).second) { out.push_back(pair); }
     }
     return out;
 }
@@ -492,21 +537,15 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                            const GpuKey* gpu, std::string* note) {
     // The records in an order of their own (GPU class id, then content): the registry's order
     // never decides which card's measurement is taken.
-    std::vector<const MeasuredPair*> ordered = measured;
-    std::stable_sort(ordered.begin(), ordered.end(), [](const MeasuredPair* a, const MeasuredPair* b) {
-        if (a->tune.key.gpu != b->tune.key.gpu) { return a->tune.key.gpu < b->tune.key.gpu; }
-        return pair_json(*a).dump() < pair_json(*b).dump();
-    });
-    std::vector<const MeasuredPair*> current, home;
-    std::set<std::string> home_cards; // two cards, not two records of one card
+    const std::vector<const MeasuredPair*> ordered = in_content_order(measured);
+    std::vector<const MeasuredPair*> current, of_generation;
     for (const auto* pair : ordered) {
         if (!pair_current(*pair)) { continue; }
         current.push_back(pair);
-        if (!generation.empty() && pair->generation == generation &&
-            home_cards.insert(pair->tune.key.gpu).second) {
-            home.push_back(pair);
-        }
+        if (!generation.empty() && pair->generation == generation) { of_generation.push_back(pair); }
     }
+    // Two cards, not two records of one card (one_per_card).
+    const std::vector<const MeasuredPair*> home = one_per_card(of_generation);
     if (current.empty()) {
         return ordered.empty() ? Profile{} : not_current(*ordered.front());
     }
@@ -619,7 +658,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
                                             std::string_view engine, std::string_view kind,
                                             double target_bits) {
     const Mode mode = mode_of_kind(kind);
-    std::vector<const MeasuredPair*> low, high;
+    std::vector<const MeasuredPair*> eligible;
     for (const auto& pair : pairs) {
         if (pair.engine != engine || !pair_current(pair)) { continue; }
         // That drafter kind, not another of its mode (MTP layers, Gemma's assistant and
@@ -629,19 +668,31 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
         const bool drafts  = std::any_of(
             pair.tune.measurements.begin(), pair.tune.measurements.end(),
             [&](const Measurement& m) { return m.config.mode == mode; });
-        if (!kind_of || !drafts) { continue; }
+        if (kind_of && drafts) { eligible.push_back(&pair); }
+    }
+    // In content order (in_content_order): which of one card's records of a target stands (the
+    // first in that order), and the group's order, never depend on the registry's.
+    std::vector<const MeasuredPair*> low, high;
+    // Records naming their board first: a record naming none matches every board of its class,
+    // so taken first it would hide each named board's own record (Codex).
+    std::vector<const MeasuredPair*> ordered = in_content_order(std::move(eligible));
+    std::stable_partition(ordered.begin(), ordered.end(),
+                          [](const MeasuredPair* p) { return p->lab_board != 0; });
+    for (const auto* record : ordered) {
+        const MeasuredPair& pair = *record;
         auto& into = pair.target_bits < 4 ? low : high;
-        // One card's record of a target once.
+        // One card's record of a target once: a card is its class and board (a record naming no
+        // board is its class's card, as pool_cards pools them).
         const bool again = std::any_of(into.begin(), into.end(), [&](const MeasuredPair* p) {
-            return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu;
+            return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu &&
+                   p->generation == pair.generation &&
+                   (p->lab_board == 0 || pair.lab_board == 0 || p->lab_board == pair.lab_board);
         });
         if (!again) { into.push_back(&pair); }
     }
     // A group's choice is a lab constant for targets nobody measured: fitted on two cards or more.
     const auto enough = [](const std::vector<const MeasuredPair*>& group) {
-        std::set<std::string> cards;
-        for (const auto* p : group) { cards.insert(p->tune.key.gpu); }
-        return cards.size() >= kGroupCards;
+        return card_count(group) >= kGroupCards;
     };
     const bool below  = target_bits < 4;
     const auto& same  = below ? low : high;
@@ -669,15 +720,15 @@ struct LabelGain {
 std::optional<LabelGain> label_gain(const std::vector<GroupMember>& members, const std::string& label,
                                     const std::vector<std::string>& families) {
     LabelGain out;
-    std::set<std::string> cards;
+    std::vector<const MeasuredPair*> measured;
     for (const auto& m : members) {
         if (const auto o = over(m.table, label, families)) {
             out.each.push_back(*o);
             out.gain += o->fine_tune_speed;
-            cards.insert(m.pair->tune.key.gpu);
+            measured.push_back(m.pair);
         }
     }
-    if (cards.size() < kGroupCards) { return std::nullopt; }
+    if (card_count(measured) < kGroupCards) { return std::nullopt; }
     out.gain /= double(out.each.size());
     return out;
 }
@@ -816,12 +867,22 @@ std::optional<MeasuredPair> carried_of(const MeasuredPair& pair, const PairQuery
 
 // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the pair:
 // their runs pooled, so its choice weighs every drafter the card measured. A load table or fit
-// fallback is the one drafter's it was measured with: kept only when the tunes agree.
-std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> measured) {
+// fallback is the one drafter's it was measured with: kept only when the tunes agree. Records of
+// two different boards of one class (both named) are two cards: each board's rates price its own
+// rounds; a record naming none joins its class's first card. The records are pooled in content
+// order (in_content_order): the pooled measurements (summed in that order), drafters and target
+// fields, each mode's round facts (the first record in that order that has them) and the order
+// of the cards (GPU class id) never depend on the registry's order.
+std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
+    std::vector<const MeasuredPair*> order;
+    for (const auto& r : records) { order.push_back(&r); }
+    std::vector<MeasuredPair> measured;
+    for (const auto* r : in_content_order(std::move(order))) { measured.push_back(*r); }
     std::vector<MeasuredPair> cards;
     for (auto& p : measured) {
         const auto same = std::find_if(cards.begin(), cards.end(), [&](const MeasuredPair& c) {
-            return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation;
+            return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation &&
+                   (c.lab_board == 0 || p.lab_board == 0 || c.lab_board == p.lab_board);
         });
         if (same == cards.end()) {
             cards.push_back(std::move(p));

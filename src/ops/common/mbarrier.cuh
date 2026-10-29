@@ -59,6 +59,20 @@ __device__ __forceinline__ void cta_mbarrier_arrive_expect_tx(std::uint64_t* bar
 #endif
 }
 
+// A consumer's generic-proxy reads of a stage (ld.shared, ldmatrix) ordered before the async-proxy
+// writes of its refill (cp.async.bulk.tensor): the mbarrier orders generic-proxy accesses only
+// (PTX ISA, memory consistency model: proxies), so every reading thread runs this after its last
+// read of a stage and before its warp arrives on the stage's empty barrier. Without it a refill
+// may overwrite a stage still being read (Wallawalla47/Infernix 4b5eae7a8c: wrong outputs on the
+// RTX 5090 while another shared-memory-heavy kernel shared the SMs, never in an isolated test).
+__device__ __forceinline__ void cta_fence_reads_before_async_refill() {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 900
+    __trap();
+#else
+    asm volatile("fence.proxy.async.shared::cta;" : : : "memory");
+#endif
+}
+
 __device__ __forceinline__ void cta_mbarrier_fence_init() {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 900
     __trap();
