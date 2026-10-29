@@ -29,10 +29,10 @@
 // with the min, which already reads that sum (HK45::kBias): one FFMA a group instead of an HSUB2 a
 // code pair. The accumulator then holds a sum ~2^7 larger; against FP64 the outputs' error over
 // the reduced |w x| stayed as it was without the fold (GV100, K = 4096 / 17408, activations of
-// one sign over all of K: max 3.5e-3 / 2.9e-3 both ways; check_volta_hmma_accuracy). No weight value is ever
-// rounded to f16, whatever its scale. The groups add in K order, the quad-pairs' sums meet at the
-// end in a fixed order ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only,
-// never on the call's T or its other tokens, and repeat run to run.
+// one sign over all of K: max 3.5e-3 / 2.9e-3 both ways; check_volta_hmma_accuracy). No weight
+// value is ever rounded to f16, whatever its scale. The groups add in K order, the quad-pairs'
+// sums meet at the end in a fixed order ((q0 + q1) + (q2 + q3)): a token's bytes depend on its
+// own column only, never on the call's T or its other tokens, and repeat run to run.
 #include "core/device.h"
 #include "core/device_class.h"
 #include "ops/common/mma.cuh"
