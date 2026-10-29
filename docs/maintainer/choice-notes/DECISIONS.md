@@ -1276,7 +1276,11 @@ attempt 3, for reference).
   (all of a slice's global loads, written together) and `convert()` (none), the kernel loading slice
   it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
   RTX 5070 Ti (instances 0.67..1.52), 0.99 on the RTX 5090 (0.72..1.29) and 1.01 on the RTX 4090
-  (0.85..1.20): the same re-roll.
+  (0.85..1.20): the same re-roll. Measured with `ninferno_r8_schedule_bench --samples 7
+  --launches 30 --rmma 1`, the vector route's time at T = 2..8 on 44 shapes (each of the 18 ggml
+  formats at 4096x4096 store and 12288x4096 SwiGLU, Q6_K add 3840x15360 / 5120x17408 / 4096x12288 /
+  2048x6144 / 4096x4096, Q4_K add 3840x15360 / 5120x17408, Q5_K add 5120x17408): 308 instances,
+  master and branch builds interleaved twice, the median of each instance's two runs.
   ptxas still places the loads: Q4_K's runtime-K slice loop issued 1..8 loads before its first
   IDP against master's 1..5, and the instances that gained loads ahead were the faster ones (T = 7,
   8 loads ahead against 2, Q4_K add 3840x15360 -28 %; T = 4, 1 against 2, +32 %). Source order
