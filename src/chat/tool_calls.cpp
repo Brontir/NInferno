@@ -915,12 +915,16 @@ nlohmann::ordered_json loose_qwen_parameters(const ToolCallConstraintTool& tool)
         const auto declared = schema.find("properties");
         if (declared != schema.end() && declared->is_object()) {
             for (const auto& [name, unused] : declared->items()) {
-                if (qwen_parameter_name(name)) { properties[name] = Ordered::object(); }
+                if (qwen_parameter_name(name)) { properties[name] = Ordered{{"type", "string"}}; }
             }
         }
     }
-    return Ordered{
-        {"type", "object"}, {"properties", std::move(properties)}, {"additionalProperties", true}};
+    // Every value is the raw text up to </parameter> (a "string" in the XML style): the language of
+    // "any value" (that text, a JSON array or a JSON object) minus JSON holding "</parameter>",
+    // whose masks cost up to 50 ms at a value's start on a 262k vocabulary, and under 1 ms here.
+    return Ordered{{"type", "object"},
+                   {"properties", std::move(properties)},
+                   {"additionalProperties", Ordered{{"type", "string"}}}};
 }
 
 // A strict tool's arguments hold to its schema, so every declared name must be one the syntax
@@ -1413,15 +1417,18 @@ public:
     static constexpr std::string_view kCall  = "call:";
     // Gemma's value syntax as Gemma4Syntax::Reader reads it: bare keys and values never hold
     // '<', so no marker fits inside the arguments; a quoted string is any text up to the closing
-    // <|"|> (a tag dispatch, so its masks take XGrammar's fast path: a character-by-character
-    // rule cost up to 70 ms per mask on a 262k vocabulary). Whitespace runs between them are bounded like
-    // JSON's (CompilerOptions::json_whitespace_run), so a model cannot write whitespace there until
-    // max_tokens.
+    // <|"|>. The string is a tag dispatch and the bare runs end on a lookahead of what may follow
+    // them, so most tokens are settled when the grammar compiles (without, a mask at the start of
+    // a value took up to 100 ms on Gemma 4's 262k vocabulary; tool_grammar_budget_test). Whitespace
+    // runs between them are bounded like JSON's (CompilerOptions::json_whitespace_run), so a model
+    // cannot write whitespace there until max_tokens.
     static constexpr std::string_view kArgumentsGrammar =
         R"GBNF(root ::= ws (member (ws "," ws member)*)? ws
 member ::= key ws ":" ws value
-key ::= quoted | [^:,{}\[\]<>"\t\n ]+
-value ::= quoted | object | array | [^,{}\[\]<>"\t\n ] [^,{}\[\]<>"\n]*
+key ::= quoted | bare_key
+bare_key ::= [^:,{}\[\]<>"\t\n ]+ (= [ \t\n:])
+value ::= quoted | object | array | bare_value
+bare_value ::= [^,{}\[\]<>"\t\n ] [^,{}\[\]<>"\n]* (= [,}\]\n])
 object ::= "{" ws (member (ws "," ws member)*)? ws "}"
 array ::= "[" ws (value (ws "," ws value)*)? ws "]"
 quoted ::= "<|\"|>" qtext "<|\"|>"
