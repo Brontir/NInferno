@@ -936,10 +936,12 @@ bool ring_swiglu_four_warps(QType q) {
 
 // The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to two facts of
 // the grid and the addressing, never a timing:
-// - each warp walks at least two superblocks of its rows' K (K >= 512 x warps): its two-step load
-//   ring otherwise never reaches a steady state, the first loads' latency and the cross-warp
-//   reduction exposed in every CTA (K = 4096 on sixteen warps, one superblock a warp, streamed
-//   DRAM at 57..70 % of peak on all five lab boards, against 71..74 % for the best split);
+// - each warp walks more K steps of its rows than its load ring holds (two steps of 128 values,
+//   every ggml decoder's 32-value runs: K > 256 x warps); with no more steps than the ring holds,
+//   the ring never refills, every step's load latency and the cross-warp reduction exposed (K =
+//   4096 on sixteen warps, two steps a warp, streamed DRAM at 57..70 % of peak on all five lab
+//   boards, against 71..74 % for the best split; K = 2560 on eight warps, 2.5 steps a warp, kept
+//   up on the RTX 3060: 32.5 us against 33.0 on four warps);
 // - its grid leaves no last wave of a few CTAs: from one to one and a half waves the last runs
 //   on a fraction of the SMs (RTX 4090 Q4_K 5120x17408 add, 320 CTAs: eight warps at 1.25 waves
 //   69 % of DRAM, four warps at 0.63 waves 75 %; RTX 5070 Ti four warps at 1.14 waves 52 %, eight
@@ -953,7 +955,7 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
     const auto keeps = [&](int warps_k) {
         const double waves = static_cast<double>(ctas) / static_cast<double>(sms * (16 / warps_k));
-        return problem.k >= 512 * warps_k && !(waves > 1.0 && waves < 1.5);
+        return problem.k > 256 * warps_k && !(waves > 1.0 && waves < 1.5);
     };
     const RmmaScheduleInfo info = rmma_schedule_info(index);
     if (info.warps_m != 1 || info.m_tiles != 1 || info.n_tiles != 1 || info.cluster != 1 ||
