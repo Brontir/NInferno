@@ -934,6 +934,38 @@ bool ring_swiglu_four_warps(QType q) {
     }
 }
 
+// The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to two facts of
+// the grid and the addressing, never a timing:
+// - each warp walks at least two superblocks of its rows' K (K >= 512 x warps): its two-step load
+//   ring otherwise never reaches a steady state, the first loads' latency and the cross-warp
+//   reduction exposed in every CTA (K = 4096 on sixteen warps, one superblock a warp, streamed
+//   DRAM at 57..70 % of peak on all five lab boards, against 71..74 % for the best split);
+// - its grid leaves no last wave of a few CTAs: from one to one and a half waves the last runs
+//   on a fraction of the SMs (RTX 4090 Q4_K 5120x17408 add, 320 CTAs: eight warps at 1.25 waves
+//   69 % of DRAM, four warps at 0.63 waves 75 %; RTX 5070 Ti four warps at 1.14 waves 52 %, eight
+//   at 2.29 waves 63 %; RTX 4070 Ti four warps at 1.33 waves 74 %, eight at 2.67 waves 86 %).
+// A one-tile CTA of `w` K warps holds 16 / w per SM: these kernels take at most 128 registers a
+// thread (ptxas, sm_86 / sm_89 / sm_120: Q4_K 114..122, Q6_K wide 128; launch bounds hold the
+// wide and ring forms to it), 16 warps of a 64K-register SM. The split that keeps both facts,
+// trying eight, four and sixteen warps in that order; the pick unchanged when it keeps them or
+// none does.
+int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::int64_t sms) {
+    if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
+    const auto keeps = [&](int warps_k) {
+        const double waves = static_cast<double>(ctas) / static_cast<double>(sms * (16 / warps_k));
+        return problem.k >= 512 * warps_k && !(waves > 1.0 && waves < 1.5);
+    };
+    const RmmaScheduleInfo info = rmma_schedule_info(index);
+    if (info.warps_m != 1 || info.m_tiles != 1 || info.n_tiles != 1 || info.cluster != 1 ||
+        keeps(info.warps_k)) {
+        return index;
+    }
+    for (const int warps_k : {8, 4, 16}) {
+        if (warps_k != info.warps_k && keeps(warps_k)) return rmma_index(1, warps_k, 1, 1);
+    }
+    return index;
+}
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -945,7 +977,7 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 if (ctas <= sms) return one_wave_split(ctas, sms);
                 if (ctas > 2 * sms && light_ggml_step(problem.qtype) &&
                     problem.epilogue != Epilogue::SwiGlu) {
-                    return rmma_index(1, 4, 1, 1);
+                    return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
                 }
                 if (ctas > 2 * sms && problem.epilogue == Epilogue::SwiGlu &&
                     ring_swiglu_four_warps(problem.qtype)) {
@@ -958,8 +990,11 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         bytes = dram_bytes_per_sm_cycle();
                     } catch (const std::exception&) {
                     }
-                    if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) return rmma_index(1, 4, 1, 1);
+                    if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) {
+                        return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
+                    }
                 }
+                return rmma_k_split_fit(rmma_index(1, 8, 1, 1), problem, ctas, sms);
             } else if (tokens <= 16) {
                 // 9..16 tokens (verify of an 8- or 16-token draft): one 8-token tile per CTA would
                 // put two or three CTA columns on the token axis, each streaming and decoding the
