@@ -33,6 +33,7 @@
 #include "core/cost_constants.h"
 #include "spec/moe_routed_share.h"
 #include "spec/config.h"
+#include "spec/proposal_rows.h"
 
 #include <nlohmann/json.hpp>
 
@@ -77,8 +78,10 @@ struct PassFacts {
 };
 
 // A drafter's pass: rows a pass runs over, and whether a round runs one per draft (MTP) or one;
-// and a head run once a round over the k drafted rows only (DFlash: the target's output head
-// scores the drafted positions, not the block's, models/speculation/dflash.cpp).
+// and the target's output head as the drafter runs it, apart: per draft over the pass's rows (the
+// target's own MTP layers), or once a round over the k drafted rows only (DFlash: the target's
+// output head scores the drafted positions, not the block's, models/speculation/dflash.cpp). A
+// proposal head reads its rows' share of it (ProposalRows; the head's rows are its head linear's n).
 struct DraftFacts {
     PassFacts pass;
     std::int32_t rows = 1;
@@ -160,9 +163,11 @@ struct CardRates {
 // Not known() when the table has no row for it.
 [[nodiscard]] CardRates card_rates_of_board(std::uint32_t pci_device_id);
 
-// R(k) above for configuration `config` on a card of `kappa`; nullopt when the facts have no
-// drafter of its mode, or the configuration drafts nothing.
+// R(k) above for configuration `config` on a card of `kappa`, the draft head read over the rows
+// `head_rows` names for its mode (the full head where none, or where the head's facts list no head
+// linear to scale); nullopt when the facts have no drafter of its mode, or the configuration
+// drafts nothing.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
-                                               double kappa);
+                                               double kappa, const ProposalRows& head_rows = {});
 
 } // namespace ninferno::spec

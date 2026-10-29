@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 183,
+  "version": 184,
   "published": "2026-10-29",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -8164,8 +8164,8 @@
             ]
           },
           "mtp": {
-            "bytes": 2520818688,
-            "params": 1260409344,
+            "bytes": 486581248,
+            "params": 243290624,
             "linears": [
               {
                 "format": "bf16",
@@ -8214,16 +8214,22 @@
                 "count": 2,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "bf16",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 2034237440,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "bf16",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -9609,8 +9615,8 @@
             ]
           },
           "mtp": {
-            "bytes": 649648128,
-            "params": 756298752,
+            "bytes": 128176128,
+            "params": 120599552,
             "linears": [
               {
                 "format": "gguf:Q8_0",
@@ -9659,16 +9665,22 @@
                 "count": 2,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 2560,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 2560,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -10469,8 +10481,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1358096496,
-            "params": 756298766,
+            "bytes": 86698096,
+            "params": 120599566,
             "linears": [
               {
                 "format": "bf16",
@@ -10519,16 +10531,22 @@
                 "count": 2,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "bf16",
-                "n": 248320,
-                "k": 2560,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1271398400,
+              "params": 635699200,
+              "linears": [
+                {
+                  "format": "bf16",
+                  "n": 248320,
+                  "k": 2560,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -15248,8 +15266,8 @@
             ]
           },
           "mtp": {
-            "bytes": 612825088,
-            "params": 756298752,
+            "bytes": 91353088,
+            "params": 120599552,
             "linears": [
               {
                 "format": "gguf:Q5_K",
@@ -15306,16 +15324,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 2560,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 521472000,
+              "params": 635699200,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 2560,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -16717,8 +16741,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1002113024,
-            "params": 1260409344,
+            "bytes": 167757824,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -16775,16 +16799,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -17569,8 +17599,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1339246592,
-            "params": 1260409344,
+            "bytes": 258557952,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q8_0",
@@ -17619,16 +17649,22 @@
                 "count": 2,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q8_0",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1080688640,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q8_0",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -18469,8 +18505,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1014827008,
-            "params": 1260409344,
+            "bytes": 180471808,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q5_K",
@@ -18527,16 +18563,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -25776,8 +25818,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1002113024,
-            "params": 1260409344,
+            "bytes": 167757824,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -25834,16 +25876,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -26628,8 +26676,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1339246592,
-            "params": 1260409344,
+            "bytes": 258557952,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q8_0",
@@ -26678,16 +26726,22 @@
                 "count": 2,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q8_0",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1080688640,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q8_0",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -27528,8 +27582,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1014827008,
-            "params": 1260409344,
+            "bytes": 180471808,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q5_K",
@@ -27586,16 +27640,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -29687,8 +29747,8 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 1269475328,
-            "params": 1696097792,
+            "bytes": 226531328,
+            "params": 424699392,
             "linears": [
               {
                 "format": "gguf:IQ4_XS",
@@ -29745,16 +29805,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 5120,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1042944000,
+              "params": 1271398400,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 5120,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -30274,8 +30340,8 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 1269475328,
-            "params": 1696097792,
+            "bytes": 226531328,
+            "params": 424699392,
             "linears": [
               {
                 "format": "gguf:IQ4_XS",
@@ -30332,16 +30398,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 5120,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1042944000,
+              "params": 1271398400,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 5120,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -32164,8 +32236,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1242236928,
-            "params": 1696097792,
+            "bytes": 199292928,
+            "params": 424699392,
             "linears": [
               {
                 "format": "gguf:Q3_K",
@@ -32222,16 +32294,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 5120,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1042944000,
+              "params": 1271398400,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 5120,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -36827,8 +36905,8 @@
             ]
           },
           "mtp": {
-            "bytes": 452130816,
-            "params": 547893760,
+            "bytes": 34953216,
+            "params": 39334400,
             "expert_bytes": 327155712,
             "expert_params": 805306368,
             "experts": 256,
@@ -36897,16 +36975,22 @@
                 "count": 256,
                 "head": false,
                 "expert": true
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 2048,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 2048,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -37634,8 +37718,8 @@
         },
         "drafters": {
           "mtp": {
-            "bytes": 1393952768,
-            "params": 1696097792,
+            "bytes": 351008768,
+            "params": 424699392,
             "linears": [
               {
                 "format": "gguf:Q6_K",
@@ -37684,16 +37768,22 @@
                 "count": 2,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 5120,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 1042944000,
+              "params": 1271398400,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 5120,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -38510,8 +38600,8 @@
             ]
           },
           "mtp": {
-            "bytes": 988055552,
-            "params": 1260409344,
+            "bytes": 153700352,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -38560,16 +38650,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -39386,8 +39482,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1021511680,
-            "params": 1260409344,
+            "bytes": 187156480,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q5_K",
@@ -39444,16 +39540,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -40246,8 +40348,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1042122752,
-            "params": 1260409344,
+            "bytes": 207767552,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q6_K",
@@ -40296,16 +40398,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -42246,8 +42354,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1002113024,
-            "params": 1260409344,
+            "bytes": 167757824,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -42304,16 +42412,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -44252,8 +44366,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1002113024,
-            "params": 1260409344,
+            "bytes": 167757824,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -44310,16 +44424,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -45697,8 +45817,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1002113024,
-            "params": 1260409344,
+            "bytes": 167757824,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -45755,16 +45875,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }
@@ -48180,8 +48306,8 @@
             ]
           },
           "mtp": {
-            "bytes": 1002113024,
-            "params": 1260409344,
+            "bytes": 167757824,
+            "params": 243290624,
             "linears": [
               {
                 "format": "gguf:Q4_K",
@@ -48238,16 +48364,22 @@
                 "count": 1,
                 "head": false,
                 "expert": false
-              },
-              {
-                "format": "gguf:Q6_K",
-                "n": 248320,
-                "k": 4096,
-                "count": 1,
-                "head": true,
-                "expert": false
               }
             ],
+            "head": {
+              "bytes": 834355200,
+              "params": 1017118720,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 4096,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
             "rows": 1,
             "per_draft": true
           }

@@ -30,7 +30,8 @@ They are the shapes a verify's routes are asked for (ops/generic/route_query.h).
 What a pass reads (round_cost.h PassFacts / DraftFacts):
   target  its layers and output head (the input table when tied), its routed experts apart;
           vision / audio towers, the token embedding and MTP layers excluded.
-  mtp     the target's own MTP layers and its output head (per draft, one row); a separate MTP
+  mtp     the target's own MTP layers and, apart ("head", per draft), its output head (per draft,
+          one row: a proposal head reads its rows' share of it); a separate MTP
           drafter (Nemotron's GGUF sidecar) its layers (NextN ones included), its experts and its
           head (the target's when it has none); Gemma 4's assistant its layers and its head over
           its kind's proposal_rows (98 304; BF16, gathered).
@@ -321,8 +322,11 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
                                       "params": int(qn.get("body", 0) + head_params)},
                                      linears(table, ("body",), quant) + linears(table, ("head",), "", rows))
             elif b.get("mtp") or b.get("mtp_experts"):
-                d = with_linears(pass_of(b, n, ["mtp", "head"], ["mtp_experts"], experts, used),
-                                 linears(target, ("mtp", "head", "mtp_experts")))
+                # Its layers per draft, and the target's output head per draft apart: a proposal
+                # head (spec/round_cost.h ProposalRows) reads a restricted share of its rows.
+                d = with_linears(pass_of(b, n, ["mtp"], ["mtp_experts"], experts, used),
+                                 linears(target, ("mtp", "mtp_experts")))
+                d["head"] = with_linears({"bytes": int(b["head"]), "params": int(n["head"])}, target_head)
             else:
                 continue
             d.update(rows=1, per_draft=True)

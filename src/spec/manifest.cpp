@@ -518,8 +518,15 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
     for (const auto& d : manifest.drafters) {
         if (d.usable()) { kinds.push_back(d.kind); }
     }
+    // Its rounds priced with the draft head rows this artifact reads.
+    SelectOptions options;
+    try {
+        options.proposal_rows = artifact_proposal_rows(artifact::Reader(artifact).directory());
+    } catch (const std::exception&) {
+        // Unreadable here: the lab artifact's rows (the pair's).
+    }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu), {},
+                              label_bits(quant), gpu_generation(gpu), options,
                               attached_identities(manifest), hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
@@ -636,6 +643,25 @@ void resolve_entry_profile(const ModelEntry& entry, const std::set<std::string>&
 }
 
 } // namespace
+
+ProposalRows artifact_proposal_rows(const artifact::Directory& dir) {
+    ProposalRows out;
+    const auto text = dir.components.find("text");
+    if (text == dir.components.end() || !text->second.proposal) { return out; }
+    const auto& proposal = *text->second.proposal;
+    // The drafters the head takes the final hidden states of (product proposal_head_drafters);
+    // DFlash2 keeps the whole domain (its selector reads it).
+    for (const char* component : {"mtp", "dflash"}) {
+        if (!dir.components.contains(component) ||
+            !dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"})) {
+            continue;
+        }
+        const auto own = proposal.drafter_rows.find(component);
+        const std::uint64_t rows = own != proposal.drafter_rows.end() ? own->second : proposal.rows;
+        if (rows > 0) { out.rows[component] = rows; }
+    }
+    return out;
+}
 
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,

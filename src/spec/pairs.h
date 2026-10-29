@@ -62,6 +62,10 @@ struct MeasuredPair {
     // not recorded), whose rates price the lab's own rounds by those facts.
     std::optional<RoundFacts> round_facts;
     std::uint32_t lab_board = 0;
+    // The draft head rows the lab's artifact read by mode ("proposal_rows": {"mtp": 57344}; its
+    // proposal head, spec/proposal_rows.h): what its measured rounds paid for the head. Empty: the
+    // full head (no proposal head, or not recorded).
+    ProposalRows proposal_rows;
 };
 
 [[nodiscard]] nlohmann::json pair_json(const MeasuredPair& pair);
@@ -119,7 +123,10 @@ struct RoundCostEstimate {
     bool known = false;
     std::string note; // how it was priced, for the choice's source
 };
-[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu);
+// `head_rows`: the draft head rows the card's artifact reads (nullptr: the lab artifact's,
+// pair.proposal_rows); the lab card's own rounds are priced at the lab artifact's.
+[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu,
+                                                    const ProposalRows* head_rows = nullptr);
 
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
 // on a card of a generation two distinct lab cards (their tunes' GPU class) measured and chose

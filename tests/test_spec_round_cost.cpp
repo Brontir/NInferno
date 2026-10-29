@@ -4,6 +4,8 @@
 // is left out, against that pair's measurement. It is no hold-out of the fit (kSmallTEta rests on
 // these cards' rounds); the hold-out evidence is fit_eta.py's cross-fit (DECISIONS 53). No GPU.
 
+#include "artifact/schema.h"
+#include "spec/manifest.h"
 #include "spec/pairs.h"
 #include "spec/registry.h"
 #include "spec/round_cost.h"
@@ -180,6 +182,62 @@ int main() {
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
+    }
+    // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
+    // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
+    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti (l4060):
+    // +9.4 / +12.9 / +16.5 / +19.6 % at mtp:2..5.
+    {
+        const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
+        const double k4060 = sp::card_rates_of_board(0x2805).kappa();
+        const sp::ProposalRows before{{{"mtp", 147456}}}, after{{{"mtp", 57344}}};
+        const double measured[] = {0.094, 0.129, 0.165, 0.196};
+        for (int k = 2; k <= 5; ++k) {
+            const auto config = sp::SpecConfig::parse("mtp:" + std::to_string(k));
+            const auto r0     = sp::round_cost(facts, config, k4060, before);
+            const auto r1     = sp::round_cost(facts, config, k4060, after);
+            expect(r0 && r1 && std::abs(*r0 / *r1 - 1 - measured[k - 2]) < 0.007,
+                   "the MTP head's rows: rounds/s gain within 0.7 pp of hard50's at mtp:" +
+                       std::to_string(k));
+        }
+        const auto config = sp::SpecConfig::parse("mtp:3");
+        expect(sp::round_cost(facts, config, k4060) ==
+                       sp::round_cost(facts, config, k4060, sp::ProposalRows{{{"dflash", 1024}}}) &&
+                   sp::round_cost(facts, config, k4060) ==
+                       sp::round_cost(facts, config, k4060, sp::ProposalRows{{{"mtp", 1u << 30}}}),
+               "another mode's rows, or rows past the head's, leave the full head");
+        const auto dflash = sp::SpecConfig::parse("dflash:7");
+        expect(*sp::round_cost(facts, dflash, k4060, sp::ProposalRows{{{"dflash", 147456}}}) <
+                   *sp::round_cost(facts, dflash, k4060),
+               "DFlash's head over the k drafts reads the proposal rows too");
+        // A pair's lab rows round-trip; zero rows are refused.
+        auto pair                    = pair_of(kQ9, "ad104:60sm");
+        pair.proposal_rows           = after;
+        const auto again             = sp::parse_pair(sp::pair_json(pair));
+        expect(again.proposal_rows == after, "a pair's proposal rows round-trip");
+        auto zero                    = sp::pair_json(pair);
+        zero["proposal_rows"]["mtp"] = 0;
+        bool refused                 = false;
+        try {
+            (void)sp::parse_pair(zero);
+        } catch (const std::runtime_error&) { refused = true; }
+        expect(refused, "zero proposal rows are refused");
+        // An artifact's rows: its proposal head where a Use binds it to the drafter, MTP its
+        // own prefix (drafter_rows), DFlash all of them; DFlash2 none (the whole domain).
+        namespace art = ninferno::artifact;
+        art::Directory dir;
+        for (const char* c : {"text", "mtp", "dflash", "dflash2"}) { dir.components[c] = {}; }
+        dir.components["text"].proposal =
+            art::Proposal{.indexed = true, .rows = 147456, .drafter_rows = {{"mtp", 57344}}};
+        for (const char* c : {"mtp", "dflash", "dflash2"}) {
+            dir.uses[{"proposal/head", std::string(c) + "/final_hidden"}] = {};
+        }
+        expect(sp::artifact_proposal_rows(dir) == sp::ProposalRows{{{"mtp", 57344}, {"dflash", 147456}}},
+               "an artifact's proposal rows: MTP its prefix, DFlash all, DFlash2 none");
+        dir.uses.erase({"proposal/head", "mtp/final_hidden"});
+        expect(sp::artifact_proposal_rows(dir).of("mtp") == 0, "a head not bound to MTP: its full head");
+        dir.components["text"].proposal.reset();
+        expect(sp::artifact_proposal_rows(dir).empty(), "no proposal head: the full head");
     }
     // A card nobody measured the pair on: the facts price its rounds, the lab card's measurement
     // raising them where it found rounds dearer than their bytes, and say so.

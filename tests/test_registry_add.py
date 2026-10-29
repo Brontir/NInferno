@@ -268,7 +268,8 @@ class RoundFactsTest(unittest.TestCase):
         tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
         facts = round_facts.round_facts(self.pair(["mtp:3", "dflash:7"], {"dflash": "z/d@2"}), tables, {})
         self.assertEqual(facts["target"], {"bytes": 200, "params": 800})
-        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 110, "params": 440, "rows": 1, "per_draft": True})
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 10, "params": 40, "rows": 1, "per_draft": True,
+                                                    "head": {"bytes": 100, "params": 400}})
         self.assertEqual(facts["drafters"]["dflash"],
                          {"bytes": 30, "params": 15, "rows": 16, "per_draft": False,
                           "head": {"bytes": 100, "params": 400}})
@@ -369,7 +370,8 @@ class RoundFactsTest(unittest.TestCase):
             {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
         self.assertEqual(facts["drafters"]["mtp"]["linears"], [
             {"format": "gguf:Q8_0", "n": 256, "k": 512, "count": 1, "head": False, "expert": False},
-            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}])
+        self.assertEqual(facts["drafters"]["mtp"]["head"]["linears"], [head])  # per draft, apart
 
     def test_checkpoint_linears_as_published_and_converted(self):
         target = self.shaped({
@@ -494,6 +496,19 @@ class RoundFactsTest(unittest.TestCase):
                "tune": {"key": {"gpu": "ad104:60sm"}}}
         out = registry_add.put_pair([old], new)
         self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
+
+class ProposalRowsTest(unittest.TestCase):
+    """registry_add.proposal_rows_of: the draft head rows the lab artifact's drafters read."""
+
+    def test_rows_by_drafter(self):
+        components = {"text": {"proposal": {"domain": "indexed", "rows": 147456, "drafter_rows": {"mtp": 57344}}},
+                      "mtp": {}, "dflash": {}, "dflash2": {}}
+        uses = [{"parameter": "proposal/head", "input": f"{c}/final_hidden"} for c in ("mtp", "dflash", "dflash2")]
+        self.assertEqual(registry_add.proposal_rows_of(components, uses), {"mtp": 57344, "dflash": 147456})
+        self.assertEqual(registry_add.proposal_rows_of(components, uses[1:]), {"dflash": 147456})
+        components["text"]["proposal"] = {"domain": "full"}
+        self.assertEqual(registry_add.proposal_rows_of(components, uses), {})
+
 
 if __name__ == "__main__":
     unittest.main()

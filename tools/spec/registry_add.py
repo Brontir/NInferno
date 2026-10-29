@@ -290,6 +290,34 @@ LAB_BOARDS = {
 }
 
 
+def proposal_rows_of(directory: dict, uses: list) -> dict:
+    """The draft head rows an artifact's MTP and DFlash read (src/spec/proposal_rows.h, manifest.cpp
+    artifact_proposal_rows): its text component's indexed proposal head where a Use binds it to the
+    drafter's final hidden states, the drafter's own leading rows (drafter_rows) or all of them."""
+    proposal = ((directory.get("text") or {}).get("proposal") or {})
+    if proposal.get("domain") != "indexed":
+        return {}
+    bound = {(u.get("parameter"), u.get("input")) for u in uses}
+    out = {}
+    for component in ("mtp", "dflash"):
+        if component in directory and ("proposal/head", f"{component}/final_hidden") in bound:
+            rows = (proposal.get("drafter_rows") or {}).get(component) or proposal.get("rows")
+            if rows:
+                out[component] = int(rows)
+    return out
+
+
+def artifact_proposal_rows(path: str) -> dict | None:
+    """proposal_rows_of the artifact at `path`; None when it does not read."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    try:
+        from artifact.reader import Artifact  # tools/artifact
+        with Artifact(path) as a:
+            return proposal_rows_of(a.directory.components, list(a.directory.uses))
+    except Exception:  # noqa: BLE001 - a lab path elsewhere: said by the caller
+        return None
+
+
 def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[str]) -> dict:
     """The registry's pair for one tune (src/spec/pairs.h MeasuredPair)."""
     shas = sorted(w.strip().lower() for w in weights if w.strip())
@@ -309,6 +337,13 @@ def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[s
     for d in manifest.get("drafters", []):
         if d.get("repo") and d.get("status") in ("embedded", "converted", "cached", "attached"):
             drafters[d["kind"]] = d["repo"] + ("@" + d["revision"] if d.get("revision") else "")
+    # The draft head rows the measured rounds paid (the artifact's proposal head): read from the
+    # artifact the tune ran, before its local path is dropped.
+    rows = artifact_proposal_rows(tune["artifact"]) if tune.get("artifact") else None
+    if rows is None:
+        print(f"warning: the tune's artifact ({tune.get('artifact') or 'not named'}) does not read: "
+              f"no proposal_rows recorded (its rounds are taken as drafted with the full head)",
+              file=sys.stderr)
     # The lab's local paths (the artifact, a separate drafter's) are no part of what was measured.
     tune = json.loads(json.dumps(tune))
     tune.pop("artifact", None)
@@ -320,6 +355,8 @@ def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[s
         pair["drafters"] = drafters
     if gpu in LAB_BOARDS:  # the board whose rates price the pair's rounds (spec/round_cost.h)
         pair["lab_board"] = LAB_BOARDS[gpu]
+    if rows:
+        pair["proposal_rows"] = rows
     return pair
 
 

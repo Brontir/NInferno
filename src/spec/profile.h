@@ -23,6 +23,7 @@
 
 #include "spec/config.h"
 #include "spec/engine_support.h"
+#include "spec/proposal_rows.h"
 
 #include <nlohmann/json.hpp>
 
@@ -213,6 +214,9 @@ struct SelectOptions {
     // The serving Engine's support for this model: when given and some choice needs a
     // configuration it cannot run, select() also fills Profile::served.
     std::optional<EngineSupport> served;
+    // The draft head rows the target's artifact reads by mode (spec/proposal_rows.h), round cost's
+    // on the card it runs on (round_cost_estimate); absent: the lab artifact's (the pair's own).
+    std::optional<ProposalRows> proposal_rows;
 };
 
 // Fills overall, non_thinking and thinking, and every drafter's status (drafters are

@@ -132,6 +132,11 @@ nlohmann::json pair_json(const MeasuredPair& pair) {
              {"generation", pair.generation}, {"tune", to_json(pair.tune)}};
     if (!pair.drafters.empty()) { out["drafters"] = pair.drafters; }
     if (pair.round_facts) { out["round_facts"] = round_facts_json(*pair.round_facts); }
+    if (!pair.proposal_rows.empty()) {
+        Json rows = Json::object();
+        for (const auto& [mode, n] : pair.proposal_rows.rows) { rows[mode] = n; }
+        out["proposal_rows"] = std::move(rows);
+    }
     if (pair.lab_board != 0) {
         char id[16];
         std::snprintf(id, sizeof id, "0x%04X", pair.lab_board);
@@ -154,6 +159,15 @@ MeasuredPair parse_pair(const nlohmann::json& doc) {
         }
         if (const auto it = doc.find("round_facts"); it != doc.end()) {
             out.round_facts = parse_round_facts(*it);
+        }
+        if (const auto it = doc.find("proposal_rows"); it != doc.end()) {
+            for (const auto& [mode, n] : it->items()) {
+                const auto rows = n.get<std::uint64_t>();
+                if (rows == 0) {
+                    throw std::runtime_error("speculation pair: proposal_rows of " + mode + " is 0");
+                }
+                out.proposal_rows.rows[mode] = rows;
+            }
         }
         if (const auto it = doc.find("lab_board"); it != doc.end()) {
             const auto text = it->get<std::string>();
@@ -397,7 +411,8 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
     return out;
 }
 
-RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu) {
+RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu,
+                                      const ProposalRows* head_rows) {
     RoundCostEstimate out;
     if (!pair.round_facts) { return out; }
     const CardRates card = card_rates(gpu);
@@ -407,8 +422,9 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
     for (const auto& [label, measured] : round_costs(pair.tune)) {
         const auto config = SpecConfig::parse(label);
         if (!config.enabled() || config.k > kPortableDepth) { continue; }
-        const auto here  = round_cost(*pair.round_facts, config, card.kappa());
-        const auto there = round_cost(*pair.round_facts, config, home.kappa());
+        const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
+                                      head_rows != nullptr ? *head_rows : pair.proposal_rows);
+        const auto there = round_cost(*pair.round_facts, config, home.kappa(), pair.proposal_rows);
         if (!here || !there || *there <= 0) { continue; }
         double cost = *here;
         // What the bytes do not show, as the lab card measured it: scales the estimate up only.
@@ -490,7 +506,8 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             return ha != hb ? ha : a->tune.key.gpu < b->tune.key.gpu;
         });
         for (const auto* pair : order) {
-            if (const auto estimate = round_cost_estimate(*pair, *gpu); estimate.known) {
+            const ProposalRows* rows = options.proposal_rows ? &*options.proposal_rows : nullptr;
+            if (const auto estimate = round_cost_estimate(*pair, *gpu, rows); estimate.known) {
                 if (note != nullptr) { *note = estimate.note; }
                 return selected(*pair, false, options, {}, &estimate);
             }

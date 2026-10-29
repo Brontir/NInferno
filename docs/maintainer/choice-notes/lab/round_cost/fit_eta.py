@@ -65,7 +65,10 @@ def R(rf, mode, k, kappa):
     if d is None:
         return None
     n = k if d["per_draft"] else 1
-    head = cost(d["head"], k, kappa) if "head" in d else 0.0  # DFlash: the head over the k drafts
+    # The head apart: MTP's per draft over its rows, DFlash's once over the k drafts.
+    head = 0.0
+    if "head" in d:
+        head = n * cost(d["head"], d["rows"], kappa) if d["per_draft"] else cost(d["head"], k, kappa)
     return (cost(rf["target"], k + 1, kappa) + n * cost(d, d["rows"], kappa) + head) / cost(rf["target"], 1, kappa)
 
 
