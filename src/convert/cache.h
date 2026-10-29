@@ -31,14 +31,25 @@ namespace ninferno::convert {
 //    BF16 ones); only artifacts with such a drafter are converted again (cache_current).
 // 5: every recipe does (qwen3_5_bf16, the dense Qwen3.5 GGUF default, left the companion BF16);
 //    again only artifacts with such a drafter are converted again.
-inline constexpr int kCacheRevision = 5;
+// 6: a Qwen target with a DFlash companion takes a proposal head by default (its draft head over
+//    the ranked rows default_proposal chooses); only Qwen artifacts with such a companion and no
+//    proposal head are converted again, where the default ranking is found.
+// 7: the default head serves MTP too (its rows the most any of MTP and DFlash asks for): Qwen
+//    artifacts with MTP layers and no head, or with revision 6's DFlash-only head, are converted
+//    again.
+inline constexpr int kCacheRevision = 7;
 
 // Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
+// Whether an artifact at `revision` lacks the default proposal head revisions 6 and 7 give: its
+// report is a Qwen target's (qwen3_5_text, qwen3_5_moe_text) with MTP layers or a DFlash
+// companion and no proposal head, or (revision 6) MTP layers and the head revision 6 made for
+// DFlash alone; and the default ranking is found (without it the conversion adds none).
+[[nodiscard]] bool default_head_outdated(const std::filesystem::path& artifact, int revision);
 
 // Whether a cached artifact is served as it is: revision kCacheRevision, or revision 3 or 4
-// without the defect revisions 4 and 5 fixed (a text-only artifact, a drafter already in Q8): a
+// without the defect revisions 4 and 5 fixed nor revisions 6 and 7's default head (a text-only artifact, a drafter already in Q8): a
 // conversion of many minutes is not repeated for a change that did not touch it. Such an older
 // artifact is stamped kCacheRevision (stamp_revision), so its report is read once.
 [[nodiscard]] bool cache_current(const std::filesystem::path& artifact);

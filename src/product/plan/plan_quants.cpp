@@ -3,10 +3,12 @@
 #include "product/plan/plan_choice.h"
 
 #include "artifact/reader.h"
+#include "convert/checks.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
+#include "spec/round_cost.h"
 
 #include "product/activation_options.h"
 #include "product/numeric_options.h"
@@ -16,6 +18,7 @@
 #include <algorithm>
 #include <cmath>
 #include <optional>
+#include <set>
 #include <iomanip>
 #include <cstdio>
 #include <iomanip>
@@ -113,16 +116,6 @@ DryRunInputs at_context(const DryRunInputs& inputs, std::uint32_t context) {
     return out;
 }
 
-// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
-// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
-// kept), the way a row's launch_context starts.
-DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
-    DryRunInputs out                  = inputs;
-    out.options.max_context           = context;
-    out.options.max_context_automatic = true;
-    return out;
-}
-
 bool own_plan(const runtime::DryRunPlan& plan) {
     const runtime::DryRunRung* chosen = plan.chosen();
     return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();
@@ -179,14 +172,74 @@ LaunchPlanOptions launch_options(const LaunchAsk& launch) {
 
 DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
     DryRunInputs out = inputs;
+    out.proposal_row_head_bytes = quant.head_bytes;
     if (inputs.subject_of) {
         if (const SpeculationSubject* own = inputs.subject_of(quant)) { out.subject = own; }
     }
     return out;
 }
 
+namespace {
+
+convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    const auto& m = facts.model;
+    if (!inputs.proposal_planned) { return {}; }
+    // The quantization's own MTP layers (its subject's components: a repository's quantizations
+    // differ), their bytes where the facts count them, else one decoder layer's share of the
+    // weights without the head and the embedding table (a checkpoint keeping mtp.* inside its
+    // shards, a split GGUF's header): an MTP layer is one decoder layer and its projection.
+    const bool mtp = inputs.subject != nullptr ? inputs.subject->components.contains("mtp")
+                                               : facts.shape.builtin_mtp;
+    double mtp_bytes = 0;
+    if (mtp) {
+        mtp_bytes = m.mtp_bytes != 0 ? static_cast<double>(m.mtp_bytes)
+                    : facts.shape.num_hidden_layers != 0
+                        ? static_cast<double>(m.weight_bytes > 2 * m.head_bytes
+                                                  ? m.weight_bytes - 2 * m.head_bytes
+                                                  : m.weight_bytes) /
+                              static_cast<double>(facts.shape.num_hidden_layers)
+                        : 0;
+    }
+    // A MoE MTP layer's routed experts are read as its one row routes them (the converter's
+    // default_proposal: moe_read_fraction of the MTP pass at 1 row; Codex on #192), their share
+    // of the layer the model's routed share. The published MTP tensors are the converted ones:
+    // keep_published keeps every GGUF block matrix as published (the recipe's Q8 table decodes
+    // them, convert.cpp), so the facts' bytes are the stored bytes.
+    if (mtp_bytes > 0 && facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
+        facts.shape.routed_expert_params > 0 && m.params > 0) {
+        const double routed = std::min(1.0, facts.shape.routed_expert_params / m.params);
+        spec::PassFacts pass;
+        pass.expert_bytes = mtp_bytes * routed;
+        pass.bytes        = mtp_bytes - pass.expert_bytes;
+        pass.experts      = facts.shape.experts;
+        pass.experts_used = facts.shape.experts_per_token;
+        mtp_bytes         = pass.bytes + pass.expert_bytes * spec::moe_read_fraction(pass, 1);
+    }
+    if (inputs.proposal_drafter_bytes <= 0 && mtp_bytes <= 0) { return {}; }
+    const double head = static_cast<double>(
+        inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
+    return convert::planned_proposal(head, static_cast<double>(m.weight_bytes), mtp_bytes,
+                                     inputs.proposal_drafter_bytes, m.vocab, m.hidden,
+                                     facts.shape.experts > 0);
+}
+
+} // namespace
+
+std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    return proposal_at(facts, inputs).bytes;
+}
+
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
-    return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
+    // The default proposal head is part of the converted target's weights, loaded only under a
+    // drafter it serves (dry_run_plan's proposal_bytes rule).
+    PlanSourceFacts at = facts;
+    if (const auto proposal = proposal_at(facts, inputs); proposal.bytes != 0) {
+        at.model.weight_bytes += proposal.bytes;
+        at.model.proposal_bytes += proposal.bytes;
+        at.model.proposal_serves_mtp    = proposal.mtp;
+        at.model.proposal_serves_dflash = proposal.dflash;
+    }
+    return plan_with_speculation(at, inputs.device, inputs.options, inputs.subject, inputs.ask,
                                  inputs.drafter_bytes, inputs.drafter_state);
 }
 
@@ -249,6 +302,9 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                         std::string_view target_model_type, std::uint32_t target_hidden,
                         const convert::FetchOptions* fetch) {
     AttachedDrafterMemory out;
+    // A Qwen target takes the default proposal head where it has MTP layers or a DFlash
+    // companion (convert::default_proposal), priced per quantization (proposal_bytes_at).
+    out.proposal_planned = target_model_type.starts_with("qwen3_5");
     for (const spec::DrafterDecl& d : subject.attached_drafters) {
         std::uint64_t bytes = 0;
         if (!d.gguf.empty()) {
@@ -339,6 +395,12 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             }
             if (!d.component.empty()) {
                 bytes = convert::companion_drafter_bytes(target_model_type, d.kind, d.quant, bytes);
+                // A Qwen target converted with a DFlash companion takes the proposal head the
+                // converter's default_proposal chooses: priced per quantization from that row's
+                // weights (proposal_bytes_at), so here only the companion's bytes it rests on.
+                if (target_model_type.starts_with("qwen3_5") && d.kind == "dflash") {
+                    out.proposal_drafter_bytes = static_cast<double>(bytes);
+                }
             } else if (!d.quant.empty() && config && !encoded) {
                 // A separate DFlash drafter keeps its feature projection [H, taps x H] in BF16
                 // (convert.cpp quantize_drafter); the rest takes the kind's quantization. Without
@@ -452,17 +514,29 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         row.weight_bytes = q.converted_bytes.value_or(q.bytes);
         row.basis        = q.format == "ninferno" ? runtime::WeightBasis::Artifact
                                                   : runtime::WeightBasis::FileSize;
+        // A GGUF whose header was read: its tensors, as its start uploads them.
+        if (q.format == "gguf" && q.table && q.table->tensor_bytes > 0) {
+            row.weight_bytes = q.table->tensor_bytes;
+            row.basis        = q.table->basis;
+            row.mtp_bytes    = q.table->mtp_bytes;
+        }
         // One size source per quantization: the shape's own file keeps the header's tensor
         // bytes; every other the listed file sizes.
-        if (!row.converted && shape.model.weight_bytes == q.bytes &&
+        if (!row.converted && !row.mtp_bytes && shape.model.weight_bytes == q.bytes &&
             shape.model.weight_basis != runtime::WeightBasis::Unknown) {
             row.basis = shape.model.weight_basis;
         }
+        row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_planned &&
+                                    proposal_bytes_at(row_facts(shape, row), inputs_for(inputs, q)) != 0;
         row.candidate.label      = q.quant;
         row.candidate.bytes      = row.weight_bytes;
         row.candidate.label_bits = q.bits;
+        // The bits of the target alone (an artifact table's own drafter left out, as the choice's
+        // quant_option_of prices it).
+        const std::uint64_t own_drafter =
+            row.mtp_bytes && q.table ? std::min(q.table->own_drafter_bytes, row.weight_bytes) : 0;
         row.candidate.bits_per_weight =
-            shape.model.bits_per_weight(static_cast<double>(row.weight_bytes));
+            shape.model.bits_per_weight(static_cast<double>(row.weight_bytes - own_drafter));
         const Unsupported why   = unsupported(q, row.candidate.bits_per_weight, inputs.device);
         row.unsupported_code    = why.code;
         row.why_unsupported     = why.text;
@@ -473,26 +547,25 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // at its storages and (--spec auto) its drafter (plan_at_choice), the probes of its own
         // context among them: as the plan of that quantization named shows it.
         std::optional<ServedChoice> served;
-        if (row.candidate.supported && inputs.pins.activations) {
-            // A pinned activation mode the family does not run: the start refuses it; the row's
-            // plan says so (refused, not a fit at a mode that never runs).
-            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
-            if (const std::string why = activation_refusal(facts, inputs.options.activations);
-                !why.empty()) {
+        if (row.candidate.supported && (inputs.pins.activations || inputs.pins.kv)) {
+            // A pin the model does not run (--activations, --kv-dtype): the start refuses it; the
+            // row's plan says so (refused, not a fit at a setting that never runs).
+            const PlanSourceFacts facts = row_facts(shape, row);
+            if (const PinRefusal refusal = pin_refusal(facts, inputs); !refusal.code.empty()) {
                 row.candidate.supported = false;
-                row.unsupported_code    = "activations_not_run";
-                row.why_unsupported     = why;
+                row.unsupported_code    = refusal.code;
+                row.why_unsupported     = refusal.why;
                 row.planned             = plan_model(facts, inputs_for(inputs, q));
-                refuse_unrun_activations(facts, inputs, row.planned);
+                refuse_unrun_pins(facts, inputs, row.planned);
             }
         }
         if (row.candidate.supported) {
-            served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+            served = choose_at_weights(row_facts(shape, row),
                                        inputs_for(inputs, q), inputs.pins, q.quant);
             if (served) { row_axes = start_axes(*served, inputs.pins); }
         }
         if (row.candidate.supported) {
-            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const PlanSourceFacts facts = row_facts(shape, row);
             const DryRunInputs own      = inputs_for(inputs, q);
             const PlanAt served_plan = [&](const DryRunInputs& asked) {
                 if (!served) { return plan_model(facts, asked); }
@@ -519,20 +592,12 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         }
         if (row.candidate.supported && row.planned.plan.planned) {
             // The speed of a typical request at the storages this row's plan serves with.
-            const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+            const PlanSourceFacts facts = row_facts(shape, row);
             choice::ModelFacts model     = choice_model_of(facts);
             const choice::CardFacts card = choice_card_of(inputs.gpu);
-            choice::QuantOption q;
-            q.label           = row.listing.quant;
-            q.weight_bytes    = static_cast<double>(row.weight_bytes);
-            q.bits_per_weight = row.candidate.bits_per_weight;
-            q.nvfp4           = q.label.find("NVFP4") != std::string::npos ||
-                                q.label.find("nvfp4") != std::string::npos;
-            q.weights         = choice::weight_class_of({}, q.label);
-            // The ternary and two-bit GGML blocks keep BF16 activations (kept_block_policy).
-            for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
-                if (q.label.find(a16) != std::string::npos) { q.int8_route = false; }
-            }
+            // The quantization as the choice prices it (product::quant_option_of: one rule for a
+            // hub row, the CLI's plan and a start's artifact).
+            const choice::QuantOption q = quant_option_of(facts, row.listing.quant);
             choice::Candidate c;
             c.kv          = row.planned.plan.kv_cache;
             c.state       = row.planned.plan.recurrent;
@@ -599,7 +664,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                    out.pick->below_floor == runtime::below_quality_floor(row.candidate);
         });
         // Two rows' worths within the generation's measured decode error are a tie: the lower KLD
-        // wins (DECISIONS 54), then the rule's order.
+        // wins (DECISIONS 57), then the rule's order.
         const double band = std::max(choice::kWorthTie, choice::worth_band(choice_card_of(inputs.gpu)));
         std::vector<std::pair<double, std::size_t>> bounds;
         for (std::size_t i = 0; i < out.rows.size(); ++i) {
@@ -609,7 +674,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                 (any_measured && !measured(row))) {
                 continue;
             }
-            const auto bound = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+            const auto bound = choose_at_weights(row_facts(shape, row),
                                                  inputs_for(inputs, row.listing), pins,
                                                  row.listing.quant, OwnContext::Unbounded);
             if (bound && bound->choice.chosen) {
@@ -628,7 +693,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         for (const auto& [bound, i] : bounds) {
             if (bound < top - band) { break; }
             const QuantRow& row = out.rows[i];
-            const auto served = choose_at_weights(with_weights(shape, row.weight_bytes, row.basis),
+            const auto served = choose_at_weights(row_facts(shape, row),
                                                   inputs_for(inputs, row.listing), pins,
                                                   row.listing.quant, OwnContext::Steps);
             if (!served || !served->choice.chosen ||
@@ -664,7 +729,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         if (best && *best != out.pick->index) {
             // The largest at its own choice: what the trade was against.
             const QuantRow& largest = out.rows[out.pick->index];
-            if (const auto at = choose_at_weights(with_weights(shape, largest.weight_bytes, largest.basis),
+            if (const auto at = choose_at_weights(row_facts(shape, largest),
                                                   inputs_for(inputs, largest.listing), pins,
                                                   largest.listing.quant, OwnContext::Steps);
                 at && at->choice.chosen && best_scored.decision_seconds > 0) {
@@ -679,8 +744,21 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             // streams under an automatic context: never a pool they silently share), as the rule's
             // pick does: its preliminary plan was made at the family's defaults.
             QuantRow& row = out.rows[*best];
-            if (ask.automatic && ask.concurrency > 1 && best_context != 0) {
-                row.launch_context = best_context;
+            // A plan that already gives each stream its own context needs no ceiling (one would
+            // only lower it); otherwise the row's plan is the one under the ceiling the launch
+            // passes, so that the plan shown, its now view and the start agree.
+            if (ask.automatic && ask.concurrency > 1 && best_context != 0 &&
+                !own_plan(row.planned.plan) && row.launch_context != best_context) {
+                row.launch_context          = best_context;
+                const PlanSourceFacts facts = row_facts(shape, row);
+                const DryRunInputs own      = inputs_for(inputs, row.listing);
+                const DryRunInputs capped   = under_context_cap(own, best_context);
+                if (const auto served = choose_at_weights(facts, own, pins, row.listing.quant)) {
+                    const DryRunInputs at = inputs_at_choice(capped, *served, pins);
+                    row.planned = plan_at_choice(facts, at, *served, pins, plan_model(facts, at));
+                } else {
+                    row.planned = plan_model(facts, capped);
+                }
             }
             row.fit.state       = runtime::QuantFitState::Own;
             row.fit.own_context = std::max(row.fit.own_context, best_context);
@@ -693,6 +771,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     out.rule = quant_rule_line(out, inputs);
     return out;
 }
+
 
 namespace {
 
@@ -979,6 +1058,7 @@ Json quant_plan_json(const QuantPlan& plan) {
                         {"low_quality",
                          row.candidate.supported && runtime::quant_rank_bits(row.candidate) > 0 &&
                              runtime::quant_rank_bits(row.candidate) < runtime::kPlanLowQualityBits},
+                        {"proposal_head_assumed", row.proposal_head_assumed},
                         {"drafter_bytes", row.planned.plan.weight_bytes > row.weight_bytes
                                               ? row.planned.plan.weight_bytes - row.weight_bytes
                                               : 0},
@@ -1164,6 +1244,99 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
             << "\n";
     }
     return out.str();
+}
+
+// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
+// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
+// kept), the way a row's launch_context starts.
+DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
+    DryRunInputs out                  = inputs;
+    out.options.max_context           = context;
+    out.options.max_context_automatic = true;
+    return out;
+}
+
+std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
+    if (facts.model.weight_basis != runtime::WeightBasis::GgufTensors ||
+        facts.model.weight_bytes == 0) {
+        return std::nullopt;
+    }
+    return GgufTensorTable{.tensor_bytes      = facts.model.weight_bytes,
+                           .mtp_bytes         = facts.model.mtp_bytes,
+                           .own_drafter_bytes = facts.model.own_drafter_bytes};
+}
+
+PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
+    PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // A row's own table: its NextN share and its own drafter as the table counts them (none for a
+    // GGUF; an artifact's own), never the shape's scaled.
+    if (row.mtp_bytes) {
+        out.model.mtp_bytes         = *row.mtp_bytes;
+        out.model.own_drafter_bytes = row.listing.table ? row.listing.table->own_drafter_bytes : 0;
+    }
+    return out;
+}
+
+QuantPlan plan_quants_read(const PlanSourceFacts& shape, std::vector<QuantListing>& listing,
+                           const DryRunInputs& inputs, const ReadTensorTable& read_table) {
+    // A table can move the choice (the bits cross the floor, the worth changes): read again until
+    // the chosen row has its own table or it cannot be read; each row at most once.
+    QuantPlan plan = plan_quants(shape, listing, inputs);
+    std::set<std::string> tried; // each row read at most once
+    // A row still at its file size, supported or refused only by the width the file size gives
+    // (no label bits: header and padding counted, its tensors may be 8 bits or fewer).
+    const auto unread = [&](const QuantRow& r) {
+        const bool by_file_width = r.unsupported_code == "above_8_bits" && r.listing.bits == 0;
+        return r.listing.format == "gguf" && !r.listing.table &&
+               (r.candidate.supported || by_file_width) && !tried.contains(r.listing.quant);
+    };
+    for (std::size_t step = 0; step <= listing.size() && read_table; ++step) {
+        const QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
+        // The row to read: the chosen one without its table, else the one ranked next above it
+        // still at its file size; nothing chosen: the lowest-ranked one at its file size (it may
+        // fit by its tensors).
+        const QuantRow* next = nullptr;
+        if (chosen == nullptr) {
+            for (const QuantRow& r : plan.rows) {
+                if (unread(r) && (next == nullptr ||
+                                  runtime::quant_ranks_above(next->candidate, r.candidate))) {
+                    next = &r;
+                }
+            }
+        } else if (chosen->listing.format == "gguf" && !chosen->listing.table) {
+            next = chosen;
+        } else {
+            for (const QuantRow& r : plan.rows) {
+                if (!unread(r) || !runtime::quant_ranks_above(r.candidate, chosen->candidate)) {
+                    continue;
+                }
+                if (next == nullptr || runtime::quant_ranks_above(next->candidate, r.candidate)) {
+                    next = &r;
+                }
+            }
+        }
+        if (next == nullptr || tried.contains(next->listing.quant)) { break; }
+        const std::string quant = next->listing.quant;
+        tried.insert(quant);
+        const auto table = read_table(quant);
+        // A read that fails leaves the file size, and nothing larger is read.
+        if (!table) { break; }
+        const bool above = chosen != nullptr && next != chosen;
+        for (auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && q.quant == quant) { q.table = table; }
+        }
+        // Read, no whole table (a split file's part): its file size stands; the next row is read.
+        if (table->tensor_bytes == 0) {
+            plan = plan_quants(shape, listing, inputs); // the rows carry the listing as read
+            continue;
+        }
+        plan = plan_quants(shape, listing, inputs);
+        // The lowest does not fit by its tensors, or the row above did not become the pick: the
+        // rows above it are larger and fit no better.
+        if (!plan.chosen) { break; }
+        if (above && plan.rows[*plan.chosen].listing.quant != quant) { break; }
+    }
+    return plan;
 }
 
 } // namespace ninferno::product

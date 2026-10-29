@@ -797,12 +797,14 @@ int run_spec_tune(int argc, char** argv) {
     }
     // The default menu drafts through the optimized proposal head where the artifact has one (a
     // GGUF conversion has none): without it, the same depths with the full head.
-    const bool head = flags.contains("configs") || product::has_proposal_head(artifact);
+    // A "+head" configuration only for a drafter the head serves (the converter's default head
+    // serves MTP and DFlash, never DFlash2).
+    const auto head_drafters = product::proposal_head_drafters(artifact);
     std::vector<spec::SpecConfig> configs{spec::SpecConfig{}};
     for (const auto& label : labels) {
         auto c = spec::SpecConfig::parse(label);
-        c.proposal_head = c.proposal_head && head;
         const std::string mode = spec::mode_name(c.mode);
+        c.proposal_head = c.proposal_head && (flags.contains("configs") || head_drafters.contains(mode));
         if (c.enabled() && (components.contains(mode) || separate.contains(mode))) {
             configs.push_back(c);
         }

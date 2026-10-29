@@ -17,9 +17,11 @@
 #include "convert/cache.h"
 #include "convert/support.h"
 #include "product/activation_options.h"
+#include "product/numeric_options.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
+#include "product/plan/plan_cached.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
 #include "artifact/framing.h"
@@ -43,6 +45,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <future>
 #include <map>
 #include <optional>
 #include <set>
@@ -955,15 +958,98 @@ App::plan_facts(const std::string& repo, const Json& listing, const std::string&
     return std::nullopt;
 }
 
+struct App::PlanNowContext {
+    std::shared_ptr<product::PlannedSubjects> subjects; // what inputs' subject pointers name
+    product::PlanSourceFacts facts;
+    product::DryRunInputs inputs;
+    std::optional<product::ServedChoice> served;
+    product::ChoicePins pins;
+};
+
+namespace {
+
+// The free memory of GPU `gpu` now (NVML), nullopt when it does not say.
+std::optional<std::uint64_t> free_now_of(const std::vector<GpuStat>& stats, int gpu) {
+    for (const auto& stat : stats) {
+        if (stat.index == gpu && stat.memory_total > 0) {
+            return product::plan_free_now_of_nvml(static_cast<std::uint64_t>(stat.memory_free));
+        }
+    }
+    return std::nullopt;
+}
+
+} // namespace
+
+Json App::artifact_plan_json(const fs::path& artifact, int gpu, const product::LaunchAsk& launch) {
+    const auto stats  = gpus_->snapshot();
+    const auto device = plan_device(stats, gpu);
+    if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
+    product::DryRunInputs inputs;
+    inputs.device = *device;
+    inputs.gpu    = product::gpu_key_of(*device);
+    for (const auto& stat : stats) {
+        if (stat.index != gpu) { continue; }
+        if (const auto key = product::gpu_key_of_bus(stat.bus_id)) { inputs.gpu = *key; }
+    }
+    const product::LaunchPlanOptions options = product::launch_options(launch);
+    inputs.options = options.options;
+    inputs.ask     = options.ask;
+    inputs.pins    = product::ChoicePins{
+           .kv = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
+           .activations = launch.activations_pinned()};
+    const product::ArtifactPlan plan = product::plan_artifact(artifact, inputs);
+    Json doc = product::artifact_plan_document(plan, artifact.string());
+    // What a start right now would get (a second model may hold the card): the replay says it.
+    if (const auto free_now = free_now_of(stats, gpu)) {
+        doc["now"] = product::plan_now_json(
+            product::plan_now(plan.facts, plan.inputs, plan.served ? &*plan.served : nullptr,
+                              plan.inputs.pins, *free_now),
+            *free_now);
+    }
+    return doc;
+}
+
 Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
                     const std::string& quant, const product::LaunchAsk& launch) {
+    // The plan of an idle card (cached), and what a start right now would get at the GPU's free
+    // memory (product::plan_now, each request: another process's share moves).
+    std::shared_ptr<const PlanNowContext> now;
+    Json doc = plan_json_idle(repo, hub, gpu, quant, launch, true, &now);
+    const auto free_now = free_now_of(gpus_->snapshot(), gpu);
+    if (!now) { // a cached plan: its context kept beside it
+        std::lock_guard lock(sizes_mutex_);
+        if (const auto it = plan_now_.find(plan_key(repo, hub, gpu, quant, launch));
+            it != plan_now_.end()) {
+            now = it->second;
+        }
+    }
+    if (free_now && now) {
+        doc["now"] = product::plan_now_json(
+            product::plan_now(now->facts, now->inputs, now->served ? &*now->served : nullptr,
+                              now->pins, *free_now),
+            *free_now);
+    }
+    return doc;
+}
+
+std::string App::plan_key(const std::string& repo, const std::string& hub, int gpu,
+                          const std::string& quant, const product::LaunchAsk& launch) const {
+    // A download or conversion here changes what a row prices (product::tables_of_cached).
+    return hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
+           "|" + convert::conversions_stamp(hub_root(), repo) + "|" +
+           product::cached_stamp(product::cached_quants(hub_root(), hub, repo, ""));
+}
+
+Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
+                         const std::string& quant, const product::LaunchAsk& launch,
+                         bool read_tables, std::shared_ptr<const PlanNowContext>* now_out) {
     const auto generation = hub_generation();
     const Json list   = listing_of(repo, hub);
     const auto device = plan_device(gpus_->snapshot(), gpu);
     if (!device) { throw std::runtime_error("no GPU " + std::to_string(gpu) + " to plan for"); }
+    // A plan whose rows were priced without reading a table is kept apart from a user's.
     const std::string key =
-        hub_key(repo, hub) + "|" + std::to_string(gpu) + "|" + quant + "|" + launch_key(launch) +
-        "|" + convert::conversions_stamp(hub_root(), repo);
+        plan_key(repo, hub, gpu, quant, launch) + (read_tables ? "" : "|known-tables");
     {
         std::lock_guard lock(sizes_mutex_);
         if (const auto it = plans_.find(key); it != plans_.end()) { return it->second; }
@@ -985,13 +1071,19 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             config = it->second;
         }
     }
-    const std::vector<product::QuantListing> listing = quant_listing(list, config);
+    std::vector<product::QuantListing> listing = quant_listing(list, config);
     const bool gguf                                  = std::any_of(listing.begin(), listing.end(),
                                                                    [](const auto& q) { return !q.drafter && q.format == "gguf"; });
     const product::LaunchPlanOptions options         = product::launch_options(launch);
     product::DryRunInputs inputs;
     inputs.device         = *device;
-    inputs.gpu            = product::gpu_key_of(*device);
+    // The GPU key a start on that device reads (its reported clocks and DRAM rate), else one
+    // from the facts alone: the choice prices the card as the server will.
+    inputs.gpu = product::gpu_key_of(*device);
+    for (const auto& stat : gpus_->snapshot()) {
+        if (stat.index != gpu) { continue; }
+        if (const auto key = product::gpu_key_of_bus(stat.bus_id)) { inputs.gpu = *key; }
+    }
     inputs.options        = options.options;
     inputs.ask            = options.ask;
     // The launch pins the KV codec and the activations the user chose; the rest is chosen.
@@ -1012,6 +1104,31 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             return convert::cached_conversion_with_drafters(root, repo, "", label);
         };
     }
+    // The quantizations' output heads, only where the converter would add the default proposal
+    // head (product::default_proposal_possible: local facts): 1 MiB windows around the parsed
+    // header's tensor table end, read together beside the MTP reads and kept per commit.
+    std::future<std::map<std::string, std::uint64_t>> heads_read;
+    if (gguf && !options_.offline && facts->model.gguf_data_offset != 0 &&
+        product::default_proposal_possible(
+            product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
+            inputs.ask)) {
+        std::vector<std::string> quants;
+        for (const auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && (quant.empty() || q.quant == quant)) {
+                quants.push_back(q.quant);
+            }
+        }
+        convert::FetchOptions fetch;
+        fetch.hub = hub;
+        if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+        heads_read = std::async(
+            std::launch::async,
+            [spec = commit.empty() ? repo : repo + "@" + commit, fetch, quants,
+             facts = facts->model] {
+                return convert::gguf_quants_head_bytes(spec, fetch, quants, facts.gguf_data_offset,
+                                                       facts.hidden, facts.vocab);
+            });
+    }
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.
     product::PlannedSubjects::MtpOf mtp_of;
     if (gguf && !options_.offline) {
@@ -1027,9 +1144,11 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
             return gguf_mtp(repo, hub, commit, label);
         };
     }
-    product::PlannedSubjects subjects(
+    // Kept with the "now" context (plan_now_): the inputs' subjects point into it.
+    const auto subjects_kept = std::make_shared<product::PlannedSubjects>(
         product::PlannedTarget{.repo = repo, .facts = *facts, .gguf = gguf, .commit = commit},
-        inputs.gpu, std::move(conversion_of), {}, std::move(mtp_of));
+        inputs.gpu, std::move(conversion_of), std::filesystem::path{}, std::move(mtp_of));
+    product::PlannedSubjects& subjects = *subjects_kept;
     std::string weights; // the named quantization's (none for the table: each row its own)
     for (const auto& q : listing) {
         if (!q.drafter && q.quant == quant) { weights = q.weights; }
@@ -1046,41 +1165,116 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
         const product::AttachedDrafterMemory drafter = product::attached_drafter_memory(
             subject, listing, facts->model.model_type, facts->model.hidden,
             options_.offline ? nullptr : &fetch);
-        inputs.drafter_bytes = drafter.bytes;
+        inputs.drafter_bytes                = drafter.bytes;
+        inputs.proposal_planned       = drafter.proposal_planned;
+        inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
         inputs.drafter_state = drafter.state;
     }
+    // Each GGUF quantization's own output head where the default proposal head is priced (Codex on
+    // #170: the plan reads them, the UI reused one file's), read beside the MTP reads below.
+    if (heads_read.valid() && inputs.proposal_planned) {
+        const auto heads = heads_read.get();
+        for (auto& q : listing) {
+            if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }
+        }
+    }
+    // The facts' own file prices its tensor table (kv_json read its head); the other rows are read
+    // as product::plan_quants_read reads them (the CLI and the start read the same rows): from the
+    // tables kept, and for a user's plan by a header read when not kept.
+    // tables_seen: the repository's tables generation this plan prices (one kept since: not cached).
+    std::uint64_t tables_seen = 0;
+    {
+        const product::QuantListing* smallest = nullptr;
+        for (const auto& q : listing) {
+            if (!q.drafter && q.format == "gguf" && (!smallest || q.bytes < smallest->bytes)) {
+                smallest = &q;
+            }
+        }
+        const std::string own_quant = smallest ? smallest->quant : std::string();
+        const auto own              = product::gguf_tensor_table(*facts);
+        {
+        // The kept tables and their generation read together (another request keeps tables).
+        std::lock_guard lock(sizes_mutex_);
+        tables_seen = tables_generation_[hub_key(repo, hub)];
+        for (auto& q : listing) {
+            if (q.drafter || q.format != "gguf") { continue; }
+            if (own && q.quant == own_quant) { q.table = own; }
+            // A plan that reads no header (the catalog, /api/quants): every table kept prices its
+            // row, so an unknown row before it cannot hide it. A user's plan reads the rows the CLI
+            // and the start read (plan_quants_read), its tables taken from what is kept.
+            if (!(read_tables && !options_.offline)) {
+                if (const auto it = gguf_tables_.find(hub_key(repo, hub) + "@" + commit + "|" + q.quant);
+                    it != gguf_tables_.end() && it->second) {
+                    q.table = it->second;
+                }
+            }
+        }
+        }
+        // The quantizations already in this UI's hub cache (the one its servers start with), at
+        // the revision a start takes (main, as the start of `repo` without one): by their own
+        // files, as the start and ninferno-serve --plan --no-load price them.
+        // Outside the lock: a file read.
+        product::tables_of_cached(listing, product::cached_quants(hub_root(), hub, repo, ""));
+    }
+    // A read that failed (a network blip) leaves this plan uncached: the next request reads again.
+    bool table_failed       = false;
+    std::uint64_t own_kept  = 0; // tables this plan's own reads kept (they are in it)
+    const bool may_read = read_tables && !options_.offline;
+    const product::ReadTensorTable read_table =
+        [this, repo, hub, commit, may_read, &table_failed, &own_kept](const std::string& label)
+        -> std::optional<product::GgufTensorTable> {
+        if (!may_read) { // the tables kept only
+            std::lock_guard lock(sizes_mutex_);
+            const auto it = gguf_tables_.find(hub_key(repo, hub) + "@" + commit + "|" + label);
+            return it != gguf_tables_.end() ? it->second : std::nullopt;
+        }
+        TableRead read;
+        auto table   = gguf_table(repo, hub, commit, label, &read);
+        table_failed = table_failed || read.failed;
+        own_kept += read.stored ? 1 : 0;
+        return table;
+    };
     Json doc;
     product::PlanSourceFacts planned_at = *facts; // the weights the choice is made at
     std::string planned_label           = quant;
+    std::uint32_t launch_context        = 0; // the ceiling a start of the shown row passes
     if (quant.empty()) {
-        const product::QuantPlan plan   = product::plan_quants(*facts, listing, inputs);
+        const product::QuantPlan plan =
+            product::plan_quants_read(*facts, listing, inputs, read_table);
         const product::QuantRow* chosen = plan.chosen ? &plan.rows[*plan.chosen] : nullptr;
         product::PlannedSpeculation planned;
         product::PlanSourceFacts at = *facts;
         if (chosen != nullptr) {
             planned = chosen->planned;
-            at      = product::with_weights(*facts, chosen->weight_bytes, chosen->basis);
+            at      = product::row_facts(*facts, *chosen);
         } else {
             planned = product::plan_model(*facts, inputs);
             // Nothing fits or runs: a pinned mode the family does not run says so.
-            product::refuse_unrun_activations(*facts, inputs, planned);
+            product::refuse_unrun_pins(*facts, inputs, planned);
         }
         doc        = product::dry_plan_document(at, repo, "hub", inputs, planned, &plan);
         planned_at = at;
-        if (chosen != nullptr) { planned_label = chosen->listing.quant; }
+        if (chosen != nullptr) {
+            planned_label  = chosen->listing.quant;
+            launch_context = chosen->launch_context;
+        }
     } else {
         // One quantization: its row of the table (the same states, sizes and codes), and its plan.
         std::vector<product::QuantListing> one;
         for (const auto& q : listing) {
             if (!q.drafter && q.quant == quant) { one.push_back(q); }
         }
-        const product::QuantPlan plan = product::plan_quants(*facts, one, inputs);
+        const product::QuantPlan plan = product::plan_quants_read(*facts, one, inputs, read_table);
         const product::QuantRow& row  = plan.rows.front();
+        launch_context                = row.launch_context;
         const product::PlanSourceFacts at =
-            product::with_weights(*facts, row.weight_bytes, row.basis);
-        const product::PlannedSpeculation planned =
-            row.planned.plan.planned ? row.planned
-                                     : product::plan_model(at, product::inputs_for(inputs, row.listing));
+            product::row_facts(*facts, row);
+        product::PlannedSpeculation planned =
+            row.planned.plan.planned || !row.planned.plan.refused_code.empty()
+                ? row.planned
+                : product::plan_model(at, product::inputs_for(inputs, row.listing));
+        // A pin the model does not run keeps its verdict (kv_not_run, activations_not_run).
+        product::refuse_unrun_pins(at, product::inputs_for(inputs, row.listing), planned);
         doc = product::dry_plan_document(at, repo + ":" + quant, "hub", inputs, planned, &plan);
         planned_at = at;
     }
@@ -1091,13 +1285,31 @@ Json App::plan_json(const std::string& repo, const std::string& hub, int gpu,
     for (const auto& q : listing) {
         if (!q.drafter && q.quant == planned_label) { at_label = product::inputs_for(inputs, q); }
     }
-    if (const auto served =
-            product::choose_at_weights(planned_at, at_label, inputs.pins, planned_label)) {
-        doc["choice"] = product::choice_json(*served);
-    }
+    const auto served =
+        product::choose_at_weights(planned_at, at_label, inputs.pins, planned_label);
+    if (served) { doc["choice"] = product::choice_json(*served); }
+    auto now      = std::make_shared<PlanNowContext>();
+    now->subjects = subjects_kept;
+    now->facts    = planned_at;
+    // A start passes the row's ceiling (several streams each get their own context): now is
+    // planned under it, as the idle plan is.
+    now->inputs   = launch_context != 0 && inputs.options.max_context_automatic
+                        ? product::under_context_cap(at_label, launch_context)
+                        : at_label;
+    now->served   = served;
+    now->pins     = inputs.pins;
     std::lock_guard lock(sizes_mutex_);
-    if (plans_.size() >= kMaxKeptPlans) { plans_.clear(); }
-    if (generation == hub_generation_) { plans_[key] = doc; }
+    if (plans_.size() >= kMaxKeptPlans) {
+        plans_.clear();
+        plan_now_.clear();
+    }
+    if (now_out != nullptr) { *now_out = now; }
+    // A table kept by another request while this one planned: this plan is not the latest.
+    if (generation == hub_generation_ && !table_failed &&
+        tables_generation_[hub_key(repo, hub)] == tables_seen + own_kept) {
+        plans_[key]     = doc;
+        plan_now_[key] = std::move(now);
+    }
     return doc;
 }
 
@@ -1156,7 +1368,7 @@ Json App::quants_json(const std::string& repo, int gpu, const std::string& hub,
     Json plan = nullptr;
     if (gpu >= 0) {
         try {
-            plan = plan_json(repo, hub, gpu, "", launch);
+            plan = plan_json_idle(repo, hub, gpu, "", launch);
         } catch (const std::exception&) {}
     }
     if (plan.is_object() && plan.contains("quants")) {
@@ -1254,7 +1466,7 @@ Json App::catalog_json(int gpu, const product::LaunchAsk& launch) {
                 if (!plan_facts_.contains(hub_key(repo, "huggingface"))) { return std::nullopt; }
             }
             try {
-                return plan_json(repo, "huggingface", gpu, "", launch);
+                return plan_json_idle(repo, "huggingface", gpu, "", launch);
             } catch (const std::exception&) { return std::nullopt; }
         };
         const auto fits = [&](const std::string& repo, const Json& q) -> std::optional<bool> {
@@ -1979,6 +2191,65 @@ void App::gguf_mtps(const std::string& repo, const std::string& hub, const std::
     }
 }
 
+std::optional<product::GgufTensorTable> App::gguf_table(const std::string& repo,
+                                                        const std::string& hub,
+                                                        const std::string& commit,
+                                                        const std::string& quant,
+                                                        TableRead* read) {
+    const std::string key = hub_key(repo, hub) + "@" + commit + "|" + quant;
+    {
+        std::lock_guard lock(sizes_mutex_);
+        if (const auto it = gguf_tables_.find(key); it != gguf_tables_.end()) { return it->second; }
+        if (const auto it = gguf_failed_.find(key);
+            it != gguf_failed_.end() &&
+            std::chrono::steady_clock::now() - it->second < std::chrono::minutes(1)) {
+            if (read != nullptr) { read->failed = true; }
+            return std::nullopt;
+        }
+    }
+    convert::FetchOptions fetch;
+    fetch.hub   = hub;
+    fetch.quant = quant;
+    if (!options_.hub_cache.empty()) { fetch.cache = options_.hub_cache; }
+    const std::string spec = commit.empty() ? repo : repo + "@" + commit;
+    for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
+        try {
+            const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
+            const auto file =
+                convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                         head.bytes.size(), head.size, head.path);
+            // A split part's head: read, no whole table (an empty one, kept too: its file size
+            // stands and the rows above it are still read).
+            const product::GgufTensorTable table =
+                product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
+                    .value_or(product::GgufTensorTable{});
+            std::lock_guard lock(sizes_mutex_);
+            gguf_tables_[key] = table;
+            gguf_failed_.erase(key);
+            if (table.tensor_bytes > 0) {
+                ++tables_generation_[hub_key(repo, hub)];
+                if (read != nullptr) { read->stored = true; }
+                // The repository's plans priced before it (the catalog's too) are planned again.
+                const std::string prefix = hub_key(repo, hub) + "|";
+                std::erase_if(plans_, [&](const auto& p) { return p.first.starts_with(prefix); });
+                std::erase_if(plan_now_, [&](const auto& p) { return p.first.starts_with(prefix); });
+            }
+            return table;
+        } catch (const convert::GgufTruncated&) {
+            continue;
+        } catch (const std::exception&) {
+            if (read != nullptr) { read->failed = true; }
+            std::lock_guard lock(sizes_mutex_);
+            gguf_failed_[key] = std::chrono::steady_clock::now();
+            return std::nullopt;
+        }
+    }
+    // Metadata past 128 MiB: read, no table (an empty one, kept: not read again).
+    std::lock_guard lock(sizes_mutex_);
+    gguf_tables_[key] = product::GgufTensorTable{};
+    return product::GgufTensorTable{};
+}
+
 std::optional<bool> App::gguf_mtp(const std::string& repo, const std::string& hub,
                                   const std::string& commit, const std::string& quant) {
     const std::string key = hub_key(repo, hub) + "@" + commit + "|" + quant;
@@ -2277,6 +2548,24 @@ void App::install(httplib::Server& server) {
     // every quantization and the largest that fits), ctx (tokens or "auto"), par (streams), kv
     // (auto or a codec), spec (auto, none, mtp, dflash, dflash2), precision (exact).
     server.Get("/api/plan", [this](const httplib::Request& req, httplib::Response& res) {
+        // A model converted here (My models: a start again is planned first), by its path: only
+        // an artifact this UI lists (/api/local), never any path.
+        if (req.has_param("artifact")) {
+            try {
+                const fs::path artifact = fs::path(req.get_param_value("artifact"));
+                const Json local        = local_json();
+                const bool listed = std::any_of(
+                    local["models"].begin(), local["models"].end(), [&](const Json& m) {
+                        return m.value("artifact", std::string()) == req.get_param_value("artifact");
+                    });
+                if (!listed) { return reply_error(res, 400, "not a model listed here"); }
+                reply_json(res, artifact_plan_json(artifact, int_param(req, "gpu", 0),
+                                                   launch_ask_of(req)));
+            } catch (const std::invalid_argument& error) {
+                reply_error(res, 400, error.what());
+            } catch (const std::exception& error) { reply_error(res, 502, error.what()); }
+            return;
+        }
         const auto [repo, tag] = split_model_tag(req.get_param_value("repo"));
         if (!convert::is_repository_spec(repo)) {
             return reply_error(res, 400, "repo must be org/name");
@@ -2372,13 +2661,12 @@ void App::install(httplib::Server& server) {
                                 request.quant.clear();
                             }
                         }
-                        // A mode the model's family does not run is refused here, with the
-                        // plan's words (product::activation_refusal), from the facts at hand: the
+                        // A pin the model does not run (an activation mode its family does not
+                        // run, a KV codec it does not take) is refused here, with the plan's words
+                        // (product::activation_refusal, kv_refusal), from the facts at hand: the
                         // artifact's, else the repository's read for its plan. The server refuses
-                        // it at start as well when neither is known yet.
-                        if (!request.activations.empty()) {
-                            const ActivationMode mode =
-                                product::parse_activation_mode(request.activations);
+                        // it at start as well when neither is known yet. Never substituted.
+                        if (!request.activations.empty() || !request.kv_dtype.empty()) {
                             std::optional<product::PlanSourceFacts> facts;
                             const std::string model = split_model_tag(request.model).first;
                             if (fs::path(model).extension() == ".ninferno") {
@@ -2392,9 +2680,20 @@ void App::install(httplib::Server& server) {
                                     model, request.hub.empty() ? "huggingface" : request.hub));
                                 if (it != plan_facts_.end()) { facts = it->second; }
                             }
-                            if (facts) {
+                            if (facts && !request.activations.empty()) {
+                                const ActivationMode mode =
+                                    product::parse_activation_mode(request.activations);
                                 if (const std::string why =
                                         product::activation_refusal(*facts, mode);
+                                    !why.empty()) {
+                                    throw std::invalid_argument(why);
+                                }
+                            }
+                            // A shape the facts do not name is the engine's to judge at
+                            // load (as refuse_unrun_kv_at_start): not refused here.
+                            if (facts && facts->model.known() && !request.kv_dtype.empty()) {
+                                if (const std::string why = product::kv_refusal(
+                                        *facts, product::parse_kv_dtype(request.kv_dtype));
                                     !why.empty()) {
                                     throw std::invalid_argument(why);
                                 }
@@ -2529,7 +2828,10 @@ void App::install(httplib::Server& server) {
                 mtp_.clear();
                 kv_failed_.clear();
                 plan_facts_.clear();
+                gguf_tables_.clear();
+                gguf_failed_.clear();
                 plans_.clear();
+                plan_now_.clear();
             }
             catalog_wake_ = true;
             const auto now = convert::hub_token();

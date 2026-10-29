@@ -732,8 +732,11 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     };
     double elements = 0;
     std::uint64_t input_table_bytes = 0;
+    std::uint64_t output_bytes = 0, embedding_bytes = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
+        if (t.name == "output.weight") { output_bytes = t.bytes; }
+        if (t.name == "token_embd.weight") { embedding_bytes = t.bytes; }
         elements += static_cast<double>(t.elements());
         if (t.name == "token_embd.weight") { input_table_bytes = t.bytes; }
         if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
@@ -763,6 +766,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
     // The input table apart from the output head (a part that lists output.weight says so).
     out.shape.input_table_bytes = has_output ? input_table_bytes : 0;
+    out.model.head_bytes     = !whole ? 0 : has_output ? output_bytes : embedding_bytes;
+    out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
     out.model.weight_elements = whole ? elements : 0;
     if (!whole && !has_output) { out.model.params = 0; }
@@ -786,7 +791,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     // "vision/..." parameters bind (a parameter is named <component>/<name>).
     // An object only a component the options may leave unloaded binds: the vision encoder's (under
     // --vision), the MTP layers' (under MTP), the own DFlash drafter's (under DFlash).
-    enum Part : std::uint8_t { Vision, Mtp, Drafter, Other, Parts };
+    enum Part : std::uint8_t { Vision, Mtp, Drafter, Proposal, Other, Parts };
 
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
     // The input table's objects that the output head does not share (an untied table: a decode
@@ -803,18 +808,26 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         const Part part = starts_with(name, "vision/")                                    ? Vision
                           : starts_with(name, "mtp/")                                     ? Mtp
                           : starts_with(name, "dflash/") || starts_with(name, "dflash2/") ? Drafter
+                          : starts_with(name, "proposal/")                                ? Proposal
                                                                                           : Other;
         for (const auto& piece : binding.parts) {
             if (piece.object.index < marks.size()) { marks[piece.object.index][part] = true; }
         }
     }
-    std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0;
+    std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0,
+                  proposal_bytes = 0;
+    // The weights' elements the bytes cover, the own drafter and the proposal head left out: as a
+    // GGUF's tensor table counts the model it converts from (bits_per_weight's denominator on both
+    // paths).
+    double elements = 0;
     std::set<std::string> formats, layer_formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
         if (tensor == nullptr) { continue; } // resources
         const auto& m    = marks[i];
-        const bool alone = !m[Other] && (int(m[Vision]) + int(m[Mtp]) + int(m[Drafter]) == 1);
+        const bool alone =
+            !m[Other] &&
+            (int(m[Vision]) + int(m[Mtp]) + int(m[Drafter]) + int(m[Proposal]) == 1);
         if (alone && m[Vision]) {
             vision_bytes += tensor->bytes; // off the text plan's weights
             continue;
@@ -824,7 +837,15 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         if (table[i] == 0) { layer_formats.insert(tensor->format); }
         if (table[i] == 1) { input_table_bytes += tensor->bytes; }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
-        if (alone && m[Drafter]) { drafter_bytes += tensor->bytes; }
+        if (alone && m[Drafter]) {
+            drafter_bytes += tensor->bytes;
+        } else if (alone && m[Proposal]) {
+            proposal_bytes += tensor->bytes;
+        } else {
+            double n = tensor->shape.empty() ? 0 : 1;
+            for (const std::uint64_t d : tensor->shape) { n *= static_cast<double>(d); }
+            elements += n;
+        }
     }
     auto out =
         finish(geometry_of_config(text->second.config), bytes, runtime::WeightBasis::Artifact);
@@ -832,6 +853,21 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
     out.shape.input_table_bytes = input_table_bytes;
+    out.model.weight_elements   = elements;
+    // The source quantization the converter recorded (a GGUF file name's label), where the
+    // weights are still its encodings: a maintainer requantization (--maintainer-quantize) stores
+    // other ones, priced by what the artifact holds (no label).
+    const auto requantized = dir.provenance.find("maintainer_quantize");
+    if (const auto q = dir.provenance.find("quant");
+        q != dir.provenance.end() && q->is_string() &&
+        !(requantized != dir.provenance.end() && requantized->is_boolean() && requantized->get<bool>())) {
+        out.shape.quant_label = q->get<std::string>();
+    }
+    out.model.proposal_bytes    = proposal_bytes;
+    out.model.proposal_serves_mtp =
+        dir.uses.contains({std::string("proposal/head"), std::string("mtp/final_hidden")});
+    out.model.proposal_serves_dflash =
+        dir.uses.contains({std::string("proposal/head"), std::string("dflash/final_hidden")});
     out.shape.builtin_mtp       = out.shape.builtin_mtp || dir.components.contains("mtp");
     // A Qwen artifact's own DFlash drafter (its dflash or dflash2 component).
     for (const char* component : {"dflash", "dflash2"}) {

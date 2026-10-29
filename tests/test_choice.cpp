@@ -82,7 +82,6 @@ ch::ModelFacts model_at(const json& m, const std::string& quant) {
     ch::ModelFacts out      = model_of(m);
     const json& q           = m.at("quants").at(quant);
     out.input_table_bytes   = q.value("input_table_bytes", 0.0);
-    out.speculation_bytes   = q.value("speculation_bytes", 0.0);
     return out;
 }
 
@@ -101,7 +100,8 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     ch::QuantOption out;
     out.label           = label;
     out.bits_per_weight = q.at("bits_per_weight").get<double>();
-    out.weight_bytes    = q.at("weight_bytes").get<double>();
+    // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
+    out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
     out.weights         = ch::weight_class_of({}, label);
     return out;
 }

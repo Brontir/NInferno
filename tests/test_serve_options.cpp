@@ -101,9 +101,6 @@ int main() {
                                         "--cuda-sync",          "yield",
                                         "--route-table",        "t.json",
                                         "--route-dir",          "r",
-                                        "--dense-tune",         "retune",
-                                        "--moe-tune",           "on",
-                                        "--tune-cache",         "c",
                                         "--debug-prefill-cuts", "700,64",
                                         "--debug-poison",       "nan",
                                         "--debug-poison-skip",  "kv,state",
@@ -113,8 +110,8 @@ int main() {
                           "the pacing flags are not read");
         const ninferno::MaintainerOptions& m = lab.maintainer;
         failures += check(m.route_table == "t.json" && m.route_dir == "r" &&
-                              m.dense_tune == ninferno::TuneMode::Retune &&
-                              m.moe_tune == ninferno::TuneMode::On && m.tune_cache == "c" &&
+                              m.dense_tune == ninferno::TuneMode::Off &&
+                              m.moe_tune == ninferno::TuneMode::Off && m.tune_cache.empty() &&
                               m.debug_prefill_cuts == std::vector<std::uint64_t>{700, 64} &&
                               m.debug_poison == std::uint8_t{0xFF} &&
                               m.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
@@ -127,6 +124,17 @@ int main() {
                 (void)parse({"ninferno-serve", "model.ninferno", bad, "x"});
             } catch (const std::invalid_argument&) { refused = true; }
             failures += check(refused, "an invalid pacing or maintainer value is accepted");
+        }
+        // The lab tuners time kernels on the machine: the server refuses them.
+        for (const char* flag : {"--dense-tune", "--moe-tune", "--tune-cache"}) {
+            bool refused = false;
+            try {
+                (void)parse({"ninferno-serve", "model.ninferno", flag, "on"});
+            } catch (const std::invalid_argument& error) {
+                refused =
+                    std::string(error.what()).find("is a lab tuner's option") != std::string::npos;
+            }
+            failures += check(refused, (std::string("the server accepted ") + flag).c_str());
         }
     }
     failures += check(defaults.response_store_max_records == kDefaultResponseStoreRecords &&

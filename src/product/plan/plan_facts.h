@@ -74,6 +74,10 @@ struct PlanTargetShape {
     // The lineage the registry matches by, in order: a GGUF's general.base_model.0.repo_url
     // org/name, a checkpoint's model card / README base_model entries; empty when none is named.
     std::vector<std::string> base_models;
+    // The quantization the weights came from ("Q4_K_M", "UD-Q5_K_XL"): a hub listing's label, an
+    // artifact's provenance "quant" (the GGUF file name's, as the converter records it); "" when
+    // unknown. The configuration choice prices a quantization by it (its measured accuracy term).
+    std::string quant_label;
 };
 
 struct PlanSourceFacts {

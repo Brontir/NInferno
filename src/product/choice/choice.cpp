@@ -376,6 +376,8 @@ Scored score(const ModelFacts& model, const CardFacts& card, const std::optional
 
 } // namespace
 
+bool is_qwen_family(const ModelFacts& model) noexcept { return qwen_family(model); }
+
 Coupled coupled_storages(const ModelFacts& model, KvCacheStorage kv, ActivationMode activations,
                          const Pins& pins) noexcept {
     Coupled out{KvCacheStorage::BFloat16, RecurrentStateStorage::FP32};
@@ -482,7 +484,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         // flops at the prefill route's rate.
         const double table   = model.input_table_bytes > 0 ? model.input_table_bytes
                                                            : model.input_table_params * quant.bits_per_weight / 8;
-        const double weights = std::max(0.0, quant.weight_bytes - model.speculation_bytes - table);
+        const double weights = std::max(0.0, quant.weight_bytes - table);
         // A generation without a row: the one whose launches it shares (Volta: Turing's, neither
         // has PDL nor Ada's L2), else Ada's; transferred either way.
         const KernelCost* cost = measured_row_of(kKernelCost, gen == "volta" ? std::string_view("turing") : gen,

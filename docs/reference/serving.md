@@ -640,7 +640,8 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then.
-- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema, and
+- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema (in the
+  JSON and Qwen XML call syntaxes; [key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
 - A JSON `response_format` (`json_schema` or `json_object`) beside enabled tools, as Agent SDKs
   send. The answer is the calls or a text answer in that format, nothing else. When a call is
@@ -807,6 +808,49 @@ retain that member order in aggregate and streaming responses, so an unmodified 
 the same ordered tool call. NInferno does not canonicalize semantically equivalent JSON. If a client
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
+
+### Key order under an output constraint
+
+A grammar that holds an object's optional properties to their schema order, each skippable, loses
+fields: once the model writes a later optional key, no earlier one can follow, and the output is
+still valid JSON. NInferno's grammars let the model write keys in its own order:
+
+- An object's optional properties may come in any order, each at most once. Its required
+  properties keep their schema order among themselves (the optional ones may sit before, between or
+  after them), and the object cannot end before all of them are written.
+- An object whose properties are all required keeps them in schema order. OpenAI strict mode
+  requires every property to be required and documents that keys come in schema order; such
+  schemas behave the same here.
+- Additional properties, where the schema admits them, may sit anywhere among the declared ones.
+- The same rule holds for nested objects, array items and `$ref` targets.
+- Each at most once is tracked for up to 256 states per object (required properties written,
+  times the set of optional ones written): eight optional properties with no required one, six
+  with three required. Optional properties past those (in schema order), and every optional
+  property of an object with `patternProperties` or `propertyNames`, may still come in any order
+  but may repeat (the tool-call parser, like most JSON parsers, keeps the last value).
+- An object with `minProperties` or `maxProperties` keeps its optional properties in schema order;
+  list them in the order the prompt asks for them.
+
+Where each constraint applies, and what it holds:
+
+| Output | Constrained when | Arguments or answer held to |
+|---|---|---|
+| `response_format` `json_schema` | always | the schema, keys as above |
+| `response_format` `json_object` | always | any JSON object |
+| Tool call, JSON syntaxes (Hermes, Mistral, Llama 3, gpt-oss harmony, Granite) | `tool_choice` `required` or named, a `strict` tool, or `parallel_tool_calls: false` | `strict` tool: its schema, keys as above; other tools: any JSON object |
+| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, values free |
+| Tool call, Gemma 4, Pythonic (OLMo 3), ATEM | the same | the call syntax only, `strict` or not: the schema is not applied |
+| A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
+
+The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning
+and the grammar opens there ([reasoning output](#reasoning-output)). Whitespace between JSON tokens
+(and inside Gemma 4 arguments) is bounded to runs of 64 characters, so a model cannot write
+whitespace until `max_tokens`; a pretty-printed object with four-space indents fits it to depth 15,
+and deeper indents are written shorter. Nesting depth is not bounded.
+
+`tools/smoke/serve_key_order.py` measures this against a running server: five optional fields
+asked for out of schema order, constrained and unconstrained, reporting the fields lost per run,
+the share of responses in schema order and near-empty objects that stopped early.
 
 ### Thinking controls
 
@@ -2200,11 +2244,12 @@ change.
 | `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (the class reserve the selection keeps beside the free memory, for the growth of what Windows holds), `desktop_bytes` (the desktop's declared share an idle card's free memory lacks); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
 | `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
 | `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
-| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight` (`weights_bytes` × 8 over the model's weights: a whole GGUF tensor table's elements, else the parameter count its geometry gives), `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`, `activations_not_run`: the `--activations` mode pinned is one the model's family does not run), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned), `estimate` (`null` when not planned, else the choice model's speeds at the plan's storages: `decode_tok_s` one stream of the asked ones at `depth` tokens in its window, a quarter of the asked context or of Auto's first step and the same for every row, `prefill_tok_s`, `request_seconds` of a `prompt` + `answer` token request, `transferred` a constant taken from another GPU generation); a single quantization's row when one was named; empty for a single model |
+| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight` (`weights_bytes` × 8 over the model's weights: a whole GGUF tensor table's elements, else the parameter count its geometry gives), `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`, `activations_not_run`: the `--activations` mode pinned is one the model's family does not run, `kv_not_run`: the `--kv-dtype` pinned is one the model does not take), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned), `estimate` (`null` when not planned, else the choice model's speeds at the plan's storages: `decode_tok_s` one stream of the asked ones at `depth` tokens in its window, a quarter of the asked context or of Auto's first step and the same for every row, `prefill_tok_s`, `request_seconds` of a `prompt` + `answer` token request, `transferred` a constant taken from another GPU generation); a single quantization's row when one was named; empty for a single model |
 | `chosen` | the rule's quantization, `null` when none fits or there is no listing |
 | `pick` | `null`, or `quant`, `tier` (`own`, `own_stepped`, `shared`, `own_below_floor`, `shared_below_floor`, `desktop`), `target_context` (own per stream; 0 shared), `context` (what the launch gets), `concurrency`, `card_gb`, `below_floor`, `low_quality` |
 | `rule` | the rule's line (English, for a terminal) |
 | `choice` | CHOICE: the configuration choice at the chosen quantization's weights |
+| `now` | what a start right now would get (`product::plan_now`): the same plan at the GPU's free memory now (another process's share counted), the choice's storages and drafter kept (they are the idle card's): `free_now_bytes`, `fits_now`, `context_now` (each stream's; 0 when it does not fit), `rung_now` of `rungs`, `private_contexts_now`, `survival_now`, `reason_now`, `reason_code_now`, `reason_params_now` (as `reason_params`). ninferno-ui computes it at each request from NVML's free bytes (≈ under WDDM); `--plan --no-load` for a hub table's pick. Absent when the free memory is not known |
 | `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `best_worth` (the same and `largest`: on a GPU generation that decides, the configuration choice weighed the quantizations of the rule's tier by worth and took `quant` over the largest; and the trade, each at its own choice on the generation's reference card: `time_ratio` the largest's seconds per request over the pick's (above 1: the largest is slower), `kld_delta` the largest's KLD less the pick's (below 0: the largest is more accurate), `accuracy_weight` the lambda that priced them), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
 
 PLAN:
@@ -2222,7 +2267,7 @@ PLAN:
 | `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
 | `estimate_basis`, `estimate_reason` | `family_planner` (the rung bytes are the start planner's but the workspace) or `approximate` and why |
 | `reason`, `fits_instead` | when nothing fits: why, and `[{concurrency, context}]`, the longest automatic context each concurrency fits |
-| `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`), `activations_not_run` (the `--activations` mode pinned is one the model's family does not run: `fits` is false whatever the memory holds, and a start refuses it before any weight loads with the same words) |
+| `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`), `activations_not_run` (the `--activations` mode pinned is one the model's family does not run: `fits` is false whatever the memory holds, and a start refuses it before any weight loads with the same words), `kv_not_run` (the same for a `--kv-dtype` the model does not take) |
 | `ladder` | every rung, top first, as `chosen` |
 | `speculation` | SPEC: the speculation the plan was made with |
 
@@ -2234,6 +2279,7 @@ CHOICE:
 | `why` | the decision in one line (English) |
 | `by_worth` | `true` when the worth decided; `false` when the quant rule and the family's defaults stood (no reference card for this generation, or a constant set still on one lab card: the `why` says which) |
 | `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
+| `kv_options` | every `--kv-dtype` codec as a start of this model takes it: `codec`, `allowed`, `why_code` (`""`, `family_codec`: the family keeps BF16 or FP8 only, `head_width`: the Qwen paged pool's layout takes another head width, `shape_unknown`), `why` (English), `slow_on_card` (FP8 codes widened in software: no E4M3 instructions below sm_89; the codec runs, slower). The engine's own rules; ninferno-ui's KV buttons are drawn from it |
 | `activations_allowed` | the `--activations` modes the model's family runs (`fast`, `exact`, and `int8` for Qwen), whatever is pinned: what ninferno-ui's selector offers |
 | `chosen` | `null` when nothing fits (or a pinned `--activations` mode the family does not run: `why` says so); else `quant` (the quantization it was made at), `chunk` (the widest prefill chunk), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), and ESTIMATES |
 | `alternatives` | every other value of each axis with the others kept: `axis` (`kv`, `activations`, `drafter`, `chunk`, `state`, `ring`: the choice is made at one quantization, the quantization table's row), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the listing order), `default` (a gate is closed: the family's default, the default chunk or the speculation profile's drafter stands), `unmeasured` (a drafter's gain is not measured on this card: the profile's drafter stands), `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |

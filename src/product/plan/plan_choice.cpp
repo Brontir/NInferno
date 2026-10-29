@@ -1,6 +1,8 @@
 #include "product/plan/plan_choice.h"
 
 #include "runtime/engine/plan_dry_run.h"
+#include "core/device_class.h"
+#include "core/paged_kv_storage.h"
 #include "product/speculation/speculation.h"
 #include "spec/gpu_identity.h"
 #include "runtime/engine/quant_rule.h"
@@ -135,7 +137,6 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     // As stored apart from the head (a tied model's converter may keep a table of its own: Gemma 4's
     // artifact holds a Q8 input table beside its Q6 head); 0 where one object serves both.
     out.input_table_bytes = static_cast<double>(s.input_table_bytes);
-    out.speculation_bytes = static_cast<double>(m.mtp_bytes + m.own_drafter_bytes);
     out.layers            = static_cast<std::uint32_t>(s.num_hidden_layers);
     out.kv_bytes_per_token = [m](KvCacheStorage storage) {
         return runtime::plan_kv_bytes_per_token(m, storage);
@@ -181,24 +182,24 @@ DryRunInputs inputs_with(const DryRunInputs& inputs, const choice::Candidate& c)
     return out;
 }
 
-std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
-                                              const DryRunInputs& inputs, const ChoicePins& pins,
-                                              const std::string& label, OwnContext memory) {
-    if (!facts.model.known()) { return std::nullopt; }
-    // The KV codec, activations and state change the output bytes: the choice reads an idle card of
-    // the device's class, never the free memory now (another process's share); the start's ladder
-    // still takes the rung the free memory allows (docs/maintainer/deterministic-decisions.md).
-    DryRunInputs idle  = inputs;
-    idle.device.free_bytes.reset();
-    ServedChoice out;
-    choice::ModelFacts model       = choice_model_of(facts);
-    const choice::CardFacts card   = choice_card_of(inputs.gpu);
+choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::string& asked) {
+    const std::string label = asked.empty() ? facts.shape.quant_label : asked;
     choice::QuantOption quant;
-    quant.label           = label.empty() ? "the model's weights" : label;
-    quant.weight_bytes    = static_cast<double>(facts.model.weight_bytes);
-    quant.bits_per_weight = facts.model.bits_per_weight(quant.weight_bytes);
-    const auto& formats   = facts.shape.weight_formats;
-    quant.nvfp4      = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
+    quant.label = label.empty() ? "the model's weights" : label;
+    // The target's weights: the model's own DFlash drafter (an artifact's dflash component) is
+    // the drafter's, priced by its round, and the proposal head (proposal/*) the drafters' (read in
+    // their place of the full head, never by a decode step); the bits over the elements the same
+    // bytes hold (a GGUF's tensor table, an artifact's tensors: one measure on both paths).
+    const std::uint64_t aside = facts.model.own_drafter_bytes + facts.model.proposal_bytes;
+    const std::uint64_t target =
+        facts.model.weight_bytes > aside ? facts.model.weight_bytes - aside : facts.model.weight_bytes;
+    quant.bits_per_weight = facts.model.bits_per_weight(static_cast<double>(target));
+    // What one token's decode step reads: the trunk, not the MTP layers (read by an MTP round
+    // only, which the drafter's gain prices).
+    quant.weight_bytes = static_cast<double>(target > facts.model.mtp_bytes ? target - facts.model.mtp_bytes
+                                                                            : target);
+    const auto& formats = facts.shape.weight_formats;
+    quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
     // The weight class: the file's own layers' formats where known (with_weights clears another
     // quantization's; the vocabulary's apart), else the label (a hub row).
     quant.weights = choice::weight_class_of(facts.shape.layer_formats, label);
@@ -211,14 +212,31 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
                                   f != "ggml_q2_0";
                        });
     // A quantization named by its listing's label (a hub row: the facts' header may be another
-    // row's) takes its route from the label, as the quant table's estimate does.
-    if (!label.empty()) {
+    // row's) takes its route from the label; an artifact's recorded source keeps the routes of the
+    // encodings it holds (its weight_formats, read above).
+    if (!asked.empty()) {
         quant.nvfp4      = label.find("NVFP4") != std::string::npos || label.find("nvfp4") != std::string::npos;
         quant.int8_route = true;
         for (const char* a16 : {"TQ1_0", "TQ2_0", "Q1_0", "Q2_0"}) {
             if (label.find(a16) != std::string::npos) { quant.int8_route = false; }
         }
     }
+    return quant;
+}
+
+std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
+                                              const DryRunInputs& inputs, const ChoicePins& pins,
+                                              const std::string& label, OwnContext memory) {
+    if (!facts.model.known()) { return std::nullopt; }
+    // The KV codec, activations and state change the output bytes: the choice reads an idle card of
+    // the device's class, never the free memory now (another process's share); the start's ladder
+    // still takes the rung the free memory allows (docs/maintainer/deterministic-decisions.md).
+    DryRunInputs idle  = inputs;
+    idle.device.free_bytes.reset();
+    ServedChoice out;
+    choice::ModelFacts model       = choice_model_of(facts);
+    const choice::CardFacts card   = choice_card_of(inputs.gpu);
+    const choice::QuantOption quant = quant_option_of(facts, label);
     out.quant = quant;
 
     choice::Pins p;
@@ -292,12 +310,20 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
         choice::allowed_axes(model, storage ? storage->kv : KvCacheStorage::BFloat16);
     out.task.contexts  = steps;
     out.allowed_activations = allowed.activations;
+    out.kv_options          = kv_options(facts, inputs.device.compute_capability);
     // A mode the family does not run (int8 outside Qwen): the start refuses it, so there is no
     // choice to make at it.
     if (p.activations && std::find(allowed.activations.begin(), allowed.activations.end(),
                                    *p.activations) == allowed.activations.end()) {
         out.choice.why = activation_refusal(facts, *p.activations);
         return out;
+    }
+    // A KV codec pinned that the model does not take: the start refuses it, likewise.
+    if (p.kv) {
+        if (std::string why = kv_refusal(facts, *p.kv); !why.empty()) {
+            out.choice.why = std::move(why);
+            return out;
+        }
     }
     out.choice         = choice::choose(model, card, out.quant, allowed, p, out.task, cached);
     out.drafters       = std::move(axis.served);
@@ -329,16 +355,148 @@ void refuse_unrun_activations_at_start(const std::filesystem::path& artifact, Ac
     if (!why.empty()) { throw std::invalid_argument(why); }
 }
 
-void refuse_unrun_activations(const PlanSourceFacts& facts, const DryRunInputs& inputs,
-                              PlannedSpeculation& planned) {
-    if (!inputs.pins.activations) { return; }
-    const std::string why = activation_refusal(facts, inputs.options.activations);
-    if (why.empty()) { return; }
+std::vector<KvOption> kv_options(const PlanSourceFacts& facts, int compute_capability) {
+    const KvCacheStorage codecs[] = {KvCacheStorage::BFloat16, KvCacheStorage::Int8Group64,
+                                     KvCacheStorage::Fp8E4M3Row256, KvCacheStorage::Nvfp4Group16,
+                                     KvCacheStorage::Fp8KeyNvfp4Value};
+    const bool e4m3 =
+        compute_capability <= 0 ||
+        device_features_for(compute_capability / 10, compute_capability % 10).mma_fp8;
+    const choice::ModelFacts model = choice_model_of(facts);
+    const choice::Allowed allowed  = choice::allowed_axes(model, KvCacheStorage::BFloat16);
+    // The Qwen families keep the paged pool, whose target append and attention are 256-wide only
+    // (ops kv_cache_append, causal_softmax_attention: D256): its compact codecs need 256-wide
+    // heads (paged_kv_storage_layout's 128-wide INT8 is the DFlash drafter pool's, not the target's).
+    const bool paged = choice::is_qwen_family(model);
+    std::vector<KvOption> out;
+    for (const KvCacheStorage kv : codecs) {
+        KvOption o;
+        o.codec        = kv;
+        o.slow_on_card = !e4m3 && (kv == KvCacheStorage::Fp8E4M3Row256 ||
+                                   kv == KvCacheStorage::Fp8KeyNvfp4Value);
+        const std::string name(kv_cache_storage_name(kv));
+        if (kv == KvCacheStorage::BFloat16) {
+            out.push_back(o);
+            continue;
+        }
+        if (!facts.model.known()) {
+            o.allowed  = false;
+            o.why_code = "shape_unknown";
+            o.why      = "the model's shape is not read: --kv-dtype " + name + " cannot be checked";
+        } else if (std::find(allowed.kv.begin(), allowed.kv.end(), kv) == allowed.kv.end()) {
+            o.allowed  = false;
+            o.why_code = "family_codec";
+            o.why      = "this model (" + facts.model.model_type +
+                    ") keeps keys and values in BF16 or FP8 (--kv-dtype bf16|fp8), not " + name;
+        } else if (paged && facts.model.full_key_dim != kD256KVCacheHeadDim) {
+            o.allowed  = false;
+            o.why_code = "head_width";
+            o.why      = "this model's heads are " + std::to_string(facts.model.full_key_dim) +
+                    " wide: --kv-dtype " + name + " takes 256-wide heads";
+        }
+        out.push_back(o);
+    }
+    return out;
+}
+
+std::string kv_refusal(const PlanSourceFacts& facts, KvCacheStorage kv) {
+    for (const KvOption& o : kv_options(facts, 0)) {
+        if (o.codec == kv) { return o.allowed ? std::string() : o.why; }
+    }
+    return "";
+}
+
+void refuse_unrun_kv_at_start(const std::filesystem::path& artifact, KvCacheStorage kv) {
+    // A shape the facts do not name (no context length or geometry in the config) is the
+    // engine's to judge at load: refused here only by the family's codecs and the head width.
+    const PlanSourceFacts facts = plan_facts_of_artifact(artifact);
+    if (!facts.model.known()) { return; }
+    const std::string why = kv_refusal(facts, kv);
+    if (!why.empty()) { throw std::invalid_argument(why); }
+}
+
+PinRefusal pin_refusal(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    if (inputs.pins.activations) {
+        if (std::string why = activation_refusal(facts, inputs.options.activations); !why.empty()) {
+            return {"activations_not_run", std::move(why)};
+        }
+    }
+    if (inputs.pins.kv && !inputs.options.kv_cache_automatic) {
+        if (std::string why = kv_refusal(facts, inputs.options.kv_cache); !why.empty()) {
+            return {"kv_not_run", std::move(why)};
+        }
+    }
+    return {};
+}
+
+void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                       PlannedSpeculation& planned) {
+    const PinRefusal refusal = pin_refusal(facts, inputs);
+    if (refusal.code.empty()) { return; }
     planned.plan.fits         = false;
     planned.plan.rung         = 0;
-    planned.plan.reason       = why;
-    planned.plan.refused_code = "activations_not_run";
+    planned.plan.reason       = refusal.why;
+    planned.plan.refused_code = refusal.code;
     planned.plan.fits_instead.clear();
+}
+
+std::uint64_t plan_free_now_of_nvml(std::uint64_t nvml_free_bytes) noexcept {
+    return nvml_free_bytes > runtime::kPlanIdleContextBytes
+               ? nvml_free_bytes - runtime::kPlanIdleContextBytes
+               : 0;
+}
+
+PlannedSpeculation plan_now(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                          const ServedChoice* served, const ChoicePins& pins,
+                          std::uint64_t free_now_bytes) {
+    DryRunInputs now      = served != nullptr ? inputs_at_choice(inputs, *served, pins) : inputs;
+    now.device.free_bytes = free_now_bytes;
+    PlannedSpeculation planned = plan_model(facts, now);
+    if (served != nullptr) { planned = plan_at_choice(facts, now, *served, pins, std::move(planned)); }
+    refuse_unrun_pins(facts, now, planned);
+    return planned;
+}
+
+nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_now_bytes) {
+    const runtime::DryRunPlan& p      = now.plan;
+    const runtime::DryRunRung* chosen = p.chosen();
+    return {{"free_now_bytes", free_now_bytes},
+            {"fits_now", p.fits},
+            {"context_now", chosen != nullptr ? chosen->rung.max_context : 0U},
+            {"rung_now", chosen != nullptr ? p.rung + 1 : 0U},
+            {"rungs", p.ladder.size()},
+            {"private_contexts_now", chosen != nullptr && p.private_contexts()},
+            {"survival_now", chosen != nullptr && chosen->rung.survival},
+            {"reason_now", p.reason},
+            {"reason_code_now", plan_reason_code(p).code},
+            {"reason_params_now", plan_reason_code(p).params}};
+}
+
+ArtifactPlan plan_artifact(const std::filesystem::path& artifact, DryRunInputs inputs,
+                           const std::filesystem::path& spec_profile) {
+    ArtifactPlan out;
+    out.facts         = plan_facts_of_artifact(artifact);
+    out.subject       = std::make_unique<SpeculationSubject>(
+        speculation_subject(artifact, inputs.gpu, spec_profile));
+    inputs.subject    = out.subject.get();
+    inputs.subject_of = {};
+    out.inputs        = inputs;
+    out.planned       = plan_model(out.facts, out.inputs);
+    refuse_unrun_pins(out.facts, out.inputs, out.planned);
+    out.served = choose_at_weights(out.facts, out.inputs, out.inputs.pins);
+    // A start serves the choice's storages and drafter: the plan shown is of them.
+    if (out.served && out.planned.plan.refused_code.empty()) {
+        out.planned = plan_at_choice(out.facts, out.inputs, *out.served, out.inputs.pins,
+                                     std::move(out.planned));
+    }
+    return out;
+}
+
+nlohmann::json artifact_plan_document(const ArtifactPlan& plan, const std::string& source) {
+    nlohmann::json doc =
+        dry_plan_document(plan.facts, source, "artifact", plan.inputs, plan.planned, nullptr);
+    if (plan.served) { doc["choice"] = choice_json(*plan.served); }
+    return doc;
 }
 
 DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,
@@ -498,6 +656,16 @@ Json choice_json(const ServedChoice& served) {
     // is pinned now: what a selector offers.
     Json modes = Json::array();
     for (const ActivationMode m : served.allowed_activations) { modes.push_back(activation_name(m)); }
+    // Every KV codec a start takes or refuses here, and why (what a selector offers).
+    Json kv = Json::array();
+    for (const KvOption& o : served.kv_options) {
+        kv.push_back({{"codec", std::string(kv_cache_storage_name(o.codec))},
+                      {"allowed", o.allowed},
+                      {"why_code", o.why_code},
+                      {"why", o.why},
+                      {"slow_on_card", o.slow_on_card}});
+    }
+    out["kv_options"] = kv;
     out["activations_allowed"] = modes;
     if (!served.choice.chosen) {
         out["chosen"] = nullptr;
