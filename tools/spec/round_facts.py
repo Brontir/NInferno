@@ -38,7 +38,7 @@ What a pass reads (round_cost.h PassFacts / DraftFacts):
   plain BF16 projections of Gemma 4 assistants and DFlash drafters; a published encoding is kept).
   dflash  the drafter's layers over its block (config block_size) and, once a round, the target's
           output head over the k drafted rows (models/speculation/dflash.cpp: the head runs on the
-          drafted rows only).
+          drafted rows only); DFlash2's selector codebooks are row tables (ROW_TABLES), no pass's.
 """
 from __future__ import annotations
 
@@ -60,6 +60,11 @@ from registry_add import LAB_BOARDS, write_registry  # noqa: E402
 REGISTRY = Path(__file__).resolve().parents[2] / "src/spec/data/drafter_registry.json"
 NOT_TEXT = re.compile(r"(^v\.|^mm\.|visual|vision|audio|^a\.|embed_vision|embed_audio)")
 NOT_PARAMS = re.compile(r"(scale|zero|g_idx|_scales$)")
+# Row tables a round reads by id, a few rows of: DFlash2's selector codebooks (vocabulary x rank; the
+# candidate path reads a drafted position's top_k successor rows and one predecessor row by token id,
+# ops/candidate_selector/bf16/candidate_selector_path.cu: < 0.1 MB a round against the drafter's GBs).
+# Resident, never a pass.
+ROW_TABLES = re.compile(r"(_codebook$|^selector_(predecessor|successor)\.)")
 
 
 def is_gguf(table: dict) -> bool:
@@ -67,9 +72,12 @@ def is_gguf(table: dict) -> bool:
 
 
 def tensor_class(name: str, gguf: bool, nextn: int, blocks: int) -> str | None:
-    """A tensor's class: body, head, embed, experts, mtp or mtp_experts; None outside the text model."""
+    """A tensor's class: body, head, embed, experts, mtp, mtp_experts or rows (a table read by id,
+    ROW_TABLES); None outside the text model."""
     if NOT_TEXT.search(name):
         return None
+    if ROW_TABLES.search(name):
+        return "rows"
     if gguf:
         m = re.match(r"blk\.(\d+)\.", name)
         layer = int(m.group(1)) if m else -1
