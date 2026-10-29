@@ -1281,9 +1281,13 @@ products. Branch kern/vec-prefetch keeps the two attempts for reference.
 its K split where the CTA's longest warp walks more K steps than its two-step load ring holds
 (steps / warps rounded up, at least three; a step is four decoder runs, `rmma_k_step`: 32 values
 for BF16 / Q8, 64 for FP8 / NVFP4 / the 16-value groupwise runs, 128 for the 32-value decoders);
-a split that breaks it takes eight warps, else four. Every one-tile store / add kernel is capped
-at 128 registers a thread (`kRmmaMinBlocks`), so `w` K warps hold 16 / w CTAs a SM as a fact
-(ptxas gave Q2_K w1x4 146-152 registers and Q5_K w1x4 129 on sm_120 before the cap).
+an eight-warp split that breaks it takes four warps where four keep it and the grid fills their
+CTA slots (CTAs x 4 >= 16 x SMs), else it stands. The split's one-tile store / add kernels (one
+warp along M) are capped at 128 registers a thread (`kRmmaMinBlocks`), so `w` K warps hold 16 / w
+CTAs a SM as a fact (ptxas gave Q2_K w1x4 146-152 registers and Q5_K w1x4 129 on sm_120 before the
+cap; capped, no rmma kernel gains stack or local memory on sm_75 / sm_89 / sm_120 — the cap first
+reached the two-warp-M U4Zp w2x2 too, 159 registers to 128 and 16 bytes of stack on sm_75, and was
+narrowed to one warp along M).
 
 **Verified.** Q4_K K = 4096 on sixteen warps (two steps each): 57-70 % of DRAM peak on five lab
 boards against 71-74 % for the best split. Q6_K 4096x2560 on eight warps (three steps for half the

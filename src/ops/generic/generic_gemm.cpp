@@ -963,10 +963,14 @@ std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
 // 71..74 % for the best split). K = 2560 on eight warps (three steps for half the warps) keeps up:
 // Q6_K 4096x2560 at T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX
 // 3060 32.4 against 32.9 (the RTX 5070 Ti and 2080 Ti ran four warps faster there: DECISIONS 61).
-// A pick that breaks it takes eight warps, else four, whichever keeps it; the pick unchanged
-// where it holds or neither does. Sixteen warps hold one CTA a SM (kRmmaMinBlocks caps a one-tile
-// store / add kernel at 128 registers a thread, so `w` K warps hold 16 / w CTAs a SM): a grid of
-// more CTAs than SMs would run them in rounds of one CTA a SM.
+// Its callers start at eight or four warps; eight that break it take four where four keep it and
+// the grid fills their CTA slots, else the pick stands. Sixteen warps hold one CTA a SM
+// (kRmmaMinBlocks caps the split's one-tile store / add kernels at 128 registers a thread, so `w` K
+// warps hold 16 / w CTAs a SM): fewer warps a CTA keep the warps a SM holds only on a grid of at
+// least that many CTAs a SM. Below it the split trades resident warps (the loads in flight) for
+// ring refills: K = 1024 (2048 rows, 128 CTAs) on four warps against eight, RTX 5070 Ti (1.8 CTAs
+// a SM) 20-37 % slower, RTX 5090 (0.75) 18-38 %, RTX 4070 Ti (2.1) within 3 %; the RTX 4060 Ti
+// (3.8, just under its four slots) ran four warps 2-16 % faster, which this leaves on eight.
 // Open (DECISIONS): how much a grid's last, partly filled round of resident CTAs costs. Pricing
 // it by its empty slots was wrong on two of four boards (RTX 4090 Q6_K 3840x15360 add: four warps
 // in one half-filled round 65 us, eight warps in one full round 79; RTX 3060 Q4_K 4096x2560:
@@ -982,19 +986,12 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
     const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
     const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
-    if (refills(info.warps_k)) return index;
-    for (const int warps_k : {8, 4}) {
-        if (warps_k == info.warps_k || !refills(warps_k)) continue;
-        // Fewer warps a CTA keep the warps a SM holds only on a grid that fills its 16 / w CTA
-        // slots: below that the split trades resident warps (the loads in flight) for ring refills.
-        // K = 1024 (2048 rows, 128 CTAs) on four warps against eight: RTX 5070 Ti (1.8 CTAs a SM)
-        // 20-37 % slower, RTX 5090 (0.75) 18-38 % slower, RTX 4070 Ti (2.1) within 3 %; the RTX
-        // 4060 Ti (3.8, just under its four slots) ran four warps 2-16 % faster, which this
-        // leaves on eight (DECISIONS 61).
-        if (warps_k < info.warps_k && ctas * warps_k < 16 * sms) continue;
-        return rmma_index(1, warps_k, 1, 1);
+    // The warps a SM holds at 128 registers a thread (kRmmaMinBlocks).
+    constexpr std::int64_t kSlotWarps = 65536 / (32 * 128);
+    if (info.warps_k <= 4 || refills(info.warps_k) || !refills(4) || ctas * 4 < kSlotWarps * sms) {
+        return index;
     }
-    return index;
+    return rmma_index(1, 4, 1, 1);
 }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
