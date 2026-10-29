@@ -1122,6 +1122,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.top_k          = c.top_k;
         args.tokens         = t;
         args.sigmoid        = c.scoring == MoeScoring::Sigmoid;
+        args.bf16_logits    = c.bf16_router_logits;
         args.renormalize    = c.renormalize;
         args.routed_scale   = c.routed_scale;
         args.ids            = static_cast<int*>(ws.ids.data);

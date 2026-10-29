@@ -130,6 +130,8 @@ public:
             config.renormalize    = true;
             config.activation     = ops::MoeActivation::SwiGlu;
             config.gate_up_layout = ops::MoeGateUpLayout::Concatenated;
+            // The router is a BF16 linear in the model (sparse_moe_bf16_logit, the same boundary).
+            config.bf16_router_logits = true;
             return GenericMoeParameters{std::move(generic), config};
         });
     }

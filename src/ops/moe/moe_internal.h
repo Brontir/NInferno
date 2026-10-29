@@ -58,6 +58,7 @@ struct SelectArgs {
     int top_k                   = 0;
     int tokens                  = 0;
     int sigmoid                 = 0;
+    int bf16_logits             = 0; // MoeConfig::bf16_router_logits
     int renormalize             = 1;
     float routed_scale          = 1.0F;
     int* ids                    = nullptr; // [T, k]

@@ -129,6 +129,10 @@ struct MoeConfig {
     /// Programmatic dependent launches through the decode chain where the device and the layer
     /// take them; false keeps a pass's chain on plain launches (a drafter's: Nemotron 3.5 MTP).
     bool pdl = true;
+    /// The router's logits rounded once to BF16 before selection and the routing weights: the
+    /// model computes its router as a BF16 linear (Qwen3.5-MoE in Transformers); false ranks the
+    /// FP32 scores (a model whose router runs in FP32).
+    bool bf16_router_logits = false;
 };
 
 /**

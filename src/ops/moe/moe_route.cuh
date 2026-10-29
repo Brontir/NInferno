@@ -4,6 +4,7 @@
 #include "ops/generic/generic_w4a8.cuh"
 #include "ops/moe/moe_internal.h"
 
+#include <cuda_bf16.h>
 #include <math_constants.h>
 
 #include <cstddef>
@@ -73,6 +74,8 @@ __device__ __forceinline__ void select_token_lanes(const SelectArgs& a, int toke
         const int e = lane + 32 * i;
         const bool in = e < a.experts;
         l[i]          = in ? logits[e] : NegInf;
+        // The model's logit boundary (MoeConfig::bf16_router_logits): rounded once to BF16.
+        if (in && a.bf16_logits) l[i] = __bfloat162float(__float2bfloat16_rn(l[i]));
         bias[i]       = in && a.selection_bias != nullptr ? a.selection_bias[e] : 0.0F;
         escale[i]     = in && a.expert_scale != nullptr ? a.expert_scale[e] : 1.0F;
     }
