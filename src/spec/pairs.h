@@ -123,15 +123,17 @@ struct RoundCostEstimate {
 // the same whatever the order of `measured` (records ordered by GPU class id, then content):
 //   1. With `gpu`, a card other than the measuring one prices its rounds by the facts
 //      (round_cost_estimate) where they are known; `note` says so.
-//   2. Two or more lab cards of the card's generation: their median round cost per configuration
-//      (on the card's own record when it is one of them, else the first by GPU class id; tokens a
-//      round are the pair's on any card); where they chose alike (each default's configuration),
-//      every measured depth and their load bounds when equal (else one request at a time), else
-//      the portable depths. `note`: "rounds: the median of N lab cards of <generation>".
+//   2. Two or more lab cards of the card's generation (the card itself among them or not): their
+//      median round cost per configuration, on the record that measured the most configurations
+//      (the card's own among equals, else the first by GPU class id; tokens a round are the pair's
+//      on any card); where they chose alike (each default's configuration) and the median keeps
+//      that choice, every measured depth and their load bounds when equal (else one request at a
+//      time), else the portable depths. `note`: "rounds: the median of N lab cards of <generation>".
 //   3. One lab card of the generation: its measurement, the portable depths.
 //   4. None, and no facts: the median round cost per configuration of every lab card that
-//      measured the target, the portable depths; `note`: "transferred: median of N lab cards of
-//      other generations (no facts for <generation>)".
+//      measured the target (on the record that measured the most configurations), the portable
+//      depths; `note`: "transferred: median of N lab cards of other generations (no facts for
+//      <generation>)" (or "no round facts for this target", "no card rates").
 // Pairs another engine version measured are left out; none left: plain decode, disabled with the
 // reason.
 [[nodiscard]] Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
