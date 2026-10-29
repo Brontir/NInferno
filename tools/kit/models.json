@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "note": "The user measurement kit's model set (docs/maintainer/user-measurement-kit.md), in priority order: the kit measures the first ones whose plan fits the card. The last one is small so that every supported card yields a row.",
+  "models": [
+    {"id": "qwen35-9b-q4km", "repo": "unsloth/Qwen3.5-9B-MTP-GGUF", "quant": "Q4_K_M", "context": 32768},
+    {"id": "gemma4-12b-q4km", "repo": "unsloth/gemma-4-12b-it-GGUF", "quant": "Q4_K_M", "context": 32768},
+    {"id": "qwen35-4b-q4km", "repo": "unsloth/Qwen3.5-4B-MTP-GGUF", "quant": "Q4_K_M", "context": 16384}
+  ]
+}
