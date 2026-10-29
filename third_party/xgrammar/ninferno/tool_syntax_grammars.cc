@@ -28,8 +28,6 @@ using xgrammar::JSONSchemaConverter;
 using xgrammar::SchemaSpecPtr;
 using Range = xgrammar::GrammarBuilder::CharacterClassElement;
 
-constexpr int32_t kMaxCodepoint = 0x10FFFF;
-
 // Code points of a UTF-8 string; nullopt when it is not valid UTF-8.
 std::optional<std::vector<int32_t>> codepoints(const std::string& text) {
     std::vector<int32_t> out;
@@ -78,11 +76,6 @@ std::vector<Range> subtract(const std::vector<Range>& ranges, std::vector<int32_
         if (lower <= range.upper) { out.push_back({lower, range.upper}); }
     }
     return out;
-}
-
-// Every code point except `excluded` (sorted ascending, no repeats).
-std::vector<Range> all_but(std::vector<int32_t> excluded) {
-    return subtract({{0, kMaxCodepoint}}, std::move(excluded));
 }
 
 bool admits(const std::vector<Range>& ranges, int32_t point) {
@@ -167,16 +160,17 @@ protected:
 const std::string kGemmaQuote = "<|\"|>";
 const std::string kGemmaKey   = "ninferno_gemma_key";
 
-// Bare keys and bare values never hold these (Gemma4Syntax::Reader, kArgumentsGrammar).
-const std::vector<int32_t> kGemmaBareExcluded = {'\t', '\n', '\r', ' ', '"', ',', ':',
-                                                 '<',  '>',  '[',  ']', '{', '}'};
+// A bare key: what Gemma 4's template writes for a schema's property names. Other keys are written
+// <|"|>-quoted, which Gemma4Syntax::Reader reads as well. Keeping bare keys to these characters
+// keeps their masks on the fast path (any character but the delimiters cost up to 30 ms per mask at
+// a key's start on Gemma 4's 262k vocabulary).
+const std::vector<Range> kGemmaBareKey = {{'$', '$'}, {'-', '.'}, {'0', '9'}, {'@', 'Z'},
+                                          {'_', '_'}, {'a', 'z'}};
 
 bool gemma_bare_key(const std::string& key) {
     if (key.empty()) { return false; }
-    return std::none_of(key.begin(), key.end(), [](char c) {
-        return std::find(kGemmaBareExcluded.begin(), kGemmaBareExcluded.end(),
-                         static_cast<unsigned char>(c)) != kGemmaBareExcluded.end();
-    });
+    return std::all_of(key.begin(), key.end(),
+                       [](char c) { return admits(kGemmaBareKey, static_cast<unsigned char>(c)); });
 }
 
 std::string gemma_key_text(const std::string& key) {
@@ -227,7 +221,7 @@ protected:
         builder_.UpdateRuleBody(kBasicString,
                                 Sequence({ByteString(kGemmaQuote), TagDispatch(false, {kGemmaQuote}),
                                           ByteString(kGemmaQuote)}));
-        const std::vector<Range> bare = all_but(kGemmaBareExcluded);
+        const std::vector<Range>& bare = kGemmaBareKey;
         const int32_t bare_key        = builder_.AddRuleWithHint(
             "ninferno_gemma_bare_key",
             Sequence({builder_.AddCharacterClass(bare), builder_.AddCharacterClassStar(bare)}));
@@ -282,7 +276,7 @@ protected:
     int32_t GetKeyPatternExcluding(const std::vector<xgrammar::ObjectSpec::Property>& properties,
                                    const std::string& rule_name) override {
         // Bare keys only: a quoted one could spell a declared name again.
-        const std::vector<Range> bare = all_but(kGemmaBareExcluded);
+        const std::vector<Range>& bare = kGemmaBareKey;
         return keys_excluding(names_of(properties), bare, bare, rule_name + "_addl_key", KeyEnd());
     }
 };
