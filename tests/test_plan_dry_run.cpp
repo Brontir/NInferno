@@ -1465,6 +1465,12 @@ void test_cached_quants() {
     std::ofstream(snap / "Model-Q6_K.gguf") << "not a gguf either";
     check(pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "")) != stamp,
           "a download here changes the stamp");
+    {
+        const std::string before = pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", ""));
+        std::ofstream(snap / "Model-Q8_0-00002-of-00002.gguf", std::ios::app) << " completed";
+        check(pr::cached_stamp(pr::cached_quants(root, "huggingface", "org/Model-GGUF", "")) != before,
+              "a later part of a split file changing changes the stamp");
+    }
     std::vector<pr::QuantListing> listing = {
         {.quant = "Q4_K_M", .format = "gguf", .bytes = 5ULL << 30, .bits = 4,
          .table = pr::GgufTensorTable{.tensor_bytes = 4ULL << 30}}};

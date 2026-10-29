@@ -16,6 +16,7 @@
 #include <set>
 #include <stdexcept>
 #include <tuple>
+#include <vector>
 
 namespace ninferno::product {
 
@@ -54,6 +55,40 @@ convert::GgufFile read_local_head(const fs::path& path) {
     }
     throw std::runtime_error(utf8(path) + ": the GGUF metadata runs past 512 MiB");
 }
+
+namespace {
+
+// The files a quantization here is made of: every part of a split GGUF beside `path`, or the file.
+std::vector<fs::path> parts_of(const fs::path& path) {
+    static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.gguf)", std::regex::icase);
+    std::smatch match;
+    const std::string name = utf8(path.filename());
+    if (!std::regex_match(name, match, split)) { return {path}; }
+    std::vector<fs::path> out;
+    std::error_code error;
+    for (const auto& entry : fs::directory_iterator(path.parent_path(), error)) {
+        std::smatch other;
+        const std::string n = utf8(entry.path().filename());
+        if (std::regex_match(n, other, split) && other[1] == match[1]) { out.push_back(entry.path()); }
+    }
+    std::sort(out.begin(), out.end());
+    return out;
+}
+
+// Its identity as it is: every part's path, size and time.
+std::string identity_of(const fs::path& path) {
+    std::string out;
+    for (const auto& part : parts_of(path)) {
+        std::error_code error;
+        const auto size = fs::file_size(part, error);
+        const auto time = fs::last_write_time(part, error);
+        out += utf8(part) + ":" + std::to_string(error ? 0 : size) + ":" +
+               std::to_string(time.time_since_epoch().count()) + ";";
+    }
+    return out;
+}
+
+} // namespace
 
 // Every part of a split GGUF beside `path` ("x-00001-of-00003.gguf"), or the file alone.
 std::uint64_t local_gguf_bytes(const fs::path& path) {
@@ -167,16 +202,13 @@ std::optional<GgufTensorTable> read_tensor_table(const fs::path& path) {
 } // namespace
 
 std::optional<GgufTensorTable> local_tensor_table(const fs::path& path) {
-    // Read once per file as it is (its size and time): a plan is made often, a file rarely moves.
-    using Key = std::tuple<std::string, std::uintmax_t, fs::file_time_type>;
+    // Read once per file as it is (every part's size and time): a plan is made often, a file rarely moves.
+    // Keyed by every part of a split file (a part completed or replaced is another file).
     static std::mutex mutex;
-    static std::map<Key, std::optional<GgufTensorTable>> kept;
+    static std::map<std::string, std::optional<GgufTensorTable>> kept;
     std::error_code error;
-    const auto size = fs::file_size(path, error);
-    if (error) { return std::nullopt; }
-    const auto time = fs::last_write_time(path, error);
-    if (error) { return std::nullopt; }
-    const Key key{utf8(path), size, time};
+    if (!fs::exists(path, error)) { return std::nullopt; }
+    const std::string key = identity_of(path);
     {
         std::lock_guard lock(mutex);
         if (const auto it = kept.find(key); it != kept.end()) { return it->second; }
@@ -190,13 +222,7 @@ std::optional<GgufTensorTable> local_tensor_table(const fs::path& path) {
 
 std::string cached_stamp(const std::map<std::string, fs::path>& cached) {
     std::string out;
-    for (const auto& [label, path] : cached) {
-        std::error_code error;
-        const auto size = fs::file_size(path, error);
-        const auto time = fs::last_write_time(path, error);
-        out += label + "=" + utf8(path) + ":" + std::to_string(size) + ":" +
-               std::to_string(time.time_since_epoch().count()) + ";";
-    }
+    for (const auto& [label, path] : cached) { out += label + "=" + identity_of(path); }
     return out;
 }
 
