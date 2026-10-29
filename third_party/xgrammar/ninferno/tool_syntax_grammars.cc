@@ -78,6 +78,33 @@ std::vector<Range> subtract(const std::vector<Range>& ranges, std::vector<int32_
     return out;
 }
 
+// Whether a regex may match a '<' (conservatively: a literal '<', any character, a negated class
+// or a class escape that holds it). A string value whose closing delimiter starts with '<' (Gemma's
+// <|"|>, ATEM's </atem:parameter>) cannot hold a regex that may write the delimiter, and XGrammar
+// cannot intersect a regex with "not this text": such a pattern or format is refused.
+bool regex_may_write_lt(const std::string& regex) {
+    for (std::size_t at = 0; at < regex.size(); ++at) {
+        const char c = regex[at];
+        if (c == '\\') {
+            if (at + 1 < regex.size() && std::string("WSDpPX").find(regex[at + 1]) != std::string::npos) {
+                return true;
+            }
+            ++at;
+        } else if (c == '<' || c == '.' || (c == '[' && at + 1 < regex.size() && regex[at + 1] == '^')) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::string checked_regex(const std::string& regex, const std::string& what) {
+    if (regex_may_write_lt(regex)) {
+        throw std::invalid_argument("a string " + what + " that may write '<' (" + regex +
+                                    ") could close the value early in this call syntax");
+    }
+    return regex;
+}
+
 bool admits(const std::vector<Range>& ranges, int32_t point) {
     return std::any_of(ranges.begin(), ranges.end(), [point](const Range& range) {
         return point >= range.lower && point <= range.upper;
@@ -175,6 +202,9 @@ bool gemma_bare_key(const std::string& key) {
 }
 
 std::string gemma_key_text(const std::string& key) {
+    if (key.find(kGemmaQuote) != std::string::npos) {
+        throw std::invalid_argument("key '" + key + "' holds Gemma's quote <|\"|>");
+    }
     return gemma_bare_key(key) ? key : kGemmaQuote + key + kGemmaQuote;
 }
 
@@ -247,11 +277,11 @@ protected:
         int32_t body = -1;
         if (spec.format.has_value()) {
             if (const auto regex = JSONFormatToRegexPattern(*spec.format)) {
-                body = RegexExpression(*regex, false, true);
+                body = RegexExpression(checked_regex(*regex, "format " + *spec.format), false, true);
             }
         }
         if (body == -1 && spec.pattern.has_value()) {
-            body = RegexExpression(*spec.pattern, false, true);
+            body = RegexExpression(checked_regex(*spec.pattern, "pattern"), false, true);
         }
         if (body == -1) {
             // Length in code points; '<' is left out so no run of them can form the closing quote.
@@ -275,9 +305,6 @@ protected:
     }
 
     int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr&) override {
-        if (key.find(kGemmaQuote) != std::string::npos) {
-            throw std::invalid_argument("argument name '" + key + "' holds Gemma's quote <|\"|>");
-        }
         return ByteString(gemma_key_text(key));
     }
 
@@ -413,9 +440,17 @@ protected:
     }
 
     // A parameter value never holds the close tag, where the parser ends it: a bounded string
-    // leaves out '<', a const or enum string holding the tag is refused. (A pattern or format is
-    // the client's regex; one that admits the tag is not caught.)
+    // leaves out '<'; a const or enum string holding the tag, and a pattern or format that may
+    // write '<', are refused.
     int32_t GenerateString(const xgrammar::StringSpec& spec, const std::string& rule_name) override {
+        if (nested_object_level_ <= 1 && spec.pattern.has_value()) {
+            (void)checked_regex(*spec.pattern, "pattern");
+        }
+        if (nested_object_level_ <= 1 && spec.format.has_value()) {
+            if (const auto regex = JSONFormatToRegexPattern(*spec.format)) {
+                (void)checked_regex(*regex, "format " + *spec.format);
+            }
+        }
         if (nested_object_level_ <= 1 && !spec.pattern.has_value() && !spec.format.has_value() &&
             (spec.min_length != 0 || spec.max_length != -1)) {
             return Repeat(rule_name + "_characters", builder_.AddCharacterClass({{'<', '<'}}, true),
