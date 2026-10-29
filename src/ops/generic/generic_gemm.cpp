@@ -956,13 +956,14 @@ std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
 
 // The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to two facts of
 // the addressing and the grid, never a timing:
-// - every warp walks more K steps of its rows than its load ring holds (two steps, rmma_kernel's
-//   ring; a step is rmma_k_step values): the fewest steps a warp takes, steps / warps rounded
-//   down, at least three. With two or fewer the ring never refills: every step's load latency and
-//   the cross-warp reduction stay exposed (Q4_K K = 4096 on sixteen warps, two steps a warp,
-//   streamed DRAM at 57..70 % of peak on all five lab boards against 71..74 % for the best split;
-//   K = 2560 on eight warps, two steps for most warps, tied four warps on the RTX 3060: 32.5 us
-//   against 33.0);
+// - the CTA's longest warp walks more K steps of its rows than its load ring holds (two steps,
+//   rmma_kernel's ring; a step is rmma_k_step values): steps / warps rounded up, at least three.
+//   The CTA ends with that warp; with two steps or fewer its ring never refills, every step's
+//   load latency and the cross-warp reduction exposed (Q4_K K = 4096 on sixteen warps, two steps
+//   each, streamed DRAM at 57..70 % of peak on all five lab boards against 71..74 % for the best
+//   split). K = 2560 on eight warps (three steps for half the warps) keeps up: Q6_K 4096x2560 at
+//   T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX 3060 32.4
+//   against 32.9; the shortest warp's count, which would take four warps, lost there;
 // - of the splits that keep it, the one whose grid fills its last round of resident CTAs best:
 //   CTAs / (slots x rounds), slots = SMs x CTAs a SM holds, rounds = CTAs / slots rounded up; a
 //   tie keeps the format's pick (light_ggml_step, the Q6_K rule). RTX 4090 Q4_K 5120x17408 add,
@@ -982,7 +983,7 @@ int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::
     }
     const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
     const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
-    const auto refills       = [&](int warps_k) { return steps / warps_k > 2; };
+    const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
     // The last round's fill as the fraction CTAs / (slots x rounds), compared exactly.
     struct Fill {
         std::int64_t ctas, cells;
