@@ -755,6 +755,9 @@ public:
     // Rows whose final hidden held a NaN or an infinity, in the step's row order (publish_step).
     NumericStatus numeric_status;
     std::array<std::uint8_t, kMaximumConcurrency> step_faults{};
+    // Rows of the step whose sampled or licensed tokens left the public domain (collect_*), in the
+    // step's row order; publish_step folds them into step_faults.
+    std::array<std::uint8_t, kMaximumConcurrency> domain_faults{};
     std::uint8_t prefill_fault = 0;
 
     // Round pacing (round_pacing.h) in a CUDA Graph engine; the timer measures each
@@ -1317,6 +1320,9 @@ private:
                                        std::span<const std::uint32_t> starts,
                                        std::span<const std::uint32_t> counts);
     void validate_licensed_tokens(std::span<const TokenId> tokens) const;
+    // Whether every token is inside the public domain; one outside it is replaced with 0 (the row
+    // faults: its request ends, the Engine and the other rows go on).
+    [[nodiscard]] bool license_tokens(std::span<TokenId> tokens) const noexcept;
     void mark_workspace_usage(std::size_t phase_bytes) noexcept;
     // One launch of a decode step: its rows (positions in the step's membership, which the
     // step's token masks and published tokens use), their lanes and budgets. A launch row is the
