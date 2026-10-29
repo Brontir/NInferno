@@ -220,6 +220,7 @@ bool gemma_bare_key(const std::string& key) {
 }
 
 std::string gemma_key_text(const std::string& key) {
+    if (key.empty()) { throw std::invalid_argument("an empty key, which Gemma's parser refuses"); }
     if (key.find(kGemmaQuote) != std::string::npos) {
         throw std::invalid_argument("key '" + key + "' holds Gemma's quote <|\"|>");
     }

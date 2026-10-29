@@ -972,6 +972,7 @@ int test_argument_key_order() {
              {ToolCallFormat::Pythonic, patterned},
              {ToolCallFormat::Gemma4, Json::parse(R"({"anyOf":[{"type":"object"},{"type":"null"}]})")},
              {ToolCallFormat::Gemma4, named("a<|\"|>b")},
+             {ToolCallFormat::Gemma4, named("")},
              {ToolCallFormat::Gemma4, Json::parse(
                   R"({"type":"object","properties":{"v":{"type":"string","pattern":"^.+$"}}})")},
              {ToolCallFormat::Atem, Json::parse(
