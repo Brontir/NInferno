@@ -934,6 +934,66 @@ bool ring_swiglu_four_warps(QType q) {
     }
 }
 
+// The K values one register-MMA step of the format covers: four runs of its decoder (rmma_kernel's
+// KStep = 4 x Decoder::kRun): 32 for BF16, Q8 and U4 G32 (eight-value runs), 64 for FP8, NVFP4
+// and the 16-value groupwise runs, 128 for the 32-value decoders (K-quants, IQ, MXFP4, the
+// quad-run U4 G32 / G64 at K % 128 == 0) and for the ggml 32-blocks stepped four at a time
+// (run_values 128).
+std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
+    Weight weight;
+    weight.qtype = qtype;
+    WeightCodec codec{};
+    try {
+        codec = codec_of(weight);
+    } catch (const std::invalid_argument&) {
+        return 128;
+    }
+    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
+                         k > 0 && (k % 128) == 0;
+    const int run = quad_u4 ? 32 : run_values(codec);
+    return run >= 128 ? run : 4 * run;
+}
+
+// The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to one fact of
+// the addressing, never a timing: the CTA's longest warp walks more K steps of its rows than its
+// load ring holds (two steps, rmma_kernel's ring; a step is rmma_k_step values): steps / warps
+// rounded up, at least three. The CTA ends with that warp; with two steps or fewer its ring never
+// refills, every step's load latency and the cross-warp reduction exposed (Q4_K K = 4096 on
+// sixteen warps, two steps each, streamed DRAM at 57..70 % of peak on all five lab boards against
+// 71..74 % for the best split). K = 2560 on eight warps (three steps for half the warps) keeps up:
+// Q6_K 4096x2560 at T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX
+// 3060 32.4 against 32.9 (the RTX 5070 Ti and 2080 Ti ran four warps faster there: DECISIONS 61).
+// Its callers start at eight or four warps; eight that break it take four where four keep it and
+// the grid fills their CTA slots, else the pick stands. Sixteen warps hold one CTA a SM
+// (kRmmaMinBlocks caps the split's one-tile store / add kernels at 128 registers a thread, so `w` K
+// warps hold 16 / w CTAs a SM): fewer warps a CTA keep the warps a SM holds only on a grid of at
+// least that many CTAs a SM. Below it the split trades resident warps (the loads in flight) for
+// ring refills: K = 1024 (2048 rows, 128 CTAs) on four warps against eight, RTX 5070 Ti (1.8 CTAs
+// a SM) 20-37 % slower, RTX 5090 (0.75) 18-38 %, RTX 4070 Ti (2.1) within 3 %; the RTX 4060 Ti
+// (3.8, just under its four slots) ran four warps 2-16 % faster, which this leaves on eight.
+// Open (DECISIONS): how much a grid's last, partly filled round of resident CTAs costs. Pricing
+// it by its empty slots was wrong on two of four boards (RTX 4090 Q6_K 3840x15360 add: four warps
+// in one half-filled round 65 us, eight warps in one full round 79; RTX 3060 Q4_K 4096x2560:
+// eight warps 8-10 % slower although they fill more) and right on two (RTX 4070 Ti / 5070 Ti
+// light K-quants 6-12 % faster on eight): a round under the warps that saturate DRAM is what
+// costs, and that count is not a fact we hold yet.
+int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::int64_t sms) {
+    if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
+    const RmmaScheduleInfo info = rmma_schedule_info(index);
+    if (info.warps_m != 1 || info.m_tiles != 1 || info.n_tiles != 1 || info.cluster != 1) {
+        return index;
+    }
+    const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
+    const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
+    const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
+    // The warps a SM holds at 128 registers a thread (kRmmaMinBlocks).
+    constexpr std::int64_t kSlotWarps = 65536 / (32 * 128);
+    if (info.warps_k <= 4 || refills(info.warps_k) || !refills(4) || ctas * 4 < kSlotWarps * sms) {
+        return index;
+    }
+    return rmma_index(1, 4, 1, 1);
+}
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -945,7 +1005,7 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 if (ctas <= sms) return one_wave_split(ctas, sms);
                 if (ctas > 2 * sms && light_ggml_step(problem.qtype) &&
                     problem.epilogue != Epilogue::SwiGlu) {
-                    return rmma_index(1, 4, 1, 1);
+                    return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
                 }
                 if (ctas > 2 * sms && problem.epilogue == Epilogue::SwiGlu &&
                     ring_swiglu_four_warps(problem.qtype)) {
@@ -958,8 +1018,11 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                         bytes = dram_bytes_per_sm_cycle();
                     } catch (const std::exception&) {
                     }
-                    if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) return rmma_index(1, 4, 1, 1);
+                    if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) {
+                        return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
+                    }
                 }
+                return rmma_k_split_fit(rmma_index(1, 8, 1, 1), problem, ctas, sms);
             } else if (tokens <= 16) {
                 // 9..16 tokens (verify of an 8- or 16-token draft): one 8-token tile per CTA would
                 // put two or three CTA columns on the token axis, each streaming and decoding the
