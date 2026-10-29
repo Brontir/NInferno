@@ -1338,21 +1338,22 @@ x {default, 4 streams, 128K}. The measurements are on the RTX 4060 Ti:
 | Qwen3.5-9B / -MTP, 4 streams | UD-Q4_K_XL nvfp4 | Q4_K_S k8v4 / IQ4_NL k8v4 | worth with the measured KLDs and IQ4 rows |
 | Qwen3.5-9B-MTP, default | UD-Q4_K_XL int8 mtp:3 (40,640) | Q5_K_S nvfp4 mtp:5 (34,176) | worth with the measured KLDs, plus the one-stream plan fix below |
 
-The measured numbers behind those rows:
+The measured numbers behind those rows (KLD on the RTX 4060 Ti and 4070 Ti, each against its own
+Q8_0 reference under the exact route: the same file gives the same KLD to six digits on both):
 
 | quant | KLD (curve before) | 1 / 4 streams, tok/s |
 |---|---|---|
 | Q4_1 | 0.0242 | 50.5 / 45.9 |
 | Q4_K_M | 0.0192 | 51.1 / 45.7 |
 | Q4_0 | 0.0509 | 54.4 / 49.3 |
-| Q4_K_S | 0.0227 (0.028) | 54.0 / 47.9 |
-| IQ4_NL | 0.0284 | 53.2 / 47.9 |
-| UD-Q4_K_XL | 0.0182 (0.0160) | 48.5 / 43.6 |
-| Q5_K_S | 0.0113 (about 0.013) | 46.4 / 41.7 |
+| Q4_K_S | 0.0225 (0.028) | 54.0 / 47.9 |
+| IQ4_NL | 0.0287 | 53.2 / 47.9 |
+| UD-Q4_K_XL | 0.0183 (0.0160) | 48.5 / 43.6 |
+| Q5_K_S | 0.0110 (about 0.013) | 46.4 / 41.7 |
 
 **The default row** goes from an estimated 98 to 113 tok/s.
 - Measured on essays at one stream: UD-Q4_K_XL mtp:3 71 tok/s, Q5_K_S mtp:5 62. The worth still
-  favours Q5_K_S: ln(71/62) = 0.14 < 25 x 0.0069 = 0.17.
+  favours Q5_K_S: ln(71/62) = 0.14 < 25 x 0.0073 = 0.18.
 - The one-stream plan fix: a one-stream pick by worth was scored at the target context with its
   drafter, then launched at the longest context that fits. On 8 GB that context drops the drafter
   (Q5_K_S plain, 46 tok/s). The launch now keeps the scored context where the drafter returns there.
