@@ -1319,6 +1319,7 @@ each, the ring never refills) to four. Four against eight, every rmma one-tile r
 T = 1..8, three repeats (`ninferno_r8_schedule_bench`):
 - RTX 5070 Ti (70 SMs, 1.8 CTAs a SM): four warps 20-37 % slower (Q4 x1.20, Q5 x1.22, Q6 x1.37);
 - RTX 5090 (170, 0.75): 18-38 % slower; RTX 4070 Ti (60, 2.1): within 3 % (Q6 3.5 % slower);
+- RTX 2080 Ti (68, 1.9): mixed, NVFP4 8 % slower, Q4 within 1 %, Q5 2 % and Q6 6 % faster;
 - RTX 4060 Ti (34, 3.8): four warps 2-16 % faster (Q4 x0.98, Q5 x0.90, Q6 x0.93, NVFP4 x0.84).
 With the 128-register cap a SM holds two eight-warp CTAs or four four-warp ones, so on a grid of
 fewer than four CTAs a SM the split halves the warps a SM holds, and the loads in flight with them;
