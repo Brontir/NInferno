@@ -32,7 +32,16 @@
 #include <string>
 #include <vector>
 
+namespace ninferno::artifact {
+struct Directory;
+}
+
 namespace ninferno::spec {
+
+// The draft head rows an artifact's drafters read (spec/proposal_rows.h): its text component's
+// proposal head, for MTP and DFlash where it takes their final hidden states, each drafter's own
+// leading rows (proposal.drafter_rows) or all of them. Empty without a proposal head.
+[[nodiscard]] ProposalRows artifact_proposal_rows(const artifact::Directory& dir);
 
 struct ManifestDrafter {
     std::string name, kind, repo, revision, artifact, artifact_id, component, status;

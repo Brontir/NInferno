@@ -33,6 +33,7 @@
 #include "core/cost_constants.h"
 #include "spec/moe_routed_share.h"
 #include "spec/config.h"
+#include "spec/proposal_rows.h"
 
 #include <nlohmann/json.hpp>
 
@@ -41,10 +42,27 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ninferno::spec {
 
 struct GpuKey; // spec/profile.h
+
+// Linears a pass computes alike: `count` matrices of n output rows over k input columns in one
+// published format (tools/spec/round_facts.py: "gguf:Q4_K", "bf16", "nvfp4", "mxfp4", "int4", "fp8",
+// "conv:q8" where the converter re-encodes a drafter's projections), the output head's apart, a
+// routed expert bank's with its experts counted. Facts of the weights' headers: the shapes a verify's
+// routes are asked for (ops/generic/route_query.h); not yet priced (the round's cost is its bytes).
+struct LinearGroup {
+    std::string format;
+    std::int64_t n     = 0;
+    std::int64_t k     = 0;
+    std::int32_t count = 0;
+    bool head          = false;
+    bool expert        = false;
+
+    friend bool operator==(const LinearGroup&, const LinearGroup&) = default;
+};
 
 // One pass's weights: its dense part (read once whatever the rows) and its routed experts.
 struct PassFacts {
@@ -54,13 +72,16 @@ struct PassFacts {
     double expert_params = 0;
     std::int32_t experts      = 0; // routed experts per layer (0: dense)
     std::int32_t experts_used = 0; // experts a token routes to
+    std::vector<LinearGroup> linears; // its linears (empty: facts written before they were listed)
 
     friend bool operator==(const PassFacts&, const PassFacts&) = default;
 };
 
 // A drafter's pass: rows a pass runs over, and whether a round runs one per draft (MTP) or one;
-// and a head run once a round over the k drafted rows only (DFlash: the target's output head
-// scores the drafted positions, not the block's, models/speculation/dflash.cpp).
+// and the target's output head as the drafter runs it, apart: per draft over the pass's rows (the
+// target's own MTP layers), or once a round over the k drafted rows only (DFlash: the target's
+// output head scores the drafted positions, not the block's, models/speculation/dflash.cpp). A
+// proposal head reads its rows' share of it (ProposalRows; the head's rows are its head linear's n).
 struct DraftFacts {
     PassFacts pass;
     std::int32_t rows = 1;
@@ -142,9 +163,11 @@ struct CardRates {
 // Not known() when the table has no row for it.
 [[nodiscard]] CardRates card_rates_of_board(std::uint32_t pci_device_id);
 
-// R(k) above for configuration `config` on a card of `kappa`; nullopt when the facts have no
-// drafter of its mode, or the configuration drafts nothing.
+// R(k) above for configuration `config` on a card of `kappa`, the draft head read over the rows
+// `head_rows` names for its mode (the full head where none, or where the head's facts list no head
+// linear to scale); nullopt when the facts have no drafter of its mode, or the configuration
+// drafts nothing.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
-                                               double kappa);
+                                               double kappa, const ProposalRows& head_rows = {});
 
 } // namespace ninferno::spec

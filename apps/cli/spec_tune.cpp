@@ -818,6 +818,8 @@ int run_spec_tune(int argc, char** argv) {
     profile.artifact        = artifact;
     profile.created         = ninferno::utc_now();
     profile.key.artifact_id = spec::artifact_id_hex(artifact);
+    // The draft head rows its rounds pay (round cost prices the lab's rounds at them).
+    profile.proposal_rows = spec::artifact_proposal_rows(artifact::Reader(artifact).directory());
     profile.key.gpu         = gpu.id;
     std::vector<std::string> ids; // a built-in drafter has no artifact of its own
     for (const char* name : {"mtp", "dflash", "dflash2"}) {
