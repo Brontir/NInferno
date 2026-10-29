@@ -624,14 +624,8 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
                                             std::string_view engine, std::string_view kind,
                                             double target_bits) {
     const Mode mode = mode_of_kind(kind);
-    // In content order (in_content_order): which of one card's records of a target stands, and the
-    // group's order, never depend on the registry's.
-    std::vector<const MeasuredPair*> ordered;
-    for (const auto& pair : pairs) { ordered.push_back(&pair); }
-    ordered = in_content_order(std::move(ordered));
-    std::vector<const MeasuredPair*> low, high;
-    for (const auto* record : ordered) {
-        const MeasuredPair& pair = *record;
+    std::vector<const MeasuredPair*> eligible;
+    for (const auto& pair : pairs) {
         if (pair.engine != engine || !pair_current(pair)) { continue; }
         // That drafter kind, not another of its mode (MTP layers, Gemma's assistant and
         // Nemotron's MTP block all propose as MTP).
@@ -640,11 +634,18 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
         const bool drafts  = std::any_of(
             pair.tune.measurements.begin(), pair.tune.measurements.end(),
             [&](const Measurement& m) { return m.config.mode == mode; });
-        if (!kind_of || !drafts) { continue; }
+        if (kind_of && drafts) { eligible.push_back(&pair); }
+    }
+    // In content order (in_content_order): which of one card's records of a target stands (the
+    // first in that order), and the group's order, never depend on the registry's.
+    std::vector<const MeasuredPair*> low, high;
+    for (const auto* record : in_content_order(std::move(eligible))) {
+        const MeasuredPair& pair = *record;
         auto& into = pair.target_bits < 4 ? low : high;
         // One card's record of a target once.
         const bool again = std::any_of(into.begin(), into.end(), [&](const MeasuredPair* p) {
-            return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu;
+            return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu &&
+                   p->generation == pair.generation;
         });
         if (!again) { into.push_back(&pair); }
     }
@@ -827,11 +828,12 @@ std::optional<MeasuredPair> carried_of(const MeasuredPair& pair, const PairQuery
 
 // One card's tunes (spec-tune measures one drafter at a time) are one measurement of the pair:
 // their runs pooled, so its choice weighs every drafter the card measured. A load table or fit
-// fallback is the one drafter's it was measured with: kept only when the tunes agree. The records
-// are pooled in content order (in_content_order): the pooled measurements, drafters and target
-// fields, each mode's round facts (the first record in that order that has them) and the lab
-// board (the lowest id any record names) never depend on the registry's order; so is the order
-// of the cards (GPU class id).
+// fallback is the one drafter's it was measured with: kept only when the tunes agree. Records of
+// two different boards of one class (both named) are two cards: each board's rates price its own
+// rounds; a record naming none joins its class's first card. The records are pooled in content
+// order (in_content_order): the pooled measurements (summed in that order), drafters and target
+// fields, each mode's round facts (the first record in that order that has them) and the order
+// of the cards (GPU class id) never depend on the registry's order.
 std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
     std::vector<const MeasuredPair*> order;
     for (const auto& r : records) { order.push_back(&r); }
@@ -840,7 +842,8 @@ std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
     std::vector<MeasuredPair> cards;
     for (auto& p : measured) {
         const auto same = std::find_if(cards.begin(), cards.end(), [&](const MeasuredPair& c) {
-            return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation;
+            return c.tune.key.gpu == p.tune.key.gpu && c.generation == p.generation &&
+                   (c.lab_board == 0 || p.lab_board == 0 || c.lab_board == p.lab_board);
         });
         if (same == cards.end()) {
             cards.push_back(std::move(p));
@@ -865,9 +868,7 @@ std::vector<MeasuredPair> pool_cards(std::vector<MeasuredPair> records) {
                 }
             }
         }
-        if (p.lab_board != 0 && (same->lab_board == 0 || p.lab_board < same->lab_board)) {
-            same->lab_board = p.lab_board;
-        }
+        if (same->lab_board == 0) { same->lab_board = p.lab_board; }
         if (into.load != p.tune.load) { into.load.clear(); }
         if (!into.fit_fallback || !p.tune.fit_fallback ||
             into.fit_fallback->config != p.tune.fit_fallback->config) {

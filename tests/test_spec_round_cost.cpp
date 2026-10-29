@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -320,14 +321,20 @@ int main() {
                    ab->profile.thinking.config == ba->profile.thinking.config &&
                    std::abs(ab->profile.overall.speedup() - ba->profile.overall.speedup()) < 1e-9,
                "the pooled choice does not depend on the records' order");
-        // Every order of the records gives the same plan: one card's two tunes (one naming no lab
-        // board), three other cards; each card's own, the facts', a transfer's, a sibling's and a
-        // group's choice.
-        auto unboarded      = dflash;
-        unboarded.lab_board = 0;
-        const std::vector<sp::MeasuredPair> records = {mtp, unboarded, pair_of(kQ9, "ad102:128sm"),
-                                                       pair_of(kQ9, "ga106:28sm"),
-                                                       pair_of(kQ9, "gv100:80sm")};
+        // Every order of the records gives the same plan. One card (the RTX 4070 Ti) has four tunes
+        // that an order could tell apart: two MTP tunes whose mode's round facts differ, plain
+        // decode measured at other speeds in each (sums of three or more terms), two DFlash tunes
+        // (pair_group keeps one of them), one naming no lab board; two other cards.
+        const auto tuned = [](sp::MeasuredPair p, double plain, double spec, std::uint32_t board) {
+            for (auto& m : p.tune.measurements) { m.seconds *= m.config.enabled() ? spec : plain; }
+            p.lab_board = board;
+            return p;
+        };
+        auto mtp_b = tuned(mtp, 1.1, 1.05, 0x2782);
+        mtp_b.round_facts->drafters.at("mtp").rows += 1;
+        const std::vector<sp::MeasuredPair> records = {
+            tuned(mtp, 1.0, 1.0, 0x2782), mtp_b, tuned(dflash, 1.2, 1.0, 0),
+            tuned(dflash, 1.3, 1.03, 0x2782), pair_of(kQ9, "ad102:128sm"), pair_of(kQ9, "ga106:28sm")};
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
         const auto rtx2080ti = card("tu102:68sm", "tu102", "sm75", 75, 68, 1545, 616);
         const std::string repo(std::string_view(kQ9).substr(0, std::string_view(kQ9).find(' ')));
@@ -338,20 +345,19 @@ int main() {
                          : std::string("none\n");
             };
             for (const auto* gpu : {&rtx4060ti, &rtx4070ti, &rtx2080ti}) {
-                add(sp::pair_choice(in, whole.target, "qwen3_5", kinds, 4.0, gpu == &rtx2080ti ? "sm75" : "sm89",
-                                    {}, whole.drafters, {}, gpu));
+                add(sp::pair_choice(in, whole.target, "qwen3_5", kinds, 4.0,
+                                    gpu == &rtx2080ti ? "sm75" : "sm89", {}, whole.drafters, {}, gpu));
             }
             add(sp::pair_choice(in, "another-quantization", "qwen3_5", kinds, 4.0, "sm89", {},
                                 whole.drafters, repo, &rtx4060ti));
             const auto group = sp::pair_group(in, "qwen3_5", "dflash", 4.0);
-            std::string cards;
-            for (const auto* p : group) { cards += p->tune.key.gpu + "/" + std::to_string(p->lab_board) + ","; }
+            for (const auto* p : group) { out += sp::pair_json(*p).dump() + ","; }
             const auto grouped = sp::profile_for_group(group, "dflash", nullptr);
-            out += cards + "|" + (grouped ? sp::to_json(*grouped).dump() : std::string("none")) + "\n";
+            out += "|" + (grouped ? sp::to_json(*grouped).dump() : std::string("none")) + "\n";
             return out;
         };
         const auto reference = plan_of(records);
-        std::vector<std::size_t> idx = {0, 1, 2, 3, 4};
+        std::vector<std::size_t> idx = {0, 1, 2, 3, 4, 5};
         bool same = !reference.empty();
         int orders = 0;
         do {
@@ -360,11 +366,19 @@ int main() {
             same = same && plan_of(shuffled) == reference;
             ++orders;
         } while (same && std::next_permutation(idx.begin(), idx.end()));
-        expect(same && orders == 120, "all 120 orders of the records give the same plans");
-        // One card's two tunes, one naming no lab board: still the card's own measurement.
-        const auto pooled = sp::pair_choice({unboarded, mtp}, whole.target, "qwen3_5", kinds, 4.0, "sm89",
-                                            {}, whole.drafters, {}, &rtx4070ti);
-        expect(pooled && pooled->basis == "measured", "one card's two tunes, one without a board: measured");
+        expect(same && orders == 720, "all 720 orders of the records give the same plans");
+        // Two boards of one class (an RTX 4070 SUPER's tune beside the 4070 Ti's) are two cards,
+        // each priced by its own board; a tune naming no board is the class's card's.
+        const auto two = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0x2782), tuned(mtp, 1.0, 1.0, 0x2783)},
+                                         whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
+                                         {}, &rtx4070ti);
+        expect(two && two->source.find("(2 lab card(s))") != std::string::npos,
+               "two boards of one class are two cards: " + (two ? two->source : std::string()));
+        const auto one = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0), tuned(dflash, 1.0, 1.0, 0x2782)},
+                                         whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
+                                         {}, &rtx4070ti);
+        expect(one && one->source.find("(1 lab card(s))") != std::string::npos && one->basis == "measured",
+               "a tune naming no board joins its class's card: " + (one ? one->source : std::string()));
     }
     // Pair removal: the plan's speedup on a card with its own pair left out (the facts price the
     // other cards' measurements for it), against that pair's measurement (the same target, its
