@@ -347,6 +347,45 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(calls.count("z/d@2"), 2)
         self.assertEqual(saved[-1], 3)  # both targets and the drafter, saved after each read
 
+    def test_only_measured_modes_need_their_tables(self):
+        # A pair measured with DFlash advertises an untested DFlash2: only DFlash's table is consumed.
+        pair = {"target_repo": "org/t@1 NVFP4", "target": "a",
+                "drafters": {"dflash": "z/d@2", "dflash2": "z/d2@3"},
+                "tune": {"measurements": [{"config": "plain"}, {"config": "dflash:7"}], "drafters": []}}
+        keys = round_facts.consumed_tables({"pairs": [pair]}, pair)
+        self.assertEqual(keys, {"org/t@1 NVFP4", "drafter:z/d@2"})
+        # MTP from the target's own layers reads no drafter table; a separate MTP drafter's is read.
+        pair["tune"] = {"measurements": [{"config": "mtp:3"}], "drafters": [{"kind": "gemma4_assistant"}]}
+        pair["drafters"] = {"gemma4_assistant": "g/a@4"}
+        self.assertEqual(round_facts.consumed_tables({"pairs": [pair]}, pair),
+                         {"org/t@1 NVFP4", "drafter:g/a@4"})
+
+    def test_nested_untied_head_is_the_head(self):
+        # dense.cpp head_tensor accepts language_model.lm_head.weight: the head, not body; the
+        # embedding then is no tied head.
+        self.assertEqual(round_facts.tensor_class("language_model.lm_head.weight", False, 0, 0), "head")
+        self.assertEqual(round_facts.tensor_class("lm_head.weight", False, 0, 0), "head")
+        table = {"meta": {}, "tensors": {"model.embed_tokens.weight": 100, "language_model.lm_head.weight": 100},
+                 "elems": {"model.embed_tokens.weight": 50, "language_model.lm_head.weight": 50}}
+        b, _, _, _ = round_facts.classes(table)
+        self.assertEqual((b["head"], b["embed"]), (100, 100))
+        self.assertNotIn("body", b)
+
+    def test_autoround_qweight_is_read_as_its_packing(self):
+        # AutoRound names its layout in packing_format (formats.cpp): GPTQ's words by default.
+        self.assertEqual(round_facts.qweight_method({"quant_method": "auto-round"}), "gptq")
+        self.assertEqual(round_facts.qweight_method({"quant_method": "intel/auto-round",
+                                                     "packing_format": "auto_round:auto_awq"}), "awq")
+        meta, _ = round_facts._config_meta({"quantization_config": {"quant_method": "auto-round",
+                                                                    "packing_format": "auto_round:auto_awq"}})
+        self.assertEqual(meta["packing_format"], "auto_round:auto_awq")
+        # A GPTQ-packed [k/8, n] qweight of 4096x1024 from an AutoRound checkpoint is a linear.
+        shapes = {"model.layers.0.mlp.up_proj.qweight": ["int4", [512, 4096]]}
+        table = {"meta": {"quant_method": "auto-round"}, "tensors": {}, "shapes": shapes,
+                 "elems": {"model.layers.0.mlp.up_proj.qweight": 4096 * 4096}}
+        got = round_facts.linears(table, ("body",))
+        self.assertEqual([(g["n"], g["k"]) for g in got], [(4096, 4096)])
+
     def test_nested_quantization_and_newer_ggml_types(self):
         meta, bits = round_facts._config_meta({"text_config": {"quantization_config": {"quant_method": "gptq",
                                                                                        "bits": 4}}})
