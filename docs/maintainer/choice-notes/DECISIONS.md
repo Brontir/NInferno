@@ -1198,9 +1198,13 @@ mtp:3 1.654); Ampere, Volta and Blackwell measure 1.53-1.59 and 1.80-1.86 at mtp
 1.63 / 1.87. Off Ada the shallow MTP rounds cost relatively more; why is not measured yet (the
 MTP head's launches and the T=3-4 verify route are candidates, compare 56's mismatches 1 and 3). The
 plan's speedup on Turing is predicted high by up to 12 % at mtp:2/3; its pick (dflash:7) is
-unaffected here, dflash rounds agree within 6 %.
+unaffected here, dflash rounds agree within 6.4 %. Most of the 12 % is the source being an Ada
+card: against the other non-Ada lab cards (mtp:2 1.53-1.59) Turing is about 5 % dearer.
 
 **Open.** Nothing changes from one card: a Turing eta needs a second Turing card in the registry
-(53); until then the transfer's source should say it is another generation's raw measurement, and
-the gap stays recorded here. Rerun: `tools/kit/measure.py --spec-tune 900` on l2080 (result
+(53). Until then two things are wrong in the transfer, not in Turing: the source pair is the first
+current pair in the registry's order (`profile_for_target`'s fallback, `current.front()`), against
+the rule that the registry's order never decides; and the source says "registry pair ... (6 lab
+card(s))" where it should say another generation's raw measurement and name the card. The gap
+stays recorded here. Rerun: `tools/kit/measure.py --spec-tune 900` on l2080 (result
 `ninferno-user-run/1.1`, validate.py verdicts S5/S6).

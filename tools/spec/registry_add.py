@@ -86,6 +86,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime
+import functools
 import hashlib
 import json
 import re
@@ -313,10 +314,13 @@ def chip_of_board(board) -> str:
         wanted = int(board, 16) if isinstance(board, str) else int(board)
     except ValueError:
         return ""
-    for row in json.loads(FACTS.read_text(encoding="utf-8"))["gpus"]:
-        if int(row["id"], 16) == wanted:
-            return str(row.get("chip", "")).lower()
-    return ""
+    return _board_chips().get(wanted, "")
+
+
+@functools.lru_cache(maxsize=1)
+def _board_chips() -> dict:
+    return {int(row["id"], 16): str(row.get("chip", "")).lower()
+            for row in json.loads(FACTS.read_text(encoding="utf-8"))["gpus"]}
 
 
 def pair_chip(pair: dict) -> str:
@@ -434,6 +438,9 @@ def put_user_pair(registry: dict, user: dict, pair: dict) -> None:
     target in `registry` was measured on the same chip."""
     gpu = pair["tune"]["key"]["gpu"]
     mine = pair_chip(pair)
+    if not mine:
+        raise SystemExit("the user's chip is unknown (no board in the facts table, no GPU class): "
+                         "a lab pair of the same chip cannot be ruled out")
     for p in registry.get("pairs", []):
         # The chip, never the board: a 2080 Ti Rev. A (0x1E07) and the non-A (0x1E04) are both TU102.
         if p.get("target") == pair["target"] and mine and pair_chip(p) == mine:
