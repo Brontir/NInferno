@@ -779,8 +779,14 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             // A plan that already gives each stream its own context needs no ceiling (one would
             // only lower it); otherwise the row's plan is the one under the ceiling the launch
             // passes, so that the plan shown, its now view and the start agree.
-            if (ask.automatic && ask.concurrency > 1 && best_context != 0 &&
-                !own_plan(row.planned.plan) && row.launch_context != best_context) {
+            // One stream: the row's plan takes the longest context that fits, which may leave out
+            // the drafter its worth was scored with (an 8 GB card: Q5_K_S with mtp at 32K, plain at
+            // 64K); the launch then keeps the context the worth was scored at, as the owner's order
+            // has it (the wanted context, then the drafter).
+            const bool drafter_lost = best_scored.drafter != "plain" &&
+                                      row.planned.speculation.engine.backend == SpeculativeBackend::None;
+            if (ask.automatic && best_context != 0 && row.launch_context != best_context &&
+                ((ask.concurrency > 1 && !own_plan(row.planned.plan)) || drafter_lost)) {
                 row.launch_context          = best_context;
                 const PlanSourceFacts facts = row_facts(shape, row);
                 const DryRunInputs own      = inputs_for(inputs, row.listing);
