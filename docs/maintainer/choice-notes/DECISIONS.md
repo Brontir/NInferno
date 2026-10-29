@@ -1217,3 +1217,14 @@ the rule that the registry's order never decides; and the source says "registry 
 card(s))" where it should say another generation's raw measurement and name the card. The gap
 stays recorded here. Rerun: `tools/kit/measure.py --spec-tune 900` on l2080 (result
 `ninferno-user-run/1.1`, validate.py verdicts S5/S6).
+
+**Resolved in the transfer (29.10).** `profile_for_target` no longer lets the registry's order pick
+the card: the records are ordered by GPU class id; two or more lab cards of the card's generation
+give their median R per configuration; with none and no facts, the median R of every lab card that
+measured the target, said in the source as "transferred: median of N lab cards of other
+generations (no facts for turing)". The generation ratios (`generation_round_costs`, off in the
+shipped registry since 52: they needed two cards of each generation) are gone. The same l2080 tune
+against the new prediction (the six lab cards' median): mtp:2 x1.062, mtp:3 x1.021, mtp:4 x1.019,
+mtp:5 x1.023, dflash:3 x1.011, dflash:5 x1.020, dflash:7 x1.061: every configuration within the
+kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8 DFlash verify the
+facts overprice on Ada (above).
