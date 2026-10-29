@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <limits>
 #include <optional>
+#include <vector>
 #include <map>
 #include <set>
 #include <stdexcept>
@@ -432,11 +433,12 @@ std::vector<const MeasuredPair*> one_per_card(const std::vector<const MeasuredPa
 
 
 // The kernels a round's graphs launched by configuration label (Measurement::graph_kernels over
-// its rounds) and a plain step's (over plain decode's tokens), per section and then averaged over
-// the sections the way round_costs() averages their costs: each section that priced the label
-// (plain decode timed and counted there) one share, whatever its rounds. A label without counts
-// in such a section is left out.
-std::map<std::string, RoundLaunches> round_launches(const Profile& tune) {
+// its rounds) and a plain step's (over plain decode's tokens), one entry per section that priced
+// the label (plain decode timed and counted there), whatever its rounds: the estimate prices each
+// section's round and averages those prices, as round_costs() averages the sections' measured
+// costs (a mean of ratios, not the ratio of mean counts). A label without counts in such a section
+// is left out.
+std::map<std::string, std::vector<RoundLaunches>> round_launches(const Profile& tune) {
     using Pooled = std::pair<double, double>; // kernels, rounds or steps
     std::map<std::string, Pooled> steps;      // by section
     std::map<std::string, double> timed;      // plain decode's seconds by section
@@ -448,20 +450,13 @@ std::map<std::string, RoundLaunches> round_launches(const Profile& tune) {
         r.first += double(m.graph_kernels);
         r.second += double(m.graph_rounds);
     }
-    std::map<std::string, std::pair<RoundLaunches, double>> sums; // by label: sums, sections
+    std::map<std::string, std::vector<RoundLaunches>> out;
     for (const auto& [key, r] : rounds) {
         const auto s = steps.find(key.second);
         const auto t = timed.find(key.second);
         if (s == steps.end() || t == timed.end() || t->second <= 0) { continue; }
-        auto& sum = sums[key.first];
-        sum.first.round += r.first / r.second;
-        sum.first.step += s->second.first / s->second.second;
-        sum.second += 1;
-    }
-    std::map<std::string, RoundLaunches> out;
-    for (const auto& [label, sum] : sums) {
-        out[label] = RoundLaunches{.round = sum.first.round / sum.second,
-                                   .step  = sum.first.step / sum.second};
+        out[key.first].push_back(RoundLaunches{.round = r.first / r.second,
+                                               .step  = s->second.first / s->second.second});
     }
     return out;
 }
@@ -496,16 +491,26 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
         const ProposalRows lab      = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
         // Launches priced on both cards or on neither (a lab card of a generation without a
         // launch time would leave them in the measured excess, counting them twice).
-        const auto it               = launches.find(label);
-        const RoundLaunches counted = it != launches.end() && card.launch_bytes() > 0 &&
-                                              home.launch_bytes() > 0
-                                          ? it->second
-                                          : RoundLaunches{};
-        const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
-                                      head_rows != nullptr ? *head_rows : lab, card.launch_bytes(),
-                                      counted);
-        const auto there = round_cost(*pair.round_facts, config, home.kappa(), lab,
-                                      home.launch_bytes(), counted);
+        const auto it = launches.find(label);
+        const std::vector<RoundLaunches> counted =
+            it != launches.end() && card.launch_bytes() > 0 && home.launch_bytes() > 0
+                ? it->second
+                : std::vector<RoundLaunches>{RoundLaunches{}};
+        // Each section's round priced with its own counts, then averaged (round_launches).
+        const auto priced = [&](double kappa, const ProposalRows& rows,
+                                double launch_bytes) -> std::optional<double> {
+            double sum = 0;
+            for (const RoundLaunches& section : counted) {
+                const auto r = round_cost(*pair.round_facts, config, kappa, rows, launch_bytes,
+                                          section);
+                if (!r) { return std::nullopt; }
+                sum += *r;
+            }
+            return sum / static_cast<double>(counted.size());
+        };
+        const auto here  = priced(card.kappa(), head_rows != nullptr ? *head_rows : lab,
+                                  card.launch_bytes());
+        const auto there = priced(home.kappa(), lab, home.launch_bytes());
         if (!here || !there || *there <= 0) { continue; }
         double cost = *here;
         // What the bytes do not show, as the lab card measured it: scales the estimate up only.
