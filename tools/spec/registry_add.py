@@ -290,17 +290,40 @@ def generation_of(gpu_class: str) -> str:
 
 
 # The lab's boards by GPU class (the tunes' key.gpu): their PCI product ids in
-# src/core/data/gpu_facts.json.
+# src/core/data/gpu_facts.json, as nvidia-smi reads them on the stands (pci.device_id, 2026-10-29).
+# A chip has several ids (a 3060 Lite Hash Rate, a 2080 Ti Rev. A beside the non-A); the
+# stand's own is the one listed. Their rates are the same rows of the facts table either way.
 LAB_BOARDS = {
     "ad104:60sm": "0x2782",   # GeForce RTX 4070 Ti
     "ad102:128sm": "0x2684",  # GeForce RTX 4090
     "ad106:34sm": "0x2805",   # GeForce RTX 4060 Ti 16GB
     "gb203:70sm": "0x2C05",   # GeForce RTX 5070 Ti
     "gb202:170sm": "0x2B85",  # GeForce RTX 5090
-    "ga106:28sm": "0x2503",   # GeForce RTX 3060
-    "tu102:68sm": "0x1E04",   # GeForce RTX 2080 Ti
+    "ga106:28sm": "0x2504",   # GeForce RTX 3060 Lite Hash Rate
+    "tu102:68sm": "0x1E07",   # GeForce RTX 2080 Ti Rev. A
     "gv100:80sm": "0x1DBA",   # Quadro GV100
 }
+
+
+def chip_of_board(board) -> str:
+    """The chip of a PCI product id ("0x1E07" or 0x1E07) in the facts table; "" when unknown."""
+    if board in (None, "", 0):
+        return ""
+    try:
+        wanted = int(board, 16) if isinstance(board, str) else int(board)
+    except ValueError:
+        return ""
+    for row in json.loads(FACTS.read_text(encoding="utf-8"))["gpus"]:
+        if int(row["id"], 16) == wanted:
+            return str(row.get("chip", "")).lower()
+    return ""
+
+
+def pair_chip(pair: dict) -> str:
+    """A pair's chip: its board's in the facts table (a user's board, a lab board), else its
+    tune's GPU class's ("tu102:68sm" -> "tu102")."""
+    return (chip_of_board(pair.get("board")) or chip_of_board(pair.get("lab_board"))
+            or chip(((pair.get("tune") or {}).get("key") or {}).get("gpu", "")))
 
 
 def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[str]) -> dict:
@@ -410,9 +433,12 @@ def put_user_pair(registry: dict, user: dict, pair: dict) -> None:
     in the place of one of the same target, GPU class and board; refused where a lab pair of the
     target in `registry` was measured on the same chip."""
     gpu = pair["tune"]["key"]["gpu"]
+    mine = pair_chip(pair)
     for p in registry.get("pairs", []):
-        if p.get("target") == pair["target"] and chip(p["tune"]["key"]["gpu"]) == chip(gpu):
-            raise SystemExit(f"the lab measured this target on {p['tune']['key']['gpu']}: its measurement stands")
+        # The chip, never the board: a 2080 Ti Rev. A (0x1E07) and the non-A (0x1E04) are both TU102.
+        if p.get("target") == pair["target"] and mine and pair_chip(p) == mine:
+            raise SystemExit(f"the lab measured this target on {p['tune']['key']['gpu']} ({mine}): its "
+                             "measurement stands")
     same = lambda p: (p.get("target") == pair["target"] and p["tune"]["key"]["gpu"] == gpu
                       and p.get("board") == pair.get("board"))
     user["user_pairs"] = [p for p in user.get("user_pairs", []) if not same(p)] + [pair]

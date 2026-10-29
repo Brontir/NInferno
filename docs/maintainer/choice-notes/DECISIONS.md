@@ -1164,3 +1164,43 @@ accept more than the corpus' prose (50). Master served the same (the 5070 Ti's p
    out; the test bounds it at 15 %), its pick is right.
 2. gpt-oss rounds are 6-10 % dearer than their facts on both cards (MoE routing: 53's +12.5 %).
 3. MTP at depth 3 is 7-9 % dearer than its facts on both cards (the 9B, Gemma 4 12B).
+
+## 57. Turing's MTP rounds 12 % dearer than the R(k) the plan transfers to it (29.10, open, measured)
+
+The user kit's first run on a card without its own pair of the target (#210; RTX 2080 Ti Rev. A,
+tu102, l2080, build 5ab1c936; Qwen3.5-9B MTP GGUF Q4_K_M, spec-tune on the lab pairs' menu,
+414 s, plain decode 92.8-93.0 tok/s across the sections). Acceptance agrees with the six lab
+pairs at every configuration (within 0.7 %). The round cost does not, at shallow MTP depths:
+
+| configuration | R measured here | R the plan uses | measured / plan |
+|---|---|---|---|
+| mtp:2 | 1.626 | 1.449 | x1.122 |
+| mtp:3 | 1.867 | 1.661 | x1.124 |
+| mtp:4 | 1.987 | 1.884 | x1.055 |
+| mtp:5 | 2.201 | 2.077 | x1.060 |
+| dflash:3 | 1.726 | 1.676 | x1.030 |
+| dflash:5 | 1.743 | 1.718 | x1.015 |
+| dflash:7 | 1.846 | 1.735 | x1.063 |
+| dflash:11 | 2.687 | (not priced: deeper than the portable depth) | |
+
+R in plain decode steps a round, `spec::profile_round_costs` of the tune and of the plan's resolved
+profile (`plan.speculation.round_cost`).
+
+**What the plan's R is.** Not the facts: since 53 / #161 the facts price only Ada (two lab cards
+give its eta); Turing has one lab card and no eta, so `round_cost_estimate` is unknown there. With
+no Turing pair of this target and no estimate, `profile_for_target` takes a lab pair's measurement
+raw: the plan's R equals the RTX 4070 Ti's measured R to the third digit (mtp:2 1.449, mtp:3
+1.661, mtp:4 1.884, dflash:7 1.735). The source says "registry pair ... (6 lab card(s))", nothing
+of a transfer.
+
+**What it shows.** An Ada card's rounds are the cheapest of the lab's (the 4090: mtp:2 1.450,
+mtp:3 1.654); Ampere, Volta and Blackwell measure 1.53-1.59 and 1.80-1.86 at mtp:2/3, Turing
+1.63 / 1.87. Off Ada the shallow MTP rounds cost relatively more; why is not measured yet (the
+MTP head's launches and the T=3-4 verify route are candidates, compare 56's mismatches 1 and 3). The
+plan's speedup on Turing is predicted high by up to 12 % at mtp:2/3; its pick (dflash:7) is
+unaffected here, dflash rounds agree within 6 %.
+
+**Open.** Nothing changes from one card: a Turing eta needs a second Turing card in the registry
+(53); until then the transfer's source should say it is another generation's raw measurement, and
+the gap stays recorded here. Rerun: `tools/kit/measure.py --spec-tune 900` on l2080 (result
+`ninferno-user-run/1.1`, validate.py verdicts S5/S6).

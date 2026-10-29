@@ -422,6 +422,30 @@ class UserRun(unittest.TestCase):
             registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
         self.assertIn("its measurement stands", str(e.exception))
 
+    def test_the_lab_pair_is_found_by_chip_not_board(self):
+        # A user's 2080 Ti Rev. A against a lab pair on the non-A board: one chip, TU102.
+        pair = registry_add.user_pair(user_run(), "")
+        pair["board"], pair["tune"]["key"]["gpu"] = "0x1E07", "tu102:68sm"
+        lab = {"target": pair["target"], "lab_board": "0x1E04", "tune": {"key": {"gpu": "tu102:68sm"}}}
+        with self.assertRaises(SystemExit):
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        # A lab pair keyed by the chip alone ("tu102"), no board.
+        lab = {"target": pair["target"], "tune": {"key": {"gpu": "tu102"}}}
+        with self.assertRaises(SystemExit):
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        # Another chip of the generation is another card.
+        lab = {"target": pair["target"], "lab_board": "0x2504", "tune": {"key": {"gpu": "ga106:28sm"}}}
+        user = {}
+        registry_add.put_user_pair({"pairs": [lab]}, user, pair)
+        self.assertEqual(len(user["user_pairs"]), 1)
+
+    def test_lab_boards_are_their_classes_chips(self):
+        for gpu, board in registry_add.LAB_BOARDS.items():
+            self.assertEqual(registry_add.chip_of_board(board), registry_add.chip(gpu), gpu)
+        self.assertEqual(registry_add.chip_of_board("0x1E04"), "tu102")
+        self.assertEqual(registry_add.chip_of_board("0x2503"), "ga106")
+        self.assertEqual(registry_add.chip_of_board("nonsense"), "")
+
     def test_cli_needs_accept_user(self):
         with tempfile.TemporaryDirectory() as d:
             run, reg, users = Path(d) / "run.json", Path(d) / "reg.json", Path(d) / "user_pairs.json"
