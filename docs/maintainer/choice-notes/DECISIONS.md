@@ -1511,14 +1511,10 @@ ahead of the best W4A8 tile on the RTX 5090 and the RTX 4090 for every 9B shape 
 frontend (`runtime::prompt_tail_calls`: the execution boundaries a one-message prompt's tail
 carries, the same at two prompt lengths); the choice prices each as one decode step of the
 candidate without its drafter, in the prefill rate and in a task's time, and its line says
-`prefill (2 tail calls)`. Qwen 3.5 counts 2 with thinking on or off (`<|im_start|>assistant
-`
-and the reasoning block; the boundary after `<think>
-` falls at the end or inside a token). Gemma 4
-counts 3: its template renders an empty thought channel when thinking is off, its default
-(`<|turn>model
-`, `<|channel>thought
-`, `<channel|>`), and the RTX 4070 Ti profile shows those
+`prefill (2 tail calls)`. Qwen 3.5 counts 2 with thinking on or off (`<|im_start|>assistant\n`
+and the reasoning block; the boundary after `<think>\n` falls at the end or inside a token).
+Gemma 4 counts 3: its template renders an empty thought channel when thinking is off, its default
+(`<|turn>model\n`, `<|channel>thought\n`, `<channel|>`), and the RTX 4070 Ti profile shows those
 three calls (two on `vec_kernel`, one on `r8_kernel`, 51 ms). Gemma's request has a fourth piece the
 count leaves out: its ring checkpoint is captured about 50 tokens before the end, so the prompt's
 last chunk stops there, the stream waits for the copy (item 3) and a call of about 50 tokens follows
