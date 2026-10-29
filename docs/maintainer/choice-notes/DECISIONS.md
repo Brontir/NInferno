@@ -1242,8 +1242,9 @@ at 128 registers a thread (`kRmmaMinBlocks`), so `w` K warps hold 16 / w CTAs a 
 **Verified.** Q4_K K = 4096 on sixteen warps (two steps each): 57-70 % of DRAM peak on five lab
 boards against 71-74 % for the best split. Q6_K 4096x2560 on eight warps (three steps for half the
 warps) against four: RTX 4070 Ti 19.6 against 21.1 us, RTX 3060 32.4 against 32.9 (the shortest
-warp's count would have taken four). Against it: the RTX 5070 Ti ran four warps 11 % faster on the
-same shape (10.1 against 11.3 us).
+warp's count would have taken four). Against it: the RTX 5070 Ti and RTX 2080 Ti ran four warps
+faster on the same shape (10.1 against 11.3 us; 22.5 against 23.9), so at K = 2560 the rounded-up
+count keeps master's eight warps without the boards agreeing on it (two each way).
 
 **Open: what a grid's partly filled last round costs.** Pricing it by its empty slots (the fill
 CTAs / (slots x rounds), the better fill winning) was wrong on two of four boards and right on
@@ -1252,7 +1253,10 @@ two, measured with `ninferno_r8_schedule_bench` against master 8e7db18c:
   in a full round 79.0 (x1.21); RTX 3060 Q4_K 4096x2560 / 4096x3072 store, eight warps 4-10 %
   slower although they fill more;
 - right: RTX 4070 Ti Q4_K 4096x3072 / 5120x5120 store, eight warps 5-8 % faster; RTX 5070 Ti Q4_K
-  5120x5120 store and Q5_K 5120x17408 add, eight warps 6-12 % faster.
+  5120x5120 store and Q5_K 5120x17408 add, eight warps 6-12 % faster; RTX 2080 Ti Q4_K / Q5_K
+  5120x17408 add, eight warps 19 % faster (135.3 -> 109.5 us, 161.0 -> 130.8).
+The light K-quants' four-warp start (`light_ggml_step`, measured on one board, the RTX 5080) is
+itself what these rows question: eight warps won on four of five boards past two CTAs a SM.
 The slot model predicted 17-25 % where the boards showed -10..+8 %: a round with fewer resident
 warps is slow only below the warps that keep DRAM busy, which depends on the bytes each warp has
 in flight (its ring) and the DRAM latency under load. That latency is not a fact we hold; until it

@@ -962,7 +962,7 @@ std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
 // sixteen warps, two steps each, streamed DRAM at 57..70 % of peak on all five lab boards against
 // 71..74 % for the best split). K = 2560 on eight warps (three steps for half the warps) keeps up:
 // Q6_K 4096x2560 at T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX
-// 3060 32.4 against 32.9 (the RTX 5070 Ti ran four warps 11 % faster there: open, see below).
+// 3060 32.4 against 32.9 (the RTX 5070 Ti and 2080 Ti ran four warps faster there: DECISIONS 61).
 // A pick that breaks it takes eight warps, else four, whichever keeps it; the pick unchanged
 // where it holds or neither does. Sixteen warps hold one CTA a SM (kRmmaMinBlocks caps a one-tile
 // store / add kernel at 128 registers a thread, so `w` K warps hold 16 / w CTAs a SM): a grid of
