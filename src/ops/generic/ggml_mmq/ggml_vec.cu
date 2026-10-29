@@ -330,13 +330,25 @@ struct Decoder<GGML_TYPE_IQ3_XXS> {
     // codes: qs (64); high: scales and signs (32); scales: d (2).
     static constexpr int kCode = 64, kHigh = 32, kScale = 2, kTableWords = 256, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return iq3xxs_grid; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
-        const uint2 qs          = *reinterpret_cast<const uint2*>(p.codes + blk * kCode + 8 * u);
+    // The slice's bytes as loaded: its 8 qs bytes, its scale-and-signs word, d.
+    struct Raw {
+        uint2 qs;
+        std::uint32_t aux;
+        half d;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        r.qs  = *reinterpret_cast<const uint2*>(p.codes + blk * kCode + 8 * u);
+        r.aux = *reinterpret_cast<const std::uint32_t*>(p.high + blk * kHigh + 4 * u);
+        r.d   = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const uint2 qs          = r.qs;
         const std::uint32_t q0  = qs.x;
         const std::uint32_t q1  = qs.y;
-        const std::uint32_t aux = *reinterpret_cast<const std::uint32_t*>(p.high + blk * kHigh + 4 * u);
-        s.f[0]                  = half_at(p.scales + blk * kScale) * (0.5f + float(aux >> 28)) * 0.5f;
+        const std::uint32_t aux = r.aux;
+        s.f[0]                  = __half2float(r.d) * (0.5f + float(aux >> 28)) * 0.5f;
 #pragma unroll
         for (int e = 0; e < 4; ++e) {
             const std::uint32_t q  = e < 2 ? q0 : q1;
@@ -344,6 +356,12 @@ struct Decoder<GGML_TYPE_IQ3_XXS> {
             s.w[2 * e]             = negate_bytes(grid[(q >> (16 * (e & 1))) & 0xFF], sg);
             s.w[2 * e + 1]         = negate_bytes(grid[(q >> (16 * (e & 1) + 8)) & 0xFF], sg >> 4);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0)));
@@ -355,23 +373,44 @@ struct Decoder<GGML_TYPE_IQ3_S> {
     // codes: qs (64), qh (8), signs (32); high: scales (4); scales: d (2).
     static constexpr int kCode = 104, kHigh = 4, kScale = 2, kTableWords = 512, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return iq3s_grid; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
+    // The slice's bytes as loaded: its 8 qs bytes, its qh byte, its 4 sign bytes, its scale byte, d.
+    struct Raw {
+        uint2 q;
+        std::uint32_t sg;
+        std::uint8_t qh, sc;
+        half d;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
         // The code plane's 104-byte blocks keep qs 8-byte and the signs 4-byte aligned.
-        const std::uint8_t* b  = p.codes + blk * kCode;
-        const uint2 q          = *reinterpret_cast<const uint2*>(b + 8 * u);
+        const std::uint8_t* b = p.codes + blk * kCode;
+        r.q                   = *reinterpret_cast<const uint2*>(b + 8 * u);
+        r.qh                  = b[64 + u];
+        r.sg                  = *reinterpret_cast<const std::uint32_t*>(b + 72 + 4 * u);
+        r.sc                  = p.high[blk * kHigh + u / 2];
+        r.d                   = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const uint2 q          = r.q;
         const std::uint32_t q0 = q.x;
         const std::uint32_t q1 = q.y;
-        const std::uint32_t qh = b[64 + u];
-        const std::uint32_t sg = *reinterpret_cast<const std::uint32_t*>(b + 72 + 4 * u);
-        const int sc           = (p.high[blk * kHigh + u / 2] >> (4 * (u & 1))) & 0xF;
-        s.f[0]                 = half_at(p.scales + blk * kScale) * float(1 + 2 * sc);
+        const std::uint32_t qh = r.qh;
+        const std::uint32_t sg = r.sg;
+        const int sc           = (r.sc >> (4 * (u & 1))) & 0xF;
+        s.f[0]                 = __half2float(r.d) * float(1 + 2 * sc);
 #pragma unroll
         for (int e = 0; e < 8; ++e) {
             const std::uint32_t idx =
                 (((e < 4 ? q0 : q1) >> (8 * (e & 3))) & 0xFF) | ((qh << (8 - e)) & 0x100);
             s.w[e] = negate_bytes(grid[idx], sg >> (4 * e));
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0)));
@@ -445,10 +484,20 @@ struct Decoder<GGML_TYPE_IQ2_XXS> {
     __device__ static const std::uint32_t* table() {
         return reinterpret_cast<const std::uint32_t*>(iq2xxs_grid);
     }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
-        const uint2 q = *reinterpret_cast<const uint2*>(p.codes + blk * kCode + 8 * u);
-        s.f[0]        = half_at(p.scales + blk * kScale) * (0.5f + float(q.y >> 28)) * 0.25f;
+    // The slice's bytes as loaded: its 8 qs bytes, d.
+    struct Raw {
+        uint2 q;
+        half d;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        r.q = *reinterpret_cast<const uint2*>(p.codes + blk * kCode + 8 * u);
+        r.d = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const uint2 q = r.q;
+        s.f[0]        = __half2float(r.d) * (0.5f + float(q.y >> 28)) * 0.25f;
 #pragma unroll
         for (int l = 0; l < 4; ++l) {
             const std::uint32_t at = 2 * ((q.x >> (8 * l)) & 0xFF);
@@ -456,6 +505,12 @@ struct Decoder<GGML_TYPE_IQ2_XXS> {
             s.w[2 * l]             = negate_bytes(grid[at], sg);
             s.w[2 * l + 1]         = negate_bytes(grid[at + 1], sg >> 4);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0)));
@@ -470,11 +525,23 @@ struct Decoder<GGML_TYPE_IQ2_XS> {
     __device__ static const std::uint32_t* table() {
         return reinterpret_cast<const std::uint32_t*>(iq2xs_grid);
     }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
-        const uint2 q          = *reinterpret_cast<const uint2*>(p.codes + blk * kCode + 8 * u);
-        const float d          = half_at(p.scales + blk * kScale);
-        const std::uint32_t sc = p.high[blk * kHigh + u];
+    // The slice's bytes as loaded: its 8 qs bytes, its scale byte, d.
+    struct Raw {
+        uint2 q;
+        half d;
+        std::uint8_t sc;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        r.q  = *reinterpret_cast<const uint2*>(p.codes + blk * kCode + 8 * u);
+        r.d  = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+        r.sc = p.high[blk * kHigh + u];
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const uint2 q          = r.q;
+        const float d          = __half2float(r.d);
+        const std::uint32_t sc = r.sc;
         s.f[0]                 = d * (0.5f + float(sc & 0xF)) * 0.25f;
         s.f[1]                 = d * (0.5f + float(sc >> 4)) * 0.25f;
 #pragma unroll
@@ -485,6 +552,12 @@ struct Decoder<GGML_TYPE_IQ2_XS> {
             s.w[2 * l]             = negate_bytes(grid[at], sg);
             s.w[2 * l + 1]         = negate_bytes(grid[at + 1], sg >> 4);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return d * (s.f[0] * float(dot4(s.w, a, 0)) + s.f[1] * float(dot4(s.w + 4, a + 4, 0)));
@@ -499,14 +572,28 @@ struct Decoder<GGML_TYPE_IQ2_S> {
     __device__ static const std::uint32_t* table() {
         return reinterpret_cast<const std::uint32_t*>(iq2s_grid);
     }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
-        const std::uint8_t* b  = p.codes + blk * kCode;
-        const std::uint32_t qs = *reinterpret_cast<const std::uint32_t*>(b + 4 * u);
-        const std::uint32_t sg = *reinterpret_cast<const std::uint32_t*>(b + 32 + 4 * u);
-        const std::uint32_t qh = b[64 + u];
-        const float d          = half_at(p.scales + blk * kScale);
-        const std::uint32_t sc = p.high[blk * kHigh + u];
+    // The slice's bytes as loaded: its 4 qs bytes, its 4 sign bytes, its qh byte, its scale byte, d.
+    struct Raw {
+        std::uint32_t qs, sg;
+        std::uint8_t qh, sc;
+        half d;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        const std::uint8_t* b = p.codes + blk * kCode;
+        r.qs                  = *reinterpret_cast<const std::uint32_t*>(b + 4 * u);
+        r.sg                  = *reinterpret_cast<const std::uint32_t*>(b + 32 + 4 * u);
+        r.qh                  = b[64 + u];
+        r.d                   = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+        r.sc                  = p.high[blk * kHigh + u];
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const std::uint32_t qs = r.qs;
+        const std::uint32_t sg = r.sg;
+        const std::uint32_t qh = r.qh;
+        const float d          = __half2float(r.d);
+        const std::uint32_t sc = r.sc;
         s.f[0]                 = d * (0.5f + float(sc & 0xF)) * 0.25f;
         s.f[1]                 = d * (0.5f + float(sc >> 4)) * 0.25f;
 #pragma unroll
@@ -515,6 +602,12 @@ struct Decoder<GGML_TYPE_IQ2_S> {
             s.w[2 * l]             = negate_bytes(grid[at], sg >> (8 * l));
             s.w[2 * l + 1]         = negate_bytes(grid[at + 1], sg >> (8 * l + 4));
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return d * (s.f[0] * float(dot4(s.w, a, 0)) + s.f[1] * float(dot4(s.w + 4, a + 4, 0)));
@@ -528,11 +621,23 @@ struct Decoder<GGML_TYPE_IQ1_S> {
     // dl (code + delta - 1), and dl (delta - 1) multiplies the column's sum.
     static constexpr int kCode = 32, kHigh = 16, kScale = 2, kTableWords = 2048, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return iq1s_grid_gpu; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
-        const std::uint32_t qs = *reinterpret_cast<const std::uint32_t*>(p.codes + blk * kCode + 4 * u);
-        const std::uint32_t qh = *reinterpret_cast<const std::uint16_t*>(p.high + blk * kHigh + 2 * u);
-        s.f[0] = half_at(p.scales + blk * kScale) * float(((qh >> 11) & 0x0E) + 1);
+    // The slice's bytes as loaded: its 4 qs bytes, its 2 qh bytes, d.
+    struct Raw {
+        std::uint32_t qs;
+        std::uint16_t qh;
+        half d;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        r.qs = *reinterpret_cast<const std::uint32_t*>(p.codes + blk * kCode + 4 * u);
+        r.qh = *reinterpret_cast<const std::uint16_t*>(p.high + blk * kHigh + 2 * u);
+        r.d  = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const std::uint32_t qs = r.qs;
+        const std::uint32_t qh = r.qh;
+        s.f[0] = __half2float(r.d) * float(((qh >> 11) & 0x0E) + 1);
         s.f[1] = -1.0f + IQ1S_DELTA - float(qh & 0x8000) * (2.0f * IQ1S_DELTA / 0x8000);
 #pragma unroll
         for (int l = 0; l < 4; ++l) {
@@ -540,6 +645,12 @@ struct Decoder<GGML_TYPE_IQ1_S> {
             s.w[2 * l]            = int(g & 0x0F0F0F0Fu);
             s.w[2 * l + 1]        = int((g >> 4) & 0x0F0F0F0Fu);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float sum) {
         return s.f[0] * (d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0))) + s.f[1] * sum);
@@ -737,17 +848,29 @@ struct Decoder<GGML_TYPE_IQ1_M> {
     // values contribute dl (code . x + (delta - 1) sum x) with sum x over the column's codes.
     static constexpr int kCode = 32, kHigh = 16, kScale = 8, kTableWords = 2048, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return iq1s_grid_gpu; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t* grid, Slice& s) {
-        const auto* sc = reinterpret_cast<const std::uint16_t*>(p.scales + blk * kScale);
+    // The slice's bytes as loaded: the four scale words, its 4 qs bytes, its 2 qh bytes.
+    struct Raw {
+        uint2 sc;
+        std::uint32_t qs;
+        std::uint16_t qh;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        r.sc = *reinterpret_cast<const uint2*>(p.scales + blk * kScale);
+        r.qs = *reinterpret_cast<const std::uint32_t*>(p.codes + blk * kCode + 4 * u);
+        r.qh = *reinterpret_cast<const std::uint16_t*>(p.high + blk * kHigh + 2 * u);
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t* grid,
+                                                   Slice& s) {
+        const auto* sc = reinterpret_cast<const std::uint16_t*>(&r.sc);
         const auto bits = static_cast<unsigned short>((sc[0] >> 12) | ((sc[1] >> 8) & 0x00F0) |
                                                       ((sc[2] >> 4) & 0x0F00) | (sc[3] & 0xF000));
         const float d          = __half2float(__ushort_as_half(bits));
         const std::uint32_t sb = sc[u / 2] >> (6 * (u % 2));
         s.f[0]                 = d * float(2 * (sb & 7) + 1);
         s.f[1]                 = d * float(2 * ((sb >> 3) & 7) + 1);
-        const std::uint32_t qs = *reinterpret_cast<const std::uint32_t*>(p.codes + blk * kCode + 4 * u);
-        const std::uint32_t qh = *reinterpret_cast<const std::uint16_t*>(p.high + blk * kHigh + 2 * u);
+        const std::uint32_t qs = r.qs;
+        const std::uint32_t qh = r.qh;
 #pragma unroll
         for (int l = 0; l < 4; ++l) {
             const std::uint32_t h = (qh >> (4 * l)) & 0xF;
@@ -756,6 +879,12 @@ struct Decoder<GGML_TYPE_IQ1_M> {
             s.w[2 * l + 1]        = int((g >> 4) & 0x0F0F0F0Fu);
             s.f[2 + l]            = -1.0f + ((h & 8) != 0 ? -IQ1M_DELTA : IQ1M_DELTA);
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         float half[2] = {0.0f, 0.0f};
