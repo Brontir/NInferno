@@ -1192,6 +1192,10 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         }
         const std::string own_quant = smallest ? smallest->quant : std::string();
         const auto own              = product::gguf_tensor_table(*facts);
+        {
+        // The kept tables and their generation read together (another request keeps tables).
+        std::lock_guard lock(sizes_mutex_);
+        tables_seen = tables_generation_[hub_key(repo, hub)];
         for (auto& q : listing) {
             if (q.drafter || q.format != "gguf") { continue; }
             if (own && q.quant == own_quant) { q.table = own; }
@@ -1205,12 +1209,12 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
                 }
             }
         }
+        }
         // The quantizations already in this UI's hub cache (the one its servers start with), at
         // the revision a start takes (main, as the start of `repo` without one): by their own
         // files, as the start and ninferno-serve --plan --no-load price them.
+        // Outside the lock: a file read.
         product::tables_of_cached(listing, product::cached_quants(hub_root(), hub, repo, ""));
-        std::lock_guard lock(sizes_mutex_);
-        tables_seen = tables_generation_[hub_key(repo, hub)];
     }
     // A read that failed (a network blip) leaves this plan uncached: the next request reads again.
     bool table_failed       = false;
