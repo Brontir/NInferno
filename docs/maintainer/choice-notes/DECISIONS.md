@@ -1168,21 +1168,22 @@ accept more than the corpus' prose (50). Master served the same (the 5070 Ti's p
 ## 58. Verify widths stay on the band rule: the register MMA priced as its best one-tile schedule is wrong for the schedule that runs (29.10, #209)
 
 **Decision.** The selector keeps the band rule at verify widths (vector kernel at T <= 4, the
-register MMA from 5). `verify_route_seconds` (bytes at 0.93 of DRAM, counted warp instructions at
-0.6 of the issue rate, hypot, 1.5 us a launch) stays in the code unused.
+register MMA from 5). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
+0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) stays in the code unused.
 
 - Variants: pick the cheaper of the vector kernel and the register MMA by that price / the band rule.
 - The price of the vector kernel holds (RTX 4070 Ti, Q6_K 3840x15360, T = 5: 117 us predicted,
   119 measured). The register MMA's price is its best one-tile schedule (w1x4 / w1x8 / w1x16), but
   heuristic_rmma's schedule is what runs: scored against it (T = 2..4, 889 calls where master takes
-  the vector kernel, six boards) the priced pick moved 556 calls for a geomean of 1.0001, with
-  regressions to 1.55x (4070 Ti IQ1_M 4096x4096 T = 3: 13.0 -> 20.1 us on w1x8). The hard50 gains
+  the vector kernel, six boards) the priced pick moved 556 calls for a geomean time over master's of
+  1.0001, with regressions to 1.55x the time (4070 Ti IQ1_M 4096x4096 T = 3: 13.0 -> 20.1 us on w1x8). The hard50 gains
   on the 5070 Ti / 5090 / 3060 (+5..9 % dflash:3 and mtp:3, Qwen3.5-9B) did not carry to other shapes.
 - The missing fact: the running schedule's DRAM efficiency. Q6_K 3840x15360 T = 5 on the 4070 Ti
   streams 57 / 66 / 77 % of DRAM on w1x4 / w1x8 / w1x16 at 16 warps per SM each, 4.2 KB of loads in
-  flight per warp in every schedule (13x Little's law): not latency. Study open: DRAM row locality
+  flight per warp in every schedule (13x the bytes in flight that
+  DRAM bandwidth x latency / SMs asks): not latency. Study open: DRAM row locality
   (bytes per row activation from each schedule's K interleave) and wave quantization.
-- The Gemma 4 12B MTP round's excess on the 4070 Ti (+1.0..1.3 ms of 21.07) is this: its Q6_K down
+- The Gemma 4 12B MTP round's excess on the 4070 Ti (+1.0..1.3 ms of a 21.07 ms round) is this: its Q6_K down
   projection on w1x8 (149 us, 96 us of bytes; the vector kernel 119, w1x16 121). It waits for that fact
   (no dense-tuner stopgap: 55).
 
@@ -1194,12 +1195,12 @@ products. Branch kern/vec-prefetch keeps the two attempts for reference.
 
 - The fact: RTX 5070 Ti, Q4_K 4096x4096, T = 2..8 vector 14.6 / 15.2 / 21.0 / 18.2 / 16.7 / 23.0 /
   26.1 us (repeats within 0.5 %); registers -> CTAs per SM -> rounds does not order them (T = 6, 5
-  CTAs per SM and two rounds, is the fastest; a rounds term fitted to 3204 calls gains nothing), the
+  CTAs per SM and two rounds, is the fastest from T = 4 on; a rounds term fitted to 3204 calls gains nothing), the
   stalls are long-scoreboard (77-85 %), and the slice loop's SASS issues 2 / 1 / 2 / 2 / 5 / 2 / 3
   global loads before the first IDP: the instance the compiler batched most is the fast one.
 - Attempt 1, the next step's slices fetched into registers before this step's products: geomean
-  over master 1.043 (5070 Ti) and 1.096 (3060), instances 0.62..1.50.
-- Attempt 2, the next step's codes prefetched to L2 (`prefetch.global.L2`, no registers): 1.010 on
-  the 5070 Ti, instances 0.68..1.44 (IQ2_S T = 4 22.9 -> 16.1 us, Q5_K T = 8 24.6 -> 35.3).
+  time over master's 1.043 (5070 Ti) and 1.096 (3060), instances 0.62..1.50.
+- Attempt 2, the next step's codes prefetched to L2 (`prefetch.global.L2`, no registers): geomean time
+  over master's 1.010 on the 5070 Ti, instances 0.68..1.44 (IQ2_S T = 4 22.9 -> 16.1 us, Q5_K T = 8 24.6 -> 35.3).
 - Both re-roll the compiler's per-instance schedule rather than fix it; only explicit load batching
   holds loads in flight independent of it.
