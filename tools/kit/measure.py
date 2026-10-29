@@ -127,12 +127,10 @@ def run_flags(model, device, spec="none"):
 
 
 def port_free(port):
+    """Nothing listens on the port (a closed socket in TIME_WAIT from the last start is free)."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        try:
-            s.bind(("127.0.0.1", port))
-            return True
-        except OSError:
-            return False
+        s.settimeout(2)
+        return s.connect_ex(("127.0.0.1", port)) != 0
 
 
 def request(port, prompt, max_tokens):
@@ -231,9 +229,9 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, device, 
     each timed by the server's own timings (prefill = prompt_n / prompt_ms; decode = (predicted_n
     - 1) / predicted_ms, serving.md), under telemetry."""
     out = {"telemetry": None}
-    server = Server(serve, model, flags, port, str(workdir / f"{tag}.serve.log"))
-    sampler = None
+    server = sampler = None
     try:
+        server = Server(serve, model, flags, port, str(workdir / f"{tag}.serve.log"))
         out["start_s"] = round(server.wait(), 1)
         out["served"] = server.meta()
         out["served"]["choice"] = server.choice_line()
@@ -299,7 +297,8 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, device, 
     finally:
         if sampler:
             out["telemetry"] = sampler.stop()
-        server.stop()
+        if server:
+            server.stop()
     return out
 
 
@@ -413,8 +412,7 @@ def main():
         if chosen:
             listed = []
             for model, plan in chosen:
-                rows = [r for r in plan.get("quants") or [] if r.get("quant") == model["quant"]]
-                size = (rows[0].get("weights_bytes") or 0) / 2**30 if rows else 0
+                size = ((plan.get("model") or {}).get("weights_bytes") or 0) / 2**30
                 listed.append(f"{model['repo']} {model['quant']} ({size:.1f} GiB"
                               + (" and its drafters" if args.spec_tune else "") + ")")
             print("The kit fetches into your hub cache (what is already there is not fetched again): "
