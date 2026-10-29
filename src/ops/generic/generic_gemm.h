@@ -524,7 +524,8 @@ struct Problem {
 [[nodiscard]] bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
 // A verify call's time (seconds) on ggml's vector kernel or on the one-tile register MMA (T = 2..8,
 // the ggml K-quant / i-quant / legacy formats), from the device class's bandwidth, SMs and clock and
-// counted instructions; nullopt without counts (Turing, Volta, sm_9x/10x) or a roofline. The
+// counted instructions (sm_8x takes sm_86's counts, sm_80/87 included uncounted); nullopt without
+// counts (Turing, Volta, sm_9x/10x) or a roofline. The
 // register MMA's price is its best one-tile schedule's, not the schedule heuristic_rmma runs, so the
 // selector does not use it (generic_gemm.cpp).
 [[nodiscard]] std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,

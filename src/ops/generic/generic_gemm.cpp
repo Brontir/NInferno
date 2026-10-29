@@ -625,6 +625,10 @@ std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilo
     return std::nullopt;
 }
 
+constexpr double kVerifyDramFraction  = 0.93; // see verify_route_seconds
+constexpr double kVerifyIssueFraction = 0.6;
+constexpr double kVerifyLaunchSeconds = 1.5e-6;
+
 } // namespace
 
 // NOT USED BY THE SELECTOR. The register MMA is priced here as the best one-tile schedule
@@ -642,15 +646,12 @@ std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilo
 // 5070 Ti, 5090), 3204 timed calls (vector and one-tile register MMA, T = 2..8, 19 formats):
 // - kVerifyDramFraction (FITTED): the p90 DRAM share of those calls, 0.89..0.94 on every card.
 // - kVerifyIssueFraction, u (FITTED): the best u under this combination per generation is 0.65 on
-//   sm_89 (three cards), 0.60 on sm_120 (two), 0.65 on sm_86 (one card: it takes the others').
+//   sm_89 (three cards), 0.60 on sm_120 (two), 0.65 on sm_86 (one card); one 0.6 serves all.
 // - the combination (FITTED form): rms of log(measured / predicted) 0.118 for sqrt(tb^2 + ui^2)
 //   against 0.144 for max (full overlap, under-predicts 5.5 %) and 0.190 for the sum (no overlap,
 //   over-predicts 13 %). The choice's loss over the better kernel is 1.025..1.031 for all three.
 // - kVerifyLaunchSeconds: a launch on a back-to-back stream (RTX 4090 decode graph, no PDL).
 // nullopt where the device has no roofline or its instruction set no counts.
-inline constexpr double kVerifyDramFraction  = 0.93;
-inline constexpr double kVerifyIssueFraction = 0.6;
-inline constexpr double kVerifyLaunchSeconds = 1.5e-6;
 
 std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
                                            Epilogue epilogue, double payload_bytes,
