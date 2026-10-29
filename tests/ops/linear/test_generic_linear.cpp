@@ -1477,15 +1477,17 @@ int check_mmq_code_sums(const Format& f) {
 // sum passes FP16's range: m = 250 against blocks of values near 30 (a sum near 960, a product
 // near 240000). The dot multiplied the (d, m) and (d8, s8) halves in FP16 and the token's output
 // went infinite; the scales now multiply in FP32 (llama.cpp #30950). The oracle is the FP64
-// product of the decoded weights and the int8 activation (quantize_a8).
+// product of the decoded weights and the int8 activation (quantize_a8). Only the DP4A tile path
+// (no int8 MMA: Volta) multiplied in FP16; the int8 MMA path of later boards passes either way.
 int check_mmq_large_min(const Format& f) {
     const std::int32_t n = 128, k = 1024, t = 16;
     const generic::Route mmq{generic::Family::GgmlMmq, 0};
     HostWeight host               = make_weight(f.qtype, n, k, 71U);
-    const std::size_t block_bytes = f.qtype == QType::GGML_Q4_1 ? 20 : 24;
-    auto& bytes                   = host.packed.payload;
-    for (std::size_t b = 0; b + block_bytes <= bytes.size(); b += block_bytes) {
-        quantized_weight::detail::store_u16_le(bytes, b + 2,
+    // ggml_planes_v1: the scale plane holds each block's (d, m) halves, 4 bytes a block; m at +2.
+    auto& packed = host.packed;
+    for (std::uint64_t b = 0; b < packed.scale_plane_bytes / 4; ++b) {
+        quantized_weight::detail::store_u16_le(packed.payload,
+                                               packed.scale_plane_offset + b * 4 + 2,
                                                quantized_weight::detail::f32_to_f16(250.0F));
     }
     DeviceWeight device  = upload_weight(host);

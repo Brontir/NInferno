@@ -3353,7 +3353,9 @@ int run_unwritten_poison_case(const Geometry& geometry, KvCacheStorage storage,
 // before the 64-key tile holding the outsized value must stay finite and match the same call
 // without it. Columns from that tile's first key on share its FP16 partial shift, which follows
 // the largest V scale of the whole tile (keys masked for the column included), so their values
-// move by the shift's rounding.
+// move by the shift's rounding. The case reaches the fast INT8 prompt kernel where the INT8 prompt route
+// takes it (a 1024-token prompt on the lab boards); on a board that routes the prompt elsewhere it
+// only checks that path.
 int run_infinite_v_scale_case(const Geometry& geometry) {
     constexpr KvCacheStorage storage = KvCacheStorage::Int8Group64;
     constexpr int width = 1024, outsized = 300;
