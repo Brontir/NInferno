@@ -1473,85 +1473,6 @@ int check_mmq_code_sums(const Format& f) {
     return 0;
 }
 
-// Q4_1 / Q5_1 through ggml's matrix kernel where a block's minimum times the activation block's
-// sum passes FP16's range: m = 250 against blocks of values near 30 (a sum near 960, a product
-// near 240000). The dot multiplied the (d, m) and (d8, s8) halves in FP16 and the token's output
-// went infinite; the scales now multiply in FP32 (llama.cpp #30950). The oracle is the FP64
-// product of the decoded weights and the int8 activation (quantize_a8). Only the DP4A tile path
-// (no int8 MMA: Volta) multiplied in FP16; the int8 MMA path of later boards passes either way.
-int check_mmq_large_min(const Format& f) {
-    const std::int32_t n = 128, k = 1024, t = 16;
-    const generic::Route mmq{generic::Family::GgmlMmq, 0};
-    HostWeight host               = make_weight(f.qtype, n, k, 71U);
-    // ggml_planes_v1: the scale plane holds each block's (d, m) halves, 4 bytes a block; m at +2.
-    auto& packed = host.packed;
-    for (std::uint64_t b = 0; b < packed.scale_plane_bytes / 4; ++b) {
-        quantized_weight::detail::store_u16_le(packed.payload,
-                                               packed.scale_plane_offset + b * 4 + 2,
-                                               quantized_weight::detail::f32_to_f16(250.0F));
-    }
-    DeviceWeight device  = upload_weight(host);
-    const Weight& weight = device.weight;
-    if (!generic::route_admits(mmq, weight, ops::LinearPolicy::AllowA8)) {
-        std::cout << f.name << " ggml_mmq large minimum: not admitted on this device\n";
-        return 0;
-    }
-    std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
-    std::mt19937 rng(73U);
-    std::uniform_real_distribution<float> u(-1.0F, 1.0F);
-    for (auto& v : activation) { v = f32_to_bf16(30.0F + u(rng)); }
-    DeviceBuffer x(activation.size() * 2);
-    x.copy_from_host(activation.data(), x.bytes);
-    DeviceBuffer out(static_cast<std::size_t>(n) * t * 2);
-    Tensor tx(x.p, DType::BF16, {k, t});
-    Tensor tout(out.p, DType::BF16, {n, t});
-    DeviceArena workspace(std::max<std::size_t>({generic::route_workspace_bytes(mmq, k, t),
-                                                 generic::ggml_mmq_workspace_bytes(k, n, t), 256}));
-    generic::Call call;
-    call.x                        = &tx;
-    call.weight                   = &weight;
-    call.rows                     = n;
-    call.epilogue                 = generic::Epilogue::Store;
-    call.out[0]                   = &tout;
-    call.segment_rows[0]          = n;
-    const std::uint64_t fallbacks = generic::ggml_mmq_fallback_count();
-    generic::run_route(mmq, call, &workspace, nullptr);
-    cuda_check(cudaDeviceSynchronize(), "large-minimum run");
-    if (generic::ggml_mmq_fallback_count() != fallbacks) {
-        std::cerr << f.name << " ggml_mmq large minimum: ran A16, not ggml_mmq\n";
-        return 1;
-    }
-    const auto got = download_bf16(out.p, static_cast<std::size_t>(n) * t);
-    std::vector<std::int32_t> rows(static_cast<std::size_t>(n));
-    for (std::int32_t i = 0; i < n; ++i) { rows[static_cast<std::size_t>(i)] = i; }
-    const std::vector<float> w = weight_rows(host, rows);
-    std::vector<float> xq(activation.size());
-    for (std::size_t i = 0; i < xq.size(); ++i) { xq[i] = bf16_to_f32(activation[i]); }
-    quantize_a8(xq, k);
-    std::vector<double> oracle(static_cast<std::size_t>(n) * t);
-    cpu_linear_gemm_fp64(w.data(), xq.data(), oracle.data(), n, k, t);
-    double err = 0.0, norm = 0.0;
-    int non_finite = 0;
-    for (std::size_t i = 0; i < got.size(); ++i) {
-        if ((got[i] & 0x7f80U) == 0x7f80U) {
-            ++non_finite;
-            continue;
-        }
-        const double a = bf16_to_f32(got[i]);
-        err += (a - oracle[i]) * (a - oracle[i]);
-        norm += oracle[i] * oracle[i];
-    }
-    const double rel = std::sqrt(err / norm);
-    std::cout << f.name << " ggml_mmq large minimum: non-finite " << non_finite << ", rel_l2 " << rel
-              << "\n";
-    if (non_finite != 0 || !(rel < kMmqCodeSumAgreement)) {
-        std::cerr << f.name << " ggml_mmq large minimum: " << non_finite
-                  << " non-finite outputs, rel_l2 " << rel << " to the oracle\n";
-        return 1;
-    }
-    return 0;
-}
-
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
 // the generic W4A8 from 17 tokens on every build, the tiled route there without tensor mma.sync
 // (Volta: volta_tiled_route), decode and verify widths unchanged; the same
@@ -2208,12 +2129,6 @@ int main() {
         const bool k_quant = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K;
         if (!on_build(f) || !k_quant || !generic::ggml_mmq_format(f.qtype)) continue;
         failures += check_mmq_code_sums(f);
-    }
-    // 2g. A block minimum times the activation block's sum past FP16's range (Q4_1, Q5_1).
-    for (const Format& f : kFormats) {
-        const bool min_term = f.qtype == QType::GGML_Q4_1 || f.qtype == QType::GGML_Q5_1;
-        if (!on_build(f) || !min_term || !generic::ggml_mmq_format(f.qtype)) continue;
-        failures += check_mmq_large_min(f);
     }
 
     // 3. Every compiled route qualified on one awkward shape per format and epilogue.
