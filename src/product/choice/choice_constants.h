@@ -107,7 +107,7 @@ enum class WeightClass : std::uint8_t {
             // UD-Q4_K_XL, UD-Q5_K_XL): R8 at one row, ggml's vec kernel at 2-4, register MMA / MMQ at 5-8
     Q8,     // Q8_0 (q8_g32_fp16): R8 at every width
     IQ4,    // ggml's IQ4_XS / IQ4_NL mixes (with Q4_K/Q5_K/Q8_0 tensors): R8 at one row, vec / MMQ beyond
-    Other,  // a format whose decode routes no census measured (codebook IQ*, Q4_0/Q4_1, IQ4_NL, Q2_K,
+    Other,  // a format whose decode routes no census measured (other codebook IQ*, Q4_0/Q4_1, Q2_K,
             // Q3_K, FP4): its speed is transferred (the K-quants' rows) and it decides nothing
 };
 

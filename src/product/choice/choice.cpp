@@ -551,14 +551,14 @@ WeightClass weight_class_of(const std::vector<std::string>& formats, std::string
         const bool repacked = i + 2 < t.size() && t[i + 2].size() >= 2 && t[i + 2][0] == 'R' &&
                               std::isdigit(static_cast<unsigned char>(t[i + 2][1]));
         if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k && !repacked) { return WeightClass::KQuant; }
-        if (t[i] == "IQ4" && i + 1 < t.size() && (t[i + 1] == "XS" || t[i + 1] == "NL") &&
-            !(i + 2 < t.size() && t[i + 2].size() >= 2 && t[i + 2][0] == 'R')) {
+        if (t[i] == "IQ4" && i + 1 < t.size() && (t[i + 1] == "XS" || t[i + 1] == "NL") && !repacked) {
             return WeightClass::IQ4;
         }
         if (t[i] == "Q8") {
             // Q8, Q8_0; unsloth's Q8_K_XL / _L / _M / _S (Q8_0 with 16-bit tensors), not Q8_KV or Q8_K_R8.
             const std::string next  = i + 1 < t.size() ? t[i + 1] : "";
             const std::string after = i + 2 < t.size() ? t[i + 2] : "";
+            if (repacked) { continue; }
             if (next.empty() || next == "0" ||
                 (next == "K" && (after == "XL" || after == "L" || after == "M" || after == "S"))) {
                 return WeightClass::Q8;
@@ -566,6 +566,13 @@ WeightClass weight_class_of(const std::vector<std::string>& formats, std::string
         }
     }
     return WeightClass::Other;
+}
+
+bool class_measured(const CardFacts& card, WeightClass weights) noexcept {
+    const std::string_view gen = generation_of(card);
+    return std::any_of(std::begin(kRowsEta), std::end(kRowsEta), [&](const RowsEta& r) {
+        return r.generation == gen && r.weights == weights && r.cards >= 2;
+    });
 }
 
 double worth_band(const CardFacts& card) noexcept {

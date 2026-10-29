@@ -124,6 +124,9 @@ struct QuantOption {
 // and 16-bit tensors; anything else is Other.
 [[nodiscard]] WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label);
 
+// Whether this card's generation measured the class's decode routes on two cards (kRowsEta).
+[[nodiscard]] bool class_measured(const CardFacts& card, WeightClass weights) noexcept;
+
 // The band within which two quantizations' worths are a tie on this card's decisions (the
 // generation's measured decode error, kDecodePredictionError; 0 where none is measured).
 [[nodiscard]] double worth_band(const CardFacts& card) noexcept;

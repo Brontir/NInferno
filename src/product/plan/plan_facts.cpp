@@ -835,7 +835,9 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         }
         bytes += tensor->bytes;
         formats.insert(tensor->format);
-        if (table[i] == 0) { layer_formats.insert(tensor->format); }
+        if (table[i] == 0 && !(alone && (m[Mtp] || m[Drafter] || m[Proposal]))) {
+            layer_formats.insert(tensor->format); // the trunk's layers
+        }
         if (table[i] == 1) { input_table_bytes += tensor->bytes; }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (alone && m[Drafter]) {
