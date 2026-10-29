@@ -207,11 +207,11 @@ def text_blob():
     return blob.split("<document>\n", 1)[1].split("\n</document>", 1)[0]
 
 
-def prompt_of(blob, chars, i):
-    """A slice of the long text at its own offset (a distinct prompt: no reusable prefix beyond the
-    chat template's head), followed by the question."""
-    offset = (i * 7919 * 13 + i * 104729) % max(1, len(blob) - chars)
-    return blob[offset:offset + chars] + QUESTION
+def prompt_of(blob, chars, i, nonce):
+    """A slice of the long text at its own offset, after a nonce line (a probe and its timed
+    request share no reusable prefix beyond the chat template's head), and the question."""
+    offset = (i * 7919 * 13 + i * 104729) % max(1, len(blob) - 4 * chars)
+    return f"[{nonce}]\n" + blob[offset:offset + chars] + QUESTION
 
 
 def apps_info(bus, wddm, server_pid):
@@ -244,19 +244,33 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, device, 
         blob = text_blob()
         t0 = sampler.now()
         request(port, "Say hello in one short sentence.", 16)
-        base, _ = request(port, QUESTION.strip(), 1)  # the template and the question alone
-        probe, _ = request(port, prompt_of(blob, 8000, 997), 1)
-        sampler.mark("warmup", t0, sampler.now())
+        base, _ = request(port, "[w]\n" + QUESTION.strip(), 1)  # the template, a nonce, the question
         overhead = base.get("prompt_tokens", 0)
-        per_token = 8000 / max(1, probe.get("prompt_tokens", 2000) - overhead)
+        # Each timed prompt is sized on its own slice: a probe of that slice (its own nonce: nothing
+        # of it is reused) gives the slice's characters per token.
+        sizes = {}
+
+        def size(kind, i, tokens):
+            key = (kind, i)
+            index = i + (0 if kind == "decode" else 50)
+            chars = int(max(16, tokens - overhead) * 4)
+            for _ in range(2):
+                usage, _ = request(port, prompt_of(blob, chars, index, f"probe {kind} {i} {chars}"), 1)
+                got = max(1, usage.get("prompt_tokens", tokens) - overhead)
+                chars = int(chars * max(16, tokens - overhead) / got)
+            sizes[key] = chars
+        for i in range(prompts):
+            size("decode", i, depth)
+            size("prefill", i, prompt_len)
+        sampler.mark("warmup", t0, sampler.now())
         out_tokens = max(32, min(256, depth // 8))
         rows = []
 
         def timed(kind, i, tokens, max_tokens):
-            chars = int(max(16, tokens - overhead) * per_token)
+            chars = sizes[(kind, i)]
             t_a = sampler.now()
-            usage, timings = request(port, prompt_of(blob, chars, i + (0 if kind == "decode" else 50)),
-                                     max_tokens)
+            usage, timings = request(port, prompt_of(blob, chars, i + (0 if kind == "decode" else 50),
+                                                     f"run {kind} {i}"), max_tokens)
             t_b = sampler.now()
             prompt_ms = timings.get("prompt_ms") or 0
             predicted_ms = timings.get("predicted_ms") or 0

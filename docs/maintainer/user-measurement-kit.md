@@ -39,7 +39,8 @@ constant.
    - Records the compute processes before and after.
    - Holds a 5 s idle window under telemetry.
    - Sends a warm-up request.
-   - Measures the chat template's overhead, then the characters per token.
+   - Measures the chat template's overhead, then sizes each timed prompt on its own slice of text: up to two
+     probes per slice, each led by its own nonce line so nothing of a probe is reused.
    - **Decode:** `--prompts` (3) requests at the plan's decode depth (`choice.chosen.depth`), each answering `depth/8` tokens (32..256). Decode = `(predicted_n - 1) / predicted_ms`, from the server's own `timings` (serving.md).
    - **Prefill:** `--prompts` requests at the choice's typical prompt (`choice.task.prompt`, the length `prefill_tok_s` is priced at). Prefill = `prompt_n / prompt_ms`.
    - Every prompt is a distinct slice of the long text `tools/bench/perf_matrix.py` uses. A request with a reused prefix (`cache_n > 0`), or a decode request whose answer ended before half its tokens, is kept but excluded.
