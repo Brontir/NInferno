@@ -32,7 +32,7 @@ BOARDS = {g["id"].upper(): g for g in json.loads((ROOT / "src/core/data/gpu_fact
 GEN = {70: "volta", 75: "turing", 86: "ga10x", 89: "ada", 120: "gb20x"}
 SHARE = 0.30
 STANDS = {"l4070": "0x2782", "l4090": "0x2684", "l4060": "0x2805", "l5070": "0x2C05", "l5090": "0x2B85",
-          "l3060": "0x2504", "l2080": "0x1E07", "lgv100": "0x1DBA"}  # nvidia-smi pci.device_id, 29.10
+          "l3060": "0x2503", "l2080": "0x1E04", "lgv100": "0x1DBA"}  # the registry pairs' lab_board (by name below), not the stands' own ids (0x2504, 0x1E07: same rates)
 HARD_TAGS = {"q9b_q4km": "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae Q4_K_M",
              "g12_q4km": "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M",
              "oss20": "ggml-org/gpt-oss-20b-GGUF@15dcfc7e7c608c6161507211ed43c5b590801b4b MXFP4",
