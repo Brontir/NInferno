@@ -112,19 +112,25 @@ enum class WeightClass : std::uint8_t {
 // control, convolution and recurrent update, attention, the activations' quantize ahead of a vec or
 // MMQ call, sampling). One row: Qwen3.5-9B 145 + 167 = 312 (9.75 a layer), its Q8_0 177 + 191 = 368
 // (11.5), Gemma 4 12B 213 + 249 = 462 (9.6), the same on every card. At 2-8 rows Ada's counts (the
-// reference generation's routes; the 5-8-row K-quant routes launch 167-215 small kernels by card). A
-// family or class without a row takes Qwen 3.5's K-quant row by layers (transferred).
+// reference generation's routes; the 5-8-row K-quant routes launch 167-215 small kernels by card).
+// Once a step, not a layer (the census's positions outside the layers): the output head's GEMV, and
+// the input gather, the final norm and the sampling (Qwen 3.5: the scatter, top-k, sample, copy and
+// finite check, 7; Gemma 4 also its embedding scale, logit soft-cap and two scalar sets, 9). Another
+// size of the family scales only the rest by its layers. A family or class without a row takes the
+// family's K-quant row, else Qwen 3.5's (transferred).
 struct DecodeLaunches {
     std::string_view family;
     WeightClass weights;
     double layers;   // the census model's
     double gemv;     // the weight-reading kernels a step (the same at every row count)
     double small[3]; // the small ones at 1, 2-4 and 5-8 rows
+    double fixed_gemv;  // of them once a step (the output head)
+    double fixed_small; // of the small ones once a step (gather, final norm, sampling)
 };
 inline constexpr DecodeLaunches kDecodeLaunches[] = {
-    {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}},
-    {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}},
-    {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}},
+    {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}, 1, 7},
+    {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}, 1, 7},
+    {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
 };
 
 // What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one row,
