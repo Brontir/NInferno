@@ -1403,6 +1403,12 @@ ahead of the best W4A8 tile on the RTX 5090 and the RTX 4090 for every 9B shape 
    a large share of the time to the first token. A pass that reads the weights once for the tail's
    few tokens whatever its boundaries, or the boundary states taken from the chunk that crosses them,
    would keep the restore exact without the extra reads.
-3. Gemma's ring checkpoint stalls the stream for the whole copy: a device-side staging copy
-   (340 MB at the DRAM rate, under 1 ms) released to the host in the background, and only the
-   ring's filled rows for a prompt shorter than the window, would take it off the request.
+3. Gemma's ring checkpoint stalls the stream for the whole copy. The capture takes
+   `CaptureStatePlacement::HostSnapshot` (qwen3_5/program/transactions/capture.cpp,
+   `capture_prefers_device`) because no Device state image is free: a run of distinct requests
+   leaves the cached images holding earlier requests' checkpoints, and the policy counts only free
+   images, not ones it could evict. The continuing request then writes the very replica being
+   copied, so it waits for the 340 MB to reach the host. A Device fork into an evictable image
+   (a copy at the DRAM rate, under 1 ms, released to the host in the background) or only the ring's
+   filled rows for a prompt shorter than the window would take it off the request; which
+   checkpoint to evict is the cache policy's call.
