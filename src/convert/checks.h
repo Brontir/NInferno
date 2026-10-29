@@ -6,6 +6,7 @@
 
 #include "convert/files.h"
 #include "convert/model.h"
+#include "spec/round_cost.h"
 
 #include <cstdint>
 #include <filesystem>
@@ -106,10 +107,14 @@ struct PlannedProposal {
 };
 // `mtp_read`: what an MTP pass reads (a MoE MTP layer's routed experts at one row's share;
 // negative: `mtp_bytes`), `mtp_bytes` what the MTP layers store (out of the target's pass).
+// `target`: the target's verify pass as default_proposal prices it (its stored layers and head,
+// the MTP layers and the token embedding left out, a MoE's routed experts apart, read at the
+// verified rows' share: spec::moe_read_fraction); nullptr: `target_bytes` less the MTP layers.
 [[nodiscard]] PlannedProposal planned_proposal(double head_bytes, double target_bytes,
                                                double mtp_bytes, double drafter_bytes,
                                                std::uint64_t vocab, std::uint64_t hidden,
-                                               bool moe = false, double mtp_read = -1);
+                                               bool moe = false, double mtp_read = -1,
+                                               const spec::PassFacts* target = nullptr);
 [[nodiscard]] inline std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
                                                           double mtp_bytes, double drafter_bytes,
                                                           std::uint64_t vocab, std::uint64_t hidden,

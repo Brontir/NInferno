@@ -223,9 +223,35 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
     if (inputs.proposal_drafter_bytes <= 0 && mtp_bytes <= 0) { return {}; }
     const double head = static_cast<double>(
         inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
+    // The target's verify pass as the converter prices it (Codex on #199): its weights less the
+    // MTP layers and an untied token embedding (the header's, else the vocabulary's rows at the
+    // weights' bytes per parameter), a MoE's routed experts apart (the model's routed share).
+    std::optional<spec::PassFacts> target;
+    {
+        double embedding = static_cast<double>(m.embedding_bytes);
+        if (embedding == 0 && !facts.shape.tied_embeddings && m.params > 0) {
+            embedding = static_cast<double>(m.vocab) * static_cast<double>(m.hidden) *
+                        static_cast<double>(m.weight_bytes) / m.params;
+        }
+        const double stored = static_cast<double>(m.weight_bytes) - mtp_bytes - embedding;
+        const bool routed   = facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
+                            facts.shape.routed_expert_params > 0 && m.params > 0;
+        if (stored > 0 && (embedding > 0 || routed)) {
+            spec::PassFacts pass;
+            if (routed) {
+                pass.expert_bytes =
+                    stored * std::min(1.0, facts.shape.routed_expert_params / m.params);
+                pass.experts      = facts.shape.experts;
+                pass.experts_used = facts.shape.experts_per_token;
+            }
+            pass.bytes = stored - pass.expert_bytes;
+            target     = pass;
+        }
+    }
     return convert::planned_proposal(head, static_cast<double>(m.weight_bytes), mtp_bytes,
                                      inputs.proposal_drafter_bytes, m.vocab, m.hidden,
-                                     facts.shape.experts > 0, mtp_read);
+                                     facts.shape.experts > 0, mtp_read,
+                                     target ? &*target : nullptr);
 }
 
 } // namespace

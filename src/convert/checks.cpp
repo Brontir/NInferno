@@ -622,16 +622,20 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
 
 PlannedProposal planned_proposal(double head_bytes, double target_bytes, double mtp_bytes,
                                  double drafter_bytes, std::uint64_t vocab, std::uint64_t hidden,
-                                 bool moe, double mtp_read) {
+                                 bool moe, double mtp_read, const spec::PassFacts* target_pass) {
     if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return {}; }
     // A plan prices many rows and probes: the ranking is read once per vocabulary, each answer
     // kept (the same facts, the same bytes).
     if (mtp_read < 0) { mtp_read = mtp_bytes; }
-    using Key = std::tuple<double, double, double, double, std::uint64_t, std::uint64_t, bool, double>;
+    const spec::PassFacts pass = target_pass ? *target_pass : spec::PassFacts{};
+    using Key = std::tuple<double, double, double, double, std::uint64_t, std::uint64_t, bool, double,
+                           bool, double, double, std::int32_t, std::int32_t>;
     static std::mutex mutex;
     static std::map<std::uint64_t, std::vector<std::int64_t>> rankings; // by vocabulary
     static std::map<Key, PlannedProposal> answers;
-    const Key key{head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe, mtp_read};
+    const Key key{head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe, mtp_read,
+                  target_pass != nullptr, pass.bytes, pass.expert_bytes, pass.experts,
+                  pass.experts_used};
     std::lock_guard lock(mutex);
     if (const auto it = answers.find(key); it != answers.end()) { return it->second; }
     auto ranking = rankings.find(vocab);
@@ -667,19 +671,27 @@ PlannedProposal planned_proposal(double head_bytes, double target_bytes, double 
         // The target's weights hold its head already (a GGUF's tensor table counts output.weight);
         // the rows the most demanding drafter asks for, as default_proposal keeps.
         const auto& totals  = ranking->second;
-        const double target = std::max(target_bytes - mtp_bytes, full);
-        std::uint64_t rows  = 0;
+        // The verify of `depth` drafts: default_proposal's where the pass is given (Codex on #199:
+        // the routed experts at the verified rows' share, the embedding out), else the stored
+        // target less its MTP layers; never below the head it holds.
+        const auto verify = [&](std::int32_t depth) {
+            const double read =
+                target_pass ? pass.bytes + pass.expert_bytes * spec::moe_read_fraction(pass, depth + 1)
+                            : target_bytes - mtp_bytes;
+            return std::max(read, full);
+        };
+        std::uint64_t rows = 0;
         if (mtp_bytes > 0) {
             const std::int32_t k = spec::kDraftHeadMtpDepth;
             const auto asked =
-                spec::draft_head_rows(totals, k * full / (target + k * (mtp_read + full)), k).rows;
+                spec::draft_head_rows(totals, k * full / (verify(k) + k * (mtp_read + full)), k).rows;
             out.mtp = asked != 0;
             rows    = std::max(rows, asked);
         }
         if (drafter_bytes > 0) {
-            const auto asked = spec::draft_head_rows(totals, full / (target + drafter_bytes + full),
-                                                     spec::kDraftHeadDepth)
-                                   .rows;
+            const std::int32_t k = spec::kDraftHeadDepth;
+            const auto asked =
+                spec::draft_head_rows(totals, full / (verify(k) + drafter_bytes + full), k).rows;
             out.dflash = asked != 0;
             rows       = std::max(rows, asked);
         }
