@@ -272,6 +272,96 @@
    "small_us": 1162.9
   },
   {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 15818.1,
+   "small_kernels": 167,
+   "small_us": 577.8
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 145,
+   "gemv_us": 16418.4,
+   "small_kernels": 295,
+   "small_us": 992.7
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 145,
+   "gemv_us": 17819.4,
+   "small_kernels": 167,
+   "small_us": 2033.2
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 25321.7,
+   "small_kernels": 191,
+   "small_us": 515.2
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 2,
+   "gemv_kernels": 177,
+   "gemv_us": 25978.2,
+   "small_kernels": 367,
+   "small_us": 1007.0
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 8,
+   "gemv_kernels": 177,
+   "gemv_us": 28970.7,
+   "small_kernels": 367,
+   "small_us": 2147.5
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 21952.2,
+   "small_kernels": 249,
+   "small_us": 949.9
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 213,
+   "gemv_us": 22828.4,
+   "small_kernels": 557,
+   "small_us": 1686.6
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 213,
+   "gemv_us": 25172.6,
+   "small_kernels": 345,
+   "small_us": 2720.6
+  },
+  {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q4_K_M",
