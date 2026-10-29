@@ -132,7 +132,7 @@ FUSED_EXPERTS = re.compile(r"\.experts\.\w+_proj$")  # a checkpoint's experts as
 
 def safetensors_format(name: str, dtype: str, bits: int) -> str:
     """A safetensors weight's published format: nvfp4 (ModelOpt's uint8 weight, compressed-tensors'
-    weight_packed), mxfp4 (_blocks), int<bits> (AWQ / GPTQ qweight, compressed-tensors' int32
+    weight_packed; mxfp4 where its weight_scale is E8M0, parse_safetensors_header), mxfp4 (_blocks), int<bits> (AWQ / GPTQ qweight, compressed-tensors' int32
     weight_packed), fp8, else its dtype (bf16, f16, f32)."""
     if dtype == "U8" and "_blocks" in name:
         return "mxfp4"
@@ -164,8 +164,9 @@ def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) 
         fused = FUSED_EXPERTS.search(name) is not None
         if not (name.endswith(WEIGHT_SUFFIX) or fused):
             return None
-        rank = len(dims) - (1 if fmt == "mxfp4" else 0)
-        if rank != (3 if fused or (fmt == "mxfp4" and ".experts" in name) else 2):
+        blocks = name.endswith("_blocks")  # gpt-oss MXFP4: [(experts,) n, k/32, 16]
+        rank = len(dims) - (1 if blocks else 0)
+        if rank != (3 if fused or (blocks and ".experts" in name) else 2):
             return None
         count = dims[0] if rank == 3 else 1
         if name.endswith("qweight"):
@@ -173,7 +174,7 @@ def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) 
                 return None
             n = dims[1] if method == "gptq" else elems // max(1, dims[0])
         else:
-            n = dims[-3] if fmt == "mxfp4" else dims[-2]
+            n = dims[-3] if blocks else dims[-2]
         k = elems // max(1, n * count)
     if k < 32 or n < 1 or n * k * count != elems:
         return None
@@ -464,7 +465,10 @@ def parse_safetensors_header(header: dict, bits: int) -> tuple[dict, dict, dict]
         elif v["dtype"] == "U8" and (k.endswith((".weight", "weight_packed")) or "_blocks" in k):
             e *= 2  # two 4-bit values a byte (ModelOpt NVFP4, compressed-tensors NVFP4, MXFP4)
         tensors[k], elems[k] = b - a, e
-        shapes[k] = [safetensors_format(k, v["dtype"], bits), list(v["shape"])]
+        fmt = safetensors_format(k, v["dtype"], bits)
+        if fmt == "nvfp4" and (header.get(k.rsplit(".", 1)[0] + ".weight_scale") or {}).get("dtype") == "U8":
+            fmt = "mxfp4"  # compressed-tensors MXFP4: the same packed codes, E8M0 (uint8) block scales
+        shapes[k] = [fmt, list(v["shape"])]
     return tensors, elems, shapes
 
 

@@ -307,6 +307,13 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(shapes["b.weight_packed"], ["nvfp4", [4]])
         self.assertEqual(shapes["b.weight_scale"], ["fp8", [1]])
         self.assertEqual(shapes["c.weight"], ["bf16", [3]])
+        # compressed-tensors MXFP4: the same uint8 weight_packed, its block scales E8M0 (uint8).
+        mx = {"d.weight_packed": {"dtype": "U8", "shape": [512, 128], "data_offsets": [0, 65536]},
+              "d.weight_scale": {"dtype": "U8", "shape": [512, 8], "data_offsets": [65536, 69632]}}
+        _, elems, shapes = round_facts.parse_safetensors_header(mx, 4)
+        self.assertEqual(shapes["d.weight_packed"], ["mxfp4", [512, 128]])
+        self.assertEqual(round_facts.linear_shape("d.weight_packed", "mxfp4", [512, 128],
+                                                  elems["d.weight_packed"], "compressed-tensors"), (512, 256, 1))
 
     def test_gguf_sizes_from_offsets(self):
         def s(text):
