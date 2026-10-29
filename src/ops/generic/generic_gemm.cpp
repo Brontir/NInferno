@@ -552,8 +552,7 @@ std::int32_t vec_rule_max_tokens() {
     return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
 }
 
-// The widths of the band rule above (the dense tuner's R8 domain, r8_tunable, keeps it).
-bool vec_band(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
@@ -626,6 +625,15 @@ std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilo
     return std::nullopt;
 }
 
+} // namespace
+
+// NOT USED BY THE SELECTOR. The register MMA is priced here as the best one-tile schedule
+// (w1x4 / w1x8 / w1x16 at the bytes and the counted instructions), which is wrong for the
+// schedule heuristic_rmma actually runs: on long-K shapes that schedule streams DRAM at 57..77 %
+// (RTX 4070 Ti, Q6_K 3840x15360 T = 5: w1x4 171 us, w1x8 149, w1x16 121 against 108 priced) for
+// a reason not yet known (its bytes in flight are 13x Little's law). Verify picks stay the band
+// rule until the schedule's own efficiency is a fact.
+//
 // A verify call's time on the vector kernel or on the one-tile register MMA (T = 2..8, the ggml
 // formats both read): the payload's DRAM time tb and its warp instructions' issue time ti (four
 // schedulers a SM issuing one instruction each a clock: every SM from Volta on), combined as
@@ -658,33 +666,7 @@ std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QT
     return std::sqrt(tb * tb + ui * ui) + (vector ? 2.0 : 1.0) * kVerifyLaunchSeconds;
 }
 
-// The verify widths' kernel between the vector kernel and the one-tile register MMA: where the
-// BF16 MMA is native and verify_route_seconds prices both, the cheaper of the two at T = 2..8
-// (a call priced onto the register MMA takes it, not R8: the band rule never left those widths to
-// R8 for a format the vector kernel reads); elsewhere the band rule (T <= 4 with tensor mma.sync,
-// vec_rule_max_tokens' widths without: Volta), past it nothing.
-enum class VerifyPick { None, Vector, RegisterMma };
-
-VerifyPick verify_pick(const Problem& problem, const Weight& w, std::int32_t tokens) {
-    if (tokens < 2 || !vec_call(w, problem.policy, tokens)) return VerifyPick::None;
-    const std::int32_t widest = vec_max_tokens();
-    if (widest > ggml_mmq::kVecMaxColumns) {
-        return tokens <= widest ? VerifyPick::Vector : VerifyPick::None;
-    }
-    try {
-        const auto& d = device_class();
-        if (d.features.mma_bf16_native) {
-            const double bytes = static_cast<double>(w.payload_bytes);
-            const auto vec =
-                verify_route_seconds(d, true, problem.qtype, problem.epilogue, bytes, tokens);
-            const auto rmma =
-                verify_route_seconds(d, false, problem.qtype, problem.epilogue, bytes, tokens);
-            if (vec && rmma) return *vec < *rmma ? VerifyPick::Vector : VerifyPick::RegisterMma;
-        }
-    } catch (const std::exception&) {
-    }
-    return tokens <= kVecRuleMaxTokens ? VerifyPick::Vector : VerifyPick::None;
-}
+namespace {
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
 // capacity bound counts it too, or a workspace sized to the bound ran the call A16 (a vector call
@@ -2772,27 +2754,14 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
         if (route_admits(r, weight, problem.policy)) return r;
     }
     // A8 where the policy allows it: ggml's vector kernel for speculative verify (2..8 tokens) of
-    // the ggml block formats it decodes (verify_pick), R8 for decode and for the verify of the other
+    // the ggml block formats it decodes (vec_rule), R8 for decode and for the verify of the other
     // formats with an R8 codec, W4A8 from 17 tokens; the rest stays A16. The vector kernel streams
     // each weight row once for every token of the call and runs the epilogue in place: on the RTX
     // 5090 ISTA IQ3_S MTP3 it beat the R8 and A16 schedules the dense tuner picked there (C1 166 ->
     // 174 tok/s), whose L2-cold timings of one call at a time miss the stream of a verify step. The
     // tuner still replaces it where a route beats it by its margin (Muse Glimmer 30B Q4_K_M: the
     // rule alone lost C1 by 19 %).
-    switch (verify_pick(problem, weight, tokens)) {
-    case VerifyPick::Vector:
-        return Route{Family::GgmlVec, 0};
-    case VerifyPick::RegisterMma: {
-        const Route r{Family::RegisterMma,
-                      static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, false))};
-        if (route_admits(r, weight, problem.policy)) return r;
-        // No register-MMA schedule admits this shape: the band rule's route, as before pricing.
-        if (tokens <= kVecRuleMaxTokens) return Route{Family::GgmlVec, 0};
-        break;
-    }
-    case VerifyPick::None:
-        break;
-    }
+    if (vec_rule(weight, problem.policy, tokens)) return Route{Family::GgmlVec, 0};
     // From 17 tokens outside the prefill profile the cost model's route of either activation class
     // (cost_route, a8_candidates); the rules below where the device reports no clocks.
     if (!prefill_band && tokens >= 17 && problem.qtype != QType::NVFP4) {
@@ -2987,8 +2956,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
     // ggml's matrix kernel stands in for the heuristic only: a route table's or the dense tuner's
     // A16 schedule keeps its shape.
     const bool a8_wide = tokens >= 17 && allows_w4a8(weight, problem.policy);
-    const VerifyPick pick = verify_pick(problem, weight, tokens);
-    const bool vec        = pick == VerifyPick::Vector;
+    const bool vec     = vec_rule(weight, problem.policy, tokens);
     const bool a8      = a8_wide || vec || r8_call(weight, problem.policy, tokens) ||
                     mmq_verify_rule(weight, problem.policy, problem.n, tokens);
     const auto tuned   = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
@@ -3006,15 +2974,13 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
     // The dense tuner's choice at decode widths (generic_tune.cpp): an A16 schedule for an A16 call,
     // an R8 schedule for an R8 decode call; never a W4A8 call.
     if (!a8_wide) {
-        // At a priced verify width (verify_pick: the vector kernel or the register MMA) any timed
-        // route that beat the pick may stand in.
+        // Under the vector kernel's rule any timed route that beat it may stand in.
         const bool r8_ok = r8_call(weight, problem.policy, tokens) ||
                            r8_verify_tunable(weight, problem.policy, tokens);
-        const bool priced = pick != VerifyPick::None;
         if (const auto dense = tuned_dense_route(problem, tokens);
             dense && route_admits(*dense, weight, problem.policy) &&
             (dense->family == Family::R8Mma ? r8_ok
-                                            : priced || !r8_call(weight, problem.policy, tokens))) {
+                                            : vec || !r8_call(weight, problem.policy, tokens))) {
             return *dense;
         }
     }
@@ -3035,13 +3001,9 @@ bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens
            r8_verify_compiled(w.qtype);
 }
 
-bool ggml_vec_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    return tokens >= 2 && vec_call(w, policy, tokens);
-}
-
 bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return r8_verify_tunable(w, policy, tokens) ||
-           (vec_band(w, policy, tokens) && r8_call(w, policy, tokens));
+           (vec_rule(w, policy, tokens) && r8_call(w, policy, tokens));
 }
 
 bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens) {
