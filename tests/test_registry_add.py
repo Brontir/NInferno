@@ -327,6 +327,13 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(elems, {"x": 64, "y": 32})
         self.assertEqual(shapes, {"x": ["gguf:type99", [64]], "y": ["gguf:F16", [32]]})
 
+    def test_nested_quantization_and_newer_ggml_types(self):
+        meta, bits = round_facts._config_meta({"text_config": {"quantization_config": {"quant_method": "gptq",
+                                                                                       "bits": 4}}})
+        self.assertEqual((meta["quant_method"], bits), ("gptq", 4))
+        self.assertEqual(round_facts.GGML_NAMES[40], "NVFP4")
+        self.assertEqual(round_facts.GGML_BLOCKS[40], (64, 36))
+
     def test_norms_by_role_and_int8(self):
         # Nemotron-H's grouped SSM norm is 2-D, no linear; compressed-tensors W8A16 reads int8.
         self.assertIsNone(round_facts.linear_shape("blk.0.ssm_norm.weight", "gguf:F32", [512, 8], 4096, ""))
