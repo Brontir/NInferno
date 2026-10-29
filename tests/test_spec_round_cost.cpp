@@ -279,9 +279,10 @@ int main() {
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
         std::string own_note;
         const auto own = sp::profile_for_target(both, "sm89", {}, &rtx4070ti, &own_note);
-        expect(own_note.empty() && own.thinking.config == agreed.thinking.config &&
+        expect(own_note == "rounds: the median of 2 lab cards of ada" &&
+                   own.thinking.config == agreed.thinking.config &&
                    own.overall.config == agreed.overall.config,
-               "a lab board keeps the agreeing cards' measured profile");
+               "a lab board takes its generation's agreeing cards' median rounds: " + own_note);
     }
     // One card's two tunes (spec-tune measures one drafter at a time), each with its own mode's
     // facts: pooled, both drafters are priced, whatever the records' order.

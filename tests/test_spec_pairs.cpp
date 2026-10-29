@@ -131,7 +131,7 @@ int main() {
             median = median && std::abs(r / base.at(label) - 1.1) < 1e-9; // 1, 1, 1.1, 1.2, 1.3
         }
         expect(median, "no facts and no lab card of the generation: the median of every lab card's R");
-        expect(note == "transferred: median of 5 lab cards of other generations (no facts for turing)",
+        expect(note == "transferred: median of 5 lab cards of other generations (no card rates)",
                "the transfer is said: " + note);
         expect(turing.thinking.config.k <= sp::kPortableDepth && turing.load.size() == 1,
                "a transfer takes the portable depths, one request at a time");
@@ -154,6 +154,13 @@ int main() {
         const auto some = sp::profile_round_costs(sp::profile_for_target({&a, &partial, &e}, "sm75"));
         expect(some.contains("dflash:7") && std::abs(some.at("dflash:7") / base.at("dflash:7") - 1.15) < 1e-9,
                "a configuration's median over the cards that measured it (1, 1.3)");
+        // The base is the record that measured the most configurations: a card that measured only
+        // part of the menu (and sorts first by class id) does not drop the others' configurations.
+        auto first_part = on(ada_q4, "aa000:1sm", "sm86", 1.0);
+        std::erase_if(first_part.tune.measurements,
+                      [](const auto& m) { return m.config.label() == "dflash:7"; });
+        const auto kept = sp::profile_round_costs(sp::profile_for_target({&first_part, &e}, "sm75"));
+        expect(kept.contains("dflash:7"), "a configuration the first card did not measure stays");
         // Two lab cards of the generation: their median, on the first by GPU class id; their
         // order never matters either.
         std::string home_note;
