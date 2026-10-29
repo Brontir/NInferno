@@ -324,10 +324,13 @@ def _board_chips() -> dict:
 
 
 def pair_chip(pair: dict) -> str:
-    """A pair's chip: its board's in the facts table (a user's board, a lab board), else its
-    tune's GPU class's ("tu102:68sm" -> "tu102")."""
-    return (chip_of_board(pair.get("board")) or chip_of_board(pair.get("lab_board"))
-            or chip(((pair.get("tune") or {}).get("key") or {}).get("gpu", "")))
+    """A pair's chip: its board's in the facts table (a user's board, a lab board); a pair with
+    no board, its tune's GPU class's ("tu102:68sm" -> "tu102"). A board the facts table does not
+    know stays unknown (""), never inferred from the class."""
+    board = pair.get("board") or pair.get("lab_board")
+    if board:
+        return chip_of_board(board)
+    return chip(((pair.get("tune") or {}).get("key") or {}).get("gpu", ""))
 
 
 def pair_of(tune: dict, manifest: dict, target: str, quant: str, weights: list[str]) -> dict:

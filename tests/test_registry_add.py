@@ -439,6 +439,14 @@ class UserRun(unittest.TestCase):
         registry_add.put_user_pair({"pairs": [lab]}, user, pair)
         self.assertEqual(len(user["user_pairs"]), 1)
 
+    def test_an_unknown_board_is_refused(self):
+        # A board the facts table does not list: its chip is unknown, not the class's.
+        pair = registry_add.user_pair(user_run(), "")
+        pair["board"] = "0xFFFF"
+        with self.assertRaises(SystemExit) as e:
+            registry_add.put_user_pair({"pairs": []}, {}, pair)
+        self.assertIn("chip is unknown", str(e.exception))
+
     def test_lab_boards_are_their_classes_chips(self):
         for gpu, board in registry_add.LAB_BOARDS.items():
             self.assertEqual(registry_add.chip_of_board(board), registry_add.chip(gpu), gpu)
