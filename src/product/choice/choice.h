@@ -39,6 +39,7 @@
 #include <functional>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::product::choice {
@@ -77,6 +78,11 @@ struct ModelFacts {
     int experts = 0, experts_per_token = 0;
     double routed_expert_params = 0;  // all routed experts' weights (0: dense)
     double input_table_params = 0;    // an untied input embedding table (a step reads one row; 0 when tied)
+    // Its bytes as stored (a GGUF's token_embd may be another format than the average: Qwen3.5-9B
+    // Q4_K_M stores it Q4_K, 4.5 bits against 5.3 on average); 0: unknown, input_table_params at
+    // the average bits stands in.
+    double input_table_bytes = 0;
+    std::uint32_t layers = 0;         // the trunk's layers (a decode step launches kernels per layer)
     // Per-token and per-lane bytes of the state a step reads, by storage
     // (runtime::plan_kv_bytes_per_token, plan_ring_bytes_per_token, plan_state_bytes).
     std::function<std::uint64_t(KvCacheStorage)> kv_bytes_per_token;
@@ -104,7 +110,26 @@ struct QuantOption {
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
+    // The decode routes its weights take (weight_class_of): an Other's speed is transferred and it
+    // wins no decision on worth (plan_quants).
+    WeightClass weights = WeightClass::KQuant;
 };
+
+// The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
+[[nodiscard]] std::string_view generation_of(const CardFacts& card) noexcept;
+
+// The weight class of a quantization: from its weight formats where known (as
+// artifact::format_name spells them), else from its label (a hub row: Q4_K / Q5_K / Q6_K mixes;
+// Q8, Q8_0 and unsloth's Q8_K_XL, which is Q8_0 with 16-bit tensors). A K-quant mix may carry Q8_0
+// and 16-bit tensors; anything else is Other.
+[[nodiscard]] WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label);
+
+// Whether this card's generation measured the class's decode routes on two cards (kRowsEta).
+[[nodiscard]] bool class_measured(const CardFacts& card, WeightClass weights) noexcept;
+
+// The band within which two quantizations' worths are a tie on this card's decisions (the
+// generation's measured decode error, kDecodePredictionError; 0 where none is measured).
+[[nodiscard]] double worth_band(const CardFacts& card) noexcept;
 
 // What the user asks: the context each stream holds of its own (the contexts in turn: a pinned
 // one, or Auto's targets runtime::quant_own_targets gives), the streams, the request shape.
@@ -155,7 +180,8 @@ struct Candidate {
 struct Speed {
     double decode_per_stream = 0; // tokens a second each stream decodes at the context given
     double prefill           = 0; // prompt tokens a second
-    bool transferred         = false; // a constant came from another generation (kTransferGeneration)
+    bool transferred         = false; // a constant came from another generation (kTransferGeneration),
+                                      // or rests on one lab card of this one
 };
 
 // Decode at `context` tokens in the window with `concurrency` rows, and prefill of a `prompt`

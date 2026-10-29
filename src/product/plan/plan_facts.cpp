@@ -714,7 +714,7 @@ PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t 
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
     Geometry g      = geometry_of_gguf(head.metadata);
     bool has_output = false;
-    std::set<std::string> formats;
+    std::set<std::string> formats, layer_formats;
     std::uint64_t tensor_bytes = 0;
     // The NextN blocks after the trunk (blk.<b>.* for b at least the trunk's layers): the MTP
     // layers the converter moves to the mtp component, uploaded under MTP only.
@@ -731,12 +731,14 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         return block;
     };
     double elements = 0;
+    std::uint64_t input_table_bytes = 0;
     std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
         if (t.name == "token_embd.weight") { embedding_bytes = t.bytes; }
         elements += static_cast<double>(t.elements());
+        if (t.name == "token_embd.weight") { input_table_bytes = t.bytes; }
         const auto block = block_of(t.name);
         const bool mtp   = g.mtp && block && *block >= g.layers;
         if (mtp) { mtp_bytes += t.bytes; }
@@ -749,6 +751,10 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
         }
         formats.insert(format_of_ggml(t.type));
+        // The trunk's layers: not the tables, not the NextN blocks (priced apart, off plain decode).
+        if (t.name != "token_embd.weight" && t.name != "output.weight" && !mtp) {
+            layer_formats.insert(format_of_ggml(t.type));
+        }
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
     // its own tensors, so the listed file sizes stand for the rest.
@@ -760,10 +766,13 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     auto out                 = finish(g, whole ? tensor_bytes : file_bytes,
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
+    out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
         out.shape.base_models = {std::move(*base)};
     }
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
+    // The input table apart from the output head (a part that lists output.weight says so).
+    out.shape.input_table_bytes = has_output ? input_table_bytes : 0;
     out.model.head_bytes     = !whole ? 0 : has_output ? output_bytes : embedding_bytes;
     out.model.embedding_bytes = has_output ? embedding_bytes : 0;
     out.model.token_table_bytes = embedding_bytes;
@@ -796,6 +805,34 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     enum Part : std::uint8_t { Vision, Mtp, Drafter, Proposal, Other, Parts };
 
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
+    // The input table's objects that the output head does not share (an untied table: a decode
+    // step gathers one row of it).
+    std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
+    for (const auto& [name, binding] : dir.bindings) {
+        const std::uint8_t bit = name == "text/token_embedding" ? 1 : name == "text/output_head" ? 2 : 0;
+        for (const auto& piece : binding.parts) {
+            if (bit != 0 && piece.object.index < table.size()) { table[piece.object.index] |= bit; }
+        }
+    }
+    // The untied input table's bytes: the embedding binding's own element range of each object
+    // the head does not share (a packed object holds other parameters' elements too).
+    std::uint64_t input_table_bytes = 0;
+    if (const auto embedding = dir.bindings.find("text/token_embedding");
+        embedding != dir.bindings.end()) {
+        for (const auto& piece : embedding->second.parts) {
+            const std::size_t i = piece.object.index;
+            if (i >= dir.objects.size() || table[i] != 1) { continue; }
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
+            if (tensor == nullptr) { continue; }
+            double n = tensor->shape.empty() ? 0 : 1;
+            for (const std::uint64_t d : tensor->shape) { n *= static_cast<double>(d); }
+            const double share =
+                piece.end > piece.begin && n > 0
+                    ? std::min(1.0, static_cast<double>(piece.end - piece.begin) / n)
+                    : 1.0;
+            input_table_bytes += static_cast<std::uint64_t>(share * static_cast<double>(tensor->bytes));
+        }
+    }
     for (const auto& [name, binding] : dir.bindings) {
         const Part part = starts_with(name, "vision/")                                    ? Vision
                           : starts_with(name, "mtp/")                                     ? Mtp
@@ -812,7 +849,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     // GGUF's tensor table counts the model it converts from (bits_per_weight's denominator on both
     // paths).
     double elements = 0;
-    std::set<std::string> formats;
+    std::set<std::string> formats, layer_formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
         if (tensor == nullptr) { continue; } // resources
@@ -826,6 +863,9 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         }
         bytes += tensor->bytes;
         formats.insert(tensor->format);
+        if (table[i] == 0 && !(alone && (m[Mtp] || m[Drafter] || m[Proposal]))) {
+            layer_formats.insert(tensor->format); // the trunk's layers
+        }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;
@@ -842,6 +882,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.vision_bytes      = vision_bytes;
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
+    out.shape.input_table_bytes = input_table_bytes;
     out.model.weight_elements   = elements;
     // The source quantization the converter recorded (a GGUF file name's label), where the
     // weights are still its encodings: a maintainer requantization (--maintainer-quantize) stores
@@ -865,6 +906,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         out.model.state.drafter = plan_drafter_state_of_config(it->second.config, out.model.hidden);
     }
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
+    out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     return out;
 }
 
@@ -891,10 +933,16 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
         return static_cast<std::uint64_t>(static_cast<long double>(part) * bytes / whole);
     };
     facts.model.mtp_bytes         = scaled(facts.model.mtp_bytes);
+    facts.shape.input_table_bytes = scaled(facts.shape.input_table_bytes);
     facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
     facts.model.embedding_bytes   = scaled(facts.model.embedding_bytes);
     facts.model.routed_expert_bytes     = scaled(facts.model.routed_expert_bytes);
     facts.model.mtp_routed_expert_bytes = scaled(facts.model.mtp_routed_expert_bytes);
+    // Another quantization's weight formats are not this file's: unknown (its label names them).
+    if (bytes != facts.model.weight_bytes) {
+        facts.shape.weight_formats.clear();
+        facts.shape.layer_formats.clear();
+    }
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;
     return facts;

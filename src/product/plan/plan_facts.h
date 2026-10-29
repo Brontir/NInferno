@@ -60,9 +60,17 @@ struct PlanTargetShape {
     double full_attention_width = 0, sliding_attention_width = 0;
     bool builtin_mtp = false; // MTP / NextN layers in the model (GGUF nextn_predict_layers)
     bool tied_embeddings = false; // the output head shares the input table (no separate rows to read)
+    // The untied input table's bytes as stored (a GGUF's token_embd, an artifact's
+    // text/token_embedding the output head does not share): a decode step gathers one row of it, so
+    // the speed estimate leaves it out of the weights a step reads. 0: unknown or tied.
+    std::uint64_t input_table_bytes = 0;
     // The quantized weight formats, as artifact::format_name spells them where known
     // ("ggml_q4_k", "mxfp4", "nvfp4", "bf16"); empty when unknown.
     std::vector<std::string> weight_formats;
+    // The same of the layers' tensors alone (not the input table or the output head, which a
+    // vocabulary option may store apart: --vocab q8 on BF16 layers): the routes a step's
+    // projections take (choice::weight_class_of).
+    std::vector<std::string> layer_formats;
     // The lineage the registry matches by, in order: a GGUF's general.base_model.0.repo_url
     // org/name, a checkpoint's model card / README base_model entries; empty when none is named.
     std::vector<std::string> base_models;

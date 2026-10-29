@@ -134,6 +134,10 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     out.sliding_attention_width = s.sliding_attention_width;
     out.input_table_params =
         s.tied_embeddings ? 0.0 : static_cast<double>(s.vocab_size) * static_cast<double>(s.hidden_size);
+    // As stored apart from the head (a tied model's converter may keep a table of its own: Gemma 4's
+    // artifact holds a Q8 input table beside its Q6 head); 0 where one object serves both.
+    out.input_table_bytes = static_cast<double>(s.input_table_bytes);
+    out.layers            = static_cast<std::uint32_t>(s.num_hidden_layers);
     out.kv_bytes_per_token = [m](KvCacheStorage storage) {
         return runtime::plan_kv_bytes_per_token(m, storage);
     };
@@ -196,6 +200,9 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
                                                                             : target);
     const auto& formats = facts.shape.weight_formats;
     quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
+    // The weight class: the file's own layers' formats where known (with_weights clears another
+    // quantization's; the vocabulary's apart), else the label (a hub row).
+    quant.weights = choice::weight_class_of(facts.shape.layer_formats, label);
     // An int8 route (AllowA8): any quantized format but the ternary and two-bit GGML blocks
     // (formats.cpp kept_block_policy: TQ1_0, TQ2_0, Q1_0 and Q2_0 keep BF16 activations).
     quant.int8_route = formats.empty() ||

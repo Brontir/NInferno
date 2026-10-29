@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -61,9 +62,26 @@ ch::ModelFacts model_of(const json& m) {
         return st.value(std::string(ninferno::recurrent_state_storage_name(s)),
                         st.at("f16").get<std::uint64_t>());
     };
-    out.recurrent               = true;
+    out.recurrent               = m.value("recurrent", true);
     out.full_attention_width    = m.value("full_attention_width", 0.0);
     out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
+    out.layers                  = m.value("layers", 0U);
+    if (m.contains("ring_bytes_per_token")) {
+        const json ring         = m.at("ring_bytes_per_token");
+        out.ring_bytes_per_token = [ring](KvCacheStorage s) {
+            return ring.at(std::string(ninferno::kv_cache_storage_name(s))).get<std::uint64_t>();
+        };
+        out.window = m.at("window").get<std::uint32_t>();
+    }
+    if (!out.recurrent) { out.state_bytes = nullptr; }
+    return out;
+}
+
+// The model at one quantization: its input table and speculation-only weights as stored.
+ch::ModelFacts model_at(const json& m, const std::string& quant) {
+    ch::ModelFacts out      = model_of(m);
+    const json& q           = m.at("quants").at(quant);
+    out.input_table_bytes   = q.value("input_table_bytes", 0.0);
     return out;
 }
 
@@ -82,20 +100,24 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     ch::QuantOption out;
     out.label           = label;
     out.bits_per_weight = q.at("bits_per_weight").get<double>();
-    out.weight_bytes    = q.at("weight_bytes").get<double>();
+    // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
+    out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
+    out.weights         = ch::weight_class_of({}, label);
     return out;
 }
 
-// Every fitted point within the fit's error: decode 5.2 % rms (worst 15.5 %); prefill (the 22K points,
-// at their prompt, attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
+// The 2026-10-23 points: an MoE's decode within its fit's error (kMoeDecode: 5.2 % rms, worst 15.5 %);
+// a dense model's one-stream decode from facts (its several-stream rows are wave aggregates, not a
+// step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
+// attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
-    double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0;
-    int decodes = 0, prefills = 0;
+    double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
+    int decodes = 0, prefills = 0, moes = 0;
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
-        const ch::ModelFacts mf = model_of(m);
-        const ch::CardFacts cf  = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
         const std::string q     = row.at("quant").get<std::string>();
+        const ch::ModelFacts mf = model_at(m, q);
+        const ch::CardFacts cf  = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
         const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv          = kv_of(row.at("kv").get<std::string>());
@@ -106,9 +128,15 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
                                          row.at("context").get<double>(), row.value("prompt", 0U));
         const double d    = s.decode_per_stream / row.at("decode").get<double>() - 1;
-        decode_sq += d * d;
-        decode_worst = std::max(decode_worst, std::abs(d));
-        ++decodes;
+        if (mf.moe()) {
+            moe_sq += d * d;
+            moe_worst = std::max(moe_worst, std::abs(d));
+            ++moes;
+        } else if (row.at("concurrency").get<std::uint32_t>() == 1) {
+            decode_sq += d * d;
+            decode_worst = std::max(decode_worst, std::abs(d));
+            ++decodes;
+        }
         if (!row.at("prefill").is_null() && row.at("kv").get<std::string>() == "int8") {
             const double p = s.prefill / row.at("prefill").get<double>() - 1;
             prefill_sq += p * p;
@@ -121,9 +149,104 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "decode " << decodes << " points: rms " << decode_rms * 100 << " %, worst "
               << decode_worst * 100 << " %; prefill " << prefills << ": rms " << prefill_rms * 100
               << " %, worst " << prefill_worst * 100 << " %\n";
-    check(decodes == 49 && prefills == 15, "the fixture's 49 decode points and 15 prefill points");
-    check(decode_rms < 0.055 && decode_worst < 0.16, "decode within the fit's error");
+    const double moe_rms = std::sqrt(moe_sq / moes);
+    std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
+    check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
+    check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
+    check(moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode within its fit's error");
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
+}
+
+// Plain decode from facts (choice_constants.h): every point of the 2026-10-28 campaign
+// (tests/fixtures/choice/decode_measured.json: 1/2/4/8 streams, Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4
+// 12B Q4_K_M, seven cards of four generations) within the model's spread; the generations that decide
+// at the error kDecodePredictionError states (the worth's tie band: derived here, not tuned).
+void decodes_from_facts(const json& fixture) {
+    double sq = 0, worst = 0;
+    int n = 0;
+    std::map<std::string, std::pair<double, int>> by_generation; // sum of ln(predicted / measured)^2
+    double own_worst = 0; // the worst on the generations that decide
+    for (const json& row : fixture.at("rows")) {
+        const json& m            = fixture.at("models").at(row.at("model").get<std::string>());
+        const std::string q      = row.at("quant").get<std::string>();
+        const ch::ModelFacts mf  = model_at(m, q);
+        const ch::CardFacts cf   = card_of(fixture.at("cards").at(row.at("card").get<std::string>()));
+        const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
+        ch::Candidate c;
+        c.kv    = kv_of(row.at("kv").get<std::string>());
+        c.ring  = kv_of(row.at("ring").get<std::string>());
+        c.state = row.at("state").get<std::string>() == "f32" ? RecurrentStateStorage::FP32 : RecurrentStateStorage::FP16;
+        const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
+                                         row.at("context").get<double>());
+        const double d    = s.decode_per_stream / row.at("decode").get<double>() - 1;
+        std::cout << "  " << row.at("card").get<std::string>() << ' ' << row.at("model").get<std::string>() << ' ' << q
+                  << " x" << row.at("concurrency").get<int>() << ": " << s.decode_per_stream << " against "
+                  << row.at("decode").get<double>() << " (" << d * 100 << " %)\n";
+        sq += d * d;
+        worst = std::max(worst, std::abs(d));
+        ++n;
+        const std::string gen = std::string(ch::generation_of(cf));
+        auto& g = by_generation[gen];
+        g.first += std::log1p(d) * std::log1p(d);
+        ++g.second;
+        if (gen == "ada" || gen == "gb20x") { own_worst = std::max(own_worst, std::abs(std::log1p(d))); }
+    }
+    const double rms = std::sqrt(sq / n);
+    std::cout << "decode from facts, " << n << " points: rms " << rms * 100 << " %, worst " << worst * 100 << " %\n";
+    check(n == 100 && rms < 0.04, "decode from facts within the model's spread");
+    // The generations whose rows rest on their own census: within 10 %; Turing (one card) within its
+    // stated rows' 6 % rms; Ampere (one card, its own census) within 3 %.
+    const auto gen_rms = [&](const char* g) {
+        const auto& v = by_generation[g];
+        return v.second > 0 ? std::sqrt(v.first / v.second) : 1.0;
+    };
+    check(by_generation["turing"].second == 12 && gen_rms("turing") < 0.06, "Turing's estimate within its rows' error");
+    check(by_generation["ga10x"].second == 12 && gen_rms("ga10x") < 0.03, "Ampere's estimate within its rows' error");
+    for (const ch::PredictionError& e : ch::kDecodePredictionError) {
+        const auto& g       = by_generation[std::string(e.generation)];
+        const double g_rms  = g.second > 0 ? std::sqrt(g.first / g.second) : 0;
+        std::cout << "  " << e.generation << ": " << g.second << " points, rms " << g_rms << " (stated " << e.rms << ")\n";
+        check(g.second >= 24 && std::abs(g_rms - e.rms) < 0.0015, "the stated decode error is the measured one");
+    }
+    check(own_worst < 0.10, "the deciding generations' worst point within 10 %");
+}
+
+// The kernels a step launches are the graph's (kDecodeLaunches against the nsys census,
+// tests/fixtures/choice/decode_census.json): every card's weight-reading kernels, and its small ones at
+// one row.
+void counts_the_kernels(const json& census) {
+    int n = 0;
+    for (const json& row : census.at("rows")) {
+        const std::string model = row.at("model").get<std::string>();
+        const std::string family = model.rfind("gemma", 0) == 0 ? "gemma4_text" : "qwen3_5_text";
+        const ch::WeightClass w  = ch::weight_class_of({}, row.at("quant").get<std::string>());
+        const auto* l = std::find_if(std::begin(ch::kDecodeLaunches), std::end(ch::kDecodeLaunches),
+                                     [&](const ch::DecodeLaunches& r) { return r.family == family && r.weights == w; });
+        if (l == std::end(ch::kDecodeLaunches)) {
+            check(false, "a census row has its family's launches");
+            continue;
+        }
+        check(row.at("gemv_kernels").get<double>() == l->gemv, "the weight-reading kernels a step: the census's");
+        if (row.at("streams").get<int>() == 1) {
+            check(row.at("small_kernels").get<double>() == l->small[0], "the small kernels at one row: the census's");
+        }
+        ++n;
+    }
+    check(n >= 68, "the census rows");
+    // The weight class from formats, else the label.
+    check(ch::weight_class_of({"ggml_q4_k", "ggml_q6_k", "q8_g32_fp16", "bf16"}, "") == ch::WeightClass::KQuant,
+          "a K-quant mix with Q8_0 and 16-bit tensors");
+    check(ch::weight_class_of({"q8_g32_fp16", "bf16"}, "") == ch::WeightClass::Q8, "Q8_0 alone");
+    check(ch::weight_class_of({"ggml_iq4_nl", "q8_g32_fp16", "ggml_q5_k"}, "Q4_K_M") == ch::WeightClass::IQ4,
+          "IQ4_NL: the formats decide over the label");
+    for (const char* q : {"IQ4_XS", "IQ4_NL", "UD-IQ4_XS"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::IQ4, "an IQ4 label"); }
+    for (const char* k : {"Q4_K_M", "UD-Q4_K_XL", "Q5_K_M", "UD-Q5_K_XL", "Q6_K", "q6_k"}) {
+        check(ch::weight_class_of({}, k) == ch::WeightClass::KQuant, "a K-quant label");
+    }
+    for (const char* q : {"Q8_0", "Q8", "q8_0", "UD-Q8_K_XL"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::Q8, "a Q8 label"); }
+    for (const char* o : {"UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_KV", "Q8_K_R8", "Q8_0_R8", "Q4_K_R4", "IQ4_XS_R8", "Q4_1", "Q4_0"}) {
+        check(ch::weight_class_of({}, o) == ch::WeightClass::Other, "an unmeasured label");
+    }
 }
 
 struct Bench {
@@ -359,7 +482,7 @@ void weighs_the_quantizations(const json& fixture) {
     check(!quant_term(q).measured && quant_term(q).kld > 0.01925, "a label at other bits: interpolated");
     q.label           = "custom";
     q.bits_per_weight = 5.5;
-    const double mid  = std::exp(std::log(0.01925) + (5.5 - 5.080) / (5.878 - 5.080) * (std::log(0.01061) - std::log(0.01925)));
+    const double mid  = std::exp(std::log(0.01828) + (5.5 - 5.321) / (5.674 - 5.321) * (std::log(0.01103) - std::log(0.01828)));
     check(std::abs(quant_term(q).kld - mid) < 1e-9 && !quant_term(q).measured, "5.5 bits: interpolated");
     q.bits_per_weight = 9.0;
     check(quant_term(q).kld == 0, "above Q8_0's bits: the reference");
@@ -668,6 +791,12 @@ int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
     reproduces_the_measurements(fixture);
+    {
+        std::ifstream campaign(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_measured.json");
+        decodes_from_facts(json::parse(campaign));
+        std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
+        counts_the_kernels(json::parse(census));
+    }
     prices_attention(fixture);
     chooses(fixture);
     decides_by_generation(fixture);

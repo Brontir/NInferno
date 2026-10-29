@@ -1293,6 +1293,100 @@ attempt 3, for reference).
   uses, loaded by index from memory; check `cuobjdump -res-usage` STACK before timing a kernel
   change.
 
+## 60. Decode speed from the bytes and the kernels of a step; a generation's one card prices only its own boards (28.10)
+
+The dense decode estimate (src/product/choice, PR #184) had one fitted term, kDenseDecode's share of
+the int8 peak. It is replaced by measured per-generation efficiencies of the kernels a step runs. A
+step of C rows takes:
+
+    t(C) = W / (eta_rows(C, class) * BW) + C * row_bytes / (eta_dram * BW) + N_gemv * t_gemv + N_small(C) * t_small
+
+- W: the weights the step reads. The input table, the MTP layers and the own drafter are left out.
+- N_gemv and N_small: the kernels the family's graph launches a step (nsys, a fact of the graph:
+  `kDecodeLaunches`). They are the same on every card:
+  - Qwen3.5-9B Q4_K_M: 145 + 167 (9.75 a layer);
+  - Q8_0: 177 + 191 (11.5 a layer);
+  - Gemma 4 12B: 213 + 249 (9.6 a layer).
+
+  The output head, the gather, the final norm and the sampling run once a step. They do not scale
+  with another size's layers.
+- t_gemv and t_small (`kKernelCost`): the census's measured residual, a kernel's time beyond its
+  bytes. Where the census explains it:
+  - Ada's plain R8: 1.5 us launch plus the 0.29 us graph gap;
+  - Blackwell: PDL hides the plain projections' launch (0.2 us median).
+- eta_rows: the share of DRAM a weight class's routes reach, by generation:
+  - K-quants: vec at 2-4 rows, rmma/MMQ at 5-8;
+  - Q8: R8 at every width.
+
+`fit_decode.py` derives every row from two fixtures: `decode_measured.json` and `decode_census.json`.
+
+**IQ4 (IQ4_XS, IQ4_NL) is its own class**, measured on two Ada cards (RTX 4060 Ti, 4070 Ti, 29.10):
+its graph launches 161 + 167 kernels a step (R8 IQ4 GEMVs), and its rows are 0.927 / 0.885 / 0.773 at
+2 / 4 / 8 rows. At one row (kDramEta and Ada's kernel cost, not fitted on it) it comes within 1.6 %.
+
+**A weight class without a census** (`WeightClass::Other`: other IQ*, Q4_0/1, Q2_K/Q3_K, FP4)
+takes the K-quant rows, marked transferred. It does not win by worth while a measured class is in
+the tier (even one that does not fit); then the rule's pick stands.
+
+**The tie band between quantizations** is the model's measured error on the generation:
+`kDecodePredictionError`, rms of ln(estimate/measured), Ada 2.8 %, recomputed by the test.
+- The error is in-sample. Out of the fixture, Q5_K_M, UD-Q5_K_XL, Q6_K, IQ4_NL and UD-Q4_K_XL come
+  within 2.1 %.
+- Only Ada's row is read, because only Ada has a reference card.
+- Inside the band the lower KLD wins: a speed difference smaller than the estimate's error is no
+  argument against accuracy.
+
+**One-card rows** (Turing 2080 Ti, Ampere 3060) stay:
+- They price only their own boards and are marked transferred.
+- No decision reads them: the choice prices on the reference card (Ada only).
+- A second card of the generation in the census and the decode campaign removes the mark: any TU10x
+  for Turing, a second GA10x (RTX 3070/3080/3090, A4000/A5000) for Ampere.
+- The 3060 census (29.10) gives t_gemv 4.55 us and t_small 2.61 us, and 1.8 % rms on its 12 points
+  (up to +18 % on Ada's rows).
+- Volta takes Turing's rows, transferred.
+
+**The defaults this changes against master 8bbf2e72.** Ada; plan without load, 7 models x 3 cards
+x {default, 4 streams, 128K}. The measurements are on the RTX 4060 Ti:
+- speed: plain decode per stream at 1 / 4 streams;
+- KLD: `--quick` against a fresh Q8_0 reference that gives Q4_K_M 0.0192, as kQuantKld has it.
+
+| model, ask | master | this PR | why |
+|---|---|---|---|
+| Qwen3.5-9B, 128K | Q4_1 | Q4_K_M | Q4_1 is unmeasured (Other) |
+| Qwen3.5-9B-MTP, 128K | Q4_0 mtp:3 | Q4_K_S mtp:4 | Q4_0 is unmeasured (Other) |
+| Qwen3.5-9B / -MTP, 4 streams | UD-Q4_K_XL nvfp4 | Q4_K_S k8v4 / IQ4_NL k8v4 | worth with the measured KLDs and IQ4 rows |
+| Qwen3.5-9B-MTP, default | UD-Q4_K_XL int8 mtp:3 (40,640) | Q5_K_S nvfp4 mtp:5 (34,176) | worth with the measured KLDs, plus the one-stream plan fix below |
+
+The measured numbers behind those rows (KLD on the RTX 4060 Ti and 4070 Ti, each against its own
+Q8_0 reference under the exact route: the same file gives the same KLD to six digits on both):
+
+| quant | KLD (curve before) | 1 / 4 streams, tok/s |
+|---|---|---|
+| Q4_1 | 0.0242 | 50.5 / 45.9 |
+| Q4_K_M | 0.0192 | 51.1 / 45.7 |
+| Q4_0 | 0.0509 | 54.4 / 49.3 |
+| Q4_K_S | 0.0225 (0.028) | 54.0 / 47.9 |
+| IQ4_NL | 0.0287 | 53.2 / 47.9 |
+| UD-Q4_K_XL | 0.0183 (0.0160) | 48.5 / 43.6 |
+| Q5_K_S | 0.0110 (about 0.013) | 46.4 / 41.7 |
+
+**The default row** goes from an estimated 98 to 113 tok/s.
+- Measured on essays at one stream: UD-Q4_K_XL mtp:3 71 tok/s, Q5_K_S mtp:5 62. The worth still
+  favours Q5_K_S: ln(71/62) = 0.14 < 25 x 0.0073 = 0.18.
+- The one-stream plan fix: a one-stream pick by worth was scored at the target context with its
+  drafter, then launched at the longest context that fits. On 8 GB that context drops the drafter
+  (Q5_K_S plain, 46 tok/s). The launch now keeps the scored context where the drafter returns there.
+
+**Qwen3.8-27B on the 4090** changes too:
+- 128K: UD-Q4_K_XL to UD-Q5_K_S;
+- 4 streams: UD-Q4_K_XL to UD-Q4_K_M.
+
+Both follow from the measured KLD points moving the curve. They are not measured on 27B: the 4090
+stand's disk has 4.7 GB free.
+
+IQ4_XS on the 4060 Ti is a measured class now: plain 55.0 / 49.4 tok/s, KLD 0.0286, and dflash:7 on
+essays 85.8 tok/s.
+
 ## 61. The decode K split of one-tile calls: the ring fact holds, the last round's cost is open (29.10, open, measured)
 
 **Rule now (`rmma_k_split_fit`).** A one-tile store / add call of more CTAs than SMs (T <= 8) keeps
