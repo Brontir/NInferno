@@ -117,21 +117,42 @@ struct Decoder<GGML_TYPE_Q4_K> {
     // Whole blocks: d, dmin, scales (12), qs (128).
     static constexpr int kCode = 144, kHigh = 0, kScale = 0, kTableWords = 0, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t*, Slice& s) {
-        const std::uint8_t* b = p.codes + blk * kCode;
-        const float2 dm       = __half22float2(*reinterpret_cast<const half2*>(b));
+    // The slice's bytes as loaded: d and dmin, the 12 scale bytes, its 32 code bytes.
+    struct Raw {
+        half2 dm;
+        std::uint32_t scale[3];
+        uint4 a0, a1;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
+        const std::uint8_t* b  = p.codes + blk * kCode;
+        r.dm                   = *reinterpret_cast<const half2*>(b);
+        const auto* sw         = reinterpret_cast<const std::uint32_t*>(b + 4);
+        r.scale[0]             = sw[0];
+        r.scale[1]             = sw[1];
+        r.scale[2]             = sw[2];
+        const uint4* qs        = reinterpret_cast<const uint4*>(b + 16 + 32 * (u / 2));
+        r.a0                   = qs[0];
+        r.a1                   = qs[1];
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t*,
+                                                   Slice& s) {
+        const float2 dm = __half22float2(r.dm);
         int sc, m;
-        scale_min_k4(b + 4, u, sc, m);
-        s.f[0]              = dm.x * float(sc);
-        s.f[1]              = dm.y * float(m);
-        const uint4* qs     = reinterpret_cast<const uint4*>(b + 16 + 32 * (u / 2));
-        const uint4 a0      = qs[0];
-        const uint4 a1      = qs[1];
-        const int shift     = 4 * (u & 1);
-        const std::uint32_t v[8] = {a0.x, a0.y, a0.z, a0.w, a1.x, a1.y, a1.z, a1.w};
+        scale_min_k4(reinterpret_cast<const std::uint8_t*>(r.scale), u, sc, m);
+        s.f[0]          = dm.x * float(sc);
+        s.f[1]          = dm.y * float(m);
+        const int shift = 4 * (u & 1);
+        const std::uint32_t v[8] = {r.a0.x, r.a0.y, r.a0.z, r.a0.w,
+                                    r.a1.x, r.a1.y, r.a1.z, r.a1.w};
 #pragma unroll
         for (int i = 0; i < 8; ++i) s.w[i] = int((v[i] >> shift) & 0x0F0F0F0Fu);
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float sum) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0))) - s.f[1] * sum;
@@ -619,6 +640,13 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
     *out = __float2bfloat16(v);
 }
 
+// A decoder whose slice splits into load() (every global load of the slice, issued together) and
+// convert() (no global load): the kernel issues the next slice's loads before this slice's
+// products, so each lane keeps a slice's bytes in flight whatever the compiler schedules
+// (DECISIONS 59: the loads in flight per warp are what the vector kernel's time follows).
+template <class D>
+concept SplitDecoder = requires { typename D::Raw; };
+
 // KS: the static K the slice loop unrolls over, or 0 for the runtime K. Gated: the SwiGlu pair (gate
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
@@ -659,10 +687,9 @@ __launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
 #pragma unroll
             for (int j = 0; j < T; ++j) acc[r][j] = 0.0f;
         }
-        const auto slice = [&](int it) {
+        // The activation slice `it` of every column: its int8 values, scale and sum.
+        const auto activation = [&](int it, int (&a)[T][8], float (&d)[T], float (&sum)[T]) {
             const int s = lane + 32 * it;
-            int a[T][8];
-            float d[T], sum[T];
 #pragma unroll
             for (int j = 0; j < T; ++j) {
                 const float2 ds = __half22float2(p.ds[std::int64_t(j) * slices + s]);
@@ -673,21 +700,63 @@ __launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
                 a[j][0] = v0.x; a[j][1] = v0.y; a[j][2] = v0.z; a[j][3] = v0.w;
                 a[j][4] = v1.x; a[j][5] = v1.y; a[j][6] = v1.z; a[j][7] = v1.w;
             }
-#pragma unroll
-            for (int r = 0; r < kRows; ++r) {
-                Slice sl;
-                D::decode(r == 0 ? p.first : second, base[r] + std::int64_t(32 / kPerBlock) * it, sub,
-                          table, sl);
-#pragma unroll
-                for (int j = 0; j < T; ++j) acc[r][j] += D::dot(sl, a[j], d[j], sum[j]);
-            }
         };
-        if constexpr (KS != 0) {
-            static_assert(KS % 1024 == 0);
+        const auto block_of = [&](int r, int it) {
+            return base[r] + std::int64_t(32 / kPerBlock) * it;
+        };
+        if constexpr (SplitDecoder<D>) {
+            // Slice it + 1's weight bytes load while slice it's products run.
+            const int count = KS != 0 ? KS / 1024 : (slices - lane + 31) / 32;
+            typename D::Raw raw[kRows];
+            if (count > 0) {
 #pragma unroll
-            for (int it = 0; it < KS / 1024; ++it) slice(it);
+                for (int r = 0; r < kRows; ++r) D::load(r == 0 ? p.first : second, block_of(r, 0), sub, raw[r]);
+            }
+            const auto step_at = [&](int it) {
+                Slice sl[kRows];
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) D::convert(raw[r], sub, table, sl[r]);
+                if (it + 1 < count) {
+#pragma unroll
+                    for (int r = 0; r < kRows; ++r)
+                        D::load(r == 0 ? p.first : second, block_of(r, it + 1), sub, raw[r]);
+                }
+                int a[T][8];
+                float d[T], sum[T];
+                activation(it, a, d, sum);
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) {
+#pragma unroll
+                    for (int j = 0; j < T; ++j) acc[r][j] += D::dot(sl[r], a[j], d[j], sum[j]);
+                }
+            };
+            if constexpr (KS != 0) {
+                static_assert(KS % 1024 == 0);
+#pragma unroll
+                for (int it = 0; it < KS / 1024; ++it) step_at(it);
+            } else {
+                for (int it = 0; it < count; ++it) step_at(it);
+            }
         } else {
-            for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
+            const auto slice = [&](int it) {
+                int a[T][8];
+                float d[T], sum[T];
+                activation(it, a, d, sum);
+#pragma unroll
+                for (int r = 0; r < kRows; ++r) {
+                    Slice sl;
+                    D::decode(r == 0 ? p.first : second, block_of(r, it), sub, table, sl);
+#pragma unroll
+                    for (int j = 0; j < T; ++j) acc[r][j] += D::dot(sl, a[j], d[j], sum[j]);
+                }
+            };
+            if constexpr (KS != 0) {
+                static_assert(KS % 1024 == 0);
+#pragma unroll
+                for (int it = 0; it < KS / 1024; ++it) slice(it);
+            } else {
+                for (int it = 0; lane + 32 * it < slices; ++it) slice(it);
+            }
         }
 #pragma unroll
         for (int r = 0; r < kRows; ++r) {
