@@ -637,7 +637,16 @@ struct ThinkingControlOptions {
     // Omitted means unlimited. Injected target-control tokens consume the total output budget but
     // not this model-origin budget.
     std::optional<std::uint32_t> budget;
+    // Without a budget, where the chat template can end thinking: the thinking is closed early
+    // enough that a quarter of the output limit (requested_output_tokens, or less where the
+    // context leaves less) stays for the answer, else a long thinking can spend the whole limit
+    // and leave no answer. A limit too small for the control suffix and an answer takes none.
+    // The engine leaves it true only where it set the budget.
+    bool answer_room = false;
 };
+
+// The share of the output limit answer_room keeps for the answer: 1 / kAnswerRoomShare.
+inline constexpr std::uint32_t kAnswerRoomShare = 4;
 
 // A request's speculation in a speculative engine: its draft depth, from 1 up to the engine's
 // window (SpeculativeOptions: the largest of draft_tokens and request_draft_tokens), or 0 for
@@ -1318,6 +1327,9 @@ struct SpeculativeStats {
 
 struct ThinkingBudgetStats {
     std::optional<std::uint32_t> configured_budget;
+    // The budget is the engine's answer room (ThinkingControlOptions::answer_room), not one the
+    // request or the server named.
+    bool answer_room = false;
     // Model-origin tokens accepted while thinking remained open, including the token that closes
     // it; counted for every response that starts in thinking, with or without a budget.
     std::uint32_t model_thinking_tokens = 0;

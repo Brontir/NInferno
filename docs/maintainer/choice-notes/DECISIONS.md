@@ -1228,6 +1228,7 @@ against the new prediction (the six lab cards' median): mtp:2 x1.062, mtp:3 x1.0
 mtp:5 x1.023, dflash:3 x1.011, dflash:5 x1.020, dflash:7 x1.061: every configuration within the
 kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8 DFlash verify the
 facts overprice on Ada (above).
+
 ## 58. Verify widths stay on the band rule: the register MMA priced as its best one-tile schedule is wrong for the schedule that runs (29.10, #209)
 
 **Decision.** The selector keeps the band rule at verify widths. On the native-MMA boards measured
@@ -1368,3 +1369,55 @@ stand's disk has 4.7 GB free.
 IQ4_XS on the 4060 Ti is a measured class now: plain 55.0 / 49.4 tok/s, KLD 0.0286, and dflash:7 on
 essays 85.8 tok/s.
 
+## 61. The decode K split of one-tile calls: the ring fact holds, the last round's cost is open (29.10, open, measured)
+
+**Rule now (`rmma_k_split_fit`).** A one-tile store / add call of more CTAs than SMs (T <= 8) keeps
+its K split where the CTA's longest warp walks more K steps than its two-step load ring holds
+(steps / warps rounded up, at least three; a step is four decoder runs, `rmma_k_step`: 32 values
+for BF16 / Q8, 64 for FP8 / NVFP4 / the 16-value groupwise runs, 128 for the 32-value decoders);
+an eight-warp split that breaks it takes four warps where four keep it and the grid fills their
+CTA slots (CTAs x 4 >= 16 x SMs), else it stands. The split's one-tile store / add kernels (one
+warp along M) are capped at 128 registers a thread (`kRmmaMinBlocks`), so `w` K warps hold 16 / w
+CTAs a SM as a fact (ptxas gave Q2_K w1x4 146-152 registers and Q5_K w1x4 129 on sm_120 before the
+cap; capped, no rmma kernel gains stack or local memory on sm_75 / sm_89 / sm_120 — the cap first
+reached the two-warp-M U4Zp w2x2 too, 159 registers to 128 and 16 bytes of stack on sm_75, and was
+narrowed to one warp along M).
+
+**Verified.** Q4_K K = 4096 on sixteen warps (two steps each): 57-70 % of DRAM peak on five lab
+boards against 71-74 % for the best split. Q6_K 4096x2560 on eight warps (three steps for half the
+warps) against four: RTX 4070 Ti 19.6 against 21.1 us, RTX 3060 32.4 against 32.9 (the shortest
+warp's count would have taken four). Against it: the RTX 5070 Ti and RTX 2080 Ti ran four warps
+faster on the same shape (10.1 against 11.3 us; 22.5 against 23.9), so at K = 2560 the rounded-up
+count keeps master's eight warps without the boards agreeing on it (two each way).
+
+**Open: what a grid's partly filled last round costs.** Pricing it by its empty slots (the fill
+CTAs / (slots x rounds), the better fill winning) was wrong on two of four boards and right on
+two, measured with `ninferno_r8_schedule_bench` against master 8e7db18c:
+- wrong: RTX 4090 Q6_K 3840x15360 add, four warps in one half-filled round 65.3 us, eight warps
+  in a full round 79.0 (x1.21); RTX 3060 Q4_K 4096x2560 / 4096x3072 store, eight warps 4-10 %
+  slower although they fill more;
+- right: RTX 4070 Ti Q4_K 4096x3072 / 5120x5120 store, eight warps 5-8 % faster; RTX 5070 Ti Q4_K
+  5120x5120 store and Q5_K 5120x17408 add, eight warps 6-12 % faster; RTX 2080 Ti Q4_K / Q5_K
+  5120x17408 add, eight warps 19 % faster (135.3 -> 109.5 us, 161.0 -> 130.8).
+The light K-quants' four-warp start (`light_ggml_step`, measured on one board, the RTX 5080) is
+itself what these rows question: eight warps won on four of five boards past two CTAs a SM.
+The slot model predicted 17-25 % where the boards showed -10..+8 %: a round with fewer resident
+warps is slow only below the warps that keep DRAM busy, which depends on the bytes each warp has
+in flight (its ring) and the DRAM latency under load. That latency is not a fact we hold; until it
+is, the tail stays out of the rule (no fitted band).
+
+**K = 1024: the ring fact alone was wrong on the boards it moved (29.10, measured).** Against master
+the rule above changed one shape on every golden board with more CTAs than SMs: 2048x1024 groupwise
+Q4 / Q5 / Q6, FP8 and NVFP4 store / add (128 CTAs, 16 steps of 64 values), eight warps (two steps
+each, the ring never refills) to four. Four against eight, every rmma one-tile route timed at
+T = 1..8, three repeats (`ninferno_r8_schedule_bench`):
+- RTX 5070 Ti (70 SMs, 1.8 CTAs a SM): four warps 20-37 % slower (Q4 x1.20, Q5 x1.22, Q6 x1.37);
+- RTX 5090 (170, 0.75): 18-38 % slower; RTX 4070 Ti (60, 2.1): within 3 % (Q6 3.5 % slower);
+- RTX 2080 Ti (68, 1.9): mixed, NVFP4 8 % slower, Q4 within 1 %, Q5 2 % and Q6 6 % faster;
+- RTX 4060 Ti (34, 3.8): four warps 2-16 % faster (Q4 x0.98, Q5 x0.90, Q6 x0.93, NVFP4 x0.84).
+With the 128-register cap a SM holds two eight-warp CTAs or four four-warp ones, so on a grid of
+fewer than four CTAs a SM the split halves the warps a SM holds, and the loads in flight with them;
+the refilled ring does not buy that back. The rule now takes fewer warps only where the grid fills
+their slots (CTAs x warps >= 16 x SMs), which moves no golden board's pick (the 4060 Ti, at 3.8,
+stays on eight and leaves its 2-16 % there). What a nearly full grid gains from the refilled ring
+is the same open question as the tail above.

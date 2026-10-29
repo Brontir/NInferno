@@ -221,19 +221,36 @@ public:
 
         std::shared_ptr<Request> request;
         try {
-            // An output constraint's grammar opens at the first reasoning close, so the output
-            // splits there too; without one a quoted close stays reasoning text.
-            auto output = instance_.frontend.make_output_session(
-                prompt, options.stop, options.output, options.execution.thinking,
-                !options.constraint.compiled);
             const std::uint32_t capacity_output =
                 max_context_ - prompt_summary.prompt_tokens + static_cast<std::uint32_t>(1);
+            const std::uint32_t output_limit =
+                std::min(options.execution.requested_output_tokens, capacity_output);
+            // answer_room: a budget that leaves a quarter of the output limit to the answer.
+            ThinkingControlOptions& thinking = options.execution.thinking;
+            const bool room = thinking.answer_room && !thinking.budget &&
+                              prompt_summary.thinking_budget_control && prompt_summary.thinking() &&
+                              output_limit / kAnswerRoomShare > 0;
+            thinking.answer_room = room; // true only where the budget is the answer room
+            if (room) { thinking.budget = output_limit - output_limit / kAnswerRoomShare; }
+            // An output constraint's grammar opens at the first reasoning close, so the output
+            // splits there too; without one a quoted close stays reasoning text.
+            const auto make_output = [&] {
+                return instance_.frontend.make_output_session(prompt, options.stop, options.output,
+                                                              thinking,
+                                                              !options.constraint.compiled);
+            };
+            auto output = make_output();
             try {
-                output.validate_generation_capacity(
-                    std::min(options.execution.requested_output_tokens, capacity_output));
+                output.validate_generation_capacity(output_limit);
             } catch (const std::invalid_argument& error) {
-                throw RequestError(RequestErrorKind::ThinkingBudgetCapacityInsufficient,
-                                   error.what());
+                if (!room) {
+                    throw RequestError(RequestErrorKind::ThinkingBudgetCapacityInsufficient,
+                                       error.what());
+                }
+                // A limit too small for the control suffix and an answer: no room is kept.
+                thinking.budget.reset();
+                thinking.answer_room = false;
+                output = make_output();
             }
             request = std::make_shared<Request>(request_id, publication_order, std::move(prompt),
                                                 std::move(output), prompt_summary, prepare_seconds,
@@ -2120,13 +2137,15 @@ private:
     }
 
     // A request resumable from text: its prompt has no media and nothing it generated shapes its
-    // sampling past what the text says (penalties count generated tokens, a thinking budget its
-    // reasoning, a constraint its grammar state).
+    // sampling past what the text says (penalties count generated tokens, a constraint its grammar
+    // state). A thinking budget counts in the request's own OutputSession, which the resumed
+    // request keeps (preempt_lease_victim), so it resumes where it was; preemptible() never takes
+    // a request whose control suffix is pending.
     [[nodiscard]] bool resumable(const Request& request) const {
         const ResolvedExecutionOptions& execution = request.options.execution;
         return instance_.frontend.resumable(request.prompt) &&
                execution.sampling.presence_penalty == 0.0F &&
-               execution.sampling.frequency_penalty == 0.0F && !execution.thinking.budget &&
+               execution.sampling.frequency_penalty == 0.0F &&
                !request.options.constraint.compiled;
     }
 
@@ -2134,7 +2153,7 @@ private:
     // control reserve, and another request holds a lane, which finishes and frees pages.
     [[nodiscard]] bool preemptible(std::uint32_t lane, std::uint32_t reserve) const {
         const auto& request = slots_[lane];
-        if (!request->preempt_source || request->capture_pending ||
+        if (!request->preempt_source || request->capture_pending || request->is_control_ready() ||
             request->budget->remaining() <= reserve) {
             return false;
         }

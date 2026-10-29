@@ -3346,6 +3346,77 @@ int run_unwritten_poison_case(const Geometry& geometry, KvCacheStorage storage,
     return failures;
 }
 
+// A V value past 127 x 65504 makes its INT8 group's FP16 scale infinite. The fast INT8 prompt
+// kernel's partial rescale searched for a shift that brings the scale under its limit and never
+// found one: the call never returned and the GPU stayed busy (iamwavecut/ninfer-all#137, fixed in
+// prompt_fast.cuh by kInt8PromptFastF16PartialMaxShift). The call must return, and the columns
+// before the 64-key tile holding the outsized value must stay finite and match the same call
+// without it. Columns from that tile's first key on share its FP16 partial shift, which follows
+// the largest V scale of the whole tile (keys masked for the column included), so their values
+// move by the shift's rounding. The case reaches the fast INT8 prompt kernel where the INT8 prompt route
+// takes it (a 1024-token prompt on the lab boards); on a board that routes the prompt elsewhere it
+// only checks that path.
+int run_infinite_v_scale_case(const Geometry& geometry) {
+    constexpr KvCacheStorage storage = KvCacheStorage::Int8Group64;
+    constexpr int width = 1024, outsized = 300;
+    const ops::CausalAttentionExecutionEnvelope envelope{width, width};
+    const std::size_t q_column_elements  = std::size_t(kHeadDim) * geometry.q_heads,
+                      kv_column_elements = std::size_t(kHeadDim) * geometry.kv_heads;
+    auto q = make_bf16_values(q_column_elements * width, 4100u, -.25f, .25f);
+    auto k = make_bf16_values(kv_column_elements * width, 4101u, -.25f, .25f);
+    auto v = make_bf16_values(kv_column_elements * width, 4102u, -1.f, 1.f);
+    std::vector<HostCache> initial{make_cache(geometry, storage, width + 3, 4103u)};
+    std::vector<std::int32_t> positions(width), lanes{0}, valid{width};
+    for (int j = 0; j < width; ++j) positions[j] = j;
+    const auto q_bits = to_bf16_bits(q), k_bits = to_bf16_bits(k);
+    auto v_clean = to_bf16_bits(v), v_outsized = v_clean;
+    v_outsized[std::size_t(outsized) * kv_column_elements] = f32_to_bf16(1.0e7f);
+    GuardedDeviceBuffer dq(q.size() * 2), dk(k.size() * 2), dv(v.size() * 2), dp(width * 4),
+        dvalid(4), dlanes(4), dout(q.size() * 2);
+    dq.copy_from_host(q_bits.data(), q_bits.size() * 2);
+    dk.copy_from_host(k_bits.data(), k_bits.size() * 2);
+    dp.copy_from_host(positions.data(), positions.size() * 4);
+    dvalid.copy_from_host(valid.data(), 4);
+    dlanes.copy_from_host(lanes.data(), 4);
+    Tensor tq(dq.data(), DType::BF16, {kHeadDim, geometry.q_heads, width, 1});
+    Tensor tk(dk.data(), DType::BF16, {kHeadDim, geometry.kv_heads, width, 1}),
+        tv(dv.data(), DType::BF16, {kHeadDim, geometry.kv_heads, width, 1});
+    Tensor tp(dp.data(), DType::I32, {width, 1}), tvalid(dvalid.data(), DType::I32, {1}),
+        tlanes(dlanes.data(), DType::I32, {1});
+    Tensor tout(dout.data(), DType::BF16, {kHeadDim, geometry.q_heads, width, 1});
+    const auto capacity = ops::causal_softmax_attention_workspace_capacity_bytes(
+        op_geometry(geometry), storage, envelope, 1, width, width,
+        DeviceContext().execution_view());
+    GuardedDeviceBuffer scratch(std::max<std::size_t>(capacity, 256));
+    DeviceContext device;
+    const auto run = [&](const std::vector<std::uint16_t>& v_bits) {
+        dv.copy_from_host(v_bits.data(), v_bits.size() * 2);
+        BatchDeviceCache cache(initial, MappingPattern::Fragmented,
+                               static_cast<std::int32_t>(envelope.max_visible_keys));
+        WorkspaceArena workspace(DeviceSpan{scratch.data(), scratch.bytes()});
+        dout.fill(0xff);
+        cuda_synchronize();
+        ops::causal_softmax_attention(tq, tk, tv, tp, tvalid, tlanes, op_geometry(geometry),
+                                      kAttentionScale, cache.view(), envelope, workspace, tout,
+                                      device.execution_view());
+        cuda_synchronize(device.stream);
+        return copy_from_guarded<std::uint16_t>(dout, q.size());
+    };
+    const auto clean = run(v_clean);
+    const auto large = run(v_outsized);
+    const std::string label = std::string("infinite V scale ") + geometry.name;
+    int failures            = 0;
+    for (std::size_t i = 0; i < std::size_t(outsized / 64 * 64) * q_column_elements; ++i) {
+        if ((large[i] & 0x7f80u) == 0x7f80u || large[i] != clean[i]) {
+            std::cerr << label << ": a column before the outsized value changed (element " << i
+                      << ")\n";
+            ++failures;
+            break;
+        }
+    }
+    return failures + dout.verify_guards(label) + scratch.verify_guards(label);
+}
+
 int run_unwritten_poison_cases() {
     int failures = 0;
     for (auto storage :
@@ -3414,7 +3485,8 @@ int run_softmax_attention_causal_cache_tests(std::optional<KvCacheStorage> selec
 
 int run_softmax_attention_unwritten_tests() {
     if (cuda_unavailable()) return 77;
-    const int failures = run_unwritten_poison_cases();
+    int failures = run_unwritten_poison_cases();
+    for (const Geometry& geometry : kGeometries) failures += run_infinite_v_scale_case(geometry);
     std::cout << (failures ? "FAIL" : "PASS") << " causal attention never reads unwritten KV\n";
     return failures ? 1 : 0;
 }

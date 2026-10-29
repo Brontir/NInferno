@@ -150,6 +150,9 @@ struct ServeOptions {
     std::optional<bool> enable_thinking;
     std::optional<bool> preserve_thinking;
     std::optional<std::uint32_t> default_thinking_budget;
+    // A thinking request without a budget keeps a quarter of its output limit for the answer
+    // (ThinkingControlOptions::answer_room); --no-answer-room lets the thinking take it all.
+    bool answer_room = true;
     // --repetition-stop N: end an output whose last N tokens repeat one short period (0: off).
     std::uint32_t repetition_stop = 0;
     // --repetition-thinking conclude: a loop --repetition-stop finds inside the thinking closes the
