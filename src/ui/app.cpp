@@ -1160,12 +1160,13 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
             subject, listing, facts->model.model_type, facts->model.hidden,
             options_.offline ? nullptr : &fetch);
         inputs.drafter_bytes                = drafter.bytes;
+        inputs.proposal_planned       = drafter.proposal_planned;
         inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
         inputs.drafter_state = drafter.state;
     }
     // Each GGUF quantization's own output head where the default proposal head is priced (Codex on
     // #170: the plan reads them, the UI reused one file's), read beside the MTP reads below.
-    if (heads_read.valid() && inputs.proposal_drafter_bytes > 0) {
+    if (heads_read.valid() && inputs.proposal_planned) {
         const auto heads = heads_read.get();
         for (auto& q : listing) {
             if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }

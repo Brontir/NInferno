@@ -53,6 +53,12 @@ int main() {
         const auto r15 = sp::draft_head_rows(counts, share, 15);
         expect(r3.rows == 106496, "9B depth 3 keeps 106496 rows, got " + std::to_string(r3.rows));
         expect(r15.rows == 172032, "9B depth 15 keeps 172032 rows, got " + std::to_string(r15.rows));
+        // MTP reads the head once a draft: 9B mtp:3 (MTP pass 1,002,113,024 B with its head).
+        const double mtp_share =
+            3 * 834355200.0 / (5117970432.0 + 3 * 1002113024.0);
+        const auto mtp = sp::draft_head_rows(counts, mtp_share, sp::kDraftHeadMtpDepth);
+        expect(mtp.rows == 57344 && mtp.gain > 0.2,
+               "9B mtp:3 keeps 57344 rows, got " + std::to_string(mtp.rows));
         // A head dearer in the round (a small active MoE): fewer rows, more gain.
         const auto heavy = sp::draft_head_rows(counts, 0.3, 7);
         expect(heavy.rows == 98304 && heavy.gain > 0.15, "share 0.3 keeps 98304 rows");

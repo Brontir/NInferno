@@ -1,4 +1,5 @@
 #include "convert/cache.h"
+#include "artifact/reader.h"
 #include "convert/checks.h"
 #include "convert/drafters.h"
 
@@ -65,10 +66,11 @@ bool unquantized_drafter_attention(const std::filesystem::path& artifact) {
     return false;
 }
 
-bool companion_without_proposal(const std::filesystem::path& artifact) {
+bool default_head_outdated(const std::filesystem::path& artifact, int revision) {
+    if (revision >= 7) { return false; }
     std::ifstream stream(artifact.string() + ".conversion.json");
     if (!stream) { return false; }
-    bool companion = false;
+    bool dflash = false, mtp = false, proposal = false;
     try {
         const OJson report = OJson::parse(stream);
         // Only a Qwen target's (default_proposal), and only where this build finds the ranking.
@@ -84,12 +86,21 @@ bool companion_without_proposal(const std::filesystem::path& artifact) {
             for (const auto& name : method.value("parameters", OJson::array())) {
                 if (!name.is_string()) { continue; }
                 const auto& text = name.get_ref<const std::string&>();
-                if (text.starts_with("proposal/")) { return false; }
-                companion = companion || text.starts_with("dflash/");
+                proposal = proposal || text.starts_with("proposal/");
+                dflash   = dflash || text.starts_with("dflash/");
+                mtp      = mtp || text.starts_with("mtp/");
             }
         }
     } catch (const std::exception&) { return false; }
-    return companion;
+    // Without a head: one with MTP layers or a DFlash companion takes one now. With one: the
+    // head revision 6 gave served DFlash alone, so one with MTP layers takes MTP's use too.
+    if (!proposal) { return dflash || mtp; }
+    if (revision != 6 || !mtp) { return false; }
+    try {
+        const artifact::Reader reader(artifact);
+        return !reader.directory().uses.contains(
+            {std::string("proposal/head"), std::string("mtp/final_hidden")});
+    } catch (const std::exception&) { return false; }
 }
 
 namespace {
@@ -98,7 +109,7 @@ namespace {
 bool serves_at(const std::filesystem::path& artifact, int revision) {
     return revision >= kCacheRevision ||
            (revision >= 3 && !unquantized_drafter_attention(artifact) &&
-            !companion_without_proposal(artifact));
+            !default_head_outdated(artifact, revision));
 }
 
 } // namespace

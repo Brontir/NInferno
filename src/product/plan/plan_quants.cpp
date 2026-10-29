@@ -8,6 +8,7 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
+#include "spec/round_cost.h"
 
 #include "product/activation_options.h"
 #include "product/numeric_options.h"
@@ -177,20 +178,68 @@ DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant) {
     return out;
 }
 
-std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
-    if (inputs.proposal_drafter_bytes <= 0) { return 0; }
-    const auto& m     = facts.model;
+namespace {
+
+convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    const auto& m = facts.model;
+    if (!inputs.proposal_planned) { return {}; }
+    // The quantization's own MTP layers (its subject's components: a repository's quantizations
+    // differ), their bytes where the facts count them, else one decoder layer's share of the
+    // weights without the head and the embedding table (a checkpoint keeping mtp.* inside its
+    // shards, a split GGUF's header): an MTP layer is one decoder layer and its projection.
+    const bool mtp = inputs.subject != nullptr ? inputs.subject->components.contains("mtp")
+                                               : facts.shape.builtin_mtp;
+    double mtp_bytes = 0;
+    if (mtp) {
+        mtp_bytes = m.mtp_bytes != 0 ? static_cast<double>(m.mtp_bytes)
+                    : facts.shape.num_hidden_layers != 0
+                        ? static_cast<double>(m.weight_bytes > 2 * m.head_bytes
+                                                  ? m.weight_bytes - 2 * m.head_bytes
+                                                  : m.weight_bytes) /
+                              static_cast<double>(facts.shape.num_hidden_layers)
+                        : 0;
+    }
+    // A MoE MTP layer's routed experts are read as its one row routes them (the converter's
+    // default_proposal: moe_read_fraction of the MTP pass at 1 row; Codex on #192), their share
+    // of the layer the model's routed share. The published MTP tensors are the converted ones:
+    // keep_published keeps every GGUF block matrix as published (the recipe's Q8 table decodes
+    // them, convert.cpp), so the facts' bytes are the stored bytes.
+    if (mtp_bytes > 0 && facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
+        facts.shape.routed_expert_params > 0 && m.params > 0) {
+        const double routed = std::min(1.0, facts.shape.routed_expert_params / m.params);
+        spec::PassFacts pass;
+        pass.expert_bytes = mtp_bytes * routed;
+        pass.bytes        = mtp_bytes - pass.expert_bytes;
+        pass.experts      = facts.shape.experts;
+        pass.experts_used = facts.shape.experts_per_token;
+        mtp_bytes         = pass.bytes + pass.expert_bytes * spec::moe_read_fraction(pass, 1);
+    }
+    if (inputs.proposal_drafter_bytes <= 0 && mtp_bytes <= 0) { return {}; }
     const double head = static_cast<double>(
         inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
-    return convert::planned_proposal_bytes(head, static_cast<double>(m.weight_bytes),
-                                           inputs.proposal_drafter_bytes, m.vocab, m.hidden,
-                                           facts.shape.experts > 0);
+    return convert::planned_proposal(head, static_cast<double>(m.weight_bytes), mtp_bytes,
+                                     inputs.proposal_drafter_bytes, m.vocab, m.hidden,
+                                     facts.shape.experts > 0);
+}
+
+} // namespace
+
+std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
+    return proposal_at(facts, inputs).bytes;
 }
 
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
-    return plan_with_speculation(facts, inputs.device, inputs.options, inputs.subject, inputs.ask,
-                                 inputs.drafter_bytes + proposal_bytes_at(facts, inputs),
-                                 inputs.drafter_state);
+    // The default proposal head is part of the converted target's weights, loaded only under a
+    // drafter it serves (dry_run_plan's proposal_bytes rule).
+    PlanSourceFacts at = facts;
+    if (const auto proposal = proposal_at(facts, inputs); proposal.bytes != 0) {
+        at.model.weight_bytes += proposal.bytes;
+        at.model.proposal_bytes += proposal.bytes;
+        at.model.proposal_serves_mtp    = proposal.mtp;
+        at.model.proposal_serves_dflash = proposal.dflash;
+    }
+    return plan_with_speculation(at, inputs.device, inputs.options, inputs.subject, inputs.ask,
+                                 inputs.drafter_bytes, inputs.drafter_state);
 }
 
 runtime::QuantAsk quant_ask_of(const DryRunInputs& inputs, std::uint32_t native_context) {
@@ -252,6 +301,9 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                         std::string_view target_model_type, std::uint32_t target_hidden,
                         const convert::FetchOptions* fetch) {
     AttachedDrafterMemory out;
+    // A Qwen target takes the default proposal head where it has MTP layers or a DFlash
+    // companion (convert::default_proposal), priced per quantization (proposal_bytes_at).
+    out.proposal_planned = target_model_type.starts_with("qwen3_5");
     for (const spec::DrafterDecl& d : subject.attached_drafters) {
         std::uint64_t bytes = 0;
         if (!d.gguf.empty()) {
@@ -467,7 +519,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             shape.model.weight_basis != runtime::WeightBasis::Unknown) {
             row.basis = shape.model.weight_basis;
         }
-        row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_drafter_bytes > 0 &&
+        row.proposal_head_assumed = q.head_bytes == 0 && inputs.proposal_planned &&
                                     proposal_bytes_at(with_weights(shape, row.weight_bytes,
                                                                    row.basis),
                                                       inputs_for(inputs, q)) != 0;

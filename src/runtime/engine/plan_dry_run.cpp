@@ -477,17 +477,18 @@ DryRunPlan dry_run_plan(const PlanModelFacts& model, const PlanDeviceFacts& devi
     // own DFlash drafter only under DFlash (the family load reads only the component the
     // speculation names).
     const SpeculativeBackend backend = options.speculative.backend;
-    // The proposal head only when it drafts: asked for, or under DFlash (which drafts with the
-    // artifact's head whenever it serves DFlash; a separate drafter's plan keeps it counted).
+    // The proposal head only when it drafts: asked for, or under MTP or DFlash where it serves
+    // them (they draft with the artifact's head then, product::model_draft_head).
     const std::uint64_t unloaded =
         (backend != SpeculativeBackend::Mtp ? model.mtp_bytes : 0) +
         (backend != SpeculativeBackend::DFlash && backend != SpeculativeBackend::DFlash2
              ? model.own_drafter_bytes
              : 0) +
-        (options.speculative.proposal_head != ProposalHead::Optimized &&
-                 backend != SpeculativeBackend::DFlash
-             ? model.proposal_bytes
-             : 0);
+        (options.speculative.proposal_head == ProposalHead::Optimized ||
+                 (backend == SpeculativeBackend::Mtp && model.proposal_serves_mtp) ||
+                 (backend == SpeculativeBackend::DFlash && model.proposal_serves_dflash)
+             ? 0
+             : model.proposal_bytes);
     out.weight_bytes = (model.weight_bytes > unloaded ? model.weight_bytes - unloaded : 0) +
                        model.drafter_bytes + (options.enable_vision ? model.vision_bytes : 0);
     out.free_after_weights =

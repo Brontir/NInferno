@@ -1711,18 +1711,20 @@ ConvertResult convert(const ConvertOptions& options) {
     if (share_tied_head(model, recipe)) {
         log("tied output head: bound to the token embedding's objects (one copy)");
     }
-    // Without --proposal a Qwen target converted with a DFlash drafter gets a proposal head for
-    // that drafter, of the rows the bytes/acceptance bound chooses (default_proposal,
+    // Without --proposal a Qwen target with MTP layers or a DFlash drafter gets a proposal head
+    // for them, of the rows the bytes/acceptance bound chooses (default_proposal,
     // spec/draft_head.h), when the default ranking is found; --no-proposal keeps the full head.
     std::filesystem::path proposal_ranking = ranking;
     std::string proposal_ranking_text      = ranking_text;
     std::uint64_t proposal_rows            = options.proposal ? options.proposal_rows : 0;
+    std::vector<std::string> proposal_drafters;
     if (!options.proposal && options.proposal_default && !restricted) {
         if (const auto found = resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
             const auto chosen = default_proposal(model, recipe, *found);
             if (!chosen.note.empty()) { log(chosen.note); }
             if (chosen.rows != 0) {
                 proposal_rows         = chosen.rows;
+                proposal_drafters     = chosen.drafters;
                 proposal_ranking      = *found;
                 proposal_ranking_text = py_path_str(kDefaultProposalRanking);
             }
@@ -1732,7 +1734,7 @@ ConvertResult convert(const ConvertOptions& options) {
         add_official_proposal(model, recipe, ranking, ranking_text, options.proposal_rows);
     } else if (proposal_rows != 0 && !restricted) {
         add_official_proposal(model, recipe, proposal_ranking, proposal_ranking_text,
-                              proposal_rows, {"dflash"});
+                              proposal_rows, proposal_drafters);
     }
     // --maintainer-quantize runs the recipe's table as written.
     if (!options.maintainer_quantize) {

@@ -126,8 +126,9 @@ struct SpeculationAsk {
 };
 
 // Whether the converter would add its default proposal head to the target (convert::
-// default_proposal): a Qwen 3.5 target the registry declares a DFlash companion for, with the
-// default ranking found, and a speculation that may draft with DFlash (auto, or DFlash asked).
+// default_proposal): a Qwen 3.5 target with the default ranking found, and its MTP layers under a
+// speculation that may draft with MTP (auto, or MTP asked), or a DFlash companion the registry
+// declares under one that may draft with DFlash.
 // Local facts only: the plan reads the quantizations' heads only when one is planned.
 [[nodiscard]] bool default_proposal_possible(const PlannedTarget& target, const SpeculationAsk& ask);
 

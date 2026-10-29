@@ -167,12 +167,17 @@ DeclaredDrafters declared_drafters(const PlannedTarget& target) {
 
 bool default_proposal_possible(const PlannedTarget& target, const SpeculationAsk& ask) {
     if (!target.facts.model.model_type.starts_with("qwen3_5")) { return false; }
-    // A drafter file given (--drafter) drafts in the companion's place.
-    if (!ask.given.drafter.empty()) { return false; }
-    if (!ask.automatic && ask.given.backend != SpeculativeBackend::DFlash) { return false; }
+    const bool mtp = ask.automatic || ask.given.backend == SpeculativeBackend::Mtp;
+    // A drafter file given (--drafter) drafts in the DFlash companion's place.
+    const bool dflash = ask.given.drafter.empty() &&
+                        (ask.automatic || ask.given.backend == SpeculativeBackend::DFlash);
+    if (!mtp && !dflash) { return false; }
     if (!convert::resolve_ranking(convert::kDefaultProposalRanking, std::filesystem::current_path())) {
         return false;
     }
+    // The model's own MTP layers draft with the head too.
+    if (mtp && target.facts.shape.builtin_mtp) { return true; }
+    if (!dflash) { return false; }
     try {
         for (const spec::DrafterDecl& d : declared_drafters(target).attached) {
             if (!d.component.empty() && d.kind == "dflash") { return true; }
@@ -188,7 +193,7 @@ SpeculationSubject planned_subject(const PlannedTarget& target, const spec::GpuK
     out.support    = spec::engine_support(facts.model.model_type);
     // A GGUF conversion carries no proposal head; a checkpoint's recipe may (Qwen's +head): the
     // conservative side, the full head.
-    out.proposal_head = false;
+    out.proposal_drafters.clear();
 
     const std::string engine = engine_of(facts.model.model_type);
     std::optional<spec::SpeculationManifest> manifest;

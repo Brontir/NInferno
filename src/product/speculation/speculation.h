@@ -38,11 +38,13 @@ namespace ninferno::product {
 // another kind.
 [[nodiscard]] SpeculativeBackend backend_of_drafter_kind(std::string_view kind) noexcept;
 
-// Whether the artifact carries the proposal head that "+head" configurations draft with.
+// Whether the artifact carries a proposal head that some drafter's "+head" configuration drafts
+// with.
 [[nodiscard]] bool has_proposal_head(const std::filesystem::path& artifact);
-// has_proposal_head's rule on a directory: a proposal head that serves every drafter component
-// the artifact carries (mtp, dflash, dflash2), so a "+head" choice of any of them can bind it.
-[[nodiscard]] bool proposal_head_serves_drafters(const artifact::Directory& dir);
+// The drafter components (mtp, dflash, dflash2) the artifact's proposal head serves (a Use of
+// proposal/head on <component>/final_hidden): a "+head" choice of one of them binds it.
+[[nodiscard]] std::set<std::string> proposal_head_drafters(const artifact::Directory& dir);
+[[nodiscard]] std::set<std::string> proposal_head_drafters(const std::filesystem::path& artifact);
 
 // The watchdog floor a speculative choice runs with: its measured break-even point, or 1.2 tokens
 // per round when the profile recorded none.
@@ -82,7 +84,7 @@ struct SpeculationSubject {
     // none was found; nullopt: the artifact's id is unreadable.
     std::optional<spec::ResolvedSpeculation> resolved;
     std::set<std::string> components; // the artifact's (text, mtp, dflash, dflash2, ...)
-    bool proposal_head = false;       // it carries Qwen's proposal head
+    std::set<std::string> proposal_drafters; // the drafters its Qwen proposal head serves
     spec::EngineSupport support;      // what the Engine's family runs
     // A dry run's drafters the converter's drafter plan takes from a repository of their own
     // (uploaded beside the target, or embedded in the artifact as a component: either way their
@@ -260,13 +262,13 @@ void require_named_tune(const std::filesystem::path& artifact, int device,
                                         std::string_view component);
 
 // The head a backend drafts with: the proposal head (Optimized) when asked for (--lm-head-draft,
-// a "+head" choice), or for DFlash with the artifact's own drafter whenever its head serves
-// DFlash: the converter gives a Qwen target with a DFlash drafter the head only where its rows
-// pay (convert::default_proposal, spec/draft_head.h), and the target's verify decides every
-// token, so the output is the target's. MTP, DFlash2 and a separate drafter keep what they were
-// asked for. A full-head choice of a profile drafts with the head too (the rule decides it, not
-// the tune); a conversion with --no-proposal keeps the full head.
-[[nodiscard]] ProposalHead model_draft_head(bool head_serves_dflash, SpeculativeBackend backend,
+// a "+head" choice), or for MTP and DFlash with the artifact's own drafter whenever its head
+// serves that drafter: the converter gives a Qwen target the head only where its rows pay
+// (convert::default_proposal, spec/draft_head.h), and the target's verify decides every token,
+// so the output is the target's. DFlash2 and a separate drafter keep what they were asked for. A
+// full-head choice of a profile drafts with the head too (the rule decides it, not the tune); a
+// conversion with --no-proposal keeps the full head.
+[[nodiscard]] ProposalHead model_draft_head(bool head_serves_backend, SpeculativeBackend backend,
                                             ProposalHead given) noexcept;
 [[nodiscard]] ProposalHead model_draft_head(const std::filesystem::path& artifact,
                                             SpeculativeBackend backend,

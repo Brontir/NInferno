@@ -77,15 +77,17 @@ void load_resources(Model& model, const std::filesystem::path& root, std::uint64
 // (tools/freq_corpus/fixtures/ranking, installed with the registry's rankings).
 inline constexpr const char* kDefaultProposalRanking = "ranking.train.counts.i64";
 
-// The proposal head a Qwen target converted with a DFlash drafter gets without --proposal
-// (spec/draft_head.h), for its DFlash drafter only (MTP keeps the full head; DFlash2's fused
-// top-k runs only on the 131072-row Q4 head, so it is left as it is): its rows from the
-// ranking's counts and the share of a DFlash round's stored bytes the full draft head reads (the
-// target's pass without its token table, the drafter's component, the head), at the default
-// depth. rows 0: the target has no such drafter, its facts are unreadable, or no restriction
-// pays. `note` says what the choice rested on.
+// The proposal head a Qwen target with MTP layers or a DFlash drafter gets without --proposal
+// (spec/draft_head.h), for those drafters (DFlash2's fused top-k runs only on the 131072-row Q4
+// head, so it keeps the full head): for each, the rows from the ranking's counts and the share of
+// its round's stored bytes the full draft head reads (MTP: k heads over the target's pass and k
+// MTP passes; DFlash: one over the target's pass, the drafter's component and the head), at its
+// default depth; the head keeps the most rows any of them asks for. rows 0: the target has no
+// such drafter, its facts are unreadable, or no restriction pays. `note` says what the choice
+// rested on.
 struct DefaultProposal {
     std::uint64_t rows = 0;
+    std::vector<std::string> drafters; // the components it serves ("mtp", "dflash")
     std::string note;
 };
 [[nodiscard]] DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
@@ -93,13 +95,26 @@ struct DefaultProposal {
 // The bytes the proposal head default_proposal gives a target take, from what a plan knows before
 // the conversion: the head's stored bytes (0: unknown, an unquantized checkpoint's: stored as its
 // default recipe stores it, qwen3_5_recipe_head_format of qwen3_5_checkpoint_recipe(`moe`), its
-// rows gathered to the recipe's Q4), the target's and its DFlash drafter's weights, the
-// vocabulary and width. The rows
-// from the default ranking as default_proposal finds it, with their int32 token ids; 0 when it is
-// not found or nothing pays.
-[[nodiscard]] std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
-                                                   double drafter_bytes, std::uint64_t vocab,
-                                                   std::uint64_t hidden, bool moe = false);
+// rows gathered to the recipe's Q4), the target's weights, its MTP layers' (0: none) and its DFlash drafter's (0:
+// none), the vocabulary and width. The rows from the default ranking as default_proposal finds
+// it (the most MTP 3 and DFlash 7 ask for), with their int32 token ids; 0 when it is not found
+// or nothing pays.
+struct PlannedProposal {
+    std::uint64_t bytes = 0;
+    bool mtp            = false; // MTP asks rows (the head serves it)
+    bool dflash         = false; // DFlash asks rows
+};
+[[nodiscard]] PlannedProposal planned_proposal(double head_bytes, double target_bytes,
+                                               double mtp_bytes, double drafter_bytes,
+                                               std::uint64_t vocab, std::uint64_t hidden,
+                                               bool moe = false);
+[[nodiscard]] inline std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
+                                                          double mtp_bytes, double drafter_bytes,
+                                                          std::uint64_t vocab, std::uint64_t hidden,
+                                                          bool moe = false) {
+    return planned_proposal(head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe)
+        .bytes;
+}
 
 // select_shortlist(counts, n, force_include).
 [[nodiscard]] std::vector<std::int64_t> select_shortlist(const std::vector<std::int64_t>& counts,

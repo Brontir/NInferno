@@ -62,8 +62,8 @@ int main() {
     const auto dflash = [&] { return model_drafter(target, SpeculativeBackend::DFlash); };
 
     failures += check(mtp().empty(), "no manifest: no drafter");
-    // The head a backend drafts with (model_draft_head): DFlash takes the artifact's head when it
-    // serves DFlash; MTP and DFlash2 keep what they were asked for; an asked-for head stays.
+    // The head a backend drafts with (model_draft_head): MTP and DFlash take the artifact's head
+    // when it serves them; DFlash2 keeps what it was asked for; an asked-for head stays.
     {
         using ninferno::ProposalHead;
         using ninferno::product::model_draft_head;
@@ -74,8 +74,11 @@ int main() {
                               ProposalHead::Full,
                           "DFlash keeps the full head without one");
         failures += check(model_draft_head(true, SpeculativeBackend::Mtp, ProposalHead::Full) ==
+                              ProposalHead::Optimized,
+                          "MTP drafts with a head that serves it");
+        failures += check(model_draft_head(false, SpeculativeBackend::Mtp, ProposalHead::Full) ==
                               ProposalHead::Full,
-                          "MTP keeps the full head");
+                          "MTP keeps the full head without one");
         failures += check(model_draft_head(true, SpeculativeBackend::DFlash2, ProposalHead::Full) ==
                               ProposalHead::Full,
                           "DFlash2 keeps the full head");
@@ -87,15 +90,16 @@ int main() {
                                            ProposalHead::Full) == ProposalHead::Full,
                           "a separate DFlash drafter keeps the full head");
     }
-    // A "+head" choice binds the head only where it serves every drafter the artifact carries
-    // (Codex on #170: DFlash + DFlash2 with the converter's DFlash-only head chose dflash2:7+head).
+    // A "+head" choice of a drafter binds the head only through that drafter's Use (Codex on
+    // #170: DFlash + DFlash2 with a DFlash-only head chose dflash2:7+head).
     {
-        using ninferno::product::proposal_head_serves_drafters;
+        using ninferno::product::proposal_head_drafters;
         namespace art = ninferno::artifact;
         art::Directory dir;
         dir.components["text"].proposal = art::Proposal{.indexed = true, .rows = 147456};
         dir.components["dflash"];
         dir.components["dflash2"];
+        dir.components["mtp"];
         const auto use = [&](const std::string& input) {
             art::Use u;
             u.parameter = "proposal/head";
@@ -103,16 +107,13 @@ int main() {
             dir.uses.emplace(std::pair{u.parameter, u.input}, u);
         };
         use("dflash/final_hidden");
-        failures += check(!proposal_head_serves_drafters(dir),
-                          "a DFlash-only head is no DFlash2 +head");
-        use("dflash2/final_hidden");
-        failures += check(proposal_head_serves_drafters(dir), "a head of both serves both");
-        dir.components["mtp"];
-        failures += check(!proposal_head_serves_drafters(dir), "nor an MTP +head without its use");
+        failures += check(proposal_head_drafters(dir) == std::set<std::string>{"dflash"},
+                          "a DFlash-only head serves DFlash alone");
         use("mtp/final_hidden");
-        failures += check(proposal_head_serves_drafters(dir), "a head of all three serves all");
+        failures += check(proposal_head_drafters(dir) == std::set<std::string>{"dflash", "mtp"},
+                          "the default head serves MTP and DFlash, not DFlash2");
         dir.components["text"].proposal.reset();
-        failures += check(!proposal_head_serves_drafters(dir), "no proposal: no head");
+        failures += check(proposal_head_drafters(dir).empty(), "no proposal: no head");
     }
     // One mode of a published profile (no measurements): its fit fallback of that mode becomes its
     // choice, and the load table measured with the default's drafter gives way to one request at a
