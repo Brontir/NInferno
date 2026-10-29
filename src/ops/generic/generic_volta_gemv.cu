@@ -1,9 +1,10 @@
 // Volta's decode GEMV for the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats: a warp per output
-// row (four rows for a large store, volta_kquant_gemv_rows_kernel), lanes over a superblock (lane l: its values 8 l .. 8 l + 7), codes decoded straight to FP32
-// and summed against FP32 activations. Without tensor mma.sync the register-MMA tiles emulate the
-// MMA fragment layout on FP32 FMAs; at T <= 4 this kernel reads the same bytes in row order.
-// run_route takes it for a lane-local register-MMA call (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6
-// ms, decode 25.5 -> 28.4 tok/s).
+// row (four rows for a large store, volta_kquant_gemv_rows_kernel), lanes over a superblock (lane
+// l: its values 8 l .. 8 l + 7), codes decoded straight to FP32 and summed against FP32
+// activations. Without tensor mma.sync the register-MMA tiles emulate the MMA fragment layout on
+// FP32 FMAs; at T <= 4 this kernel reads the same bytes in row order. run_route takes it for a
+// lane-local register-MMA call (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6 ms, decode 25.5 -> 28.4
+// tok/s).
 #include "core/device.h"
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.cuh"
