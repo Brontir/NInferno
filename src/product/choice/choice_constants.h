@@ -43,12 +43,16 @@
 // (it costs 26 % on the RTX 4070 Ti, 38 % on the 5070 Ti at 2048 + 512 tokens). At lambda 50 the
 // 4070 Ti's two were within 0.01 of each other: no clear "about the same".
 
+#include "core/cost_constants.h"
+#include "spec/moe_routed_share.h"
 #include "ninferno/types.h"
 
 #include <cstdint>
 #include <string_view>
 
 namespace ninferno::product::choice {
+
+using ::ninferno::spec::kMoeRoutedShare; // spec/moe_routed_share.h, a fitted calibration
 
 // The activation route a configuration's linears take (the peak its compute runs at).
 enum class Route : std::uint8_t {
@@ -72,15 +76,9 @@ struct DecodeConstants {
 inline constexpr DecodeConstants kDenseDecode{0.90, 0.054, 0.0};
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
-// dp4a's int8 rate a SM-clock: a generation without an int8 MMA decodes its int8 route at it
-// (choice.cpp decode_int8_peak). Derived from the CUDA C++ Programming Guide's arithmetic throughput
-// table, compute capability 7.0: 64 32-bit integer multiply-adds a SM-clock, each dp4a 4 int8
-// multiply-adds (2 operations each).
-inline constexpr double kDp4aOpsPerSmClock = 512;
-
-// Rows routed apart read 0.30 of the experts independent routing would add (fitted on the
-// registry's speculation floors, audit1018/x3).
-inline constexpr double kMoeRoutedShare = 0.30;
+// kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
+// decode_int8_peak): core/cost_constants.h, a chip fact; kMoeRoutedShare: spec/moe_routed_share.h,
+// a fitted calibration. Both shared with spec/round_cost.h.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16

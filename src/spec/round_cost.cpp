@@ -52,7 +52,7 @@ CardRates rates(int major, int minor, int sms, double clock_hz, double dram_byte
     CardRates out;
     if (major <= 0 || sms <= 0 || clock_hz <= 0 || dram_bytes_per_s <= 0) { return out; }
     const GenerationRow& row = generation_row(major, minor);
-    const double per_sm_clock = row.s8 > 0 ? row.s8 : kDp4aOpsPerSmClockRound;
+    const double per_sm_clock = row.s8 > 0 ? row.s8 : kDp4aOpsPerSmClock;
     out.dram_bytes_per_s      = dram_bytes_per_s;
     out.int8_ops_per_s        = per_sm_clock * double(sms) * clock_hz;
     out.generation            = row.name;
@@ -103,7 +103,7 @@ double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept {
     if (pass.experts <= 0) { return 1.0; }
     const double pick  = double(pass.experts_used) / double(pass.experts);
     const double apart = 1.0 - std::pow(1.0 - pick, double(rows));
-    return pick + kRoutedExpertShare * (apart - pick);
+    return pick + kMoeRoutedShare * (apart - pick);
 }
 
 CardRates card_rates(int compute_capability, int sms, int sm_clock_khz, double dram_gbps) {
