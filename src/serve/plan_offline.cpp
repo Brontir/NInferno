@@ -214,6 +214,8 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                     convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                              head.bytes.size(), head.size, head.path);
                 out.facts = product::plan_facts_of_gguf(file, header->bytes);
+                // A split model's head from the part that holds it (table and --quant alike).
+                product::complete_split_gguf_head(out.facts, spec, fetch, header->quant);
                 if (vision) { out.facts.model.vision_bytes = listed_projector_bytes(quants); }
                 // The quantization read prices its own tensors in the table.
                 for (auto& l : out.listing) {

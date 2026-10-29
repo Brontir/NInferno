@@ -103,6 +103,24 @@ def main() -> int:
                                                   tensor_info("output.weight", [256, 1024], 14)),
     }
     hub.add_repo("org/ggufsplit", ggufsplit)
+    # A split model tying its head: no part names output.weight, part 0 holds the token table,
+    # its later part a whole GGUF header (one F32 norm) the 1 MiB window holds.
+    def gguf_part(size):
+        header = b"GGUF" + struct.pack("<IQQ", 3, 1, 0) + tensor_info("blk.0.attn_norm.weight", [256], 0)
+        header += bytes(-len(header) % 32)
+        return header + bytes(size - len(header))
+    ggufsplittied = {
+        "m-Q4_K_M-00001-of-00002.gguf": with_info(blob(2 * MIB, 55), 600 * 1024,
+                                                  tensor_info("token_embd.weight", [256, 1024], 14)),
+        "m-Q4_K_M-00002-of-00002.gguf": gguf_part(2 * MIB),
+    }
+    hub.add_repo("org/ggufsplittied", ggufsplittied)
+    # The same whose later part's table the window does not hold whole (no GGUF header there):
+    # it may name output.weight past the window, so no tie (Opus on #202).
+    hub.add_repo("org/ggufsplitpartial", {
+        "m-Q4_K_M-00001-of-00002.gguf": ggufsplittied["m-Q4_K_M-00001-of-00002.gguf"],
+        "m-Q4_K_M-00002-of-00002.gguf": blob(2 * MIB, 56),
+    })
     # A CDN that ignores ranges (a 200 for any Range): a window's read drops the leading bytes.
     ggufnorange = {"m-Q4_K_M.gguf": blob(3 * MIB, 52)}
     hub.add_repo("org/ggufnorange", ggufnorange)
@@ -344,15 +362,29 @@ def main() -> int:
             case("gguf window", window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
             # A split model's head from its later part (Q6_K: 210 bytes a 256-value block), not
             # the Q8_0 embedding in part 0; a tied model's, the embedding.
-            def heads(shape):
+            def heads(shape, repo="org/ggufsplit", cache=None):
                 environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
                 environment["HF_ENDPOINT"] = base
-                result = subprocess.run([str(probe), "org/ggufsplit", "--heads=Q4_K_M", str(600 * 1024),
-                                         str(work / f"cache-split-{shape.replace(':', '-')}"), shape],
+                cache = cache or f"cache-{repo.split('/')[1].split('@')[0]}-{shape.replace(':', '-')}"
+                result = subprocess.run([str(probe), repo, "--heads=Q4_K_M", str(600 * 1024),
+                                         str(work / cache), shape],
                                         capture_output=True, text=True, env=environment)
                 return json.loads(result.stdout) if result.returncode == 0 else {"error": result.stderr}
             case("split gguf head from its later part", heads("256:1024") == {"Q4_K_M": 210 * 1024})
-            case("split gguf tied head: the embedding", heads("256:1024:tied") == {"Q4_K_M": 8 * 34 * 1024})
+            case("split gguf tied head: the embedding", heads("256:1024:tied")
+                 == {"Q4_K_M": 8 * 34 * 1024, "Q4_K_M#tied": True})
+            # Kept per commit: a head read as tied (a sibling of a tied model) stays tied when a
+            # later read (an explicit --quant) is not told so (Codex on #202).
+            pinned = "org/ggufsplit@c0ffee0123456789abcdef0123456789abcdef01"
+            first = heads("256:1024:tied", pinned, cache="cache-pinned")
+            again = heads("256:1024", pinned, cache="cache-pinned")
+            case("a cached tied head stays tied", first == again == {"Q4_K_M": 8 * 34 * 1024, "Q4_K_M#tied": True})
+            # Not told it ties (part 0 cannot say): every part read, no output.weight, the token
+            # table is the head (Codex on #199).
+            case("split gguf found tied", heads("256:1024", "org/ggufsplittied")
+                 == {"Q4_K_M": 210 * 1024, "Q4_K_M#tied": True})
+            case("a later part not read whole: no tie", heads("256:1024", "org/ggufsplitpartial")
+                 == {"Q4_K_M": 0})
             data = ggufnorange["m-Q4_K_M.gguf"]
             window = head("Q4_K_M", MIB, repo="org/ggufnorange", begin=MIB + 3)
             case("gguf window from a server without ranges",

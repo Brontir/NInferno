@@ -211,11 +211,17 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
     // What the layers store stays out of the target's pass (Codex on #192); only the price of a
     // pass is the routed read.
     double mtp_read = mtp_bytes;
+    const bool by_params = facts.shape.routed_expert_params > 0 && m.params > 0;
     if (mtp_bytes > 0 && facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
-        facts.shape.routed_expert_params > 0 && m.params > 0) {
-        const double routed = std::min(1.0, facts.shape.routed_expert_params / m.params);
+        ((m.mtp_routed_expert_bytes != 0 && m.mtp_bytes != 0) || by_params)) {
+        const double routed =
+            by_params ? std::min(1.0, facts.shape.routed_expert_params / m.params) : 0.0;
         spec::PassFacts pass;
-        pass.expert_bytes = mtp_bytes * routed;
+        // The MTP layers' routed banks as stored where the table counts them (Codex on #199: a
+        // mixed-quant model's experts are not their parameter share of the bytes).
+        pass.expert_bytes = m.mtp_routed_expert_bytes != 0 && m.mtp_bytes != 0
+                                ? std::min(mtp_bytes, static_cast<double>(m.mtp_routed_expert_bytes))
+                                : mtp_bytes * routed;
         pass.bytes        = mtp_bytes - pass.expert_bytes;
         pass.experts      = facts.shape.experts;
         pass.experts_used = facts.shape.experts_per_token;
@@ -236,12 +242,14 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
         }
         const double stored = static_cast<double>(m.weight_bytes) - mtp_bytes - embedding;
         const bool routed   = facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
-                            facts.shape.routed_expert_params > 0 && m.params > 0;
+                            (m.routed_expert_bytes != 0 || by_params);
         if (stored > 0 && (embedding > 0 || routed)) {
             spec::PassFacts pass;
             if (routed) {
                 pass.expert_bytes =
-                    stored * std::min(1.0, facts.shape.routed_expert_params / m.params);
+                    m.routed_expert_bytes != 0
+                        ? std::min(stored, static_cast<double>(m.routed_expert_bytes))
+                        : stored * std::min(1.0, facts.shape.routed_expert_params / m.params);
                 pass.experts      = facts.shape.experts;
                 pass.experts_used = facts.shape.experts_per_token;
             }
@@ -256,6 +264,33 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
 }
 
 } // namespace
+
+void complete_split_gguf_head(PlanSourceFacts& facts, const std::string& spec,
+                              const convert::FetchOptions& fetch, const std::string& quant) {
+    auto& m = facts.model;
+    if (m.head_bytes != 0 || m.gguf_data_offset == 0 || m.hidden == 0 || m.vocab == 0 ||
+        !m.model_type.starts_with("qwen3_5")) {
+        return;
+    }
+    std::set<std::string> tied;
+    const auto heads = convert::gguf_quants_head_bytes(spec, fetch, {quant}, m.gguf_data_offset,
+                                                       m.hidden, m.vocab, false, &tied);
+    const auto it = heads.find(quant);
+    if (it == heads.end() || it->second == 0) { return; }
+    m.head_bytes = it->second;
+    const bool tie = tied.contains(quant);
+    if (tie) {
+        facts.shape.tied_embeddings = true;
+        m.embedding_bytes           = 0;
+    } else {
+        // Untied: the parsed part's token table is the embedding a verify never reads.
+        m.embedding_bytes = m.token_table_bytes;
+    }
+    // The parameter count the part's table left out while the tie was unknown (plan_facts_of_gguf):
+    // the geometry's, its token table once more when untied (Opus on #202: a split MoE's routed
+    // share prices its verify and MTP passes by it).
+    if (m.params == 0) { m.params = params_of_geometry(facts, tie); }
+}
 
 std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {
     return proposal_at(facts, inputs).bytes;
@@ -1317,9 +1352,12 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
         facts.model.weight_bytes == 0) {
         return std::nullopt;
     }
-    return GgufTensorTable{.tensor_bytes      = facts.model.weight_bytes,
-                           .mtp_bytes         = facts.model.mtp_bytes,
-                           .own_drafter_bytes = facts.model.own_drafter_bytes};
+    return GgufTensorTable{.tensor_bytes            = facts.model.weight_bytes,
+                           .mtp_bytes               = facts.model.mtp_bytes,
+                           .own_drafter_bytes       = facts.model.own_drafter_bytes,
+                           .routed_expert_bytes     = facts.model.routed_expert_bytes,
+                           .mtp_routed_expert_bytes = facts.model.mtp_routed_expert_bytes,
+                           .token_table_bytes       = facts.model.token_table_bytes};
 }
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
@@ -1329,6 +1367,21 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     if (row.mtp_bytes) {
         out.model.mtp_bytes         = *row.mtp_bytes;
         out.model.own_drafter_bytes = row.listing.table ? row.listing.table->own_drafter_bytes : 0;
+    }
+    // Its stored routed banks and token table where its table counted them (a GGUF's).
+    if (const auto& table = row.listing.table) {
+        if (table->routed_expert_bytes) {
+            out.model.routed_expert_bytes = *table->routed_expert_bytes;
+        }
+        if (table->mtp_routed_expert_bytes) {
+            out.model.mtp_routed_expert_bytes = *table->mtp_routed_expert_bytes;
+        }
+        if (table->token_table_bytes) {
+            // The untied embedding a verify never reads is the token table (with_weights scaled
+            // the parsed row's); a tied model reads it as its head and counts none.
+            if (out.model.embedding_bytes != 0) { out.model.embedding_bytes = *table->token_table_bytes; }
+            out.model.token_table_bytes = *table->token_table_bytes;
+        }
     }
     return out;
 }

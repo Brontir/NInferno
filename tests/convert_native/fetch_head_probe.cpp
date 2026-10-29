@@ -17,6 +17,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <exception>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -55,8 +56,10 @@ int main(int argc, char** argv) {
             const auto hidden       = std::stoull(shape.substr(0, colon));
             const auto vocab        = std::stoull(shape.substr(colon + 1));
             const bool tied         = shape.find(":tied") != std::string::npos;
+            std::set<std::string> ties;
             nlohmann::json out = ninferno::convert::gguf_quants_head_bytes(
-                argv[1], options, quants, std::stoull(argv[3]), hidden, vocab, tied);
+                argv[1], options, quants, std::stoull(argv[3]), hidden, vocab, tied, &ties);
+            for (const auto& q : ties) { out[q + "#tied"] = true; }
             std::printf("%s\n", out.dump().c_str());
             return 0;
         }

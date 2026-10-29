@@ -1165,6 +1165,70 @@ accept more than the corpus' prose (50). Master served the same (the 5070 Ti's p
 2. gpt-oss rounds are 6-10 % dearer than their facts on both cards (MoE routing: 53's +12.5 %).
 3. MTP at depth 3 is 7-9 % dearer than its facts on both cards (the 9B, Gemma 4 12B).
 
+## 57. Turing's MTP rounds 12 % dearer than the R(k) the plan transfers to it (29.10, open, measured)
+
+The user kit's first run on a card without its own pair of the target (#210; RTX 2080 Ti Rev. A,
+tu102, l2080, build 5ab1c936; Qwen3.5-9B MTP GGUF Q4_K_M, spec-tune on the lab pairs' menu,
+414 s, plain decode 92.8-93.0 tok/s across the sections). Acceptance agrees with the six lab
+pairs at every configuration (within 0.7 %). The round cost does not, at shallow MTP depths:
+
+| configuration | R measured here | R the plan uses | measured / plan |
+|---|---|---|---|
+| mtp:2 | 1.626 | 1.449 | x1.122 |
+| mtp:3 | 1.867 | 1.661 | x1.124 |
+| mtp:4 | 1.987 | 1.884 | x1.055 |
+| mtp:5 | 2.201 | 2.077 | x1.060 |
+| dflash:3 | 1.726 | 1.676 | x1.030 |
+| dflash:5 | 1.743 | 1.718 | x1.015 |
+| dflash:7 | 1.846 | 1.735 | x1.063 |
+| dflash:11 | 2.687 | (not priced: deeper than the portable depth) | |
+
+R in plain decode steps a round, `spec::profile_round_costs` of the tune and of the plan's resolved
+profile (`plan.speculation.round_cost`).
+
+**What the plan's R is.** Not the facts: since 53 / #161 the facts price only Ada (two lab cards
+give its eta); Turing has one lab card and no eta, so `round_cost_estimate` is unknown there. With
+no Turing pair of this target and no estimate, `profile_for_target` takes a lab pair's measurement
+raw: the plan's R equals the RTX 4070 Ti's measured R to the third digit (mtp:2 1.449, mtp:3
+1.661, mtp:4 1.884, dflash:7 1.735). The source says "registry pair ... (6 lab card(s))", nothing
+of a transfer.
+
+**What it shows.** An Ada card's rounds are the cheapest of the lab's (the 4090: mtp:2 1.450,
+mtp:3 1.654); Ampere, Volta and Blackwell measure 1.53-1.59 and 1.80-1.86 at mtp:2/3, Turing
+1.63 / 1.87. Off Ada the shallow MTP rounds cost relatively more; why is not measured yet (the
+MTP head's launches and the T=3-4 verify route are candidates, compare 56's mismatches 1 and 3). The
+plan's speedup on Turing is predicted high by up to 12 % at mtp:2/3; its pick (dflash:7) is
+unaffected here, dflash rounds agree within 6.4 %. Most of the 12 % is the source being an Ada
+card: against the other non-Ada lab cards (mtp:2 1.53-1.59) Turing is about 5 % dearer.
+
+**For comparison, the facts path (Ada).** The same kit run on the RTX 4060 Ti 16GB (ad106, l4060,
+build 11388484; no lab pair of ad106, so the plan prices the rounds from the facts, ada, eta 0.148;
+591 s). Acceptance confirms the six lab pairs at all 8 configurations. R measured / R facts: mtp:2
+x0.998, mtp:3 x0.995, mtp:4 x0.972, mtp:5 x0.961, dflash:3 x0.949, dflash:5 x0.911, dflash:7 x0.884
+(1.559 against 1.764: contradicts at ±10 %); dflash:11 not priced. The MTP rounds hold the
+facts; the DFlash rounds of 6 and 8 verify rows are 9-12 % cheaper than their facts, the same sign
+and size as the 5070 Ti's in 56 (mismatch 1). Open with it: the facts overprice the T=6-8 verify
+on cards with few SMs (34 here, 70 there), a route fact not yet in the bytes model.
+
+**Open.** Nothing changes from one card: a Turing eta needs a second Turing card in the registry
+(53). Until then two things are wrong in the transfer, not in Turing: the source pair is the first
+current pair in the registry's order (`profile_for_target`'s fallback, `current.front()`), against
+the rule that the registry's order never decides; and the source says "registry pair ... (6 lab
+card(s))" where it should say another generation's raw measurement and name the card. The gap
+stays recorded here. Rerun: `tools/kit/measure.py --spec-tune 900` on l2080 (result
+`ninferno-user-run/1.1`, validate.py verdicts S5/S6).
+
+**Resolved in the transfer (29.10).** `profile_for_target` no longer lets the registry's order pick
+the card: the records are ordered by GPU class id; two or more lab cards of the card's generation
+give their median R per configuration; with none and no facts, the median R of every lab card that
+measured the target, said in the source as "transferred: median of N lab cards of other
+generations (no facts for turing)". The generation ratios (`generation_round_costs`, off in the
+shipped registry since 52: they needed two cards of each generation) are gone. The same l2080 tune
+against the new prediction (the six lab cards' median): mtp:2 x1.062, mtp:3 x1.021, mtp:4 x1.019,
+mtp:5 x1.023, dflash:3 x1.011, dflash:5 x1.020, dflash:7 x1.061: every configuration within the
+kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8 DFlash verify the
+facts overprice on Ada (above).
+
 ## 60. Decode speed from the bytes and the kernels of a step; a generation's one card prices only its own boards (28.10)
 
 The dense decode estimate (src/product/choice, PR #184) had one fitted term, kDenseDecode's share of
