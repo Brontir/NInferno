@@ -910,6 +910,7 @@ void ProgramImpl::collect_ordinary(const LaunchRows& part, double seconds, std::
         const std::uint32_t base_S = sequence.ledger_frontier;
         if (steps == 1) {
             TokenId& token = ordinary_host_egress->sampled_tokens[row];
+            if (debug_token_domain_point()) { token = model.traits().public_tokens; }
             if (!license_tokens(std::span<TokenId>(&token, 1))) {
                 domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
             }
@@ -1290,6 +1291,7 @@ void ProgramImpl::collect_speculative(const LaunchRows& part, double seconds) {
         }
         TokenId* tokens = mtp ? mtp_host_egress->licensed_tokens.data()
                               : dflash_host_egress->licensed_tokens.data();
+        if (debug_token_domain_point()) { tokens[row * width] = model.traits().public_tokens; }
         if (!license_tokens(
                 std::span<TokenId>(tokens + row * width, static_cast<std::size_t>(count_i)))) {
             domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;

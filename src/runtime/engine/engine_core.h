@@ -1151,6 +1151,8 @@ private:
         // Cancelled, a faulted one (its round computed a NaN or an infinity) fails.
         enum class RowRelease : std::uint8_t { None, Cancelled, Faulted };
         std::array<RowRelease, kMaximumConcurrency> releases{};
+        // A faulted row's kRowFault*, read before the commit consumes the pending batch.
+        std::array<std::uint8_t, kMaximumConcurrency> row_fault{};
         const auto released = [&](std::size_t row) noexcept {
             return releases[row] != RowRelease::None;
         };
@@ -1187,7 +1189,8 @@ private:
                 if (cancelled_at_unit_start[lane]) {
                     releases[row] = RowRelease::Cancelled;
                 } else if (!pending.row_faults().empty() && pending.row_faults()[row] != 0U) {
-                    releases[row] = RowRelease::Faulted;
+                    releases[row]  = RowRelease::Faulted;
+                    row_fault[row] = pending.row_faults()[row];
                 }
                 const std::int32_t raw_count =
                     pending.row_counts().empty() ? 1 : pending.row_counts()[row];
@@ -1319,7 +1322,7 @@ private:
                 const std::uint32_t lane     = lane_indices[row];
                 const auto& request          = slots_[lane];
                 if (releases[row] == RowRelease::Faulted) {
-                    faulted_rows.add(request, lane, FinishReason::None, pending.row_faults()[row]);
+                    faulted_rows.add(request, lane, FinishReason::None, row_fault[row]);
                     continue;
                 }
                 const std::uint32_t accepted = decisions[row].accepted_tokens;
