@@ -92,6 +92,66 @@
    "small_us": 1558.4
   },
   {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "streams": 1,
+   "gemv_kernels": 161,
+   "gemv_us": 17718.2,
+   "small_kernels": 167,
+   "small_us": 504.5
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "streams": 2,
+   "gemv_kernels": 161,
+   "gemv_us": 18098.1,
+   "small_kernels": 295,
+   "small_us": 788.0
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "streams": 8,
+   "gemv_kernels": 161,
+   "gemv_us": 19283.2,
+   "small_kernels": 167,
+   "small_us": 1322.0
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "streams": 1,
+   "gemv_kernels": 161,
+   "gemv_us": 18317.8,
+   "small_kernels": 167,
+   "small_us": 503.7
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "streams": 2,
+   "gemv_kernels": 161,
+   "gemv_us": 18820.0,
+   "small_kernels": 295,
+   "small_us": 788.1
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "streams": 8,
+   "gemv_kernels": 161,
+   "gemv_us": 22974.8,
+   "small_kernels": 167,
+   "small_us": 1320.1
+  },
+  {
    "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q4_K_M",

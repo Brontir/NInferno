@@ -544,9 +544,11 @@ std::vector<std::string> label_tokens(std::string_view label) {
 
 WeightClass weight_class_of(const std::vector<std::string>& formats, std::string_view label) {
     if (!formats.empty()) {
-        bool k = false, q8 = false, other = false;
+        bool k = false, q8 = false, iq4 = false, other = false;
         for (const std::string& f : formats) {
-            if (f == "ggml_q4_k" || f == "ggml_q5_k" || f == "ggml_q6_k") {
+            if (f == "ggml_iq4_xs" || f == "ggml_iq4_nl") {
+                iq4 = true;
+            } else if (f == "ggml_q4_k" || f == "ggml_q5_k" || f == "ggml_q6_k") {
                 k = true;
             } else if (f == "q8_g32_fp16") {
                 q8 = true;
@@ -554,7 +556,11 @@ WeightClass weight_class_of(const std::vector<std::string>& formats, std::string
                 other = true;
             }
         }
-        return other ? WeightClass::Other : k ? WeightClass::KQuant : q8 ? WeightClass::Q8 : WeightClass::Other;
+        return other ? WeightClass::Other
+               : iq4 ? WeightClass::IQ4
+               : k   ? WeightClass::KQuant
+               : q8  ? WeightClass::Q8
+                     : WeightClass::Other;
     }
     // A label: Q8 / Q8_0 (not Q8_KV), or a Q4_K / Q5_K / Q6_K mix (Q4_K_M, UD-Q5_K_XL, Q6_K).
     const std::vector<std::string> t = label_tokens(label);
@@ -564,6 +570,10 @@ WeightClass weight_class_of(const std::vector<std::string>& formats, std::string
         const bool repacked = i + 2 < t.size() && t[i + 2].size() >= 2 && t[i + 2][0] == 'R' &&
                               std::isdigit(static_cast<unsigned char>(t[i + 2][1]));
         if ((t[i] == "Q4" || t[i] == "Q5" || t[i] == "Q6") && next_k && !repacked) { return WeightClass::KQuant; }
+        if (t[i] == "IQ4" && i + 1 < t.size() && (t[i + 1] == "XS" || t[i + 1] == "NL") &&
+            !(i + 2 < t.size() && t[i + 2].size() >= 2 && t[i + 2][0] == 'R')) {
+            return WeightClass::IQ4;
+        }
         if (t[i] == "Q8") {
             // Q8, Q8_0; unsloth's Q8_K_XL / _L / _M / _S (Q8_0 with 16-bit tensors), not Q8_KV or Q8_K_R8.
             const std::string next  = i + 1 < t.size() ? t[i + 1] : "";

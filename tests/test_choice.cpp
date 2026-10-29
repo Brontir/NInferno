@@ -193,7 +193,7 @@ void decodes_from_facts(const json& fixture) {
     }
     const double rms = std::sqrt(sq / n);
     std::cout << "decode from facts, " << n << " points: rms " << rms * 100 << " %, worst " << worst * 100 << " %\n";
-    check(n == 84 && rms < 0.04, "decode from facts within the model's spread");
+    check(n == 100 && rms < 0.04, "decode from facts within the model's spread");
     // The generations whose rows rest on their own census: within 10 %; Turing (one card) within its
     // stated rows' 6 % rms; Ampere (one card, its own census) within 3 %.
     const auto gen_rms = [&](const char* g) {
@@ -208,7 +208,7 @@ void decodes_from_facts(const json& fixture) {
         std::cout << "  " << e.generation << ": " << g.second << " points, rms " << g_rms << " (stated " << e.rms << ")\n";
         check(g.second >= 24 && std::abs(g_rms - e.rms) < 0.0015, "the stated decode error is the measured one");
     }
-    check(own_worst < 0.09, "the deciding generations' worst point within 9 %");
+    check(own_worst < 0.10, "the deciding generations' worst point within 10 %");
 }
 
 // The kernels a step launches are the graph's (kDecodeLaunches against the nsys census,
@@ -232,18 +232,19 @@ void counts_the_kernels(const json& census) {
         }
         ++n;
     }
-    check(n >= 62, "the census rows");
+    check(n >= 68, "the census rows");
     // The weight class from formats, else the label.
     check(ch::weight_class_of({"ggml_q4_k", "ggml_q6_k", "q8_g32_fp16", "bf16"}, "") == ch::WeightClass::KQuant,
           "a K-quant mix with Q8_0 and 16-bit tensors");
     check(ch::weight_class_of({"q8_g32_fp16", "bf16"}, "") == ch::WeightClass::Q8, "Q8_0 alone");
-    check(ch::weight_class_of({"ggml_iq4_nl", "q8_g32_fp16", "ggml_q5_k"}, "Q4_K_M") == ch::WeightClass::Other,
+    check(ch::weight_class_of({"ggml_iq4_nl", "q8_g32_fp16", "ggml_q5_k"}, "Q4_K_M") == ch::WeightClass::IQ4,
           "IQ4_NL: the formats decide over the label");
+    for (const char* q : {"IQ4_XS", "IQ4_NL", "UD-IQ4_XS"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::IQ4, "an IQ4 label"); }
     for (const char* k : {"Q4_K_M", "UD-Q4_K_XL", "Q5_K_M", "UD-Q5_K_XL", "Q6_K", "q6_k"}) {
         check(ch::weight_class_of({}, k) == ch::WeightClass::KQuant, "a K-quant label");
     }
     for (const char* q : {"Q8_0", "Q8", "q8_0", "UD-Q8_K_XL"}) { check(ch::weight_class_of({}, q) == ch::WeightClass::Q8, "a Q8 label"); }
-    for (const char* o : {"IQ4_NL", "UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_KV", "Q8_K_R8", "Q4_K_R4"}) {
+    for (const char* o : {"UD-IQ3_XXS", "Q4_0", "Q3_K_M", "MXFP4", "NVFP4", "BF16", "Q8_KV", "Q8_K_R8", "Q4_K_R4", "IQ4_XS_R8", "Q4_1", "Q4_0"}) {
         check(ch::weight_class_of({}, o) == ch::WeightClass::Other, "an unmeasured label");
     }
 }

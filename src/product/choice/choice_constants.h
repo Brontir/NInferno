@@ -102,6 +102,7 @@ enum class WeightClass : std::uint8_t {
     KQuant, // ggml's K-quant mixes (Q4_K, Q5_K, Q6_K, with Q8_0 and 16-bit tensors: Q4_K_M ... Q6_K,
             // UD-Q4_K_XL, UD-Q5_K_XL): R8 at one row, ggml's vec kernel at 2-4, register MMA / MMQ at 5-8
     Q8,     // Q8_0 (q8_g32_fp16): R8 at every width
+    IQ4,    // ggml's IQ4_XS / IQ4_NL mixes (with Q4_K/Q5_K/Q8_0 tensors): R8 at one row, vec / MMQ beyond
     Other,  // a format whose decode routes no census measured (codebook IQ*, Q4_0/Q4_1, IQ4_NL, Q2_K,
             // Q3_K, FP4): its speed is transferred (the K-quants' rows) and it decides nothing
 };
@@ -131,6 +132,7 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}, 1, 7},
     {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}, 1, 7},
     {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
+    {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 
 // What a kernel costs a step beyond its bytes, by generation: the census's measured residual, one row,
@@ -138,7 +140,7 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // a small one's less the state and KV bytes it reads, the mean over every kernel of the class. Where
 // the census explains it: Ada's plain R8 projections 1.5 us of launch and ramp plus the graph's
 // 0.29 us gap (the median 1.9-2.2 us); the SwiGLU and residual epilogues 2.2-6 us and the Q8_0 R8 on
-// the 4090 3.5 us raise the mean to 2.40; its norms 1.7-1.9 us (four times their bytes), the attention
+// the 4090 3.5 us raise the mean to 2.34; its norms 1.7-1.9 us (four times their bytes), the attention
 // at a short context 6.6. Blackwell's PDL hides the plain projections' launch (0.2 us median: their
 // weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
 // Turing: the projections 4.2-8.3 us, one card. A row of one card prices only its own boards'
@@ -152,7 +154,7 @@ struct KernelCost {
     int cards;
 };
 inline constexpr KernelCost kKernelCost[] = {
-    {"ada", 2.40e-6, 1.96e-6, 3},    // RTX 4060 Ti, 4070 Ti, 4090
+    {"ada", 2.34e-6, 1.93e-6, 3},    // RTX 4060 Ti, 4070 Ti, 4090
     {"gb20x", 1.87e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
     {"ga10x", 4.55e-6, 2.61e-6, 1},  // RTX 3060
     {"turing", 8.30e-6, 5.09e-6, 1}, // RTX 2080 Ti
@@ -172,9 +174,11 @@ struct RowsEta {
     int cards;
 };
 inline constexpr RowsEta kRowsEta[] = {
-    {"ada", WeightClass::KQuant, 2, 0.906, 3},    {"ada", WeightClass::KQuant, 4, 0.878, 3},
-    {"ada", WeightClass::KQuant, 8, 0.795, 3},    {"ada", WeightClass::Q8, 2, 0.934, 3},
-    {"ada", WeightClass::Q8, 4, 0.916, 3},        {"ada", WeightClass::Q8, 8, 0.869, 3},
+    {"ada", WeightClass::KQuant, 2, 0.904, 3},    {"ada", WeightClass::KQuant, 4, 0.877, 3},
+    {"ada", WeightClass::KQuant, 8, 0.794, 3},    {"ada", WeightClass::Q8, 2, 0.933, 3},
+    {"ada", WeightClass::Q8, 4, 0.915, 3},        {"ada", WeightClass::Q8, 8, 0.868, 3},
+    {"ada", WeightClass::IQ4, 2, 0.927, 2},       {"ada", WeightClass::IQ4, 4, 0.885, 2},
+    {"ada", WeightClass::IQ4, 8, 0.773, 2}, // RTX 4060 Ti, 4070 Ti: IQ4_XS, IQ4_NL
     {"gb20x", WeightClass::KQuant, 2, 0.922, 2},  {"gb20x", WeightClass::KQuant, 4, 0.795, 2},
     {"gb20x", WeightClass::KQuant, 8, 0.732, 2},  {"gb20x", WeightClass::Q8, 2, 0.951, 2},
     {"gb20x", WeightClass::Q8, 4, 0.911, 2},      {"gb20x", WeightClass::Q8, 8, 0.867, 2},
@@ -194,7 +198,7 @@ struct PredictionError {
     std::string_view generation;
     double rms;
 };
-inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.025}, {"gb20x", 0.020}};
+inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.028}, {"gb20x", 0.020}};
 
 inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
