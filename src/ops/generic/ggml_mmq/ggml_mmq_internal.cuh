@@ -121,7 +121,7 @@ Launch select_launch(int rows, int columns, int k) {
         const int efficiency = 100 * tiles / (device.sm_count * waves);
         // A block beyond the call's work units (an output tile times its K_vram steps) has nothing
         // to do and lengthens the fixup's scan (llama.cpp #30553).
-        const int work = tiles * ((k + best.k_vram - 1) / best.k_vram);
+        const int work = tiles * std::max(1, (k + best.k_vram - 1) / best.k_vram);
         best.blocks    = efficiency >= 90 ? tiles : std::min(device.sm_count, work);
         best.fixup           = tiles % best.blocks != 0;
     } else {
