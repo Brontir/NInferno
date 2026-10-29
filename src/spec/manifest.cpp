@@ -1,5 +1,6 @@
 #include "spec/manifest.h"
 
+#include "artifact/formats.h"
 #include "artifact/reader.h"
 #include "core/hub_revision.h"
 #include "core/sha256.h"
@@ -451,6 +452,20 @@ void resolve_manifest_profile(const SpeculationManifest& manifest,
 // out.other_kinds (ResolvedSpeculation::other_kinds): its lab measurement (pair_choice over that
 // kind: its pair, a sibling's, its group's), else the published profile for this GPU where that
 // drafts with it. `label`, `weights`, `quant` and `repo` as for the profile itself.
+// The selection options of a target at `artifact`: its rounds priced with the draft head rows it
+// reads (artifact_proposal_rows); where it does not read (a target not converted yet, a hub
+// label), the lab artifact's (the pair's own, SelectOptions::proposal_rows absent).
+SelectOptions rows_of(const std::filesystem::path& artifact) {
+    SelectOptions out;
+    std::error_code ec;
+    if (artifact.empty() || !std::filesystem::is_regular_file(artifact, ec)) { return out; }
+    try {
+        out.proposal_rows = artifact_proposal_rows(artifact::Reader(artifact).directory());
+    } catch (const std::exception&) {
+    }
+    return out;
+}
+
 void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesystem::path& label,
                          const GpuKey& gpu, std::string_view weights, std::string_view quant,
                          std::string_view repo, ResolvedSpeculation& out) {
@@ -469,7 +484,7 @@ void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesys
         alone.fallback = out.fallback;
         if (!registry.pairs().empty() && manifest.source != "bundle") {
             if (auto choice = pair_choice(registry.pairs(), weights, manifest.engine, {d.kind},
-                                          label_bits(quant), gpu_generation(gpu), {},
+                                          label_bits(quant), gpu_generation(gpu), rows_of(label),
                                           attached_identities(manifest), repo, &gpu)) {
                 attach_drafters(manifest, choice->profile, alone);
                 std::string origin;
@@ -519,7 +534,7 @@ bool resolve_pair_profile(const SpeculationManifest& manifest,
         if (d.usable()) { kinds.push_back(d.kind); }
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu), {},
+                              label_bits(quant), gpu_generation(gpu), rows_of(artifact),
                               attached_identities(manifest), hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     attach_drafters(manifest, choice->profile, out);
@@ -557,7 +572,7 @@ bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& co
         if (components.contains(kind)) { kinds.emplace_back(kind); }
     }
     auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
-                              label_bits(quant), gpu_generation(gpu), {}, {},
+                              label_bits(quant), gpu_generation(gpu), rows_of(artifact), {},
                               hub_repo_of_artifact(artifact), &gpu);
     if (!choice) { return false; }
     for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
@@ -636,6 +651,41 @@ void resolve_entry_profile(const ModelEntry& entry, const std::set<std::string>&
 }
 
 } // namespace
+
+ProposalRows artifact_proposal_rows(const artifact::Directory& dir) {
+    ProposalRows out;
+    const auto text = dir.components.find("text");
+    if (text == dir.components.end() || !text->second.proposal) { return out; }
+    const auto& proposal = *text->second.proposal;
+    // A drafter's own prefix is read only where the head's layout has row views (core/weight_view
+    // weight_row_prefix: none for row- or block-scaled FP8 and NVFP4's swizzled scales); elsewhere
+    // it reads all the rows.
+    bool prefixes = true;
+    if (const auto b = dir.bindings.find("proposal/head"); b != dir.bindings.end()) {
+        for (const auto& part : b->second.parts) {
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.object(part.object));
+            if (tensor == nullptr) { continue; }
+            const auto layout = artifact::parse_layout(tensor->layout);
+            if (layout == QuantLayout::RowScale || layout == QuantLayout::BlockScaleK16M128x4 ||
+                layout == QuantLayout::BlockScale128F32) {
+                prefixes = false;
+            }
+        }
+    }
+    // The drafters the head takes the final hidden states of (product proposal_head_drafters);
+    // DFlash2 keeps the whole domain (its selector reads it).
+    for (const char* component : {"mtp", "dflash"}) {
+        if (!dir.components.contains(component) ||
+            !dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"})) {
+            continue;
+        }
+        const auto own = proposal.drafter_rows.find(component);
+        const std::uint64_t rows =
+            prefixes && own != proposal.drafter_rows.end() ? own->second : proposal.rows;
+        if (rows > 0) { out.rows[component] = rows; }
+    }
+    return out;
+}
 
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,

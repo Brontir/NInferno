@@ -415,6 +415,11 @@ Json to_json(const Profile& p) {
              {"drafters", drafters},
              {"skipped", p.skipped},
              {"measurements", measurements}};
+    if (!p.proposal_rows.empty()) {
+        Json rows = Json::object();
+        for (const auto& [mode, n] : p.proposal_rows.rows) { rows[mode] = n; }
+        out["proposal_rows"] = std::move(rows);
+    }
     if (p.served) { out["served"] = served_json(*p.served); }
     if (p.portable) { out["portable"] = served_json(*p.portable); }
     if (p.fit_fallback) { out["fit_fallback"] = choice_json(*p.fit_fallback); }
@@ -438,6 +443,15 @@ Profile profile_from_json(const Json& doc) {
     p.created         = doc.value("created", std::string());
     p.settings        = doc.value("settings", std::string());
     p.tune_seconds    = doc.value("tune_seconds", 0.0);
+    if (const auto it = doc.find("proposal_rows"); it != doc.end()) {
+        for (const auto& [mode, n] : it->items()) {
+            if (!n.is_number_unsigned() || n.get<std::uint64_t>() == 0) {
+                throw std::runtime_error("spec profile: proposal_rows of " + mode +
+                                         " is no positive row count");
+            }
+            p.proposal_rows.rows[mode] = n.get<std::uint64_t>();
+        }
+    }
     p.overall         = choice_from(doc.at("default"));
     p.non_thinking    = choice_from(doc.at("non_thinking"));
     p.thinking        = choice_from(doc.at("thinking"));

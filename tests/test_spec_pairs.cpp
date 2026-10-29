@@ -212,6 +212,22 @@ int main() {
         // Another drafter of the same mode is not this kind's group.
         expect(sp::pair_group(mtp, "qwen3_5", "gemma4_assistant", 4.9).empty(),
                "a group is of the drafter kind, not only of its mode");
+        // Two boards of one class and a record of that class naming no board, in either order:
+        // the named boards stand as two cards (the unnamed record no longer hides them).
+        auto board_a = mtp_q4, board_b = mtp_q4, unnamed = mtp_q4;
+        board_a.tune.key.gpu = board_b.tune.key.gpu = unnamed.tune.key.gpu = "ad104:60sm";
+        board_a.generation = board_b.generation = unnamed.generation = "sm89";
+        board_a.lab_board = 0x2782;
+        board_b.lab_board = 0x2783;
+        unnamed.lab_board = 0;
+        unnamed.tune.drafters.front().status = "aaa-first";
+        for (const auto& order : {std::vector<sp::MeasuredPair>{unnamed, board_a, board_b},
+                                  std::vector<sp::MeasuredPair>{board_b, board_a, unnamed}}) {
+            const auto group = sp::pair_group(order, "qwen3_5", "mtp", 4.9);
+            expect(group.size() == 2 && group[0]->lab_board != 0 && group[1]->lab_board != 0,
+                   "named boards of one class stand beside a record naming none (" +
+                       std::to_string(group.size()) + ")");
+        }
     }
     // Three cards, no depth all of them measured (one 1-3, one 3-5, one 1 and 5): each depth on
     // two cards stands, the group speculates (it decoded plainly for want of a common label).

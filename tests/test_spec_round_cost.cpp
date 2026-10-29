@@ -4,6 +4,8 @@
 // is left out, against that pair's measurement. It is no hold-out of the fit (kSmallTEta rests on
 // these cards' rounds); the hold-out evidence is fit_eta.py's cross-fit (DECISIONS 53). No GPU.
 
+#include "artifact/schema.h"
+#include "spec/manifest.h"
 #include "spec/pairs.h"
 #include "spec/registry.h"
 #include "spec/round_cost.h"
@@ -12,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
@@ -90,8 +93,36 @@ int main() {
         } catch (const std::runtime_error&) { refused = true; }
         expect(refused, "experts with none used are refused");
         expect(q9.round_facts->drafters.at("dflash").head.has_value() &&
-                   !q9.round_facts->drafters.at("mtp").head.has_value(),
-               "DFlash prices the target's head over the drafted rows apart; MTP within its pass");
+                   q9.round_facts->drafters.at("mtp").head.has_value() &&
+                   q9.round_facts->drafters.at("mtp").head->linears ==
+                       q9.round_facts->drafters.at("dflash").head->linears,
+               "the target's head apart: DFlash's over the drafted rows, MTP's per draft");
+        // The linears: the target's matrices hold nearly all its parameters (norms, convolutions
+        // and gates left), one output head among them, the one DFlash runs over the drafted rows.
+        const auto& facts = *q9.round_facts;
+        double held       = 0;
+        int heads         = 0;
+        for (const auto& g : facts.target.linears) {
+            held += double(g.n) * double(g.k) * g.count;
+            heads += g.head ? 1 : 0;
+        }
+        const double all = facts.target.params + facts.target.expert_params;
+        expect(held <= all && held >= 0.97 * all && heads == 1,
+               "the target's linears hold its parameters, one head among them");
+        std::vector<sp::LinearGroup> head;
+        for (const auto& g : facts.target.linears) {
+            if (g.head) { head.push_back(g); }
+        }
+        expect(facts.drafters.at("dflash").head->linears == head &&
+                   !facts.drafters.at("mtp").pass.linears.empty(),
+               "DFlash's head is the target's; the MTP pass lists its linears");
+        auto zero                             = sp::round_facts_json(facts);
+        zero["target"]["linears"][0]["count"] = 0;
+        bool refused_linear                   = false;
+        try {
+            (void)sp::parse_round_facts(zero);
+        } catch (const std::runtime_error&) { refused_linear = true; }
+        expect(refused_linear, "a linear counted zero times is refused");
     }
     // An MoE pass's experts: k/E for one row, towards k/E + 0.30 (1 - k/E) for many.
     {
@@ -156,6 +187,101 @@ int main() {
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
+    }
+    // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
+    // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
+    // rounds/s gain R(147,456) / R(57,344) - 1 against hard50's on the RTX 4060 Ti (l4060):
+    // +9.4 / +12.9 / +16.5 / +19.6 % at mtp:2..5.
+    {
+        const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
+        const double k4060 = sp::card_rates_of_board(0x2805).kappa();
+        const sp::ProposalRows before{{{"mtp", 147456}}}, after{{{"mtp", 57344}}};
+        const double measured[] = {0.094, 0.129, 0.165, 0.196};
+        for (int k = 2; k <= 5; ++k) {
+            const auto config = sp::SpecConfig::parse("mtp:" + std::to_string(k));
+            const auto r0     = sp::round_cost(facts, config, k4060, before);
+            const auto r1     = sp::round_cost(facts, config, k4060, after);
+            expect(r0 && r1 && std::abs(*r0 / *r1 - 1 - measured[k - 2]) < 0.007,
+                   "the MTP head's rows: rounds/s gain within 0.7 pp of hard50's at mtp:" +
+                       std::to_string(k));
+        }
+        const auto config = sp::SpecConfig::parse("mtp:3");
+        expect(sp::round_cost(facts, config, k4060) ==
+                       sp::round_cost(facts, config, k4060, sp::ProposalRows{{{"dflash", 1024}}}) &&
+                   sp::round_cost(facts, config, k4060) ==
+                       sp::round_cost(facts, config, k4060, sp::ProposalRows{{{"mtp", 1u << 30}}}),
+               "another mode's rows, or rows past the head's, leave the full head");
+        const auto dflash = sp::SpecConfig::parse("dflash:7");
+        expect(*sp::round_cost(facts, dflash, k4060, sp::ProposalRows{{{"dflash", 147456}}}) <
+                   *sp::round_cost(facts, dflash, k4060),
+               "DFlash's head over the k drafts reads the proposal rows too");
+        // A checkpoint's head (BF16 here): its proposal rows are stored Q4_G64_FP16 (4.25 bits a
+        // value), a GGUF's in the head's own format (its bytes' share, above).
+        {
+            sp::RoundFacts f;
+            f.target = sp::PassFacts{.bytes = 1000, .params = 1000};
+            sp::DraftFacts d;
+            d.pass = sp::PassFacts{.bytes = 100, .params = 100};
+            d.head = sp::PassFacts{.bytes = 2.0 * 1000 * 64, .params = 1000.0 * 64};
+            d.head->linears = {{.format = "bf16", .n = 1000, .k = 64, .count = 1, .head = true}};
+            f.drafters["mtp"] = d;
+            const auto c = sp::SpecConfig::parse("mtp:2");
+            const auto r = sp::round_cost(f, c, 0.0, sp::ProposalRows{{{"mtp", 100}}});
+            expect(r && near(*r, (1000 + 2 * (100 + 100 * 64 * 4.25 / 8)) / 1000, 1e-12),
+                   "a checkpoint's proposal rows at Q4_G64_FP16's 4.25 bits");
+        }
+        // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
+        // refused.
+        auto pair                            = pair_of(kQ9, "ad104:60sm");
+        pair.tune.proposal_rows              = after;
+        const auto again                     = sp::parse_pair(sp::pair_json(pair));
+        expect(again.tune.proposal_rows == after, "a tune's proposal rows round-trip");
+        auto zero                            = sp::pair_json(pair);
+        zero["tune"]["proposal_rows"]["mtp"] = 0;
+        bool refused                         = false;
+        try {
+            (void)sp::parse_pair(zero);
+        } catch (const std::runtime_error&) { refused = true; }
+        expect(refused, "zero proposal rows are refused");
+        // The lab card's own rounds at its rows, the card's at its artifact's: a lab artifact of
+        // the full head and a card's of MTP's prefix price the card's MTP rounds cheaper.
+        const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+        const auto lab       = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti);
+        const auto mine      = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti, &after);
+        expect(lab.known && mine.known && mine.cost.at("mtp:3") < lab.cost.at("mtp:3") &&
+                   mine.cost.at("dflash:7") == lab.cost.at("dflash:7"),
+               "the card's artifact rows price its MTP rounds; DFlash's (not named) stay");
+        // A tune's "mtp:3" drafted with the full head whatever rows its artifact had: its own
+        // rounds priced so (only a "+head" label drafted through the rows).
+        const auto plain_labels = sp::round_cost_estimate(pair, rtx4060ti);
+        expect(plain_labels.known && plain_labels.cost.at("mtp:3") == lab.cost.at("mtp:3"),
+               "a configuration without +head was measured with the full head");
+        // An artifact's rows: its proposal head where a Use binds it to the drafter, MTP its
+        // own prefix (drafter_rows), DFlash all of them; DFlash2 none (the whole domain).
+        namespace art = ninferno::artifact;
+        art::Directory dir;
+        for (const char* c : {"text", "mtp", "dflash", "dflash2"}) { dir.components[c] = {}; }
+        dir.components["text"].proposal =
+            art::Proposal{.indexed = true, .rows = 147456, .drafter_rows = {{"mtp", 57344}}};
+        for (const char* c : {"mtp", "dflash", "dflash2"}) {
+            dir.uses[{"proposal/head", std::string(c) + "/final_hidden"}] = {};
+        }
+        expect(sp::artifact_proposal_rows(dir) == sp::ProposalRows{{{"mtp", 57344}, {"dflash", 147456}}},
+               "an artifact's proposal rows: MTP its prefix, DFlash all, DFlash2 none");
+        // A head without row views (row-scaled FP8 here): MTP reads all its rows.
+        art::TensorObject fp8;
+        fp8.id     = "head";
+        fp8.layout = "row_scale_v1";
+        dir.objects.push_back(fp8);
+        dir.bindings["proposal/head"].parts.push_back({.object = {.index = 0}, .begin = 0, .end = 1});
+        expect(sp::artifact_proposal_rows(dir).of("mtp") == 147456,
+               "a head with no row views: MTP reads all its rows");
+        dir.bindings.clear();
+        dir.objects.clear();
+        dir.uses.erase({"proposal/head", "mtp/final_hidden"});
+        expect(sp::artifact_proposal_rows(dir).of("mtp") == 0, "a head not bound to MTP: its full head");
+        dir.components["text"].proposal.reset();
+        expect(sp::artifact_proposal_rows(dir).empty(), "no proposal head: the full head");
     }
     // A card nobody measured the pair on: the facts price its rounds, the lab card's measurement
     // raising them where it found rounds dearer than their bytes, and say so.
@@ -320,6 +446,88 @@ int main() {
                    ab->profile.thinking.config == ba->profile.thinking.config &&
                    std::abs(ab->profile.overall.speedup() - ba->profile.overall.speedup()) < 1e-9,
                "the pooled choice does not depend on the records' order");
+        // Every order of the records gives the same plan. One card (the RTX 4070 Ti) has four tunes
+        // that an order could tell apart: two MTP tunes whose mode's round facts differ, plain
+        // decode measured at other speeds in each (sums of three or more terms), two DFlash tunes
+        // (pair_group keeps one of them), one naming no lab board; two other cards.
+        const auto tuned = [](sp::MeasuredPair p, double plain, double spec, std::uint32_t board) {
+            for (auto& m : p.tune.measurements) { m.seconds *= m.config.enabled() ? spec : plain; }
+            p.lab_board = board;
+            return p;
+        };
+        auto mtp_b = tuned(mtp, 1.1, 1.05, 0x2782);
+        mtp_b.round_facts->drafters.at("mtp").rows += 1;
+        const std::vector<sp::MeasuredPair> records = {
+            tuned(mtp, 1.0, 1.0, 0x2782), mtp_b, tuned(dflash, 1.2, 1.0, 0),
+            tuned(dflash, 1.3, 1.03, 0x2782), pair_of(kQ9, "ad102:128sm"), pair_of(kQ9, "ga106:28sm")};
+        const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
+        const auto rtx2080ti = card("tu102:68sm", "tu102", "sm75", 75, 68, 1545, 616);
+        const std::string repo(std::string_view(kQ9).substr(0, std::string_view(kQ9).find(' ')));
+        const auto plan_of = [&](const std::vector<sp::MeasuredPair>& in) {
+            std::string out;
+            const auto add = [&](const std::optional<sp::PairChoice>& c) {
+                out += c ? c->basis + "|" + c->source + "|" + sp::to_json(c->profile).dump() + "\n"
+                         : std::string("none\n");
+            };
+            for (const auto* gpu : {&rtx4060ti, &rtx4070ti, &rtx2080ti}) {
+                add(sp::pair_choice(in, whole.target, "qwen3_5", kinds, 4.0,
+                                    gpu == &rtx2080ti ? "sm75" : "sm89", {}, whole.drafters, {}, gpu));
+            }
+            add(sp::pair_choice(in, "another-quantization", "qwen3_5", kinds, 4.0, "sm89", {},
+                                whole.drafters, repo, &rtx4060ti));
+            const auto group = sp::pair_group(in, "qwen3_5", "dflash", 4.0);
+            for (const auto* p : group) { out += sp::pair_json(*p).dump() + ","; }
+            const auto grouped = sp::profile_for_group(group, "dflash", nullptr);
+            out += "|" + (grouped ? sp::to_json(*grouped).dump() : std::string("none")) + "\n";
+            return out;
+        };
+        const auto reference = plan_of(records);
+        std::vector<std::size_t> idx = {0, 1, 2, 3, 4, 5};
+        bool same = !reference.empty();
+        int orders = 0;
+        do {
+            std::vector<sp::MeasuredPair> shuffled;
+            for (const auto i : idx) { shuffled.push_back(records[i]); }
+            same = same && plan_of(shuffled) == reference;
+            ++orders;
+        } while (same && std::next_permutation(idx.begin(), idx.end()));
+        expect(same && orders == 720, "all 720 orders of the records give the same plans");
+        // Two boards of one class (an RTX 4500 Ada's tune beside the 4070 Ti's, both ad104:60sm) are
+        // two cards (each finds its own record, not the facts) taking the median R of the two.
+        const std::vector<sp::MeasuredPair> boards = {tuned(mtp, 1.0, 1.0, 0x2782),
+                                                      tuned(mtp, 1.0, 1.3, 0x27B1)};
+        const auto rtx4500 = card("ad104:60sm", "ad104", "sm89", 89, 60, 2580, 432);
+        const auto two     = sp::pair_choice(boards, whole.target, "qwen3_5", kinds, 4.0, "sm89", {},
+                                             whole.drafters, {}, &rtx4070ti);
+        const auto other   = sp::pair_choice(boards, whole.target, "qwen3_5", kinds, 4.0, "sm89", {},
+                                             whole.drafters, {}, &rtx4500);
+        const auto r = [](const std::optional<sp::PairChoice>& c) {
+            return c ? sp::profile_round_costs(c->profile) : std::map<std::string, double>{};
+        };
+        expect(two && other && two->source.find("(2 lab card(s))") != std::string::npos &&
+                   !r(two).empty() && !r(other).empty() &&
+                   std::abs(r(other).at("mtp:3") / r(two).at("mtp:3") - 1) < 1e-9,
+               "two boards of one class are two cards, priced by their median: " +
+                   (two ? two->source : std::string()));
+        // So in a group: the two boards are two cards (enough for a group's choice); a record naming
+        // no board is its class's card's.
+        const std::vector<sp::MeasuredPair> group_boards = {tuned(dflash, 1.0, 1.0, 0x2782),
+                                                            tuned(dflash, 1.0, 1.1, 0x27B1),
+                                                            tuned(dflash, 1.0, 1.2, 0)};
+        expect(sp::pair_group(group_boards, "qwen3_5", "dflash", 4.0).size() == 2,
+               "two boards of one class are a group of two cards; an unnamed board's record is one of them");
+        // Two targets on one card, one record naming its board and one naming none: one card, no
+        // group (a group's choice rests on two cards).
+        auto unnamed_other   = tuned(dflash, 1.0, 1.0, 0);
+        unnamed_other.target = "other-weights";
+        expect(sp::pair_group({tuned(dflash, 1.0, 1.0, 0x2782), unnamed_other}, "qwen3_5", "dflash", 4.0)
+                   .empty(),
+               "a record naming no board is its class's card in a group's count");
+        const auto one = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0), tuned(dflash, 1.0, 1.0, 0x2782)},
+                                         whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
+                                         {}, &rtx4070ti);
+        expect(one && one->source.find("(1 lab card(s))") != std::string::npos && one->basis == "measured",
+               "a tune naming no board joins its class's card: " + (one ? one->source : std::string()));
     }
     // Pair removal: the plan's speedup on a card with its own pair left out (the facts price the
     // other cards' measurements for it), against that pair's measurement (the same target, its
