@@ -182,7 +182,10 @@ int main() {
         }
         std::cout << name << ": compile " << compile_s << " s, " << (bytes >> 20U)
                   << " MiB, mask mean " << (mask_total / masks) * 1e3 << " ms, max "
-                  << mask_max * 1e3 << " ms over " << masks << " steps\n";
+                  << mask_max * 1e3 << " ms over " << masks << " steps (slowest after \""
+                  << call_text(format).substr(slowest > 40 ? slowest - 40 : 0,
+                                              slowest > 40 ? 40 : slowest)
+                  << "\")\n";
         check(accepted && matcher.completed(), name + ": the grammar admits a tool_0 call");
         check(compile_s < options.compile_timeout.count() / 2000.0,
               name + ": compile within half the compile timeout");
