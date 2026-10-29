@@ -183,7 +183,8 @@ std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs
     const double head = static_cast<double>(
         inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
     return convert::planned_proposal_bytes(head, static_cast<double>(m.weight_bytes),
-                                           inputs.proposal_drafter_bytes, m.vocab, m.hidden);
+                                           inputs.proposal_drafter_bytes, m.vocab, m.hidden,
+                                           facts.shape.experts > 0);
 }
 
 PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& inputs) {

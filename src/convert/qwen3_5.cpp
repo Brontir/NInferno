@@ -983,7 +983,7 @@ void dense_q8(Model& model, Recipe& recipe) {
     require_dense(model);
     optional_components(model, recipe);
     assign_grouped(model, recipe, "text/token_embedding", kQ8);
-    assign_grouped(model, recipe, "text/output_head", kQ8);
+    assign_grouped(model, recipe, "text/output_head", qwen3_5_recipe_head_format("qwen3_5_q8"));
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
@@ -1094,7 +1094,7 @@ void qwen3_6_35b_a3b(Model& model, Recipe& recipe) {
     require_moe(model);
     optional_components(model, recipe);
     assign_grouped(model, recipe, "text/token_embedding", kQ8);
-    assign_grouped(model, recipe, "text/output_head", kQ6);
+    assign_grouped(model, recipe, "text/output_head", qwen3_5_recipe_head_format("qwen3_6_35b_a3b"));
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
@@ -1119,7 +1119,7 @@ void qwen3_6_27b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) {
     optional_components(model, recipe);
     const auto& quantized = sources.get("quantized");
     assign_grouped(model, recipe, "text/token_embedding", kQ8);
-    assign_grouped(model, recipe, "text/output_head", kQ8);
+    assign_grouped(model, recipe, "text/output_head", qwen3_5_recipe_head_format("qwen3_6_27b_nvfp4"));
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
@@ -1214,7 +1214,7 @@ void qwen3_6_35b_a3b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) 
     const auto& quantized = sources.get("quantized");
     optional_components(model, recipe);
     assign_grouped(model, recipe, "text/token_embedding", kQ8);
-    assign_grouped(model, recipe, "text/output_head", kQ6);
+    assign_grouped(model, recipe, "text/output_head", qwen3_5_recipe_head_format("qwen3_6_35b_a3b_nvfp4"));
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
@@ -1364,6 +1364,21 @@ Model build_qwen3_5_model(const Checkpoint& base, const std::vector<std::string>
     return model;
 }
 
+std::string_view qwen3_5_checkpoint_recipe(bool moe) noexcept {
+    return moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
+}
+
+QType qwen3_5_recipe_head_format(std::string_view recipe) noexcept {
+    if (recipe == "qwen3_6_27b" || recipe == "qwen3_6_35b_a3b" ||
+        recipe == "qwen3_6_35b_a3b_nvfp4") {
+        return kQ6;
+    }
+    if (recipe == "qwen3_8_27b" || recipe == "qwen3_5_q8" || recipe == "qwen3_6_27b_nvfp4") {
+        return kQ8;
+    }
+    return QType::BF16;
+}
+
 bool is_qwen3_5_recipe(std::string_view name) noexcept {
     return name == "qwen3_6_27b" || name == "qwen3_6_27b_nvfp4" || name == "qwen3_8_27b" ||
            name == "qwen3_8_27b_nvfp4" || name == "qwen3_6_35b_a3b" ||
@@ -1374,9 +1389,9 @@ bool is_qwen3_5_recipe(std::string_view name) noexcept {
 void apply_qwen3_5_recipe(std::string_view name, Model& model, Recipe& recipe,
                           SourceInputs& sources) {
     if (name == "qwen3_6_27b") {
-        dense_groupwise(model, recipe, kQ6);
+        dense_groupwise(model, recipe, qwen3_5_recipe_head_format(name));
     } else if (name == "qwen3_8_27b") {
-        dense_groupwise(model, recipe, kQ8);
+        dense_groupwise(model, recipe, qwen3_5_recipe_head_format(name));
     } else if (name == "qwen3_6_35b_a3b") {
         qwen3_6_35b_a3b(model, recipe);
     } else if (name == "qwen3_6_27b_nvfp4") {

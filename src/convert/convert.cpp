@@ -2389,7 +2389,7 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
             if (gguf) {
                 if (const auto error = qwen3_5_plan_error(checkpoint, out, mtp)) {
                     out.note    = out.recipe + " does not fit this GGUF (" + *error + ")";
-                    out.recipe  = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
+                    out.recipe  = qwen3_5_checkpoint_recipe(moe);
                     out.sources = {};
                 }
             } else if (!converted(checkpoint, out.recipe) ||
@@ -2420,12 +2420,12 @@ RecipeChoice choose_recipe(const std::filesystem::path& checkpoint, GgufRequest 
             out.recipe = "qwen3_5_published";
             if (const auto error = qwen3_5_plan_error(checkpoint, out, mtp)) {
                 out.note   = out.recipe + " does not fit this GGUF (" + *error + ")";
-                out.recipe = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
+                out.recipe = qwen3_5_checkpoint_recipe(moe);
             }
         } else {
             // Unquantized projections run as published; the MoE has no unquantized recipe, and
             // its maintainer recipe is refused unless forced.
-            out.recipe = moe ? "qwen3_6_35b_a3b" : "qwen3_5_bf16";
+            out.recipe = qwen3_5_checkpoint_recipe(moe);
         }
         if (!header_note.empty()) {
             out.note = out.note.empty() ? header_note : header_note + "; " + out.note;

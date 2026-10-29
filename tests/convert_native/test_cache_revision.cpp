@@ -8,6 +8,7 @@
 #include "convert/cache.h"
 #include "convert/checks.h"
 #include "convert/fetch.h"
+#include "convert/qwen3_5.h"
 #include "core/sys.h"
 
 #include <filesystem>
@@ -90,6 +91,18 @@ int main() {
                                                     248320, 4096) ==
               147456ULL * 3360 + 147456ULL * 4,
           "the planned proposal head counts its rows and their token ids");
+    // A BF16 checkpoint's head (no stored bytes known) as its default recipe stores it: the MoE's
+    // (qwen3_6_35b_a3b) Q6, the dense one's (qwen3_5_bf16) BF16 (Codex on #170). The MoE's smaller
+    // head is a smaller share of the round: more rows than a BF16 head would get.
+    {
+        using namespace ninferno::convert;
+        check(qwen3_5_recipe_head_format(qwen3_5_checkpoint_recipe(true)) == QType::Q6_G64_FP16 &&
+                  qwen3_5_recipe_head_format(qwen3_5_checkpoint_recipe(false)) == QType::BF16,
+              "the default recipes' head formats");
+        const auto moe   = planned_proposal_bytes(0, 5e9, 0.9e9, 248320, 2048, true);
+        const auto dense = planned_proposal_bytes(0, 5e9, 0.9e9, 248320, 2048, false);
+        check(dense != 0 && moe > dense, "the MoE checkpoint's head priced at its recipe's Q6");
+    }
 
     // A checkpoint replaced at the same path changes the stamp of what its conversion read; an
     // artifact converted before stamps were kept is stamped on first sight, not converted again.

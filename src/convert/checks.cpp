@@ -1,5 +1,6 @@
 #include "convert/checks.h"
 #include "convert/drafters.h"
+#include "convert/qwen3_5.h"
 
 #include "core/utf8.h"
 #include "core/weight.h"
@@ -597,15 +598,15 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
 }
 
 std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, double drafter_bytes,
-                                     std::uint64_t vocab, std::uint64_t hidden) {
+                                     std::uint64_t vocab, std::uint64_t hidden, bool moe) {
     if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return 0; }
     // A plan prices many rows and probes: the ranking is read once per vocabulary, each answer
     // kept (the same facts, the same bytes).
-    using Key = std::tuple<double, double, double, std::uint64_t, std::uint64_t>;
+    using Key = std::tuple<double, double, double, std::uint64_t, std::uint64_t, bool>;
     static std::mutex mutex;
     static std::map<std::uint64_t, std::vector<std::int64_t>> rankings; // by vocabulary
     static std::map<Key, std::uint64_t> answers;
-    const Key key{head_bytes, target_bytes, drafter_bytes, vocab, hidden};
+    const Key key{head_bytes, target_bytes, drafter_bytes, vocab, hidden, moe};
     std::lock_guard lock(mutex);
     if (const auto it = answers.find(key); it != answers.end()) { return it->second; }
     auto ranking = rankings.find(vocab);
@@ -628,9 +629,14 @@ std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes, dou
     }
     std::uint64_t out = 0;
     if (!ranking->second.empty()) {
-        // A checkpoint's head: BF16 in the round (the share), its gathered rows the recipe's Q4.
+        // An unquantized checkpoint's head: in the round (the share) as its default recipe stores
+        // it (Codex on #170: the MoE's recipe stores it Q6, not BF16), its gathered rows the
+        // recipe's Q4.
         const double values = static_cast<double>(vocab) * static_cast<double>(hidden);
-        const double full   = head_bytes > 0 ? head_bytes : values * 2;
+        const double full =
+            head_bytes > 0
+                ? head_bytes
+                : values * stored_bits(qwen3_5_recipe_head_format(qwen3_5_checkpoint_recipe(moe))) / 8;
         const double rows_bytes = head_bytes > 0 ? head_bytes / static_cast<double>(vocab)
                                                  : hidden * stored_bits(QType::Q4_G64_FP16) / 8;
         // The target's weights hold its head already (a GGUF's tensor table counts output.weight).
