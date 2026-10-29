@@ -1547,8 +1547,10 @@ void check_pinned(const FetchOptions& options, const std::string& repo,
     }
 }
 
-// The first `bytes` of `url` by an HTTP range request. `headers` (credentials) go to `url` only,
-// never to where it redirects (a CDN); a server that ignores the range is cut off at `bytes`.
+// The first `bytes` of `url` by an HTTP range request (from `begin`). `headers` (credentials) go
+// to `url` only, never to where it redirects (a CDN); a server that ignores the range (a 200) is
+// read from its start, its first `begin` bytes dropped, and cut off at `bytes`; a 206 whose range
+// does not start at `begin` is refused.
 // `total`: the whole file's bytes as the answer gives them (Content-Range, or the Content-Length
 // of a 200), 0 when it does not; a file shorter than `bytes` is returned whole.
 std::string range_prefix(const std::string& url, const std::vector<std::string>& headers,
@@ -1556,11 +1558,15 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
     struct Sink {
         std::string data;
         std::uint64_t limit = 0;
+        CURL* handle        = nullptr;
+        bool started        = false;
+        std::uint64_t skip  = 0; // a 200's leading bytes before `begin`
+        std::uint64_t begin = 0;
     };
     const auto get = [&](const std::string& from, const std::vector<std::string>& lines,
                          bool follow, Response& response) {
         Easy easy;
-        Sink sink{.limit = bytes};
+        Sink sink{.limit = bytes, .handle = easy.handle, .begin = begin};
         for (const auto& line : lines) { easy.header(line); }
         easy.header("Range: bytes=" + std::to_string(begin) + "-" +
                     std::to_string(begin + bytes - 1));
@@ -1570,8 +1576,19 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
         curl_easy_setopt(easy.handle, CURLOPT_HEADERDATA, &response);
         const auto write = +[](char* data, std::size_t size, std::size_t count,
                                void* user) -> std::size_t {
-            auto& into       = *static_cast<Sink*>(user);
-            const auto taken = std::min<std::uint64_t>(into.limit - into.data.size(), size * count);
+            auto& into = *static_cast<Sink*>(user);
+            if (!into.started) {
+                into.started = true;
+                long status  = 0;
+                curl_easy_getinfo(into.handle, CURLINFO_RESPONSE_CODE, &status);
+                if (status == 200) { into.skip = into.begin; }
+            }
+            std::size_t offered = size * count;
+            const auto dropped  = std::min<std::uint64_t>(into.skip, offered);
+            into.skip -= dropped;
+            data += dropped;
+            offered -= dropped;
+            const auto taken = std::min<std::uint64_t>(into.limit - into.data.size(), offered);
             into.data.append(data, taken);
             return into.data.size() < into.limit ? size * count : 0; // full: stop the transfer
         };
@@ -1605,6 +1622,13 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
     };
     if (const auto range = header("content-range"); range.find('/') != std::string::npos) {
         total = number(range.substr(range.find('/') + 1));
+        // "bytes <first>-<last>/<total>": a slice from elsewhere than asked is not the window.
+        const auto first = range.find_first_of("0123456789");
+        if (response.status == 206 &&
+            (first == std::string::npos || number(range.substr(first, range.find('-', first) - first)) != begin)) {
+            throw hub_error("reading bytes from " + std::to_string(begin) + " of " + url, response,
+                            "the answer's range starts elsewhere");
+        }
     } else if (response.status == 200) {
         total = number(header("content-length"));
     }
