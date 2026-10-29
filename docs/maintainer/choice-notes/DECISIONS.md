@@ -1276,7 +1276,8 @@ products. Branch kern/vec-prefetch keeps the two attempts for reference.
 - Attempt 3, that batching in source (kern/vec-raw-split, 29.10): every decoder split into `load()`
   (all of a slice's global loads, issued together) and `convert()` (none), the kernel loading slice
   it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
-  RTX 5070 Ti (instances 0.67..1.52) and 1.01 on the RTX 4090 (0.85..1.20): the same re-roll.
+  RTX 5070 Ti (instances 0.67..1.52), 0.99 on the RTX 5090 (0.72..1.29) and 1.01 on the RTX 4090
+  (0.85..1.20): the same re-roll.
   ptxas still places the loads: Q4_K's runtime-K slice loop issued 1..8 loads before its first
   IDP against master's 1..5, and the instances that gained loads ahead were the faster ones (T = 7
   add -28 %, T = 4 +32 % with one fewer). Source order does not hold them either; what is left is
