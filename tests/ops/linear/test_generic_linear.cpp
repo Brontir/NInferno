@@ -914,8 +914,7 @@ int check_volta_hmma_accuracy(const Format& f, std::int32_t k, float mean, std::
                                    generic::Epilogue::Store};
     const generic::Route route = generic::select_route(problem, device.weight, t, false);
     if (route.family != generic::Family::RegisterMma) {
-        std::cerr << f.name << " Volta HMMA accuracy: T=8 not the register-MMA route
-";
+        std::cerr << f.name << " Volta HMMA accuracy: T=8 not the register-MMA route\n";
         return 1;
     }
     Tensor tx(x.p, DType::BF16, {k, t});
@@ -951,12 +950,10 @@ int check_volta_hmma_accuracy(const Format& f, std::int32_t k, float mean, std::
         }
     const double average = total / (static_cast<double>(rows) * t);
     std::cout << "VOLTA_HMMA_ACCURACY " << f.name << " k=" << k << " mean=" << mean
-              << " max=" << worst << " avg=" << average << '
-';
+              << " max=" << worst << " avg=" << average << '\n';
     if (worst <= 1.0 / 256.0) return 0;
     std::cerr << f.name << " Volta HMMA accuracy k=" << k << ": error " << worst
-              << " of the reduced |w x| above one bf16 ulp
-";
+              << " of the reduced |w x| above one bf16 ulp\n";
     return 1;
 }
 
