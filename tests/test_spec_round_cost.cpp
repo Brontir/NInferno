@@ -265,6 +265,16 @@ int main() {
         }
         expect(sp::artifact_proposal_rows(dir) == sp::ProposalRows{{{"mtp", 57344}, {"dflash", 147456}}},
                "an artifact's proposal rows: MTP its prefix, DFlash all, DFlash2 none");
+        // A head without row views (row-scaled FP8 here): MTP reads all its rows.
+        art::TensorObject fp8;
+        fp8.id     = "head";
+        fp8.layout = "row_scale_v1";
+        dir.objects.push_back(fp8);
+        dir.bindings["proposal/head"].parts.push_back({.object = {.index = 0}, .begin = 0, .end = 1});
+        expect(sp::artifact_proposal_rows(dir).of("mtp") == 147456,
+               "a head with no row views: MTP reads all its rows");
+        dir.bindings.clear();
+        dir.objects.clear();
         dir.uses.erase({"proposal/head", "mtp/final_hidden"});
         expect(sp::artifact_proposal_rows(dir).of("mtp") == 0, "a head not bound to MTP: its full head");
         dir.components["text"].proposal.reset();
