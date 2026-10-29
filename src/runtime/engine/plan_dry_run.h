@@ -214,6 +214,12 @@ struct PlanModelFacts {
     // An untied model's token embedding table's stored bytes (a GGUF's token_embd.weight beside
     // its output.weight), 0 when tied or unknown: a decode step never reads it whole.
     std::uint64_t embedding_bytes = 0;
+    // The parsed GGUF header's token_embd.weight bytes, tied or not (a split part 0's table cannot
+    // say; product::complete_split_gguf_head settles it), 0: none in that table.
+    std::uint64_t token_table_bytes = 0;
+    // The routed experts' stored bytes (a whole GGUF table's *_exps tensors: the trunk's, and the
+    // MTP layers' apart), 0 when dense or unknown: a pass reads them at its rows' routed share.
+    std::uint64_t routed_expert_bytes = 0, mtp_routed_expert_bytes = 0;
     // Where a whole GGUF's tensor data starts (its tensor table ends just before), 0: not a GGUF.
     std::uint64_t gguf_data_offset = 0;
     // A drafter's full-attention KV per token (DFlash's own layers), 0 when none or unknown: the

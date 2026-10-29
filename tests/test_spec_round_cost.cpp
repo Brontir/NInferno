@@ -17,6 +17,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -347,27 +348,59 @@ int main() {
         chip_keyed.tune.key.gpu = "ad104";
         for (const auto* p : {&pair_of(kQ9, "ad104:60sm"), static_cast<const sp::MeasuredPair*>(&chip_keyed)}) {
             std::string note;
-            (void)sp::profile_for_target({p}, "sm89", {}, nullptr, &rtx4070ti, &note);
+            (void)sp::profile_for_target({p}, "sm89", {}, &rtx4070ti, &note);
             expect(note.empty(), "the measuring card's own record (" + p->tune.key.gpu + "), not facts");
         }
         // Another board of the lab card's class (RTX 4500 Ada: 432 GB/s against the 4070 Ti's 504):
         // not the lab card, priced by the facts.
         const auto rtx4500 = card("ad104:60sm", "ad104", "sm89", 89, 60, 2580, 432);
         std::string other_note;
-        (void)sp::profile_for_target({&pair_of(kQ9, "ad104:60sm")}, "sm89", {}, nullptr, &rtx4500,
+        (void)sp::profile_for_target({&pair_of(kQ9, "ad104:60sm")}, "sm89", {}, &rtx4500,
                                      &other_note);
         expect(!other_note.empty(), "another board of the lab card's class: priced by the facts");
         auto arch_keyed          = chip_keyed;
         arch_keyed.tune.key.gpu  = "sm89";
         std::string note;
-        (void)sp::profile_for_target({&arch_keyed}, "sm89", {}, nullptr, &rtx4070ti, &note);
+        (void)sp::profile_for_target({&arch_keyed}, "sm89", {}, &rtx4070ti, &note);
         expect(!note.empty(), "an architecture key is no card's own: priced by the facts");
         // A generation without eta (one lab card): another board keeps the lab-measured profile.
         const auto rtx3060_8gb = card("ga106:28sm", "ga106", "sm86", 86, 28, 1777, 240);
         std::string ampere_note;
-        (void)sp::profile_for_target({&pair_of(kQ9, "ga106:28sm")}, "sm86", {}, nullptr, &rtx3060_8gb,
+        (void)sp::profile_for_target({&pair_of(kQ9, "ga106:28sm")}, "sm86", {}, &rtx3060_8gb,
                                      &ampere_note);
         expect(ampere_note.empty(), "Ampere has no eta yet: the lab-measured profile, no facts");
+        // Turing: no eta and no lab pair of this target on Turing. The median R of every lab card
+        // that measured it, said as a transfer; never the registry's first pair (the RTX 4070
+        // Ti's own R, DECISIONS 57).
+        const auto rtx2080ti = card("tu102:68sm", "tu102", "sm75", 75, 68, 1545, 616);
+        std::vector<const sp::MeasuredPair*> q9;
+        std::map<std::string, std::vector<double>> each;
+        for (const auto& p : sp::Registry::builtin().pairs()) {
+            if (std::string_view(p.target_repo) != kQ9) { continue; }
+            q9.push_back(&p);
+            for (const auto& [label, r] : sp::profile_round_costs(p.tune)) { each[label].push_back(r); }
+        }
+        std::string turing_note;
+        const auto turing = sp::profile_for_target(q9, "sm75", {}, &rtx2080ti, &turing_note);
+        const auto cost   = sp::profile_round_costs(turing);
+        const auto ada_r  = sp::profile_round_costs(pair_of(kQ9, "ad104:60sm").tune);
+        bool median = q9.size() >= 2 && cost.contains("mtp:2") && cost.contains("mtp:3");
+        for (const auto& [label, r] : cost) {
+            auto v = each.at(label);
+            std::sort(v.begin(), v.end());
+            const double m = v.size() % 2 ? v[v.size() / 2] : (v[v.size() / 2 - 1] + v[v.size() / 2]) / 2;
+            median = median && near(r, m, 1e-9);
+        }
+        expect(median && !near(cost.at("mtp:2"), ada_r.at("mtp:2"), 0.01),
+               "Turing takes the lab cards' median R, not the RTX 4070 Ti's");
+        expect(turing_note == "transferred: median of " + std::to_string(q9.size()) +
+                                  " lab cards of other generations (no facts for turing)",
+               "the transfer is said: " + turing_note);
+        auto reversed = q9;
+        std::reverse(reversed.begin(), reversed.end());
+        expect(sp::to_json(sp::profile_for_target(reversed, "sm75", {}, &rtx2080ti)).dump() ==
+                   sp::to_json(turing).dump(),
+               "the registry's order never moves Turing's profile");
     }
     // Two lab cards of the generation that agree: their deep depths and load table are theirs; a
     // card that measured nothing is priced by the facts, no deeper than kPortableDepth (Codex P2
@@ -381,7 +414,7 @@ int main() {
         const auto agreed    = sp::profile_for_target(both, "sm89");
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
         std::string note;
-        const auto priced  = sp::profile_for_target(both, "sm89", {}, nullptr, &rtx4060ti, &note);
+        const auto priced  = sp::profile_for_target(both, "sm89", {}, &rtx4060ti, &note);
         const auto shallow = [](const sp::Profile& p) {
             return p.overall.config.k <= sp::kPortableDepth &&
                    p.thinking.config.k <= sp::kPortableDepth &&
@@ -392,12 +425,28 @@ int main() {
         expect(!note.empty() && shallow(priced),
                "an unmeasured Ada card: facts, no deeper than kPortableDepth: " +
                    priced.thinking.config.label());
+        // What the plan reports as "round_cost" (spec::profile_round_costs of the resolved
+        // profile) is, for a profile priced by the facts, the facts' R(k) itself: the user kit
+        // holds a measured R(k) to it (tools/kit/validate.py).
+        {
+            std::string one_note;
+            const auto one   = sp::profile_for_target({&ada}, "sm89", {}, &rtx4060ti, &one_note);
+            const auto facts = sp::round_cost_estimate(ada, rtx4060ti);
+            const auto costs = sp::profile_round_costs(one);
+            bool same = !one_note.empty() && facts.known && costs.size() == facts.cost.size();
+            for (const auto& [label, cost] : costs) {
+                const auto it = facts.cost.find(label);
+                same = same && it != facts.cost.end() && near(cost, it->second, 1e-9);
+            }
+            expect(same, "the priced profile's round costs are the facts' estimate");
+        }
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
         std::string own_note;
-        const auto own = sp::profile_for_target(both, "sm89", {}, nullptr, &rtx4070ti, &own_note);
-        expect(own_note.empty() && own.thinking.config == agreed.thinking.config &&
+        const auto own = sp::profile_for_target(both, "sm89", {}, &rtx4070ti, &own_note);
+        expect(own_note == "rounds: the median of 2 lab cards of ada" &&
+                   own.thinking.config == agreed.thinking.config &&
                    own.overall.config == agreed.overall.config,
-               "a lab board keeps the agreeing cards' measured profile");
+               "a lab board takes its generation's agreeing cards' median rounds: " + own_note);
     }
     // One card's two tunes (spec-tune measures one drafter at a time), each with its own mode's
     // facts: pooled, both drafters are priced, whatever the records' order.

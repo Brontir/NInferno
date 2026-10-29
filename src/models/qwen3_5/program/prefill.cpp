@@ -1368,7 +1368,9 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
         const double vision_seconds       = staged.vision ? staged.vision->elapsed_seconds() : 0.0;
         const std::uint32_t prompt_tokens = staged.prompt_tokens;
 
-        validate_licensed_tokens(std::span<const TokenId>(host_tokens, 1));
+        if (!license_tokens(std::span<TokenId>(host_tokens, 1)) && prefill_fault == 0U) {
+            prefill_fault = runtime::kRowFaultTokenDomain;
+        }
         if (sequence.ledger.size() != prompt_tokens) {
             throw std::logic_error("candidate token ledger does not match prompt length");
         }

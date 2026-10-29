@@ -47,9 +47,12 @@ constant.
 4. **Telemetry:** `nvidia-smi --query-gpu=... -lms=500` for the whole start, columnar:
    - SM and memory clocks, temperature, power, utilization, memory used, pstate and the clock event reasons;
    - a mark per window (idle, warm-up, `decode i`, `prefill i`).
-5. **Optional, recorded only (the validator does not judge them in this version):**
-   - `--hard50` runs `tools/bench/hard_set.py` against the plain start (as the lab's `q_hard`). With 50 items, the binomial standard error is about 7 points: it can show a gross failure, never a quality difference. Its budget estimate is 50 answers of about 1100 tokens at the plan's decode. Qwen3.5-9B Q4_K_M on an RTX 4060 Ti took 18 minutes.
-   - `--spec-tune S` runs `ninferno spec-tune <artifact> --budget-seconds S --publish ... --measured-on "<card> user-kit"`, the run our stands publish registry entries from. The plan's `--spec auto` prediction goes beside it.
+5. **Optional:**
+   - `--hard50` runs `tools/bench/hard_set.py` against the plain start (as the lab's `q_hard`). With 50 items, the binomial standard error is about 7 points: it can show a gross failure, never a quality difference. Its budget estimate is 50 answers of about 1100 tokens at the plan's decode. Qwen3.5-9B Q4_K_M on an RTX 4060 Ti took 18 minutes. The run records the question set's SHA-256.
+   - `--spec-tune S` runs `ninferno spec-tune <artifact> --budget-seconds S --publish ... --measured-on "<card> user-kit"`, the run our stands publish registry entries from, under telemetry (one window, `spec-tune`, and the compute processes while it runs and after). Where the registry has lab pairs of the repository and quantization, it runs their configurations (`--configs`): the default menu drafts through the proposal head where the artifact has one (`+head`), which no lab pair measured, so neither the pairs' acceptance nor the plan's round costs could be held to it. Beside the tune the run records:
+     - the `--spec auto` plan's `plan.speculation` (`basis`, `source`, `served`, `by_thinking`, `fallbacks`, `notes`, and `round_cost`: what a round of each configuration costs in the resolved profile, in plain decode steps; serving.md);
+     - the drafter manifest beside the artifact (`<artifact>.speculation.json`): the engine family and each drafter's kind and status, its repo@revision only when the registry declares that repository (else `other`); no profiles, no paths;
+     - the target's identity: the hub revision and the SHA-256 of its weight files, hashed from their bytes (about 10 s per 5 GB; `blob_matches` says whether the hub's blob name agrees), the key of the registry's pairs.
 
 ## The result file: `ninferno-user-run/1.minor`
 
@@ -58,7 +61,7 @@ major 1.
 
 | Field | What |
 |---|---|
-| `schema` | `"ninferno-user-run/1.0"` |
+| `schema` | `"ninferno-user-run/1.1"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`) |
 | `kit` | `{version, models_version, models_sha256}` |
 | `created` | UTC time |
 | `ninferno` | `{version}`: the first line of `ninferno-serve --version` |
@@ -76,6 +79,12 @@ A plain run holds the following fields.
 | `plan` | `chosen` (the plan's `choice.chosen`); `prompt` (`choice.task.prompt`); `document` (the plan JSON's `schema, ask, device, choice, estimate, pick, rule`, `model` without `source`, and `plan`'s scalar fields) |
 | `passes[]` | `start_s`; `served` `{id, fingerprint, speculation, choice}`; `processes_before` and `processes_after` `{listed, others, informative}`; `requests[]` (each with `prompt_tokens, cache_n, prompt_n, prompt_ms, predicted_n, predicted_ms, excluded?`); `measured` `{decode, prefill: {median, min, max, n, prompt_tokens}}`; `telemetry` `{period_ms, t, columns, marks, reason_fields}`; `error` |
 | `error` | why a run was not measured (fetch, budget) |
+
+A `hard50` run holds `hard50` (hard_set.py's summary and `wrong`, the ids answered wrong),
+`set_sha256` and `served.choice`. A `spec` run holds `plan` `{chosen, error, speculation}`,
+`configs` (the lab pairs' menu it ran; empty: spec-tune's default), `manifest`, `target`
+`{revision, weights: [{sha256, bytes, blob_matches?}]}`, `profile` (spec-tune `--out`), `publish`,
+`processes_before`, `processes_after` and `telemetry`.
 
 **Privacy.**
 - Every string is scrubbed before writing: the home, the working directory and the hub cache become `<local>`, and other absolute paths become `<path>`.
@@ -105,8 +114,8 @@ verdict:
 
 A verdict covers **this board** only: this quant, length and C=1. A card name's other boards (OEM,
 laptop) are not covered. When the estimate was `speed_transferred` from another card, the verdict
-tests the transfer rule, not this card's facts. Speculation and hard50 runs are recorded, not judged,
-in this version.
+tests the transfer rule, not this card's facts. Speculation and hard50 runs have their own rules
+(below).
 
 ### Rejection rules (stated, applied in order)
 
@@ -125,12 +134,54 @@ in this version.
 These numbers (5 %, 256 MiB, 5 %, 10 %, 5 %, ±10 %) are set at the top of `validate.py`. A change
 goes through this page first.
 
+## Judging speculation (`spec` runs)
+
+A spec-tune measures two things, and they are judged apart:
+- **Acceptance**, the tokens a round per configuration and corpus section: a property of the target, its drafter and the greedy corpus, not of the card (the six lab cards of Qwen3.5-9B Q4_K_M agree within 3 % per section). It is held to the registry's lab pairs of the same target.
+- **Round cost**, what a round costs in plain decode steps: R(k). The user's is computed from the tune's own measurements as `spec::profile_round_costs` computes it (per section a round's seconds over plain decode's seconds a token, the mean over the sections). It is held to the plan's `round_cost` for the same configuration.
+
+What the plan's round cost is, from its `source`, is said in every verdict, and only the first is a test of the facts:
+- **the facts' R(k)**: the source says the rounds were priced from the weights' bytes and this card's rates;
+- **the facts raised to a lab card's measurement**: a configuration the source lists after "conservative where the lab card measured rounds dearer" (part measurement);
+- **a lab measurement, not the facts**: any other source, quoted (this class's own pair, the median of a generation's lab cards, a sibling quantization, the median of other generations' lab cards: "transferred: ..."). The verdict then tests that a lab measurement carries to this board.
+
+The round costs are the resolved profile's: a configuration of a drafter whose profile the plan did not resolve, or deeper than the portable depth, has no prediction.
+
+| Rule | Rejects | When |
+|---|---|---|
+| S1 the tune | the run | no profile or publish (spec-tune failed); a configuration with a section without a round. A tune that left a drafter `untested` or skipped configurations is judged on what it measured, but is no registry candidate |
+| S2 identity | no reference | the target's weights not recorded (no pair can be named); the lab pairs of the target (by the weights' SHA-256) of another engine key (`key.engine`); settings other than the pairs' (context, chunk, KV, greedy; the wait mode moves the clock, never a token); a separate drafter of the configuration's mode other than the pair's (repo@revision; an `mtp:K` label drafts with a Gemma 4 assistant or a NemotronH sidecar where the target has one) |
+| S3 load and slowdown | round cost | another compute process listed on the card during or after the tune (TCC/Linux); a slowdown, thermal or power-brake sample in the `spec-tune` window. Unknown reasons, a capped card (R4) or an unknown power source: kept, no verdict. Acceptance is token counts and survives all of these |
+| S4 steady plain | round cost | the tune's plain decode across its sections more than 5 % apart (the card's speed moved during the tune) |
+| S5 acceptance | the configuration | the tokens a round pooled over the sections ((accepted + rounds) / rounds) more than 10 % from the median of the lab cards' over the same sections and prompt counts (lab pairs of another menu, other sections or another drafter are left out, each said): **contradicts** the registry pairs' acceptance (a broken drafter, conversion or kernel on this card); within: **confirms**. The worst section is reported beside it. Fewer than 2 lab cards with the configuration (a `+head` one included: the lab measures no proposal head): no reference |
+| S6 round cost | the configuration | the measured R(k) more than 10 % from the plan's `round_cost`: **contradicts** that prediction (of the kind said above); within: **confirms**. A configuration the plan does not price (deeper than the portable depth): no prediction |
+
+A spec run is a **registry candidate** when the file and the run are accepted, every drafter was tested and no configuration was skipped or ran a section without a round, every measured separate drafter is one the registry declares, the target's identity and the manifest are recorded, no configuration's acceptance contradicts the lab pairs, and the settings are the pairs' (when there are pairs). Being a candidate says only that `registry_add.py --from-user-run` will take it.
+
+## Judging hard50 (`hard50` runs)
+
+`tools/kit/hard50_reference.json` holds the lab's hard50 runs of each model (plain decode, one per lab card, the campaign and date, and the ids each answered wrong) and the question set's SHA-256. The kit's run records the same: its count, its wrong ids, the set's SHA-256 and the start's `choice |` line (its KV and activations).
+
+| Rule | Rejects | When |
+|---|---|---|
+| H1 the run | the run | not 50 questions, or a request that failed (`errors` above 0) |
+| H2 the set | no verdict | the run's question set differs from the reference's, or was not recorded; or the reference has no run of this repository and quantization |
+| H3 below the lab | the verdict | either: fewer correct than the lab's lowest card minus two binomial standard deviations at the lab's median (`2 * sqrt(50 p (1 - p))`, p the median over 50); or, with 3 lab cards or more, more questions that every lab card answered right answered wrong here than `2 m + 2`, m the most any lab card has against the others (greedy decoding: the cards differ by numerics on a fixed set, and Qwen3.5-9B's seven cards differ by at most one such question). **Below the lab**: a gross failure (a broken kernel, a wrong template, a corrupted download); otherwise **consistent with the lab**. Never "better": 50 items cannot show it |
+
+The reference is refreshed by hand from the stands' `q_hard` runs after a change that moves answers, never to fit a submission.
+
+## A user's tune into the registry (maintainer)
+
+    python tools/spec/registry_add.py --from-user-run RUN.json --accept-user [--run ID] [--registry PATH]
+
+It validates the file again (the same `validate.py`, against `--registry`) and refuses unless the spec run is a registry candidate, or without `--accept-user`: a submission is evidence, and an entry is made only by a maintainer who read the validator's report. It builds the pair as `--pair` does, from what the run recorded (the tune, the manifest, the target's revision and weights), and:
+- marks it `user_kit` `{kit, schema, created, ninferno, card, measured_on}`, and gives it the user's `board` (the PCI device id) instead of a `lab_board`;
+- puts it into `tools/spec/user_pairs.json` (`--user-pairs FILE`), not the registry: the engine embeds the registry, and its hash is in every manifest, so a user's pair there would make every manifest stale. A user's pair is recorded, never served. Served, it would count as a lab card wherever the selector counts cards (a generation's median, the facts' template card, a transfer's median, a group's choice), so serving it waits for the selector to tell user pairs apart (serving its own board only, after the lab's);
+- refuses a target the lab measured on the same chip in the registry (the lab's measurement stands); a second run of the same class and board replaces the first.
+
+The tool changes the file in the working tree (and its `version`); the change reaches the main branch only through a maintainer's PR, never automatically.
+
 ## Not yet (later PRs)
 
-- Judging speculation: acceptance (tokens per round) against the registry pair, and round cost
-  against the bytes model R(k). Only a SPEC `basis` of `similar`, `generic` or `preliminary` is a
-  real prediction; `own` would be circular.
-- A `registry_add.py` path for user entries (`measured_on ... user-kit`, refused without
-  `--accept-user`).
 - Detecting an overclock against the gpu-facts boost clock (record the clocks now; judge later).
 - Multi-GPU selection beyond `--device`.

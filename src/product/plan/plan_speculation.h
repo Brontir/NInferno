@@ -171,6 +171,11 @@ struct SpeculationReport {
     };
     std::optional<ThinkingVariant> with_thinking, without_thinking;
     bool per_request = false;
+    // Under --spec auto, what a round of each measured configuration costs in the resolved
+    // profile (spec::profile_round_costs, plain decode steps a round): the facts' R(k) where the
+    // source says the rounds were priced from the weights' bytes, else the measuring card's.
+    // Empty with no profile.
+    std::map<std::string, double> round_cost;
 };
 
 // Whether the speculation `report` serves drafts with one of `subject`'s separate drafters

@@ -38,6 +38,12 @@ struct GgufTensorTable {
     std::uint64_t mtp_bytes         = 0;
     std::uint64_t own_drafter_bytes = 0; // a converted artifact's own drafter, inside tensor_bytes
     runtime::WeightBasis basis      = runtime::WeightBasis::GgufTensors; // Artifact for one
+    // A GGUF table's own stored routed-expert banks (trunk, MTP layers) and token table: a mixed
+    // quantization encodes them at other widths than its dense tensors, so the file's total does
+    // not scale another row's (Codex on #202). Unset: scaled from the parsed row's.
+    std::optional<std::uint64_t> routed_expert_bytes;
+    std::optional<std::uint64_t> mtp_routed_expert_bytes;
+    std::optional<std::uint64_t> token_table_bytes;
 };
 // The table from the facts of a head read (nullopt: a split part or no tensor table).
 [[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);
@@ -142,6 +148,14 @@ struct DryRunInputs {
 // The default proposal head's bytes (convert::planned_proposal_bytes) at `facts`' weights: the
 // row's own head where its header was read, else the facts' head as it is (a head's format is
 // the file's, not a share of the weights); 0 when the inputs plan none.
+// A split Qwen GGUF's head, where its parsed part 0 did not hold it (Codex on #199): the later
+// parts' headers read (convert::gguf_quants_head_bytes) for `quant`'s output.weight, else the
+// tied token table every part was read without; the head's bytes, the tie, and an untied model's
+// embedding (its part 0's token_embd.weight) set in `facts`. Nothing for a whole table or a head
+// known.
+void complete_split_gguf_head(PlanSourceFacts& facts, const std::string& spec,
+                              const convert::FetchOptions& fetch, const std::string& quant);
+
 [[nodiscard]] std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts,
                                               const DryRunInputs& inputs);
 

@@ -2320,6 +2320,7 @@ SPEC:
 | `depth_at_concurrency` | the depth a step of `--max-concurrency` lanes runs at |
 | `fallbacks` | the start's order as tried: `[{step, label, fits, served, note}]`, `step` one of `profile`, `explicit`, `fit_fallback`, `shallower`, `head`, `plain`, `pool_head`, `pool_plain`; `served` marks the one the start ends on |
 | `notes` | the resolution's notes |
+| `round_cost` | under `--spec auto`, what a round of each measured configuration costs in the resolved profile, in plain decode steps (`{"dflash:7": 1.9, ...}`): per corpus section a round's seconds over plain decode's seconds a token, the mean over the sections. Where `source` says the rounds were priced from the weights' bytes it is the facts' R(k) for this card, otherwise the measuring card's; `{}` with no profile |
 | `by_thinking` | the profile's choice for requests with thinking and without, where the plan serves the profile's own choice: `{thinking: {config, speedup}, non_thinking: {config, speedup}, per_request}`, each the entry for that flag of the menu the start serves (`plain` when it decodes plainly), `speedup` the decode the profile measured for that configuration against plain (1 for a plain decode it chose; 0: not measured), `per_request` whether each request runs its own (`--spec-select thinking` by the measurements); `null` elsewhere |
 
 ### KV capacity

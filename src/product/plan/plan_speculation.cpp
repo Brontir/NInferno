@@ -8,6 +8,7 @@
 #include "product/speculative_options.h"
 #include "runtime/engine/kv_capacity.h"
 #include "spec/manifest.h"
+#include "spec/pairs.h"
 #include "spec/registry.h"
 
 #include <algorithm>
@@ -414,6 +415,9 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                 for (const std::string& note : subject->resolved->notes) {
                     r.notes.push_back(note);
                 }
+                if (subject->resolved->found()) {
+                    r.round_cost = spec::profile_round_costs(subject->resolved->profile);
+                }
             }
         }
         const auto with_given = [&](const ServedSpeculation& s) {
@@ -620,6 +624,7 @@ Json to_json(const SpeculationReport& r) {
             {"depth_at_concurrency", r.depth_at_concurrency},
             {"fallbacks", std::move(fallbacks)},
             {"notes", r.notes},
+            {"round_cost", r.round_cost},
             {"by_thinking", r.with_thinking && r.without_thinking
                                 ? Json{{"thinking", {{"config", r.with_thinking->label},
                                                      {"speedup", r.with_thinking->speedup}}},
