@@ -30,6 +30,7 @@
 // up, never down; rounds of more than kPortableDepth drafts (from 12 rows verify kernels change
 // tiles: up to +60 %) are not estimated away from the lab card at all.
 
+#include "core/cost_constants.h"
 #include "spec/config.h"
 
 #include <nlohmann/json.hpp>
@@ -82,13 +83,9 @@ struct RoundFacts {
 // is left out (a later registry's facts read by an earlier build).
 [[nodiscard]] RoundFacts parse_round_facts(const nlohmann::json& doc);
 
-// Rows routed apart read this share of the experts independent routing would add (the
-// configuration choice's kMoeRoutedShare, product/choice/choice_constants.h: fitted on the
-// registry's speculation floors, audit1018/x3).
-inline constexpr double kRoutedExpertShare = 0.30;
-
 // The share of a pass's routed-expert bytes `rows` rows read: k/E for one row, towards the experts
-// any of them routes to (1 - (1 - k/E)^rows) at kRoutedExpertShare of independent routing.
+// any of them routes to (1 - (1 - k/E)^rows) at kMoeRoutedShare (core/cost_constants.h) of
+// independent routing.
 [[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept;
 
 // The share of its int8 tensor peak (the generation row's s8 rate, core/generation.h; dp4a's where
@@ -118,10 +115,6 @@ inline constexpr SmallTEta kSmallTEta[] = {
     {"ada", 0.148, 2},
     {"gb20x", 0.165, 2},
 };
-
-// dp4a's int8 rate a SM-clock, for a generation without an int8 MMA (Volta): the configuration
-// choice's kDp4aOpsPerSmClock (CUDA C++ Programming Guide, compute capability 7.0).
-inline constexpr double kDp4aOpsPerSmClockRound = 512;
 
 // A card's rates as the round cost reads them.
 struct CardRates {
