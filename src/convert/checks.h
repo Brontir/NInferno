@@ -104,10 +104,12 @@ struct PlannedProposal {
     bool mtp            = false; // MTP asks rows (the head serves it)
     bool dflash         = false; // DFlash asks rows
 };
+// `mtp_read`: what an MTP pass reads (a MoE MTP layer's routed experts at one row's share;
+// negative: `mtp_bytes`), `mtp_bytes` what the MTP layers store (out of the target's pass).
 [[nodiscard]] PlannedProposal planned_proposal(double head_bytes, double target_bytes,
                                                double mtp_bytes, double drafter_bytes,
                                                std::uint64_t vocab, std::uint64_t hidden,
-                                               bool moe = false);
+                                               bool moe = false, double mtp_read = -1);
 [[nodiscard]] inline std::uint64_t planned_proposal_bytes(double head_bytes, double target_bytes,
                                                           double mtp_bytes, double drafter_bytes,
                                                           std::uint64_t vocab, std::uint64_t hidden,

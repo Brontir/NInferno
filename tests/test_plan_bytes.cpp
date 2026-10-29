@@ -24,6 +24,7 @@
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/startup.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
+#include "convert/checks.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/kv_capacity.h"
@@ -976,6 +977,27 @@ void test_proposal_bytes_per_quant() {
           "an MTP plan loads the head");
     check(weights(SpeculativeBackend::None, true) == weights(SpeculativeBackend::None, false),
           "a plain plan not");
+    // The run sizes the restricted head under the drafters it serves (Codex on #192: a
+    // pre-conversion MTP plan sized the full head's logits), never with a separate drafter.
+    {
+        rt::PlanModelFacts held     = mtp.model;
+        held.proposal_bytes         = 57344ULL * 3364;
+        held.proposal_serves_mtp    = true;
+        held.proposal_serves_dflash = false;
+        ninferno::SpeculativeOptions s;
+        s.backend = SpeculativeBackend::Mtp;
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Optimized, "MTP: the head");
+        s.backend = SpeculativeBackend::DFlash;
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "DFlash it does not serve");
+        s.backend = SpeculativeBackend::DFlash2;
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "DFlash2: full");
+        s.backend = SpeculativeBackend::Mtp;
+        s.drafter = "/models/drafter.ninferno";
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "a separate drafter: full");
+        held.proposal_bytes = 0;
+        s.drafter.clear();
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "no head: full");
+    }
     // A quantization whose subject has no MTP layers: none of their rows.
     pr::SpeculationSubject plain;
     plain.components = {"text"};
@@ -1000,14 +1022,15 @@ void test_proposal_bytes_per_quant() {
     const double share  = 32e9 / 35e9;
     const double read   = static_cast<double>(moe.model.mtp_bytes) *
                         (1 - share + share * ninferno::spec::moe_read_fraction(routed, 1));
-    pr::PlanSourceFacts dense_read = moe;
-    dense_read.shape.experts       = 0;
-    dense_read.model.mtp_bytes     = static_cast<std::uint64_t>(read);
+    // The layers' stored bytes out of the target's pass, the routed read the pass's price.
+    const auto priced = ninferno::convert::planned_proposal(
+        static_cast<double>(moe.model.head_bytes), static_cast<double>(moe.model.weight_bytes),
+        static_cast<double>(moe.model.mtp_bytes), 0, moe.model.vocab, moe.model.hidden, true, read);
     pr::PlanSourceFacts dense_all  = moe;
     dense_all.shape.experts        = 0;
-    check(pr::proposal_bytes_at(moe, none) == pr::proposal_bytes_at(dense_read, none) &&
+    check(pr::proposal_bytes_at(moe, none) == priced.bytes &&
               pr::proposal_bytes_at(moe, none) != pr::proposal_bytes_at(dense_all, none),
-          "MoE MTP: priced at its routed read");
+          "MoE MTP: priced at its routed read, its stored bytes out of the target");
 }
 
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the

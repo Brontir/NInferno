@@ -622,15 +622,16 @@ DefaultProposal default_proposal(const Model& model, const Recipe& recipe,
 
 PlannedProposal planned_proposal(double head_bytes, double target_bytes, double mtp_bytes,
                                  double drafter_bytes, std::uint64_t vocab, std::uint64_t hidden,
-                                 bool moe) {
+                                 bool moe, double mtp_read) {
     if (vocab == 0 || hidden == 0 || target_bytes <= 0) { return {}; }
     // A plan prices many rows and probes: the ranking is read once per vocabulary, each answer
     // kept (the same facts, the same bytes).
-    using Key = std::tuple<double, double, double, double, std::uint64_t, std::uint64_t, bool>;
+    if (mtp_read < 0) { mtp_read = mtp_bytes; }
+    using Key = std::tuple<double, double, double, double, std::uint64_t, std::uint64_t, bool, double>;
     static std::mutex mutex;
     static std::map<std::uint64_t, std::vector<std::int64_t>> rankings; // by vocabulary
     static std::map<Key, PlannedProposal> answers;
-    const Key key{head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe};
+    const Key key{head_bytes, target_bytes, mtp_bytes, drafter_bytes, vocab, hidden, moe, mtp_read};
     std::lock_guard lock(mutex);
     if (const auto it = answers.find(key); it != answers.end()) { return it->second; }
     auto ranking = rankings.find(vocab);
@@ -671,7 +672,7 @@ PlannedProposal planned_proposal(double head_bytes, double target_bytes, double 
         if (mtp_bytes > 0) {
             const std::int32_t k = spec::kDraftHeadMtpDepth;
             const auto asked =
-                spec::draft_head_rows(totals, k * full / (target + k * (mtp_bytes + full)), k).rows;
+                spec::draft_head_rows(totals, k * full / (target + k * (mtp_read + full)), k).rows;
             out.mtp = asked != 0;
             rows    = std::max(rows, asked);
         }

@@ -1118,9 +1118,9 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         heads_read = std::async(
             std::launch::async,
             [spec = commit.empty() ? repo : repo + "@" + commit, fetch, quants,
-             facts = facts->model] {
+             facts = facts->model, tied = facts->shape.tied_embeddings] {
                 return convert::gguf_quants_head_bytes(spec, fetch, quants, facts.gguf_data_offset,
-                                                       facts.hidden, facts.vocab);
+                                                       facts.hidden, facts.vocab, tied);
             });
     }
     // Each GGUF quantization's own MTP layers (the facts are one file's: kv_json's), read once.

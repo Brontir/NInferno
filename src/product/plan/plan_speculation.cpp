@@ -319,6 +319,17 @@ bool uses_attached_drafter(const SpeculationSubject& subject, const SpeculationR
                        });
 }
 
+ProposalHead planned_proposal_head(const runtime::PlanModelFacts& model,
+                                   const SpeculativeOptions& speculative) noexcept {
+    if (model.proposal_bytes == 0 || !speculative.drafter.empty()) {
+        return speculative.proposal_head;
+    }
+    const bool serves =
+        (speculative.backend == SpeculativeBackend::Mtp && model.proposal_serves_mtp) ||
+        (speculative.backend == SpeculativeBackend::DFlash && model.proposal_serves_dflash);
+    return model_draft_head(serves, speculative.backend, speculative.proposal_head);
+}
+
 PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
                                          const runtime::PlanDeviceFacts& device,
                                          const EngineOptions& options,
@@ -334,6 +345,7 @@ PlannedSpeculation plan_with_speculation(const PlanSourceFacts& facts,
         EngineOptions planned     = options;
         planned.speculative       = speculative;
         runtime::PlanModelFacts m = facts.model;
+        planned.speculative.proposal_head = planned_proposal_head(m, speculative);
         // A separate drafter (an artifact of its own: Gemma 4's assistant, gpt-oss's DFlash) is
         // uploaded beside the target: one named by the options, or, before a conversion names its
         // path (an explicit --spec with --with-drafters), one the drafter plan takes from its own
