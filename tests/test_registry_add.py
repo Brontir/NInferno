@@ -404,7 +404,7 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(round_facts.linear_shape("a.weight_blocks", "mxfp4", [512, 8, 16], 512 * 256, ""),
                          (512, 256, 1))
 
-    def test_row_tables_are_no_passs(self):
+    def test_row_tables_are_in_no_pass(self):
         # DFlash2's selector codebooks are read a few rows by id: neither its bytes nor a linear.
         target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
         drafter = self.shaped({"layers.0.mlp.up_proj.weight": ["bf16", [512, 256], 131072],
