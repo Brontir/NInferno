@@ -400,13 +400,19 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                 product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
                                        .commit = model.commit},
                 out.inputs.ask)) {
+            // The parsed one's too where its header did not hold the head (a split model's part
+            // 0 lists only its own tensors).
+            std::vector<std::string> heads_of = others;
+            if (model.facts.model.head_bytes == 0) { heads_of.push_back(model.quant); }
             out.heads = std::async(std::launch::async, [spec = model.commit.empty()
                                                                    ? model.repo
                                                                    : model.repo + "@" + model.commit,
-                                                        others, facts = model.facts.model] {
+                                                        others = std::move(heads_of),
+                                                        facts = model.facts.model,
+                                                        tied = model.facts.shape.tied_embeddings] {
                             return convert::gguf_quants_head_bytes(spec, fetch_options(), others,
                                                                    facts.gguf_data_offset,
-                                                                   facts.hidden, facts.vocab);
+                                                                   facts.hidden, facts.vocab, tied);
                         }).share();
         }
         auto read = std::make_shared<const std::map<std::string, std::optional<bool>>>(
@@ -492,7 +498,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
                 planning.heads.valid() ? planning.heads.get()
                                        : std::map<std::string, std::uint64_t>{};
             for (auto& q : listing) {
-                if (const auto it = heads.find(q.quant); it != heads.end()) {
+                if (const auto it = heads.find(q.quant); it != heads.end() && it->second != 0) {
                     q.head_bytes = it->second;
                 }
             }

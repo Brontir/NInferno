@@ -37,18 +37,28 @@ namespace {
 // credentials, update checks and where a tool finds its inputs (the desktop UI's access key,
 // catalog and updater, apps/ui). Every decision is an option. The <dump>_ROWS names are built at
 // run time from their dump's name (models/common/layer_dump.h).
-constexpr std::array<std::string_view, 22> kNonDecisionVariables{
-    "NINFERNO_DENSE_DUMP_ROWS",    "NINFERNO_GEMMA4_DUMP_ROWS",
-    "NINFERNO_QWEN_DUMP_ROWS",     "NINFERNO_API_KEY",
-    "NINFERNO_ARTIFACT_DIRECT_IO", "NINFERNO_DEBUG_CUDA_ERROR_FILE",
-    "NINFERNO_DEBUG_FREEZE_FILE",  "NINFERNO_DEBUG_NAN_FILE",
-    "NINFERNO_DEBUG_TRAP_FILE",    "NINFERNO_DENSE_DUMP",
-    "NINFERNO_GEMMA4_DUMP",        "NINFERNO_PDFIUM",
-    "NINFERNO_QWEN_DUMP",          "NINFERNO_QWEN_DUMP_KINDS",
-    "NINFERNO_ROUTE_RECORD",       "NINFERNO_SCORE_ARGMAX",
-    "NINFERNO_SCORE_LOGITS",       "NINFERNO_UPDATE_CHECK",
-    "NINFERNO_UPDATE_URL",         "NINFERNO_UI_KEY",
-    "NINFERNO_CATALOG_URL",        "NINFERNO_UPDATER",
+constexpr std::array<std::string_view, 21> kNonDecisionVariables{
+    "NINFERNO_DENSE_DUMP_ROWS",
+    "NINFERNO_GEMMA4_DUMP_ROWS",
+    "NINFERNO_QWEN_DUMP_ROWS",
+    "NINFERNO_API_KEY",
+    "NINFERNO_DEBUG_CUDA_ERROR_FILE",
+    "NINFERNO_DEBUG_FREEZE_FILE",
+    "NINFERNO_DEBUG_NAN_FILE",
+    "NINFERNO_DEBUG_TRAP_FILE",
+    "NINFERNO_DENSE_DUMP",
+    "NINFERNO_GEMMA4_DUMP",
+    "NINFERNO_PDFIUM",
+    "NINFERNO_QWEN_DUMP",
+    "NINFERNO_QWEN_DUMP_KINDS",
+    "NINFERNO_ROUTE_RECORD",
+    "NINFERNO_SCORE_ARGMAX",
+    "NINFERNO_SCORE_LOGITS",
+    "NINFERNO_UPDATE_CHECK",
+    "NINFERNO_UPDATE_URL",
+    "NINFERNO_UI_KEY",
+    "NINFERNO_CATALOG_URL",
+    "NINFERNO_UPDATER",
 };
 
 // The maintainer options' keys in the options section with their release values: one given

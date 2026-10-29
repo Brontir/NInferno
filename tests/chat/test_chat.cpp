@@ -647,7 +647,8 @@ int test_structural_tags() {
          "<parameter=days>\n2\n</parameter>\n</function>\n</tool_call>",
          ""},
         {ToolCallFormat::Gemma4,
-         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>", ""},
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:2}<tool_call|>",
+         "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,days:<|\"|>two<|\"|>}<tool_call|>"},
         {ToolCallFormat::MistralJson, "[TOOL_CALLS]weather[ARGS]{\"city\": \"Oslo\", \"days\": 2}",
          "[TOOL_CALLS]weather[ARGS]{\"city\": 2, \"days\": 2}"},
         {ToolCallFormat::Llama3Json,
@@ -659,7 +660,8 @@ int test_structural_tags() {
          "<|start|>assistant<|channel|>commentary to=functions.weather <|constrain|>json"
          "<|message|>{\"city\": 2, \"days\": 2}<|call|>"},
         {ToolCallFormat::Pythonic,
-         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>", ""},
+         "<function_calls>weather(city=\"Oslo\", days=2)</function_calls>",
+         "<function_calls>weather(city=\"Oslo\", days=\"two\")</function_calls>"},
         {ToolCallFormat::GraniteJson,
          "<|tool_call|>[{\"name\": \"weather\", \"arguments\": {\"city\": \"Oslo\", \"days\": 2}}]",
          "<|tool_call|>[{\"name\": \"weather\", \"arguments\": {\"city\": 2, \"days\": 2}}]"},
@@ -668,7 +670,10 @@ int test_structural_tags() {
          "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
          "<atem:parameter name=\"days\">2</atem:parameter>\n</atem:invoke>\n"
          "</atem:function_calls>",
-         ""},
+         " to=weather<|message|><atem:function_calls>\n<atem:invoke name=\"weather\">\n"
+         "<atem:parameter name=\"city\">Oslo</atem:parameter>\n"
+         "<atem:parameter name=\"days\">two</atem:parameter>\n</atem:invoke>\n"
+         "</atem:function_calls>"},
     };
     for (const Sample& sample : samples) {
         const std::string name(ninferno::chat::tool_call_format_name(sample.format));
@@ -710,6 +715,16 @@ int test_structural_tags() {
                                   name + " grammar bounds the whitespace after the calls");
             }
             if (sample.format == ToolCallFormat::Gemma4) {
+                // Strict arguments refuse an undeclared key; the checks below are of a non-strict
+                // tool's free arguments.
+                failures += check(!grammar_accepts(compiled,
+                                                   "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>,"
+                                                   "days:2,tags:[3]}<tool_call|>"),
+                                  name + " strict grammar refuses an undeclared argument");
+                const std::vector<ToolCallConstraintTool> free_tools = {
+                    {.name = "weather", .parameters_json = kWeatherSchema.dump(), .strict = false}};
+                spec.definition = syntax.structural_tag(free_tools, requirement, "weather", true);
+                compiled        = compiler.compile(spec);
                 // Gemma's free-text arguments never hold a turn or channel marker.
                 failures += check(!grammar_accepts(compiled,
                                                    "<|tool_call>call:weather{city:<|\"|>Oslo<|\"|>}"
@@ -856,7 +871,7 @@ int test_argument_key_order() {
              }
              return "<|tool_call>call:fill{" + body + "}<tool_call|>";
          },
-         false},
+         true},
         {ToolCallFormat::Pythonic,
          [](const std::vector<std::string>& keys) {
              std::string body;
@@ -865,7 +880,17 @@ int test_argument_key_order() {
              }
              return "<function_calls>fill(" + body + ")</function_calls>";
          },
-         false},
+         true},
+        {ToolCallFormat::Atem,
+         [](const std::vector<std::string>& keys) {
+             std::string body;
+             for (const std::string& key : keys) {
+                 body += "<atem:parameter name=\"" + key + "\">v" + key + "</atem:parameter>\n";
+             }
+             return " to=fill<|message|><atem:function_calls>\n<atem:invoke name=\"fill\">\n" +
+                    body + "</atem:invoke>\n</atem:function_calls>";
+         },
+         true},
     };
     const ninferno::structured::ConstraintCompiler compiler(byte_vocabulary());
     const std::vector<std::string> definitions = {tool_definition("fill", schema)};
@@ -911,8 +936,163 @@ int test_argument_key_order() {
                     }
                 }
                 failures += check(all, label + " parser reads all five keys back");
+                if (!strict || !c.shaped) { continue; }
+                // Required A and D keep their order; the optional keys go anywhere around them.
+                Json mixed        = schema;
+                mixed["required"] = Json::array({"A", "D"});
+                const std::vector<ToolCallConstraintTool> spined = {
+                    {.name = "fill", .parameters_json = mixed.dump(), .strict = true}};
+                spec.definition    = syntax.structural_tag(spined, requirement, "fill", true);
+                const auto ordered = compiler.compile(spec);
+                failures += check(grammar_accepts(ordered, text), label + " mixed: C,A,E,B,D");
+                failures += check(grammar_accepts(ordered, c.call({"A", "D"})),
+                                  label + " mixed: the required keys only");
+                failures += check(!grammar_accepts(ordered, c.call({"D", "A"})),
+                                  label + " mixed: required keys keep their order");
+                failures += check(!grammar_accepts(ordered, c.call({"C", "A", "E"})),
+                                  label + " mixed: a required key cannot be skipped");
             }
         }
+    }
+    // A strict schema a syntax cannot write is refused, not silently left unenforced.
+    const auto named = [](const std::string& property) {
+        Json schema                     = Json::parse(R"({"type":"object","properties":{}})");
+        schema["properties"][property] = Json{{"type", "string"}};
+        return schema;
+    };
+    const Json recursive = Json::parse(R"({"type":"object","properties":{
+        "name":{"type":"string"},"children":{"type":"array","items":{"$ref":"#"}}}})");
+    const Json patterned = Json::parse(
+        R"({"type":"object","patternProperties":{"^x":{"type":"string"}}})");
+    for (const auto& [format, refused] : std::vector<std::pair<ToolCallFormat, Json>>{
+             {ToolCallFormat::Pythonic, named("max-results")},
+             {ToolCallFormat::Atem, named("say \"hi\"")},
+             {ToolCallFormat::Pythonic, recursive},
+             {ToolCallFormat::Atem, recursive},
+             {ToolCallFormat::Pythonic, patterned},
+             {ToolCallFormat::Gemma4, Json::parse(R"({"anyOf":[{"type":"object"},{"type":"null"}]})")},
+             {ToolCallFormat::Gemma4, named("a<|\"|>b")},
+             {ToolCallFormat::Gemma4, named("")},
+             {ToolCallFormat::Gemma4, Json::parse(
+                  R"({"type":"object","properties":{"v":{"type":"string","pattern":"^.+$"}}})")},
+             {ToolCallFormat::Atem, Json::parse(
+                  R"({"type":"object","properties":{"v":{"type":"string","pattern":"^[^x]+$"}}})")},
+             {ToolCallFormat::Gemma4, Json::parse(
+                  R"({"type":"object","properties":{"v":{"type":"string","pattern":"^\\x3c$"}}})")},
+             {ToolCallFormat::Gemma4, Json::parse(
+                  R"({"type":"object","properties":{"v":{"type":"string","pattern":"^[ -~]+$"}}})")},
+             {ToolCallFormat::Atem,
+              Json::parse(R"({"type":"object","properties":{"v":{"enum":["a</atem:parameter>b"]}}})")},
+         }) {
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name = "fill", .parameters_json = refused.dump(), .strict = true}};
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition             = ninferno::chat::tool_call_syntax(format).structural_tag(
+            tools, ToolCallRequirement::Required, "", true);
+        std::string code = "accepted";
+        try {
+            (void)compiler.compile(spec);
+        } catch (const ninferno::OutputConstraintError& error) { code = error.code(); }
+        failures += check(code == "unsupported_schema",
+                          std::string(ninferno::chat::tool_call_format_name(format)) +
+                              " strict schema refused: " + refused.dump() + ": " + code);
+    }
+    // A root typed ["object"] is the same object root.
+    for (const ToolCallFormat format :
+         {ToolCallFormat::Gemma4, ToolCallFormat::Pythonic, ToolCallFormat::Atem}) {
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name            = "fill",
+             .parameters_json = R"({"type":["object"],"properties":{"a":{"type":"integer"}}})",
+             .strict          = true}};
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition             = ninferno::chat::tool_call_syntax(format).structural_tag(
+            tools, ToolCallRequirement::Required, "", true);
+        bool compiled = true;
+        try {
+            (void)compiler.compile(spec);
+        } catch (const std::exception&) { compiled = false; }
+        failures += check(compiled, std::string(ninferno::chat::tool_call_format_name(format)) +
+                                        " accepts a root typed [\"object\"]");
+    }
+    // ATEM: a constrained string is the text between the tags, read back as written; an additional
+    // key never spells a declared one.
+    {
+        const Json unit = Json::parse(R"({"type":"object","properties":{
+            "unit":{"enum":["celsius","fahrenheit"]},"days":{"type":"integer"}},
+            "required":["unit"],"additionalProperties":{"type":"string"}})");
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name = "fill", .parameters_json = unit.dump(), .strict = true}};
+        const auto& atem = ninferno::chat::tool_call_syntax(ToolCallFormat::Atem);
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition = atem.structural_tag(tools, ToolCallRequirement::Named, "fill", true);
+        const auto compiled = compiler.compile(spec);
+        const auto call     = [](const std::string& body) {
+            return " to=fill<|message|><atem:function_calls>\n<atem:invoke name=\"fill\">\n" + body +
+                   "</atem:invoke>\n</atem:function_calls>";
+        };
+        const std::string good = call("<atem:parameter name=\"unit\">celsius</atem:parameter>\n"
+                                      "<atem:parameter name=\"note\">x</atem:parameter>\n");
+        failures += check(grammar_accepts(compiled, good), "atem strict enum and additional key");
+        failures += check(
+            !grammar_accepts(compiled, call("<atem:parameter name=\"unit\">\ncelsius\n"
+                                            "</atem:parameter>\n")),
+            "atem strict enum refuses whitespace around the value");
+        failures += check(
+            !grammar_accepts(compiled, call("<atem:parameter name=\"unit\">celsius</atem:parameter>\n"
+                                            "<atem:parameter name=\"days\">1</atem:parameter>\n"
+                                            "<atem:parameter name=\"days\">x</atem:parameter>\n")),
+            "atem additional key cannot spell a declared one");
+        const std::vector<std::string> unit_definitions = {tool_definition("fill", unit)};
+        const auto parsed = atem.parse(
+            good, 64, *ninferno::chat::build_tool_call_output_contract(unit_definitions, true,
+                                                                       ToolCallFormat::Atem));
+        failures += check(parsed.tool_calls.size() == 1 &&
+                              Json::parse(parsed.tool_calls[0].arguments_json).value("unit", "") ==
+                                  "celsius",
+                          "atem parser reads the enum value back");
+    }
+    // Gemma 4 and Pythonic read a repeated key as its last value (a key past the tracked ones may
+    // repeat under the grammar), as the JSON and XML parsers do.
+    {
+        const auto gemma = ninferno::chat::tool_call_syntax(ToolCallFormat::Gemma4)
+                               .parse("<|tool_call>call:fill{A:1,A:2}<tool_call|>", 64,
+                                      *ninferno::chat::build_tool_call_output_contract(
+                                          definitions, true, ToolCallFormat::Gemma4));
+        failures += check(gemma.tool_calls.size() == 1 &&
+                              Json::parse(gemma.tool_calls[0].arguments_json).value("A", 0) == 2,
+                          "gemma4 parser keeps the last of a repeated key");
+        const auto python = ninferno::chat::tool_call_syntax(ToolCallFormat::Pythonic)
+                                .parse("<function_calls>fill(A=1, A=2)</function_calls>", 64,
+                                       *ninferno::chat::build_tool_call_output_contract(
+                                           definitions, true, ToolCallFormat::Pythonic));
+        failures += check(python.tool_calls.size() == 1 &&
+                              Json::parse(python.tool_calls[0].arguments_json).value("A", 0) == 2,
+                          "pythonic parser keeps the last of a repeated key");
+    }
+    // Gemma 4 writes a key of other characters quoted, and its parser reads it back.
+    {
+        const Json spaced = Json::parse(
+            R"({"type":"object","properties":{"two words":{"type":"integer"}},"required":["two words"],"additionalProperties":false})");
+        const std::vector<ToolCallConstraintTool> tools = {
+            {.name = "fill", .parameters_json = spaced.dump(), .strict = true}};
+        ninferno::OutputConstraintSpec spec;
+        spec.kind                   = ninferno::OutputConstraintKind::StructuralTag;
+        spec.special_tokens_visible = true;
+        spec.definition = ninferno::chat::tool_call_syntax(ToolCallFormat::Gemma4)
+                              .structural_tag(tools, ToolCallRequirement::Named, "fill", true);
+        const auto compiled = compiler.compile(spec);
+        failures += check(
+            grammar_accepts(compiled, "<|tool_call>call:fill{<|\"|>two words<|\"|>:3}<tool_call|>"),
+            "gemma4 strict quoted key");
+        failures += check(
+            !grammar_accepts(compiled, "<|tool_call>call:fill{two words:3}<tool_call|>"),
+            "gemma4 strict refuses a bare key with a space");
     }
     return failures;
 }

@@ -32,8 +32,9 @@
 // bytes). Every result is one JSON object on stdout.
 // Maintainer options (docs/maintainer/environment.md): --cuda-sync spin|blocking|yield|auto,
 // --route-table FILE, --route-dir DIR, --dense-tune off|on|retune, --tune-cache DIR,
-// --debug-poison BYTE and --debug-poison-skip SITES, applied to the process as an Engine applies
-// them; --moe-tune is refused (no MoE schedule tuner runs here). Any other option is refused.
+// --debug-poison BYTE, --debug-poison-skip SITES and --artifact-io MODE, applied to the process as
+// an Engine applies them; --moe-tune is refused (no MoE schedule tuner runs here). Any other option
+// is refused.
 //
 // <artifact> may also be a Hugging Face checkpoint directory: it is converted once, in-process,
 // with the official recipe for its architecture into <dir>/.ninferno-cache/<recipe>.ninferno, and
@@ -88,7 +89,7 @@ Arguments parse(int argc, char** argv) {
     Arguments out{argv[1], argv[2], {}};
     // Every option some command reads; anything else is refused, not ignored.
     static const std::set<std::string> known = {
-        "a16",       "activations",  "chunk",        "context",
+        "a16",       "activations",  "artifact-io",  "chunk",        "context",
         "cuda-sync", "cuts",         "debug-poison", "debug-poison-skip",
         "decode",    "dense-tune",   "dflash",       "draft-tokens",
         "dump",      "eager-decode", "kv-dtype",

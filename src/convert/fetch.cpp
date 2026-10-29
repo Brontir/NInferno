@@ -1954,7 +1954,7 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
 std::map<std::string, std::uint64_t>
 gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                        const std::vector<std::string>& quants, std::uint64_t table_end,
-                       std::uint64_t hidden, std::uint64_t vocab) {
+                       std::uint64_t hidden, std::uint64_t vocab, bool tied) {
     std::map<std::string, std::uint64_t> out;
     if (quants.empty() || table_end == 0 || hidden == 0 || vocab == 0) { return out; }
     // Kept beside the commit's conversions: a commit's files do not change.
@@ -1965,7 +1965,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                                     [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); });
     std::string hub_revision  = revision;
     const fs::path cache_file = make_hub(options, hub_revision)->cache_dir(root, repo) /
-                                "ninferno" / revision / "gguf_heads.json";
+                                "ninferno" / revision / "gguf_heads.v2.json";
     nlohmann::json cached = nlohmann::json::object();
     if (commit) {
         try {
@@ -1995,17 +1995,29 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                 FetchOptions one = options;
                 one.quant        = wanted[i];
                 std::uint64_t bytes = 0;
+                // The head's tensor: output.weight, or the embedding table a tied model reads.
+                const char* name = tied ? "token_embd.weight" : "output.weight";
+                const auto find  = [&](const GgufHead& window) {
+                    const auto* data = reinterpret_cast<const std::byte*>(window.bytes.data());
+                    if (const auto found =
+                            gguf_tensor_info_bytes(data, window.bytes.size(), name, {hidden, vocab})) {
+                        bytes = *found;
+                    }
+                };
+                // Each read on its own: one that fails skips only itself (not read: 0).
+                std::size_t parts = 1;
                 try {
                     const auto window = fetch_gguf_head(spec, one, kWindow, 0, begin);
-                    const auto* data  = reinterpret_cast<const std::byte*>(window.bytes.data());
-                    for (const char* name : {"output.weight", "token_embd.weight"}) {
-                        if (const auto found = gguf_tensor_info_bytes(
-                                data, window.bytes.size(), name, {hidden, vocab})) {
-                            bytes = *found;
-                            break;
-                        }
-                    }
-                } catch (const std::exception&) {} // not read: 0
+                    parts             = window.parts;
+                    find(window);
+                } catch (const std::exception&) {}
+                // A split model's head may lie in a later part (Codex on #170): its header lists
+                // its own tensors after a few metadata keys.
+                for (std::size_t part = 1; bytes == 0 && part < parts; ++part) {
+                    try {
+                        find(fetch_gguf_head(spec, one, kWindow, part, 0));
+                    } catch (const std::exception&) {}
+                }
                 std::lock_guard lock(out_mutex);
                 out[wanted[i]] = bytes;
             }
