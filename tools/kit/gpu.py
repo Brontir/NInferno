@@ -140,9 +140,33 @@ def host_facts():
         pass
     out = {"os": f"{platform.system()} {platform.release()}", "machine": platform.machine(),
            "cpu": platform.processor() or None, "cpus": os.cpu_count(), "ram_bytes": ram}
-    if os.name == "nt":
-        out["on_battery"] = on_battery()
+    out["on_battery"] = on_battery() if os.name == "nt" else linux_on_battery()
     return out
+
+
+def linux_on_battery():
+    """Linux: True on battery, False on mains or with no battery, None when it cannot be told
+    (/sys/class/power_supply)."""
+    root = "/sys/class/power_supply"
+    try:
+        supplies = os.listdir(root)
+    except OSError:
+        return None
+    batteries, mains = False, None
+    for name in supplies:
+        try:
+            with open(os.path.join(root, name, "type"), encoding="utf-8") as f:
+                kind = f.read().strip()
+            if kind == "Battery":
+                batteries = True
+            elif kind == "Mains":
+                with open(os.path.join(root, name, "online"), encoding="utf-8") as f:
+                    mains = bool(mains) or f.read().strip() == "1"
+        except OSError:
+            continue
+    if not batteries:
+        return False
+    return None if mains is None else not mains
 
 
 def on_battery():

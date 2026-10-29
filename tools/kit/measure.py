@@ -69,12 +69,13 @@ def scrub(value):
     for s in PRIVATE:
         text = text.replace(s, "<local>").replace(s.replace("\\", "/"), "<local>")
     # Any other absolute path, to the end of its line or quote (a path may hold spaces, so what
-    # follows it on the line goes too): a drive path with either separator, a UNC share, or a
-    # POSIX path of two or more parts (not a URL's //host, and not tok/s or org/repo, which do not
-    # start with a slash).
+    # follows it on the line goes too): a drive path with either separator, a UNC share with
+    # either separator, or a POSIX path (a slash after a space, a quote or the start, then a name:
+    # not a URL's //host, and not tok/s, N/A or org/repo, whose slash follows a letter).
     text = re.sub(r"(?<![\w.])[A-Za-z]:[\\/][^'\"\n]*", "<path>", text)
     text = re.sub(r"\\\\[^'\"\n]+", "<path>", text)
-    text = re.sub(r"(?<![\w.:/])/(?:[^'\"\n/]+/)+[^'\"\n]*", "<path>", text)
+    text = re.sub(r"(?<![\w.:/])//[^/\s'\"][^'\"\n]*", "<path>", text)
+    text = re.sub(r"(?<![\w.:/<>])/[^\s'\"/][^'\"\n]*", "<path>", text)
     return text
 
 
@@ -391,6 +392,10 @@ def main():
     ap.add_argument("--yes", action="store_true", help="fetch without asking")
     args = ap.parse_args()
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # the CUDA ordinal is nvidia-smi's index
+    # A visibility remapping would make the engine's --device another card than nvidia-smi's
+    # --id: --device alone picks the card.
+    if os.environ.pop("CUDA_VISIBLE_DEVICES", None) is not None:
+        print("CUDA_VISIBLE_DEVICES is ignored by the kit: --device picks the card", flush=True)
 
     serve = exe(args.bin, "ninferno-serve")
     cli = exe(args.bin, "ninferno") if args.spec_tune else None

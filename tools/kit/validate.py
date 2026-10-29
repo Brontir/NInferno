@@ -46,12 +46,15 @@ def reasons_in(tel, indices):
     prefix = tel.get("reason_fields")
     if not prefix or not indices:
         return None
-    found = set()
+    found, seen = set(), False
     for reason in REJECT_REASONS + RECORD_REASONS + ("applications_clocks_setting",):
-        column = tel["columns"].get(f"{prefix}.{reason}") or []
-        if any(active(column[i]) for i in indices if i < len(column)):
+        column = (tel.get("columns") or {}).get(f"{prefix}.{reason}") or []
+        values = [column[i] for i in indices if i < len(column)]
+        seen = seen or any(isinstance(v, str) for v in values)
+        if any(active(v) for v in values):
             found.add(reason)
-    return found
+    # Every sample N/A: the reasons were not read in this window.
+    return found if seen else None
 
 
 def pass_rules(p):
@@ -106,7 +109,7 @@ def card_rules(doc):
         capped.append(f"application clocks {app:.0f} below the default {app_default:.0f} MHz")
     if active((smi.get("reasons_now") or {}).get(f"{smi.get('reason_fields')}.applications_clocks_setting")):
         capped.append("a locked clock (applications clocks setting)")
-    if doc.get("host", {}).get("on_battery"):
+    if (doc.get("host") or {}).get("on_battery"):
         capped.append("on battery")
     return None, capped
 
@@ -119,6 +122,12 @@ def card_unknowns(smi):
     if not isinstance(smi.get("clocks.default_applications.graphics"), float):
         out.append("the application clocks")
     return out
+
+
+def power_unknown(doc):
+    """Whether the power source could not be told (a battery whose state is unknown)."""
+    host = doc.get("host") or {}
+    return "on_battery" not in host or host.get("on_battery") is None
 
 
 def metric_values(p, metric):
@@ -250,6 +259,8 @@ def validate(doc, tolerance=TOLERANCE):
                             row["verdict"] = "not used: the card is capped"
                         elif unknown:
                             row["verdict"] = "not used: R3 unknown (no clock event reasons in a window)"
+                        elif power_unknown(doc):
+                            row["verdict"] = "not used: the power source (AC or battery) is unknown"
                         elif identity_unknown:
                             row["verdict"] = "not used: R1 unknown (a start did not report its choice)"
                         elif abs(ratio - 1) <= tolerance:

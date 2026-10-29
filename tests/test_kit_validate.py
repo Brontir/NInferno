@@ -42,7 +42,7 @@ def doc(passes=None, smi=None):
     card = {"name": "NVIDIA GeForce RTX 4060 Ti", "power.limit": 165.0, "power.default_limit": 165.0,
             "reason_fields": P}
     card.update(smi or {})
-    return {"schema": "ninferno-user-run/1.0", "host": {},
+    return {"schema": "ninferno-user-run/1.0", "host": {"on_battery": False},
             "card": {"smi": card, "plan_device": {"name": "NVIDIA GeForce RTX 4060 Ti"}},
             "runs": [{"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "plain",
                       "plan": {"chosen": {"decode_tok_s_at_depth": 48.0, "prefill_tok_s": 3400.0,
@@ -159,6 +159,20 @@ class Rules(unittest.TestCase):
             p["measured"]["decode"]["prompt_tokens_range"] = [7600, 8800]
         self.assertTrue(metric(validate.validate(d), "decode")["status"].startswith("rejected: R7"))
 
+    def test_na_reasons_are_unknown(self):
+        d = doc()
+        for p in d["runs"][0]["passes"]:
+            cols = p["telemetry"]["columns"]
+            for k in list(cols):
+                if k.startswith(P):
+                    cols[k] = [None] * len(cols[k])
+        self.assertTrue(metric(validate.validate(d), "decode")["verdict"].startswith("not used: R3 unknown"))
+
+    def test_unknown_power_source(self):
+        d = doc()
+        d["host"]["on_battery"] = None
+        self.assertTrue(metric(validate.validate(d), "decode")["verdict"].startswith("not used: the power"))
+
     def test_render(self):
         text = validate.render(validate.validate(copy.deepcopy(doc())))
         self.assertIn("decode: accepted", text)
@@ -172,7 +186,8 @@ class Privacy(unittest.TestCase):
         for text in ("12 tok/s", "org/repo", "https://huggingface.co/org/repo"):
             self.assertEqual(measure.scrub(text), text)
         self.assertEqual(measure.scrub_doc({"artifact": "/x/y", "a": ["/home/u/f"]}), {"a": ["<path>"]})
-        for text in ("/srv/users/Alice Smith/model.gguf", "D:/data/alice/model.gguf"):
+        for text in ("/srv/users/Alice Smith/model.gguf", "D:/data/alice/model.gguf", "//server/share/Alice/f",
+                     "/Alice"):
             self.assertNotIn("lice", measure.scrub(text))
 
 

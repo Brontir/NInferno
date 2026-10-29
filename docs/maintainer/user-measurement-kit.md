@@ -14,7 +14,7 @@ constant.
         [--passes 2] [--hard50] [--spec-tune SECONDS] [--out FILE] [--yes]
 
 - **`--bin DIR`** holds `ninferno-serve`, plus `ninferno` when `--spec-tune` is given: a release or a build.
-- **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set, so `--device` is `nvidia-smi`'s index.
+- **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device` is `nvidia-smi`'s index.
 - **Downloads:**
   - The models are fetched first through `ninferno-serve --prepare-only` into the user's hub cache.
   - The kit states what it will fetch and asks first (`--yes` skips the question).
@@ -29,7 +29,7 @@ constant.
    - From `nvidia-smi`: name, PCI bus id, driver and driver model (WDDM/TCC), VBIOS, memory, power limits (current, default, maximum, enforced), maximum and application clocks, PCIe link, pstate, the clock event reasons now.
    - Fields are probed through `--help-query-gpu`: `clocks_event_reasons.*` on drivers 535 and newer, `clocks_throttle_reasons.*` before. An N/A value is kept as unknown, never as a pass.
    - The plan's `device` block.
-   - The OS, the CPU, the RAM and, on Windows, AC or battery.
+   - The OS, the CPU, the RAM, and AC or battery (Windows `GetSystemPowerStatus`, Linux `/sys/class/power_supply`; a host without a battery is on AC). An unknown power source gives no verdict.
 2. **Model set.**
    - `tools/kit/models.json` (versioned; its hash goes in the result) lists `{id, repo, quant, context}` in priority order. The last entry is small, so every supported card yields a row.
    - Each entry is planned on this card with `--plan --no-load --json` and the exact flags of the start (`--max-context C --max-concurrency 1 --spec none`).
