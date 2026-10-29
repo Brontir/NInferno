@@ -1718,6 +1718,7 @@ ConvertResult convert(const ConvertOptions& options) {
     std::string proposal_ranking_text      = ranking_text;
     std::uint64_t proposal_rows            = options.proposal ? options.proposal_rows : 0;
     std::vector<std::string> proposal_drafters;
+    std::map<std::string, std::uint64_t> proposal_drafter_rows;
     if (!options.proposal && options.proposal_default && !restricted) {
         if (const auto found = resolve_ranking(kDefaultProposalRanking, std::filesystem::current_path())) {
             const auto chosen = default_proposal(model, recipe, *found);
@@ -1725,6 +1726,7 @@ ConvertResult convert(const ConvertOptions& options) {
             if (chosen.rows != 0) {
                 proposal_rows         = chosen.rows;
                 proposal_drafters     = chosen.drafters;
+                proposal_drafter_rows = chosen.drafter_rows;
                 proposal_ranking      = *found;
                 proposal_ranking_text = py_path_str(kDefaultProposalRanking);
             }
@@ -1734,7 +1736,7 @@ ConvertResult convert(const ConvertOptions& options) {
         add_official_proposal(model, recipe, ranking, ranking_text, options.proposal_rows);
     } else if (proposal_rows != 0 && !restricted) {
         add_official_proposal(model, recipe, proposal_ranking, proposal_ranking_text,
-                              proposal_rows, proposal_drafters);
+                              proposal_rows, proposal_drafters, proposal_drafter_rows);
     }
     // --maintainer-quantize runs the recipe's table as written.
     if (!options.maintainer_quantize) {

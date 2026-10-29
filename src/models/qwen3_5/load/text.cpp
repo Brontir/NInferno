@@ -126,7 +126,12 @@ ProposalWeights bind_proposal(Bindings& b, const artifact::Proposal& proposal,
         throw artifact::ArtifactError("proposal rows exceed the output domain");
     }
     ProposalWeights out;
-    out.rows = static_cast<std::uint32_t>(rows);
+    out.rows       = static_cast<std::uint32_t>(rows);
+    out.draft_rows = out.rows;
+    if (const auto own = proposal.drafter_rows.find(options.speculative_component());
+        own != proposal.drafter_rows.end()) {
+        out.draft_rows = static_cast<std::uint32_t>(own->second); // schema: 0 < rows' own <= rows
+    }
     out.head = b.parameter("proposal/head", {rows, target.hidden_size},
                            {std::string(options.speculative_component()) + "/final_hidden"});
     if (proposal.indexed) {
