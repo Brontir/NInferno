@@ -4,6 +4,7 @@
 #include "ops/common/math.cuh"
 #include "ops/common/warp.cuh"
 
+#include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
 namespace ninferno::ops::detail {
@@ -84,6 +85,15 @@ sparse_moe_merge_ranked_runs(SparseMoeRankedValue (&run)[kSparseMoeTopK]) {
     }
 }
 
+// A router logit as the model computes it: the router projection's output is BF16 (Transformers'
+// Qwen3_5MoeSparseMoeBlock: the gate and the shared expert's gate are BF16 linears; only the
+// softmax runs in FP32), so selection, the routing weights and the shared expert's gate read the
+// FP32 score rounded once to BF16. Ties at that precision go to the lower id (the ranking's order).
+// The same fix as Wallawalla47/Infernix 7502986580.
+__device__ __forceinline__ float sparse_moe_bf16_logit(float value) {
+    return __bfloat162float(__float2bfloat16_rn(value));
+}
+
 __device__ __forceinline__ void sparse_moe_select_top8_warp(const float* scores, int* ids,
                                                             float* alpha, float* shared_scale,
                                                             float* selected_logits) {
@@ -92,7 +102,7 @@ __device__ __forceinline__ void sparse_moe_select_top8_warp(const float* scores,
 #pragma unroll
     for (int item = 0; item < kSparseMoeTopK; ++item) {
         const int id = lane + item * 32;
-        local[item]  = {scores[id], id};
+        local[item]  = {sparse_moe_bf16_logit(scores[id]), id};
     }
     sparse_moe_sort_eight_descending(local);
     sparse_moe_merge_ranked_runs(local);
@@ -111,7 +121,7 @@ __device__ __forceinline__ void sparse_moe_select_top8_warp(const float* scores,
     float denominator = warp_reduce_sum(exponential);
     denominator       = __shfl_sync(kFullWarpMask, denominator, 0);
     if (lane < kSparseMoeTopK) { alpha[lane] = exponential / denominator; }
-    if (lane == 0) { *shared_scale = sigmoid(scores[kSparseMoeExperts]); }
+    if (lane == 0) { *shared_scale = sigmoid(sparse_moe_bf16_logit(scores[kSparseMoeExperts])); }
 }
 
 } // namespace ninferno::ops::detail

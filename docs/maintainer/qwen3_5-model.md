@@ -205,15 +205,21 @@ and commit semantics, including their numerical boundary.
 For token h, with E routed experts and K selected experts:
 
 ```text
-router_probs = softmax(W_router h)
+router_logits = bf16(W_router h)
+router_probs = softmax(router_logits)
 (values, ids) = topk(router_probs, K)
 routing_weight = values / sum(values)
 
 y_e = W_down[e](SiLU(W_gate[e] h) * (W_up[e] h))
 y_routed = sum(routing_weight[e] * y_e for e in ids)
 shared = W_shared_down(SiLU(W_shared_gate h) * (W_shared_up h))
-y = y_routed + sigmoid(W_shared_score h) * shared
+y = y_routed + sigmoid(bf16(W_shared_score h)) * shared
 ```
+
+The router logits are the router projection rounded once to BF16, as the model computes them
+(Transformers' `Qwen3_5MoeSparseMoeBlock`: the gate and the shared expert's gate are BF16 linears,
+only the softmax runs in FP32): selection, the routing weights and the shared expert's sigmoid read
+those values, and ties at that precision go to the lower expert id.
 
 The shared expert always executes and is outside top-k. Logical expert id e identifies router row e
 and the corresponding expert matrices. Physical bank ordering and fused dispatch preserve that
