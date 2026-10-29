@@ -540,6 +540,29 @@ def wanted_tables(registry: dict, pair: dict) -> list[tuple]:
     return out
 
 
+def refresh_tables(registry: dict, tables: dict, read=None, save=None) -> set[str]:
+    """Reads the pairs' missing tables (and ones without shapes) into `tables` with `read` (fetch),
+    calling `save` after each; returns the keys still unread at the end (their pairs keep the facts
+    they have). A table one pair could not read and a later pair read is no longer unread."""
+    read = read or fetch
+    failed: set[str] = set()
+    for p in registry.get("pairs", []):
+        for key, at, files, shas in wanted_tables(registry, p):
+            if key in tables and "shapes" in tables[key]:
+                continue  # the cache: read before (a table without shapes is read again)
+            try:
+                tables[key] = read(at, files, shas)
+                print(f"{key}: {len(tables[key]['tensors'])} tensors", file=sys.stderr)
+            except Exception as error:  # noqa: BLE001 - one model's failure skips its pairs
+                print(f"{key}: {error}", file=sys.stderr)
+                failed.add(key)
+                continue
+            failed.discard(key)
+            if save is not None:
+                save(tables)
+    return failed
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--registry", type=Path, default=REGISTRY)
@@ -549,23 +572,14 @@ def main() -> int:
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
     before = copy.deepcopy(registry)
     tables = json.loads(args.tables.read_text(encoding="utf-8")) if args.tables and args.tables.exists() else {}
-    failed: set[str] = set()  # tables a refresh could not read: their pairs keep the facts they have
+    failed: set[str] = set()
     if args.fetch:
-        for p in registry.get("pairs", []):
-            for key, at, files, shas in wanted_tables(registry, p):
-                if key in tables and "shapes" in tables[key]:
-                    continue  # the cache: read before (a table without shapes is read again)
-                try:
-                    tables[key] = fetch(at, files, shas)
-                    print(f"{key}: {len(tables[key]['tensors'])} tensors", file=sys.stderr)
-                except Exception as error:  # noqa: BLE001 - one model's failure skips its pairs
-                    print(f"{key}: {error}", file=sys.stderr)
-                    failed.add(key)
-                    continue
-                if args.tables:  # whole or not at all: a crash mid-write keeps the cache
-                    part = args.tables.with_name(args.tables.name + ".part")
-                    part.write_text(json.dumps(tables), encoding="utf-8")
-                    os.replace(part, args.tables)
+        def save(t: dict) -> None:
+            if args.tables:  # whole or not at all: a crash mid-write keeps the cache
+                part = args.tables.with_name(args.tables.name + ".part")
+                part.write_text(json.dumps(t), encoding="utf-8")
+                os.replace(part, args.tables)
+        failed = refresh_tables(registry, tables, fetch, save)
     done = 0
     for p in registry.get("pairs", []):
         board = LAB_BOARDS.get(p["tune"]["key"]["gpu"])
