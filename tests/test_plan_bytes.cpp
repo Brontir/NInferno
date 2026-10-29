@@ -24,6 +24,7 @@
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/startup.h"
 #include "models/qwen3_5/program/qwen3_5_execution.h"
+#include "convert/checks.h"
 #include "product/plan/plan_facts.h"
 #include "product/plan/plan_quants.h"
 #include "runtime/engine/kv_capacity.h"
@@ -920,8 +921,12 @@ void test_default_proposal_possible() {
 // each row's own head where its header was read, else the parsed one's as it is (Codex on #170:
 // GGUF quantizations often share one Q6_K output.weight while their layers differ).
 void test_proposal_bytes_per_quant() {
+    // unsloth/Qwen3.5-9B-MTP-GGUF Q4_K_M's tensor table: its text layers 4,283,598,848 bytes,
+    // output.weight (Q6_K) 834,355,200, output_norm 16,384 (the 5,117,970,432 the converter's
+    // verify reads), token_embd.weight 572,129,280 (never a verify's); the MTP layer apart below.
     pr::PlanSourceFacts q4 = pr::plan_facts_of_gguf_metadata(qwen27b_gguf(), 0);
-    q4.model.weight_bytes  = 5117970432;
+    q4.model.weight_bytes    = 5117970432ULL + 572129280ULL;
+    q4.model.embedding_bytes = 572129280;
     q4.model.head_bytes    = 834355200;
     q4.model.vocab         = 248320;
     q4.model.hidden        = 4096;
@@ -932,7 +937,7 @@ void test_proposal_bytes_per_quant() {
     inputs.proposal_drafter_bytes = 1372703744.0;
     // Q5_K_M: larger layers, the same Q6_K head (its header read).
     pr::PlanSourceFacts q5 = q4;
-    q5.model.weight_bytes  = 6033000000;
+    q5.model.weight_bytes  = 6033000000 + 572129280ULL;
     pr::QuantListing row_q4{.quant = "Q4_K_M", .format = "gguf", .bytes = q4.model.weight_bytes};
     pr::QuantListing row_q5{.quant = "Q5_K_M", .format = "gguf", .bytes = q5.model.weight_bytes};
     row_q4.head_bytes = 834355200;
@@ -953,7 +958,8 @@ void test_proposal_bytes_per_quant() {
     check(pr::proposal_bytes_at(q4, none) == 0, "no companion and no MTP layers: no head");
     // MTP layers alone: the rows MTP 3 asks for (57,344 on the 9B).
     pr::PlanSourceFacts mtp = q4;
-    mtp.model.mtp_bytes     = 1002113024 - 834355200; // the MTP layer without the head it shares
+    mtp.model.mtp_bytes     = 167757824; // blk.32, the MTP layer (it shares the head)
+    mtp.model.weight_bytes  = 5857857536; // the whole table
     mtp.shape.builtin_mtp   = true;
     check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3360 + 57344ULL * 4,
           "MTP layers alone: 57,344 rows and ids");
@@ -976,6 +982,27 @@ void test_proposal_bytes_per_quant() {
           "an MTP plan loads the head");
     check(weights(SpeculativeBackend::None, true) == weights(SpeculativeBackend::None, false),
           "a plain plan not");
+    // The run sizes the restricted head under the drafters it serves (Codex on #192: a
+    // pre-conversion MTP plan sized the full head's logits), never with a separate drafter.
+    {
+        rt::PlanModelFacts held     = mtp.model;
+        held.proposal_bytes         = 57344ULL * 3364;
+        held.proposal_serves_mtp    = true;
+        held.proposal_serves_dflash = false;
+        ninferno::SpeculativeOptions s;
+        s.backend = SpeculativeBackend::Mtp;
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Optimized, "MTP: the head");
+        s.backend = SpeculativeBackend::DFlash;
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "DFlash it does not serve");
+        s.backend = SpeculativeBackend::DFlash2;
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "DFlash2: full");
+        s.backend = SpeculativeBackend::Mtp;
+        s.drafter = "/models/drafter.ninferno";
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "a separate drafter: full");
+        held.proposal_bytes = 0;
+        s.drafter.clear();
+        check(pr::planned_proposal_head(held, s) == ProposalHead::Full, "no head: full");
+    }
     // A quantization whose subject has no MTP layers: none of their rows.
     pr::SpeculationSubject plain;
     plain.components = {"text"};
@@ -998,16 +1025,38 @@ void test_proposal_bytes_per_quant() {
     routed.experts      = 256;
     routed.experts_used = 8;
     const double share  = 32e9 / 35e9;
-    const double read   = static_cast<double>(moe.model.mtp_bytes) *
-                        (1 - share + share * ninferno::spec::moe_read_fraction(routed, 1));
-    pr::PlanSourceFacts dense_read = moe;
-    dense_read.shape.experts       = 0;
-    dense_read.model.mtp_bytes     = static_cast<std::uint64_t>(read);
+    // As proposal_at computes it: the dense part, then the routed part at one row's share.
+    routed.expert_bytes = static_cast<double>(moe.model.mtp_bytes) * share;
+    routed.bytes        = static_cast<double>(moe.model.mtp_bytes) - routed.expert_bytes;
+    const double read = routed.bytes + routed.expert_bytes * ninferno::spec::moe_read_fraction(routed, 1);
+    // The layers' stored bytes out of the target's pass, the routed read the pass's price; the
+    // target's verify as the converter prices it: its stored layers and head without the MTP
+    // layers and the embedding, its routed experts at the verified rows' share (Codex on #199).
+    ninferno::spec::PassFacts verify;
+    const double stored = static_cast<double>(moe.model.weight_bytes) -
+                          static_cast<double>(moe.model.mtp_bytes) -
+                          static_cast<double>(moe.model.embedding_bytes);
+    verify.expert_bytes = stored * share;
+    verify.bytes        = stored - verify.expert_bytes;
+    verify.experts      = 256;
+    verify.experts_used = 8;
+    const auto priced = ninferno::convert::planned_proposal(
+        static_cast<double>(moe.model.head_bytes), static_cast<double>(moe.model.weight_bytes),
+        static_cast<double>(moe.model.mtp_bytes), 0, moe.model.vocab, moe.model.hidden, true, read,
+        &verify);
     pr::PlanSourceFacts dense_all  = moe;
     dense_all.shape.experts        = 0;
-    check(pr::proposal_bytes_at(moe, none) == pr::proposal_bytes_at(dense_read, none) &&
+    check(pr::proposal_bytes_at(moe, none) == priced.bytes &&
               pr::proposal_bytes_at(moe, none) != pr::proposal_bytes_at(dense_all, none),
-          "MoE MTP: priced at its routed read");
+          "MoE MTP: priced at its routed read, its stored bytes out of the target");
+    // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
+    // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.
+    check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3364, "the 9B's MTP rows from its table");
+    // Without the embedding's bytes known (a checkpoint's facts), the vocabulary's rows at the
+    // weights' bytes per parameter come out of the verify too: a MoE target reads less a round.
+    pr::PlanSourceFacts moe_unknown = moe;
+    moe_unknown.model.embedding_bytes = 0;
+    check(pr::proposal_bytes_at(moe_unknown, none) != 0, "the embedding estimated: rows planned");
 }
 
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the

@@ -761,6 +761,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     }
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
     out.model.head_bytes     = !whole ? 0 : has_output ? output_bytes : embedding_bytes;
+    out.model.embedding_bytes = has_output ? embedding_bytes : 0;
     out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
     out.model.weight_elements = whole ? elements : 0;
@@ -871,6 +872,7 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
     };
     facts.model.mtp_bytes         = scaled(facts.model.mtp_bytes);
     facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
+    facts.model.embedding_bytes   = scaled(facts.model.embedding_bytes);
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;
     return facts;

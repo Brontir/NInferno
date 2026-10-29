@@ -191,20 +191,26 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
     const bool mtp = inputs.subject != nullptr ? inputs.subject->components.contains("mtp")
                                                : facts.shape.builtin_mtp;
     double mtp_bytes = 0;
-    if (mtp) {
-        mtp_bytes = m.mtp_bytes != 0 ? static_cast<double>(m.mtp_bytes)
-                    : facts.shape.num_hidden_layers != 0
-                        ? static_cast<double>(m.weight_bytes > 2 * m.head_bytes
-                                                  ? m.weight_bytes - 2 * m.head_bytes
-                                                  : m.weight_bytes) /
-                              static_cast<double>(facts.shape.num_hidden_layers)
-                        : 0;
+    if (mtp && m.mtp_bytes != 0) {
+        mtp_bytes = static_cast<double>(m.mtp_bytes);
+    } else if (mtp && facts.shape.num_hidden_layers != 0) {
+        // One decoder layer and the MTP layer's own input projection (eh_proj: [H, 2H]) at the
+        // weights' bits (Codex on #192: the projection is the MTP pass's, not a layer's share).
+        const double trunk = static_cast<double>(
+            m.weight_bytes > 2 * m.head_bytes ? m.weight_bytes - 2 * m.head_bytes : m.weight_bytes);
+        const double hidden     = static_cast<double>(m.hidden);
+        const double projection = 2 * hidden * hidden *
+                                  m.bits_per_weight(static_cast<double>(m.weight_bytes)) / 8;
+        mtp_bytes = trunk / static_cast<double>(facts.shape.num_hidden_layers) + projection;
     }
     // A MoE MTP layer's routed experts are read as its one row routes them (the converter's
     // default_proposal: moe_read_fraction of the MTP pass at 1 row; Codex on #192), their share
     // of the layer the model's routed share. The published MTP tensors are the converted ones:
     // keep_published keeps every GGUF block matrix as published (the recipe's Q8 table decodes
     // them, convert.cpp), so the facts' bytes are the stored bytes.
+    // What the layers store stays out of the target's pass (Codex on #192); only the price of a
+    // pass is the routed read.
+    double mtp_read = mtp_bytes;
     if (mtp_bytes > 0 && facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
         facts.shape.routed_expert_params > 0 && m.params > 0) {
         const double routed = std::min(1.0, facts.shape.routed_expert_params / m.params);
@@ -213,14 +219,40 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
         pass.bytes        = mtp_bytes - pass.expert_bytes;
         pass.experts      = facts.shape.experts;
         pass.experts_used = facts.shape.experts_per_token;
-        mtp_bytes         = pass.bytes + pass.expert_bytes * spec::moe_read_fraction(pass, 1);
+        mtp_read          = pass.bytes + pass.expert_bytes * spec::moe_read_fraction(pass, 1);
     }
     if (inputs.proposal_drafter_bytes <= 0 && mtp_bytes <= 0) { return {}; }
     const double head = static_cast<double>(
         inputs.proposal_row_head_bytes != 0 ? inputs.proposal_row_head_bytes : m.head_bytes);
+    // The target's verify pass as the converter prices it (Codex on #199): its weights less the
+    // MTP layers and an untied token embedding (the header's, else the vocabulary's rows at the
+    // weights' bytes per parameter), a MoE's routed experts apart (the model's routed share).
+    std::optional<spec::PassFacts> target;
+    {
+        double embedding = static_cast<double>(m.embedding_bytes);
+        if (embedding == 0 && !facts.shape.tied_embeddings && m.params > 0) {
+            embedding = static_cast<double>(m.vocab) * static_cast<double>(m.hidden) *
+                        static_cast<double>(m.weight_bytes) / m.params;
+        }
+        const double stored = static_cast<double>(m.weight_bytes) - mtp_bytes - embedding;
+        const bool routed   = facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
+                            facts.shape.routed_expert_params > 0 && m.params > 0;
+        if (stored > 0 && (embedding > 0 || routed)) {
+            spec::PassFacts pass;
+            if (routed) {
+                pass.expert_bytes =
+                    stored * std::min(1.0, facts.shape.routed_expert_params / m.params);
+                pass.experts      = facts.shape.experts;
+                pass.experts_used = facts.shape.experts_per_token;
+            }
+            pass.bytes = stored - pass.expert_bytes;
+            target     = pass;
+        }
+    }
     return convert::planned_proposal(head, static_cast<double>(m.weight_bytes), mtp_bytes,
                                      inputs.proposal_drafter_bytes, m.vocab, m.hidden,
-                                     facts.shape.experts > 0);
+                                     facts.shape.experts > 0, mtp_read,
+                                     target ? &*target : nullptr);
 }
 
 } // namespace
