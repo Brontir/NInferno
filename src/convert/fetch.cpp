@@ -1397,7 +1397,6 @@ gguf_quants_carry_mtp(const std::string& spec, const FetchOptions& options,
     constexpr std::size_t kAtOnce = 8; // range reads of one hub at a time
     std::map<std::string, std::optional<bool>> out;
     std::mutex out_mutex;
-    std::set<std::string> ties; // split models found to tie their head
     std::atomic<std::size_t> next{0};
     std::vector<std::thread> threads;
     for (std::size_t t = 0; t < std::min(kAtOnce, quants.size()); ++t) {
@@ -1990,6 +1989,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
     const std::uint64_t begin       = table_end > kWindow / 2 ? table_end - kWindow / 2 : 0;
     constexpr std::size_t kAtOnce   = 8;
     std::mutex out_mutex;
+    std::set<std::string> ties; // split models found to tie their head
     std::atomic<std::size_t> next{0};
     std::vector<std::thread> threads;
     for (std::size_t t = 0; t < std::min(kAtOnce, wanted.size()); ++t) {
