@@ -17,7 +17,7 @@ CARD_FIELDS = [
     "power.limit", "power.default_limit", "power.max_limit", "enforced.power.limit",
     "clocks.max.sm", "clocks.max.mem", "clocks.applications.graphics",
     "clocks.default_applications.graphics", "pcie.link.gen.max", "pcie.link.width.max",
-    "driver_model.current", "pstate", "display_active",
+    "driver_model.current", "pstate", "display_active", "pci.device_id",
 ]
 # The event reasons that reject a measured window (thermal or hardware slowdown, power brake), the
 # ones only recorded (a power cap under load is the card's stock behaviour), and an application

@@ -32,7 +32,7 @@ import gpu  # noqa: E402
 import validate  # noqa: E402
 
 KIT_VERSION = "1"
-SCHEMA = "ninferno-user-run/1.0"
+SCHEMA = "ninferno-user-run/1.1"
 HAYSTACK = ROOT / "examples/cli/messages/long_niah_256k.json"  # perf_matrix.py's long text
 QUESTION = "\n\nSummarize the text above in detail, section by section."
 START_TIMEOUT_S = 900
@@ -502,7 +502,8 @@ def main():
             if args.spec_tune and progress.fits(args.spec_tune + 300, f"{model['id']} spec-tune"):
                 progress.step(f"{model['id']}: ninferno spec-tune for {args.spec_tune} s")
                 started = time.time()
-                doc["runs"].append(spec_tune(serve, cli, model, args.device, args.spec_tune, card, workdir))
+                doc["runs"].append(spec_tune(serve, cli, model, args.device, args.spec_tune, card, workdir,
+                                              smi_id, wddm))
                 progress.spend(time.time() - started)
     finally:
         # Written whatever happened (an interrupted run keeps what it measured).
@@ -518,23 +519,39 @@ def main():
     return 0
 
 
+HARD_SET = ROOT / "eval/corpora/hard50/hard50.json"
+REGISTRY = ROOT / "src/spec/data/drafter_registry.json"
+
+
+def sha256_of(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 23), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
 def hard50(serve, model, flags, port, workdir):
     run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "hard50"}
     out = workdir / f"{model['id']}.hard50.json"
     out.unlink(missing_ok=True)  # never an earlier run's file
     server = None
     try:
+        run["set_sha256"] = sha256_of(HARD_SET)
         server = Server(serve, model, flags, port, str(workdir / f"{model['id']}.hard50.serve.log"))
         server.wait()
+        run["served"] = {"choice": server.choice_line()}
         done = subprocess.run([sys.executable, str(ROOT / "tools/bench/hard_set.py"), "--url",
-                               f"http://127.0.0.1:{port}/v1", "--set",
-                               str(ROOT / "eval/corpora/hard50/hard50.json"), "--tag", model["id"],
+                               f"http://127.0.0.1:{port}/v1", "--set", str(HARD_SET), "--tag", model["id"],
                                "--out", str(out)], capture_output=True, text=True)
         if done.returncode != 0:
             lines = (done.stderr or done.stdout).strip().splitlines()
             raise RuntimeError("hard_set.py failed: " + (lines[-1] if lines else str(done.returncode)))
         result = json.loads(out.read_text(encoding="utf-8"))
         run["hard50"] = result.get("summary", {k: v for k, v in result.items() if k != "questions"})
+        # The ids answered wrong (the set's own ids, no answer text): what the lab's runs are
+        # compared with item by item (tools/kit/hard50_reference.json).
+        run["hard50"]["wrong"] = sorted(r["id"] for r in result.get("rows", []) if not r.get("correct"))
     except Exception as e:  # noqa: BLE001
         run["error"] = scrub(e)
     finally:
@@ -543,28 +560,137 @@ def hard50(serve, model, flags, port, workdir):
     return run
 
 
-def spec_tune(serve, cli, model, device, seconds, card, workdir):
-    """`ninferno spec-tune` as the stands publish registry entries from, beside the plan's own
-    speculation prediction (--spec auto). Recorded only: the validator does not judge it yet."""
+def declared_drafter_repos():
+    """The drafter repositories the registry names (its models' and its pairs'): a manifest's other
+    drafters are recorded as "other" (a private or local repository names nothing of ours)."""
+    try:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return set()
+    repos = {d.get("repo") for m in registry.get("models", []) for d in m.get("drafters", [])}
+    repos |= {v.split("@")[0] for p in registry.get("pairs", []) for v in (p.get("drafters") or {}).values()}
+    return {r for r in repos if r}
+
+
+def manifest_of(artifact):
+    """The drafter manifest beside the artifact, without its profiles and paths."""
+    path = Path(artifact + ".speculation.json")
+    if not path.exists():
+        return None
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    known = declared_drafter_repos()
+    target = doc.get("target") or {}
+    out = {"schema": doc.get("schema"), "entry": doc.get("entry"), "matched_by": doc.get("matched_by"),
+           "target": {k: target.get(k) for k in ("engine", "repo", "architecture", "builtin_mtp",
+                                                 "vocab_fingerprint") if k in target},
+           "drafters": []}
+    for d in doc.get("drafters", []):
+        kept = {k: d.get(k) for k in ("name", "kind", "component", "status", "compatible") if k in d}
+        if d.get("repo"):
+            if d["repo"] in known:
+                kept["repo"], kept["revision"] = d["repo"], d.get("revision", "")
+            else:
+                kept["repo"] = "other"
+        out["drafters"].append(kept)
+    return out
+
+
+def target_identity(artifact):
+    """The target's hub revision and its weight files' SHA-256 (the registry pairs' key): the GGUF
+    files of the snapshot the artifact was converted from, hashed (a blob's name is what the hub
+    promised, not what is on disk). None when the artifact is not in a hub cache's layout."""
+    path = Path(artifact)
+    revision = path.parent.name  # <hub>/models--org--name/ninferno/<revision>/<artifact>
+    if path.parent.parent.name != "ninferno" or not re.fullmatch(r"[0-9a-f]{40}", revision):
+        return None
+    snapshot = path.parent.parent.parent / "snapshots" / revision
+    weights = []
+    for f in sorted(snapshot.glob("*.gguf")):
+        base = re.sub(r"-\d{5}-of-\d{5}$", "", f.stem)
+        if not path.name.startswith(base + ".") or "mmproj" in f.name.lower():
+            continue
+        entry = {"sha256": sha256_of(f), "bytes": f.stat().st_size}
+        try:
+            blob = Path(os.readlink(f)).name
+        except OSError:
+            blob = ""
+        if re.fullmatch(r"[0-9a-f]{64}", blob):
+            entry["blob_matches"] = blob == entry["sha256"]
+        weights.append(entry)
+    return {"revision": revision, "weights": weights}
+
+
+def lab_configs(model):
+    """The configurations the registry's lab pairs of this repository and quantization measured
+    (by name: the weights are checked by their SHA-256 when judged), in the registry's order; empty
+    when the lab measured none (spec-tune then runs its default menu). A user's tune of the same
+    menu is what the pairs' acceptance and the plan's round costs can be held to: the default menu
+    drafts through the proposal head where the artifact has one, which no lab pair measured."""
+    try:
+        registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    out = []
+    for p in registry.get("pairs", []):
+        repo, _, quant = str(p.get("target_repo", "")).partition(" ")
+        if repo.split("@")[0] == model["repo"] and quant == model["quant"] and not p.get("user_kit"):
+            for m in (p.get("tune") or {}).get("measurements", []):
+                if m.get("config") not in out and m.get("config") != "plain":
+                    out.append(m["config"])
+    return out
+
+
+SPEC_KEEP = ("ask", "served", "basis", "source", "round_cost", "by_thinking", "fallbacks", "notes")
+
+
+def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wddm=False):
+    """`ninferno spec-tune` as the stands publish registry entries from, under telemetry, beside
+    the plan's own speculation (--spec auto: its basis, source and round costs), the drafter
+    manifest and the target's identity (validate.py judges it; registry_add.py --from-user-run
+    takes an accepted one)."""
     run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "spec"}
+    sampler = None
     try:
         plan, error = plan_json(serve, model, run_flags(model, device, spec="auto"))
-        run["plan"] = {"chosen": ((plan or {}).get("choice") or {}).get("chosen"), "error": error}
+        run["plan"] = {"chosen": ((plan or {}).get("choice") or {}).get("chosen"), "error": error,
+                       "speculation": {k: v for k, v in (((plan or {}).get("plan") or {})
+                                                         .get("speculation") or {}).items() if k in SPEC_KEEP}}
         artifact, error = prepare(serve, model, with_drafters=True)
         if not artifact:
             raise RuntimeError(error or "no artifact")
+        run["manifest"] = manifest_of(artifact)
+        print("    hashing the target's weight files (the registry's key) ...", flush=True)
+        run["target"] = target_identity(artifact)
         profile, publish = workdir / f"{model['id']}.spec_profile.json", workdir / f"{model['id']}.publish.json"
-        out = subprocess.run([cli, "spec-tune", artifact, "--budget-seconds", str(seconds), "--device",
-                              str(device), "--out", str(profile), "--publish", str(publish),
-                              "--applies-to", model["repo"], "--measured-on",
-                              f"{card['smi'].get('name')} user-kit"], capture_output=True, text=True)
-        if out.returncode != 0:
-            lines = (out.stderr or out.stdout).strip().splitlines()
+        for f in (profile, publish):
+            f.unlink(missing_ok=True)  # never an earlier run's file
+        if smi_id:
+            sampler = gpu.Sampler(smi_id).start()
+        t0 = sampler.now() if sampler else 0
+        run["configs"] = lab_configs(model)
+        menu = ["--configs", ",".join(run["configs"])] if run["configs"] else []
+        proc = subprocess.Popen([cli, "spec-tune", artifact, "--budget-seconds", str(seconds), "--device",
+                                 str(device), "--out", str(profile), "--publish", str(publish),
+                                 "--applies-to", model["repo"], "--measured-on",
+                                 f"{card['smi'].get('name')} user-kit"] + menu,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if smi_id:
+            time.sleep(5)  # the tune has loaded its first model by then
+            run["processes_before"] = apps_info(smi_id, wddm, proc.pid)
+        stdout, stderr = proc.communicate()
+        if sampler:
+            sampler.mark("spec-tune", t0, sampler.now())
+            run["processes_after"] = apps_info(smi_id, wddm, proc.pid)
+        if proc.returncode != 0:
+            lines = (stderr or stdout).strip().splitlines()
             raise RuntimeError(lines[-1] if lines else "spec-tune failed")
         run["profile"] = json.loads(profile.read_text(encoding="utf-8"))
         run["publish"] = json.loads(publish.read_text(encoding="utf-8"))
     except Exception as e:  # noqa: BLE001
         run["error"] = scrub(e)
+    finally:
+        if sampler:
+            run["telemetry"] = sampler.stop()
     return run
 
 
