@@ -35,7 +35,10 @@ This page states the rule and its target. The engine does not meet all of it yet
 - a speculation round's cost from facts (`spec/round_cost.h`) has its small-T tensor share (eta)
   only for Ada and Blackwell, each fitted on two lab cards (DECISIONS 53, 56); Ampere (RTX 3060),
   Turing (RTX 2080 Ti) and Volta (Quadro GV100) each rest on one lab card, so their cards keep the
-  lab-measured profiles until a second card of the generation measures registry pairs;
+  lab-measured profiles until a second card of the generation measures registry pairs: the
+  generation's lab card's own rounds, else the median round cost of every lab card that measured
+  the target, said as a transfer (`spec::profile_for_target`; the records' order never decides,
+  DECISIONS 57);
 - the plan ladder's rungs are declared, but under `--spec auto` each Engine build the server tries
   (the profile's choice, its fit fallback, shallower drafts, plain decode) picks its own rung from
   its own free reading, and the kernel warm-up may still move the plan to a lower rung when it took
