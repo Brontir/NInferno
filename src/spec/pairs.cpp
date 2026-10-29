@@ -665,7 +665,12 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     // In content order (in_content_order): which of one card's records of a target stands (the
     // first in that order), and the group's order, never depend on the registry's.
     std::vector<const MeasuredPair*> low, high;
-    for (const auto* record : in_content_order(std::move(eligible))) {
+    // Records naming their board first: a record naming none matches every board of its class,
+    // so taken first it would hide each named board's own record (Codex).
+    std::vector<const MeasuredPair*> ordered = in_content_order(std::move(eligible));
+    std::stable_partition(ordered.begin(), ordered.end(),
+                          [](const MeasuredPair* p) { return p->lab_board != 0; });
+    for (const auto* record : ordered) {
         const MeasuredPair& pair = *record;
         auto& into = pair.target_bits < 4 ? low : high;
         // One card's record of a target once: a card is its class and board (a record naming no
