@@ -3,6 +3,7 @@
 #include "structured/schema_support.h"
 
 #include <log_hook.h>
+#include <tool_syntax_grammars.h>
 #include <nlohmann/json.hpp>
 #include <xgrammar/xgrammar.h>
 
@@ -185,10 +186,40 @@ std::string cache_key(const OutputConstraintSpec& spec) {
     return key;
 }
 
+// A json_schema format in one of the argument styles of tool_syntax_grammars.h: the grammar of a
+// strict tool's arguments in a call syntax XGrammar has no style for.
+std::optional<std::string> argument_style_grammar(const nlohmann::ordered_json& node, int run) {
+    const auto style = node.find("style");
+    if (style == node.end() || !style->is_string()) { return std::nullopt; }
+    using Make             = std::string (*)(const std::string&, int);
+    const std::string name = style->get<std::string>();
+    const Make make        = name == kGemma4ArgumentStyle     ? &ninferno_xgrammar::gemma4_arguments_ebnf
+                             : name == kPythonicArgumentStyle ? &ninferno_xgrammar::pythonic_arguments_ebnf
+                             : name == kAtemArgumentStyle     ? &ninferno_xgrammar::atem_arguments_ebnf
+                                                              : nullptr;
+    if (make == nullptr) { return std::nullopt; }
+    const auto schema = node.find("json_schema");
+    if (schema == node.end() || !schema->is_object()) {
+        throw OutputConstraintError("invalid_structural_tag",
+                                    "a " + name + " format needs a json_schema object");
+    }
+    const std::string normalized = normalize_supported_json_schema(*schema).dump();
+    try {
+        return make(normalized, run);
+    } catch (const OutputConstraintError&) {
+        throw;
+    } catch (const std::invalid_argument& error) {
+        throw OutputConstraintError("unsupported_schema",
+                                    "the " + name + " call syntax cannot hold this schema: " +
+                                        error.what());
+    }
+}
+
 // JSON inside a structural tag (tool-call arguments, a client's tag) keeps the whitespace bound of
 // a JSON response format: every json_schema node without its own max_whitespace_cnt gets `run`.
 // xgrammar leaves those runs unbounded by default, so a model could write whitespace inside the
-// arguments until max_tokens. A definition that is not JSON is left for xgrammar to reject.
+// arguments until max_tokens. A json_schema node in an argument style (argument_style_grammar)
+// becomes the grammar of that style. A definition that is not JSON is left for xgrammar to reject.
 std::string bound_structural_tag_whitespace(const std::string& definition, int run) {
     nlohmann::ordered_json tag = nlohmann::ordered_json::parse(definition, nullptr, false);
     if (tag.is_discarded()) { return definition; }
@@ -200,6 +231,12 @@ std::string bound_structural_tag_whitespace(const std::string& definition, int r
         if (!node.is_object()) { return; }
         const auto type          = node.find("type");
         const bool schema_format = type != node.end() && *type == "json_schema";
+        if (schema_format) {
+            if (std::optional<std::string> grammar = argument_style_grammar(node, run)) {
+                node = nlohmann::ordered_json{{"type", "grammar"}, {"grammar", std::move(*grammar)}};
+                return;
+            }
+        }
         if (schema_format && !node.contains("max_whitespace_cnt")) {
             node["max_whitespace_cnt"] = run;
         }
@@ -265,6 +302,10 @@ bool declares_free_grammar(const OutputConstraintSpec& spec) {
 
 bool declares_free_grammar(const CompiledConstraint& compiled) noexcept {
     return compiled.free_grammar;
+}
+
+std::size_t memory_bytes(const CompiledConstraint& compiled) noexcept {
+    return compiled.memory_bytes;
 }
 
 ConstraintVocabularyView vocabulary_view(const CompiledConstraint& compiled) noexcept {

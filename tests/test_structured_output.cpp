@@ -993,6 +993,49 @@ void key_order_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec any;
     any.kind = OutputConstraintKind::JsonObject;
     check(admits(compiler.compile(any), value.dump(4)), "json_object: 15 levels indented by four");
+    // Counted objects (minProperties/maxProperties) take the same any-order rule, the count exact.
+    Json at_most_two             = five;
+    at_most_two["maxProperties"] = 2;
+    const auto two               = compiler.compile(schema_spec(at_most_two));
+    check(admits(two, object_of({"C", "A"})), "maxProperties 2: C,A");
+    check(admits(two, "{}"), "maxProperties 2: empty");
+    check(!admits(two, object_of({"C", "A", "E"})), "maxProperties 2: a third key");
+    Json at_least_two             = five;
+    at_least_two["minProperties"] = 2;
+    const auto least              = compiler.compile(schema_spec(at_least_two));
+    check(admits(least, object_of({"E", "B"})), "minProperties 2: E,B");
+    check(admits(least, object_of({"C", "A", "E", "B", "D"})), "minProperties 2: all five");
+    check(!admits(least, object_of({"C"})), "minProperties 2: one key");
+    check(!admits(least, "{}"), "minProperties 2: empty");
+    check(!admits(least, object_of({"C", "A", "C"})), "minProperties 2: duplicate key");
+    // With additional keys (which may repeat) a counted object keeps the fixed order; it counts.
+    Json open_one                    = five;
+    open_one["additionalProperties"] = true;
+    open_one["minProperties"]        = 1;
+    open_one["maxProperties"]        = 3;
+    const auto loose_count           = compiler.compile(schema_spec(open_one));
+    check(admits(loose_count, object_of({"Z"})), "min 1 max 3: one additional key");
+    check(admits(loose_count, object_of({"C", "Z", "Y"})), "min 1 max 3: three mixed keys");
+    check(!admits(loose_count, object_of({"C", "Z", "Y", "X"})), "min 1 max 3: four keys");
+    check(!admits(loose_count, "{}"), "min 1 max 3: empty");
+    // Required A and D with at most three keys: one optional key fits, and it may come first; two
+    // optional keys first would leave no room for both required ones, so the second is refused.
+    Json spine_count             = mixed;
+    spine_count["maxProperties"] = 3;
+    const auto tight             = compiler.compile(schema_spec(spine_count));
+    check(admits(tight, object_of({"C", "A", "D"})), "required A, D, max 3: C,A,D");
+    check(admits(tight, object_of({"A", "D", "E"})), "required A, D, max 3: A,D,E");
+    check(!admits(tight, object_of({"C", "E", "A", "D"})), "required A, D, max 3: C,E,A,D");
+    {
+        RequestConstraint request(tight, false);
+        request.commit(bytes_of(R"({"C":"vC",)"));
+        std::vector<std::uint32_t> row(request.mask_words());
+        request.fill_round({}, row.data(), row.size());
+        request.commit(bytes_of(R"(")"));
+        request.fill_round({}, row.data(), row.size());
+        check(allowed(row.data(), 'A') && !allowed(row.data(), 'E') && !allowed(row.data(), 'B'),
+              "required A, D, max 3: after C only a required key may follow");
+    }
 }
 
 // A strict tool's arguments are one JSON object in every tool-call syntax: the root is held to

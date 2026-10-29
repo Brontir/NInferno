@@ -690,6 +690,13 @@ struct ToolCallConstraintTool {
     bool strict = false;
 };
 
+// Styles of a structural tag's json_schema format for a strict tool's arguments in call syntaxes
+// XGrammar has no style for (Gemma 4, Pythonic, ATEM). The constraint compiler turns such a
+// format into the grammar of that syntax's arguments held to the schema.
+inline constexpr std::string_view kGemma4ArgumentStyle   = "ninferno_gemma4";
+inline constexpr std::string_view kPythonicArgumentStyle = "ninferno_pythonic";
+inline constexpr std::string_view kAtemArgumentStyle     = "ninferno_atem";
+
 struct OutputConstraintSpec {
     OutputConstraintKind kind = OutputConstraintKind::JsonObject;
     std::string definition;
