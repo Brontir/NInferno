@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -33,6 +34,18 @@ public:
     LinearParameters linear(WeightUseId id) const {
         return with_context(model_.weight(id.parameter).name,
                             [&] { return ops::prepare_linear_weight(model_.input(id)); });
+    }
+
+    // The leading `rows` rows of a projection (weight_row_prefix); none where its layout has no
+    // row views.
+    std::optional<LinearParameters> linear_rows(WeightId id, std::uint32_t rows) const {
+        return with_context(model_.weight(id).name, [&]() -> std::optional<LinearParameters> {
+            const auto input = model_.input(id);
+            const auto view  = weight_row_prefix(input.weight, rows);
+            if (!view) { return std::nullopt; }
+            return ops::prepare_linear_weight(
+                ops::WeightInput{*view, input.policy, input.activation_input_divisor});
+        });
     }
 
     // A row table read by id (DFlash2 codebooks): the stored matrix as it is, any format.
@@ -349,8 +362,15 @@ Parameters::Parameters(const Model& source) : model(source) {
                              [&] { return prepare.draft(*w.draft); });
     }
     if (w.proposal) {
-        proposal =
-            ProposalParameters{prepare.linear(w.proposal->head), std::nullopt, w.proposal->rows};
+        // The loaded drafter's rows: a prefix of the head where it asks fewer (its layout keeping
+        // row views), the whole head otherwise.
+        auto prefix = w.proposal->draft_rows < w.proposal->rows
+                          ? prepare.linear_rows(w.proposal->head, w.proposal->draft_rows)
+                          : std::nullopt;
+        proposal    = prefix ? ProposalParameters{std::move(*prefix), std::nullopt,
+                                                  w.proposal->draft_rows}
+                             : ProposalParameters{prepare.linear(w.proposal->head), std::nullopt,
+                                                  w.proposal->rows};
         if (w.proposal->token_ids) { proposal->token_ids = prepare.tensor(*w.proposal->token_ids); }
     }
 }

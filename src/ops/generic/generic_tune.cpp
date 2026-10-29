@@ -739,6 +739,8 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
 
 std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t tokens) {
     if (tokens < 1 || tokens > kDenseTuneMaxTokens) return std::nullopt;
+    // Routes timed on this device are not a substituted board's (route_query.h).
+    if (substituted_foreign_class()) return std::nullopt;
     std::lock_guard lock(g_mutex);
     if (g_tuned.empty()) return std::nullopt;
     const auto it = g_tuned.find(key_of(problem));
@@ -748,7 +750,8 @@ std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t toke
 
 std::optional<Route> tuned_prefill_route(const Problem& problem, std::int32_t tokens,
                                          Route heuristic) {
-    if (tokens <= kDenseTuneMaxTokens || !g_enabled.load(std::memory_order_relaxed)) {
+    if (tokens <= kDenseTuneMaxTokens || !g_enabled.load(std::memory_order_relaxed) ||
+        substituted_foreign_class()) {
         return std::nullopt;
     }
     std::lock_guard lock(g_mutex);

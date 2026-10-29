@@ -493,9 +493,24 @@ struct DeviceTables {
 
 std::array<DeviceTables, kMaxDevices> g_devices;
 
+// The tables of a substituted class (ScopedDeviceClass), one per substitute content
+// (device_class_key): a board answered by substitution never reads, nor leaves, the ordinal's.
+std::mutex g_substituted_mutex;
+std::map<std::string, std::unique_ptr<DeviceTables>> g_substituted;
+
 // The calling thread's device, or device 0 where none is current (a table inspected or loaded
-// before any device is set).
+// before any device is set); a substituted class's own, except that a substitute equal to the
+// current device's own class reads that device's tables (an explicit --route-table included), so
+// the pure query asked of the engine's own board answers as the engine selects.
 DeviceTables& here() {
+    if (const std::string* substitute = substituted_device_class_key();
+        substitute != nullptr && substituted_foreign_class()) {
+        const std::string& key = *substitute;
+        std::lock_guard lock(g_substituted_mutex);
+        auto& slot = g_substituted[key];
+        if (!slot) slot = std::make_unique<DeviceTables>();
+        return *slot;
+    }
     int device = 0;
     if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) device = 0;
     return g_devices[static_cast<std::size_t>(device)];
@@ -638,15 +653,18 @@ void set_route_table_dir(const std::filesystem::path& dir) {
         changed = g_dir != dir;
         g_dir   = dir;
     }
-    for (DeviceTables& d : g_devices) {
+    const auto reset = [&](DeviceTables& d) {
         std::lock_guard lock(d.mutex);
-        if (!changed && !d.explicit_table) continue;
+        if (!changed && !d.explicit_table) return;
         d.explicit_table    = false;
         d.default_attempted = false;
         d.default_status    = {};
         d.table.reset();
         d.settled.store(false, std::memory_order_release);
-    }
+    };
+    for (DeviceTables& d : g_devices) reset(d);
+    std::lock_guard lock(g_substituted_mutex);
+    for (auto& [key, d] : g_substituted) reset(*d);
 }
 
 RouteTableStatus load_route_table(const std::string& path) {

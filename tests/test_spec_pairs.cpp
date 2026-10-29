@@ -497,6 +497,29 @@ int main() {
         }
         std::filesystem::remove(path);
     }
+    // A round's cost in a profile (what the plan reports as "round_cost"): per section a round's
+    // seconds over plain decode's seconds a token, the mean over the sections.
+    {
+        sp::Profile p;
+        const auto m = [](const char* label, const char* family, std::int64_t tokens, double seconds,
+                          std::int64_t rounds) {
+            sp::Measurement out;
+            out.config  = sp::SpecConfig::parse(label);
+            out.family  = family;
+            out.tokens  = tokens;
+            out.seconds = seconds;
+            out.rounds  = rounds;
+            return out;
+        };
+        p.measurements = {m("plain", "math", 100, 10.0, 0), m("plain", "code", 100, 5.0, 0),
+                          m("mtp:3", "math", 300, 4.0, 20),   // 0.2 s a round over 0.1: 2
+                          m("mtp:3", "code", 300, 3.0, 20),   // 0.15 over 0.05: 3
+                          m("mtp:3", "prose", 300, 3.0, 20)}; // no plain decode of prose: left out
+        const auto cost = sp::profile_round_costs(p);
+        expect(cost.size() == 1 && cost.contains("mtp:3") && std::abs(cost.at("mtp:3") - 2.5) < 1e-9,
+               "a round's cost is the mean over the sections plain decode measured too");
+        expect(sp::profile_round_costs(sp::Profile{}).empty(), "no measurements: no round cost");
+    }
     std::cout << (failures == 0 ? "spec pairs: ok\n" : "spec pairs: FAILED\n");
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }

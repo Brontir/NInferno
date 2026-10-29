@@ -66,6 +66,19 @@ SHA-256 of the target's weight files as the hub lists them (the pair's key; orde
 card's generation comes from the tune's GPU class through the PCI facts table
 (src/core/data/gpu_facts.json: "ad104" is sm89). A pair of the same target, generation and GPU class
 is replaced.
+
+--from-user-run takes a user's spec-tune from the measurement kit (tools/kit/measure.py --spec-tune;
+docs/maintainer/user-measurement-kit.md) as a candidate:
+
+    python tools/spec/registry_add.py --from-user-run RUN.json --accept-user [--run ID]
+
+It validates the file again (tools/kit/validate.py) and refuses unless the spec run is a registry
+candidate, and without --accept-user. The pair is built as --pair builds it, from the tune, the
+manifest and the target's revision and weights the run recorded, marked "user_kit" and with the
+user's board ("board", the PCI device id) instead of a lab board. It goes into --user-pairs FILE
+(tools/spec/user_pairs.json), not the registry: the engine embeds the registry (its hash is in every
+manifest), and a user's entry is recorded for a maintainer's PR, never served, and never in place of
+a lab pair (a lab pair of the target on the same chip in --registry refuses it).
 """
 
 from __future__ import annotations
@@ -347,6 +360,65 @@ def put_pair(pairs: list[dict], pair: dict) -> list[dict]:
     return kept + [pair]
 
 
+def chip(gpu_class: str) -> str:
+    return str(gpu_class or "").split(":")[0].lower()
+
+
+def user_pair(doc: dict, run_id: str, registry: dict | None = None) -> dict:
+    """The registry pair of a user's accepted spec run (tools/kit/measure.py --spec-tune), as
+    --pair builds it from what the run recorded, refused unless tools/kit/validate.py calls it a
+    registry candidate. Marked "user_kit", with the user's board instead of a lab board."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "kit"))
+    import validate  # noqa: PLC0415 (the kit's validator: the same rules the submission was read by)
+    report = validate.validate(doc, registry=registry)
+    if report["file"] != "accepted":
+        raise SystemExit(f"the file is {report['file']}: nothing to take")
+    spec = [(run, out) for run, out in zip(doc["runs"], report["runs"]) if run.get("mode") == "spec"
+            and (not run_id or run.get("id") == run_id)]
+    if len(spec) != 1:
+        raise SystemExit(f"{len(spec)} spec run(s){' named ' + run_id if run_id else ''}: name one with --run ID")
+    run, out = spec[0]
+    if out.get("candidate") != "yes":
+        raise SystemExit(f"{run.get('id')}: not a registry candidate ({out.get('candidate')}); "
+                         "validate.py RUN.json says why")
+    target, manifest = run["target"], run["manifest"]
+    tune = json.loads(json.dumps(run["profile"]))
+    measured = {k for m in tune.get("measurements", []) if m.get("config", "plain") != "plain"
+                for k in validate.kinds_of(m["config"])}
+    drafters = []
+    for d in manifest.get("drafters", []):
+        if d.get("kind") in measured and d.get("repo") == "other":
+            raise SystemExit(f"the {d['kind']} drafter is not one the registry declares: no pair")
+        drafters.append({**d, "repo": d.get("repo") if d.get("repo") != "other" else ""})
+    pair = pair_of(tune, {"target": manifest.get("target", {}), "drafters": drafters},
+                   f"{run['repo']}@{target['revision']}", run["quant"],
+                   [w["sha256"] for w in target["weights"]])
+    # The user's board, never a lab board's rates: another board of the class is priced by its own.
+    pair.pop("lab_board", None)
+    device = str(((doc.get("card") or {}).get("smi") or {}).get("pci.device_id") or "")
+    if re.fullmatch(r"0x[0-9A-Fa-f]{8}", device):
+        pair["board"] = "0x" + device[2:6].upper()
+    pair["user_kit"] = {"kit": doc.get("kit"), "schema": doc.get("schema"), "created": doc.get("created"),
+                        "ninferno": doc.get("ninferno"), "card": doc["card"]["smi"].get("name"),
+                        "measured_on": (run.get("publish") or {}).get("measured_on", "")}
+    return pair
+
+
+def put_user_pair(registry: dict, user: dict, pair: dict) -> None:
+    """`pair` into `user` (the user pairs' file, {"version", "user_pairs"}: not the registry, which
+    the engine embeds and whose hash a manifest records; a user's entry is recorded, never served),
+    in the place of one of the same target, GPU class and board; refused where a lab pair of the
+    target in `registry` was measured on the same chip."""
+    gpu = pair["tune"]["key"]["gpu"]
+    for p in registry.get("pairs", []):
+        if p.get("target") == pair["target"] and chip(p["tune"]["key"]["gpu"]) == chip(gpu):
+            raise SystemExit(f"the lab measured this target on {p['tune']['key']['gpu']}: its measurement stands")
+    same = lambda p: (p.get("target") == pair["target"] and p["tune"]["key"]["gpu"] == gpu
+                      and p.get("board") == pair.get("board"))
+    user["user_pairs"] = [p for p in user.get("user_pairs", []) if not same(p)] + [pair]
+    user["version"] = int(user.get("version", 0)) + 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("model", nargs="?")
@@ -363,12 +435,33 @@ def main() -> int:
     parser.add_argument("--target", default="")
     parser.add_argument("--quant", default="")
     parser.add_argument("--weights", default="")
+    parser.add_argument("--from-user-run", type=Path)
+    parser.add_argument("--accept-user", action="store_true")
+    parser.add_argument("--run", default="")
+    parser.add_argument("--user-pairs", type=Path, default=Path(__file__).resolve().parent / "user_pairs.json")
     args = parser.parse_args()
     registry = json.loads(args.registry.read_text(encoding="utf-8"))
     before = copy.deepcopy(registry)
     if args.restamp:
         write_registry(registry, before, args.registry)
         print(f"{args.registry}: version {registry.get('version')}")
+        return 0
+    if args.from_user_run is not None:
+        if not args.accept_user:
+            parser.error("--from-user-run needs --accept-user: a submission is evidence; a maintainer "
+                         "who read validate.py's report takes it")
+        pair = user_pair(json.loads(args.from_user_run.read_text(encoding="utf-8")), args.run, registry)
+        user = (json.loads(args.user_pairs.read_text(encoding="utf-8")) if args.user_pairs.exists()
+                else {"note": "Users' spec-tunes (tools/kit, registry_add.py --from-user-run): recorded "
+                              "for the lab to reproduce, never served (the engine reads "
+                              "src/spec/data/drafter_registry.json only).", "version": 0, "user_pairs": []})
+        put_user_pair(registry, user, pair)
+        with open(args.user_pairs, "w", encoding="utf-8", newline="\n") as out:
+            out.write(json.dumps(user, indent=2, ensure_ascii=False) + "\n")
+        print(f"{pair['target_repo']}: user pair on {pair['generation']} ({pair['tune']['key']['gpu']}"
+              f"{', board ' + pair['board'] if pair.get('board') else ''}) into {args.user_pairs.name}, "
+              f"{len(user['user_pairs'])} user pair(s): a candidate for a maintainer's PR (recorded, "
+              "not served)")
         return 0
     if args.pair is not None:
         if args.manifest is None or not args.target or not args.weights:
