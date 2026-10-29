@@ -164,7 +164,6 @@ protected:
 
 const std::string kGemmaQuote = "<|\"|>";
 const std::string kGemmaKey   = "ninferno_gemma_key";
-const std::string kGemmaQChar = "ninferno_gemma_qchar";
 
 // Bare keys and bare values never hold these (Gemma4Syntax::Reader, kArgumentsGrammar).
 const std::vector<int32_t> kGemmaBareExcluded = {'\t', '\n', '\r', ' ', '"', ',', ':',
@@ -220,22 +219,12 @@ public:
 
 protected:
     void AddBasicRules() override {
-        builder_.AddEmptyRule(kGemmaQChar);
         JSONSchemaConverter::AddBasicRules({kGemmaKey});
-        // A quoted string: anything up to the closing <|"|> (Reader::quoted takes the first one).
-        builder_.UpdateRuleBody(
-            kGemmaQChar,
-            Choice({builder_.AddCharacterClass({{'<', '<'}}, true),
-                    Sequence({ByteString("<"), builder_.AddCharacterClass({{'|', '|'}}, true)}),
-                    Sequence({ByteString("<|"), builder_.AddCharacterClass({{'"', '"'}}, true)}),
-                    Sequence({ByteString("<|\""), builder_.AddCharacterClass({{'|', '|'}}, true)}),
-                    Sequence({ByteString("<|\"|"),
-                              builder_.AddCharacterClass({{'>', '>'}}, true)})}));
-        builder_.UpdateRuleBody(
-            kBasicString,
-            Sequence({ByteString(kGemmaQuote),
-                      Repeat("ninferno_gemma_qchars", RuleRef(kGemmaQChar), 0, -1),
-                      ByteString(kGemmaQuote)}));
+        // A quoted string: any text up to the closing <|"|> (Reader::quoted takes the first one).
+        // A tag dispatch, as XGrammar's XML strings, keeps its masks on the fast path.
+        builder_.UpdateRuleBody(kBasicString,
+                                Sequence({ByteString(kGemmaQuote), TagDispatch(false, {kGemmaQuote}),
+                                          ByteString(kGemmaQuote)}));
         const std::vector<Range> bare = all_but(kGemmaBareExcluded);
         builder_.UpdateRuleBody(
             kGemmaKey,
