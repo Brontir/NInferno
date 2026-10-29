@@ -175,8 +175,7 @@ int main() {
                    !sp::round_cost_estimate(q9, sp::GpuKey{{"*"}, 0, false}).known,
                "no facts, or no rates: no estimate (the measured ratios stand)");
     }
-    // The card that measured a pair: on a generation with eta its rounds are priced by the facts
-    // too, with its own tokens a round (DECISIONS 56), its tune keyed by class id or chip.
+    // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
         auto chip_keyed      = pair_of(kQ9, "ad104:60sm");
@@ -184,8 +183,7 @@ int main() {
         for (const auto* p : {&pair_of(kQ9, "ad104:60sm"), static_cast<const sp::MeasuredPair*>(&chip_keyed)}) {
             std::string note;
             (void)sp::profile_for_target({p}, "sm89", {}, nullptr, &rtx4070ti, &note);
-            expect(note.find("rounds priced from the weights' bytes") != std::string::npos,
-                   "the measuring card's own record (" + p->tune.key.gpu + "), priced by the facts");
+            expect(note.empty(), "the measuring card's own record (" + p->tune.key.gpu + "), not facts");
         }
         // Another board of the lab card's class (RTX 4500 Ada: 432 GB/s against the 4070 Ti's 504):
         // not the lab card, priced by the facts.
@@ -206,9 +204,9 @@ int main() {
                                      &ampere_note);
         expect(ampere_note.empty(), "Ampere has no eta yet: the lab-measured profile, no facts");
     }
-    // Two lab cards of the generation that agree: their deep depths and load table are theirs
-    // without a card's rates; a card that measured nothing is priced by the facts, no deeper than
-    // kPortableDepth (Codex P2 on #161); so is a lab board (DECISIONS 56).
+    // Two lab cards of the generation that agree: their deep depths and load table are theirs; a
+    // card that measured nothing is priced by the facts, no deeper than kPortableDepth (Codex P2
+    // on #161); a lab board keeps the measurement.
     {
         const auto& ada   = pair_of(kQ9, "ad104:60sm");
         auto twin         = ada; // the same measurement on a second Ada card: they agree
@@ -232,9 +230,9 @@ int main() {
         const auto rtx4070ti = card("ad104:60sm", "ad104", "sm89", 89, 60, 2610, 504);
         std::string own_note;
         const auto own = sp::profile_for_target(both, "sm89", {}, nullptr, &rtx4070ti, &own_note);
-        expect(!own_note.empty() && shallow(own),
-               "a lab board of a generation with eta: facts, no deeper than kPortableDepth: " +
-                   own.thinking.config.label());
+        expect(own_note.empty() && own.thinking.config == agreed.thinking.config &&
+                   own.overall.config == agreed.overall.config,
+               "a lab board keeps the agreeing cards' measured profile");
     }
     // One card's two tunes (spec-tune measures one drafter at a time), each with its own mode's
     // facts: pooled, both drafters are priced, whatever the records' order.
@@ -302,9 +300,8 @@ int main() {
             for (const auto& p : registry.pairs()) {
                 if (p.tune.key.gpu == h.gpu) { own_only.push_back(p); }
             }
-            // Without the card's rates: its own measured profile, not the facts.
             const auto measured  = sp::pair_choice(own_only, own_pair.target, "qwen3_5", kinds, 4.0,
-                                                   generation, {}, own_pair.drafters, {}, nullptr);
+                                                   generation, {}, own_pair.drafters, {}, &h.key);
             const auto predicted = sp::pair_choice(without, own_pair.target, "qwen3_5", kinds, 4.0,
                                                    generation, {}, own_pair.drafters, {}, &h.key);
             if (!measured || !predicted) {

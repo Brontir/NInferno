@@ -454,8 +454,7 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
         return measured.empty() ? Profile{} : not_current(*measured.front());
     }
     const MeasuredPair* own_pair = nullptr;
-    // The card itself measured it: priced by the facts with its own tokens a round where the
-    // generation has eta (below), else its own measurement (after the agreement of its
+    // The card itself measured it: its own measurement (below, after the agreement of its
     // generation's lab cards). Its own keys are its class id and chip
     // (a tune's key.gpu is either; the architecture is every card of it, not this one), and where
     // the pair names its lab board, that board's rates too: another board of the class (an RTX
@@ -474,17 +473,6 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             for (std::size_t i = 0; i < own && i < gpu->chain.size() && own_pair == nullptr; ++i) {
                 if (pair->tune.key.gpu == gpu->chain[i] && same_board(*pair)) { own_pair = pair; }
             }
-        }
-    }
-    // The card's own pair where its generation has eta: its tokens a round as measured, its rounds
-    // from the facts like any other card's (R from facts, only E measured; no decision keyed by
-    // the card's identity: choice-notes DECISIONS 56). The lab card's own measurement still raises
-    // a round the facts price lower by more than kRoundCostAgreement (round_cost_estimate), and
-    // depths beyond kPortableDepth are not priced, as on any card.
-    if (gpu != nullptr && own_pair != nullptr) {
-        if (const auto estimate = round_cost_estimate(*own_pair, *gpu); estimate.known) {
-            if (note != nullptr) { *note = estimate.note; }
-            return selected(*own_pair, false, options, {}, &estimate);
         }
     }
     // Another card's: its tokens a round (the pair's, on any card), its rounds priced for this card
