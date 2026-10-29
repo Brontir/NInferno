@@ -28,7 +28,8 @@ struct Probe {
     // The rewrite execution frontiers as distances from the prompt's end (0 left out: a frontier
     // at the end splits nothing).
     std::set<std::uint32_t> tail;
-    // A cache opportunity the program moves down to the 64-token grid (neutral_frontier.h).
+    // A cache capture the program places off the prompt's static frontiers (on the 64-token grid
+    // below the message's end, neutral_frontier.h).
     bool off_grid_capture = false;
 };
 
@@ -57,11 +58,17 @@ Probe probe(const models::qwen3_5::Frontend& frontend, int words) {
     for (const std::uint32_t f : frontiers) {
         if (f < tokens) { out.tail.insert(tokens - f); }
     }
-    for (const auto& opportunity : prompt.context_cache.opportunities) {
+    // Where the program places the captures (request_plan.cpp): a frontier that is neither a static
+    // one nor the prompt's end splits the prefill.
+    for (const auto& opportunity :
+         models::qwen3_5::runtime_support::neutral_cache_opportunities(
+             std::span<const models::qwen3_5::PreparedCacheOpportunity>(
+                 prompt.context_cache.opportunities),
+             tokens, frontiers)) {
         out.off_grid_capture =
             out.off_grid_capture ||
-            !models::qwen3_5::runtime_support::is_neutral_prefill_frontier(opportunity.frontier,
-                                                                            tokens, frontiers);
+            (opportunity.frontier != tokens &&
+             !std::binary_search(frontiers.begin(), frontiers.end(), opportunity.frontier));
     }
     return out;
 }
