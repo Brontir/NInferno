@@ -538,6 +538,49 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     const runtime::QuantAsk ask = quant_ask_of(inputs, shape.model.native_context);
     std::vector<runtime::QuantCandidate> candidates;
     std::vector<runtime::QuantFit> fits;
+    // The speed of a typical request at the storages a row's plan serves with (the row's
+    // estimate: shown, and redone when the launch's context changes).
+    const auto estimate_row = [&](QuantRow& row, const std::optional<StartAxes>& row_axes) {
+        row.estimate_drafter.clear();
+        // The speed of a typical request at the storages this row's plan serves with.
+        const PlanSourceFacts facts = row_facts(shape, row);
+        choice::ModelFacts model     = choice_model_of(facts);
+        const choice::CardFacts card = choice_card_of(inputs.gpu);
+        // The quantization as the choice prices it (product::quant_option_of: one rule for a
+        // hub row, the CLI's plan and a start's artifact).
+        const choice::QuantOption q = quant_option_of(facts, row.listing.quant);
+        choice::Candidate c;
+        c.kv          = row.planned.plan.kv_cache;
+        c.state       = row.planned.plan.recurrent;
+        c.ring        = row_axes && row_axes->ring ? *row_axes->ring : inputs.options.sliding_kv_cache;
+        c.activations = row_axes && row_axes->activations ? *row_axes->activations
+                                                          : inputs.options.activations;
+        if (row_axes && row_axes->chunk) { c.chunk = *row_axes->chunk; }
+        // The drafter this row's plan serves, at the gain the choice weighs it with: the
+        // row's speed is of what the row would run.
+        const SpeculativeBackend served = row.planned.speculation.engine.backend;
+        if (const DryRunInputs own = inputs_for(inputs, row.listing);
+            served != SpeculativeBackend::None && own.subject != nullptr) {
+            const DrafterAxis axis = drafter_axis(*own.subject, own.ask);
+            for (std::size_t i = 0; i < axis.served.size(); ++i) {
+                if (axis.served[i].engine.backend == served) {
+                    model.drafters       = axis.options;
+                    c.drafter            = i + 1;
+                    // Only a measured gain is counted (speed_of); the estimate names it.
+                    if (axis.options[i].measured) { row.estimate_drafter = axis.options[i].label; }
+                    break;
+                }
+            }
+        }
+        choice::Task task;
+        task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
+        const std::uint32_t context =
+            ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
+        row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
+        row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth,
+                                        task.prompt);
+        row.request_seconds = choice::request_seconds(model, card, q, c, task);
+    };
     for (const QuantListing& q : listing) {
         if (q.drafter) { continue; }
         QuantRow row;
@@ -622,46 +665,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                 ? runtime::QuantFitState::Unknown
                                 : runtime::QuantFitState::Unsupported;
         }
-        if (row.candidate.supported && row.planned.plan.planned) {
-            // The speed of a typical request at the storages this row's plan serves with.
-            const PlanSourceFacts facts = row_facts(shape, row);
-            choice::ModelFacts model     = choice_model_of(facts);
-            const choice::CardFacts card = choice_card_of(inputs.gpu);
-            // The quantization as the choice prices it (product::quant_option_of: one rule for a
-            // hub row, the CLI's plan and a start's artifact).
-            const choice::QuantOption q = quant_option_of(facts, row.listing.quant);
-            choice::Candidate c;
-            c.kv          = row.planned.plan.kv_cache;
-            c.state       = row.planned.plan.recurrent;
-            c.ring        = row_axes && row_axes->ring ? *row_axes->ring : inputs.options.sliding_kv_cache;
-            c.activations = row_axes && row_axes->activations ? *row_axes->activations
-                                                              : inputs.options.activations;
-            if (row_axes && row_axes->chunk) { c.chunk = *row_axes->chunk; }
-            // The drafter this row's plan serves, at the gain the choice weighs it with: the
-            // row's speed is of what the row would run.
-            const SpeculativeBackend served = row.planned.speculation.engine.backend;
-            if (const DryRunInputs own = inputs_for(inputs, row.listing);
-                served != SpeculativeBackend::None && own.subject != nullptr) {
-                const DrafterAxis axis = drafter_axis(*own.subject, own.ask);
-                for (std::size_t i = 0; i < axis.served.size(); ++i) {
-                    if (axis.served[i].engine.backend == served) {
-                        model.drafters       = axis.options;
-                        c.drafter            = i + 1;
-                        // Only a measured gain is counted (speed_of); the estimate names it.
-                        if (axis.options[i].measured) { row.estimate_drafter = axis.options[i].label; }
-                        break;
-                    }
-                }
-            }
-            choice::Task task;
-            task.concurrency    = std::max<std::uint32_t>(inputs.options.max_concurrency, 1);
-            const std::uint32_t context =
-                ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
-            row.estimate_depth = std::max<std::uint32_t>(512, context / 4);
-            row.estimate = choice::speed_of(model, card, q, c, task.concurrency, row.estimate_depth,
-                                            task.prompt);
-            row.request_seconds = choice::request_seconds(model, card, q, c, task);
-        }
+        if (row.candidate.supported && row.planned.plan.planned) { estimate_row(row, row_axes); }
         candidates.push_back(row.candidate);
         fits.push_back(row.fit);
         out.rows.push_back(std::move(row));
@@ -685,11 +689,13 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
         // KV codec may bring a row the rule's resolved options left short to the target. Rows go in
         // the order of the best worth their weights could reach (no memory planned: a bound); the
         // memory is planned (one plan a step) only while a row's bound can still beat the best.
-        // A row whose weights take routes no census measured (choice::WeightClass::Other: codebook
-        // IQ*, Q4_0, IQ4_NL, FP4) has a transferred speed: it wins no decision while a measured row
-        // is in the tier.
+        // A row whose weights take routes this generation did not measure on two cards
+        // (choice::class_measured: Other's codebook IQ*, Q4_0/1, FP4 anywhere; IQ4 off Ada) has a
+        // transferred speed: it wins no decision while a measured row is in the tier.
+        const choice::CardFacts measured_card = choice_card_of(inputs.gpu);
         const auto measured = [&](const QuantRow& row) {
-            return choice::weight_class_of({}, row.listing.quant) != choice::WeightClass::Other;
+            return choice::class_measured(measured_card,
+                                          quant_option_of(row_facts(shape, row), row.listing.quant).weights);
         };
         const bool any_measured = std::any_of(out.rows.begin(), out.rows.end(), [&](const QuantRow& row) {
             return row.candidate.supported && measured(row) &&
@@ -783,23 +789,35 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             // the drafter its worth was scored with (an 8 GB card: Q5_K_S with mtp at 32K, plain at
             // 64K); the launch then keeps the context the worth was scored at, as the owner's order
             // has it (the wanted context, then the drafter).
-            const bool drafter_lost = best_scored.drafter != "plain" &&
+            const bool shared_pool  = ask.concurrency > 1 && !own_plan(row.planned.plan);
+            const bool drafter_lost = ask.concurrency == 1 && best_scored.drafter != "plain" &&
                                       row.planned.speculation.engine.backend == SpeculativeBackend::None;
+            bool capped_here = false;
             if (ask.automatic && best_context != 0 && row.launch_context != best_context &&
-                ((ask.concurrency > 1 && !own_plan(row.planned.plan)) || drafter_lost)) {
+                (shared_pool || drafter_lost)) {
+                const QuantRow before       = row;
                 row.launch_context          = best_context;
                 const PlanSourceFacts facts = row_facts(shape, row);
                 const DryRunInputs own      = inputs_for(inputs, row.listing);
                 const DryRunInputs capped   = under_context_cap(own, best_context);
+                std::optional<StartAxes> axes;
                 if (const auto served = choose_at_weights(facts, own, pins, row.listing.quant)) {
                     const DryRunInputs at = inputs_at_choice(capped, *served, pins);
                     row.planned = plan_at_choice(facts, at, *served, pins, plan_model(facts, at));
+                    axes        = start_axes(*served, pins);
                 } else {
                     row.planned = plan_model(facts, capped);
                 }
+                // One stream capped for its drafter keeps the cap only where the drafter returns.
+                if (!shared_pool && row.planned.speculation.engine.backend == SpeculativeBackend::None) {
+                    row = before;
+                } else {
+                    capped_here = true;
+                    if (row.planned.plan.planned) { estimate_row(row, axes); }
+                }
             }
             row.fit.state       = runtime::QuantFitState::Own;
-            row.fit.own_context = std::max(row.fit.own_context, best_context);
+            row.fit.own_context = capped_here ? best_context : std::max(row.fit.own_context, best_context);
         }
     }
     if (out.pick) {
