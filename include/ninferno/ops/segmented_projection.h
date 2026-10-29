@@ -111,7 +111,7 @@ void segmented_gdn_input_proj_conv_record(const Tensor& x,
 // (gdn_norm_gating_proj) at one CTA width chosen from the hidden size alone: a and b come from the
 // unrounded normalized input in FP32, and a token's bytes do not depend on the other columns of
 // the call. Never under the invariant route profile.
-inline constexpr std::int32_t kSegmentedFusedControlMaxTokens = 16;
+inline constexpr std::int32_t kSegmentedFusedControlMaxTokens = 0;
 [[nodiscard]] std::size_t segmented_gdn_norm_gating_workspace_capacity_bytes(
     const SegmentedProjectionWeights& weights, std::int32_t min_tokens, std::int32_t max_tokens);
 
