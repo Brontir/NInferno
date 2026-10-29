@@ -4,6 +4,7 @@
 #include "core/machine_facts.h"
 #include "spec/profile.h"
 
+#include <algorithm>
 #include <cmath>
 #include <stdexcept>
 
@@ -13,6 +14,9 @@ namespace {
 
 using Json = nlohmann::json;
 
+// Q4_G64_FP16: 4-bit codes and a binary16 scale a 64 values (convert stored_bits).
+constexpr double kProposalQ4BitsPerValue = 4.25;
+
 Json pass_json(const PassFacts& p) {
     Json out{{"bytes", p.bytes}, {"params", p.params}};
     if (p.experts > 0) {
@@ -20,6 +24,14 @@ Json pass_json(const PassFacts& p) {
         out["expert_params"] = p.expert_params;
         out["experts"]       = p.experts;
         out["experts_used"]  = p.experts_used;
+    }
+    if (!p.linears.empty()) {
+        Json groups = Json::array();
+        for (const auto& g : p.linears) {
+            groups.push_back(Json{{"format", g.format}, {"n", g.n}, {"k", g.k}, {"count", g.count},
+                                  {"head", g.head}, {"expert", g.expert}});
+        }
+        out["linears"] = std::move(groups);
     }
     return out;
 }
@@ -38,6 +50,21 @@ PassFacts parse_pass(const Json& doc) {
         ((p.experts > 0) != (p.expert_bytes > 0))) {
         throw std::runtime_error("round facts: a pass's bytes, parameters or experts are malformed");
     }
+    if (const auto groups = doc.find("linears"); groups != doc.end()) {
+        for (const auto& g : *groups) {
+            LinearGroup l;
+            l.format = g.at("format").get<std::string>();
+            l.n      = g.at("n").get<std::int64_t>();
+            l.k      = g.at("k").get<std::int64_t>();
+            l.count  = g.at("count").get<std::int32_t>();
+            l.head   = g.value("head", false);
+            l.expert = g.value("expert", false);
+            if (l.format.empty() || l.n < 1 || l.k < 1 || l.count < 1) {
+                throw std::runtime_error("round facts: a linear's format, rows, columns or count are malformed");
+            }
+            p.linears.push_back(std::move(l));
+        }
+    }
     return p;
 }
 
@@ -46,6 +73,33 @@ double pass_cost(const PassFacts& p, std::int32_t rows, double kappa) {
     const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows);
     const double ops    = 2.0 * double(rows) * (p.params + p.expert_params * active);
     return bytes + kappa * ops;
+}
+
+// A head's facts over `rows` of its rows (0: all), as the converter stores a proposal head
+// (convert/checks.cpp add_official_proposal, planned_proposal_bytes): a GGUF target's rows in its
+// head's own format (its bytes' share; measured, RTX 4070 Ti: the Q6_K rows' GEMV 1038.5 / 405.7 us
+// at 147,456 / 57,344 rows, 94 % of the DRAM rate both), a checkpoint's gathered rows re-encoded
+// Q4_G64_FP16 (4.25 bits a value). Unchanged when its facts list no head linear, or `rows` covers
+// them.
+PassFacts head_over_rows(const PassFacts& head, std::uint64_t rows) {
+    std::int64_t all = 0;
+    bool gguf        = true;
+    for (const auto& g : head.linears) {
+        if (!g.head) { continue; }
+        all += g.n;
+        gguf = gguf && g.format.starts_with("gguf:");
+    }
+    if (rows == 0 || all <= 0 || rows >= std::uint64_t(all)) { return head; }
+    const double share = double(rows) / double(all);
+    PassFacts out      = head;
+    out.params *= share;
+    out.bytes = gguf ? head.bytes * share : out.params * kProposalQ4BitsPerValue / 8;
+    for (auto& g : out.linears) {
+        if (!g.head) { continue; }
+        g.n = std::max<std::int64_t>(1, std::int64_t(std::llround(double(g.n) * share)));
+        if (!gguf) { g.format = "conv:q4_g64"; }
+    }
+    return out;
 }
 
 CardRates rates(int major, int minor, int sms, double clock_hz, double dram_bytes_per_s) {
@@ -122,15 +176,23 @@ CardRates card_rates_of_board(std::uint32_t pci_device_id) {
                  row->bus_bits / 8.0 * row->gbps * 1e9);
 }
 
-std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa) {
+std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
+                                 const ProposalRows& head_rows) {
     if (!config.enabled() || config.k < 1) { return std::nullopt; }
-    const auto d = facts.drafters.find(mode_name(config.mode));
+    const std::string mode = mode_name(config.mode);
+    const auto d           = facts.drafters.find(mode);
     if (d == facts.drafters.end()) { return std::nullopt; }
-    const double plain  = pass_cost(facts.target, 1, kappa);
-    const double verify = pass_cost(facts.target, config.k + 1, kappa);
-    const double passes = d->second.per_draft ? double(config.k) : 1.0;
-    const double head   = d->second.head ? pass_cost(*d->second.head, config.k, kappa) : 0.0;
-    const double draft  = passes * pass_cost(d->second.pass, d->second.rows, kappa) + head;
+    const DraftFacts& draft_facts = d->second;
+    const double plain            = pass_cost(facts.target, 1, kappa);
+    const double verify           = pass_cost(facts.target, config.k + 1, kappa);
+    const double passes           = draft_facts.per_draft ? double(config.k) : 1.0;
+    double head                   = 0;
+    if (draft_facts.head) {
+        const PassFacts read = head_over_rows(*draft_facts.head, head_rows.of(mode));
+        head = draft_facts.per_draft ? passes * pass_cost(read, draft_facts.rows, kappa)
+                                     : pass_cost(read, config.k, kappa);
+    }
+    const double draft = passes * pass_cost(draft_facts.pass, draft_facts.rows, kappa) + head;
     return (verify + draft) / plain;
 }
 

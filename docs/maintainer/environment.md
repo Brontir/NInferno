@@ -174,4 +174,5 @@ fault.
 | `NINFERNO_DEBUG_FREEZE_FILE` | file path | While the file exists, the executor blocks as on a hung device wait. |
 | `NINFERNO_DEBUG_TRAP_FILE` | file path | Once the file appears, the next check launches a kernel that traps, which poisons the CUDA context as a failed device-side assert does. Fires once. |
 | `NINFERNO_DEBUG_CUDA_ERROR_FILE` | file path | When the file exists, the next check removes it and raises a recoverable CUDA error (`cudaErrorMemoryAllocation`). Each new file is one error. |
+| `NINFERNO_DEBUG_TOKEN_DOMAIN_FILE` | file path | When the file exists, the next sampled or licensed decode token is replaced with one outside the public vocabulary and the file is removed: that request ends with a numerical failure, the others go on. Each new file is one token. |
 | `NINFERNO_DEBUG_NAN_FILE` | file path | See the [serving reference](../reference/serving.md). |

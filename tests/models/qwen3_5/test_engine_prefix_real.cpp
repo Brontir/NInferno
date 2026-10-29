@@ -1572,6 +1572,31 @@ int exercise_vision(ninferno::Engine& engine) {
                   << '\n';
         return 1;
     }
+    // The reused continuation prefills a text-only suffix after the cached multimodal prefix: its
+    // positions keep the image's RoPE delta, so it decodes what an uncached prefill decodes.
+    // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side):
+    // with it the suffix's dropped delta changes the greedy tokens (RTX 4070 Ti, Qwen3.5-4B AWQ:
+    // the old code failed here, while a 512x256 image's -112 still decoded the same 16 tokens).
+    {
+        const auto wide = gradient_ppm(1024, 1024);
+        ninferno::RequestOptions long_reuse = options(true);
+        ninferno::RequestOptions long_fresh = options(false);
+        long_reuse.execution.requested_output_tokens = 16;
+        long_fresh.execution.requested_output_tokens = 16;
+        const ninferno::GenerationResult wide_first =
+            engine.generate(engine.prepare(first_input(wide)), options(true));
+        const ninferno::GenerationResult cached =
+            engine.generate(engine.prepare(followup_input(wide, wide_first)), long_reuse);
+        const ninferno::GenerationResult fresh =
+            engine.generate(engine.prepare(followup_input(wide, wide_first)), long_fresh);
+        if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
+            cached.generated_token_ids != fresh.generated_token_ids) {
+            std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
+                         "uncached prefill (RoPE delta lost?): reused="
+                      << cached.reused_prompt_tokens << '\n';
+            return 1;
+        }
+    }
 
     std::vector<std::uint8_t> second_image = image_bytes;
     second_image.back() ^= 0x5aU;

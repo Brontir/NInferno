@@ -14,7 +14,8 @@
 //     requests are measured only, taken where two lab cards of the card's generation measured the
 //     pair and chose alike (a lab constant holds on two cards of a generation:
 //     docs/maintainer/deterministic-decisions.md). A pair without facts, or a card whose rates are
-//     unknown, keeps the generation's measured ratio (generation_round_costs).
+//     unknown, takes the median R of the lab cards of its generation that measured the target,
+//     else of every lab card that did, said as a transfer (profile_for_target).
 //
 // A target nobody measured takes its group's choice (profile_for_group): the pairs of the same
 // engine and drafter kind, of the same bit class (below 4 bits drafts pay less), measured on two
@@ -89,24 +90,14 @@ struct MeasuredPair {
 // disabled with the reason.
 [[nodiscard]] Profile profile_for_pair(const MeasuredPair& pair, const SelectOptions& options = {});
 
-// What a round of each configuration (by its label) costs on generation `to` over `from`: the
-// median, over the targets the lab measured on both, of the one's round cost over the other's (a
-// round's seconds over plain decode's seconds per token, over the corpus sections both measured).
-// A drafter's acceptance is the pair's: its tokens per round match from card to card (Ada and
-// Ampere within 1 %); what a round costs is the card's, the more so the more rows it verifies
-// (choice/DECISIONS 51). A configuration has one only where two cards of each generation measured
-// it on a target in common (a generation constant rests on two of its cards, AGENTS.md).
-// The relative spread the ratios of a configuration may have over its cards (the two Ada cards'
-// agree within 1.5 % on the 9B MTP pair); wider, it has none (deterministic-decisions.md).
+// How far a lab card's measured round may sit above its facts before the estimate is raised to it
+// (round_cost_estimate; the two Ada cards agree within 1.5 % on the 9B MTP pair).
 inline constexpr double kRoundCostAgreement = 0.05;
+// What scales a pair's rounds, by configuration label (a configuration without one is left out).
 struct RoundCostRatios {
     std::map<std::string, double> ratio; // by configuration label
-    // Two cards of each generation measured a target in common: a configuration without a ratio
-    // (none measured, or its cards disagree) then has no estimate.
     bool known = false;
 };
-[[nodiscard]] RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
-                                                     std::string_view from, std::string_view to);
 
 // A round's cost on a card from the pair's facts (round_cost on card_rates), by configuration label,
 // for the measured configurations of at most kPortableDepth drafts: R(k) in plain decode steps,
@@ -119,7 +110,11 @@ struct RoundCostEstimate {
     bool known = false;
     std::string note; // how it was priced, for the choice's source
 };
-[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu);
+// `head_rows`: the draft head rows the card's artifact reads (nullptr: the lab artifact's,
+// pair.tune.proposal_rows for a "+head" configuration, the full head for any other: spec-tune
+// drafts those with the full head); the lab card's own rounds are priced at the lab's.
+[[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu,
+                                                    const ProposalRows* head_rows = nullptr);
 
 // What a round costs in a profile's measurements, by configuration label: per corpus section the
 // seconds a round over plain decode's seconds a token, the mean over the sections both measured
@@ -128,21 +123,26 @@ struct RoundCostEstimate {
 // that a user's spec-tune can be held to it (tools/kit/validate.py).
 [[nodiscard]] std::map<std::string, double> profile_round_costs(const Profile& profile);
 
-// The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
-// on a card of a generation two distinct lab cards (their tunes' GPU class) measured and chose
-// alike for (each default's
-// configuration), their profile with every measured depth, and their load bounds when they are
-// equal (else one request at a time); otherwise the portable one (profile_for_pair away from home)
-// from a measurement of this generation if there is one, else the first, its rounds costed as on
-// this generation where `lab` measured a target on both (generation_round_costs). With `gpu`, a
-// card other than the measuring one prices its rounds by the facts instead (round_cost_estimate)
-// where they are known: rather than a home measurement of another card, and rather than the
-// generation's ratio; `note` (when given) then says so. Pairs another engine version measured are
-// left out; none left: plain decode, disabled with the reason.
+// The profile of a target from its pairs measured on the lab's cards (the same target and drafters),
+// the same whatever the order of `measured` (records ordered by GPU class id, then content):
+//   1. With `gpu`, a card other than the measuring one prices its rounds by the facts
+//      (round_cost_estimate) where they are known; `note` says so.
+//   2. Two or more lab cards of the card's generation (the card itself among them or not): their
+//      median round cost per configuration, on the record that measured the most configurations
+//      (the card's own among equals, else the first by GPU class id; tokens a round are the pair's
+//      on any card); where they chose alike (each default's configuration) and the median keeps
+//      that choice, every measured depth and their load bounds when equal (else one request at a
+//      time), else the portable depths. `note`: "rounds: the median of N lab cards of <generation>".
+//   3. One lab card of the generation: its measurement, the portable depths.
+//   4. None, and no facts: the median round cost per configuration of every lab card that
+//      measured the target (on the record that measured the most configurations), the portable
+//      depths; `note`: "transferred: median of N lab cards of other generations (no facts for
+//      <generation>)" (or "no round facts for this target", "no card rates").
+// Pairs another engine version measured are left out; none left: plain decode, disabled with the
+// reason.
 [[nodiscard]] Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                                          std::string_view generation,
                                          const SelectOptions& options = {},
-                                         const std::vector<MeasuredPair>* lab = nullptr,
                                          const GpuKey* gpu = nullptr, std::string* note = nullptr);
 
 // The group of a target nobody measured: the current pairs (pair_current) of `engine` drafting with

@@ -155,6 +155,7 @@ MeasuredPair parse_pair(const nlohmann::json& doc) {
         if (const auto it = doc.find("round_facts"); it != doc.end()) {
             out.round_facts = parse_round_facts(*it);
         }
+
         if (const auto it = doc.find("lab_board"); it != doc.end()) {
             const auto text = it->get<std::string>();
             char* end       = nullptr;
@@ -364,44 +365,85 @@ std::map<std::string, double> profile_round_costs(const Profile& profile) {
     return round_costs(profile);
 }
 
-RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
-                                       std::string_view from, std::string_view to) {
-    std::map<std::string, std::vector<double>> ratios;
-    // A generation's constant rests on two of its cards: per configuration, the cards each side
-    // measured it on.
-    std::map<std::string, std::pair<std::set<std::string>, std::set<std::string>>> cards;
-    for (const auto& a : lab) {
-        if (a.generation != from || !pair_current(a)) { continue; }
-        const auto at_from = round_costs(a.tune);
-        for (const auto& b : lab) {
-            // The same weights with the same drafters (their revisions), else another pair.
-            if (b.generation != to || b.target != a.target || b.engine != a.engine ||
-                b.drafters != a.drafters || !pair_current(b)) {
-                continue;
-            }
-            for (const auto& [label, cost] : round_costs(b.tune)) {
-                if (const auto f = at_from.find(label); f != at_from.end() && f->second > 0) {
-                    ratios[label].push_back(cost / f->second);
-                    cards[label].first.insert(a.tune.key.gpu);
-                    cards[label].second.insert(b.tune.key.gpu);
-                }
-            }
-        }
+namespace {
+
+// Per configuration label, the median over `pairs` of each one's round cost (round_costs; an even
+// count: the mean of the middle two).
+std::map<std::string, double> median_round_costs(const std::vector<const MeasuredPair*>& pairs) {
+    std::map<std::string, std::vector<double>> each;
+    for (const auto* pair : pairs) {
+        for (const auto& [label, cost] : round_costs(pair->tune)) { each[label].push_back(cost); }
     }
-    RoundCostRatios out;
-    for (auto& [label, each] : ratios) {
-        if (cards[label].first.size() < 2 || cards[label].second.size() < 2) { continue; }
-        out.known = true;
-        std::sort(each.begin(), each.end());
-        // Cards that disagree make it the hardware's, not the generation's: no estimate.
-        if (each.back() > each.front() * (1 + kRoundCostAgreement)) { continue; }
-        const std::size_t n = each.size();
-        out.ratio[label]          = n % 2 ? each[n / 2] : (each[n / 2 - 1] + each[n / 2]) / 2;
+    std::map<std::string, double> out;
+    for (auto& [label, v] : each) {
+        std::sort(v.begin(), v.end());
+        const std::size_t n = v.size();
+        out[label]          = n % 2 ? v[n / 2] : (v[n / 2 - 1] + v[n / 2]) / 2;
     }
     return out;
 }
 
-RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu) {
+// What scales `base`'s rounds to `wanted` costs, by configuration label (selected() leaves out a
+// configuration without one).
+RoundCostRatios ratios_to(const MeasuredPair& base, const std::map<std::string, double>& wanted) {
+    RoundCostRatios out;
+    const auto have = round_costs(base.tune);
+    for (const auto& [label, cost] : wanted) {
+        if (const auto h = have.find(label); h != have.end() && h->second > 0) {
+            out.ratio[label] = cost / h->second;
+        }
+    }
+    out.known = !out.ratio.empty();
+    return out;
+}
+
+// The record whose rounds carry `costs`: the one that measured the most of its configurations
+// (a configuration the base did not measure would be left out), then `preferred` (the card's own),
+// then the first in `pairs`' order (by GPU class id).
+const MeasuredPair& base_of(const std::vector<const MeasuredPair*>& pairs,
+                            const std::map<std::string, double>& costs,
+                            const MeasuredPair* preferred) {
+    const auto covered = [&](const MeasuredPair* p) {
+        const auto have = round_costs(p->tune);
+        return std::count_if(costs.begin(), costs.end(),
+                             [&](const auto& c) { return have.contains(c.first); });
+    };
+    const MeasuredPair* best = nullptr;
+    long best_n              = -1;
+    for (const auto* p : pairs) {
+        const long n = static_cast<long>(covered(p));
+        if (n > best_n || (n == best_n && p == preferred)) {
+            best   = p;
+            best_n = n;
+        }
+    }
+    return *best;
+}
+
+// One record per card (its GPU class id), the first in `pairs`' order.
+std::vector<const MeasuredPair*> one_per_card(const std::vector<const MeasuredPair*>& pairs) {
+    std::vector<const MeasuredPair*> out;
+    std::set<std::string> cards;
+    for (const auto* pair : pairs) {
+        if (cards.insert(pair->tune.key.gpu).second) { out.push_back(pair); }
+    }
+    return out;
+}
+
+// A generation's name for a source ("sm75" -> "turing"); the key itself when unnamed.
+std::string generation_name(std::string_view generation) {
+    static const std::map<std::string, std::string, std::less<>> names = {
+        {"sm70", "volta"},  {"sm75", "turing"}, {"sm80", "ampere"},     {"sm86", "ampere"},
+        {"sm87", "ampere"}, {"sm89", "ada"},    {"sm90", "hopper"},     {"sm100", "blackwell"},
+        {"sm103", "blackwell"}, {"sm120", "blackwell"}, {"sm121", "blackwell"}};
+    const auto it = names.find(generation);
+    return it != names.end() ? it->second : std::string(generation);
+}
+
+} // namespace
+
+RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu,
+                                      const ProposalRows* head_rows) {
     RoundCostEstimate out;
     if (!pair.round_facts) { return out; }
     const CardRates card = card_rates(gpu);
@@ -411,8 +453,13 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
     for (const auto& [label, measured] : round_costs(pair.tune)) {
         const auto config = SpecConfig::parse(label);
         if (!config.enabled() || config.k > kPortableDepth) { continue; }
-        const auto here  = round_cost(*pair.round_facts, config, card.kappa());
-        const auto there = round_cost(*pair.round_facts, config, home.kappa());
+        // The lab drafted a "+head" configuration through its artifact's proposal head, any other
+        // with the full head (spec-tune: ProposalHead::Full); a start drafts through the head
+        // wherever its artifact's serves the drafter (product model_draft_head), whatever the label.
+        const ProposalRows lab = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
+        const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
+                                      head_rows != nullptr ? *head_rows : lab);
+        const auto there = round_cost(*pair.round_facts, config, home.kappa(), lab);
         if (!here || !there || *there <= 0) { continue; }
         double cost = *here;
         // What the bytes do not show, as the lab card measured it: scales the estimate up only.
@@ -442,11 +489,17 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
 
 Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                            std::string_view generation, const SelectOptions& options,
-                           const std::vector<MeasuredPair>* lab, const GpuKey* gpu,
-                           std::string* note) {
+                           const GpuKey* gpu, std::string* note) {
+    // The records in an order of their own (GPU class id, then content): the registry's order
+    // never decides which card's measurement is taken.
+    std::vector<const MeasuredPair*> ordered = measured;
+    std::stable_sort(ordered.begin(), ordered.end(), [](const MeasuredPair* a, const MeasuredPair* b) {
+        if (a->tune.key.gpu != b->tune.key.gpu) { return a->tune.key.gpu < b->tune.key.gpu; }
+        return pair_json(*a).dump() < pair_json(*b).dump();
+    });
     std::vector<const MeasuredPair*> current, home;
     std::set<std::string> home_cards; // two cards, not two records of one card
-    for (const auto* pair : measured) {
+    for (const auto* pair : ordered) {
         if (!pair_current(*pair)) { continue; }
         current.push_back(pair);
         if (!generation.empty() && pair->generation == generation &&
@@ -455,11 +508,11 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
         }
     }
     if (current.empty()) {
-        return measured.empty() ? Profile{} : not_current(*measured.front());
+        return ordered.empty() ? Profile{} : not_current(*ordered.front());
     }
     const MeasuredPair* own_pair = nullptr;
-    // The card itself measured it: its own measurement (below, after the agreement of its
-    // generation's lab cards). Its own keys are its class id and chip
+    // The card itself measured it: its tokens a round, at its generation's median round cost when
+    // another lab card of the generation measured it too (below). Its own keys are its class id and chip
     // (a tune's key.gpu is either; the architecture is every card of it, not this one), and where
     // the pair names its lab board, that board's rates too: another board of the class (an RTX
     // 3060 8 GB beside the 12 GB lab card, an RTX 4500 Ada beside the 4070 Ti) is priced by the
@@ -494,13 +547,21 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
             return ha != hb ? ha : a->tune.key.gpu < b->tune.key.gpu;
         });
         for (const auto* pair : order) {
-            if (const auto estimate = round_cost_estimate(*pair, *gpu); estimate.known) {
+            const ProposalRows* rows = options.proposal_rows ? &*options.proposal_rows : nullptr;
+            if (const auto estimate = round_cost_estimate(*pair, *gpu, rows); estimate.known) {
                 if (note != nullptr) { *note = estimate.note; }
                 return selected(*pair, false, options, {}, &estimate);
             }
         }
     }
+    // This generation's lab cards: their median round cost per configuration, on the record that
+    // measured the most configurations (the card's own among equals; tokens a round are the pair's
+    // on any card). Two or more that choose alike keep every measured depth and their load bounds
+    // when equal, as long as the median keeps their choice.
     if (home.size() >= 2) {
+        const auto costs         = median_round_costs(home);
+        const MeasuredPair& base = base_of(home, costs, own_pair);
+        const auto ratios        = ratios_to(base, costs);
         std::vector<Profile> each;
         for (const auto* pair : home) { each.push_back(selected(*pair, true, options)); }
         const auto same = [&](Choice Profile::*c) {
@@ -508,32 +569,50 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
                 return (p.*c).config == (each.front().*c).config;
             });
         };
-        if (same(&Profile::overall) && same(&Profile::thinking) && same(&Profile::non_thinking)) {
-            Profile out = each.front();
-            // The watchdog's break-even: the highest any agreeing card measured (the order of the
-            // records never moves it).
-            for (Choice Profile::*c : {&Profile::overall, &Profile::thinking, &Profile::non_thinking}) {
-                for (const Profile& p : each) {
-                    (out.*c).floor_tokens_per_round =
-                        std::max((out.*c).floor_tokens_per_round, (p.*c).floor_tokens_per_round);
-                }
-            }
-            const bool loads = std::all_of(each.begin(), each.end(), [&](const Profile& p) {
-                return p.load == each.front().load;
-            });
-            if (!loads || out.load.empty()) { out.load = {LoadBound{.lanes = 2, .depth = 0}}; }
-            return out;
+        if (note != nullptr) {
+            *note = "rounds: the median of " + std::to_string(home.size()) + " lab cards of " +
+                    generation_name(generation);
         }
+        const auto choices = {&Profile::overall, &Profile::thinking, &Profile::non_thinking};
+        if (std::all_of(choices.begin(), choices.end(), same)) {
+            Profile out = selected(base, true, options, ratios);
+            const bool kept = std::all_of(choices.begin(), choices.end(), [&](Choice Profile::*c) {
+                return (out.*c).config == (each.front().*c).config;
+            });
+            if (kept) {
+                // The watchdog's break-even: the highest any agreeing card measured.
+                for (Choice Profile::*c : choices) {
+                    for (const Profile& p : each) {
+                        (out.*c).floor_tokens_per_round =
+                            std::max((out.*c).floor_tokens_per_round, (p.*c).floor_tokens_per_round);
+                    }
+                }
+                const bool loads = std::all_of(each.begin(), each.end(), [&](const Profile& p) {
+                    return p.load == each.front().load;
+                });
+                if (!loads || out.load.empty()) { out.load = {LoadBound{.lanes = 2, .depth = 0}}; }
+                return out;
+            }
+        }
+        return selected(base, false, options, ratios);
     }
     if (own_pair != nullptr) { return selected(*own_pair, false, options); }
     if (!home.empty()) { return selected(*home.front(), false, options); }
-    // Another generation's measurement: its rounds costed as on this one where the lab measured
-    // a target on both.
-    const MeasuredPair& away = *current.front();
-    return selected(away, false, options,
-                    lab != nullptr && !generation.empty()
-                        ? generation_round_costs(*lab, away.generation, generation)
-                        : RoundCostRatios{});
+    // No lab card of this generation and no facts: the median round cost per configuration of
+    // every lab card that measured the target, said as a transfer.
+    const auto away  = one_per_card(current);
+    const auto costs = median_round_costs(away);
+    if (note != nullptr) {
+        const std::string why =
+            gpu == nullptr               ? std::string("no card rates")
+            : card_rates(*gpu).known()   ? std::string("no round facts for this target")
+            : generation.empty()         ? std::string("no facts for this card")
+                                         : "no facts for " + generation_name(generation);
+        *note = "transferred: median of " + std::to_string(away.size()) +
+                " lab cards of other generations (" + why + ")";
+    }
+    const MeasuredPair& base = base_of(away, costs, nullptr);
+    return selected(base, false, options, ratios_to(base, costs));
 }
 
 std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pairs,
@@ -858,7 +937,7 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
     const auto priced = [](const std::string& note) { return note.empty() ? note : "; " + note; };
     if (const auto own = own_cards(pairs, query); !own.empty()) {
         std::string note;
-        auto profile = profile_for_target(pointers(own), generation, served, &pairs, gpu, &note);
+        auto profile = profile_for_target(pointers(own), generation, served, gpu, &note);
         return PairChoice{.profile = std::move(profile),
                           .basis   = "measured",
                           .source  = "registry pair " + own.front().target_repo + " (" +
@@ -873,8 +952,8 @@ std::optional<PairChoice> pair_choice(const std::vector<MeasuredPair>& pairs,
             std::string named;
             for (const auto& q : siblings.quants) { named += (named.empty() ? "" : ", ") + q; }
             std::string note;
-            auto profile = profile_for_target(pointers(siblings.cards), generation, served,
-                                              &pairs, gpu, &note);
+            auto profile = profile_for_target(pointers(siblings.cards), generation, served, gpu,
+                                              &note);
             return PairChoice{.profile = std::move(profile),
                               .basis   = "preliminary",
                               .source  = "registry sibling " + std::string(repo.substr(0, at)) +

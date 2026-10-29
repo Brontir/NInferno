@@ -428,6 +428,17 @@ void ProgramImpl::validate_licensed_tokens(std::span<const TokenId> tokens) cons
     }
 }
 
+bool ProgramImpl::license_tokens(std::span<TokenId> tokens) const noexcept {
+    bool inside = true;
+    for (TokenId& token : tokens) {
+        if (token < 0 || token >= model.traits().public_tokens) {
+            token  = 0;
+            inside = false;
+        }
+    }
+    return inside;
+}
+
 // A decode step runs its rows in at most two launches that share one synchronization: the rows
 // that speculate verify their drafts in one speculative launch (MTP or DFlash), and the rows that
 // decode plainly (every row of an ordinary engine; in a speculative engine, a request whose
@@ -628,6 +639,7 @@ ProgramImpl::decode_raw(std::span<const std::uint32_t> lanes,
                                   std::chrono::duration<double>(finished - launched).count(),
                                   round_timer->elapsed_ms() / 1000.0, finished, follows_round);
         }
+        domain_faults.fill(0);
         if (speculative.size != 0) { collect_speculative(speculative, seconds); }
         if (plain.size != 0) { collect_ordinary(plain, seconds, ordinary_steps); }
         return publish_step(lanes.size(), speculative, plain, ordinary_steps, timing.finish());
@@ -725,15 +737,16 @@ runtime::BatchedGeneratedRound ProgramImpl::publish_step(std::size_t rows,
                                                          std::uint32_t ordinary_steps,
                                                          runtime::ExecutionTiming timing) {
     bool faulted = false;
+    // A non-finite hidden is the cause when both hold (its argmax is the out-of-domain token).
+    const auto fault = [&](std::uint32_t row, bool non_finite) {
+        step_faults[row] = non_finite ? runtime::kRowFaultNonFinite : domain_faults[row];
+        faulted          = faulted || step_faults[row] != 0U;
+    };
     for (std::size_t i = 0; i < speculative.size; ++i) {
-        step_faults[speculative.rows[i]] =
-            numeric_status.faulted(NumericStatus::Launch::Speculative, i) ? 1U : 0U;
-        faulted = faulted || step_faults[speculative.rows[i]] != 0U;
+        fault(speculative.rows[i], numeric_status.faulted(NumericStatus::Launch::Speculative, i));
     }
     for (std::size_t i = 0; i < plain.size; ++i) {
-        step_faults[plain.rows[i]] =
-            numeric_status.faulted(NumericStatus::Launch::Plain, i) ? 1U : 0U;
-        faulted = faulted || step_faults[plain.rows[i]] != 0U;
+        fault(plain.rows[i], numeric_status.faulted(NumericStatus::Launch::Plain, i));
     }
     const auto row_faults = faulted ? std::span<const std::uint8_t>(step_faults.data(), rows)
                                     : std::span<const std::uint8_t>{};
@@ -896,8 +909,11 @@ void ProgramImpl::collect_ordinary(const LaunchRows& part, double seconds, std::
         const std::uint32_t base_E = sequence.execution_frontier;
         const std::uint32_t base_S = sequence.ledger_frontier;
         if (steps == 1) {
-            const TokenId token = ordinary_host_egress->sampled_tokens[row];
-            validate_licensed_tokens(std::span<const TokenId>(&token, 1));
+            TokenId& token = ordinary_host_egress->sampled_tokens[row];
+            if (debug_token_domain_point()) { token = model.traits().public_tokens; }
+            if (!license_tokens(std::span<TokenId>(&token, 1))) {
+                domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
+            }
             sequence.text_kv_valid = base_E + 1;
             // A speculative engine's drafter state stays where the request stopped speculating.
             commit_sequence_kv(sequence, sequence.text_kv_valid, backend_kv_valid(sequence));
@@ -915,8 +931,11 @@ void ProgramImpl::collect_ordinary(const LaunchRows& part, double seconds, std::
                 tokens[step] = ordinary_host_egress->step_tokens[step * kMaximumConcurrency + row];
             }
             tokens[steps - 1U] = ordinary_host_egress->sampled_tokens[row];
+            if (debug_token_domain_point()) { tokens[steps - 1U] = model.traits().public_tokens; }
+            if (!license_tokens(std::span<TokenId>(tokens, steps))) {
+                domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
+            }
             const std::span<const TokenId> produced(tokens, steps);
-            validate_licensed_tokens(produced);
             sequence.ledger.insert(sequence.ledger.end(), produced.begin(), produced.end());
             sequence.prefix_identity.append_generated(steps, sequence.rope_delta);
             sequence.prefix_digests.append_generated(produced, sequence.rope_delta);
@@ -1271,10 +1290,13 @@ void ProgramImpl::collect_speculative(const LaunchRows& part, double seconds) {
             throw std::runtime_error(mtp ? "MTP batch returned invalid row metadata"
                                          : "DFlash batch returned invalid row metadata");
         }
-        const TokenId* tokens = mtp ? mtp_host_egress->licensed_tokens.data()
-                                    : dflash_host_egress->licensed_tokens.data();
-        validate_licensed_tokens(
-            std::span<const TokenId>(tokens + row * width, static_cast<std::size_t>(count_i)));
+        TokenId* tokens = mtp ? mtp_host_egress->licensed_tokens.data()
+                              : dflash_host_egress->licensed_tokens.data();
+        if (debug_token_domain_point()) { tokens[row * width] = model.traits().public_tokens; }
+        if (!license_tokens(
+                std::span<TokenId>(tokens + row * width, static_cast<std::size_t>(count_i)))) {
+            domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
+        }
         const bool copy_round = mtp && request.copy_round;
         request.copy_round    = false;
         if (extent == 0) {

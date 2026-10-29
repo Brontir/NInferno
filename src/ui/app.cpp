@@ -2370,6 +2370,8 @@ Json App::kv_json(const std::string& repo, const Json& listing, const std::strin
                 convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
                                          head.bytes.size(), head.size, head.path);
             auto facts = product::plan_facts_of_gguf(file, static_cast<std::uint64_t>(smallest));
+            // A split model's head from the part that holds it (as the server's plan reads it).
+            product::complete_split_gguf_head(facts, repo, fetch, quant);
             out        = kv_summary(&facts);
             {
                 std::lock_guard lock(sizes_mutex_);
