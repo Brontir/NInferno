@@ -104,6 +104,7 @@ int main() {
                                         "--debug-prefill-cuts", "700,64",
                                         "--debug-poison",       "nan",
                                         "--debug-poison-skip",  "kv,state",
+                                        "--artifact-io",        "direct",
                                         "--drafter-registry",   "reg.json"});
         failures += check(lab.pacing.steps == 8 && lab.pacing.wait == ninferno::DecodeWait::Block &&
                               lab.pacing.cuda_sync == ninferno::CudaSyncSchedule::Yield,
@@ -115,6 +116,7 @@ int main() {
                               m.debug_prefill_cuts == std::vector<std::uint64_t>{700, 64} &&
                               m.debug_poison == std::uint8_t{0xFF} &&
                               m.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
+                              m.artifact_io == ninferno::ArtifactIo::Direct &&
                               lab.drafter_registry == "reg.json",
                           "the maintainer flags are not read");
         for (const char* bad :

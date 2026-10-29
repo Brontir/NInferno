@@ -439,6 +439,9 @@ struct MaintainerOptions {
     std::optional<std::uint8_t> debug_poison;
     // --debug-poison-skip SITE,...: sites left unpoisoned (kv, ingress, state, weights).
     std::vector<std::string> debug_poison_skip;
+    // --artifact-io auto|direct|buffered: how the weights are read at load (O_DIRECT or the page
+    // cache). An I/O mode, not a decision: the bytes read are the same.
+    ArtifactIo artifact_io = ArtifactIo::Auto;
 
     bool operator==(const MaintainerOptions&) const = default;
 };
