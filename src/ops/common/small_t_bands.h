@@ -55,11 +55,18 @@ inline int small_t_band_variant(std::span<const SmallTChipBands> measured,
     std::span<const SmallTBand> bands = fallback;
     try {
         const DeviceClass& d = device_class();
-        if (cache.device != &d) {
-            cache.entry  = small_t_band_entry(measured, d);
-            cache.device = &d;
+        int entry            = -1;
+        if (substituted_device_class() != nullptr) {
+            // A substitute (ScopedDeviceClass) may reuse an earlier one's address: never cached.
+            entry = small_t_band_entry(measured, d);
+        } else {
+            if (cache.device != &d) {
+                cache.entry  = small_t_band_entry(measured, d);
+                cache.device = &d;
+            }
+            entry = cache.entry;
         }
-        if (cache.entry >= 0) bands = measured[static_cast<std::size_t>(cache.entry)].bands;
+        if (entry >= 0) bands = measured[static_cast<std::size_t>(entry)].bands;
     } catch (...) {}
     for (const SmallTBand& band : bands) {
         if (cols <= band.max_cols) return band.variant;

@@ -589,6 +589,7 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
         note << choice.rows << " ranked rows (" << 100 * choice.coverage
              << " % of the ranking's tokens, bound " << 100 * choice.gain << " % a round);";
         out.drafters.push_back(drafter);
+        out.drafter_rows[drafter] = choice.rows;
         out.rows = std::max(out.rows, choice.rows);
     };
     if (mtp) {
@@ -600,8 +601,8 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
         const std::int32_t k = spec::kDraftHeadDepth;
         choose("dflash", k, head / (verify(k) + dflash_bytes + head));
     }
-    // One head serves them: the rows the most demanding drafter's bound asks for (a drafter that
-    // asks fewer only reads more bytes than its own optimum, never loses more tokens).
+    // One head serves them: the rows the most demanding drafter's bound asks for; a drafter that
+    // asks fewer reads its own rows, a prefix of the same head (add_official_proposal nests them).
     if (out.rows != 0) { note << " the head keeps " << out.rows << " rows"; }
     out.note = note.str();
     return out;
@@ -719,21 +720,47 @@ std::string declared_architecture(const OJson& config) {
 
 void add_official_proposal(Model& model, Recipe& recipe, const std::filesystem::path& ranking,
                            const std::string& ranking_text, std::uint64_t rows,
-                           const std::vector<std::string>& drafters) {
+                           const std::vector<std::string>& drafters,
+                           const std::map<std::string, std::uint64_t>& drafter_rows) {
     if (model.index.contains("proposal/head")) {
         throw std::runtime_error("proposal head already configured");
     }
-    const auto ids = shortlist_ids(model, ranking, rows);
-    auto head      = gather_source(model.parameters[model.at("text/output_head")].source, ids);
     std::vector<std::string> inputs;
+    OJson prefixes = OJson::object();
+    std::set<std::uint64_t> sizes{rows};
     for (const char* component : {"mtp", "dflash", "dflash2"}) {
         const bool wanted = drafters.empty() || std::find(drafters.begin(), drafters.end(),
                                                           component) != drafters.end();
         if (wanted && model.components.contains(component)) {
             inputs.push_back(std::string(component) + "/final_hidden");
+            const auto asked = drafter_rows.find(component);
+            if (asked != drafter_rows.end() && asked->second != 0 && asked->second < rows) {
+                prefixes[component] = asked->second;
+                sizes.insert(asked->second);
+            }
         }
     }
+    // Nested: each size's shortlist (select_shortlist keeps a smaller size's ids, the ranked ones
+    // and the forced specials), its ids not yet laid out appended in its ranking order. One size:
+    // the shortlist as it is.
+    std::vector<std::int64_t> ids;
+    if (sizes.size() == 1) {
+        ids = shortlist_ids(model, ranking, rows);
+    } else {
+        const auto totals = ranking_totals(model, ranking);
+        std::set<std::int64_t> laid;
+        for (const auto size : sizes) {
+            for (const auto id : select_shortlist(totals, size, model.special_token_ids)) {
+                if (laid.insert(id).second) { ids.push_back(id); }
+            }
+            if (ids.size() != size) {
+                throw std::runtime_error("a drafter's shortlist is not inside the proposal's");
+            }
+        }
+    }
+    auto head = gather_source(model.parameters[model.at("text/output_head")].source, ids);
     model.components["text"]["proposal"] = OJson{{"domain", "indexed"}, {"rows", rows}};
+    if (!prefixes.empty()) { model.components["text"]["proposal"]["drafter_rows"] = prefixes; }
     Parameter proposal;
     proposal.name         = "proposal/head";
     proposal.shape        = head->shape();

@@ -362,12 +362,21 @@ def parse_directory(value: object, *, entry_name: str | None = None) -> Director
         if "proposal" in component:
             if name != "text":
                 raise ArtifactError("only text may declare proposal")
-            proposal = members(component["proposal"], {"domain"}, {"rows"}, "proposal")
+            proposal = members(
+                component["proposal"], {"domain"}, {"rows", "drafter_rows"}, "proposal"
+            )
             if proposal["domain"] == "full":
-                if "rows" in proposal:
+                if "rows" in proposal or "drafter_rows" in proposal:
                     raise ArtifactError("full proposal must omit rows")
             elif proposal["domain"] == "indexed":
-                integer(proposal.get("rows"), "proposal rows", positive=True)
+                rows = integer(proposal.get("rows"), "proposal rows", positive=True)
+                drafters = proposal.get("drafter_rows", {})
+                if not isinstance(drafters, dict):
+                    raise ArtifactError("proposal drafter_rows must be an object")
+                for drafter, count in drafters.items():
+                    identifier(drafter, "proposal drafter")
+                    if integer(count, "proposal drafter rows", positive=True) > rows:
+                        raise ArtifactError("proposal drafter rows exceed the proposal rows")
             else:
                 raise ArtifactError("proposal domain must be full or indexed")
 
