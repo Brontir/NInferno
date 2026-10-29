@@ -51,6 +51,12 @@ XGrammar has no style for (Gemma 4, Pythonic, ATEM), with converters derived fro
 When updating, re-apply the function and run `ninferno_chat_test` and, with a tokenizer,
 `ninferno_tool_grammar_budget_test`.
 
+Local change: `cpp/support/container.h`, `List::Erase`, marked "NInferno (xgrammar #1003)": the
+erased value is reset before its slot returns to the free list, so a token mask evicted from the
+rule-level cache frees its memory then (upstream kept it alive until the slot was reused, past the
+cache's byte budget). Upstream fixed it after v0.2.8 (mlc-ai/xgrammar#1003); drop the line when
+updating past that fix.
+
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new
 tag, keep this file and `CMakeLists.txt`, and re-run the structured-output unit tests
 (`ninferno_structured_output_test`).
