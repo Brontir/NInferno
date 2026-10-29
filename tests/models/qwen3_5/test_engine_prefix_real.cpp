@@ -1574,9 +1574,11 @@ int exercise_vision(ninferno::Engine& engine) {
     }
     // The reused continuation prefills a text-only suffix after the cached multimodal prefix: its
     // positions keep the image's RoPE delta, so it decodes what an uncached prefill decodes.
-    // A wide 512x256 image leaves a large delta (its merged grid is far from square in tokens).
+    // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side):
+    // with it the suffix's dropped delta changes the greedy tokens (RTX 4070 Ti, Qwen3.5-4B AWQ:
+    // the old code failed here, while a 512x256 image's -112 still decoded the same 16 tokens).
     {
-        const auto wide = gradient_ppm(512, 256);
+        const auto wide = gradient_ppm(1024, 1024);
         ninferno::RequestOptions long_reuse = options(true);
         ninferno::RequestOptions long_fresh = options(false);
         long_reuse.execution.requested_output_tokens = 16;
