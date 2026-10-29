@@ -149,7 +149,7 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
 // Turing: the projections 4.2-8.3 us, one card. A row of one card prices only its own boards'
 // estimate (marked transferred; no decision reads it: the choice prices on a reference card's
-// generation; DECISIONS 57); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
+// generation; DECISIONS 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
 // one card): its projections 3.1-5.5 us, no PDL, no Ada L2.
 struct KernelCost {
     std::string_view generation;
@@ -197,7 +197,7 @@ inline constexpr RowsEta kRowsEta[] = {
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
 // measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
 // not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)
-// differ by less are a tie: the lower KLD wins (DECISIONS 57).
+// differ by less are a tie: the lower KLD wins (DECISIONS 60).
 struct PredictionError {
     std::string_view generation;
     double rms;
@@ -396,6 +396,9 @@ struct QuantKldPoint {
     double bits_per_weight;
     double kld;
     std::string_view label;
+    // A point of the curve other bits interpolate on (two cards); false: the measured file's own
+    // value only (one card, matched by its label and bits), which moves no other model's estimate.
+    bool curve = true;
 };
 
 inline constexpr std::string_view kQuantKldSource =
@@ -409,13 +412,13 @@ inline constexpr int kQuantKldCards = 2;
 inline constexpr QuantKldPoint kQuantKld[] = {
     {8.516, 0.00000, "Q8_0"},       // ppl 4.9651, the reference
     {6.665, 0.00629, "Q6_K"},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
-    {6.016, 0.00936, "UD-Q5_K_XL"}, // one card (WORKLOG 24.10); the curve gives 0.00985 at its bits
+    {6.016, 0.00936, "UD-Q5_K_XL", false}, // one card (WORKLOG 24.10); the curve gives 0.00985 at its bits
     {5.878, 0.01061, "Q5_K_M"},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
-    {5.674, 0.01132, "Q5_K_S"},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference)
-    {5.321, 0.01823, "UD-Q4_K_XL"}, // one card: RTX 4070 Ti, 2026-10-29 (the fresh Q8_0 reference)
+    {5.674, 0.01132, "Q5_K_S", false},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference)
+    {5.321, 0.01823, "UD-Q4_K_XL", false}, // one card: RTX 4070 Ti, 2026-10-29 (the fresh Q8_0 reference)
     {5.080, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
-    {4.810, 0.02268, "Q4_K_S"},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference; Q4_0 0.0509 there)
-    {4.789, 0.02840, "IQ4_NL"},     // one card: RTX 4070 Ti, 2026-10-29 (fresh Q8_0 reference, Q4_K_M 0.01920 on it), top-1 0.9407
+    {4.810, 0.02268, "Q4_K_S", false},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference; Q4_0 0.0509 there)
+    {4.789, 0.02840, "IQ4_NL", false},     // one card: RTX 4070 Ti, 2026-10-29 (fresh Q8_0 reference, Q4_K_M 0.01920 on it), top-1 0.9407
     {4.617, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
     {4.174, 0.06812, "Q3_K_M"},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
     {3.584, 0.10710, "UD-IQ3_XXS"}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
