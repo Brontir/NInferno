@@ -1340,10 +1340,21 @@ double dram_bytes_per_sm_cycle() {
     });
 }
 
-bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, int wide_ctas,
-                    int plain_ctas, std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
+bool rmma_variant_occupancy_rule(std::int64_t grid_ctas, int sms, int variant_ctas,
+                                 int plain_ctas) {
+    if (variant_ctas <= 0 || plain_ctas <= 0 || sms <= 0) return false;
+    if (variant_ctas >= plain_ctas) return true;
+    const auto waves = [&](int resident) {
+        const std::int64_t wave = static_cast<std::int64_t>(resident) * sms;
+        return (grid_ctas + wave - 1) / wave;
+    };
+    return waves(variant_ctas) <= waves(plain_ctas);
+}
+
+bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occupancy,
+                    std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
     return bytes_per_sm_cycle > 0.0 && bytes_per_sm_cycle < kRmmaWideBytes &&
-           compute_capability >= 75 && wide_ctas >= plain_ctas &&
+           compute_capability >= 75 && occupancy &&
            wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
 }
 
