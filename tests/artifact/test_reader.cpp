@@ -132,6 +132,22 @@ void geometry_and_views() {
     require(std::to_integer<int>(planes.codes[0]) == 0x52 &&
                 std::to_integer<int>(planes.scales[1]) == 0x40,
             "row view selected the wrong represented values");
+    // A row prefix (a drafter reading the leading rows of a ranked head): the same parent, its
+    // planes where the whole matrix has them, only the row count cut.
+    const WeightView whole{{2, 130}, {{&parent, 0, 260}}};
+    const auto first = weight_row_prefix(whole, 1);
+    require(first && first->shape == std::vector<std::uint64_t>{1, 130} &&
+                first->parts.size() == 1 && first->parts[0].parent == &parent &&
+                first->parts[0].begin == 0 && first->parts[0].end == 130,
+            "a row prefix is not the leading rows of its parent");
+    const auto full_weight = native_weight(whole);
+    const auto prefix      = native_weight(*first);
+    require(prefix.n == 1 && prefix.k == 130 && prefix.qdata == full_weight.qdata &&
+                prefix.qhigh == full_weight.qhigh && prefix.scales == full_weight.scales &&
+                prefix.scale_nb[1] == full_weight.scale_nb[1],
+            "a RowSplit row prefix moved its planes or strides");
+    require(!weight_row_prefix(whole, 2) && !weight_row_prefix(whole, 0),
+            "a prefix of all rows or none was made");
 
     std::vector<std::byte> fp8(16896);
     WeightParent fp8_parent{weight_geometry(QType::FP8_E4M3FN_ROW_BF16, QuantLayout::RowScale,
@@ -142,6 +158,8 @@ void geometry_and_views() {
             "FP8 view recomputed the parent scale base");
     rejects<std::invalid_argument>([&] { (void)native_weight(fp8_rows); },
                                    "complete-parent ABI accepted an FP8 submatrix");
+    require(!weight_row_prefix(WeightView{{256, 64}, {{&fp8_parent, 0, 256 * 64}}}, 128),
+            "an FP8 row-scaled parent (read whole) gave a row prefix");
 
     std::vector<std::byte> nvfp4(4612);
     WeightParent nv_parent{weight_geometry(QType::NVFP4, QuantLayout::BlockScaleK16M128x4,
@@ -397,6 +415,32 @@ void invalid_directories() {
     }
     bad([](Json& root) { root["files"][1]["payload_bytes"] = 1.5; });
     bad([](Json& root) { root["components"]["text"]["resources"]["tokenizer.json"] = "q5"; });
+    // A proposal's drafter rows: indexed only, positive, never past its rows.
+    bad([](Json& root) {
+        root["components"]["text"]["proposal"] = {{"domain", "full"}, {"drafter_rows", {{"mtp", 1}}}};
+    });
+    bad([](Json& root) {
+        root["components"]["text"]["proposal"] = {
+            {"domain", "indexed"}, {"rows", 4}, {"drafter_rows", {{"mtp", 5}}}};
+    });
+    bad([](Json& root) {
+        root["components"]["text"]["proposal"] = {
+            {"domain", "indexed"}, {"rows", 4}, {"drafter_rows", {{"mtp", 0}}}};
+    });
+    bad([](Json& root) {
+        root["components"]["text"]["proposal"] = {
+            {"domain", "indexed"}, {"rows", 4}, {"drafter_rows", Json::array({2})}};
+    });
+    {
+        Json root = fixture.root;
+        root["components"]["text"]["proposal"] = {
+            {"domain", "indexed"}, {"rows", 4}, {"drafter_rows", {{"mtp", 2}}}};
+        const auto parsed = parse_directory(root, "model.ninferno");
+        const auto& proposal = parsed.component("text").proposal;
+        require(proposal && proposal->indexed && proposal->rows == 4 &&
+                    proposal->drafter_rows.size() == 1 && proposal->drafter_rows.at("mtp") == 2,
+                "a proposal's drafter rows were not read");
+    }
     rejects([] { (void)parse_json("{\"a\":{\"x\":1,\"x\":2}}", "duplicate"); },
             "duplicate JSON key accepted");
     fixture.write();

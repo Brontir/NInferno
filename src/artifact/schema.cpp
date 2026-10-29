@@ -307,16 +307,30 @@ void parse_components(Directory& out, const Json& values) {
         if (value.contains("proposal")) {
             if (name != "text") { throw ArtifactError("only text may declare proposal"); }
             const auto& p = value.at("proposal");
-            require_members(p, {"domain"}, {"rows"}, "proposal");
+            require_members(p, {"domain"}, {"rows", "drafter_rows"}, "proposal");
             const auto domain = require_id(p.at("domain"), "proposal domain");
-            if (domain == "full" && !p.contains("rows")) {
+            if (domain == "full" && !p.contains("rows") && !p.contains("drafter_rows")) {
                 component.proposal = Proposal{};
             } else if (domain == "indexed" && p.contains("rows")) {
                 component.proposal =
-                    Proposal{true, require_u64(p.at("rows"), "proposal rows", true)};
+                    Proposal{true, require_u64(p.at("rows"), "proposal rows", true), {}};
+                if (p.contains("drafter_rows")) {
+                    const auto& drafters = p.at("drafter_rows");
+                    if (!drafters.is_object()) {
+                        throw ArtifactError("proposal drafter_rows must be an object");
+                    }
+                    for (const auto& [drafter, rows] : drafters.items()) {
+                        (void)require_id(Json(drafter), "proposal drafter");
+                        const auto n = require_u64(rows, "proposal drafter rows", true);
+                        if (n > component.proposal->rows) {
+                            throw ArtifactError("proposal drafter rows exceed the proposal rows");
+                        }
+                        component.proposal->drafter_rows.emplace(drafter, n);
+                    }
+                }
             } else {
-                throw ArtifactError(
-                    "proposal must be full without rows or indexed with positive rows");
+                throw ArtifactError("proposal must be full without rows or indexed with positive "
+                                    "rows");
             }
         }
         out.components.emplace(name, std::move(component));

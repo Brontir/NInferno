@@ -488,8 +488,12 @@ The complete record of `text.proposal` is:
 |---|---|---|
 | domain | `full` or `indexed` | Proposal row domain |
 | rows | PositiveU64, indexed only | Ns; logical row count of the indexed head |
+| drafter_rows | Object, optional, indexed only | Drafter component name → PositiveU64 at most Ns: that drafter reads only the head's leading rows and token IDs |
 
 Its parameters remain in the root bindings, using the already defined names `proposal/head` and `proposal/token_ids`.
+The converter's default head lays its rows out nested: each drafter named in `drafter_rows` finds exactly the shortlist of its own
+size (the ranked IDs and the forced specials it would keep alone) as the head's leading rows, so one head and one ID table serve
+drafters asking different row counts (MTP's prefix of DFlash's rows), each reading only its own rows.
 The row count of full is taken from the Text vocab_size; indexed requires an explicit token ID mapping. The main output head is always provided by
 Text's own bindings. When proposal is omitted, the existing backend uses the target's full output representation, per its code.
 
