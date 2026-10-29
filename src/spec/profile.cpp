@@ -46,6 +46,8 @@ Measurement& add_into(Measurement& total, const Measurement& m) {
     total.accepted += m.accepted;
     total.compared += m.compared;
     total.identical += m.identical;
+    total.graph_kernels += m.graph_kernels;
+    total.graph_rounds += m.graph_rounds;
     return total;
 }
 
@@ -385,7 +387,7 @@ Json to_json(const Profile& p) {
     }
     Json measurements = Json::array();
     for (const auto& m : p.measurements) {
-        measurements.push_back(Json{{"config", m.config.label()},
+        Json& j = measurements.emplace_back(Json{{"config", m.config.label()},
                                     {"family", m.family},
                                     {"prompts", m.prompts},
                                     {"tokens", m.tokens},
@@ -398,6 +400,10 @@ Json to_json(const Profile& p) {
                                     {"acceptance", m.acceptance()},
                                     {"compared", m.compared},
                                     {"identical", m.identical}});
+        if (m.graph_kernels > 0 && m.graph_rounds > 0) {
+            j["graph_kernels"] = m.graph_kernels;
+            j["graph_rounds"]  = m.graph_rounds;
+        }
     }
     Json out{{"schema", 1},
              {"key",
@@ -481,6 +487,8 @@ Profile profile_from_json(const Json& doc) {
         x.accepted  = m.value("accepted", std::int64_t{0});
         x.compared  = m.value("compared", std::int64_t{0});
         x.identical = m.value("identical", std::int64_t{0});
+        x.graph_kernels = m.value("graph_kernels", std::int64_t{0});
+        x.graph_rounds  = m.value("graph_rounds", std::int64_t{0});
         p.measurements.push_back(std::move(x));
     }
     p.skipped = doc.value("skipped", std::vector<std::string>{});
