@@ -57,9 +57,12 @@ std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact) {
     if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
         const artifact::Reader reader(artifact);
         const models::qwen3_5::LoadPlan plan = models::qwen3_5::plan_load(reader);
+        // The text frontend the engine makes without --vision (model_instance.cpp load_qwen3_5).
         models::qwen3_5::FrontendOptions options;
-        options.architecture = plan.config().text.architecture;
-        options.max_context  = 4096;
+        options.architecture     = plan.config().text.architecture;
+        options.vision_enabled   = false;
+        options.vision_component = reader.directory().components.contains("vision");
+        options.max_context      = 4096;
         return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options));
     }
     const HfTextFiles files = read_hf_text_files(artifact);
