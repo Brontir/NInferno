@@ -254,6 +254,33 @@ void counts_the_kernels(const json& census) {
 // MMQ's int8 rows; Q8_0 had taken the MMQ rows (+35-61 % at 14K before). The Q8 rows are the mean of
 // these same points (Ada, Blackwell: each card within 7 % of its generation's mean; Ampere and Turing
 // one card each, so in sample).
+// A prefill's tail calls (DECISIONS 62): each a plain decode step at the prompt's depth, in the
+// prefill rate and in a request's time; none where the frontend counted none.
+void prefills_pay_tail_calls(const json& fixture) {
+    const json& m          = fixture.at("models").at("Qwen3.5-9B-MTP");
+    ch::ModelFacts none    = model_at(m, "Q4_K_M");
+    ch::ModelFacts two     = none;
+    two.prompt_tail_calls  = 2;
+    const ch::CardFacts cf = card_of(fixture.at("cards").at("RTX 4070 Ti"));
+    const ch::QuantOption q = quant_of("Q4_K_M", m.at("quants").at("Q4_K_M"));
+    ch::Candidate c;
+    c.kv                       = KvCacheStorage::Int8Group64;
+    const std::uint32_t prompt = 2048;
+    const double step = 1 / ch::speed_of(none, cf, q, c, 1, prompt, 0).decode_per_stream;
+    const double t0   = prompt / ch::speed_of(none, cf, q, c, 1, prompt, prompt).prefill;
+    const double t2   = prompt / ch::speed_of(two, cf, q, c, 1, prompt, prompt).prefill;
+    check(std::abs((t2 - t0) - 2 * step) < 1e-9 * t2, "two tail calls add two decode steps to a prefill");
+    ch::Task task;
+    task.prompt = prompt;
+    task.answer = 1;
+    const double r0 = ch::request_seconds(none, cf, q, c, task);
+    const double r2 = ch::request_seconds(two, cf, q, c, task);
+    check(std::abs((r2 - r0) - 2 * step) < 1e-9 * r2, "and to a request's time");
+    std::cout << "tail calls: a decode step " << step * 1e3 << " ms, 2K prefill " << prompt / t0 << " -> "
+              << prompt / t2 << " tok/s
+";
+}
+
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0};
     int n[2] = {0, 0};
@@ -863,6 +890,7 @@ int main() {
         decodes_from_facts(json::parse(campaign));
         std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
         prefills_by_format(json::parse(prefills));
+        prefills_pay_tail_calls(json::parse(prefills));
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         counts_the_kernels(json::parse(census));
     }

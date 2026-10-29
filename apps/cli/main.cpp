@@ -4,6 +4,7 @@
 
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
+#include "runtime/engine/prompt_tail.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
 #include "spec/gpu_identity.h"
@@ -230,6 +231,8 @@ void print_generation_summary(const ninferno::GenerationResult& result,
 } // namespace
 
 int main(int argc, char** argv) {
+    // The prefill's tail calls come from the artifact's frontend (DECISIONS 62).
+    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls);
     if (ninferno::version_requested(argc, argv)) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;

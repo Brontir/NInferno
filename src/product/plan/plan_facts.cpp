@@ -19,6 +19,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <system_error>
 #include <vector>
 
@@ -790,6 +791,17 @@ PlanSourceFacts plan_facts_of_config(const json& config, std::uint64_t weight_by
     return finish(geometry_of_config(config), weight_bytes, basis);
 }
 
+namespace {
+PromptTailCallsSource& prompt_tail_calls_source() {
+    static PromptTailCallsSource source;
+    return source;
+}
+} // namespace
+
+void set_prompt_tail_calls_source(PromptTailCallsSource source) {
+    prompt_tail_calls_source() = std::move(source);
+}
+
 PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
     const auto& dir = reader.directory();
@@ -907,6 +919,9 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     }
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
+    if (const auto& source = prompt_tail_calls_source()) {
+        if (const auto calls = source(artifact)) { out.shape.prompt_tail_calls = *calls; }
+    }
     return out;
 }
 

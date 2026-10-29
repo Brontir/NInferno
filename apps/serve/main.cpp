@@ -2,6 +2,8 @@
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
 #include "product/plan/plan_choice.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/prompt_tail.h"
 #include "product/update/update_check.h"
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
@@ -142,6 +144,8 @@ int print_version() {
 } // namespace
 
 int main(int argc, char** argv) {
+    // The prefill's tail calls come from the artifact's frontend (DECISIONS 62).
+    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls);
     std::set_terminate(log_terminate);
 #ifdef _WIN32
     // Waits of a millisecond (the scheduler's polls) last the 15.6 ms system tick otherwise.
