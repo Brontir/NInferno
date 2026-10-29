@@ -511,8 +511,10 @@ protected:
         if (nested_object_level_ > 1) {
             return XMLToolCallingConverter::GetKeyPatternExcluding(properties, rule_name);
         }
-        return keys_excluding(names_of(properties), kIdentifierFirst, kIdentifierRest,
-                              rule_name + "_addl_key", ByteString(kAtemNameEnd));
+        // Any name the parser reads up to the closing quote of the attribute.
+        const std::vector<Range> names = subtract({{0x20, 0x10FFFF}}, {'"', '<', '>'});
+        return keys_excluding(names_of(properties), names, names, rule_name + "_addl_key",
+                              ByteString(kAtemNameEnd));
     }
 
 private:
@@ -556,6 +558,10 @@ void check_root(const std::string& schema, bool list_root) {
             }
         } else if (node.is<picojson::object>()) {
             for (const auto& [key, item] : node.get<picojson::object>()) {
+                // Instance data, not subschemas.
+                if (key == "const" || key == "enum" || key == "default" || key == "examples") {
+                    continue;
+                }
                 if (key == "$ref" && item.is<std::string>() && item.get<std::string>() == "#") {
                     return true;
                 }
