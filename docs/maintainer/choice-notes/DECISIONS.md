@@ -1307,3 +1307,18 @@ The slot model predicted 17-25 % where the boards showed -10..+8 %: a round with
 warps is slow only below the warps that keep DRAM busy, which depends on the bytes each warp has
 in flight (its ring) and the DRAM latency under load. That latency is not a fact we hold; until it
 is, the tail stays out of the rule (no fitted band).
+
+**K = 1024: the ring fact alone was wrong on the boards it moved (29.10, measured).** Against master
+the rule above changed one shape on every golden board with more CTAs than SMs: 2048x1024 groupwise
+Q4 / Q5 / Q6, FP8 and NVFP4 store / add (128 CTAs, 16 steps of 64 values), eight warps (two steps
+each, the ring never refills) to four. Four against eight, every rmma one-tile route timed at
+T = 1..8, three repeats (`ninferno_r8_schedule_bench`):
+- RTX 5070 Ti (70 SMs, 1.8 CTAs a SM): four warps 20-37 % slower (Q4 x1.20, Q5 x1.22, Q6 x1.37);
+- RTX 5090 (170, 0.75): 18-38 % slower; RTX 4070 Ti (60, 2.1): within 3 % (Q6 3.5 % slower);
+- RTX 4060 Ti (34, 3.8): four warps 2-16 % faster (Q4 x0.98, Q5 x0.90, Q6 x0.93, NVFP4 x0.84).
+With the 128-register cap a SM holds two eight-warp CTAs or four four-warp ones, so on a grid of
+fewer than four CTAs a SM the split halves the warps a SM holds, and the loads in flight with them;
+the refilled ring does not buy that back. The rule now takes fewer warps only where the grid fills
+their slots (CTAs x warps >= 16 x SMs), which moves no golden board's pick (the 4060 Ti, at 3.8,
+stays on eight and leaves its 2-16 % there). What a nearly full grid gains from the refilled ring
+is the same open question as the tail above.
