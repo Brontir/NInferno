@@ -98,8 +98,9 @@ public:
     using JSONSchemaConverter::JSONSchemaConverter;
 
 protected:
+    // `end`: what follows a key, asserted after it so that its tokens settle at compile time.
     int32_t keys_excluding(const std::vector<std::string>& names, const std::vector<Range>& first,
-                           const std::vector<Range>& rest, const std::string& hint) {
+                           const std::vector<Range>& rest, const std::string& hint, int32_t end) {
         struct Node {
             std::map<int32_t, std::size_t> children;
             bool terminal = false;
@@ -148,6 +149,7 @@ protected:
             if (index != 0 && !node.terminal) { choices.push_back(Empty()); }
             builder_.UpdateRuleBody(rules[index], Choice(choices));
         }
+        builder_.UpdateLookaheadAssertion(rules[0], end);
         return RuleRef(rules[0]);
     }
 
@@ -226,11 +228,15 @@ protected:
                                 Sequence({ByteString(kGemmaQuote), TagDispatch(false, {kGemmaQuote}),
                                           ByteString(kGemmaQuote)}));
         const std::vector<Range> bare = all_but(kGemmaBareExcluded);
-        builder_.UpdateRuleBody(
-            kGemmaKey,
-            Choice({Sequence({builder_.AddCharacterClass(bare), builder_.AddCharacterClassStar(bare)}),
-                    RuleRef(kBasicString)}));
+        const int32_t bare_key        = builder_.AddRuleWithHint(
+            "ninferno_gemma_bare_key",
+            Sequence({builder_.AddCharacterClass(bare), builder_.AddCharacterClassStar(bare)}));
+        // What follows a bare key: a run of almost any characters settles its tokens only so.
+        builder_.UpdateLookaheadAssertion(bare_key, KeyEnd());
+        builder_.UpdateRuleBody(kGemmaKey, Choice({RuleRef(bare_key), RuleRef(kBasicString)}));
     }
+
+    int32_t KeyEnd() { return Sequence({WhitespaceExpression(), ByteString(":")}); }
 
     int32_t GenerateString(const xgrammar::StringSpec& spec, const std::string& rule_name) override {
         if (!spec.pattern.has_value() && !spec.format.has_value() && spec.min_length == 0 &&
@@ -277,7 +283,7 @@ protected:
                                    const std::string& rule_name) override {
         // Bare keys only: a quoted one could spell a declared name again.
         const std::vector<Range> bare = all_but(kGemmaBareExcluded);
-        return keys_excluding(names_of(properties), bare, bare, rule_name + "_addl_key");
+        return keys_excluding(names_of(properties), bare, bare, rule_name + "_addl_key", KeyEnd());
     }
 };
 
@@ -374,7 +380,7 @@ protected:
             return JSONSchemaConverter::GetKeyPatternExcluding(properties, rule_name);
         }
         return keys_excluding(names_of(properties), kIdentifierFirst, kIdentifierRest,
-                              rule_name + "_addl_key");
+                              rule_name + "_addl_key", ByteString("="));
     }
 
 private:
