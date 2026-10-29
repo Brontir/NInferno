@@ -131,8 +131,8 @@ int main() {
         check(qwen3_5_recipe_head_format(qwen3_5_checkpoint_recipe(true)) == ninferno::QType::Q6_G64_FP16 &&
                   qwen3_5_recipe_head_format(qwen3_5_checkpoint_recipe(false)) == ninferno::QType::BF16,
               "the default recipes' head formats");
-        const auto moe   = planned_proposal_bytes(0, 5e9, 0.9e9, 248320, 2048, true);
-        const auto dense = planned_proposal_bytes(0, 5e9, 0.9e9, 248320, 2048, false);
+        const auto moe   = planned_proposal_bytes(0, 5e9, 0.0, 0.9e9, 248320, 2048, true);
+        const auto dense = planned_proposal_bytes(0, 5e9, 0.0, 0.9e9, 248320, 2048, false);
         check(dense != 0 && moe > dense, "the MoE checkpoint's head priced at its recipe's Q6");
     }
 
