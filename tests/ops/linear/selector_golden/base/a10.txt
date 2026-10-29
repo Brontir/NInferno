@@ -12577,8 +12577,8 @@ iq4nl p0 store 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
 iq4nl p0 store 5120x17408 prefill T=96..2048 rmma.m1.n8.w4x1 ws=0
 iq4nl p0 store 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0
 iq4nl p0 store 5120x17408 invariant T=12..2048 rmma.m1.n4.w1x8 ws=0
-iq4nl p0 add 5120x17408 speed T=1..4 rmma.m1.n1.w1x4 ws=0
-iq4nl p0 add 5120x17408 speed T=5..32 rmma.m1.n4.w1x8 ws=0
+iq4nl p0 add 5120x17408 speed T=1..8 rmma.m1.n1.w1x4 ws=0
+iq4nl p0 add 5120x17408 speed T=12..32 rmma.m1.n4.w1x8 ws=0
 iq4nl p0 add 5120x17408 speed T=48..128 rmma.m1.n4.w1x4 ws=0
 iq4nl p0 add 5120x17408 speed T=192..2048 rmma.m1.n8.w4x1 ws=0
 iq4nl p0 add 5120x17408 prefill T=17..64 rmma.m1.n4.w4x1 ws=0
@@ -12607,7 +12607,7 @@ iq4nl p1 add 5120x17408 speed T=1 r8.w8r1 ws=0
 iq4nl p1 add 5120x17408 speed T=2 ggml_vec ws=39168
 iq4nl p1 add 5120x17408 speed T=3 ggml_vec ws=58752
 iq4nl p1 add 5120x17408 speed T=4 ggml_vec ws=78336
-iq4nl p1 add 5120x17408 speed T=5..8 rmma.m1.n4.w1x8 ws=0
+iq4nl p1 add 5120x17408 speed T=5..8 rmma.m1.n1.w1x4 ws=0
 iq4nl p1 add 5120x17408 speed T=12..2048 ggml_mmq ws=0
 iq4nl p1 add 5120x17408 prefill T=17..2048 ggml_mmq ws=0
 iq4nl p1 add 5120x17408 invariant T=1..8 rmma.m1.n1.w1x8 ws=0

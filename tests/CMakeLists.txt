@@ -48,6 +48,10 @@ ninferno_add_test(ninferno_spec_draft_head_test NEEDS_SOURCE_DIR
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
 
+# tools/kit/validate.py: the user measurement kit's rejection rules and verdicts, no GPU.
+add_test(NAME ninferno_kit_validate_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
+
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
   COMMAND bash "${PROJECT_SOURCE_DIR}/tools/check_file_modes.sh")

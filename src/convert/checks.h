@@ -52,10 +52,15 @@ void check_source_fields(const std::string& name, const OJson& actual, const OJs
 // proposal.add_official_proposal: an indexed Q4 proposal head gathered from the text head's
 // default source, with its int32 token ids.
 // `drafters`: the components whose final hidden states it takes (empty: every one the model has
-// of mtp, dflash, dflash2).
+// of mtp, dflash, dflash2). `drafter_rows`: a drafter asking fewer than `rows` (its own
+// bytes/acceptance bound, default_proposal) reads the head's leading rows (the artifact's
+// proposal.drafter_rows): the rows are laid out nested, each such drafter's prefix exactly the
+// shortlist of its own size (the ranked ids and the forced specials it keeps alone), then the
+// next size's further ids, each part in ranking order.
 void add_official_proposal(Model& model, Recipe& recipe, const std::filesystem::path& ranking,
                            const std::string& ranking_text, std::uint64_t rows,
-                           const std::vector<std::string>& drafters = {});
+                           const std::vector<std::string>& drafters = {},
+                           const std::map<std::string, std::uint64_t>& drafter_rows = {});
 
 using ResourceOverrides = std::vector<std::pair<std::string, std::filesystem::path>>;
 using ResourceFallbacks = std::map<std::string, std::string>;
@@ -89,6 +94,7 @@ inline constexpr const char* kDefaultProposalRanking = "ranking.train.counts.i64
 struct DefaultProposal {
     std::uint64_t rows = 0;
     std::vector<std::string> drafters; // the components it serves ("mtp", "dflash")
+    std::map<std::string, std::uint64_t> drafter_rows; // the rows each of them asks alone
     std::string note;
 };
 [[nodiscard]] DefaultProposal default_proposal(const Model& model, const Recipe& recipe,

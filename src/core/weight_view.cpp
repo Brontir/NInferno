@@ -334,6 +334,29 @@ WeightRowPlanes weight_row_planes(const WeightRegion& region) {
     return out;
 }
 
+std::optional<WeightView> weight_row_prefix(const WeightView& view, std::uint64_t rows) {
+    if (view.shape.size() != 2 || rows == 0 || rows >= view.shape[0] || view.parts.empty()) {
+        return std::nullopt;
+    }
+    for (const auto& part : view.parts) {
+        validate_region(part);
+        const auto layout = part.parent->geometry.layout;
+        if (layout == QuantLayout::RowScale || layout == QuantLayout::BlockScaleK16M128x4 ||
+            layout == QuantLayout::BlockScale128F32) {
+            return std::nullopt;
+        }
+    }
+    WeightView out{{rows, view.shape[1]}, {}};
+    std::uint64_t left = mul(rows, view.shape[1]);
+    for (const auto& part : view.parts) {
+        if (left == 0) { break; }
+        const auto take = std::min(left, part.end - part.begin);
+        out.parts.push_back(WeightRegion{part.parent, part.begin, part.begin + take});
+        left -= take;
+    }
+    return out;
+}
+
 Tensor weight_tensor(const WeightView& view, std::initializer_list<std::int32_t> internal_shape) {
     const auto region = contiguous_weight_region(view);
     const auto& g     = region.parent->geometry;
