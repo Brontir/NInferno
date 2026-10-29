@@ -310,6 +310,10 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocksPerSm) void nvfp4_a4_t
                 }
             }
         }
+        // Every lane's shared reads of this stage, ordered before its TMA refill, finish before
+        // the elected lane releases it.
+        cta_fence_reads_before_async_refill();
+        __syncwarp();
         if (lane == 0) { cta_mbarrier_arrive(&shared.empty[stage]); }
     }
 

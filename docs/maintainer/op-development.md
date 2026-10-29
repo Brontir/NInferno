@@ -281,6 +281,13 @@ A family may share private launch or computation bodies across related Ops. Each
 defines its output mapping, observable fusion boundary, validation, and dispatch; sharing does not
 create a model-callable private backend.
 
+A pipeline whose producer refills shared-memory stages with TMA (`cp.async.bulk.tensor`: writes of
+the async proxy) while consumers read those stages with ordinary loads or `ldmatrix` (the generic
+proxy) runs `cta_fence_reads_before_async_refill()` (`src/ops/common/mbarrier.cuh`,
+`fence.proxy.async.shared::cta`) in every reading thread after its last read of a stage and before
+its warp arrives on that stage's empty barrier: the mbarrier orders generic-proxy accesses only. A
+producer of 16-byte `cp.async` copies writes through the generic proxy and needs no fence.
+
 ## 5. State, workspace, naming, and dependencies
 
 ### 5.1 State and execution views
