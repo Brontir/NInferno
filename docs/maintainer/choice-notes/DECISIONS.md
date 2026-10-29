@@ -1273,3 +1273,16 @@ products. Branch kern/vec-prefetch keeps the two attempts for reference.
   over master's 1.010 on the 5070 Ti, instances 0.68..1.44 (IQ2_S T = 4 22.9 -> 16.1 us, Q5_K T = 8 24.6 -> 35.3).
 - Both re-roll the compiler's per-instance schedule rather than fix it; only explicit load batching
   holds loads in flight independent of it.
+- Attempt 3, that batching in source (kern/vec-raw-split, 29.10): every decoder split into `load()`
+  (all of a slice's global loads, issued together) and `convert()` (none), the kernel loading slice
+  it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
+  RTX 5070 Ti (instances 0.67..1.52) and 1.01 on the RTX 4090 (0.85..1.20): the same re-roll.
+  ptxas still places the loads: Q4_K's runtime-K slice loop issued 1..8 loads before its first
+  IDP against master's 1..5, and the instances that gained loads ahead were the faster ones (T = 7
+  add -28 %, T = 4 +32 % with one fewer). Source order does not hold them either; what is left is
+  holding them below the compiler (the loads in PTX that ptxas may not sink) or more warps a SM.
+- A trap on the way: a raw slice that kept the 12 Q4_K / Q5_K scale bytes as a register array,
+  indexed by the lane's sub-block at run time, put the whole slice in local memory (96-112 bytes of
+  stack a thread on sm_120, Q4_K 53 % slower than master). The raw slice keeps only the bytes it
+  uses, loaded by index from memory; check `cuobjdump -res-usage` STACK before timing a kernel
+  change.
