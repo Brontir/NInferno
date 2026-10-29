@@ -515,6 +515,8 @@ value for_statement::execute_impl(context& ctx) {
                                          : mk_val<value_undefined>("nextitem"));
         loop_scope.set_val("loop", loop_obj);
         scope_update_fns[i](loop_scope);
+        // An iteration ran, whatever break / continue does: the else block is for no item.
+        noIteration = false;
         try {
             for (auto& stmt : body) {
                 value val = stmt->execute(loop_scope);
@@ -523,7 +525,6 @@ value for_statement::execute_impl(context& ctx) {
         } catch (const continue_statement::signal&) {
             continue;
         } catch (const break_statement::signal&) { break; }
-        noIteration = false;
     }
 
     if (noIteration) {

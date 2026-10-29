@@ -111,6 +111,11 @@ int language_semantics() {
                                     Json{{"content", "<think>embedded</think>answer"}},
                                     Json{{"content", "answer"}}})}},
          "[True:first][False:][False:][True:embedded][False:]"},
+        // A loop whose iterations all break or continue still ran: its else block does not.
+        {"{% for i in [1, 2] %}{% break %}{% else %}empty{% endfor %}|"
+         "{% for i in [1, 2] %}{% continue %}{% else %}empty{% endfor %}|"
+         "{% for i in [] %}x{% else %}empty{% endfor %}",
+         Json::object(), "||empty"},
         // llama.cpp #30941: a namespace has no dict methods (ns.items is the attribute); a dict
         // keeps them.
         {"{% set ns = namespace(items=[]) %}{{ 'yes' if ns.items else 'no' }}{% set ns.items = "
