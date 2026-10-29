@@ -956,19 +956,21 @@ private:
         std::array<std::shared_ptr<Request>, kMaximumConcurrency> requests{};
         std::array<std::uint32_t, kMaximumConcurrency> lanes{};
         std::array<FinishReason, kMaximumConcurrency> reasons{};
+        std::array<std::uint8_t, kMaximumConcurrency> faults{}; // a faulted row's kRowFault*
         std::size_t count = 0;
 
         void add(const std::shared_ptr<Request>& request, std::uint32_t lane,
-                 FinishReason reason = FinishReason::None) noexcept {
+                 FinishReason reason = FinishReason::None, std::uint8_t fault = 0) noexcept {
             requests[count] = request;
             lanes[count]    = lane;
             reasons[count]  = reason;
+            faults[count]   = fault;
             ++count;
         }
     };
 
-    // Completes the released rows of a commit: the terminal ones with their reason, the ones whose
-    // round computed a NaN or an infinity with a numerical failure.
+    // Completes the released rows of a commit: the terminal ones with their reason, the faulted
+    // ones (a NaN or an infinity, or a token outside the vocabulary) with a numerical failure.
     void complete_released(const ReleasedRows& terminal, const ReleasedRows& faulted) {
         for (std::size_t index = 0; index < terminal.count; ++index) {
             complete_success(terminal.requests[index], terminal.reasons[index]);
@@ -976,14 +978,16 @@ private:
         }
         for (std::size_t index = 0; index < faulted.count; ++index) {
             const std::size_t generated = faulted.requests[index]->generated.size();
-            complete_error(
-                faulted.requests[index],
-                std::make_exception_ptr(RequestError(
-                    RequestErrorKind::NumericalFailure,
-                    "the model computed a NaN or an infinity in its final hidden state " +
-                        (generated == 0
-                             ? std::string("at the end of the prompt")
-                             : "after " + std::to_string(generated) + " generated tokens"))));
+            const std::string where =
+                generated == 0 ? std::string("at the end of the prompt")
+                               : "after " + std::to_string(generated) + " generated tokens";
+            complete_error(faulted.requests[index],
+                           std::make_exception_ptr(RequestError(
+                               RequestErrorKind::NumericalFailure,
+                               faulted.faults[index] == kRowFaultTokenDomain
+                                   ? "the model selected a token outside its vocabulary " + where
+                                   : "the model computed a NaN or an infinity in its final "
+                                     "hidden state " + where)));
             remove_completed_slot(faulted.lanes[index]);
         }
     }
@@ -1315,7 +1319,7 @@ private:
                 const std::uint32_t lane     = lane_indices[row];
                 const auto& request          = slots_[lane];
                 if (releases[row] == RowRelease::Faulted) {
-                    faulted_rows.add(request, lane);
+                    faulted_rows.add(request, lane, FinishReason::None, pending.row_faults()[row]);
                     continue;
                 }
                 const std::uint32_t accepted = decisions[row].accepted_tokens;
