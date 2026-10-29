@@ -315,7 +315,7 @@ double quant_kld(double bits, std::string_view label, bool same_family, bool& me
         }
         if (p.kld <= 0) {
             reference_bits = std::max(reference_bits, p.bits_per_weight);
-        } else {
+        } else if (p.curve) {
             points.push_back(&p);
         }
     }

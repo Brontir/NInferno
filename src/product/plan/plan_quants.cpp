@@ -702,7 +702,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                    out.pick->below_floor == runtime::below_quality_floor(row.candidate);
         });
         // Two rows' worths within the generation's measured decode error are a tie: the lower KLD
-        // wins (DECISIONS 57), then the rule's order.
+        // wins (DECISIONS 60), then the rule's order.
         const double band = std::max(choice::kWorthTie, choice::worth_band(choice_card_of(inputs.gpu)));
         std::vector<std::pair<double, std::size_t>> bounds;
         for (std::size_t i = 0; i < out.rows.size(); ++i) {

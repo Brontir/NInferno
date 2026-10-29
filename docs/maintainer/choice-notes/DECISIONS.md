@@ -1165,7 +1165,7 @@ accept more than the corpus' prose (50). Master served the same (the 5070 Ti's p
 2. gpt-oss rounds are 6-10 % dearer than their facts on both cards (MoE routing: 53's +12.5 %).
 3. MTP at depth 3 is 7-9 % dearer than its facts on both cards (the 9B, Gemma 4 12B).
 
-## 57. Decode speed from the bytes and the kernels of a step; a generation's one card prices only its own boards (28.10)
+## 60. Decode speed from the bytes and the kernels of a step; a generation's one card prices only its own boards (28.10)
 
 The dense decode estimate (src/product/choice, PR #184) had one fitted term, kDenseDecode's share of
 the int8 peak. It is replaced by measured per-generation efficiencies of the kernels a step runs. A
