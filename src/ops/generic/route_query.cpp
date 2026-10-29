@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
-#include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
 
@@ -95,25 +94,15 @@ std::optional<RouteShape> route_shape(const DeviceClass& device, QType qtype, Li
     WeightParent parent;
     parent.data                 = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
     parent.weight_scale_divisor = nvfp4 ? 1.0F : 0.0F;
-    // The call's rows (the first ones of the stored matrix: where a slice starts moves no route)
-    // of a stored matrix of `stored` rows.
-    const auto describe = [&](std::uint64_t stored) {
-        const std::uint64_t shape[2] = {stored, static_cast<std::uint64_t>(k)};
-        parent.geometry = weight_geometry(qtype, default_weight_layout(qtype), shape);
-        WeightView view;
-        view.shape = {own, static_cast<std::uint64_t>(k)};
-        view.parts = {WeightRegion{&parent, 0, own * static_cast<std::uint64_t>(k)}};
-        return native_weight(view, nvfp4 ? 1.0F : 0.0F);
-    };
+    // The stored matrix whole, as the engine passes a projection slice (ops/weight_input.cpp
+    // projection_slice: native_weight of the complete parent, the call's rows in Problem::n).
     const std::uint64_t stored = std::max<std::uint64_t>(own, static_cast<std::uint64_t>(parent_rows));
-    Weight weight;
-    try {
-        weight = describe(stored);
-    } catch (const std::invalid_argument&) {
-        // A layout whose Weight is only ever a complete parent (FP8 row/block scales, NVFP4).
-        if (stored == own) throw;
-        weight = describe(own);
-    }
+    const std::uint64_t shape[2] = {stored, static_cast<std::uint64_t>(k)};
+    parent.geometry = weight_geometry(qtype, default_weight_layout(qtype), shape);
+    WeightView view;
+    view.shape = {stored, static_cast<std::uint64_t>(k)};
+    view.parts = {WeightRegion{&parent, 0, stored * static_cast<std::uint64_t>(k)}};
+    const Weight weight = native_weight(view, nvfp4 ? 1.0F : 0.0F);
     if (!supports(weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
     return shape_of_route(select_route(problem, weight, tokens, prefill), device.features);

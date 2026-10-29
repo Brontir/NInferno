@@ -41,7 +41,8 @@ struct RouteShape {
 // `epilogue` takes on `device` (SwiGLU: `n` output rows, the weight 2 n rows), and its shape;
 // nullopt where the generic path does not read such a weight (generic::supports).
 // `parent_rows`: the rows of the stored matrix the call reads `n` of (a fused QKV or stacked
-// projection's slice; 0: the call's own), whose bytes the selector's cost rules see. `policy` is
+// projection's slice; 0: the call's own): the weight is described whole, as the engine passes a
+// slice (native_weight of its complete parent, the call's rows in Problem::n). `policy` is
 // the call's as the engine passes it: an NVFP4 weight without a calibrated activation divisor runs
 // AllowA8, not AllowA4 (ops/weight_input.cpp projection_slice). The route tables read are the
 // default lookup's for `device`; where `device` is the current device's own class, that device's
