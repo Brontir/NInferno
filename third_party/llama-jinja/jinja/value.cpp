@@ -233,6 +233,19 @@ const func_builtins& global_builtins() {
              std::string msg = args.get_pos(0)->as_string().str();
              throw template_raised_exception(msg);
          }},
+        // dict(key=value, ...): an object with its dict methods (jinja2's dict).
+        {"dict",
+         [](const func_args& args) -> value {
+             auto out = mk_val<value_object>();
+             for (const auto& arg : args.get_args()) {
+                 if (!is_val<value_kwarg>(arg)) {
+                     throw raised_exception("dict() arguments must be kwargs");
+                 }
+                 auto kwarg = cast_val<value_kwarg>(arg);
+                 out->insert(kwarg->key, kwarg->val);
+             }
+             return out;
+         }},
         {"namespace",
          [](const func_args& args) -> value {
              auto out = mk_val<value_object>();
