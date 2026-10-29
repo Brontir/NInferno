@@ -278,13 +278,18 @@ void complete_split_gguf_head(PlanSourceFacts& facts, const std::string& spec,
     const auto it = heads.find(quant);
     if (it == heads.end() || it->second == 0) { return; }
     m.head_bytes = it->second;
-    if (tied.contains(quant)) {
+    const bool tie = tied.contains(quant);
+    if (tie) {
         facts.shape.tied_embeddings = true;
         m.embedding_bytes           = 0;
     } else {
         // Untied: the parsed part's token table is the embedding a verify never reads.
         m.embedding_bytes = m.token_table_bytes;
     }
+    // The parameter count the part's table left out while the tie was unknown (plan_facts_of_gguf):
+    // the geometry's, its token table once more when untied (Opus on #202: a split MoE's routed
+    // share prices its verify and MTP passes by it).
+    if (m.params == 0) { m.params = params_of_geometry(facts, tie); }
 }
 
 std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts, const DryRunInputs& inputs) {

@@ -868,6 +868,19 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     return out;
 }
 
+double params_of_geometry(const PlanSourceFacts& facts, bool tied) {
+    const auto& s = facts.shape;
+    if (!(s.active_params > 0)) { return 0; }
+    // finish: params = active + the routed experts a token does not take + the untied head.
+    const double idle =
+        s.experts > 0 && s.experts_per_token > 0
+            ? s.routed_expert_params * (1.0 - static_cast<double>(s.experts_per_token) /
+                                                  static_cast<double>(s.experts))
+            : 0.0;
+    const double vocab = s.vocab_size > 0 ? s.vocab_size : 152064; // finish's default
+    return s.active_params + idle + (tied ? 0.0 : vocab * static_cast<double>(facts.model.hidden));
+}
+
 PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
                              runtime::WeightBasis basis) {
     // The speculation-only shares at the other quantization: in proportion (a listing names only

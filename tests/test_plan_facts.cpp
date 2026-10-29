@@ -154,6 +154,18 @@ int gguf_qwen35() {
     failures += same(s0.model.token_table_bytes, 1000, "split part 0's token table");
     failures += same(s0.model.head_bytes, 0, "split part 0: the head not known");
     failures += same(s0.model.embedding_bytes, 0, "split part 0: the embedding not known");
+    // Its parameter count, left out while the tie is unknown, from the geometry once settled
+    // (complete_split_gguf_head; Opus on #202): the untied count of the part naming its head,
+    // the token table once less when tied.
+    failures += check(s0.model.params == 0 && s.model.params > 0, "split part 0: params unknown");
+    const double table = 5120.0 * 248320;
+    failures += check(std::abs(pr::params_of_geometry(s0, false) - s.model.params) <
+                              1e-9 * s.model.params &&
+                          std::abs(pr::params_of_geometry(s0, true) - (s.model.params - table)) <
+                              1e-9 * s.model.params,
+                      "split params from the geometry " +
+                          std::to_string(pr::params_of_geometry(s0, false)) + " vs " +
+                          std::to_string(s.model.params));
 
     // Routed expert banks as stored (*_exps), the trunk's and the MTP layers' apart (Codex on
     // #199: a mixed-quant model's experts are not their parameter share of the bytes).

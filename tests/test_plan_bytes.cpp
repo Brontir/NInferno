@@ -1078,8 +1078,13 @@ void test_proposal_bytes_per_quant() {
         check(own.model.routed_expert_bytes == row.weight_bytes / 3 &&
                   own.model.mtp_routed_expert_bytes == *row.mtp_bytes / 3 &&
                   own.model.token_table_bytes == 123456789 &&
-                  (moe.model.embedding_bytes == 0 || own.model.embedding_bytes == 123456789),
-              "a row's own table gives its routed banks and token table");
+                  moe.model.embedding_bytes != 0 && own.model.embedding_bytes == 123456789,
+              "a row's own table gives its routed banks and token table (untied: its embedding)");
+        pr::PlanSourceFacts tied_shape = moe;
+        tied_shape.model.embedding_bytes = 0;
+        tied_shape.shape.tied_embeddings = true;
+        check(pr::row_facts(tied_shape, row).model.embedding_bytes == 0,
+              "a tied model's row reads its token table as the head: no embedding");
         pr::QuantRow scaled = row;
         scaled.listing.table->routed_expert_bytes.reset();
         check(pr::row_facts(moe, scaled).model.routed_expert_bytes ==

@@ -2021,9 +2021,14 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                 } catch (const std::exception&) {}
                 // A split model's head may lie in a later part (Codex on #170): its header lists
                 // its own tensors after a few metadata keys.
+                // Read counts only a part whose tensor table the window holds whole: one running
+                // past it may name output.weight beyond (Opus on #202: no false tie).
                 for (std::size_t part = 1; bytes == 0 && part < parts; ++part) {
                     try {
-                        find(fetch_gguf_head(spec, one, kWindow, part, 0));
+                        const auto window = fetch_gguf_head(spec, one, kWindow, part, 0);
+                        find(window);
+                        (void)parse_gguf_head(reinterpret_cast<const std::byte*>(window.bytes.data()),
+                                              window.bytes.size(), window.size, window.path);
                         ++read;
                     } catch (const std::exception&) {}
                 }
