@@ -243,10 +243,12 @@ __global__ __launch_bounds__(256) void volta_kquant_gemv_kernel(GemmArgs a) {
     }
 }
 
-// R rows a warp, for a call of many rows (the LM head; launch_format): the activation's words, their FP32
-// values and their sum (the min's factor) are a function of the superblock and the token only,
-// so a warp takes them once for its R rows instead of once a row. Each row's sums run in the
-// same order either way: the bytes do not depend on R.
+// R rows a warp, for a call of many rows (the LM head; launch_format): the activation's words,
+// their FP32 values and their sum (the min's factor) are a function of the superblock and the
+// token only, so a warp takes them once for its R rows instead of once a row. Each row's sums run
+// in the same order either way: the bytes do not depend on R. GV100, Qwen3.5-9B Q6_K LM head
+// (248320 x 4096, T = 1): loop 92 -> 81 SASS instructions a row and superblock, 1485 -> 1406 us
+// (the bytes' floor at the measured 660 GB/s: 1264).
 template <class Format, Epilogue E, int NT, int R>
 __global__ __launch_bounds__(256) void volta_kquant_gemv_rows_kernel(GemmArgs a) {
     constexpr int kSets = E == Epilogue::SwiGlu ? 2 : 1;
