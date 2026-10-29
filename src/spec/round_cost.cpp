@@ -116,6 +116,12 @@ CardRates rates(int major, int minor, int sms, double clock_hz, double dram_byte
             out.eta_cards = e.cards;
         }
     }
+    for (const auto& l : kLaunchTime) {
+        if (l.generation == out.generation) {
+            out.launch_seconds = l.seconds;
+            out.eta_dram       = l.eta_dram;
+        }
+    }
     return out;
 }
 
@@ -177,7 +183,8 @@ CardRates card_rates_of_board(std::uint32_t pci_device_id) {
 }
 
 std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
-                                 const ProposalRows& head_rows) {
+                                 const ProposalRows& head_rows, double launch_bytes,
+                                 const RoundLaunches& launches) {
     if (!config.enabled() || config.k < 1) { return std::nullopt; }
     const std::string mode = mode_name(config.mode);
     const auto d           = facts.drafters.find(mode);
@@ -193,6 +200,9 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
                                      : pass_cost(read, config.k, kappa);
     }
     const double draft = passes * pass_cost(draft_facts.pass, draft_facts.rows, kappa) + head;
+    if (launch_bytes > 0 && launches.known()) {
+        return (verify + draft + launch_bytes * launches.round) / (plain + launch_bytes * launches.step);
+    }
     return (verify + draft) / plain;
 }
 

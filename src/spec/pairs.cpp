@@ -398,6 +398,35 @@ RoundCostRatios generation_round_costs(const std::vector<MeasuredPair>& lab,
     return out;
 }
 
+namespace {
+
+// The kernels a round's graphs launched by configuration label (Measurement::graph_kernels over
+// its rounds) and a plain step's (over plain decode's tokens), pooled over the sections; a label
+// without counts, or a tune whose plain decode has none, is left out.
+std::map<std::string, RoundLaunches> round_launches(const Profile& tune) {
+    double step_kernels = 0, steps = 0;
+    std::map<std::string, std::pair<double, double>> rounds; // kernels, rounds
+    for (const auto& m : tune.measurements) {
+        if (m.graph_kernels <= 0) { continue; }
+        if (!m.config.enabled()) {
+            step_kernels += double(m.graph_kernels);
+            steps += double(m.tokens);
+        } else if (m.rounds > 0) {
+            auto& r = rounds[m.config.label()];
+            r.first += double(m.graph_kernels);
+            r.second += double(m.rounds);
+        }
+    }
+    std::map<std::string, RoundLaunches> out;
+    if (steps <= 0) { return out; }
+    for (const auto& [label, r] : rounds) {
+        out[label] = RoundLaunches{.round = r.first / r.second, .step = step_kernels / steps};
+    }
+    return out;
+}
+
+} // namespace
+
 RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu,
                                       const ProposalRows* head_rows) {
     RoundCostEstimate out;
@@ -406,13 +435,17 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
     const CardRates home = card_rates_of_board(pair.lab_board);
     if (!card.known() || !home.known()) { return out; }
     std::string raised;
+    const auto launches = round_launches(pair.tune);
     for (const auto& [label, measured] : round_costs(pair.tune)) {
         const auto config = SpecConfig::parse(label);
         if (!config.enabled() || config.k > kPortableDepth) { continue; }
-        const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
-                                      head_rows != nullptr ? *head_rows : pair.tune.proposal_rows);
-        const auto there =
-            round_cost(*pair.round_facts, config, home.kappa(), pair.tune.proposal_rows);
+        const auto it              = launches.find(label);
+        const RoundLaunches counted = it != launches.end() ? it->second : RoundLaunches{};
+        const auto here = round_cost(*pair.round_facts, config, card.kappa(),
+                                     head_rows != nullptr ? *head_rows : pair.tune.proposal_rows,
+                                     card.launch_bytes(), counted);
+        const auto there = round_cost(*pair.round_facts, config, home.kappa(),
+                                      pair.tune.proposal_rows, home.launch_bytes(), counted);
         if (!here || !there || *there <= 0) { continue; }
         double cost = *here;
         // What the bytes do not show, as the lab card measured it: scales the estimate up only.

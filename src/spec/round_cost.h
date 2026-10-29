@@ -138,6 +138,29 @@ inline constexpr SmallTEta kSmallTEta[] = {
     {"gb20x", 0.165, 2},
 };
 
+// A kernel's launch time inside a graph replay (t0) and the DRAM rate a decode kernel's bytes reach
+// (eta_dram), by generation: a kernel of B bytes takes B / (eta_dram x BW) + t0 (the Ada census,
+// Qwen3.5-9B Q4_K_M plain decode on the RTX 4090, 4070 Ti and 4060 Ti, every kernel within 2 %:
+// t0 1.5 us without PDL, eta_dram 0.946; sm_120 launches chain with PDL, t0 0.5 us). A round pays
+// t0 for each kernel its graphs launch (Measurement::graph_kernels, counted from the captured
+// graphs), a plain step for each of its own: R(k) adds them, in bytes at eta_dram x BW.
+struct LaunchTime {
+    std::string_view generation;
+    double seconds;
+    double eta_dram;
+};
+inline constexpr LaunchTime kLaunchTime[] = {
+    {"ada", 1.5e-6, 0.946},
+    {"gb20x", 0.5e-6, 0.946}, // eta_dram: Ada's (the same GDDR decode kernels), a transfer
+};
+
+// The kernels a round's graphs launch and a plain step's (0: not counted, no launch term).
+struct RoundLaunches {
+    double round = 0;
+    double step  = 0;
+    [[nodiscard]] bool known() const noexcept { return round > 0 && step > 0; }
+};
+
 // A card's rates as the round cost reads them.
 struct CardRates {
     double dram_bytes_per_s = 0;
@@ -145,6 +168,13 @@ struct CardRates {
     std::string generation;      // core/generation.h's row name
     double eta              = 0; // kSmallTEta's, 0 when the generation has none
     std::int32_t eta_cards  = 0;
+    double launch_seconds   = 0; // kLaunchTime's, 0 when the generation has none
+    double eta_dram         = 0;
+
+    // A kernel launch's time as the bytes it would read in it (round cost's unit); 0 when unknown.
+    [[nodiscard]] double launch_bytes() const noexcept {
+        return launch_seconds * eta_dram * dram_bytes_per_s;
+    }
 
     // DRAM bytes per operation at small T; 0 when unknown.
     [[nodiscard]] double kappa() const noexcept {
@@ -167,7 +197,11 @@ struct CardRates {
 // `head_rows` names for its mode (the full head where none, or where the head's facts list no head
 // linear to scale); nullopt when the facts have no drafter of its mode, or the configuration
 // drafts nothing.
+// With `launches` known and `launch_bytes` > 0 (CardRates::launch_bytes), the round's kernel
+// launches and the plain step's are added (each launch_bytes).
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
-                                               double kappa, const ProposalRows& head_rows = {});
+                                               double kappa, const ProposalRows& head_rows = {},
+                                               double launch_bytes          = 0,
+                                               const RoundLaunches& launches = {});
 
 } // namespace ninferno::spec

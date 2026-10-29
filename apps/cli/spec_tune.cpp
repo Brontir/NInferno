@@ -14,6 +14,7 @@
 
 #include "artifact/reader.h"
 #include "core/clock.h"
+#include "core/decode_graph.h"
 #include "core/sha256.h"
 #include "core/paged_kv_cache.h"
 #include "ninferno/engine.h"
@@ -904,7 +905,9 @@ int run_spec_tune(int argc, char** argv) {
             for (const auto& p : corpus.prompts) {
                 if (p.family != family) { continue; }
                 for (int r = 0; r < repeat; ++r) {
-                    const auto result = run(p);
+                    const std::uint64_t kernels = graph_kernels_launched();
+                    const auto result           = run(p);
+                    m.graph_kernels += static_cast<std::int64_t>(graph_kernels_launched() - kernels);
                     const auto& ids   = result.generated_token_ids;
                     // The first token comes from the prefill; decode time covers the rest.
                     m.prompts += 1;
