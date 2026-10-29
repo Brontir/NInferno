@@ -368,6 +368,12 @@ std::map<std::string, double> profile_round_costs(const Profile& profile) {
 
 namespace {
 
+// A card: its GPU class id and the board its record names (two boards of one class are two cards,
+// each priced by its own rates; pool_cards).
+std::string card_of(const MeasuredPair& pair) {
+    return pair.tune.key.gpu + "/" + std::to_string(pair.lab_board);
+}
+
 // The records in their own order: GPU class id, generation, then content (the record's JSON, each
 // rendered once), so the registry's order never decides which record is first.
 std::vector<const MeasuredPair*> in_content_order(std::vector<const MeasuredPair*> pairs) {
@@ -441,7 +447,7 @@ std::vector<const MeasuredPair*> one_per_card(const std::vector<const MeasuredPa
     std::vector<const MeasuredPair*> out;
     std::set<std::string> cards;
     for (const auto* pair : pairs) {
-        if (cards.insert(pair->tune.key.gpu).second) { out.push_back(pair); }
+        if (cards.insert(card_of(*pair)).second) { out.push_back(pair); }
     }
     return out;
 }
@@ -504,12 +510,12 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
     // never decides which card's measurement is taken.
     const std::vector<const MeasuredPair*> ordered = in_content_order(measured);
     std::vector<const MeasuredPair*> current, home;
-    std::set<std::string> home_cards; // two cards, not two records of one card
+    std::set<std::string> home_cards; // two cards, not two records of one card (card_of)
     for (const auto* pair : ordered) {
         if (!pair_current(*pair)) { continue; }
         current.push_back(pair);
         if (!generation.empty() && pair->generation == generation &&
-            home_cards.insert(pair->tune.key.gpu).second) {
+            home_cards.insert(card_of(*pair)).second) {
             home.push_back(pair);
         }
     }

@@ -367,13 +367,23 @@ int main() {
             ++orders;
         } while (same && std::next_permutation(idx.begin(), idx.end()));
         expect(same && orders == 720, "all 720 orders of the records give the same plans");
-        // Two boards of one class (an RTX 4070 SUPER's tune beside the 4070 Ti's) are two cards,
-        // each priced by its own board; a tune naming no board is the class's card's.
-        const auto two = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0x2782), tuned(mtp, 1.0, 1.0, 0x2783)},
-                                         whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
-                                         {}, &rtx4070ti);
-        expect(two && two->source.find("(2 lab card(s))") != std::string::npos,
-               "two boards of one class are two cards: " + (two ? two->source : std::string()));
+        // Two boards of one class (an RTX 4500 Ada's tune beside the 4070 Ti's, both ad104:60sm) are
+        // two cards (each finds its own record, not the facts) taking the median R of the two.
+        const std::vector<sp::MeasuredPair> boards = {tuned(mtp, 1.0, 1.0, 0x2782),
+                                                      tuned(mtp, 1.0, 1.3, 0x27B1)};
+        const auto rtx4500 = card("ad104:60sm", "ad104", "sm89", 89, 60, 2580, 432);
+        const auto two     = sp::pair_choice(boards, whole.target, "qwen3_5", kinds, 4.0, "sm89", {},
+                                             whole.drafters, {}, &rtx4070ti);
+        const auto other   = sp::pair_choice(boards, whole.target, "qwen3_5", kinds, 4.0, "sm89", {},
+                                             whole.drafters, {}, &rtx4500);
+        const auto r = [](const std::optional<sp::PairChoice>& c) {
+            return c ? sp::profile_round_costs(c->profile) : std::map<std::string, double>{};
+        };
+        expect(two && other && two->source.find("(2 lab card(s))") != std::string::npos &&
+                   !r(two).empty() && !r(other).empty() &&
+                   std::abs(r(other).at("mtp:3") / r(two).at("mtp:3") - 1) < 1e-9,
+               "two boards of one class are two cards, priced by their median: " +
+                   (two ? two->source : std::string()));
         const auto one = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0), tuned(dflash, 1.0, 1.0, 0x2782)},
                                          whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
                                          {}, &rtx4070ti);
