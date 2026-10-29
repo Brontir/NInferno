@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "kit"))
 import gpu  # noqa: E402
+import measure  # noqa: E402
 import validate  # noqa: E402
 
 P = "clocks_event_reasons"
@@ -156,6 +157,16 @@ class Rules(unittest.TestCase):
     def test_render(self):
         text = validate.render(validate.validate(copy.deepcopy(doc())))
         self.assertIn("decode: accepted", text)
+
+
+class Privacy(unittest.TestCase):
+    def test_scrub_paths(self):
+        for text in ("/opt/private/model.gguf", "\\\\server\\share\\x.json", "D:\\data\\x"):
+            self.assertNotIn("private", measure.scrub(text))
+            self.assertIn("<path>", measure.scrub(text))
+        for text in ("12 tok/s", "org/repo", "https://huggingface.co/org/repo"):
+            self.assertEqual(measure.scrub(text), text)
+        self.assertEqual(measure.scrub_doc({"artifact": "/x/y", "a": ["/home/u/f"]}), {"a": ["<path>"]})
 
 
 class Gpu(unittest.TestCase):

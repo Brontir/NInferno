@@ -48,7 +48,7 @@ constant.
    - SM and memory clocks, temperature, power, utilization, memory used, pstate and the clock event reasons;
    - a mark per window (idle, warm-up, `decode i`, `prefill i`).
 5. **Optional, recorded only (the validator does not judge them in this version):**
-   - `--hard50` runs `tools/bench/hard_set.py` against the plain start (as the lab's `q_hard`). With 50 items, the binomial standard error is about 7 points: it can show a gross failure, never a quality difference.
+   - `--hard50` runs `tools/bench/hard_set.py` against the plain start (as the lab's `q_hard`). With 50 items, the binomial standard error is about 7 points: it can show a gross failure, never a quality difference. Its budget estimate is 50 answers of about 1100 tokens at the plan's decode. Qwen3.5-9B Q4_K_M on an RTX 4060 Ti took 18 minutes.
    - `--spec-tune S` runs `ninferno spec-tune <artifact> --budget-seconds S --publish ... --measured-on "<card> user-kit"`, the run our stands publish registry entries from. The plan's `--spec auto` prediction goes beside it.
 
 ## The result file: `ninferno-user-run/1.minor`

@@ -68,7 +68,12 @@ def scrub(value):
     text = str(value)
     for s in PRIVATE:
         text = text.replace(s, "<local>").replace(s.replace("\\", "/"), "<local>")
-    text = re.sub(r"(?<![\w.])(?:[A-Za-z]:\\|/(?:home|root|Users|tmp|mnt|var)/)[^\s'\"]*", "<path>", text)
+    # Any other absolute path: a drive path, a UNC share, or a POSIX path of two or more parts
+    # (not a URL's //host, and not tok/s or org/repo, which do not start with a slash). A path
+    # with spaces loses its first part here (the known local strings above take the home whole).
+    text = re.sub(r"(?<![\w.])[A-Za-z]:\\[^\s'\"]*", "<path>", text)
+    text = re.sub(r"\\\\[^\s'\"]+", "<path>", text)
+    text = re.sub(r"(?<![\w.:/])/(?:[^\s'\"/]+/)+[^\s'\"]*", "<path>", text)
     return text
 
 
@@ -479,7 +484,9 @@ def main():
                       f"{m.get('decode', {}).get('median')} tok/s (plan: prefill "
                       f"{chosen_plan.get('prefill_tok_s')}, decode {chosen_plan.get('decode_tok_s_at_depth')})"
                       + (f"; error: {result['error']}" if result.get("error") else ""), flush=True)
-            if args.hard50 and progress.fits(900, f"{model['id']} hard50"):
+            # 50 questions of about 1100 answer tokens at the plan's decode, and a start.
+            hard_cost = 150 + 50 * 1100 / max(1.0, float(chosen_plan.get("decode_tok_s") or 30))
+            if args.hard50 and progress.fits(hard_cost, f"{model['id']} hard50"):
                 progress.step(f"{model['id']}: the hard question set (plain)")
                 started = time.time()
                 doc["runs"].append(hard50(serve, model, flags, args.port, workdir))
@@ -506,13 +513,18 @@ def main():
 def hard50(serve, model, flags, port, workdir):
     run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "hard50"}
     out = workdir / f"{model['id']}.hard50.json"
+    out.unlink(missing_ok=True)  # never an earlier run's file
     server = None
     try:
         server = Server(serve, model, flags, port, str(workdir / f"{model['id']}.hard50.serve.log"))
         server.wait()
-        subprocess.run([sys.executable, str(ROOT / "tools/bench/hard_set.py"), "--url",
-                        f"http://127.0.0.1:{port}/v1", "--set", str(ROOT / "eval/corpora/hard50/hard50.json"),
-                        "--tag", model["id"], "--out", str(out)], capture_output=True, text=True)
+        done = subprocess.run([sys.executable, str(ROOT / "tools/bench/hard_set.py"), "--url",
+                               f"http://127.0.0.1:{port}/v1", "--set",
+                               str(ROOT / "eval/corpora/hard50/hard50.json"), "--tag", model["id"],
+                               "--out", str(out)], capture_output=True, text=True)
+        if done.returncode != 0:
+            lines = (done.stderr or done.stdout).strip().splitlines()
+            raise RuntimeError("hard_set.py failed: " + (lines[-1] if lines else str(done.returncode)))
         result = json.loads(out.read_text(encoding="utf-8"))
         run["hard50"] = result.get("summary", {k: v for k, v in result.items() if k != "questions"})
     except Exception as e:  # noqa: BLE001
