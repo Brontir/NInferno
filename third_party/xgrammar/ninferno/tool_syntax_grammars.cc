@@ -83,14 +83,32 @@ std::vector<Range> subtract(const std::vector<Range>& ranges, std::vector<int32_
 // <|"|>, ATEM's </atem:parameter>) cannot hold a regex that may write the delimiter, and XGrammar
 // cannot intersect a regex with "not this text": such a pattern or format is refused.
 bool regex_may_write_lt(const std::string& regex) {
+    bool in_class = false;
     for (std::size_t at = 0; at < regex.size(); ++at) {
         const char c = regex[at];
         if (c == '\\') {
-            if (at + 1 < regex.size() && std::string("WSDpPX").find(regex[at + 1]) != std::string::npos) {
+            if (at + 1 >= regex.size()) { return true; }
+            const char escaped = regex[at + 1];
+            // Class escapes holding '<' and code escapes that may spell it.
+            if (std::string("WSDpPXxuUc0123456789").find(escaped) != std::string::npos) {
                 return true;
             }
             ++at;
-        } else if (c == '<' || c == '.' || (c == '[' && at + 1 < regex.size() && regex[at + 1] == '^')) {
+        } else if (in_class) {
+            if (c == ']') {
+                in_class = false;
+            } else if (c == '-' && at + 1 < regex.size() && regex[at + 1] != ']' && at > 0) {
+                // A range whose ends are plain characters: does it span '<'?
+                const unsigned char low  = static_cast<unsigned char>(regex[at - 1]);
+                const unsigned char high = static_cast<unsigned char>(regex[at + 1]);
+                if (regex[at + 1] == '\\' || (low <= '<' && high >= '<')) { return true; }
+            } else if (c == '<') {
+                return true;
+            }
+        } else if (c == '[') {
+            if (at + 1 < regex.size() && regex[at + 1] == '^') { return true; }
+            in_class = true;
+        } else if (c == '<' || c == '.') {
             return true;
         }
     }
@@ -445,6 +463,15 @@ protected:
     void AddBasicRules() override {
         XMLToolCallingConverter::AddBasicRules();
         builder_.UpdateRuleBody(kXMLString, TagDispatch(false, {kAtemClose}));
+        // A JSON string inside a value (an array's or object's) leaves out a raw '<' (a unicode
+        // escape still spells it), so the close tag never appears inside the value.
+        const int32_t normal = builder_.AddCharacterClass(
+            {{0, 0x1f}, {'"', '"'}, {'<', '<'}, {'\\', '\\'}}, true);
+        const int32_t rest   = RuleRef(kBasicStringSub);
+        builder_.UpdateRuleBody(
+            kBasicStringSub,
+            Choice({ByteString("\""), Sequence({normal, rest}),
+                    Sequence({ByteString("\\"), RuleRef(kBasicEscape), rest})}));
     }
 
     // A parameter value never holds the close tag, where the parser ends it: a bounded string

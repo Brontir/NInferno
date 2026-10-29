@@ -976,6 +976,10 @@ int test_argument_key_order() {
                   R"({"type":"object","properties":{"v":{"type":"string","pattern":"^.+$"}}})")},
              {ToolCallFormat::Atem, Json::parse(
                   R"({"type":"object","properties":{"v":{"type":"string","pattern":"^[^x]+$"}}})")},
+             {ToolCallFormat::Gemma4, Json::parse(
+                  R"({"type":"object","properties":{"v":{"type":"string","pattern":"^\\x3c$"}}})")},
+             {ToolCallFormat::Gemma4, Json::parse(
+                  R"({"type":"object","properties":{"v":{"type":"string","pattern":"^[ -~]+$"}}})")},
              {ToolCallFormat::Atem,
               Json::parse(R"({"type":"object","properties":{"v":{"enum":["a</atem:parameter>b"]}}})")},
          }) {
