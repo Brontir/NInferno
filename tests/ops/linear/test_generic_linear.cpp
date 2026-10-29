@@ -1607,7 +1607,8 @@ int main() {
             {600, 70, 3, 4, true},    // three waves at either (280 and 210 a wave)
             {768, 70, 3, 4, false},   // three waves at 4, four at 3
             {1088, 128, 2, 3, false}, // 128 SMs, 1088 CTAs: three waves at 3, five at 2
-            {80, 68, 1, 2, true},     // fewer CTAs than SMs: one wave at either
+            {60, 68, 1, 2, true},     // fewer CTAs than SMs: one wave at either
+            {80, 68, 1, 2, false},    // 80 CTAs on 68 SMs: two waves at 1, one at 2
             {80, 68, 0, 2, false},    // the variant fits no CTA
             {80, 68, 2, 0, false},    // counts unknown
             {80, 0, 2, 2, false},     // SMs unknown
