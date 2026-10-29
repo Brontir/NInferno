@@ -1,5 +1,5 @@
 // Volta's decode GEMV for the ggml Q4_K / Q5_K / Q6_K, Q8 G32 and BF16 formats: a warp per output
-// row, lanes over a superblock (lane l: its values 8 l .. 8 l + 7), codes decoded straight to FP32
+// row (four rows for a large store, volta_kquant_gemv_rows_kernel), lanes over a superblock (lane l: its values 8 l .. 8 l + 7), codes decoded straight to FP32
 // and summed against FP32 activations. Without tensor mma.sync the register-MMA tiles emulate the
 // MMA fragment layout on FP32 FMAs; at T <= 4 this kernel reads the same bytes in row order.
 // run_route takes it for a lane-local register-MMA call (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6
@@ -270,16 +270,16 @@ __global__ __launch_bounds__(256) void volta_kquant_gemv_rows_kernel(GemmArgs a)
     for (int s = 0; s < kSets; ++s) {
         const int row0 = a.row_begin + l0 + (s == 1 ? a.up_offset : 0);
         Format cur[R];
+        // A row past the call's loads the last one (never used): no branch, no indeterminate copy.
 #pragma unroll
-        for (int r = 0; r < R; ++r)
-            if (l0 + r < a.rows) cur[r].load(a, row0 + r, 0, lane);
+        for (int r = 0; r < R; ++r) cur[r].load(a, row0 + min(r, a.rows - 1 - l0), 0, lane);
 #pragma unroll 1
         for (int b = 0; b < sb; ++b) {
             Format nxt[R];
 #pragma unroll
             for (int r = 0; r < R; ++r) {
                 nxt[r] = cur[r];
-                if (b + 1 < sb && l0 + r < a.rows) nxt[r].load(a, row0 + r, b + 1, lane);
+                if (b + 1 < sb) nxt[r].load(a, row0 + min(r, a.rows - 1 - l0), b + 1, lane);
             }
             const int k0 = 256 * b + 8 * lane;
             // The lane's eight activation values of each token, and (codes) their sum.
@@ -394,12 +394,12 @@ void launch_rows(const GemmArgs& args, cudaStream_t stream) {
     CUDA_CHECK(cudaGetLastError());
 }
 
-// Four rows a warp where the grid still holds four CTAs an SM or more (the LM head's 248320 rows:
-// 7760 CTAs), else one.
+// Four rows a warp for a store (the LM head's form) whose grid still holds four CTAs an SM or more
+// (248320 rows: 7760 CTAs), else one; the measured call is the LM head's.
 template <class Format, Epilogue E>
 void launch_format(const GemmArgs& args, cudaStream_t stream) {
     const auto quad_blocks = static_cast<std::int64_t>((args.rows + 31) / 32);
-    if (quad_blocks >= 4LL * device_class().sms) {
+    if (E == Epilogue::Store && quad_blocks >= 4LL * device_class().sms) {
         launch_rows<Format, E, 4>(args, stream);
     } else {
         launch_rows<Format, E, 1>(args, stream);
