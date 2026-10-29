@@ -384,6 +384,13 @@ int main() {
                    std::abs(r(other).at("mtp:3") / r(two).at("mtp:3") - 1) < 1e-9,
                "two boards of one class are two cards, priced by their median: " +
                    (two ? two->source : std::string()));
+        // So in a group: the two boards are two cards (enough for a group's choice); a record naming
+        // no board is its class's card's.
+        const std::vector<sp::MeasuredPair> group_boards = {tuned(dflash, 1.0, 1.0, 0x2782),
+                                                            tuned(dflash, 1.0, 1.1, 0x27B1),
+                                                            tuned(dflash, 1.0, 1.2, 0)};
+        expect(sp::pair_group(group_boards, "qwen3_5", "dflash", 4.0).size() == 2,
+               "two boards of one class are a group of two cards; an unnamed board's record is one of them");
         const auto one = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0), tuned(dflash, 1.0, 1.0, 0x2782)},
                                          whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
                                          {}, &rtx4070ti);

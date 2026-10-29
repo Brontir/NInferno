@@ -648,17 +648,19 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     for (const auto* record : in_content_order(std::move(eligible))) {
         const MeasuredPair& pair = *record;
         auto& into = pair.target_bits < 4 ? low : high;
-        // One card's record of a target once.
+        // One card's record of a target once: a card is its class and board (a record naming no
+        // board is its class's card, as pool_cards pools them).
         const bool again = std::any_of(into.begin(), into.end(), [&](const MeasuredPair* p) {
             return p->target == pair.target && p->tune.key.gpu == pair.tune.key.gpu &&
-                   p->generation == pair.generation;
+                   p->generation == pair.generation &&
+                   (p->lab_board == 0 || pair.lab_board == 0 || p->lab_board == pair.lab_board);
         });
         if (!again) { into.push_back(&pair); }
     }
     // A group's choice is a lab constant for targets nobody measured: fitted on two cards or more.
     const auto enough = [](const std::vector<const MeasuredPair*>& group) {
         std::set<std::string> cards;
-        for (const auto* p : group) { cards.insert(p->tune.key.gpu); }
+        for (const auto* p : group) { cards.insert(card_of(*p)); }
         return cards.size() >= kGroupCards;
     };
     const bool below  = target_bits < 4;
@@ -692,7 +694,7 @@ std::optional<LabelGain> label_gain(const std::vector<GroupMember>& members, con
         if (const auto o = over(m.table, label, families)) {
             out.each.push_back(*o);
             out.gain += o->fine_tune_speed;
-            cards.insert(m.pair->tune.key.gpu);
+            cards.insert(card_of(*m.pair));
         }
     }
     if (cards.size() < kGroupCards) { return std::nullopt; }
