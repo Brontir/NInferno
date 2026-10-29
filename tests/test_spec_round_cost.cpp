@@ -90,8 +90,10 @@ int main() {
         } catch (const std::runtime_error&) { refused = true; }
         expect(refused, "experts with none used are refused");
         expect(q9.round_facts->drafters.at("dflash").head.has_value() &&
-                   !q9.round_facts->drafters.at("mtp").head.has_value(),
-               "DFlash prices the target's head over the drafted rows apart; MTP within its pass");
+                   q9.round_facts->drafters.at("mtp").head.has_value() &&
+                   q9.round_facts->drafters.at("mtp").head->linears ==
+                       q9.round_facts->drafters.at("dflash").head->linears,
+               "the target's head apart: DFlash's over the drafted rows, MTP's per draft");
         // The linears: the target's matrices hold nearly all its parameters (norms, convolutions
         // and gates left), one output head among them, the one DFlash runs over the drafted rows.
         const auto& facts = *q9.round_facts;
