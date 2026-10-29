@@ -1362,7 +1362,9 @@ the BF16 peak comes out above 1 (Ada 1.09, gb20x 1.40): the fit form misses a te
 **The missing fact (server nsys, RTX 4070 Ti, the kit's flags; prompts of 962 / 1912 / 2862 tokens).**
 The server's `prompt_ms` equals the request's GPU window within 2.5 ms, so the request is GPU-bound.
 Against the prompt length it is a line: Qwen 9B 5880 tok/s plus 25 ms, Gemma 12B 3496 tok/s plus
-16 ms. The intercept is whole-model passes over a few tokens each:
+16 ms; the same requests give Qwen 12.5k tok/s plus about 30 ms on the RTX 4090 and 7.1k plus
+about 17 ms on the RTX 5070 Ti (Gemma's shortest request varies by 50 % between repeats there).
+The intercept is whole-model passes over a few tokens each:
 - Qwen 9B: the prefill splits at the generation prompt's execution boundaries
   (`inspect_prompt_layout`: the assistant turn's begin, its body, the reasoning open with thinking
   off), so after the prompt's chunks two more calls run at T = 3 and T = 4. Each reads every weight
