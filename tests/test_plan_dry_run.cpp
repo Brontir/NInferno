@@ -1294,6 +1294,47 @@ void test_kv_options() {
     check(ok_plan.rows.front().candidate.supported, "a pinned INT8 on Qwen plans");
 }
 
+// What a start right now would get (product::plan_now): the idle card's plan at the free memory
+// now; all of it free gives the idle plan, a share held elsewhere less context or no start.
+void test_plan_now() {
+    pr::PlanSourceFacts facts;
+    facts.model = qwen27b(9 * kGiB);
+    pr::DryRunInputs inputs;
+    inputs.device = card(24, 89);
+    inputs.gpu    = pr::gpu_key_of(inputs.device);
+    const pr::LaunchPlanOptions o = pr::launch_options({.max_concurrency = 1, .spec = "none"});
+    inputs.options = o.options;
+    inputs.ask     = o.ask;
+    const pr::PlannedSpeculation idle = pr::plan_model(facts, inputs);
+    check(idle.plan.fits, "the idle card fits");
+    const std::uint64_t all = idle.plan.free_bytes;
+    const auto served       = pr::choose_at_weights(facts, inputs, inputs.pins);
+    const pr::PlannedSpeculation at_all =
+        pr::plan_now(facts, inputs, served ? &*served : nullptr, inputs.pins, all);
+    check(at_all.plan.fits && at_all.plan.chosen()->rung.max_context ==
+                                  pr::plan_now(facts, inputs, served ? &*served : nullptr,
+                                               inputs.pins, all).plan.chosen()->rung.max_context,
+          "all of it free: a start's plan");
+    const nlohmann::json j = pr::plan_now_json(at_all, all);
+    check(j["fits_now"] == true && j["free_now_bytes"] == all && j["context_now"].get<std::uint32_t>() > 0,
+          "the now view as JSON");
+    const pr::PlannedSpeculation half =
+        pr::plan_now(facts, inputs, served ? &*served : nullptr, inputs.pins, all / 2 + 5 * kGiB);
+    check(!half.plan.fits || half.plan.chosen()->rung.max_context <=
+                                 at_all.plan.chosen()->rung.max_context,
+          "less free: no more context");
+    const pr::PlannedSpeculation none =
+        pr::plan_now(facts, inputs, served ? &*served : nullptr, inputs.pins, 4 * kGiB);
+    const nlohmann::json n = pr::plan_now_json(none, 4 * kGiB);
+    check(!none.plan.fits && n["fits_now"] == false && n["context_now"] == 0 &&
+              n["reason_code_now"] == "weights_too_big",
+          "the weights do not fit what is free now: said with the code");
+    // NVML's free bytes less the context a start creates first (the idle plan's rule).
+    check(pr::plan_free_now_of_nvml(rt::kPlanIdleContextBytes + kGiB) == kGiB &&
+              pr::plan_free_now_of_nvml(rt::kPlanIdleContextBytes / 2) == 0,
+          "the start's own context counted");
+}
+
 int main() {
     // The plan's mechanics on the published profiles: the registry without the lab's measured
     // pairs (test_spec_pairs tests those), so a campaign's new pairs move none of these checks
@@ -1316,6 +1357,7 @@ int main() {
     test_rows_at_choice();
     test_quant_option_one_rule();
     test_kv_options();
+    test_plan_now();
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

@@ -104,6 +104,10 @@ struct DryRunInputs {
     ChoicePins pins;
 };
 
+// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
+// --max-context-cap X: a row's launch_context; the free memory picks the rung under that ceiling).
+[[nodiscard]] DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context);
+
 // `inputs` for one quantization: its own subject when DryRunInputs::subject_of gives one.
 [[nodiscard]] DryRunInputs inputs_for(const DryRunInputs& inputs, const QuantListing& quant);
 

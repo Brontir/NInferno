@@ -131,6 +131,22 @@ struct PinRefusal {
 void refuse_unrun_pins(const PlanSourceFacts& facts, const DryRunInputs& inputs,
                        PlannedSpeculation& planned);
 
+// The free memory a start would find now from what NVML reports free outside any process: less
+// the CUDA context the start itself creates first (runtime::kPlanIdleContextBytes, the idle plan's
+// rule), as ninferno-serve's free_now is read after its context exists (cudaMemGetInfo).
+[[nodiscard]] std::uint64_t plan_free_now_of_nvml(std::uint64_t nvml_free_bytes) noexcept;
+// The plan a start right now would get: `inputs` (an idle card's plan inputs) with the device's
+// free memory now, at the storages and drafter the choice (`served`, nullptr: none) takes, the pins
+// a start refuses refused. The configuration choice itself stays the idle card's (choose_at_weights:
+// the KV codec, activations and drafter do not move with another process's share); the ladder's
+// rung and the context do. One code for ninferno-serve's plan without the weights and ninferno-ui.
+[[nodiscard]] PlannedSpeculation plan_now(const PlanSourceFacts& facts, const DryRunInputs& inputs,
+                                          const ServedChoice* served, const ChoicePins& pins,
+                                          std::uint64_t free_now_bytes);
+// plan_now as JSON: free_now_bytes, fits_now, context_now (each stream's, 0 when it does not
+// fit), rung_now and rungs, private_contexts_now, reason_now and reason_code_now.
+[[nodiscard]] nlohmann::json plan_now_json(const PlannedSpeculation& now, std::uint64_t free_now_bytes);
+
 // The inputs with the storages a start of the choice runs (StartAxes' KV codec, state, rings,
 // activations and widest chunk, the axes the user left automatic; not the drafter).
 [[nodiscard]] DryRunInputs inputs_at_choice(const DryRunInputs& inputs, const ServedChoice& served,

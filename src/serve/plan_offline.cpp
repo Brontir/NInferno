@@ -543,18 +543,21 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
     // The free memory now (another process may hold some): would the pick start right now?
     if (table && free_now && quants && quants->pick) {
         const product::QuantRow& row             = quants->rows[quants->pick->index];
-        product::DryRunInputs now                = product::inputs_for(planning.inputs, row.listing);
-        now.device.free_bytes                    = free_now;
+        // Under the row's ceiling when a start passes one (several streams, automatic context).
+        const product::DryRunInputs listed       = product::inputs_for(planning.inputs, row.listing);
+        const product::DryRunInputs at_row =
+            row.launch_context != 0 && listed.options.max_context_automatic
+                ? product::under_context_cap(listed, row.launch_context)
+                : listed;
         const product::PlanSourceFacts at_weights =
             product::with_weights(model.facts, row.weight_bytes, row.basis);
-        product::PlannedSpeculation at_now = product::plan_model(at_weights, now);
-        // The choice is made at the chosen row: there, the drafter it serves.
-        if (served && quants->chosen && *quants->chosen == quants->pick->index) {
-            at_now = product::plan_at_choice(at_weights, now, *served, pins_of(options),
-                                             std::move(at_now));
-        }
+        // The choice is made at the chosen row: there, its storages and the drafter it serves.
+        const bool at_choice = served && quants->chosen && *quants->chosen == quants->pick->index;
+        const product::PlannedSpeculation at_now = product::plan_now(
+            at_weights, at_row, at_choice ? &*served : nullptr, pins_of(options), *free_now);
         out.json["device"]["free_now_bytes"] = *free_now;
         out.json["device"]["fits_now"]       = at_now.plan.fits;
+        out.json["now"]                      = product::plan_now_json(at_now, *free_now);
         if (!at_now.plan.fits) {
             out.text += "now    | free now " +
                         std::to_string(*free_now / (std::uint64_t{1} << 20)) +

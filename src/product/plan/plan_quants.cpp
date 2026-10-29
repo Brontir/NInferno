@@ -113,16 +113,6 @@ DryRunInputs at_context(const DryRunInputs& inputs, std::uint32_t context) {
     return out;
 }
 
-// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
-// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
-// kept), the way a row's launch_context starts.
-DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
-    DryRunInputs out                  = inputs;
-    out.options.max_context           = context;
-    out.options.max_context_automatic = true;
-    return out;
-}
-
 bool own_plan(const runtime::DryRunPlan& plan) {
     const runtime::DryRunRung* chosen = plan.chosen();
     return chosen != nullptr && !chosen->rung.survival && plan.private_contexts();
@@ -637,8 +627,21 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             // streams under an automatic context: never a pool they silently share), as the rule's
             // pick does: its preliminary plan was made at the family's defaults.
             QuantRow& row = out.rows[*best];
-            if (ask.automatic && ask.concurrency > 1 && best_context != 0) {
-                row.launch_context = best_context;
+            // A plan that already gives each stream its own context needs no ceiling (one would
+            // only lower it); otherwise the row's plan is the one under the ceiling the launch
+            // passes, so that the plan shown, its now view and the start agree.
+            if (ask.automatic && ask.concurrency > 1 && best_context != 0 &&
+                !own_plan(row.planned.plan) && row.launch_context != best_context) {
+                row.launch_context          = best_context;
+                const PlanSourceFacts facts = with_weights(shape, row.weight_bytes, row.basis);
+                const DryRunInputs own      = inputs_for(inputs, row.listing);
+                const DryRunInputs capped   = under_context_cap(own, best_context);
+                if (const auto served = choose_at_weights(facts, own, pins, row.listing.quant)) {
+                    const DryRunInputs at = inputs_at_choice(capped, *served, pins);
+                    row.planned = plan_at_choice(facts, at, *served, pins, plan_model(facts, at));
+                } else {
+                    row.planned = plan_model(facts, capped);
+                }
             }
             row.fit.state       = runtime::QuantFitState::Own;
             row.fit.own_context = std::max(row.fit.own_context, best_context);
@@ -1122,6 +1125,16 @@ std::string render_dry_plan_text(const PlanSourceFacts& facts, const std::string
             << "\n";
     }
     return out.str();
+}
+
+// The inputs of a launch with its context capped at `context` and still automatic (ninferno-serve
+// --max-context-cap X: the free memory picks the rung under that ceiling, the step-down rungs
+// kept), the way a row's launch_context starts.
+DryRunInputs under_context_cap(const DryRunInputs& inputs, std::uint32_t context) {
+    DryRunInputs out                  = inputs;
+    out.options.max_context           = context;
+    out.options.max_context_automatic = true;
+    return out;
 }
 
 } // namespace ninferno::product
