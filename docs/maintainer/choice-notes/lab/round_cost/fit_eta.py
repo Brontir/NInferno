@@ -60,15 +60,43 @@ def cost(p, rows, kappa):
             + kappa * 2 * rows * (p["params"] + p.get("expert_params", 0) * act))
 
 
-def R(rf, mode, k, kappa):
+def config(c):
+    """(mode, k, through the proposal head) of a label: "mtp:3", "mtp:3+head"."""
+    label, _, suffix = c.partition("+")
+    mode, k = label.split(":")
+    return mode, int(k), suffix == "head"
+
+
+def head_rows(p, mode, through_head):
+    """The rows a pair's tune drafted `mode` through: its artifact's proposal rows for a "+head"
+    configuration (spec-tune drafts the others with the full head); 0 the full head."""
+    return int((p["tune"].get("proposal_rows") or {}).get(mode, 0)) if through_head else 0
+
+
+def head_over(head, rows):
+    """spec/round_cost.cpp head_over_rows: a GGUF head's rows in its own format, a checkpoint's
+    re-encoded Q4_G64_FP16 (4.25 bits a value)."""
+    groups = [g for g in head.get("linears", []) if g["head"]]
+    allr = sum(g["n"] for g in groups)
+    if not rows or not allr or rows >= allr:
+        return head
+    share = rows / allr
+    params = head["params"] * share
+    gguf = all(g["format"].startswith("gguf:") for g in groups)
+    return {"bytes": head["bytes"] * share if gguf else params * 4.25 / 8, "params": params}
+
+
+def R(rf, mode, k, kappa, rows=0):
     d = rf["drafters"].get(mode)
     if d is None:
         return None
     n = k if d["per_draft"] else 1
-    # The head apart: MTP's per draft over its rows, DFlash's once over the k drafts.
+    # The head apart: MTP's per draft over its rows, DFlash's once over the k drafts; a proposal
+    # head over `rows` of its rows.
     head = 0.0
     if "head" in d:
-        head = n * cost(d["head"], d["rows"], kappa) if d["per_draft"] else cost(d["head"], k, kappa)
+        h = head_over(d["head"], rows)
+        head = n * cost(h, d["rows"], kappa) if d["per_draft"] else cost(h, k, kappa)
     return (cost(rf["target"], k + 1, kappa) + n * cost(d, d["rows"], kappa) + head) / cost(rf["target"], 1, kappa)
 
 
@@ -100,9 +128,10 @@ def rows_of_registry():
             continue
         b = board(p["lab_board"])
         for c, v in measured(p).items():
-            mode, k = c.split(":")
+            mode, k, through = config(c)
             if mode in p["round_facts"]["drafters"]:
-                out.append(dict(p=p, gpu=p["tune"]["key"]["gpu"], board=b, mode=mode, k=int(k), meas=v,
+                out.append(dict(p=p, gpu=p["tune"]["key"]["gpu"], board=b, mode=mode, k=k, meas=v,
+                                rows=head_rows(p, mode, through),
                                 fam=family(p), q8="Q8_0" in p["target_repo"],
                                 moe=bool(p["round_facts"]["target"].get("experts"))))
     return out
@@ -116,7 +145,7 @@ def fit(rows):
     best = None
     for i in range(400):
         eta = 0.05 * 1.01 ** i
-        s = sum(math.log(r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], eta))) ** 2
+        s = sum(math.log(r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], eta), r["rows"])) ** 2
                 for r in rows)
         if best is None or s < best[0]:
             best = (s, eta)
@@ -157,7 +186,7 @@ def cross(rows):
         for name in names:
             eta = fit([r for r in rows if r["board"]["gen"] == g and fitted(r) and r["board"]["name"] != name])
             own = [r for r in rows if r["board"]["name"] == name and r["fam"] == "qwen" and not r["q8"] and r["k"] <= 7]
-            e = [r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], eta)) - 1 for r in own]
+            e = [r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], eta), r["rows"]) - 1 for r in own]
             print(f"| {g} | {name} | {eta:.3f} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
             # The plan for a target the generation's other card measured, priced for this card.
             for p in REG["pairs"]:
@@ -171,17 +200,18 @@ def cross(rows):
                     plain = {f: v[0] for f, v in own_s["plain"].items()}
                     best = {}
                     for c in own_s:
-                        if c == "plain" or int(c.split(":")[1]) > 7 or c not in other:
+                        if c == "plain" or config(c)[1] > 7 or c not in other:
                             continue
-                        mode, k = c.split(":")[0], int(c.split(":")[1])
-                        rp = R(p["round_facts"], mode, k, kappa(b, eta))
+                        mode, k, through = config(c)
+                        rp = R(p["round_facts"], mode, k, kappa(b, eta), head_rows(p, mode, through))
                         if rp is None:
                             continue
                         # spec/pairs.cpp round_cost_estimate: the other card's measured excess
                         # over its own R(facts) raises the estimate (only up, beyond 5 %).
                         qb = board(q["lab_board"]); qm = measured(q).get(c)
                         if qm:
-                            excess = qm / R(q["round_facts"], mode, k, kappa(qb, eta))
+                            excess = qm / R(q["round_facts"], mode, k, kappa(qb, eta),
+                                            head_rows(q, mode, through))
                             rp *= excess if excess > 1.05 else 1.0
                         pred = {f: plain[f] * rp / other[c][f][1] for f in plain if f in other[c]}
                         meas = {f: v[0] for f, v in own_s[c].items()}
@@ -217,7 +247,7 @@ def main():
     for r in rows:
         key = (r["board"]["name"], r["fam"] + (" MoE" if r["moe"] else "") + (" Q8_0" if r["q8"] else ""),
                "8-16" if r["k"] > 7 else "1-7")
-        grp[key].append(r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], etas[r["board"]["gen"]])) - 1)
+        grp[key].append(r["meas"] / R(r["p"]["round_facts"], r["mode"], r["k"], kappa(r["board"], etas[r["board"]["gen"]]), r["rows"]) - 1)
     for (name, fam, ks), e in sorted(grp.items()):
         print(f"| {name} | {fam} | {ks} | {len(e)} | {100 * sum(e) / len(e):+.1f} % | {100 * (sum(x * x for x in e) / len(e)) ** .5:.1f} % |")
     cross(rows)
@@ -237,12 +267,13 @@ def main():
             plain = json.load(open(os.path.join(d, "plain.json")))["summary"]
             for f in sorted(glob.glob(os.path.join(d, "*.json"))):
                 c = os.path.basename(f)[:-5].replace("_", ":")
-                if c == "plain" or int(c.split(":")[1]) > 7:
+                if c == "plain" or config(c)[1] > 7:
                     continue
                 run = json.load(open(f))
                 acc = sum(x["accepted"] for x in run["rows"])
                 rounds = sum(max(x["tokens"] - 1 - x["accepted"] - x.get("plain_steps", 0), 0) for x in run["rows"])
-                rp = R(pairs[key]["round_facts"], c.split(":")[0], int(c.split(":")[1]), kappa(b, eta))
+                mode, k, through = config(c)
+                rp = R(pairs[key]["round_facts"], mode, k, kappa(b, eta), head_rows(pairs[key], mode, through))
                 if not rounds or rp is None:
                     continue
                 E = (acc + rounds) / rounds
