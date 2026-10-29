@@ -172,7 +172,7 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     transferred                 = transferred || route == Route::Fp4;
     for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(moe, gen, base)) {
-            transferred = transferred || gen != generation;
+            transferred = transferred || gen != generation || row->cards < 2;
             return row->eta;
         }
     }
@@ -253,7 +253,7 @@ double attention_eta(std::string_view generation, bool& transferred) noexcept {
     for (const std::string_view gen : {generation, prefill_stand_in(generation)}) {
         for (const GenerationEta& row : kPrefillAttentionEta) {
             if (row.generation == gen) {
-                transferred = transferred || gen != generation;
+                transferred = transferred || gen != generation || row.cards < 2;
                 return row.eta;
             }
         }

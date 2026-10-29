@@ -278,6 +278,42 @@ void prefills_by_format(const json& fixture) {
               << " %)\n";
     check(n[1] == 42 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(n[0] == 42 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+
+    // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
+    // (the rate is per parameter), so the weight class alone differs.
+    const json& m             = fixture.at("models").at("Qwen3.5-9B-MTP");
+    const ch::ModelFacts mf   = model_at(m, "Q8_0");
+    const ch::QuantOption q8  = quant_of("Q8_0", m.at("quants").at("Q8_0"));
+    ch::QuantOption kq        = q8;
+    kq.weights                = ch::WeightClass::KQuant;
+    ch::Candidate c;
+    c.kv = KvCacheStorage::Int8Group64;
+    const auto at = [&](const char* card, const ch::QuantOption& q, const ch::ModelFacts& model,
+                        std::uint32_t rows) {
+        return ch::speed_of(model, card_of(fixture.at("cards").at(card)), q, c, rows, 4096, 2048);
+    };
+    const ch::Speed ada_q8 = at("RTX 4090", q8, mf, 1), ada_kq = at("RTX 4090", kq, mf, 1);
+    check(ada_q8.prefill < ada_kq.prefill * 0.8, "Ada: a Q8 prefill takes the tiles row (0.212 against 0.306)");
+    check(!ada_q8.transferred, "Ada: the tiles row rests on three cards");
+    // One card's rows price only their own boards: marked transferred.
+    check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
+              at("RTX 3060", q8, mf, 1).transferred,
+          "Turing / Ampere prefill rows of one card are transferred");
+    // A generation without a tiles row keeps its int8 row, transferred (Volta: Turing's).
+    ch::CardFacts volta = card_of(fixture.at("cards").at("RTX 2080 Ti"));
+    volta.major = 7;
+    volta.minor = 0;
+    const ch::Speed v8 = ch::speed_of(mf, volta, q8, c, 1, 4096, 2048);
+    const ch::Speed vk = ch::speed_of(mf, volta, kq, c, 1, 4096, 2048);
+    check(v8.transferred && std::abs(v8.prefill / vk.prefill - 1) < 1e-9,
+          "no tiles row: the int8 row, transferred");
+    // An MoE keeps its MoE row whatever its weights.
+    ch::ModelFacts moe        = mf;
+    moe.experts               = 128;
+    moe.experts_per_token     = 8;
+    moe.routed_expert_params  = mf.params * 0.8;
+    const ch::Speed m8 = at("RTX 4090", q8, moe, 1), mk = at("RTX 4090", kq, moe, 1);
+    check(std::abs(m8.prefill / mk.prefill - 1) < 1e-9, "an MoE's Q8 prefill on its MoE row");
 }
 
 struct Bench {

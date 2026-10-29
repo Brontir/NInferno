@@ -220,28 +220,31 @@ struct PrefillEta {
     std::string_view generation;
     Route route;
     double eta;
+    int cards; // lab cards it rests on: one card prices its own boards' estimate, marked transferred
 };
 
 // The linears' share of the route's peak (fit_prefill.py). The exact rows (BF16) were fitted on 9B
 // at a 22K prompt without the attention term; they keep that fit's time with attention now apart.
+// Turing's BF16 row kept that time against the attention's former 0.069: with the census's 0.160
+// below it prices an exact prefill too fast at long prompts until a 22K point refits it.
 inline constexpr PrefillEta kPrefillEta[] = {
     // Turing's int8 row: the nsys census of one Qwen3.5-9B Q4_K_M prefill on the RTX 2080 Ti
     // (2026-10-29, master 03afc418, 2K and 8K prompts: the step less its attention kernel, 0.182 /
-    // 0.187; one card). The facts behind it against Ada's 0.29 (the same census on the RTX 4070 Ti):
+    // 0.187; one card). The facts behind it against the RTX 4070 Ti's 0.29 (the same census there; Ada's row is 0.306):
     // ggml's MMQ runs the same launch on both (256 threads, 255 registers, 57.8 KB shared: one block,
     // 8 warps a SM) yet takes 1.9x the SM-clocks per operation on Turing: its dequantize and scale
     // math run on the CUDA cores, 64 FP32/INT32 lanes a SM on Turing against 128 on Ampere and Ada
     // (x0.5), and the 2080 Ti sustains ~1.9 GHz against its 1.545 GHz boost while Ada's run ~4 %
     // above theirs (x1.21): 0.175 from the facts, 0.185 measured. The former 0.241 (fitted at 22K
     // with attention apart) put a 2K prefill 27 % fast (the user kit, #210).
-    {false, "turing", Route::Int8, 0.185},
-    {false, "turing", Route::Bf16, 0.073}, // RTX 2080 Ti, 9B exact
-    {false, "ada", Route::Int8, 0.306},    // RTX 4060 Ti, 4070 Ti, 4090: 9B, 27B, Gemma 12B, 31B
-    {false, "ada", Route::Bf16, 0.317},    // RTX 4070 Ti, 9B exact
-    {false, "gb20x", Route::Int8, 0.324},  // RTX 5070 Ti, 5090: 9B, 27B, Gemma 12B
-    {false, "ga10x", Route::Int8, 0.363},  // RTX 3060: 9B, Gemma 12B (one card)
-    {true, "ada", Route::Int8, 0.210},     // RTX 4060 Ti, 4090: Gemma 26B-A4B, 35B-A3B
-    {true, "gb20x", Route::Int8, 0.205},   // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
+    {false, "turing", Route::Int8, 0.185, 1},
+    {false, "turing", Route::Bf16, 0.073, 1}, // RTX 2080 Ti, 9B exact (stale: see above)
+    {false, "ada", Route::Int8, 0.306, 3},    // RTX 4060 Ti, 4070 Ti, 4090: 9B, 27B, Gemma 12B, 31B
+    {false, "ada", Route::Bf16, 0.317, 1},    // RTX 4070 Ti, 9B exact
+    {false, "gb20x", Route::Int8, 0.324, 2},  // RTX 5070 Ti, 5090: 9B, 27B, Gemma 12B
+    {false, "ga10x", Route::Int8, 0.363, 1},  // RTX 3060: 9B, Gemma 12B (one card)
+    {true, "ada", Route::Int8, 0.210, 2},     // RTX 4060 Ti, 4090: Gemma 26B-A4B, 35B-A3B
+    {true, "gb20x", Route::Int8, 0.205, 2},   // RTX 5070 Ti, 5090: Gemma 26B-A4B, 35B-A3B
 };
 
 // A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
@@ -269,13 +272,14 @@ inline constexpr TilesEta kPrefillTilesEta[] = {
 struct GenerationEta {
     std::string_view generation;
     double eta;
+    int cards; // as PrefillEta::cards
 };
 
 // Turing's row: the census of the RTX 2080 Ti's prefill (int8_kv_tiled_mma_kernel: 111 ms of a 6.8K
 // prompt, 11.5 ms of a 2K one: 0.167 / 0.143; one card); the former 0.069 was fitted together with
 // the int8 row at 22K and priced the attention 2.4x slow while the linears ran fast.
 inline constexpr GenerationEta kPrefillAttentionEta[] = {
-    {"ada", 0.742}, {"gb20x", 0.740}, {"turing", 0.160}, {"ga10x", 0.497}};
+    {"ada", 0.742, 3}, {"gb20x", 0.740, 2}, {"turing", 0.160, 1}, {"ga10x", 0.497, 1}};
 
 // What the exact route's compute adds to a decode step beyond the fast route's: its rows' flops
 // (C 2 P) at this share of the int8 tensor peak, its FP32 state's bytes apart (run_sw.sh, 9B at a
