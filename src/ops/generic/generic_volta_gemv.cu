@@ -195,9 +195,15 @@ __global__ __launch_bounds__(256) void volta_kquant_gemv_kernel(GemmArgs a) {
 #pragma unroll
             for (int n = 0; n < NT; ++n) {
                 sx[n] = 0.0F;
+                // Only a BF16 row ends inside a step (K a multiple of 8); a token past the call's
+                // is never read.
+                if constexpr (kDirectOf<Format>) {
 #pragma unroll
-                for (int i = 0; i < 8; ++i) xv[n][i] = 0.0F;
-                if (n >= a.tokens || k0 >= a.k) continue;
+                    for (int i = 0; i < 8; ++i) xv[n][i] = 0.0F;
+                    if (n >= a.tokens || k0 >= a.k) continue;
+                } else {
+                    if (n >= a.tokens) break;
+                }
                 const uint4 w4 =
                     *reinterpret_cast<const uint4*>(x + static_cast<std::int64_t>(n) * a.ldx + k0);
                 const unsigned xw[4] = {w4.x, w4.y, w4.z, w4.w};
