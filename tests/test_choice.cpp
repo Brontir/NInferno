@@ -193,15 +193,15 @@ void decodes_from_facts(const json& fixture) {
     }
     const double rms = std::sqrt(sq / n);
     std::cout << "decode from facts, " << n << " points: rms " << rms * 100 << " %, worst " << worst * 100 << " %\n";
-    check(n == 84 && rms < 0.05, "decode from facts within the model's spread");
+    check(n == 84 && rms < 0.04, "decode from facts within the model's spread");
     // The generations whose rows rest on their own census: within 10 %; Turing (one card) within its
-    // stated rows' 6 % rms; Ampere on Ada's rows (transferred: its census pending) within 10 % rms.
+    // stated rows' 6 % rms; Ampere (one card, its own census) within 3 %.
     const auto gen_rms = [&](const char* g) {
         const auto& v = by_generation[g];
         return v.second > 0 ? std::sqrt(v.first / v.second) : 1.0;
     };
     check(by_generation["turing"].second == 12 && gen_rms("turing") < 0.06, "Turing's estimate within its rows' error");
-    check(by_generation["ga10x"].second == 12 && gen_rms("ga10x") < 0.10, "Ampere on Ada's rows (transferred)");
+    check(by_generation["ga10x"].second == 12 && gen_rms("ga10x") < 0.03, "Ampere's estimate within its rows' error");
     for (const ch::PredictionError& e : ch::kDecodePredictionError) {
         const auto& g       = by_generation[std::string(e.generation)];
         const double g_rms  = g.second > 0 ? std::sqrt(g.first / g.second) : 0;
@@ -232,7 +232,7 @@ void counts_the_kernels(const json& census) {
         }
         ++n;
     }
-    check(n >= 50, "the census rows");
+    check(n >= 62, "the census rows");
     // The weight class from formats, else the label.
     check(ch::weight_class_of({"ggml_q4_k", "ggml_q6_k", "q8_g32_fp16", "bf16"}, "") == ch::WeightClass::KQuant,
           "a K-quant mix with Q8_0 and 16-bit tensors");

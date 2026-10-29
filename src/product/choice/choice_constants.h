@@ -143,8 +143,8 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // weights are read during the norm) but not the epilogues', and its small kernels carry the prefetch.
 // Turing: the projections 4.2-8.3 us, one card. A row of one card prices only its own boards'
 // estimate (marked transferred; no decision reads it: the choice prices on a reference card's
-// generation; DECISIONS 54); a generation without a row takes Ada's (transferred). Ampere's census
-// is pending: its estimates take Ada's rows, transferred.
+// generation; DECISIONS 54); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
+// one card): its projections 3.1-5.5 us, no PDL, no Ada L2.
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
@@ -154,6 +154,7 @@ struct KernelCost {
 inline constexpr KernelCost kKernelCost[] = {
     {"ada", 2.40e-6, 1.96e-6, 3},    // RTX 4060 Ti, 4070 Ti, 4090
     {"gb20x", 1.87e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
+    {"ga10x", 4.55e-6, 2.61e-6, 1},  // RTX 3060
     {"turing", 8.30e-6, 5.09e-6, 1}, // RTX 2080 Ti
 };
 
@@ -177,6 +178,9 @@ inline constexpr RowsEta kRowsEta[] = {
     {"gb20x", WeightClass::KQuant, 2, 0.922, 2},  {"gb20x", WeightClass::KQuant, 4, 0.795, 2},
     {"gb20x", WeightClass::KQuant, 8, 0.732, 2},  {"gb20x", WeightClass::Q8, 2, 0.951, 2},
     {"gb20x", WeightClass::Q8, 4, 0.911, 2},      {"gb20x", WeightClass::Q8, 8, 0.867, 2},
+    {"ga10x", WeightClass::KQuant, 2, 0.895, 1},  {"ga10x", WeightClass::KQuant, 4, 0.774, 1},
+    {"ga10x", WeightClass::KQuant, 8, 0.744, 1},  {"ga10x", WeightClass::Q8, 2, 0.938, 1},
+    {"ga10x", WeightClass::Q8, 4, 0.906, 1},      {"ga10x", WeightClass::Q8, 8, 0.804, 1},
     {"turing", WeightClass::KQuant, 2, 0.863, 1}, {"turing", WeightClass::KQuant, 4, 0.712, 1},
     {"turing", WeightClass::KQuant, 8, 0.628, 1}, {"turing", WeightClass::Q8, 2, 0.961, 1},
     {"turing", WeightClass::Q8, 4, 0.898, 1},     {"turing", WeightClass::Q8, 8, 0.687, 1},
