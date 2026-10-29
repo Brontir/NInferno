@@ -1278,7 +1278,7 @@ attempt 3, for reference).
   it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
   RTX 5070 Ti (instances 0.67..1.52), 0.99 on the RTX 5090 (0.72..1.29), 1.01 on the RTX 4090
   (0.85..1.20) and 1.00 on the RTX 2080 Ti (0.80..1.24): the same re-roll. Measured with `ninferno_r8_schedule_bench --shapes
-  data/vec/raw_split.shapes --tokens 2,3,4,5,6,7,8 --samples 7 --launches 30 --rmma 1`, the vector route's
+  docs/maintainer/choice-notes/data/vec/raw_split.shapes --tokens 2,3,4,5,6,7,8 --samples 7 --launches 30 --rmma 1`, the vector route's
   time at T = 2..8 on the 44 of the file's 46 shapes the vector kernel takes (each of the 18 ggml
   formats at 4096x4096 store and 12288x4096 SwiGLU, Q6_K add 3840x15360 / 5120x17408 / 4096x12288 /
   2048x6144 / 4096x4096, Q4_K add 3840x15360 / 5120x17408, Q5_K add 5120x17408): 308 instances,
