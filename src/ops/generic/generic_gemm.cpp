@@ -552,8 +552,148 @@ std::int32_t vec_rule_max_tokens() {
     return widest > ggml_mmq::kVecMaxColumns ? widest : kVecRuleMaxTokens;
 }
 
-bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+// The widths of the band rule above (the dense tuner's R8 domain, r8_tunable, keeps it).
+bool vec_band(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
+}
+
+// Warp instructions a KB of weight payload: the vector kernel's a + b T at T columns (its dp4a and
+// activation loads grow with T, its decode does not) and the one-tile register MMA's (flat: its
+// MMAs take eight columns at any T), store / AddResidual and SwiGLU. Counted, not fitted: ncu
+// smsp__inst_executed.sum over the payload bytes, 4096x4096 store and 12288x4096 SwiGLU at T = 2,
+// 4 and 8 (a and b from T = 2 and 8; T = 4 lies on the line within 3 %), the register MMA the mean
+// of its w1x4 and w1x8 kernels. sm_8x: RTX 3060 (sm_86; the RTX 4090's sm_89 kernels count the
+// same to 1 %); sm_12x: RTX 5070 Ti (sm_120, the RTX 5090's alike); sm_75: RTX 2080 Ti, whose BF16
+// MMA is emulated (its register MMA runs more instructions a byte than sm_8x's).
+struct VerifyCount {
+    double vec_a, vec_b, rmma;
+};
+struct VerifyCounts {
+    QType qtype;
+    VerifyCount store, swiglu;
+};
+constexpr VerifyCounts kVerifyCountsSm8x[] = {
+    {QType::GGML_Q4_K, {111, 59.0, 293}, {89, 51.5, 278}},
+    {QType::GGML_Q5_K, {122, 48.5, 278}, {121, 42.4, 267}},
+    {QType::GGML_Q6_K, {198, 37.4, 212}, {184, 34.2, 206}},
+    {QType::GGML_Q2_K, {183, 113.4, 666}, {169, 101.9, 597}},
+    {QType::GGML_Q3_K, {326, 68.3, 469}, {282, 60.6, 446}},
+    {QType::GGML_IQ4_XS, {216, 54.8, 419}, {202, 49.4, 399}},
+    {QType::GGML_IQ3_XXS, {319, 78.4, 711}, {331, 66.2, 676}},
+    {QType::GGML_IQ3_S, {308, 66.2, 587}, {298, 56.8, 549}},
+    {QType::GGML_IQ2_XXS, {440, 109.1, 1053}, {413, 97.2, 988}},
+    {QType::GGML_IQ2_XS, {379, 109.8, 1004}, {405, 90.7, 930}},
+    {QType::GGML_IQ2_S, {348, 98.7, 925}, {339, 81.7, 862}},
+    {QType::GGML_IQ1_S, {360, 155.1, 1107}, {353, 131.6, 998}},
+    {QType::GGML_IQ1_M, {423, 215.5, 1217}, {416, 190.0, 1115}},
+    {QType::GGML_Q4_0, {208, 52.1, 219}, {213, 43.7, 192}},
+    {QType::GGML_Q4_1, {54, 50.5, 252}, {56, 42.5, 208}},
+    {QType::GGML_Q5_0, {191, 43.3, 239}, {188, 36.4, 213}},
+    {QType::GGML_Q5_1, {89, 42.8, 264}, {90, 36.8, 233}},
+    {QType::GGML_IQ4_NL, {159, 53.3, 350}, {161, 44.9, 321}},
+};
+constexpr VerifyCounts kVerifyCountsSm12x[] = {
+    {QType::GGML_Q4_K, {104, 51.7, 279}, {91, 49.7, 262}},
+    {QType::GGML_Q5_K, {127, 41.9, 258}, {104, 42.8, 249}},
+    {QType::GGML_Q6_K, {176, 34.9, 210}, {167, 33.9, 187}},
+    {QType::GGML_Q2_K, {161, 109.4, 638}, {148, 101.1, 577}},
+    {QType::GGML_Q3_K, {262, 70.3, 455}, {224, 61.4, 428}},
+    {QType::GGML_IQ4_XS, {210, 52.1, 430}, {194, 50.3, 403}},
+    {QType::GGML_IQ3_XXS, {327, 69.4, 739}, {305, 65.2, 693}},
+    {QType::GGML_IQ3_S, {330, 61.6, 596}, {300, 56.7, 557}},
+    {QType::GGML_IQ2_XXS, {434, 103.1, 1076}, {400, 94.7, 1022}},
+    {QType::GGML_IQ2_XS, {413, 98.5, 1012}, {368, 91.5, 943}},
+    {QType::GGML_IQ2_S, {408, 86.7, 939}, {336, 82.4, 871}},
+    {QType::GGML_IQ1_S, {422, 139.9, 1125}, {326, 132.6, 1012}},
+    {QType::GGML_IQ1_M, {460, 194.2, 1170}, {386, 185.9, 1075}},
+    {QType::GGML_Q4_0, {181, 47.6, 215}, {174, 43.3, 181}},
+    {QType::GGML_Q4_1, {48, 47.2, 232}, {41, 43.2, 193}},
+    {QType::GGML_Q5_0, {178, 39.2, 233}, {171, 34.9, 212}},
+    {QType::GGML_Q5_1, {91, 39.6, 244}, {80, 35.6, 223}},
+    {QType::GGML_IQ4_NL, {171, 47.3, 367}, {163, 43.2, 331}},
+};
+constexpr VerifyCounts kVerifyCountsSm75[] = {
+    {QType::GGML_Q4_K, {101, 62.8, 465}, {86, 53.9, 352}},
+    {QType::GGML_Q5_K, {129, 50.4, 415}, {110, 44.5, 318}},
+    {QType::GGML_Q6_K, {173, 41.8, 329}, {181, 35.8, 257}},
+    {QType::GGML_Q2_K, {152, 130.5, 962}, {162, 106.2, 750}},
+    {QType::GGML_Q3_K, {283, 81.8, 684}, {275, 67.0, 532}},
+    {QType::GGML_IQ4_XS, {205, 60.3, 920}, {210, 50.8, 891}},
+    {QType::GGML_IQ3_XXS, {322, 87.0, 952}, {335, 66.8, 798}},
+    {QType::GGML_IQ3_S, {310, 73.5, 815}, {289, 61.8, 669}},
+    {QType::GGML_IQ2_XXS, {418, 124.5, 1401}, {395, 104.4, 1173}},
+    {QType::GGML_IQ2_XS, {400, 119.1, 1333}, {406, 93.1, 1099}},
+    {QType::GGML_IQ2_S, {369, 104.3, 1208}, {325, 88.7, 1013}},
+    {QType::GGML_IQ1_S, {394, 169.1, 2478}, {328, 145.3, 2348}},
+    {QType::GGML_IQ1_M, {442, 225.4, 2445}, {421, 196.8, 2323}},
+    {QType::GGML_Q4_0, {206, 57.9, 383}, {197, 49.7, 277}},
+    {QType::GGML_Q4_1, {51, 56.3, 405}, {47, 46.5, 280}},
+    {QType::GGML_Q5_0, {188, 47.2, 373}, {188, 39.5, 283}},
+    {QType::GGML_Q5_1, {88, 47.3, 391}, {85, 38.4, 292}},
+    {QType::GGML_IQ4_NL, {171, 56.8, 828}, {152, 50.3, 794}},
+};
+
+std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilogue epilogue) {
+    std::span<const VerifyCounts> table;
+    if (d.major == 7 && d.minor == 5) {
+        table = kVerifyCountsSm75;
+    } else if (d.major == 8) {
+        table = kVerifyCountsSm8x;
+    } else if (d.major == 12) {
+        table = kVerifyCountsSm12x;
+    }
+    for (const auto& row : table) {
+        if (row.qtype == qtype) return epilogue == Epilogue::SwiGlu ? row.swiglu : row.store;
+    }
+    return std::nullopt;
+}
+
+// A verify call's time on the vector kernel or on the one-tile register MMA (T = 2..8, the ggml
+// formats both read): the payload's DRAM time tb and its warp instructions' issue time ti (four
+// schedulers a SM issuing one instruction each a clock: every SM from Volta on), combined as
+// sqrt(tb^2 + (ti / u)^2), plus a launch each (the vector kernel two: its activation quantizer).
+// tb takes kVerifyDramFraction of the bandwidth: the best one-tile calls of 14 shapes on seven
+// boards streamed 89-95 % of it. Of the issue rate a call reaches kVerifyIssueFraction, u: the
+// vector kernel on the RTX 3060 (the fewest issue slots a byte of the seven boards) reached 63 %.
+// The exponent and u are what the counts and the bandwidth do not give: the choice's loss over the
+// better of the two kernels (19 formats, 13 shapes, seven boards, T = 2..8) is flat in u = 0.4..0.8
+// and the exponent 1.5..3 (1.026..1.027). kVerifyLaunchSeconds: a launch on a back-to-back stream
+// (RTX 4090 decode graph, without PDL: 1.5 us). nullopt where the device has no roofline or its
+// instruction set no counts.
+inline constexpr double kVerifyDramFraction  = 0.93;
+inline constexpr double kVerifyIssueFraction = 0.6;
+inline constexpr double kVerifyLaunchSeconds = 1.5e-6;
+
+std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
+                                           Epilogue epilogue, double payload_bytes,
+                                           std::int32_t tokens) {
+    if (d.sms <= 0 || !d.facts.has_roofline() || payload_bytes <= 0) return std::nullopt;
+    const auto c = verify_count(d, qtype, epilogue);
+    if (!c) return std::nullopt;
+    const double per_kb = vector ? c->vec_a + c->vec_b * tokens : c->rmma;
+    const double tb     = payload_bytes / (kVerifyDramFraction * d.facts.dram_bytes_per_s());
+    const double ti =
+        per_kb * payload_bytes / 1024.0 / (4.0 * d.sms * d.facts.reference_clock_hz());
+    const double ui = ti / kVerifyIssueFraction;
+    return std::sqrt(tb * tb + ui * ui) + (vector ? 2.0 : 1.0) * kVerifyLaunchSeconds;
+}
+
+// The verify widths the vector kernel takes: with tensor mma.sync, the widths 2..8 at which
+// verify_route_seconds prices it under the one-tile register MMA (where a board or format has no
+// price, the band rule: T <= 4); without (Volta), vec_rule_max_tokens' widths.
+bool vec_rule(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    if (tokens < 2 || !vec_call(w, problem.policy, tokens)) return false;
+    const std::int32_t widest = vec_max_tokens();
+    if (widest > ggml_mmq::kVecMaxColumns) return tokens <= widest;
+    try {
+        const auto& d      = device_class();
+        const double bytes = static_cast<double>(w.payload_bytes);
+        const auto vec  = verify_route_seconds(d, true, problem.qtype, problem.epilogue, bytes, tokens);
+        const auto rmma = verify_route_seconds(d, false, problem.qtype, problem.epilogue, bytes, tokens);
+        if (vec && rmma) return *vec < *rmma;
+    } catch (const std::exception&) {
+    }
+    return tokens <= kVecRuleMaxTokens;
 }
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
@@ -2649,7 +2789,7 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
     // 174 tok/s), whose L2-cold timings of one call at a time miss the stream of a verify step. The
     // tuner still replaces it where a route beats it by its margin (Muse Glimmer 30B Q4_K_M: the
     // rule alone lost C1 by 19 %).
-    if (vec_rule(weight, problem.policy, tokens)) return Route{Family::GgmlVec, 0};
+    if (vec_rule(problem, weight, tokens)) return Route{Family::GgmlVec, 0};
     // From 17 tokens outside the prefill profile the cost model's route of either activation class
     // (cost_route, a8_candidates); the rules below where the device reports no clocks.
     if (!prefill_band && tokens >= 17 && problem.qtype != QType::NVFP4) {
@@ -2844,7 +2984,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
     // ggml's matrix kernel stands in for the heuristic only: a route table's or the dense tuner's
     // A16 schedule keeps its shape.
     const bool a8_wide = tokens >= 17 && allows_w4a8(weight, problem.policy);
-    const bool vec     = vec_rule(weight, problem.policy, tokens);
+    const bool vec     = vec_rule(problem, weight, tokens);
     const bool a8      = a8_wide || vec || r8_call(weight, problem.policy, tokens) ||
                     mmq_verify_rule(weight, problem.policy, problem.n, tokens);
     const auto tuned   = a8 ? std::optional<Route>{} : table_route(problem, tokens, prefill);
@@ -2891,7 +3031,7 @@ bool r8_verify_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens
 
 bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return r8_verify_tunable(w, policy, tokens) ||
-           (vec_rule(w, policy, tokens) && r8_call(w, policy, tokens));
+           (vec_band(w, policy, tokens) && r8_call(w, policy, tokens));
 }
 
 bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int32_t tokens) {
