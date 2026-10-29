@@ -518,7 +518,7 @@ bool vec_admits(const Weight& w, LinearPolicy policy) {
 // register-MMA tiles run on FP32 FMAs, so a call of 9..16 tokens (a deep speculative verify) runs
 // the vector kernel eight columns at a time (V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the
 // emulated tiles 1.0..2.6 ms a call, 67 % of the run); Q4_K / Q5_K / Q6_K / Q8 take Volta's HMMA
-// route from five tokens instead (volta_hmma_route).
+// route from five tokens instead, and some K-quant calls from two (volta_hmma_route).
 std::int32_t vec_max_tokens() {
     try {
         const auto& f = device_class().features;
@@ -541,9 +541,9 @@ bool vec_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // (A100: x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 x1.03).
 // Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs, so the vector kernel takes
 // every width it reads (vec_max_tokens) but where Volta's HMMA route takes the call (Q4_K / Q5_K /
-// Q6_K / Q8 from five tokens, volta_hmma_route): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at
-// T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
-// tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
+// Q6_K / Q8 from five tokens, some K-quant calls from two: volta_hmma_route): V100, Qwen3.8 27B
+// UD-Q4_K_XL, the register MMA at T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel
+// at T = 4; C8 aggregate 37.3 tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 
 std::int32_t vec_rule_max_tokens() {
@@ -2869,8 +2869,38 @@ namespace {
 // leaves at least half of its eight columns empty while the int8 kernels' per-column work is still
 // small, and from five tokens the HMMA kernel takes over, where those cards move to their MMA.
 // One card (GV100) checked the band, Qwen3.5-9B shapes: at T = 5..8 the HMMA kernel took 0.52..0.91
-// of the vector kernel's time, except Q4_K gate/up at T = 5 (140 against 128 us); at T = 2..4 the
-// vector kernel was up to 1.4x faster.
+// of the vector kernel's time, except Q4_K gate/up at T = 5 (140 against 128 us).
+//
+// At T = 2..4 the int8 kernels keep the call but for two cases (volta_hmma_narrow). The HMMA
+// kernel's time does not move with T up to eight (one n8 tile: GV100, 9B and 27B shapes, T = 2..5
+// within 5 %), while the vector kernel's grows with T: per lane and 32-value slice it loads each
+// column's activation (two 16-byte loads and its scale), and on Volta it waits on the L1's
+// global-load queue (ncu, Q6_K 4096x12288 add T = 4: lg_throttle 5.7 and long scoreboard 5.5 warps
+// per issue, against 0.02 and 0.95 for the HMMA kernel). Q6_K is the extreme: a lane reads its
+// own superblock at a 210-byte stride, so the vector kernel touches 16 L1 sectors for each sector
+// the weight brings in at every width (22.5 M against 1.4 M at T = 2), where the HMMA kernel's
+// loads are coalesced (3.1 M). Hence:
+//  - Q6_K outside SwiGLU at every width from K = 5120 (20 superblocks a row): at K = 4096 the HMMA
+//    kernel's fixed work a CTA (the first superblock's loads and staging, the epilogue) is a
+//    larger part of a row's 16 superblocks (8192x4096 store: 55 % of the DRAM rate, against
+//    69-77 % at K >= 5120) and the vector kernel stayed ahead;
+//  - Q4_K / Q5_K outside SwiGLU at four tokens, where the vector kernel's fourth column costs
+//    most (Q4_K 8192x4096 store: 41.6 us at T = 3, 53.3 at T = 4; HMMA 43.4).
+// Gate/up (SwiGLU) stays on the int8 kernels: the HMMA kernel reads gate and up rows as two sets
+// (its loop 1004 instructions a superblock of eight gate and eight up rows) and lost at every
+// width (9B 12288x4096 T = 4: 124.4 against 106.9 us). Q8 G32 keeps R8 (within 7 % of the HMMA
+// kernel both ways).
+// Measured as in a model step (ninferno_r8_schedule_bench with eleven other kernels between
+// launches: their code through the instruction caches, a fresh 4096-row Q4_K weight through the
+// L2), 13 problems x T = 2..4 of the 9B and 27B shapes: the rule never slower than the vector
+// kernel, -280.7 us in sum where the best route of each point gives -357.1.
+bool volta_hmma_narrow(const Problem& problem, std::int32_t tokens) {
+    if (problem.epilogue == Epilogue::SwiGlu) return false;
+    if (problem.qtype == QType::GGML_Q6_K) return problem.k >= 5120;
+    return tokens == kVecRuleMaxTokens &&
+           (problem.qtype == QType::GGML_Q4_K || problem.qtype == QType::GGML_Q5_K);
+}
+
 std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
                                       std::int32_t tokens) {
     if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
@@ -2878,7 +2908,7 @@ std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weig
         !volta_hmma_codec(codec_of(weight))) {
         return std::nullopt;
     }
-    if (tokens <= kVecRuleMaxTokens &&
+    if (tokens <= kVecRuleMaxTokens && !volta_hmma_narrow(problem, tokens) &&
         (vec_call(weight, problem.policy, tokens) || r8_call(weight, problem.policy, tokens))) {
         return std::nullopt;
     }
