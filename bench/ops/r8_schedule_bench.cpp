@@ -187,6 +187,13 @@ void run_problem(const Problem& p, int samples, int launches, std::size_t l2_byt
     if (tokens > 1) offer(generic::Route{generic::Family::GgmlVec, 0});
     offer(picked);
     offer(picked16);
+    // At prefill widths the W4A8 tiles and ggml's matrix kernel, whichever the device gate picks.
+    if (tokens >= 17) {
+        for (int i = 0; i < generic::w4a8_schedule_count(); ++i) {
+            offer(generic::Route{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)});
+        }
+        offer(generic::Route{generic::Family::GgmlMmq, 0});
+    }
     if (g_rmma && tokens <= 8) {
         for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
             if (generic::rmma_schedule_launchable(i) &&
