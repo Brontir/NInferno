@@ -1103,3 +1103,64 @@ Plan to remove it:
 3. Drop those entries.
 4. A/B-measure what is left on its card. Turn it into a rule or drop it.
 5. Once the file is empty, remove the read path (`generic_tune.cpp` `load_cache_locked` under Off).
+
+## 56. Blackwell's eta from two lab cards: gb20x 0.165 (28.10)
+
+53 left Blackwell without a small-T eta: one lab card (RTX 5070 Ti) had registry pairs. The RTX 5090
+(gb202, 170 SMs, 1792 GB/s) now has pairs of the same targets as the 5070 Ti (gb203, 70 SMs, 896
+GB/s): Qwen3.5-9B GGUF and MTP GGUF Q4_K_M, Gemma 4 12B Q4_K_M, gpt-oss-20b MXFP4 (spec-tune at
+325f95ff, the built-in corpus, the pairs' usual settings). The 5070 Ti got the 9B and Gemma 4 12B
+Q4_K_M pairs the same way. Registry 173 -> 180.
+
+**Hold-out first (principle: measurements verify).** `fit_eta.py` item 3 fits each card's eta on
+the generation's other card only and predicts the held-out card's rounds (Qwen, k <= 7):
+
+| held-out card | eta of the other card | R measured / R facts | rms |
+|---|---|---|---|
+| RTX 5070 Ti | 0.184 (5090) | +4.3 % | 8.4 % |
+| RTX 5090 | 0.162 (5070 Ti) | +1.4 % | 4.4 % |
+| (Ada, for scale: 4070 Ti / 4090) | 0.144 / 0.149 | +0.1 % / +0.2 % | 3.7 % / 2.0 % |
+
+The plan's pick for each target the other card measured (its tokens a round, this card's R from
+facts, the mix weights, the conservative raise) against this card's measured best (k <= 7):
+9B and 9B MTP dflash:7 = dflash:7 on both cards; Gemma 4 12B mtp:5 = mtp:5 on the 5090, mtp:4
+against mtp:5 on the 5070 Ti (-1.5 %); gpt-oss dflash:5 against dflash:7 on the 5090 (equal,
+x1.22), dflash:3 against dflash:5 on the 5070 Ti (-4 %, its MoE rounds are dearer than their
+facts on both cards and are raised from the other card's measurement).
+
+**Decision.** The row `{"gb20x", 0.165, 2}` (both cards' rounds fitted together). No fact formula
+for eta exists yet (54); the two cards' own fits differ (0.162 / 0.184, Ada's 0.144 / 0.149), so
+the row is a two-card constant under AGENTS.md, not a derived one. What it buys: a Blackwell card
+or target without its own pair is priced by the facts instead of taking the 5070 Ti's raw
+measurement.
+
+**hard50 (no flags, the branch against master; explicit depths for the measured best).** Served =
+measured best everywhere, to within 1 %:
+
+| card | model | served on this branch | tok/s | measured best | tok/s | predicted x / measured x of the served |
+|---|---|---|---|---|---|---|
+| RTX 5090 | 9B Q4_K_M | dflash:7 | 714 | dflash:7 | 713 | 2.65 / 2.71 |
+| RTX 5090 | 9B MTP Q4_K_M | dflash:7 | 738 | dflash:7 | 738 | 2.66 / 2.76 |
+| RTX 5090 | Gemma 4 12B Q4_K_M | mtp:5 | 564 | mtp:5 | 564 | 3.02 / 3.04 |
+| RTX 5090 | gpt-oss-20b | dflash:5 | 754 | dflash:7 | 761 | 1.77 / 1.64 |
+| RTX 5090 | Qwen3.8-27B UD-Q4_K_S (no 5090 pair: facts) | mtp:3 (non-thinking; mtp:5 thinking) | 226 | mtp:5 | 236 | 2.39 / 2.41 |
+| RTX 5070 Ti | 9B Q4_K_M | dflash:7 | 431 | dflash:7 | 431 | 2.61 / 2.91 |
+| RTX 5070 Ti | 9B MTP Q4_K_M | dflash:7 | 441 | dflash:7 | 441 | 2.61 / 2.94 |
+| RTX 5070 Ti | Gemma 4 12B Q4_K_M | mtp:5 | 325 | mtp:5 | 325 | 2.96 / 3.13 |
+| RTX 5070 Ti | gpt-oss-20b | dflash:7 / 5 by thinking | 429 | dflash:7 | 434 | 1.75 / 1.59 |
+
+Predicted = the run's own tokens a round / R(facts, eta 0.165). The 27B on the 5090 is the real
+hold-out (only the 5070 Ti measured it): R from facts is within -1..+2 % at every depth (mtp:2..5
+x2.14/2.39/2.49/2.51 predicted, x2.10/2.41/2.45/2.52 measured). Its non-thinking pick (mtp:3,
+-4 % against mtp:5 on hard50) comes from the corpus' acceptance, not R: hard50's math rounds
+accept more than the corpus' prose (50). Master served the same (the 5070 Ti's profile).
+
+**Mismatches (the missing facts, open).**
+1. The 5070 Ti's 9B DFlash rounds of 6 and 8 verify rows cost 7-12 % less than the facts (its 9B
+   alone fits eta 0.29); the 5090's agree (-4..+6 %). On both cards dflash:5 and dflash:7 rounds
+   cost no more than dflash:3 (5070 Ti 1.67-1.73, 5090 1.70-1.76 plain steps): the verify of 4
+   rows is dearer per row than of 6-8, a route fact (the T=4 verify kernel), not a byte fact. The
+   plan's speedup on the 5070 Ti is predicted low (x1.89 against x2.16 for the 9B MTP pair held
+   out; the test bounds it at 15 %), its pick is right.
+2. gpt-oss rounds are 6-10 % dearer than their facts on both cards (MoE routing: 53's +12.5 %).
+3. MTP at depth 3 is 7-9 % dearer than its facts on both cards (the 9B, Gemma 4 12B).

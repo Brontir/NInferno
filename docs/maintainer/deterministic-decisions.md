@@ -33,10 +33,9 @@ This page states the rule and its target. The engine does not meet all of it yet
   the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
 - a speculation round's cost from facts (`spec/round_cost.h`) has its small-T tensor share (eta)
-  only for Ada, fitted on two lab cards; Blackwell (RTX 5070 Ti; the 5090 has no registry pair
-  yet), Ampere (RTX 3060), Turing (RTX 2080 Ti) and Volta (Quadro GV100) each rest on one lab
-  card, so their cards keep the lab-measured profiles until a second card of the generation
-  measures registry pairs (choice-notes DECISIONS 53);
+  only for Ada and Blackwell, each fitted on two lab cards (DECISIONS 53, 56); Ampere (RTX 3060),
+  Turing (RTX 2080 Ti) and Volta (Quadro GV100) each rest on one lab card, so their cards keep the
+  lab-measured profiles until a second card of the generation measures registry pairs;
 - the plan ladder's rungs are declared, but under `--spec auto` each Engine build the server tries
   (the profile's choice, its fit fallback, shallower drafts, plain decode) picks its own rung from
   its own free reading, and the kernel warm-up may still move the plan to a lower rung when it took
