@@ -164,24 +164,47 @@ struct Decoder<GGML_TYPE_Q5_K> {
     // Whole blocks: d, dmin, scales (12), qh (32), qs (128).
     static constexpr int kCode = 176, kHigh = 0, kScale = 0, kTableWords = 0, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t*, Slice& s) {
+    // The slice's bytes as loaded: d and dmin, the 12 scale bytes, qh (32), its 32 qs bytes.
+    struct Raw {
+        half2 dm;
+        std::uint32_t scale[3];
+        uint4 h0, h1, l0, l1;
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
         const std::uint8_t* b = p.codes + blk * kCode;
-        const float2 dm       = __half22float2(*reinterpret_cast<const half2*>(b));
+        r.dm                  = *reinterpret_cast<const half2*>(b);
+        const auto* sw        = reinterpret_cast<const std::uint32_t*>(b + 4);
+        r.scale[0]            = sw[0];
+        r.scale[1]            = sw[1];
+        r.scale[2]            = sw[2];
+        const uint4* qh       = reinterpret_cast<const uint4*>(b + 16);
+        const uint4* ql       = reinterpret_cast<const uint4*>(b + 48 + 32 * (u / 2));
+        r.h0                  = qh[0];
+        r.h1                  = qh[1];
+        r.l0                  = ql[0];
+        r.l1                  = ql[1];
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t*,
+                                                   Slice& s) {
+        const float2 dm = __half22float2(r.dm);
         int sc, m;
-        scale_min_k4(b + 4, u, sc, m);
+        scale_min_k4(reinterpret_cast<const std::uint8_t*>(r.scale), u, sc, m);
         s.f[0]          = dm.x * float(sc);
         s.f[1]          = dm.y * float(m);
-        const uint4* qh = reinterpret_cast<const uint4*>(b + 16);
-        const uint4* ql = reinterpret_cast<const uint4*>(b + 48 + 32 * (u / 2));
-        const uint4 h0 = qh[0], h1 = qh[1], l0 = ql[0], l1 = ql[1];
-        const std::uint32_t hv[8] = {h0.x, h0.y, h0.z, h0.w, h1.x, h1.y, h1.z, h1.w};
-        const std::uint32_t lv[8] = {l0.x, l0.y, l0.z, l0.w, l1.x, l1.y, l1.z, l1.w};
+        const std::uint32_t hv[8] = {r.h0.x, r.h0.y, r.h0.z, r.h0.w, r.h1.x, r.h1.y, r.h1.z, r.h1.w};
+        const std::uint32_t lv[8] = {r.l0.x, r.l0.y, r.l0.z, r.l0.w, r.l1.x, r.l1.y, r.l1.z, r.l1.w};
         const int shift           = 4 * (u & 1);
 #pragma unroll
         for (int i = 0; i < 8; ++i) {
             s.w[i] = int(((lv[i] >> shift) & 0x0F0F0F0Fu) | (((hv[i] >> u) << 4) & 0x10101010u));
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float sum) {
         return s.f[0] * d * float(dot4(s.w + 4, a + 4, dot4(s.w, a, 0))) - s.f[1] * sum;
@@ -222,23 +245,47 @@ struct Decoder<GGML_TYPE_Q6_K> {
     // codes: ql (128), qh (64); high: scales (16); scales: d (2).
     static constexpr int kCode = 192, kHigh = 16, kScale = 2, kTableWords = 0, kBlockValues = 256;
     __device__ static const std::uint32_t* table() { return nullptr; }
-    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
-                                                  const std::uint32_t*, Slice& s) {
+    // The slice's bytes as loaded: d, its two scales, its 32 ql and 32 qh bytes (2-byte aligned).
+    struct Raw {
+        half d;
+        std::int8_t sc[2];
+        std::uint32_t l[8], h[8];
+    };
+    __device__ __forceinline__ static void load(const VecPlanes& p, std::int64_t blk, int u,
+                                                Raw& r) {
         const int h = u / 4, q = u % 4;
-        const std::uint8_t* b = p.codes + blk * kCode;
-        const float d         = half_at(p.scales + blk * kScale);
-        const auto* sc        = reinterpret_cast<const std::int8_t*>(p.high + blk * kHigh + 8 * h);
-        s.f[0]                = d * float(sc[2 * q]);
-        s.f[1]                = d * float(sc[2 * q + 1]);
+        const std::uint8_t* b  = p.codes + blk * kCode;
+        r.d                    = *reinterpret_cast<const half*>(p.scales + blk * kScale);
+        const auto* sc         = reinterpret_cast<const std::int8_t*>(p.high + blk * kHigh + 8 * h);
+        r.sc[0]                = sc[2 * q];
+        r.sc[1]                = sc[2 * q + 1];
         const std::uint8_t* ql = b + 64 * h + 32 * (q & 1);
         const std::uint8_t* qh = b + 128 + 32 * h;
 #pragma unroll
         for (int i = 0; i < 8; ++i) {
-            const std::uint32_t v = ((u32_a2(ql + 4 * i) >> (4 * (q >> 1))) & 0x0F0F0F0Fu) |
-                                    (((u32_a2(qh + 4 * i) >> (2 * q)) << 4) & 0x30303030u);
+            r.l[i] = u32_a2(ql + 4 * i);
+            r.h[i] = u32_a2(qh + 4 * i);
+        }
+    }
+    __device__ __forceinline__ static void convert(const Raw& r, int u, const std::uint32_t*,
+                                                   Slice& s) {
+        const int q   = u % 4;
+        const float d = __half2float(r.d);
+        s.f[0]        = d * float(r.sc[0]);
+        s.f[1]        = d * float(r.sc[1]);
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            const std::uint32_t v = ((r.l[i] >> (4 * (q >> 1))) & 0x0F0F0F0Fu) |
+                                    (((r.h[i] >> (2 * q)) << 4) & 0x30303030u);
             // v - 32 per byte, v in [0, 64): flip the high bits by whether v is below 32.
             s.w[i] = int(v ^ 0xE0E0E0E0u ^ ((v & 0x20202020u) * 6u));
         }
+    }
+    __device__ __forceinline__ static void decode(const VecPlanes& p, std::int64_t blk, int u,
+                                                  const std::uint32_t* t, Slice& s) {
+        Raw r;
+        load(p, blk, u, r);
+        convert(r, u, t, s);
     }
     __device__ __forceinline__ static float dot(const Slice& s, const int* a, float d, float) {
         return d * (s.f[0] * float(dot4(s.w, a, 0)) + s.f[1] * float(dot4(s.w + 4, a + 4, 0)));
