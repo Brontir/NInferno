@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
@@ -374,6 +375,20 @@ std::string card_of(const MeasuredPair& pair) {
     return pair.tune.key.gpu + "/" + std::to_string(pair.lab_board);
 }
 
+// How many physical cards `pairs` were measured on: a named board is a card of its class; a record
+// naming no board is its class's card, a card of its own only where no record of its class names
+// one.
+std::size_t card_count(const std::vector<const MeasuredPair*>& pairs) {
+    std::map<std::string, std::set<std::uint32_t>> boards; // by class: the named boards
+    for (const auto* p : pairs) { boards[p->tune.key.gpu]; }
+    for (const auto* p : pairs) {
+        if (p->lab_board != 0) { boards[p->tune.key.gpu].insert(p->lab_board); }
+    }
+    std::size_t n = 0;
+    for (const auto& [gpu, named] : boards) { n += std::max<std::size_t>(named.size(), 1); }
+    return n;
+}
+
 // The records in their own order: GPU class id, generation, then content (the record's JSON, each
 // rendered once), so the registry's order never decides which record is first.
 std::vector<const MeasuredPair*> in_content_order(std::vector<const MeasuredPair*> pairs) {
@@ -443,10 +458,17 @@ const MeasuredPair& base_of(const std::vector<const MeasuredPair*>& pairs,
 }
 
 // One record per card (its GPU class id), the first in `pairs`' order.
+// A card is its class and board (card_of); a record naming no board is its class's card, left out
+// where a record of its class names one (card_count).
 std::vector<const MeasuredPair*> one_per_card(const std::vector<const MeasuredPair*>& pairs) {
+    std::set<std::string> named;
+    for (const auto* pair : pairs) {
+        if (pair->lab_board != 0) { named.insert(pair->tune.key.gpu); }
+    }
     std::vector<const MeasuredPair*> out;
     std::set<std::string> cards;
     for (const auto* pair : pairs) {
+        if (pair->lab_board == 0 && named.contains(pair->tune.key.gpu)) { continue; }
         if (cards.insert(card_of(*pair)).second) { out.push_back(pair); }
     }
     return out;
@@ -509,16 +531,14 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
     // The records in an order of their own (GPU class id, then content): the registry's order
     // never decides which card's measurement is taken.
     const std::vector<const MeasuredPair*> ordered = in_content_order(measured);
-    std::vector<const MeasuredPair*> current, home;
-    std::set<std::string> home_cards; // two cards, not two records of one card (card_of)
+    std::vector<const MeasuredPair*> current, of_generation;
     for (const auto* pair : ordered) {
         if (!pair_current(*pair)) { continue; }
         current.push_back(pair);
-        if (!generation.empty() && pair->generation == generation &&
-            home_cards.insert(card_of(*pair)).second) {
-            home.push_back(pair);
-        }
+        if (!generation.empty() && pair->generation == generation) { of_generation.push_back(pair); }
     }
+    // Two cards, not two records of one card (one_per_card).
+    const std::vector<const MeasuredPair*> home = one_per_card(of_generation);
     if (current.empty()) {
         return ordered.empty() ? Profile{} : not_current(*ordered.front());
     }
@@ -659,9 +679,7 @@ std::vector<const MeasuredPair*> pair_group(const std::vector<MeasuredPair>& pai
     }
     // A group's choice is a lab constant for targets nobody measured: fitted on two cards or more.
     const auto enough = [](const std::vector<const MeasuredPair*>& group) {
-        std::set<std::string> cards;
-        for (const auto* p : group) { cards.insert(card_of(*p)); }
-        return cards.size() >= kGroupCards;
+        return card_count(group) >= kGroupCards;
     };
     const bool below  = target_bits < 4;
     const auto& same  = below ? low : high;
@@ -689,15 +707,15 @@ struct LabelGain {
 std::optional<LabelGain> label_gain(const std::vector<GroupMember>& members, const std::string& label,
                                     const std::vector<std::string>& families) {
     LabelGain out;
-    std::set<std::string> cards;
+    std::vector<const MeasuredPair*> measured;
     for (const auto& m : members) {
         if (const auto o = over(m.table, label, families)) {
             out.each.push_back(*o);
             out.gain += o->fine_tune_speed;
-            cards.insert(card_of(*m.pair));
+            measured.push_back(m.pair);
         }
     }
-    if (cards.size() < kGroupCards) { return std::nullopt; }
+    if (card_count(measured) < kGroupCards) { return std::nullopt; }
     out.gain /= double(out.each.size());
     return out;
 }

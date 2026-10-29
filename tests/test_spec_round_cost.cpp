@@ -391,6 +391,13 @@ int main() {
                                                             tuned(dflash, 1.0, 1.2, 0)};
         expect(sp::pair_group(group_boards, "qwen3_5", "dflash", 4.0).size() == 2,
                "two boards of one class are a group of two cards; an unnamed board's record is one of them");
+        // Two targets on one card, one record naming its board and one naming none: one card, no
+        // group (a group's choice rests on two cards).
+        auto unnamed_other   = tuned(dflash, 1.0, 1.0, 0);
+        unnamed_other.target = "other-weights";
+        expect(sp::pair_group({tuned(dflash, 1.0, 1.0, 0x2782), unnamed_other}, "qwen3_5", "dflash", 4.0)
+                   .empty(),
+               "a record naming no board is its class's card in a group's count");
         const auto one = sp::pair_choice({tuned(mtp, 1.0, 1.0, 0), tuned(dflash, 1.0, 1.0, 0x2782)},
                                          whole.target, "qwen3_5", kinds, 4.0, "sm89", {}, whole.drafters,
                                          {}, &rtx4070ti);
