@@ -531,7 +531,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
                 planning.heads.valid() ? planning.heads.get()
                                        : std::map<std::string, std::uint64_t>{};
             for (auto& q : listing) {
-                if (const auto it = heads.find(q.quant); it != heads.end()) {
+                if (const auto it = heads.find(q.quant); it != heads.end() && it->second != 0) {
                     q.head_bytes = it->second;
                 }
             }

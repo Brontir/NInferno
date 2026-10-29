@@ -1169,7 +1169,10 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     if (heads_read.valid() && inputs.proposal_planned) {
         const auto heads = heads_read.get();
         for (auto& q : listing) {
-            if (const auto it = heads.find(q.quant); it != heads.end()) { q.head_bytes = it->second; }
+            // A head not read (0) keeps what the listing knows.
+            if (const auto it = heads.find(q.quant); it != heads.end() && it->second != 0) {
+                q.head_bytes = it->second;
+            }
         }
     }
     Json doc;

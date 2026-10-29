@@ -1020,8 +1020,10 @@ void test_proposal_bytes_per_quant() {
     routed.experts      = 256;
     routed.experts_used = 8;
     const double share  = 32e9 / 35e9;
-    const double read   = static_cast<double>(moe.model.mtp_bytes) *
-                        (1 - share + share * ninferno::spec::moe_read_fraction(routed, 1));
+    // As proposal_at computes it: the dense part, then the routed part at one row's share.
+    routed.expert_bytes = static_cast<double>(moe.model.mtp_bytes) * share;
+    routed.bytes        = static_cast<double>(moe.model.mtp_bytes) - routed.expert_bytes;
+    const double read = routed.bytes + routed.expert_bytes * ninferno::spec::moe_read_fraction(routed, 1);
     // The layers' stored bytes out of the target's pass, the routed read the pass's price.
     const auto priced = ninferno::convert::planned_proposal(
         static_cast<double>(moe.model.head_bytes), static_cast<double>(moe.model.weight_bytes),

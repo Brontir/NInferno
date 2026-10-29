@@ -2004,15 +2004,20 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                         bytes = *found;
                     }
                 };
+                // Each read on its own: one that fails skips only itself (not read: 0).
+                std::size_t parts = 1;
                 try {
                     const auto window = fetch_gguf_head(spec, one, kWindow, 0, begin);
+                    parts             = window.parts;
                     find(window);
-                    // A split model's head may lie in a later part (Codex on #170): its header
-                    // lists its own tensors after a few metadata keys.
-                    for (std::size_t part = 1; bytes == 0 && part < window.parts; ++part) {
+                } catch (const std::exception&) {}
+                // A split model's head may lie in a later part (Codex on #170): its header lists
+                // its own tensors after a few metadata keys.
+                for (std::size_t part = 1; bytes == 0 && part < parts; ++part) {
+                    try {
                         find(fetch_gguf_head(spec, one, kWindow, part, 0));
-                    }
-                } catch (const std::exception&) {} // not read: 0
+                    } catch (const std::exception&) {}
+                }
                 std::lock_guard lock(out_mutex);
                 out[wanted[i]] = bytes;
             }

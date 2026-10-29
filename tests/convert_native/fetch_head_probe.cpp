@@ -57,8 +57,7 @@ int main(int argc, char** argv) {
             const bool tied         = shape.find(":tied") != std::string::npos;
             nlohmann::json out = ninferno::convert::gguf_quants_head_bytes(
                 argv[1], options, quants, std::stoull(argv[3]), hidden, vocab, tied);
-            std::printf("%s
-", out.dump().c_str());
+            std::printf("%s\n", out.dump().c_str());
             return 0;
         }
         if (std::string(argv[2]) == "--holds" || std::string(argv[2]) == "--holds-vision") {
