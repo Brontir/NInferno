@@ -232,7 +232,7 @@ void print_generation_summary(const ninferno::GenerationResult& result,
 
 int main(int argc, char** argv) {
     // The prefill's tail calls come from the artifact's frontend (DECISIONS 62).
-    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls);
+    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls_or_warn);
     if (ninferno::version_requested(argc, argv)) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;

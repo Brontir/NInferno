@@ -145,7 +145,7 @@ int print_version() {
 
 int main(int argc, char** argv) {
     // The prefill's tail calls come from the artifact's frontend (DECISIONS 62).
-    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls);
+    ninferno::product::set_prompt_tail_calls_source(ninferno::runtime::prompt_tail_calls_or_warn);
     std::set_terminate(log_terminate);
 #ifdef _WIN32
     // Waits of a millisecond (the scheduler's polls) last the 15.6 ms system tick otherwise.

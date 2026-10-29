@@ -894,8 +894,9 @@ int main() {
         std::ifstream campaign(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_measured.json");
         decodes_from_facts(json::parse(campaign));
         std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
-        prefills_by_format(json::parse(prefills));
-        prefills_pay_tail_calls(json::parse(prefills));
+        const json prefill_rows = json::parse(prefills);
+        prefills_by_format(prefill_rows);
+        prefills_pay_tail_calls(prefill_rows);
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         counts_the_kernels(json::parse(census));
     }

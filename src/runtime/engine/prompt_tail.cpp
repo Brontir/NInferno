@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <exception>
+#include <iostream>
 #include <set>
 #include <string>
 #include <vector>
@@ -51,30 +52,36 @@ std::uint32_t count_tail_calls(const models::qwen3_5::Frontend& frontend) {
 
 } // namespace
 
-std::optional<std::uint32_t> prompt_tail_calls(const std::filesystem::path& artifact) {
-    try {
-        const std::string type = artifact_model_type(artifact);
-        if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
-            const artifact::Reader reader(artifact);
-            const models::qwen3_5::LoadPlan plan = models::qwen3_5::plan_load(reader);
-            models::qwen3_5::FrontendOptions options;
-            options.architecture = plan.config().text.architecture;
-            options.max_context  = 4096;
-            return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options));
-        }
-        const HfTextFiles files = read_hf_text_files(artifact);
-        models::qwen3_5::FrontendResources resources{
-            .tokenizer_json         = files.tokenizer_json,
-            .tokenizer_config_json  = files.tokenizer_config_json,
-            .chat_template_jinja    = files.chat_template_jinja,
-            .generation_config_json = files.generation_config_json,
-        };
-        models::qwen3_5::attach_hf_text_tokenizer(resources);
+std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact) {
+    const std::string type = artifact_model_type(artifact);
+    if (type == "qwen3_5_text" || type == "qwen3_5_moe_text") {
+        const artifact::Reader reader(artifact);
+        const models::qwen3_5::LoadPlan plan = models::qwen3_5::plan_load(reader);
         models::qwen3_5::FrontendOptions options;
-        models::qwen3_5::apply_hf_text_options(options);
-        options.max_context = 4096;
-        return count_tail_calls(models::qwen3_5::make_frontend(resources, options));
-    } catch (const std::exception&) {
+        options.architecture = plan.config().text.architecture;
+        options.max_context  = 4096;
+        return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options));
+    }
+    const HfTextFiles files = read_hf_text_files(artifact);
+    models::qwen3_5::FrontendResources resources{
+        .tokenizer_json         = files.tokenizer_json,
+        .tokenizer_config_json  = files.tokenizer_config_json,
+        .chat_template_jinja    = files.chat_template_jinja,
+        .generation_config_json = files.generation_config_json,
+    };
+    models::qwen3_5::attach_hf_text_tokenizer(resources);
+    models::qwen3_5::FrontendOptions options;
+    models::qwen3_5::apply_hf_text_options(options);
+    options.max_context = 4096;
+    return count_tail_calls(models::qwen3_5::make_frontend(resources, options));
+}
+
+std::optional<std::uint32_t> prompt_tail_calls_or_warn(const std::filesystem::path& artifact) {
+    try {
+        return prompt_tail_calls(artifact);
+    } catch (const std::exception& error) {
+        std::cerr << "ninferno: the prefill's tail calls of " << artifact.string()
+                  << " are not counted (priced as none): " << error.what() << '\n';
         return std::nullopt;
     }
 }
