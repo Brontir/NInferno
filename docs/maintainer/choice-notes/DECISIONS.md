@@ -1230,8 +1230,11 @@ kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8
 facts overprice on Ada (above).
 ## 58. Verify widths stay on the band rule: the register MMA priced as its best one-tile schedule is wrong for the schedule that runs (29.10, #209)
 
-**Decision.** The selector keeps the band rule at verify widths (vector kernel at T <= 4, the
-register MMA from 5). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
+**Decision.** The selector keeps the band rule at verify widths. On the native-MMA boards measured
+here (Ampere, Ada, Blackwell) the K-quant and legacy formats take the vector kernel at T <= 4 and
+the register MMA from 5. Other boards keep their own rules: Volta's vector route extends past T = 4
+for formats `volta_hmma_route` does not take (`vec_rule_max_tokens`), and Turing sends codebook
+formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
 0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) stays in the code unused.
 
 - Variants: pick the cheaper of the vector kernel and the register MMA by that price / the band rule.
