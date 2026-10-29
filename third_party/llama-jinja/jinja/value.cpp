@@ -167,81 +167,53 @@ static value tojson(const func_args& args) {
     return result;
 }
 
-template <bool is_reject>
-static value selectattr(const func_args& args) {
-    args.ensure_count(2, 4);
-    args.ensure_vals<value_array, value_string, value_string, value_string>(true, true, false,
-                                                                            false);
-
-    auto arr          = args.get_pos(0)->as_array();
-    auto attribute    = args.get_pos(1);
-    auto out          = mk_val<value_array>();
-    value val_default = mk_val<value_undefined>();
-
-    if (args.count() == 2) {
-        // example: array | selectattr("active")
-        for (const auto& item : arr) {
-            if (!is_val<value_object>(item)) {
-                throw raised_exception("selectattr: item is not an object");
-            }
-            value attr_val   = item->at(attribute, val_default);
-            bool is_selected = attr_val->as_bool();
-            if constexpr (is_reject) is_selected = !is_selected;
-            if (is_selected) out->push_back(item);
-        }
-        return out;
-
-    } else if (args.count() == 3) {
-        // example: array | selectattr("equalto", "text")
-        // translated to: test_is_equalto(item, "text")
-        std::string test_name = args.get_pos(1)->as_string().str();
-        value test_val        = args.get_pos(2);
-        auto& builtins        = global_builtins();
-        auto it               = builtins.find("test_is_" + test_name);
-        if (it == builtins.end()) {
-            throw raised_exception("selectattr: unknown test '" + test_name + "'");
-        }
-        auto test_fn = it->second;
-        for (const auto& item : arr) {
-            func_args test_args(args.ctx);
-            test_args.push_back(item);     // current object
-            test_args.push_back(test_val); // extra argument
-            value test_result = test_fn(test_args);
-            bool is_selected  = test_result->as_bool();
-            if constexpr (is_reject) is_selected = !is_selected;
-            if (is_selected) out->push_back(item);
-        }
-        return out;
-
-    } else if (args.count() == 4) {
-        // example: array | selectattr("status", "equalto", "active")
-        // translated to: test_is_equalto(item.status, "active")
-        std::string test_name = args.get_pos(2)->as_string().str();
-        auto extra_arg        = args.get_pos(3);
-        auto& builtins        = global_builtins();
-        auto it               = builtins.find("test_is_" + test_name);
-        if (it == builtins.end()) {
-            throw raised_exception("selectattr: unknown test '" + test_name + "'");
-        }
-        auto test_fn = it->second;
-        for (const auto& item : arr) {
-            if (!is_val<value_object>(item)) {
-                throw raised_exception("selectattr: item is not an object");
-            }
-            value attr_val = item->at(attribute, val_default);
-            func_args test_args(args.ctx);
-            test_args.push_back(attr_val);  // attribute value
-            test_args.push_back(extra_arg); // extra argument
-            value test_result = test_fn(test_args);
-            bool is_selected  = test_result->as_bool();
-            if constexpr (is_reject) is_selected = !is_selected;
-            if (is_selected) out->push_back(item);
-        }
-        return out;
-    } else {
-        throw raised_exception("selectattr: invalid number of arguments");
+// select / reject (the item itself) and selectattr / rejectattr (its attribute), each with an
+// optional test and the test's arguments: array | select("odd"), array | selectattr("status",
+// "equalto", "active"). Without a test the value's truth decides (llama.cpp #31059).
+template <bool is_reject, bool lookup_attr>
+static value select_or_reject(const func_args& args) {
+    constexpr size_t test_pos = lookup_attr ? 2 : 1;
+    args.ensure_count(test_pos);
+    args.ensure_val<value_array>(args.get_pos(0));
+    value attr;
+    if constexpr (lookup_attr) {
+        attr = args.get_pos(1);
+        args.ensure_val<value_string>(attr);
     }
 
+    auto& builtins = global_builtins();
+    auto test_it   = builtins.end();
+    if (args.count() > test_pos) {
+        args.ensure_val<value_string>(args.get_pos(test_pos));
+        std::string test_name = args.get_pos(test_pos)->as_string().str();
+        test_it               = builtins.find("test_is_" + test_name);
+        if (test_it == builtins.end()) {
+            throw raised_exception(args.func_name + ": unknown test '" + test_name + "'");
+        }
+    }
+
+    auto arr          = args.get_pos(0)->as_array();
+    auto out          = mk_val<value_array>();
+    value val_default = mk_val<value_undefined>();
+    for (const auto& item : arr) {
+        value val = item;
+        if constexpr (lookup_attr) {
+            val = is_val<value_object>(item) ? item->at(attr, val_default) : val_default;
+        }
+        bool is_selected;
+        if (test_it == builtins.end()) {
+            is_selected = val->as_bool();
+        } else {
+            func_args test_args(args.ctx);
+            test_args.push_back(val);
+            for (size_t i = test_pos + 1; i < args.count(); i++) {
+                test_args.push_back(args.get_pos(i));
+            }
+            is_selected = test_it->second(test_args)->as_bool();
+        }
+        if constexpr (is_reject) is_selected = !is_selected;
+        if (is_selected) out->push_back(item);
+    }
     return out;
 }
 
@@ -271,6 +243,9 @@ const func_builtins& global_builtins() {
                  auto kwarg = cast_val<value_kwarg>(arg);
                  out->insert(kwarg->key, kwarg->val);
              }
+             // Unlike a dict, a namespace has no methods: ns.items is the attribute, as in jinja2
+             // (llama.cpp #30941).
+             out->has_builtins = false;
              return out;
          }},
         {"strftime_now",
@@ -781,10 +756,6 @@ const func_builtins& value_bool_t::get_builtins() const {
     return builtins;
 }
 
-[[noreturn]] static value array_unique_not_implemented(const func_args&) {
-    throw not_implemented_exception("Array unique builtin not implemented");
-}
-
 const func_builtins& value_array_t::get_builtins() const {
     static const func_builtins builtins = {
         {"default", default_value},
@@ -817,10 +788,10 @@ const func_builtins& value_array_t::get_builtins() const {
              return mk_val<value_int>(static_cast<int64_t>(arr.size()));
          }},
         {"slice", slice_value},
-        {"selectattr", selectattr<false>},
-        {"select", selectattr<false>},
-        {"rejectattr", selectattr<true>},
-        {"reject", selectattr<true>},
+        {"selectattr", select_or_reject<false, true>},
+        {"select", select_or_reject<false, false>},
+        {"rejectattr", select_or_reject<true, true>},
+        {"reject", select_or_reject<true, false>},
         {"join",
          [](const func_args& args) -> value {
              args.ensure_count(1, 3);
@@ -1004,7 +975,41 @@ const func_builtins& value_array_t::get_builtins() const {
              }
              return result;
          }},
-        {"unique", array_unique_not_implemented},
+        // The first item of each distinct value (or attribute), in order; strings compare without
+        // case unless case_sensitive, as jinja2's unique (llama.cpp #30819, which compares with
+        // case always).
+        {"unique",
+         [](const func_args& args) -> value {
+             args.ensure_count(1, 3);
+             args.ensure_vals<value_array>();
+             value val                 = args.get_pos(0);
+             const bool case_sensitive = args.get_kwarg_or_pos("case_sensitive", 1)->as_bool();
+             value attribute           = args.get_kwarg_or_pos("attribute", 2);
+             value undef               = mk_val<value_undefined>();
+             std::vector<value> result;
+             std::vector<value> seen;
+             for (const auto& item : val->as_array()) {
+                 value key = item;
+                 if (!attribute->is_undefined()) {
+                     key = is_val<value_object>(item) ? item->at(attribute, undef) : undef;
+                 }
+                 if (!case_sensitive && is_val<value_string>(key)) {
+                     key = mk_val<value_string>(key->as_string().lowercase());
+                 }
+                 bool dup = false;
+                 for (const auto& s : seen) {
+                     if (value_compare(s, key, value_compare_op::eq)) {
+                         dup = true;
+                         break;
+                     }
+                 }
+                 if (!dup) {
+                     seen.push_back(key);
+                     result.push_back(item);
+                 }
+             }
+             return mk_val<value_array>(std::move(result));
+         }},
     };
     return builtins;
 }

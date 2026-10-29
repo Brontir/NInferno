@@ -92,7 +92,74 @@ int language_semantics() {
          {{"d", {{"b", 1}, {"C", 2}, {"a", 3}}},
           {"people", Json::array({Json{{"name", "bob"}}, Json{{"name", "Ann"}}})}},
          "a,b,C|C,a,b|Ann,bob|a3b1C2|a|3"},
+        // llama.cpp #30533: a {% set %} in a loop body stays in its iteration; Qwen's template
+        // sets reasoning_content per message, which leaked into the next message's turn.
+        {"{% for i in [1, 2] %}{% if i == 1 %}{% set x = 7 %}{% endif %}{{ x is defined }};"
+         "{% endfor %}",
+         Json::object(), "True;False;"},
+        {"{% set x = 9 %}{% for i in [1, 2] %}{% if i == 1 %}{% set x = 7 %}{% endif %}{{ x }};"
+         "{% endfor %}{{ x }}",
+         Json::object(), "7;9;9"},
+        {"{% for m in messages %}{% if m.reasoning_content is string %}{% set reasoning_content = "
+         "m.reasoning_content %}{% elif '</think>' in m.content %}{% set reasoning_content = "
+         "m.content.split('</think>')[0].split('<think>')[-1] %}{% endif %}[{{ reasoning_content "
+         "is defined }}:{{ reasoning_content if reasoning_content is defined else '' }}]"
+         "{% endfor %}",
+         {{"messages", Json::array({Json{{"reasoning_content", "first"}, {"content", "answer"}},
+                                    Json{{"content", "answer"}},
+                                    Json{{"reasoning_content", nullptr}, {"content", "answer"}},
+                                    Json{{"content", "<think>embedded</think>answer"}},
+                                    Json{{"content", "answer"}}})}},
+         "[True:first][False:][False:][True:embedded][False:]"},
+        // llama.cpp #30941: a namespace has no dict methods (ns.items is the attribute); a dict
+        // keeps them.
+        {"{% set ns = namespace(items=[]) %}{{ 'yes' if ns.items else 'no' }}{% set ns.items = "
+         "ns.items + [1] %}{{ ns.items | length }}{{ 'yes' if ns.items else 'no' }}|"
+         "{% set d = dict(items=1) %}{% for k, v in d.items() %}{{ k }}={{ v }}{% endfor %}",
+         Json::object(), "no1yes|items=1"},
+        // llama.cpp #31059: select / reject take a test (and its arguments), selectattr /
+        // rejectattr an attribute and then a test.
+        {"{{ n|select('odd')|join(',') }}|{{ n|reject('odd')|join(',') }}|"
+         "{{ v|select|join(',') }}|{{ n|select('divisibleby', 2)|join(',') }}|"
+         "{% for p in t|selectattr('type', 'defined') %}{{ p.type }} {% endfor %}|"
+         "{{ t|rejectattr('type', 'defined')|list|length }}|"
+         "{% for p in o|selectattr('odd', 'even') %}{{ p.odd }} {% endfor %}",
+         {{"n", Json::array({1, 2, 3, 4, 5})},
+          {"v", Json::array({0, 1, "", "a", nullptr, false})},
+          {"t", Json::array({Json{{"type", "string"}}, Json{{"enum", Json::array({1})}},
+                             Json{{"type", "integer"}}})},
+          {"o", Json::array({Json{{"odd", 1}}, Json{{"odd", 2}}, Json{{"odd", 4}}})}},
+         "1,3,5|2,4|1,a|2,4|string integer |1|2 4 "},
+        // llama.cpp #30819: unique, first of each value in order; strings fold case unless
+        // case_sensitive (as jinja2).
+        {"{{ n|unique|join(',') }}|{{ s|unique|join(',') }}|"
+         "{{ s|unique(case_sensitive=true)|join(',') }}|{{ s|unique(true)|list|length }}|"
+         "{{ r|unique(attribute='id')|join(attribute='v') }}|"
+         "{{ r|unique(case_sensitive=true, attribute='id')|join(attribute='v') }}|"
+         "{{ m|unique|list|length }}|{{ []|unique|list|length }}",
+         {{"n", Json::array({3, 1, 3, 2, 1})},
+          {"s", Json::array({"a", "A", "b", "B", "a"})},
+          {"r", Json::array({Json{{"id", "x"}, {"v", 1}}, Json{{"id", "X"}, {"v", 2}},
+                             Json{{"id", "x"}, {"v", 3}}})},
+          {"m", Json::array({1, 1.0, 2, "a", "a"})}},
+         "3,1,2|a,b|a,A,b,B|4|1|12|3|0"},
+        // llama.cpp #30929: \xHH escapes, two digits, code point HH as UTF-8.
+        {"{{ message.content | replace(\"\\x00\", \"\") }}|{{ '\\xE9' }}|{{ '\\x414' }}|"
+         "{{ '\\\\xE9' }}",
+         {{"message", {{"content", std::string("\0a\0b\0", 5)}}}},
+         "ab|\xc3\xa9|A4|\\xE9"},
     };
+    for (const char* source : {"{{ '\\x' }}", "{{ '\\x0' }}", "{{ '\\xG1' }}", "{{ '\\x1G' }}",
+                               "{{ '\\x", "{{ '\\x0"}) {
+        bool rejected = false;
+        try {
+            (void)JinjaTemplate(source, "hex-test").render(Json::object());
+        } catch (const std::exception&) { rejected = true; }
+        if (!rejected) {
+            std::cerr << "malformed hex escape accepted: " << source << '\n';
+            return 1;
+        }
+    }
     int failures = 0;
     for (const auto& item : cases) {
         const auto actual = JinjaTemplate(item.source, "language-test").render(item.input).text;
