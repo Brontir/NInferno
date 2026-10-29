@@ -433,6 +433,7 @@ inline constexpr QuantKldPoint kQuantKld[] = {
     {5.674, 0.01132, "Q5_K_S"},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference)
     {5.321, 0.01823, "UD-Q4_K_XL"}, // one card: RTX 4070 Ti, 2026-10-29 (the fresh Q8_0 reference)
     {5.080, 0.01925, "Q4_K_M"},     // 0.01930 / 0.01920, ppl 4.9997, top-1 0.9512
+    {4.810, 0.02268, "Q4_K_S"},     // one card: RTX 4060 Ti, 2026-10-29 (the fresh Q8_0 reference; Q4_0 0.0509 there)
     {4.789, 0.02840, "IQ4_NL"},     // one card: RTX 4070 Ti, 2026-10-29 (fresh Q8_0 reference, Q4_K_M 0.01920 on it), top-1 0.9407
     {4.617, 0.02845, "IQ4_XS"},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
     {4.174, 0.06812, "Q3_K_M"},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
