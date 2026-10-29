@@ -21,6 +21,7 @@
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_device.h"
 #include "product/plan/plan_facts.h"
+#include "product/plan/plan_cached.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
 #include "artifact/framing.h"
@@ -1189,8 +1190,6 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         }
         const std::string own_quant = smallest ? smallest->quant : std::string();
         const auto own              = product::gguf_tensor_table(*facts);
-        std::lock_guard lock(sizes_mutex_);
-        tables_seen = tables_generation_[hub_key(repo, hub)];
         for (auto& q : listing) {
             if (q.drafter || q.format != "gguf") { continue; }
             if (own && q.quant == own_quant) { q.table = own; }
@@ -1204,6 +1203,13 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
                 }
             }
         }
+        // The quantizations already in this UI's hub cache (the one its servers start with): by
+        // their own files, as the start and ninferno-serve --plan --no-load price them.
+        if (hub == "huggingface") {
+            product::tables_of_cached(listing, product::cached_quants(hub_root(), repo, commit));
+        }
+        std::lock_guard lock(sizes_mutex_);
+        tables_seen = tables_generation_[hub_key(repo, hub)];
     }
     // A read that failed (a network blip) leaves this plan uncached: the next request reads again.
     bool table_failed       = false;
