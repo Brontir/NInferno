@@ -2362,8 +2362,10 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
         // move above the previous group's branch, so every group waited for its own (SASS sm_89:
         // LDG.64, ~50 decode instructions, the HMMA reading it, per group; ncu RTX 4090, IQ4_NL
         // add 5120x17408 w1x4 at T = 8: 17 long-scoreboard stalls per issue against IQ4_XS's 6
-        // on the same weight loads). A whole step (every step of a K of whole steps) runs the
-        // groups unchecked, as a decoder without a tail does.
+        // on the same weight loads). A whole step (every step of a K of whole steps) of one token
+        // tile runs the groups unchecked, as a decoder without a tail does. Several tiles keep the
+        // check: their hoisted loads take the registers of a CTA per SM (sm_86, IQ4_NL add
+        // 5120x17408 m1.n4.w1x8: 109 -> 154 registers, 2 -> 1 CTAs, T = 8 332 -> 453 us).
         const auto groups = [&](auto tail_tag) {
             constexpr bool kTail = decltype(tail_tag)::value;
 #pragma unroll
@@ -2451,7 +2453,9 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 }
             }
         };
-        if constexpr (GroupTailOf<Decoder>::value) {
+        if constexpr (GroupTailOf<Decoder>::value && NT > 1) {
+            groups(std::true_type{});
+        } else if constexpr (GroupTailOf<Decoder>::value) {
             if (step_k0 + 16 * G * S > k) {
                 groups(std::true_type{});
             } else {
