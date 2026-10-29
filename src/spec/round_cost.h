@@ -41,10 +41,27 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ninferno::spec {
 
 struct GpuKey; // spec/profile.h
+
+// Linears a pass computes alike: `count` matrices of n output rows over k input columns in one
+// published format (tools/spec/round_facts.py: "gguf:Q4_K", "bf16", "nvfp4", "mxfp4", "int4", "fp8",
+// "conv:q8" where the converter re-encodes a drafter's projections), the output head's apart, a
+// routed expert bank's with its experts counted. Facts of the weights' headers: the shapes a verify's
+// routes are asked for (ops/generic/route_query.h); not yet priced (the round's cost is its bytes).
+struct LinearGroup {
+    std::string format;
+    std::int64_t n     = 0;
+    std::int64_t k     = 0;
+    std::int32_t count = 0;
+    bool head          = false;
+    bool expert        = false;
+
+    friend bool operator==(const LinearGroup&, const LinearGroup&) = default;
+};
 
 // One pass's weights: its dense part (read once whatever the rows) and its routed experts.
 struct PassFacts {
@@ -54,6 +71,7 @@ struct PassFacts {
     double expert_params = 0;
     std::int32_t experts      = 0; // routed experts per layer (0: dense)
     std::int32_t experts_used = 0; // experts a token routes to
+    std::vector<LinearGroup> linears; // its linears (empty: facts written before they were listed)
 
     friend bool operator==(const PassFacts&, const PassFacts&) = default;
 };

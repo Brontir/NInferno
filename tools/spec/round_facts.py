@@ -5,7 +5,8 @@ and the lab board that measured it.
 
     round_facts.py [--registry R] [--tables T.json] [--fetch]
 
-A tensor table is {"meta": {...}, "tensors": {name: bytes}, "elems": {name: parameters}}: a GGUF
+A tensor table is {"meta": {...}, "tensors": {name: bytes}, "elems": {name: parameters},
+"shapes": {name: [format, dims]}}: a GGUF
 header's (its metadata; each tensor's bytes from the offsets of the next one, the last by its
 type) or a safetensors header's with its config.json (expert counts as expert_count /
 expert_used_count, vocab_size, a DFlash drafter's block_size). Parameters are the logical ones: a
@@ -13,10 +14,18 @@ packed tensor counts the values it holds (AWQ's qweight and compressed-tensors' 
 32 / bits each; a uint8 4-bit weight or MXFP4 block: two a byte); scales, zero points and group
 indices count bytes, no parameters. --tables reads the tables from a JSON file keyed by a pair's
 target_repo ("org/name@commit QUANT") and by "drafter:org/name@revision[:file]"; --fetch reads
-the missing ones from the hub with HTTP range reads (headers only: a target's files are the ones
+the missing ones (and ones without shapes) from the hub with HTTP range reads (headers only: a target's files are the ones
 whose LFS SHA-256 the pair names; a GGUF drafter's the file the registry's model entry names) and
-adds them to the --tables file. A pair whose tables are missing keeps no round facts: its rounds stay
+adds each to the --tables file, the cache of later runs (the hub's rate limit, HTTP 429, is
+waited out). A pair whose tables are missing keeps no round facts: its rounds stay
 priced by the measured ratios (spec/pairs.h).
+
+Each pass lists its linears too (round_cost.h LinearGroup), from the shapes: the matrices it
+computes, grouped as {format, n output rows, k input columns, count, head, expert}. A format is the
+published one ("gguf:Q4_K", a checkpoint's "bf16", "nvfp4", "mxfp4", "int4", "fp8"), or "conv:q8"
+where the converter re-encodes a drafter's projections; an expert bank counts each expert; the head
+is the output head (a tied one: the input table's; Gemma 4's assistant's over its proposal_rows).
+They are the shapes a verify's routes are asked for (ops/generic/route_query.h).
 
 What a pass reads (round_cost.h PassFacts / DraftFacts):
   target  its layers and output head (the input table when tied), its routed experts apart;
@@ -39,6 +48,8 @@ import json
 import re
 import struct
 import sys
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -50,53 +61,150 @@ NOT_TEXT = re.compile(r"(^v\.|^mm\.|visual|vision|audio|^a\.|embed_vision|embed_
 NOT_PARAMS = re.compile(r"(scale|zero|g_idx|_scales$)")
 
 
+def is_gguf(table: dict) -> bool:
+    return any(n.startswith("blk.") for n in table["tensors"])
+
+
+def tensor_class(name: str, gguf: bool, nextn: int, blocks: int) -> str | None:
+    """A tensor's class: body, head, embed, experts, mtp or mtp_experts; None outside the text model."""
+    if NOT_TEXT.search(name):
+        return None
+    if gguf:
+        m = re.match(r"blk\.(\d+)\.", name)
+        layer = int(m.group(1)) if m else -1
+        if name.startswith("token_embd") or "per_layer_token_embd" in name:
+            return "embed"
+        if name.startswith("output."):
+            return "head"
+        if nextn and layer >= blocks - nextn:
+            return "mtp_experts" if "_exps" in name else "mtp"
+        return "experts" if "_exps" in name else "body"
+    # An input embedding table by its role: outside the layers, named for embedding (embed_tokens,
+    # Nemotron's backbone.embeddings, wte, word_embeddings, ...): a token reads one row of it, no
+    # pass reads it whole.
+    in_layer = re.search(r"\.(layers|h|blocks)\.\d+\.", name) is not None
+    if name.startswith("mtp."):
+        return "mtp_experts" if ".experts" in name else "mtp"
+    if ("embed" in name and not in_layer) or name.split(".")[-2:-1] in (["wte"], ["tok_embeddings"]):
+        return "embed"
+    if name.startswith("lm_head"):
+        return "head"
+    return "experts" if ".experts" in name else "body"
+
+
+def _layout(table: dict) -> tuple[bool, int, int, int, int]:
+    """GGUF or not, NextN layers, blocks, experts, experts a token uses."""
+    meta = table.get("meta", {})
+    arch = meta.get("general.architecture", "")
+    return (is_gguf(table), int(meta.get(f"{arch}.nextn_predict_layers", 0) or 0),
+            int(meta.get(f"{arch}.block_count", 0) or 0),
+            int(meta.get(f"{arch}.expert_count", meta.get("expert_count", 0)) or 0),
+            int(meta.get(f"{arch}.expert_used_count", meta.get("expert_used_count", 0)) or 0))
+
+
 def classes(table: dict) -> tuple[dict, dict, int, int]:
     """Bytes and parameters per class (body, head, embed, experts, mtp, mtp_experts), expert counts."""
-    meta, tensors, elems = table.get("meta", {}), table["tensors"], table["elems"]
-    gguf = any(n.startswith("blk.") for n in tensors)
-    arch = meta.get("general.architecture", "")
-    nextn = int(meta.get(f"{arch}.nextn_predict_layers", 0) or 0)
-    blocks = int(meta.get(f"{arch}.block_count", 0) or 0)
-    experts = int(meta.get(f"{arch}.expert_count", meta.get("expert_count", 0)) or 0)
-    used = int(meta.get(f"{arch}.expert_used_count", meta.get("expert_used_count", 0)) or 0)
+    tensors, elems = table["tensors"], table["elems"]
+    gguf, nextn, blocks, experts, used = _layout(table)
     b: dict[str, float] = {}
     n: dict[str, float] = {}
     for name, size in tensors.items():
-        if NOT_TEXT.search(name):
+        c = tensor_class(name, gguf, nextn, blocks)
+        if c is None:
             continue
-        m = re.match(r"blk\.(\d+)\.", name)
-        layer = int(m.group(1)) if m else -1
-        if gguf:
-            if name.startswith("token_embd") or "per_layer_token_embd" in name:
-                c = "embed"
-            elif name.startswith("output."):
-                c = "head"
-            elif nextn and layer >= blocks - nextn:
-                c = "mtp_experts" if "_exps" in name else "mtp"
-            elif "_exps" in name:
-                c = "experts"
-            else:
-                c = "body"
-        else:
-            # An input embedding table by its role: outside the layers, named for embedding
-            # (embed_tokens, Nemotron's backbone.embeddings, wte, word_embeddings, ...): a token
-            # reads one row of it, no pass reads it whole.
-            in_layer = re.search(r"\.(layers|h|blocks)\.\d+\.", name) is not None
-            if name.startswith("mtp."):
-                c = "mtp_experts" if ".experts" in name else "mtp"
-            elif ("embed" in name and not in_layer) or name.split(".")[-2:-1] in (["wte"], ["tok_embeddings"]):
-                c = "embed"
-            elif name.startswith("lm_head"):
-                c = "head"
-            elif ".experts" in name:
-                c = "experts"
-            else:
-                c = "body"
         b[c] = b.get(c, 0) + size
         n[c] = n.get(c, 0) + elems[name]
     if not b.get("head"):  # tied: the head reads the input table
         b["head"], n["head"] = b.get("embed", 0), n.get("embed", 0)
     return b, n, experts, used
+
+
+# ---- The linears a pass computes, from each tensor's published format and dims.
+GGML_NAMES = {0: "F32", 1: "F16", 2: "Q4_0", 3: "Q4_1", 6: "Q5_0", 7: "Q5_1", 8: "Q8_0", 9: "Q8_1",
+              10: "Q2_K", 11: "Q3_K", 12: "Q4_K", 13: "Q5_K", 14: "Q6_K", 15: "Q8_K", 16: "IQ2_XXS",
+              17: "IQ2_XS", 18: "IQ3_XXS", 19: "IQ1_S", 20: "IQ4_NL", 21: "IQ3_S", 22: "IQ2_S",
+              23: "IQ4_XS", 24: "I8", 25: "I16", 26: "I32", 27: "I64", 28: "F64", 29: "IQ1_M",
+              30: "BF16", 34: "TQ1_0", 35: "TQ2_0", 39: "MXFP4"}
+WEIGHT_SUFFIX = (".weight", "qweight", "weight_packed", "_blocks")
+FUSED_EXPERTS = re.compile(r"\.experts\.\w+_proj$")  # a checkpoint's experts as one [E, n, k] tensor
+
+
+def safetensors_format(name: str, dtype: str, bits: int) -> str:
+    """A safetensors weight's published format: nvfp4 (ModelOpt's uint8 weight, compressed-tensors'
+    weight_packed), mxfp4 (_blocks), int<bits> (AWQ / GPTQ qweight, compressed-tensors' int32
+    weight_packed), fp8, else its dtype (bf16, f16, f32)."""
+    if dtype == "U8" and "_blocks" in name:
+        return "mxfp4"
+    if dtype == "U8" and name.endswith((".weight", "weight_packed")):
+        return "nvfp4"
+    if dtype in ("I32", "U32") and name.endswith(("qweight", "weight_packed")):
+        return f"int{bits}"
+    if dtype.startswith("F8"):
+        return "fp8"
+    return dtype.lower()
+
+
+def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) -> tuple[int, int, int] | None:
+    """(n output rows, k input columns, count) of a weight tensor computed as a linear; None for
+    anything else (norms, convolutions, scales). A GGUF tensor is [k, n(, experts)]; a checkpoint's
+    [(experts,) n, k packed]: MXFP4 blocks [(experts,) n, k/32, 16], AWQ's qweight [k, n packed],
+    GPTQ's [k packed, n]."""
+    if not elems or not dims:
+        return None
+    if fmt.startswith("gguf:"):
+        if not name.endswith(".weight") or len(dims) < 2:
+            return None
+        k, n = dims[0], dims[1]
+        count = elems // max(1, n * k)
+    else:
+        fused = FUSED_EXPERTS.search(name) is not None
+        if not (name.endswith(WEIGHT_SUFFIX) or fused):
+            return None
+        rank = len(dims) - (1 if fmt == "mxfp4" else 0)
+        if rank != (3 if fused or fmt == "mxfp4" else 2):
+            return None
+        count = dims[0] if rank == 3 else 1
+        if name.endswith("qweight"):
+            n = dims[1] if method == "gptq" else elems // max(1, dims[0])
+        else:
+            n = dims[-3] if fmt == "mxfp4" else dims[-2]
+        k = elems // max(1, n * count)
+    if k < 32 or n < 1 or n * k * count != elems:
+        return None
+    return n, k, count
+
+
+def linears(table: dict, wanted: tuple[str, ...], quant: str = "", head_rows: int = 0) -> list[dict]:
+    """The linears of a table's classes in `wanted` grouped as {format, n, k, count, head, expert}:
+    a pass's matrices as published (a tied head: the input table's), "conv:q8" where the converter
+    re-encodes them (as_converted), a head over at most `head_rows` rows. Empty without shapes."""
+    shapes = table.get("shapes")
+    if not shapes:
+        return []
+    gguf, nextn, blocks, _, _ = _layout(table)
+    method = str(table.get("meta", {}).get("quant_method", ""))
+    convert = quant == "q8" and not gguf
+    has_head = any(tensor_class(t, gguf, nextn, blocks) == "head" for t in shapes)
+    groups: dict[tuple, int] = {}
+    for name, (fmt, dims) in shapes.items():
+        c = tensor_class(name, gguf, nextn, blocks)
+        if c == "embed" and "head" in wanted and not has_head and "per_layer" not in name:
+            c = "head"  # tied: the head reads the input table
+        if c not in wanted:
+            continue
+        e = table["elems"].get(name, 0)
+        shape = linear_shape(name, fmt, dims, e, method)
+        if shape is None:
+            continue
+        n, k, count = shape
+        if convert and e >= 65536 and table["tensors"][name] >= 1.9 * e:
+            fmt = "conv:q8"
+        if c == "head" and head_rows:
+            n = min(n, head_rows)
+        key = (fmt, n, k, c == "head", c in ("experts", "mtp_experts"))
+        groups[key] = groups.get(key, 0) + count
+    return [dict(format=f, n=n, k=k, count=count, head=h, expert=x)
+            for (f, n, k, h, x), count in sorted(groups.items(), key=lambda g: (g[0][3], g[0][4], g[0]))]
 
 
 def pass_of(b, n, dense, routed, experts, used) -> dict:
@@ -147,12 +255,21 @@ def as_converted(table: dict, quant: str) -> dict:
     return out
 
 
+def with_linears(d: dict, groups: list[dict]) -> dict:
+    """The pass with its linears, when its tables carry shapes."""
+    if groups:
+        d["linears"] = groups
+    return d
+
+
 def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
     target = tables.get(pair["target_repo"])
     if target is None:
         return None
     b, n, experts, used = classes(target)
-    out = {"target": pass_of(b, n, ["body", "head"], ["experts"], experts, used), "drafters": {}}
+    out = {"target": with_linears(pass_of(b, n, ["body", "head"], ["experts"], experts, used),
+                                  linears(target, ("body", "head", "experts"))), "drafters": {}}
+    target_head = linears(target, ("head",))
     modes = {m["config"].split(":")[0] for m in pair["tune"]["measurements"] if m["config"] != "plain"}
     kinds = {d.get("kind") for d in pair["tune"].get("drafters", [])}
     for mode in sorted(modes):
@@ -172,16 +289,22 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
                     # A sidecar's layers are its NextN layers: all of them, and their experts.
                     d = pass_of(qb, qn, ["body", "mtp", "head"], ["experts", "mtp_experts"],
                                 qe or experts, qu or used)
+                    own = linears(table, ("body", "mtp", "head", "experts", "mtp_experts"), quant)
+                    if own and not any(g["head"] for g in own):
+                        own += target_head
+                    with_linears(d, own)
                 else:
                     # Its own head over the shortlist's rows, gathered as published (BF16): the
                     # kind's proposal_rows (the full vocabulary when none).
                     vocab = max(1, int(table.get("meta", {}).get("vocab_size", 262144)))
                     rows = min(head_rows or vocab, vocab)
                     head_params = qn.get("head", 0) * rows / vocab
-                    d = {"bytes": int(qb.get("body", 0) + 2 * head_params),
-                         "params": int(qn.get("body", 0) + head_params)}
+                    d = with_linears({"bytes": int(qb.get("body", 0) + 2 * head_params),
+                                      "params": int(qn.get("body", 0) + head_params)},
+                                     linears(table, ("body",), quant) + linears(table, ("head",), "", rows))
             elif b.get("mtp") or b.get("mtp_experts"):
-                d = pass_of(b, n, ["mtp", "head"], ["mtp_experts"], experts, used)
+                d = with_linears(pass_of(b, n, ["mtp", "head"], ["mtp_experts"], experts, used),
+                                 linears(target, ("mtp", "head", "mtp_experts")))
             else:
                 continue
             d.update(rows=1, per_draft=True)
@@ -195,9 +318,13 @@ def round_facts(pair: dict, tables: dict, registry: dict) -> dict | None:
             if not 1 <= block <= 16:
                 print(f"{pair['target_repo']}: {mode} drafter without a block_size", file=sys.stderr)
                 continue
-            qb, qn, _, _ = classes(as_converted(table, drafter_rule(registry, pair, mode)[0]))
-            d = {"bytes": int(qb.get("body", 0)), "params": int(qn.get("body", 0)), "rows": block,
-                 "per_draft": False, "head": {"bytes": int(b["head"]), "params": int(n["head"])}}
+            quant = drafter_rule(registry, pair, mode)[0]
+            qb, qn, _, _ = classes(as_converted(table, quant))
+            d = with_linears({"bytes": int(qb.get("body", 0)), "params": int(qn.get("body", 0)),
+                              "rows": block, "per_draft": False,
+                              "head": with_linears({"bytes": int(b["head"]), "params": int(n["head"])},
+                                                   target_head)},
+                             linears(table, ("body",), quant))
         if d["bytes"] > 0 and d["params"] > 0:
             out["drafters"][mode] = d
     return out if out["drafters"] and out["target"]["bytes"] > 0 else None
@@ -213,18 +340,29 @@ GGML_BLOCKS = {0: (1, 4), 1: (1, 2), 2: (32, 18), 3: (32, 20), 6: (32, 22), 7: (
                35: (256, 66), 36: (256, 66), 37: (256, 66), 38: (256, 66), 39: (32, 17)}
 
 
+def _open(req, tries: int = 8) -> bytes:
+    """The response body; the hub's rate limit (HTTP 429) is waited out, longer each time."""
+    for i in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return r.read()
+        except urllib.error.HTTPError as error:
+            if error.code != 429 or i + 1 == tries:
+                raise
+            after = (error.headers or {}).get("Retry-After") or "0"
+            time.sleep(max(int(after) if after.isdigit() else 0, 30 * (i + 1)))
+    raise AssertionError("unreachable")
+
+
 def _get(url: str) -> bytes:
-    with urllib.request.urlopen(url, timeout=60) as r:
-        return r.read()
+    return _open(url)
 
 
 def _range(url: str, a: int, b: int) -> bytes:
-    req = urllib.request.Request(url, headers={"Range": f"bytes={a}-{b}"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return r.read()
+    return _open(urllib.request.Request(url, headers={"Range": f"bytes={a}-{b}"}))
 
 
-def _gguf(url: str) -> tuple[dict, dict, dict]:
+def _gguf(url: str) -> tuple[dict, dict, dict, dict]:
     size = 8 << 20
     while True:
         buf = _range(url, 0, size - 1)
@@ -236,8 +374,9 @@ def _gguf(url: str) -> tuple[dict, dict, dict]:
             size *= 4
 
 
-def parse_gguf(buf: bytes) -> tuple[dict, dict, dict]:
-    """Metadata, bytes and parameters per tensor of a GGUF header (`buf` its first bytes)."""
+def parse_gguf(buf: bytes) -> tuple[dict, dict, dict, dict]:
+    """Metadata, and bytes, parameters and [format, dims] per tensor of a GGUF header (`buf` its
+    first bytes; a format is "gguf:" and the ggml type's name)."""
     at = [4]
 
     def rd(fmt):
@@ -274,7 +413,7 @@ def parse_gguf(buf: bytes) -> tuple[dict, dict, dict]:
         v = value(rd("<I"))
         if not isinstance(v, list):
             meta[k] = v
-    infos = []
+    infos, shapes = [], {}
     for _ in range(count):
         name = text()
         dims = [rd("<Q") for _ in range(rd("<I"))]
@@ -283,6 +422,7 @@ def parse_gguf(buf: bytes) -> tuple[dict, dict, dict]:
         for d in dims:
             e *= d
         infos.append((offset, name, kind, e))
+        shapes[name] = ["gguf:" + GGML_NAMES.get(kind, f"type{kind}"), dims]
     infos.sort()
     tensors, elems = {}, {}
     for i, (offset, name, kind, e) in enumerate(infos):
@@ -296,12 +436,13 @@ def parse_gguf(buf: bytes) -> tuple[dict, dict, dict]:
         if kind not in GGML_BLOCKS:
             print(f"note: ggml type {kind} ({name}) sized by its offsets", file=sys.stderr)
         elems[name] = e
-    return meta, tensors, elems
+    return meta, tensors, elems, shapes
 
 
-def parse_safetensors_header(header: dict, bits: int) -> tuple[dict, dict]:
-    """Bytes and logical parameters per tensor (packed values counted; scales and zero points none)."""
-    tensors, elems = {}, {}
+def parse_safetensors_header(header: dict, bits: int) -> tuple[dict, dict, dict]:
+    """Bytes, logical parameters (packed values counted; scales and zero points none) and
+    [format, dims] (safetensors_format) per tensor."""
+    tensors, elems, shapes = {}, {}, {}
     for k, v in header.items():
         if k == "__metadata__":
             continue
@@ -316,7 +457,8 @@ def parse_safetensors_header(header: dict, bits: int) -> tuple[dict, dict]:
         elif v["dtype"] == "U8" and (k.endswith((".weight", "weight_packed")) or "_blocks" in k):
             e *= 2  # two 4-bit values a byte (ModelOpt NVFP4, compressed-tensors NVFP4, MXFP4)
         tensors[k], elems[k] = b - a, e
-    return tensors, elems
+        shapes[k] = [safetensors_format(k, v["dtype"], bits), list(v["shape"])]
+    return tensors, elems, shapes
 
 
 def _config_meta(cfg: dict) -> tuple[dict, int]:
@@ -333,6 +475,8 @@ def _config_meta(cfg: dict) -> tuple[dict, int]:
     if block:
         meta["block_size"] = block
     q = cfg.get("quantization_config") or {}
+    if q.get("quant_method"):
+        meta["quant_method"] = q["quant_method"]
     bits = q.get("bits") or q.get("w_bit")
     for group in (q.get("config_groups") or {}).values():
         bits = bits or (group.get("weights") or {}).get("num_bits")
@@ -355,19 +499,20 @@ def fetch(repo_at: str, files: list[str] | None = None, shas: list[str] | None =
     meta, bits = ({}, 4)
     if "config.json" in names:
         meta, bits = _config_meta(json.loads(_get(base + "config.json")))
-    tensors, elems = {}, {}
+    tensors, elems, shapes = {}, {}, {}
     for f in files:
         if f.endswith(".gguf"):
-            m, t, e = _gguf(base + f)
+            m, t, e, s = _gguf(base + f)
             meta.update(m)
         else:
             n = struct.unpack("<Q", _range(base + f, 0, 7))[0]
-            t, e = parse_safetensors_header(json.loads(_range(base + f, 8, 8 + n - 1)), bits)
+            t, e, s = parse_safetensors_header(json.loads(_range(base + f, 8, 8 + n - 1)), bits)
         tensors.update(t)
         elems.update(e)
+        shapes.update(s)
     if not tensors:
         raise ValueError(f"no weight files found at {repo_at}")
-    return {"meta": meta, "tensors": tensors, "elems": elems}
+    return {"meta": meta, "tensors": tensors, "elems": elems, "shapes": shapes}
 
 
 def main() -> int:
@@ -387,15 +532,16 @@ def main() -> int:
                 parts = key[len("drafter:"):].split(":")
                 wanted.append((key, parts[0], parts[1:] or None, None))
             for key, at, files, shas in wanted:
-                if key in tables:
-                    continue
+                if key in tables and "shapes" in tables[key]:
+                    continue  # the cache: read before (a table without shapes is read again)
                 try:
                     tables[key] = fetch(at, files, shas)
                     print(f"{key}: {len(tables[key]['tensors'])} tensors", file=sys.stderr)
                 except Exception as error:  # noqa: BLE001 - one model's failure skips it
                     print(f"{key}: {error}", file=sys.stderr)
-            if args.tables:
-                args.tables.write_text(json.dumps(tables), encoding="utf-8")
+                    continue
+                if args.tables:
+                    args.tables.write_text(json.dumps(tables), encoding="utf-8")
     done = 0
     for p in registry.get("pairs", []):
         board = LAB_BOARDS.get(p["tune"]["key"]["gpu"])

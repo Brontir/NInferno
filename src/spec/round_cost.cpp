@@ -21,6 +21,14 @@ Json pass_json(const PassFacts& p) {
         out["experts"]       = p.experts;
         out["experts_used"]  = p.experts_used;
     }
+    if (!p.linears.empty()) {
+        Json groups = Json::array();
+        for (const auto& g : p.linears) {
+            groups.push_back(Json{{"format", g.format}, {"n", g.n}, {"k", g.k}, {"count", g.count},
+                                  {"head", g.head}, {"expert", g.expert}});
+        }
+        out["linears"] = std::move(groups);
+    }
     return out;
 }
 
@@ -37,6 +45,21 @@ PassFacts parse_pass(const Json& doc) {
         (p.experts > 0 && p.experts_used == 0) ||
         ((p.experts > 0) != (p.expert_bytes > 0))) {
         throw std::runtime_error("round facts: a pass's bytes, parameters or experts are malformed");
+    }
+    if (const auto groups = doc.find("linears"); groups != doc.end()) {
+        for (const auto& g : *groups) {
+            LinearGroup l;
+            l.format = g.at("format").get<std::string>();
+            l.n      = g.at("n").get<std::int64_t>();
+            l.k      = g.at("k").get<std::int64_t>();
+            l.count  = g.at("count").get<std::int32_t>();
+            l.head   = g.value("head", false);
+            l.expert = g.value("expert", false);
+            if (l.format.empty() || l.n < 1 || l.k < 1 || l.count < 1) {
+                throw std::runtime_error("round facts: a linear's format, rows, columns or count are malformed");
+            }
+            p.linears.push_back(std::move(l));
+        }
     }
     return p;
 }

@@ -90,6 +90,31 @@ int main() {
         expect(q9.round_facts->drafters.at("dflash").head.has_value() &&
                    !q9.round_facts->drafters.at("mtp").head.has_value(),
                "DFlash prices the target's head over the drafted rows apart; MTP within its pass");
+        // The linears: the target's matrices hold nearly all its parameters (norms, convolutions
+        // and gates left), one output head among them, the one DFlash runs over the drafted rows.
+        const auto& facts = *q9.round_facts;
+        double held       = 0;
+        int heads         = 0;
+        for (const auto& g : facts.target.linears) {
+            held += double(g.n) * double(g.k) * g.count;
+            heads += g.head ? 1 : 0;
+        }
+        expect(held <= facts.target.params && held >= 0.97 * facts.target.params && heads == 1,
+               "the target's linears hold its parameters, one head among them");
+        std::vector<sp::LinearGroup> head;
+        for (const auto& g : facts.target.linears) {
+            if (g.head) { head.push_back(g); }
+        }
+        expect(facts.drafters.at("dflash").head->linears == head &&
+                   !facts.drafters.at("mtp").pass.linears.empty(),
+               "DFlash's head is the target's; the MTP pass lists its linears");
+        auto zero                             = sp::round_facts_json(facts);
+        zero["target"]["linears"][0]["count"] = 0;
+        bool refused_linear                   = false;
+        try {
+            (void)sp::parse_round_facts(zero);
+        } catch (const std::runtime_error&) { refused_linear = true; }
+        expect(refused_linear, "a linear counted zero times is refused");
     }
     // An MoE pass's experts: k/E for one row, towards k/E + 0.30 (1 - k/E) for many.
     {
