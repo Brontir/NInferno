@@ -146,6 +146,27 @@ int gguf_qwen35() {
     failures += check(s.model.weight_elements == 0 &&
                           s.model.bits_per_weight(8) == (s.model.params > 0 ? 64 / s.model.params : 0),
                       "a split part's elements unknown: the parameter count");
+    // Its part 0's token table kept whether or not it is the head (complete_split_gguf_head
+    // settles the tie from the later parts; Codex on #199).
+    GgufFile split0 = split;
+    split0.tensors.erase(split0.tensors.begin() + 1); // output.weight in a later part
+    const auto s0   = pr::plan_facts_of_gguf(split0, 17000000000ULL);
+    failures += same(s0.model.token_table_bytes, 1000, "split part 0's token table");
+    failures += same(s0.model.head_bytes, 0, "split part 0: the head not known");
+    failures += same(s0.model.embedding_bytes, 0, "split part 0: the embedding not known");
+
+    // Routed expert banks as stored (*_exps), the trunk's and the MTP layers' apart (Codex on
+    // #199: a mixed-quant model's experts are not their parameter share of the bytes).
+    GgufFile moe = file;
+    moe.tensors.push_back(
+        tensor("blk.0.ffn_up_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::Q4_K, 300));
+    moe.tensors.push_back(
+        tensor("blk.0.ffn_up_shexp.weight", {5120, 512}, ninferno::convert::ggml::Q8_0, 40));
+    moe.tensors.push_back(
+        tensor("blk.64.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::Q6_K, 70));
+    const auto e = pr::plan_facts_of_gguf(moe, 999999);
+    failures += same(e.model.routed_expert_bytes, 300, "routed expert banks as stored");
+    failures += same(e.model.mtp_routed_expert_bytes, 70, "the MTP layer's routed bank apart");
 
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);

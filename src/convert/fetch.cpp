@@ -1397,6 +1397,7 @@ gguf_quants_carry_mtp(const std::string& spec, const FetchOptions& options,
     constexpr std::size_t kAtOnce = 8; // range reads of one hub at a time
     std::map<std::string, std::optional<bool>> out;
     std::mutex out_mutex;
+    std::set<std::string> ties; // split models found to tie their head
     std::atomic<std::size_t> next{0};
     std::vector<std::thread> threads;
     for (std::size_t t = 0; t < std::min(kAtOnce, quants.size()); ++t) {
@@ -1954,7 +1955,8 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
 std::map<std::string, std::uint64_t>
 gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                        const std::vector<std::string>& quants, std::uint64_t table_end,
-                       std::uint64_t hidden, std::uint64_t vocab, bool tied) {
+                       std::uint64_t hidden, std::uint64_t vocab, bool tied,
+                       std::set<std::string>* tied_found) {
     std::map<std::string, std::uint64_t> out;
     if (quants.empty() || table_end == 0 || hidden == 0 || vocab == 0) { return out; }
     // Kept beside the commit's conversions: a commit's files do not change.
@@ -1965,7 +1967,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                                     [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); });
     std::string hub_revision  = revision;
     const fs::path cache_file = make_hub(options, hub_revision)->cache_dir(root, repo) /
-                                "ninferno" / revision / "gguf_heads.v2.json";
+                                "ninferno" / revision / "gguf_heads.v3.json";
     nlohmann::json cached = nlohmann::json::object();
     if (commit) {
         try {
@@ -1977,6 +1979,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
     for (const auto& q : quants) {
         if (cached.contains(q) && cached[q].is_number_unsigned()) {
             out[q] = cached[q].get<std::uint64_t>();
+            if (tied_found != nullptr && cached.value(q + "#tied", false)) { tied_found->insert(q); }
         } else {
             wanted.push_back(q);
         }
@@ -1994,7 +1997,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
             for (std::size_t i = next++; i < wanted.size(); i = next++) {
                 FetchOptions one = options;
                 one.quant        = wanted[i];
-                std::uint64_t bytes = 0;
+                std::uint64_t bytes = 0, embedding = 0;
                 // The head's tensor: output.weight, or the embedding table a tied model reads.
                 const char* name = tied ? "token_embd.weight" : "output.weight";
                 const auto find  = [&](const GgufHead& window) {
@@ -2003,23 +2006,33 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                             gguf_tensor_info_bytes(data, window.bytes.size(), name, {hidden, vocab})) {
                         bytes = *found;
                     }
+                    if (const auto found = gguf_tensor_info_bytes(data, window.bytes.size(),
+                                                                  "token_embd.weight", {hidden, vocab})) {
+                        embedding = *found;
+                    }
                 };
                 // Each read on its own: one that fails skips only itself (not read: 0).
-                std::size_t parts = 1;
+                std::size_t parts = 1, read = 0;
                 try {
                     const auto window = fetch_gguf_head(spec, one, kWindow, 0, begin);
                     parts             = window.parts;
                     find(window);
+                    ++read;
                 } catch (const std::exception&) {}
                 // A split model's head may lie in a later part (Codex on #170): its header lists
                 // its own tensors after a few metadata keys.
                 for (std::size_t part = 1; bytes == 0 && part < parts; ++part) {
                     try {
                         find(fetch_gguf_head(spec, one, kWindow, part, 0));
+                        ++read;
                     } catch (const std::exception&) {}
                 }
+                // Every part read, no output.weight: a split model tying its head (Codex on #199).
+                const bool tie = !tied && bytes == 0 && parts > 1 && read == parts && embedding != 0;
+                if (tie) { bytes = embedding; }
                 std::lock_guard lock(out_mutex);
                 out[wanted[i]] = bytes;
+                if (tie) { ties.insert(wanted[i]); }
             }
         });
     }
@@ -2028,6 +2041,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
         try {
             for (const auto& q : wanted) {
                 if (out[q] != 0) { cached[q] = out[q]; }
+                if (ties.contains(q)) { cached[q + "#tied"] = true; }
             }
             fs::create_directories(cache_file.parent_path());
             const auto temporary = cache_file.string() + ".tmp" + std::to_string(sys::pid());
@@ -2035,6 +2049,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
             fs::rename(temporary, cache_file);
         } catch (const std::exception&) {}
     }
+    if (tied_found != nullptr) { tied_found->insert(ties.begin(), ties.end()); }
     return out;
 }
 

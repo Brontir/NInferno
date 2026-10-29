@@ -731,14 +731,18 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         return block;
     };
     double elements = 0;
-    std::uint64_t output_bytes = 0, embedding_bytes = 0;
+    std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
         if (t.name == "token_embd.weight") { embedding_bytes = t.bytes; }
         elements += static_cast<double>(t.elements());
-        if (const auto block = block_of(t.name); g.mtp && block && *block >= g.layers) {
-            mtp_bytes += t.bytes;
+        const auto block = block_of(t.name);
+        const bool mtp   = g.mtp && block && *block >= g.layers;
+        if (mtp) { mtp_bytes += t.bytes; }
+        // Routed expert banks (ffn_{gate,up,down}_exps; the shared expert is *_shexp).
+        if (block && t.name.find("_exps.") != std::string::npos) {
+            (mtp ? mtp_routed : routed) += t.bytes;
         }
         has_output = has_output || t.name == "output.weight";
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
@@ -762,6 +766,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.mtp_bytes      = whole ? mtp_bytes : 0;
     out.model.head_bytes     = !whole ? 0 : has_output ? output_bytes : embedding_bytes;
     out.model.embedding_bytes = has_output ? embedding_bytes : 0;
+    out.model.token_table_bytes = embedding_bytes;
+    out.model.routed_expert_bytes     = whole ? routed : 0;
+    out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
     out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
     out.model.weight_elements = whole ? elements : 0;
@@ -873,6 +880,8 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
     facts.model.mtp_bytes         = scaled(facts.model.mtp_bytes);
     facts.model.own_drafter_bytes = scaled(facts.model.own_drafter_bytes);
     facts.model.embedding_bytes   = scaled(facts.model.embedding_bytes);
+    facts.model.routed_expert_bytes     = scaled(facts.model.routed_expert_bytes);
+    facts.model.mtp_routed_expert_bytes = scaled(facts.model.mtp_routed_expert_bytes);
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;
     return facts;

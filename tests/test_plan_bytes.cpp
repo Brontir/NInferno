@@ -1049,6 +1049,16 @@ void test_proposal_bytes_per_quant() {
     check(pr::proposal_bytes_at(moe, none) == priced.bytes &&
               pr::proposal_bytes_at(moe, none) != pr::proposal_bytes_at(dense_all, none),
           "MoE MTP: priced at its routed read, its stored bytes out of the target");
+    // The routed banks as the table stores them where it counts them, not their parameter share
+    // (Codex on #199: a mixed-quant model): a different verify read, different rows.
+    pr::PlanSourceFacts stored_banks = moe;
+    stored_banks.model.routed_expert_bytes =
+        static_cast<std::uint64_t>(0.5 * (static_cast<double>(moe.model.weight_bytes) -
+                                          static_cast<double>(moe.model.mtp_bytes) -
+                                          static_cast<double>(moe.model.embedding_bytes)));
+    stored_banks.model.mtp_routed_expert_bytes = moe.model.mtp_bytes / 2;
+    check(pr::proposal_bytes_at(stored_banks, none) != pr::proposal_bytes_at(moe, none),
+          "MoE: the stored routed banks price the passes");
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.
     check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3364, "the 9B's MTP rows from its table");

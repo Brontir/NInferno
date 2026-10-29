@@ -142,6 +142,14 @@ struct DryRunInputs {
 // The default proposal head's bytes (convert::planned_proposal_bytes) at `facts`' weights: the
 // row's own head where its header was read, else the facts' head as it is (a head's format is
 // the file's, not a share of the weights); 0 when the inputs plan none.
+// A split Qwen GGUF's head, where its parsed part 0 did not hold it (Codex on #199): the later
+// parts' headers read (convert::gguf_quants_head_bytes) for `quant`'s output.weight, else the
+// tied token table every part was read without; the head's bytes, the tie, and an untied model's
+// embedding (its part 0's token_embd.weight) set in `facts`. Nothing for a whole table or a head
+// known.
+void complete_split_gguf_head(PlanSourceFacts& facts, const std::string& spec,
+                              const convert::FetchOptions& fetch, const std::string& quant);
+
 [[nodiscard]] std::uint64_t proposal_bytes_at(const PlanSourceFacts& facts,
                                               const DryRunInputs& inputs);
 
