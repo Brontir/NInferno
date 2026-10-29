@@ -229,7 +229,8 @@ public:
             ThinkingControlOptions& thinking = options.execution.thinking;
             const bool room = thinking.answer_room && !thinking.budget &&
                               prompt_summary.thinking_budget_control && prompt_summary.thinking() &&
-                              output_limit - output_limit / kAnswerRoomShare > 0;
+                              output_limit / kAnswerRoomShare > 0;
+            thinking.answer_room = room; // true only where the budget is the answer room
             if (room) { thinking.budget = output_limit - output_limit / kAnswerRoomShare; }
             // An output constraint's grammar opens at the first reasoning close, so the output
             // splits there too; without one a quoted close stays reasoning text.
@@ -248,6 +249,7 @@ public:
                 }
                 // A limit too small for the control suffix and an answer: no room is kept.
                 thinking.budget.reset();
+                thinking.answer_room = false;
                 output = make_output();
             }
             request = std::make_shared<Request>(request_id, publication_order, std::move(prompt),

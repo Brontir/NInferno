@@ -301,6 +301,7 @@ OperationalRecord render_request_done(const RequestLogContext& context,
         out << " | thinking "
             << product::format_pretty_count(outcome.thinking.model_thinking_tokens) << '/'
             << product::format_pretty_count(*outcome.thinking.configured_budget);
+        if (outcome.thinking.answer_room) { out << " (answer room)"; }
         if (outcome.thinking.injected_tokens != 0) {
             out << ", control " << product::format_pretty_count(outcome.thinking.injected_tokens);
         }

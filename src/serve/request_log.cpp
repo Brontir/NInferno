@@ -639,6 +639,7 @@ std::string format_request_done_json(const std::string& server_instance_id, std:
              {"thinking_budget", outcome.thinking.configured_budget
                                      ? Json(*outcome.thinking.configured_budget)
                                      : Json(nullptr)},
+             {"thinking_budget_answer_room", outcome.thinking.answer_room},
              {"model_thinking_tokens", outcome.thinking.model_thinking_tokens},
              {"thinking_control_tokens", outcome.thinking.injected_tokens},
              {"thinking_control_applied", outcome.thinking.applied},
