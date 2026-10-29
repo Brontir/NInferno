@@ -12,6 +12,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -226,6 +227,42 @@ int main() {
             const auto r = sp::round_cost(f, c, 0.0, sp::ProposalRows{{{"mtp", 100}}});
             expect(r && near(*r, (1000 + 2 * (100 + 100 * 64 * 4.25 / 8)) / 1000, 1e-12),
                    "a checkpoint's proposal rows at Q4_G64_FP16's 4.25 bits");
+        }
+        // Each kernel a round's graphs launch, and a plain step's, at the card's launch time:
+        // R = (C_round + L n_round) / (C_step + L n_step), L = t0 x eta_dram x BW.
+        {
+            sp::RoundFacts f;
+            f.target          = sp::PassFacts{.bytes = 1000, .params = 1000};
+            f.drafters["mtp"] = sp::DraftFacts{.pass = sp::PassFacts{.bytes = 100, .params = 100}};
+            const auto c      = sp::SpecConfig::parse("mtp:2");
+            const auto r = sp::round_cost(f, c, 0.0, {}, 2.0, sp::RoundLaunches{.round = 50, .step = 30});
+            expect(r && near(*r, (1000 + 200 + 2.0 * 50) / (1000 + 2.0 * 30), 1e-12),
+                   "a round's kernel launches and a plain step's");
+            expect(sp::round_cost(f, c, 0.0, {}, 2.0, sp::RoundLaunches{.round = 50}) ==
+                       sp::round_cost(f, c, 0.0),
+                   "launches not counted for the plain step: none added");
+            const auto ada = sp::card_rates_of_board(0x2782);
+            expect(near(ada.launch_bytes(), 1.5e-6 * 0.946 * ada.dram_bytes_per_s, 1e-12) &&
+                       sp::card_rates_of_board(0x2503).launch_bytes() == 0,
+                   "Ada's launch time; Ampere has none (one lab card)");
+        }
+        // A tune's graph kernels round-trip, and an estimate prices them: more kernels a round,
+        // a dearer round.
+        {
+            auto counted = pair_of(kQ9, "ad104:60sm");
+            for (auto& m : counted.tune.measurements) {
+                m.graph_kernels = m.config.enabled() ? 500 * std::max<std::int64_t>(m.rounds, 1)
+                                                     : 311 * std::max<std::int64_t>(m.tokens, 1);
+            }
+            const auto again = sp::parse_pair(sp::pair_json(counted));
+            expect(again.tune.measurements.front().graph_kernels ==
+                       counted.tune.measurements.front().graph_kernels,
+                   "graph kernels round-trip");
+            const auto rtx4060 = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
+            const auto with    = sp::round_cost_estimate(counted, rtx4060);
+            const auto without = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060);
+            expect(with.known && without.known && with.cost.at("mtp:3") != without.cost.at("mtp:3"),
+                   "counted launches enter the estimate");
         }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.
