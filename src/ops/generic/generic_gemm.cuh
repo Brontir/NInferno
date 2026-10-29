@@ -3110,9 +3110,13 @@ inline constexpr bool kRmmaAhead =
 // registers on sm_75..sm_89). Without the cap the ring took the four-warp CTA to 141-144
 // registers, three CTAs per SM against four (RTX 3060 Q4_K add w1x4 at T = 8: 112.4 -> 142.1 us;
 // held to 128: 107.2 us). ptxas for sm_89 gave the wide w1x4 159 registers against 124.
+// Every one-tile store / add kernel (one M tile, one token tile) is held to it too: the decode
+// K split (rmma_k_split_fit) counts 16 / WarpsK of them a SM. Uncapped, ptxas gave two more
+// than 128: Q2_K w1x4 152 (sm_89) / 146 (sm_120), Q5_K w1x4 129 (sm_120).
 template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
 inline constexpr int kRmmaMinBlocks =
-    (FinishOf<Decoder>::value || kRmmaAhead<Decoder, Schedule, E, Latency>) &&
+    (FinishOf<Decoder>::value || kRmmaAhead<Decoder, Schedule, E, Latency> ||
+     Schedule::kNTiles == 1) &&
             Schedule::kMTiles == 1 &&
             E != Epilogue::SwiGlu && 65536 / (Schedule::kThreads * 128) > Schedule::kMinBlocks
         ? 65536 / (Schedule::kThreads * 128)

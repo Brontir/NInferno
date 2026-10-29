@@ -934,38 +934,77 @@ bool ring_swiglu_four_warps(QType q) {
     }
 }
 
+// The K values one register-MMA step of the format covers: four runs of its decoder (rmma_kernel's
+// KStep = 4 x Decoder::kRun): 32 for BF16, Q8 and U4 G32 (eight-value runs), 64 for FP8, NVFP4
+// and the 16-value groupwise runs, 128 for the 32-value decoders (K-quants, IQ, MXFP4, the
+// quad-run U4 G32 / G64 at K % 128 == 0) and for the ggml 32-blocks stepped four at a time
+// (run_values 128).
+std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
+    Weight weight;
+    weight.qtype = qtype;
+    WeightCodec codec{};
+    try {
+        codec = codec_of(weight);
+    } catch (const std::invalid_argument&) {
+        return 128;
+    }
+    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
+                         k > 0 && (k % 128) == 0;
+    const int run = quad_u4 ? 32 : run_values(codec);
+    return run >= 128 ? run : 4 * run;
+}
+
 // The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to two facts of
-// the grid and the addressing, never a timing:
-// - each warp walks more K steps of its rows than its load ring holds (two steps of 128 values,
-//   every ggml decoder's 32-value runs: K > 256 x warps); with no more steps than the ring holds,
-//   the ring never refills, every step's load latency and the cross-warp reduction exposed (K =
-//   4096 on sixteen warps, two steps a warp, streamed DRAM at 57..70 % of peak on all five lab
-//   boards, against 71..74 % for the best split; K = 2560 on eight warps, 2.5 steps a warp, kept
-//   up on the RTX 3060: 32.5 us against 33.0 on four warps);
-// - its grid leaves no last wave of a few CTAs: from one to one and a half waves the last runs
-//   on a fraction of the SMs (RTX 4090 Q4_K 5120x17408 add, 320 CTAs: eight warps at 1.25 waves
-//   69 % of DRAM, four warps at 0.63 waves 75 %; RTX 5070 Ti four warps at 1.14 waves 52 %, eight
-//   at 2.29 waves 63 %; RTX 4070 Ti four warps at 1.33 waves 74 %, eight at 2.67 waves 86 %).
-// A one-tile CTA of `w` K warps holds 16 / w per SM: these kernels take at most 128 registers a
-// thread (ptxas, sm_86 / sm_89 / sm_120: Q4_K 114..122, Q6_K wide 128; launch bounds hold the
-// wide and ring forms to it), 16 warps of a 64K-register SM. The split that keeps both facts,
-// trying eight, four and sixteen warps in that order; the pick unchanged when it keeps them or
-// none does.
+// the addressing and the grid, never a timing:
+// - every warp walks more K steps of its rows than its load ring holds (two steps, rmma_kernel's
+//   ring; a step is rmma_k_step values): the fewest steps a warp takes, steps / warps rounded
+//   down, at least three. With two or fewer the ring never refills: every step's load latency and
+//   the cross-warp reduction stay exposed (Q4_K K = 4096 on sixteen warps, two steps a warp,
+//   streamed DRAM at 57..70 % of peak on all five lab boards against 71..74 % for the best split;
+//   K = 2560 on eight warps, two steps for most warps, tied four warps on the RTX 3060: 32.5 us
+//   against 33.0);
+// - of the splits that keep it, the one whose grid fills its last round of resident CTAs best:
+//   CTAs / (slots x rounds), slots = SMs x CTAs a SM holds, rounds = CTAs / slots rounded up; a
+//   tie keeps the format's pick (light_ggml_step, the Q6_K rule). RTX 4090 Q4_K 5120x17408 add,
+//   320 CTAs: four warps 0.625 (one round), eight 0.625 (two) — a tie, four kept (75 % of DRAM
+//   against 69 %); RTX 5070 Ti four warps 0.57, eight 0.76 (52 % against 63 %); RTX 4070 Ti four
+//   0.67, eight 0.89 (74 % against 86 %).
+// A one-tile store / add CTA of `w` K warps holds 16 / w a SM: kRmmaMinBlocks caps those kernels
+// at 128 registers a thread, 16 warps of a 64K-register SM. Eight and four warps are the
+// candidates; sixteen hold one CTA a SM, a grid of more CTAs than SMs running in rounds of one CTA
+// a SM whose cross-warp reduction and store run with nothing else resident. The pick unchanged
+// where neither split keeps the ring fact.
 int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::int64_t sms) {
     if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
-    const auto keeps = [&](int warps_k) {
-        const double waves = static_cast<double>(ctas) / static_cast<double>(sms * (16 / warps_k));
-        return problem.k > 256 * warps_k && !(waves > 1.0 && waves < 1.5);
-    };
     const RmmaScheduleInfo info = rmma_schedule_info(index);
-    if (info.warps_m != 1 || info.m_tiles != 1 || info.n_tiles != 1 || info.cluster != 1 ||
-        keeps(info.warps_k)) {
+    if (info.warps_m != 1 || info.m_tiles != 1 || info.n_tiles != 1 || info.cluster != 1) {
         return index;
     }
-    for (const int warps_k : {8, 4, 16}) {
-        if (warps_k != info.warps_k && keeps(warps_k)) return rmma_index(1, warps_k, 1, 1);
+    const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
+    const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
+    const auto refills       = [&](int warps_k) { return steps / warps_k > 2; };
+    // The last round's fill as the fraction CTAs / (slots x rounds), compared exactly.
+    struct Fill {
+        std::int64_t ctas, cells;
+    };
+    const auto fill = [&](int warps_k) {
+        const std::int64_t slots  = sms * (16 / warps_k);
+        const std::int64_t rounds = (ctas + slots - 1) / slots;
+        return Fill{ctas, slots * rounds};
+    };
+    const auto better = [](Fill a, Fill b) { return a.ctas * b.cells > b.ctas * a.cells; };
+    int best      = info.warps_k;
+    bool kept     = refills(best);
+    Fill best_fill = fill(best);
+    for (const int warps_k : {8, 4}) {
+        if (warps_k == info.warps_k || !refills(warps_k)) continue;
+        if (!kept || better(fill(warps_k), best_fill)) {
+            best      = warps_k;
+            kept      = true;
+            best_fill = fill(warps_k);
+        }
     }
-    return index;
+    return best == info.warps_k ? index : rmma_index(1, best, 1, 1);
 }
 
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
