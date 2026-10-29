@@ -383,6 +383,24 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(round_facts.linear_shape("a.qweight", "int4", [32, 512], 256 * 512, "gptq"), (512, 256, 1))
         self.assertEqual(round_facts.linear_shape("a.weight_packed", "int4", [512, 32], 256 * 512,
                                                   "compressed-tensors"), (512, 256, 1))
+        # A qweight of a method whose orientation is not known: no linear rather than a guess.
+        self.assertIsNone(round_facts.linear_shape("a.qweight", "int4", [256, 64], 256 * 512, "auto-round"))
+        # A dense MXFP4 weight's blocks [n, k / 32, 16].
+        self.assertEqual(round_facts.linear_shape("a.weight_blocks", "mxfp4", [512, 8, 16], 512 * 256, ""),
+                         (512, 256, 1))
+
+    def test_a_sidecar_without_a_head_runs_the_targets(self):
+        meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.block_count": 1,
+                "nemotron_h_moe.nextn_predict_layers": 1}
+        target = self.shaped({"output.weight": ["gguf:Q6_K", [256, 1000], 256000],
+                              "blk.0.attn_q.weight": ["gguf:Q4_0", [256, 256], 65536]})
+        side = self.shaped({"blk.0.attn_q.weight": ["gguf:Q4_0", [256, 512], 131072]}, meta)
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "m"}]}]}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:b/g@3:m.gguf": side}, registry)
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "gguf:Q4_0", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q6_K", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}])
 
     def test_embeddings_by_role_and_the_sidecar_first(self):
         meta = {"expert_count": 8, "expert_used_count": 2}

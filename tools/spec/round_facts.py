@@ -45,6 +45,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import re
 import struct
 import sys
@@ -146,9 +147,12 @@ def safetensors_format(name: str, dtype: str, bits: int) -> str:
 
 def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) -> tuple[int, int, int] | None:
     """(n output rows, k input columns, count) of a weight tensor computed as a linear; None for
-    anything else (norms, convolutions, scales). A GGUF tensor is [k, n(, experts)]; a checkpoint's
-    [(experts,) n, k packed]: MXFP4 blocks [(experts,) n, k/32, 16], AWQ's qweight [k, n packed],
-    GPTQ's [k packed, n]."""
+    anything else (norms, convolutions, scales, and row tables read by id: DFlash2's selector
+    codebooks, models/qwen3_5/execution/parameters.cpp). A GGUF tensor is [k, n(, experts)]; a
+    checkpoint's [(experts,) n, k packed]: MXFP4 blocks [(experts,) n, k/32, 16], AWQ's qweight
+    [k, n packed], GPTQ's [k packed, n] (a qweight of another method: None). A fused expert bank
+    (no .weight) is read as HF Qwen3-MoE stores it, [E, n, k]; banks stored [E, k, n] (gpt-oss's
+    BF16 gate_up_proj, Llama 4) would read transposed: none in the registry, add a rule with one."""
     if not elems or not dims:
         return None
     if fmt.startswith("gguf:"):
@@ -161,10 +165,12 @@ def linear_shape(name: str, fmt: str, dims: list[int], elems: int, method: str) 
         if not (name.endswith(WEIGHT_SUFFIX) or fused):
             return None
         rank = len(dims) - (1 if fmt == "mxfp4" else 0)
-        if rank != (3 if fused or fmt == "mxfp4" else 2):
+        if rank != (3 if fused or (fmt == "mxfp4" and ".experts" in name) else 2):
             return None
         count = dims[0] if rank == 3 else 1
         if name.endswith("qweight"):
+            if method not in ("awq", "gptq"):
+                return None
             n = dims[1] if method == "gptq" else elems // max(1, dims[0])
         else:
             n = dims[-3] if fmt == "mxfp4" else dims[-2]
@@ -350,6 +356,7 @@ def _open(req, tries: int = 8) -> bytes:
             if error.code != 429 or i + 1 == tries:
                 raise
             after = (error.headers or {}).get("Retry-After") or "0"
+            error.close()
             time.sleep(max(int(after) if after.isdigit() else 0, 30 * (i + 1)))
     raise AssertionError("unreachable")
 
@@ -540,8 +547,10 @@ def main() -> int:
                 except Exception as error:  # noqa: BLE001 - one model's failure skips it
                     print(f"{key}: {error}", file=sys.stderr)
                     continue
-                if args.tables:
-                    args.tables.write_text(json.dumps(tables), encoding="utf-8")
+                if args.tables:  # whole or not at all: a crash mid-write keeps the cache
+                    part = args.tables.with_name(args.tables.name + ".part")
+                    part.write_text(json.dumps(tables), encoding="utf-8")
+                    os.replace(part, args.tables)
     done = 0
     for p in registry.get("pairs", []):
         board = LAB_BOARDS.get(p["tune"]["key"]["gpu"])

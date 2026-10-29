@@ -99,7 +99,8 @@ int main() {
             held += double(g.n) * double(g.k) * g.count;
             heads += g.head ? 1 : 0;
         }
-        expect(held <= facts.target.params && held >= 0.97 * facts.target.params && heads == 1,
+        const double all = facts.target.params + facts.target.expert_params;
+        expect(held <= all && held >= 0.97 * all && heads == 1,
                "the target's linears hold its parameters, one head among them");
         std::vector<sp::LinearGroup> head;
         for (const auto& g : facts.target.linears) {
