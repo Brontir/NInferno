@@ -3350,8 +3350,10 @@ int run_unwritten_poison_case(const Geometry& geometry, KvCacheStorage storage,
 // kernel's partial rescale searched for a shift that brings the scale under its limit and never
 // found one: the call never returned and the GPU stayed busy (iamwavecut/ninfer-all#137, fixed in
 // prompt_fast.cuh by kInt8PromptFastF16PartialMaxShift). The call must return, and the columns
-// before the outsized value, which never see it, must stay finite and match the same call
-// without it.
+// before the 64-key tile holding the outsized value must stay finite and match the same call
+// without it. Columns from that tile's first key on share its FP16 partial shift, which follows
+// the largest V scale of the whole tile (keys masked for the column included), so their values
+// move by the shift's rounding.
 int run_infinite_v_scale_case(const Geometry& geometry) {
     constexpr KvCacheStorage storage = KvCacheStorage::Int8Group64;
     constexpr int width = 1024, outsized = 300;
@@ -3402,7 +3404,7 @@ int run_infinite_v_scale_case(const Geometry& geometry) {
     const auto large = run(v_outsized);
     const std::string label = std::string("infinite V scale ") + geometry.name;
     int failures            = 0;
-    for (std::size_t i = 0; i < std::size_t(outsized) * q_column_elements; ++i) {
+    for (std::size_t i = 0; i < std::size_t(outsized / 64 * 64) * q_column_elements; ++i) {
         if ((large[i] & 0x7f80u) == 0x7f80u || large[i] != clean[i]) {
             std::cerr << label << ": a column before the outsized value changed (element " << i
                       << ")\n";
