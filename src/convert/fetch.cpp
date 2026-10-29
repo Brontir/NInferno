@@ -1966,7 +1966,7 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                                     [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); });
     std::string hub_revision  = revision;
     const fs::path cache_file = make_hub(options, hub_revision)->cache_dir(root, repo) /
-                                "ninferno" / revision / "gguf_heads.v3.json";
+                                "ninferno" / revision / "gguf_heads.v4.json";
     nlohmann::json cached = nlohmann::json::object();
     if (commit) {
         try {
@@ -2028,8 +2028,12 @@ gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                     } catch (const std::exception&) {}
                 }
                 // Every part read, no output.weight: a split model tying its head (Codex on #199).
-                const bool tie = !tied && bytes == 0 && parts > 1 && read == parts && embedding != 0;
-                if (tie) { bytes = embedding; }
+                // A model the caller knows ties its head (`tied`: its embedding read) is recorded
+                // tied as well, so a later read of the cached entry without `tied` keeps it so
+                // (Codex on #202).
+                const bool tie = tied ? bytes != 0
+                                      : bytes == 0 && parts > 1 && read == parts && embedding != 0;
+                if (tie && !tied) { bytes = embedding; }
                 std::lock_guard lock(out_mutex);
                 out[wanted[i]] = bytes;
                 if (tie) { ties.insert(wanted[i]); }

@@ -38,6 +38,12 @@ struct GgufTensorTable {
     std::uint64_t mtp_bytes         = 0;
     std::uint64_t own_drafter_bytes = 0; // a converted artifact's own drafter, inside tensor_bytes
     runtime::WeightBasis basis      = runtime::WeightBasis::GgufTensors; // Artifact for one
+    // A GGUF table's own stored routed-expert banks (trunk, MTP layers) and token table: a mixed
+    // quantization encodes them at other widths than its dense tensors, so the file's total does
+    // not scale another row's (Codex on #202). Unset: scaled from the parsed row's.
+    std::optional<std::uint64_t> routed_expert_bytes;
+    std::optional<std::uint64_t> mtp_routed_expert_bytes;
+    std::optional<std::uint64_t> token_table_bytes;
 };
 // The table from the facts of a head read (nullopt: a split part or no tensor table).
 [[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);

@@ -1059,6 +1059,33 @@ void test_proposal_bytes_per_quant() {
     stored_banks.model.mtp_routed_expert_bytes = moe.model.mtp_bytes / 2;
     check(pr::proposal_bytes_at(stored_banks, none) != pr::proposal_bytes_at(moe, none),
           "MoE: the stored routed banks price the passes");
+    // Another row with its own tensor table (Codex on #202): its own banks and token table, not
+    // the parsed row's scaled by the file's total (a mixed quantization stores them at other
+    // widths).
+    {
+        pr::QuantRow row;
+        row.listing.format = "gguf";
+        row.weight_bytes   = moe.model.weight_bytes / 2;
+        row.basis          = rt::WeightBasis::GgufTensors;
+        row.mtp_bytes      = moe.model.mtp_bytes / 2;
+        row.listing.table  = pr::GgufTensorTable{
+             .tensor_bytes            = row.weight_bytes,
+             .mtp_bytes               = *row.mtp_bytes,
+             .routed_expert_bytes     = row.weight_bytes / 3,
+             .mtp_routed_expert_bytes = *row.mtp_bytes / 3,
+             .token_table_bytes       = 123456789};
+        const auto own = pr::row_facts(moe, row);
+        check(own.model.routed_expert_bytes == row.weight_bytes / 3 &&
+                  own.model.mtp_routed_expert_bytes == *row.mtp_bytes / 3 &&
+                  own.model.token_table_bytes == 123456789 &&
+                  (moe.model.embedding_bytes == 0 || own.model.embedding_bytes == 123456789),
+              "a row's own table gives its routed banks and token table");
+        pr::QuantRow scaled = row;
+        scaled.listing.table->routed_expert_bytes.reset();
+        check(pr::row_facts(moe, scaled).model.routed_expert_bytes ==
+                  pr::with_weights(moe, row.weight_bytes, row.basis).model.routed_expert_bytes,
+              "a table without banks keeps the scaled ones");
+    }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.
     check(pr::proposal_bytes_at(mtp, none) == 57344ULL * 3364, "the 9B's MTP rows from its table");

@@ -170,8 +170,9 @@ struct GgufHead {
 // metadata but for a few keys), else, for a split model, the first 1 MiB of each later part (each
 // part's header lists its own tensors); read several at a time; 0 where not found. A split model
 // whose parts were all read and name no output.weight ties its head (the parsed part's table alone
-// cannot say): its token_embd.weight's bytes, the quantization listed in `tied_found`. Kept per
-// commit beside its conversions (<cache>/models--org--name/ninferno/<commit>/gguf_heads.v3.json):
+// cannot say): its token_embd.weight's bytes, the quantization listed in `tied_found` (as is every
+// one read with `tied`, whose head is its embedding). Kept per commit beside its conversions
+// (<cache>/models--org--name/ninferno/<commit>/gguf_heads.v4.json, the tie with the bytes):
 // a second plan reads none.
 [[nodiscard]] std::map<std::string, std::uint64_t>
 gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,

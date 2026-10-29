@@ -1290,9 +1290,12 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
         facts.model.weight_bytes == 0) {
         return std::nullopt;
     }
-    return GgufTensorTable{.tensor_bytes      = facts.model.weight_bytes,
-                           .mtp_bytes         = facts.model.mtp_bytes,
-                           .own_drafter_bytes = facts.model.own_drafter_bytes};
+    return GgufTensorTable{.tensor_bytes            = facts.model.weight_bytes,
+                           .mtp_bytes               = facts.model.mtp_bytes,
+                           .own_drafter_bytes       = facts.model.own_drafter_bytes,
+                           .routed_expert_bytes     = facts.model.routed_expert_bytes,
+                           .mtp_routed_expert_bytes = facts.model.mtp_routed_expert_bytes,
+                           .token_table_bytes       = facts.model.token_table_bytes};
 }
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
@@ -1302,6 +1305,21 @@ PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     if (row.mtp_bytes) {
         out.model.mtp_bytes         = *row.mtp_bytes;
         out.model.own_drafter_bytes = row.listing.table ? row.listing.table->own_drafter_bytes : 0;
+    }
+    // Its stored routed banks and token table where its table counted them (a GGUF's).
+    if (const auto& table = row.listing.table) {
+        if (table->routed_expert_bytes) {
+            out.model.routed_expert_bytes = *table->routed_expert_bytes;
+        }
+        if (table->mtp_routed_expert_bytes) {
+            out.model.mtp_routed_expert_bytes = *table->mtp_routed_expert_bytes;
+        }
+        if (table->token_table_bytes) {
+            // The untied embedding a verify never reads is the token table (with_weights scaled
+            // the parsed row's); a tied model reads it as its head and counts none.
+            if (out.model.embedding_bytes != 0) { out.model.embedding_bytes = *table->token_table_bytes; }
+            out.model.token_table_bytes = *table->token_table_bytes;
+        }
     }
     return out;
 }

@@ -351,15 +351,23 @@ def main() -> int:
             case("gguf window", window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
             # A split model's head from its later part (Q6_K: 210 bytes a 256-value block), not
             # the Q8_0 embedding in part 0; a tied model's, the embedding.
-            def heads(shape, repo="org/ggufsplit"):
+            def heads(shape, repo="org/ggufsplit", cache=None):
                 environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
                 environment["HF_ENDPOINT"] = base
+                cache = cache or f"cache-{repo.split('/')[1].split('@')[0]}-{shape.replace(':', '-')}"
                 result = subprocess.run([str(probe), repo, "--heads=Q4_K_M", str(600 * 1024),
-                                         str(work / f"cache-{repo.split('/')[1]}-{shape.replace(':', '-')}"), shape],
+                                         str(work / cache), shape],
                                         capture_output=True, text=True, env=environment)
                 return json.loads(result.stdout) if result.returncode == 0 else {"error": result.stderr}
             case("split gguf head from its later part", heads("256:1024") == {"Q4_K_M": 210 * 1024})
-            case("split gguf tied head: the embedding", heads("256:1024:tied") == {"Q4_K_M": 8 * 34 * 1024})
+            case("split gguf tied head: the embedding", heads("256:1024:tied")
+                 == {"Q4_K_M": 8 * 34 * 1024, "Q4_K_M#tied": True})
+            # Kept per commit: a head read as tied (a sibling of a tied model) stays tied when a
+            # later read (an explicit --quant) is not told so (Codex on #202).
+            pinned = "org/ggufsplit@c0ffee0123456789abcdef0123456789abcdef01"
+            first = heads("256:1024:tied", pinned, cache="cache-pinned")
+            again = heads("256:1024", pinned, cache="cache-pinned")
+            case("a cached tied head stays tied", first == again == {"Q4_K_M": 8 * 34 * 1024, "Q4_K_M#tied": True})
             # Not told it ties (part 0 cannot say): every part read, no output.weight, the token
             # table is the head (Codex on #199).
             case("split gguf found tied", heads("256:1024", "org/ggufsplittied")
