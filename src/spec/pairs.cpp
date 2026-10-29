@@ -409,10 +409,13 @@ RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gp
     for (const auto& [label, measured] : round_costs(pair.tune)) {
         const auto config = SpecConfig::parse(label);
         if (!config.enabled() || config.k > kPortableDepth) { continue; }
+        // The lab drafted a "+head" configuration through its artifact's proposal head, any other
+        // with the full head (spec-tune: ProposalHead::Full); a start drafts through the head
+        // wherever its artifact's serves the drafter (product model_draft_head), whatever the label.
+        const ProposalRows lab = config.proposal_head ? pair.tune.proposal_rows : ProposalRows{};
         const auto here  = round_cost(*pair.round_facts, config, card.kappa(),
-                                      head_rows != nullptr ? *head_rows : pair.tune.proposal_rows);
-        const auto there =
-            round_cost(*pair.round_facts, config, home.kappa(), pair.tune.proposal_rows);
+                                      head_rows != nullptr ? *head_rows : lab);
+        const auto there = round_cost(*pair.round_facts, config, home.kappa(), lab);
         if (!here || !there || *there <= 0) { continue; }
         double cost = *here;
         // What the bytes do not show, as the lab card measured it: scales the estimate up only.
