@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "version": 182,
+  "version": 183,
   "published": "2026-10-29",
   "note": "Official NInferno drafter registry. Maps model ids (the base model, its quantized variants and known fine-tunes; lineage lists base models whose declared descendants an entry covers) to the drafters NInferno verified for them, pinned to a revision, and to the speculation profiles measured per GPU class with spec-tune (a maintainer tool). Lookup is exact: repository id, then a base model the checkpoint's own model card declares. Profiles: see src/spec/profile.h.",
   "kinds": {
@@ -32078,8 +32078,8 @@
         },
         "drafters": {
           "dflash2": {
-            "bytes": 2044930560,
-            "params": 1924404480,
+            "bytes": 1909844480,
+            "params": 1797264640,
             "rows": 8,
             "per_draft": false,
             "head": {

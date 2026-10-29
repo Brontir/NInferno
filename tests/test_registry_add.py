@@ -471,6 +471,19 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(round_facts.linear_shape("a.weight_blocks", "mxfp4", [512, 8, 16], 512 * 256, ""),
                          (512, 256, 1))
 
+    def test_row_tables_are_in_no_pass(self):
+        # DFlash2's selector codebooks are read a few rows by id: neither its bytes nor a linear.
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        drafter = self.shaped({"layers.0.mlp.up_proj.weight": ["bf16", [512, 256], 131072],
+                               "candidate_selector.predecessor_codebook": ["bf16", [1000, 256], 256000],
+                               "candidate_selector.successor_codebook": ["bf16", [1000, 256], 256000]},
+                              {"block_size": 8}, 2)
+        facts = round_facts.round_facts(self.pair(["dflash2:7"], {"dflash2": "z/d@2"}),
+                                        {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}, {})
+        dflash2 = facts["drafters"]["dflash2"]
+        self.assertEqual((dflash2["bytes"], dflash2["params"]), (262144, 131072))
+        self.assertEqual(len(dflash2["linears"]), 1)
+
     def test_a_sidecar_without_a_head_runs_the_targets(self):
         meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.block_count": 1,
                 "nemotron_h_moe.nextn_predict_layers": 1}
