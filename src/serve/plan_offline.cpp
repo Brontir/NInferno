@@ -175,6 +175,69 @@ std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quan
     return bytes;
 }
 
+// A hub GGUF quantization's own tensor table: its header read as read_hub reads one (nullopt: not
+// read, a split part). What a row of the table prices (product::plan_quants_read).
+std::optional<product::GgufTensorTable> hub_tensor_table(const std::string& spec,
+                                                         const std::string& quant) {
+    convert::FetchOptions fetch = fetch_options();
+    fetch.quant                 = quant;
+    for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
+        try {
+            const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
+            const auto file =
+                convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                         head.bytes.size(), head.size, head.path);
+            // A split part's head: read, no whole table (an empty one: the rows above are read).
+            return product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
+                .value_or(product::GgufTensorTable{});
+        } catch (const convert::GgufTruncated&) {
+            continue;
+        } catch (const std::exception&) { return std::nullopt; }
+    }
+    return std::nullopt;
+}
+
+// A quantization here: its own tensor table (nullopt: unreadable, a split part). A GGUF's from
+// its header; a converted artifact kept in its place (its GGUF removed) from its tensors with its
+// own drafter and MTP layers, as the artifact's own plan counts them (the hub's attached drafter
+// may be unknown offline: the artifact's own copy is the one a start loads).
+std::optional<product::GgufTensorTable> local_tensor_table(const fs::path& path) {
+    try {
+        if (ascii_lower(path.extension().string()) == ".gguf") {
+            return product::gguf_tensor_table(
+                product::plan_facts_of_gguf(read_local_head(path), local_gguf_bytes(path)));
+        }
+        const product::PlanSourceFacts facts = product::plan_facts_of_artifact(path);
+        if (facts.model.weight_basis != runtime::WeightBasis::Artifact ||
+            facts.model.weight_bytes == 0) {
+            return std::nullopt;
+        }
+        return product::GgufTensorTable{.tensor_bytes      = facts.model.weight_bytes,
+                                        .mtp_bytes         = facts.model.mtp_bytes,
+                                        .own_drafter_bytes = facts.model.own_drafter_bytes,
+                                        .basis             = runtime::WeightBasis::Artifact};
+    } catch (const std::exception&) { return std::nullopt; }
+}
+
+// The quantizations already here price their own tensor tables (read from their files, over a
+// hub header's: the file a start loads): the cached one a start keeps is planned as its explicit
+// --quant would be. Declared before read_hub; cached_quants is defined above.
+void tables_of_cached(std::vector<product::QuantListing>& listing,
+                      const std::map<std::string, fs::path>& cached) {
+    for (auto& q : listing) {
+        if (q.drafter || q.format != "gguf") { continue; }
+        if (const auto it = cached.find(q.quant); it != cached.end()) {
+            if (auto local = local_tensor_table(it->second)) { q.table = std::move(local); }
+        }
+    }
+}
+
+// The hub spec at the commit the listing was read at (a moving branch may advance between the
+// listing and a header read: the tables are the listing's revision's).
+std::string pinned_spec(const ModelRead& model) {
+    return model.commit.empty() ? model.source : model.repo + "@" + model.commit;
+}
+
 // A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
 // With `vision`, a GGUF model's facts count the projector the start fetches beside it.
 ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision,
@@ -254,6 +317,12 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                                              head.bytes.size(), head.size, head.path);
                 out.facts = product::plan_facts_of_gguf(file, header->bytes);
                 if (vision) { out.facts.model.vision_bytes = listed_projector_bytes(quants); }
+                // The quantization read prices its own tensors in the table.
+                for (auto& l : out.listing) {
+                    if (!l.drafter && l.format == "gguf" && l.quant == header->quant) {
+                        l.table = product::gguf_tensor_table(out.facts);
+                    }
+                }
                 return out;
             } catch (const convert::GgufTruncated&) { continue; }
         }
@@ -530,7 +599,12 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
                 }
             }
         }
-        quants = product::plan_quants(model.facts, listing, planning.inputs);
+        // As the start prices them (largest_fitting_hub_quant): the quantizations here by their files.
+        tables_of_cached(listing, cached_quants(model.repo, model.revision));
+        quants = product::plan_quants_read(model.facts, listing, planning.inputs,
+                                           [&](const std::string& q) {
+                                               return hub_tensor_table(pinned_spec(model), q);
+                                           });
         const product::QuantRow* chosen = quants->chosen ? &quants->rows[*quants->chosen] : nullptr;
         if (chosen == nullptr) {
             // Nothing fits: the smallest supported one's plan says why.
@@ -544,7 +618,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         if (chosen != nullptr) {
             planned        = chosen->planned;
             planned_at_row = true;
-            facts   = product::with_weights(model.facts, chosen->weight_bytes, chosen->basis);
+            facts   = product::row_facts(model.facts, *chosen);
         } else {
             planned = product::plan_model(model.facts, planning.inputs);
         }
@@ -590,7 +664,7 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
                 ? product::under_context_cap(listed, row.launch_context)
                 : listed;
         const product::PlanSourceFacts at_weights =
-            product::with_weights(model.facts, row.weight_bytes, row.basis);
+            product::row_facts(model.facts, row);
         // The choice is made at the chosen row: there, its storages and the drafter it serves.
         const bool at_choice = served && quants->chosen && *quants->chosen == quants->pick->index;
         const product::PlannedSpeculation at_now = product::plan_now(
@@ -631,7 +705,7 @@ HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan&
                          const std::function<void(const std::string&)>& log) {
     HubQuantChoice out{.quant = row.listing.quant};
     const product::DryRunInputs at = product::inputs_for(planning.inputs, row.listing);
-    out.drafters = attaches_at(product::with_weights(facts, row.weight_bytes, row.basis), at,
+    out.drafters = attaches_at(product::row_facts(facts, row), at,
                                options, row.listing.quant, row.planned);
     // An automatic context with several streams: the launch keeps the own context it was chosen
     // for (as ninferno-ui's does), never a pool the streams silently share.
@@ -712,6 +786,7 @@ largest_fitting_hub_quant(const ServeOptions& options,
                                          .bits   = quant_label_bits(label).value_or(0)});
             }
             if (shaped) {
+                tables_of_cached(local.listing, cached);
                 Planning planning       = planning_of(options, local, device, *gpu);
                 planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
                 const product::QuantPlan plan =
@@ -752,8 +827,11 @@ largest_fitting_hub_quant(const ServeOptions& options,
     }
     Planning planning       = planning_of(options, model, device, *gpu);
     planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
-    const product::QuantPlan plan =
-        product::plan_quants(model.facts, model.listing, planning.inputs);
+    std::vector<product::QuantListing> listing = model.listing;
+    tables_of_cached(listing, cached);
+    const product::QuantPlan plan              = product::plan_quants_read(
+        model.facts, listing, planning.inputs,
+        [&](const std::string& q) { return hub_tensor_table(pinned_spec(model), q); });
     if (!plan.pick) {
         throw std::runtime_error(model.repo + ": " + plan.rule +
                                  " (nothing was downloaded; --quant LABEL takes one anyway, "

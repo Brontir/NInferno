@@ -29,6 +29,19 @@ struct FetchOptions;
 
 namespace ninferno::product {
 
+// A GGUF quantization's own tensor table, its header read (plan_facts_of_gguf of an unsplit
+// file): the bytes a start of it uploads and its NextN (MTP) layers' share, as the converter moves
+// them (a converted artifact kept in a GGUF's place: its tensors and own drafter, as its own plan
+// counts them). A row with one prices these, not the listed file size (header and padding).
+struct GgufTensorTable {
+    std::uint64_t tensor_bytes      = 0;
+    std::uint64_t mtp_bytes         = 0;
+    std::uint64_t own_drafter_bytes = 0; // a converted artifact's own drafter, inside tensor_bytes
+    runtime::WeightBasis basis      = runtime::WeightBasis::GgufTensors; // Artifact for one
+};
+// The table from the facts of a head read (nullopt: a split part or no tensor table).
+[[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);
+
 // One file group of a repository listing (convert::RepoQuant's fields the plan reads).
 struct QuantListing {
     std::string quant;  // as --quant takes it ("" for safetensors weights)
@@ -45,6 +58,8 @@ struct QuantListing {
     // Its output head's stored bytes (output.weight, or the token table it is tied to) read from
     // its own GGUF header (read_head_bytes); 0: not read.
     std::uint64_t head_bytes = 0;
+    // A GGUF's own tensor table when its header was read (nullopt: the file size stands).
+    std::optional<GgufTensorTable> table;
 };
 
 
@@ -178,6 +193,7 @@ struct QuantRow {
     runtime::WeightBasis basis = runtime::WeightBasis::FileSize;
     bool converted             = false; // planned at a checkpoint's converted size
     std::uint64_t weight_bytes = 0;     // what the plan counts (the converted size when converted)
+    std::optional<std::uint64_t> mtp_bytes; // its own NextN share (a tensor table), else the shape's
     std::string unsupported_code;       // "" | drafter_file | converted_size_unknown | above_8_bits
                                         // | nvfp4_card
     std::string why_unsupported;        // "" when supported
@@ -233,6 +249,26 @@ struct QuantPlan {
 [[nodiscard]] QuantPlan plan_quants(const PlanSourceFacts& shape,
                                     const std::vector<QuantListing>& listing,
                                     const DryRunInputs& inputs);
+
+// The facts a row is planned at: the shape at the row's bytes and basis, its own NextN share when
+// its tensor table was read. One code for every plan of a row (the table, the pick, now).
+[[nodiscard]] PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row);
+
+// plan_quants, with the chosen GGUF row priced by its own tensor table: read (`read_table`, the
+// caller's header read of that quantization; nullopt when it cannot) when the listing has none,
+// and the table planned again with it, until the chosen row has its own (a table can move the
+// choice) or its read fails; then the row ranked next above it, still at its file size (header
+// and padding counted: a row just over the line may fit by its tensors), is read once: when it
+// does not become the pick, the rows above it (larger) are not read. Nothing chosen: the
+// lowest-ranked row at its file size is read once. One code for ninferno-serve --plan --no-load and
+// ninferno-ui's /api/plan: the bytes a row shows are the ones its start reads.
+// The reader returns nullopt when the read fails, an empty table (tensor_bytes 0) when the header
+// was read but holds no whole table (a split file's part).
+using ReadTensorTable = std::function<std::optional<GgufTensorTable>(const std::string& quant)>;
+[[nodiscard]] QuantPlan plan_quants_read(const PlanSourceFacts& shape,
+                                         std::vector<QuantListing>& listing,
+                                         const DryRunInputs& inputs,
+                                         const ReadTensorTable& read_table);
 
 // One model at its own weights.
 [[nodiscard]] PlannedSpeculation plan_model(const PlanSourceFacts& facts,
