@@ -563,8 +563,9 @@ bool vec_band(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // smsp__inst_executed.sum over the payload bytes, 4096x4096 store and 12288x4096 SwiGLU at T = 2,
 // 4 and 8 (a and b from T = 2 and 8; T = 4 lies on the line within 3 %), the register MMA the mean
 // of its w1x4 and w1x8 kernels. sm_8x: RTX 3060 (sm_86; the RTX 4090's sm_89 kernels count the
-// same to 1 %); sm_12x: RTX 5070 Ti (sm_120, the RTX 5090's alike); sm_75: RTX 2080 Ti, whose BF16
-// MMA is emulated (its register MMA runs more instructions a byte than sm_8x's).
+// same to 1 %); sm_12x: RTX 5070 Ti (sm_120, the RTX 5090's alike). Turing has none: its BF16 MMA is
+// emulated, and from five tokens ggml's matrix kernel, not the register MMA, is the vector kernel's
+// rival there (mmq_verify_rule), so it keeps the band rule.
 struct VerifyCount {
     double vec_a, vec_b, rmma;
 };
@@ -612,32 +613,9 @@ constexpr VerifyCounts kVerifyCountsSm12x[] = {
     {QType::GGML_Q5_1, {91, 39.6, 244}, {80, 35.6, 223}},
     {QType::GGML_IQ4_NL, {171, 47.3, 367}, {163, 43.2, 331}},
 };
-constexpr VerifyCounts kVerifyCountsSm75[] = {
-    {QType::GGML_Q4_K, {101, 62.8, 465}, {86, 53.9, 352}},
-    {QType::GGML_Q5_K, {129, 50.4, 415}, {110, 44.5, 318}},
-    {QType::GGML_Q6_K, {173, 41.8, 329}, {181, 35.8, 257}},
-    {QType::GGML_Q2_K, {152, 130.5, 962}, {162, 106.2, 750}},
-    {QType::GGML_Q3_K, {283, 81.8, 684}, {275, 67.0, 532}},
-    {QType::GGML_IQ4_XS, {205, 60.3, 920}, {210, 50.8, 891}},
-    {QType::GGML_IQ3_XXS, {322, 87.0, 952}, {335, 66.8, 798}},
-    {QType::GGML_IQ3_S, {310, 73.5, 815}, {289, 61.8, 669}},
-    {QType::GGML_IQ2_XXS, {418, 124.5, 1401}, {395, 104.4, 1173}},
-    {QType::GGML_IQ2_XS, {400, 119.1, 1333}, {406, 93.1, 1099}},
-    {QType::GGML_IQ2_S, {369, 104.3, 1208}, {325, 88.7, 1013}},
-    {QType::GGML_IQ1_S, {394, 169.1, 2478}, {328, 145.3, 2348}},
-    {QType::GGML_IQ1_M, {442, 225.4, 2445}, {421, 196.8, 2323}},
-    {QType::GGML_Q4_0, {206, 57.9, 383}, {197, 49.7, 277}},
-    {QType::GGML_Q4_1, {51, 56.3, 405}, {47, 46.5, 280}},
-    {QType::GGML_Q5_0, {188, 47.2, 373}, {188, 39.5, 283}},
-    {QType::GGML_Q5_1, {88, 47.3, 391}, {85, 38.4, 292}},
-    {QType::GGML_IQ4_NL, {171, 56.8, 828}, {152, 50.3, 794}},
-};
-
 std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilogue epilogue) {
     std::span<const VerifyCounts> table;
-    if (d.major == 7 && d.minor == 5) {
-        table = kVerifyCountsSm75;
-    } else if (d.major == 8) {
+    if (d.major == 8) {
         table = kVerifyCountsSm8x;
     } else if (d.major == 12) {
         table = kVerifyCountsSm12x;
@@ -678,22 +656,36 @@ std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QT
     return std::sqrt(tb * tb + ui * ui) + (vector ? 2.0 : 1.0) * kVerifyLaunchSeconds;
 }
 
-// The verify widths the vector kernel takes: with tensor mma.sync, the widths 2..8 at which
-// verify_route_seconds prices it under the one-tile register MMA (where a board or format has no
-// price, the band rule: T <= 4); without (Volta), vec_rule_max_tokens' widths.
-bool vec_rule(const Problem& problem, const Weight& w, std::int32_t tokens) {
-    if (tokens < 2 || !vec_call(w, problem.policy, tokens)) return false;
+// The verify widths' kernel between the vector kernel and the one-tile register MMA: where the
+// BF16 MMA is native and verify_route_seconds prices both, the cheaper of the two at T = 2..8
+// (a call priced onto the register MMA takes it, not R8: the band rule never left those widths to
+// R8 for a format the vector kernel reads); elsewhere the band rule (T <= 4 with tensor mma.sync,
+// vec_rule_max_tokens' widths without: Volta), past it nothing.
+enum class VerifyPick { None, Vector, RegisterMma };
+
+VerifyPick verify_pick(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    if (tokens < 2 || !vec_call(w, problem.policy, tokens)) return VerifyPick::None;
     const std::int32_t widest = vec_max_tokens();
-    if (widest > ggml_mmq::kVecMaxColumns) return tokens <= widest;
+    if (widest > ggml_mmq::kVecMaxColumns) {
+        return tokens <= widest ? VerifyPick::Vector : VerifyPick::None;
+    }
     try {
-        const auto& d      = device_class();
-        const double bytes = static_cast<double>(w.payload_bytes);
-        const auto vec  = verify_route_seconds(d, true, problem.qtype, problem.epilogue, bytes, tokens);
-        const auto rmma = verify_route_seconds(d, false, problem.qtype, problem.epilogue, bytes, tokens);
-        if (vec && rmma) return *vec < *rmma;
+        const auto& d = device_class();
+        if (d.features.mma_bf16_native) {
+            const double bytes = static_cast<double>(w.payload_bytes);
+            const auto vec =
+                verify_route_seconds(d, true, problem.qtype, problem.epilogue, bytes, tokens);
+            const auto rmma =
+                verify_route_seconds(d, false, problem.qtype, problem.epilogue, bytes, tokens);
+            if (vec && rmma) return *vec < *rmma ? VerifyPick::Vector : VerifyPick::RegisterMma;
+        }
     } catch (const std::exception&) {
     }
-    return tokens <= kVecRuleMaxTokens;
+    return tokens <= kVecRuleMaxTokens ? VerifyPick::Vector : VerifyPick::None;
+}
+
+bool vec_rule(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    return verify_pick(problem, w, tokens) == VerifyPick::Vector;
 }
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
@@ -2789,7 +2781,18 @@ Route heuristic_route(const Problem& problem, const Weight& weight, std::int32_t
     // 174 tok/s), whose L2-cold timings of one call at a time miss the stream of a verify step. The
     // tuner still replaces it where a route beats it by its margin (Muse Glimmer 30B Q4_K_M: the
     // rule alone lost C1 by 19 %).
-    if (vec_rule(problem, weight, tokens)) return Route{Family::GgmlVec, 0};
+    switch (verify_pick(problem, weight, tokens)) {
+    case VerifyPick::Vector:
+        return Route{Family::GgmlVec, 0};
+    case VerifyPick::RegisterMma: {
+        const Route r{Family::RegisterMma,
+                      static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, false))};
+        if (route_admits(r, weight, problem.policy)) return r;
+        break;
+    }
+    case VerifyPick::None:
+        break;
+    }
     // From 17 tokens outside the prefill profile the cost model's route of either activation class
     // (cost_route, a8_candidates); the rules below where the device reports no clocks.
     if (!prefill_band && tokens >= 17 && problem.qtype != QType::NVFP4) {
