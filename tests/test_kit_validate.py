@@ -74,6 +74,11 @@ class Rules(unittest.TestCase):
         bad["schema"] = "ninferno-user-run/1.3"
         self.assertEqual(validate.validate(bad)["file"], "accepted")
 
+    def test_missing_names(self):
+        bad = doc()
+        bad["card"]["smi"].pop("name")
+        self.assertTrue(validate.validate(bad)["file"].startswith("rejected: R1 unknown"))
+
     def test_identity(self):
         bad = doc()
         bad["card"]["plan_device"]["name"] = "NVIDIA GeForce RTX 4090"
@@ -167,6 +172,8 @@ class Privacy(unittest.TestCase):
         for text in ("12 tok/s", "org/repo", "https://huggingface.co/org/repo"):
             self.assertEqual(measure.scrub(text), text)
         self.assertEqual(measure.scrub_doc({"artifact": "/x/y", "a": ["/home/u/f"]}), {"a": ["<path>"]})
+        for text in ("/srv/users/Alice Smith/model.gguf", "D:/data/alice/model.gguf"):
+            self.assertNotIn("lice", measure.scrub(text))
 
 
 class Gpu(unittest.TestCase):

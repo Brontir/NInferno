@@ -93,7 +93,9 @@ def card_rules(doc):
     card = doc.get("card") or {}
     smi = card.get("smi") or {}
     plan_device = card.get("plan_device") or {}
-    if plan_device.get("name") and smi.get("name") and plan_device["name"] != smi["name"]:
+    if not plan_device.get("name") or not smi.get("name"):
+        return "R1 unknown: the plan's or nvidia-smi's name of the card is missing", []
+    if plan_device["name"] != smi["name"]:
         return f"R1 the plan priced {plan_device['name']}, nvidia-smi names {smi['name']}", []
     capped = []
     limit, default = smi.get("enforced.power.limit") or smi.get("power.limit"), smi.get("power.default_limit")

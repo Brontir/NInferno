@@ -63,17 +63,18 @@ PRIVATE = private_strings()
 
 
 def scrub(value):
-    """A string without the user's paths or name (the known local strings, then any remaining
-    absolute path without spaces)."""
+    """A string without the user's paths or name: the known local strings, then any remaining
+    absolute path."""
     text = str(value)
     for s in PRIVATE:
         text = text.replace(s, "<local>").replace(s.replace("\\", "/"), "<local>")
-    # Any other absolute path: a drive path, a UNC share, or a POSIX path of two or more parts
-    # (not a URL's //host, and not tok/s or org/repo, which do not start with a slash). A path
-    # with spaces loses its first part here (the known local strings above take the home whole).
-    text = re.sub(r"(?<![\w.])[A-Za-z]:\\[^\s'\"]*", "<path>", text)
-    text = re.sub(r"\\\\[^\s'\"]+", "<path>", text)
-    text = re.sub(r"(?<![\w.:/])/(?:[^\s'\"/]+/)+[^\s'\"]*", "<path>", text)
+    # Any other absolute path, to the end of its line or quote (a path may hold spaces, so what
+    # follows it on the line goes too): a drive path with either separator, a UNC share, or a
+    # POSIX path of two or more parts (not a URL's //host, and not tok/s or org/repo, which do not
+    # start with a slash).
+    text = re.sub(r"(?<![\w.])[A-Za-z]:[\\/][^'\"\n]*", "<path>", text)
+    text = re.sub(r"\\\\[^'\"\n]+", "<path>", text)
+    text = re.sub(r"(?<![\w.:/])/(?:[^'\"\n/]+/)+[^'\"\n]*", "<path>", text)
     return text
 
 
