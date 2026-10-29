@@ -27,9 +27,9 @@
 // group's activation sum) is applied in FP32 after it. Q4_K / Q5_K leave the 1024 the f16 bit
 // trick puts under each code in the operand and take 1024 d times the group's activation sum off
 // with the min, which already reads that sum (HK45::kBias): one FFMA a group instead of an HSUB2 a
-// code pair. The price is the HMMA accumulator's rounding of a sum ~2^7 larger (Volta's tensor
-// cores align to the largest addend and truncate): within a bf16 ulp of the reduced |w x| even
-// with activations of one sign over all of K (check_volta_hmma_accuracy). No weight value is ever
+// code pair. The accumulator then holds a sum ~2^7 larger; against FP64 the outputs' error over
+// the reduced |w x| stayed as it was without the fold (GV100, K = 4096 / 17408, activations of
+// one sign over all of K: max 3.5e-3 / 2.9e-3 both ways; check_volta_hmma_accuracy). No weight value is ever
 // rounded to f16, whatever its scale. The groups add in K order, the quad-pairs' sums meet at the
 // end in a fixed order ((q0 + q1) + (q2 + q3)): a token's bytes depend on its own column only,
 // never on the call's T or its other tokens, and repeat run to run.
