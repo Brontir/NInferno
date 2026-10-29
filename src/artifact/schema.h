@@ -78,6 +78,10 @@ struct Use {
 struct Proposal {
     bool indexed       = false;
     std::uint64_t rows = 0;
+    // Indexed only: a drafter (by component name) that reads fewer than `rows`, its leading rows.
+    // The rows are stored in ranking order, so a drafter whose own bytes/acceptance bound asks
+    // fewer reads that prefix of the same head and ids. A drafter not named reads all `rows`.
+    std::map<std::string, std::uint64_t, std::less<>> drafter_rows;
 };
 
 struct Component {

@@ -121,6 +121,13 @@ struct RoundCostEstimate {
 };
 [[nodiscard]] RoundCostEstimate round_cost_estimate(const MeasuredPair& pair, const GpuKey& gpu);
 
+// What a round costs in a profile's measurements, by configuration label: per corpus section the
+// seconds a round over plain decode's seconds a token, the mean over the sections both measured
+// (plain decode steps a round). Of a profile priced by the facts (price_by_facts) it is their R(k);
+// of a measured one, the measuring card's. The plan reports it (its speculation's "round_cost") so
+// that a user's spec-tune can be held to it (tools/kit/validate.py).
+[[nodiscard]] std::map<std::string, double> profile_round_costs(const Profile& profile);
+
 // The profile of a target from its pairs measured on the lab's cards (the same target and drafters):
 // on a card of a generation two distinct lab cards (their tunes' GPU class) measured and chose
 // alike for (each default's
