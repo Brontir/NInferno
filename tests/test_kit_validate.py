@@ -118,6 +118,11 @@ class Rules(unittest.TestCase):
         r = validate.validate(doc(passes=[one_pass(spread=0.3), one_pass()]))
         self.assertTrue(metric(r, "decode")["status"].startswith("rejected: R5"))
 
+    def test_spread_required(self):
+        d = doc()
+        d["runs"][0]["passes"][0]["measured"]["decode"].pop("min")
+        self.assertTrue(metric(validate.validate(d), "decode")["status"].startswith("rejected: R5"))
+
     def test_depth(self):
         r = validate.validate(doc(passes=[one_pass(tokens=4000), one_pass(tokens=4000)]))
         self.assertTrue(metric(r, "decode")["status"].startswith("rejected: R7"))
@@ -187,7 +192,7 @@ class Privacy(unittest.TestCase):
             self.assertEqual(measure.scrub(text), text)
         self.assertEqual(measure.scrub_doc({"artifact": "/x/y", "a": ["/home/u/f"]}), {"a": ["<path>"]})
         for text in ("/srv/users/Alice Smith/model.gguf", "D:/data/alice/model.gguf", "//server/share/Alice/f",
-                     "/Alice"):
+                     "/Alice", "/srv/users/O'Alice/model.gguf", '/srv/"Alice"/x'):
             self.assertNotIn("lice", measure.scrub(text))
 
 

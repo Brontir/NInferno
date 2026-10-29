@@ -217,13 +217,17 @@ def validate(doc, tolerance=TOLERANCE):
                 row["status"] = "rejected: R6 fewer than 2 usable passes"
                 out["metrics"].append(row)
                 continue
-            spreads = []
+            spreads, no_spread = [], False
             for p in usable:
                 med, lo, hi, _ = metric_values(p, metric)
-                if med and lo is not None and hi is not None:
+                if all(isinstance(x, (int, float)) for x in (med, lo, hi)) and med > 0:
                     spreads.append((hi - lo) / med)
+                else:
+                    no_spread = True
             apart = (max(medians) - min(medians)) / min(medians)
-            if apart > REPEAT_MEDIANS:
+            if no_spread:
+                row["status"] = "rejected: R5 a pass without its min..max"
+            elif apart > REPEAT_MEDIANS:
                 row["status"] = f"rejected: R5 passes {apart * 100:.1f} % apart"
             elif spreads and max(spreads) > REPEAT_SPREAD:
                 row["status"] = f"rejected: R5 a pass spans {max(spreads) * 100:.1f} % of its median"

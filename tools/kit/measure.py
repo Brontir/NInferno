@@ -68,14 +68,14 @@ def scrub(value):
     text = str(value)
     for s in PRIVATE:
         text = text.replace(s, "<local>").replace(s.replace("\\", "/"), "<local>")
-    # Any other absolute path, to the end of its line or quote (a path may hold spaces, so what
+    # Any other absolute path, to the end of its line (a path may hold spaces and quotes, so what
     # follows it on the line goes too): a drive path with either separator, a UNC share with
     # either separator, or a POSIX path (a slash after a space, a quote or the start, then a name:
     # not a URL's //host, and not tok/s, N/A or org/repo, whose slash follows a letter).
-    text = re.sub(r"(?<![\w.])[A-Za-z]:[\\/][^'\"\n]*", "<path>", text)
-    text = re.sub(r"\\\\[^'\"\n]+", "<path>", text)
-    text = re.sub(r"(?<![\w.:/])//[^/\s'\"][^'\"\n]*", "<path>", text)
-    text = re.sub(r"(?<![\w.:/<>])/[^\s'\"/][^'\"\n]*", "<path>", text)
+    text = re.sub(r"(?<![\w.])[A-Za-z]:[\\/][^\n]*", "<path>", text)
+    text = re.sub(r"\\\\[^\n]+", "<path>", text)
+    text = re.sub(r"(?<![\w.:/])//[^/\s][^\n]*", "<path>", text)
+    text = re.sub(r"(?<![\w.:/<>])/[^\s/][^\n]*", "<path>", text)
     return text
 
 
