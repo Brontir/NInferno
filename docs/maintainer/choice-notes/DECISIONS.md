@@ -1192,12 +1192,16 @@ step of C rows takes:
 
 `fit_decode.py` derives every row from two fixtures: `decode_measured.json` and `decode_census.json`.
 
-**A weight class without a census** (`WeightClass::Other`: IQ*, Q4_0/1, IQ4_NL, Q2_K/Q3_K, FP4)
+**IQ4 (IQ4_XS, IQ4_NL) is its own class**, measured on two Ada cards (RTX 4060 Ti, 4070 Ti, 29.10):
+its graph launches 161 + 167 kernels a step (R8 IQ4 GEMVs), and its rows are 0.927 / 0.885 / 0.773 at
+2 / 4 / 8 rows. At one row (kDramEta and Ada's kernel cost, not fitted on it) it comes within 1.6 %.
+
+**A weight class without a census** (`WeightClass::Other`: other IQ*, Q4_0/1, Q2_K/Q3_K, FP4)
 takes the K-quant rows, marked transferred. It does not win by worth while a measured class is in
 the tier (even one that does not fit); then the rule's pick stands.
 
 **The tie band between quantizations** is the model's measured error on the generation:
-`kDecodePredictionError`, rms of ln(estimate/measured), Ada 2.5 %, recomputed by the test.
+`kDecodePredictionError`, rms of ln(estimate/measured), Ada 2.8 %, recomputed by the test.
 - The error is in-sample. Out of the fixture, Q5_K_M, UD-Q5_K_XL, Q6_K, IQ4_NL and UD-Q4_K_XL come
   within 2.1 %.
 - Only Ada's row is read, because only Ada has a reference card.
