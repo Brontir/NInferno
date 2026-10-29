@@ -275,6 +275,9 @@ protected:
     }
 
     int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr&) override {
+        if (key.find(kGemmaQuote) != std::string::npos) {
+            throw std::invalid_argument("argument name '" + key + "' holds Gemma's quote <|\"|>");
+        }
         return ByteString(gemma_key_text(key));
     }
 
@@ -409,6 +412,32 @@ protected:
         builder_.UpdateRuleBody(kXMLString, TagDispatch(false, {kAtemClose}));
     }
 
+    // A parameter value never holds the close tag, where the parser ends it: a bounded string
+    // leaves out '<', a const or enum string holding the tag is refused. (A pattern or format is
+    // the client's regex; one that admits the tag is not caught.)
+    int32_t GenerateString(const xgrammar::StringSpec& spec, const std::string& rule_name) override {
+        if (nested_object_level_ <= 1 && !spec.pattern.has_value() && !spec.format.has_value() &&
+            (spec.min_length != 0 || spec.max_length != -1)) {
+            return Repeat(rule_name + "_characters", builder_.AddCharacterClass({{'<', '<'}}, true),
+                          static_cast<int32_t>(spec.min_length),
+                          static_cast<int32_t>(spec.max_length));
+        }
+        return XMLToolCallingConverter::GenerateString(spec, rule_name);
+    }
+    int32_t GenerateConst(const xgrammar::ConstSpec& spec, const std::string& rule_name) override {
+        refuse_close(spec.json_value);
+        return XMLToolCallingConverter::GenerateConst(spec, rule_name);
+    }
+    int32_t GenerateEnum(const xgrammar::EnumSpec& spec, const std::string& rule_name) override {
+        for (const std::string& value : spec.json_values) { refuse_close(value); }
+        return XMLToolCallingConverter::GenerateEnum(spec, rule_name);
+    }
+    void refuse_close(const std::string& json_value) const {
+        if (nested_object_level_ <= 1 && json_value.find(kAtemClose) != std::string::npos) {
+            throw std::invalid_argument("a const or enum value holds " + kAtemClose);
+        }
+    }
+
     int32_t FormatPropertyKey(const std::string& key, const SchemaSpecPtr& schema) override {
         if (nested_object_level_ > 1) {
             return XMLToolCallingConverter::FormatPropertyKey(key, schema);
@@ -469,8 +498,13 @@ void check_root(const std::string& schema, bool list_root) {
     }
     const picojson::object& root = value.get<picojson::object>();
     const auto type              = root.find("type");
-    if (type == root.end() || !type->second.is<std::string>() ||
-        type->second.get<std::string>() != "object") {
+    const bool object_type =
+        type != root.end() &&
+        ((type->second.is<std::string>() && type->second.get<std::string>() == "object") ||
+         (type->second.is<picojson::array>() && type->second.get<picojson::array>().size() == 1 &&
+          type->second.get<picojson::array>()[0].is<std::string>() &&
+          type->second.get<picojson::array>()[0].get<std::string>() == "object"));
+    if (!object_type) {
         throw std::invalid_argument("the arguments schema must be a plain {\"type\": \"object\"}");
     }
     if (!list_root) { return; }

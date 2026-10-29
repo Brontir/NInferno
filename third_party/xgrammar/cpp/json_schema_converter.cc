@@ -2636,9 +2636,9 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
   // kNInfernoMaxOrderStates, and an optional property past them may come at any point, possibly
   // more than once. Every state rule holds only rule references, so the states add no terminal
   // positions to the compiled grammar; the separator lives in one shared rule per property.
-  // A counted object (minProperties/maxProperties) adds the number of free entries written to the
-  // state, saturated at the bound that matters, so the count is exact: an entry is admitted only
-  // below maxProperties and the object ends only at minProperties or more. Past the state budget a
+  // A counted object (minProperties/maxProperties) whose optional properties are all tracked and
+  // that admits no other key counts its entries in the state, so the count is exact: an entry is
+  // admitted only below maxProperties and the object ends only at minProperties or more. Any other
   // counted object keeps the fixed-order rules.
   {
     constexpr int64_t kNInfernoMaxOrderStates = 256;
@@ -2662,13 +2662,12 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
       }
       return tracked;
     };
-    size_t tracked = tracked_for(1);
-    // Free entries counted up to this many (0: not counted).
-    int64_t free_cap = 0;
-    if (counted && (additional != nullptr || tracked < optional_indices.size())) {
-      free_cap = max_properties != -1 ? max_properties : min_properties;
-      tracked = tracked_for(free_cap + 1);
-    }
+    const size_t tracked = tracked_for(1);
+    // A free entry (an untracked optional property, an additional key) may repeat, and a repeated
+    // key is one property to a parser: a counted object counts only tracked entries, so it takes
+    // this rule only when it has no free entry. The free-entry count dimension below stays 0.
+    const bool repeatable = additional != nullptr || tracked < optional_indices.size();
+    const int64_t free_cap = 0;
     const bool fits = static_cast<int64_t>(required_count + 1) * (free_cap + 1) *
                           (int64_t{1} << tracked) <=
                       kNInfernoMaxOrderStates;
@@ -2677,7 +2676,8 @@ int32_t JSONSchemaConverter::GetPartialRuleForProperties(
         (max_properties == -1 || static_cast<int64_t>(required_count) <= max_properties) &&
         (additional != nullptr ||
          static_cast<int64_t>(properties.size()) >= static_cast<int64_t>(min_properties));
-    if ((!optional_indices.empty() || additional != nullptr) && (!counted || (fits && reachable))) {
+    if ((!optional_indices.empty() || additional != nullptr) &&
+        (!counted || (!repeatable && fits && reachable))) {
       int32_t first_separator = NextSeparatorExpression();
       int32_t middle_separator = NextSeparatorExpression();
       int32_t last_separator = NextSeparatorExpression(true);

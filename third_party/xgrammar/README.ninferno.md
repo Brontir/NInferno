@@ -35,8 +35,9 @@ optional key can be written any more: the output stays valid JSON and fields sil
 block lets an object's optional properties and additional keys come in any order, an optional
 property at most once (tracked up to 256 rule states per object, none with patternProperties; past
 that, the remaining optional properties may repeat), while its required properties keep their
-schema order. An object with minProperties/maxProperties counts its free entries in the state (a
-repeated free key counts each time); one whose states would pass 256 keeps upstream's rules, as does an object with
+schema order. An object with minProperties/maxProperties counts its entries in the state when all
+its optional properties are tracked and it admits no other key (a repeatable key would count twice
+for one property); any other counted object keeps upstream's rules, as does an object with
 only required properties and no other keys. `any_order` (non-strict Qwen XML tool arguments) is
 untouched. When updating, re-apply the block and run `ninferno_structured_output_test` and
 `ninferno_chat_test` (their key-order contracts fail without it).

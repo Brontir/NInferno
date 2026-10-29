@@ -1008,15 +1008,15 @@ void key_order_contract(const ConstraintCompiler& compiler) {
     check(!admits(least, object_of({"C"})), "minProperties 2: one key");
     check(!admits(least, "{}"), "minProperties 2: empty");
     check(!admits(least, object_of({"C", "A", "C"})), "minProperties 2: duplicate key");
-    // Additional keys count too.
+    // With additional keys (which may repeat) a counted object keeps the fixed order; it counts.
     Json open_one                    = five;
     open_one["additionalProperties"] = true;
     open_one["minProperties"]        = 1;
     open_one["maxProperties"]        = 3;
     const auto loose_count           = compiler.compile(schema_spec(open_one));
     check(admits(loose_count, object_of({"Z"})), "min 1 max 3: one additional key");
-    check(admits(loose_count, object_of({"Z", "C", "Y"})), "min 1 max 3: three mixed keys");
-    check(!admits(loose_count, object_of({"Z", "C", "Y", "A"})), "min 1 max 3: four keys");
+    check(admits(loose_count, object_of({"C", "Z", "Y"})), "min 1 max 3: three mixed keys");
+    check(!admits(loose_count, object_of({"C", "Z", "Y", "X"})), "min 1 max 3: four keys");
     check(!admits(loose_count, "{}"), "min 1 max 3: empty");
     // Required A and D with at most three keys: one optional key fits, and it may come first; two
     // optional keys first would leave no room for both required ones, so the second is refused.

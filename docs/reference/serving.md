@@ -829,13 +829,12 @@ still valid JSON. NInferno's grammars let the model write keys in its own order:
   property of an object with `patternProperties` or `propertyNames`, may still come in any order
   but may repeat (the tool-call parsers of every syntax, like most JSON parsers, keep the last
   value).
-- An object with `minProperties` or `maxProperties` takes the same rule with a counted state: a
-  key is admitted only while the object stays within `maxProperties` with room for its remaining
-  required properties, and the object ends at `minProperties` or more. A key that may repeat (see
-  below) counts each time it is written. The count joins the state
-  (keys past the tracked optional ones counted up to the bound); one whose states would pass 256
-  keeps its optional properties in schema order, so list them in the order the prompt asks for
-  them.
+- An object with `minProperties` or `maxProperties` takes the same rule with an exact count when
+  every optional property is tracked (above) and it admits no other key: a key is admitted only
+  while the object stays within `maxProperties` with room for its remaining required properties,
+  and the object ends at `minProperties` or more. Any other counted object (a key that may repeat
+  would count twice for one property) keeps its optional properties in schema order, so list them
+  in the order the prompt asks for them.
 
 Where each constraint applies, and what it holds:
 
