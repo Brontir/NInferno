@@ -985,6 +985,18 @@ void test_proposal_bytes_per_quant() {
     pr::PlanSourceFacts shards = mtp;
     shards.model.mtp_bytes     = 0;
     check(pr::proposal_bytes_at(shards, none) != 0, "MTP inside the shards: rows still planned");
+    // A MoE MTP layer reads its routed experts as one row routes them (Codex on #192): a smaller
+    // pass than its bytes, a larger head share, no fewer rows than the same bytes dense.
+    pr::PlanSourceFacts moe = mtp;
+    moe.model.params               = 35e9;
+    moe.shape.experts              = 256;
+    moe.shape.experts_per_token    = 8;
+    moe.shape.routed_expert_params = 32e9;
+    moe.model.mtp_bytes            = 4 * mtp.model.mtp_bytes;
+    pr::PlanSourceFacts dense_same = moe;
+    dense_same.shape.experts       = 0;
+    check(pr::proposal_bytes_at(moe, none) > pr::proposal_bytes_at(dense_same, none),
+          "MoE MTP: priced at its routed read");
 }
 
 // What the planner adds over the approximate estimate's KV pages: the MTP layer's pool, the

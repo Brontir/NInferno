@@ -8,6 +8,7 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
+#include "spec/round_cost.h"
 
 #include "product/activation_options.h"
 #include "product/numeric_options.h"
@@ -197,6 +198,21 @@ convert::PlannedProposal proposal_at(const PlanSourceFacts& facts, const DryRunI
                                                   : m.weight_bytes) /
                               static_cast<double>(facts.shape.num_hidden_layers)
                         : 0;
+    }
+    // A MoE MTP layer's routed experts are read as its one row routes them (the converter's
+    // default_proposal: moe_read_fraction of the MTP pass at 1 row; Codex on #192), their share
+    // of the layer the model's routed share. The published MTP tensors are the converted ones:
+    // keep_published keeps every GGUF block matrix as published (the recipe's Q8 table decodes
+    // them, convert.cpp), so the facts' bytes are the stored bytes.
+    if (mtp_bytes > 0 && facts.shape.experts > 0 && facts.shape.experts_per_token > 0 &&
+        facts.shape.routed_expert_params > 0 && m.params > 0) {
+        const double routed = std::min(1.0, facts.shape.routed_expert_params / m.params);
+        spec::PassFacts pass;
+        pass.expert_bytes = mtp_bytes * routed;
+        pass.bytes        = mtp_bytes - pass.expert_bytes;
+        pass.experts      = facts.shape.experts;
+        pass.experts_used = facts.shape.experts_per_token;
+        mtp_bytes         = pass.bytes + pass.expert_bytes * spec::moe_read_fraction(pass, 1);
     }
     if (inputs.proposal_drafter_bytes <= 0 && mtp_bytes <= 0) { return {}; }
     const double head = static_cast<double>(
