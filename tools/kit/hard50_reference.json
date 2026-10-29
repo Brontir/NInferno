@@ -1,6 +1,6 @@
 {
  "version": 1,
- "note": "The lab's hard50 runs (tools/bench/hard_set.py, greedy, over eval/corpora/hard50/hard50.json) of each model under plain decode (--spec none, C=1, the start's defaults), one per lab card, campaign m0628 (master of 2026-10-28), with the ids each answered wrong. tools/kit/validate.py holds a user's hard50 run to them; refresh after a change that moves answers (a new quantization path, a kernel's numerics), never to fit a submission.",
+ "note": "The lab's hard50 runs (tools/bench/hard_set.py, greedy, over eval/corpora/hard50/hard50.json) of each model under plain decode (--spec none, C=1, the start's defaults), one per lab card, campaign m0628 (master of 2026-10-28; Qwen3.5 9B's rows from the user kit on master ac3a9859 of 2026-10-29, after #167 moved its answers), with the ids each answered wrong. tools/kit/validate.py holds a user's hard50 run to them; refresh after a change that moves answers (a new quantization path, a kernel's numerics), never to fit a submission.",
  "set_sha256": "5e30ee70bdc4a4da2f352a2af5323091ba73e34444203445c1d894e83e47f874",
  "engine": "NInferno 0.1.0 (master of 2026-10-28)",
  "models": {
@@ -144,23 +144,22 @@
   "unsloth/Qwen3.5-9B-MTP-GGUF Q4_K_M": [
    {
     "card": "NVIDIA GeForce RTX 2080 Ti",
-    "correct": 27,
+    "correct": 26,
     "by_dataset": {
-     "gsm8k": 13,
+     "gsm8k": 14,
      "math_500": 7,
-     "mmlu_pro": 7
+     "mmlu_pro": 5
     },
     "wrong": [
      "gsm8k_main:1046",
      "gsm8k_main:12",
      "gsm8k_main:163",
      "gsm8k_main:242",
-     "gsm8k_main:520",
      "gsm8k_main:779",
      "gsm8k_main:835",
+     "math_500_Level 2:31",
      "math_500_Level 3:26",
-     "math_500_Level 3:39",
-     "math_500_Level 3:4",
+     "math_500_Level 3:7",
      "math_500_Level 4:22",
      "math_500_Level 4:25",
      "math_500_Level 4:50",
@@ -172,10 +171,12 @@
      "math_500_Level 5:70",
      "math_500_Level 5:85",
      "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
      "mmlu_pro_history:374",
+     "mmlu_pro_history:50",
      "mmlu_pro_philosophy:436"
     ],
-    "date": "2026-10-28"
+    "date": "2026-10-29"
    },
    {
     "card": "NVIDIA GeForce RTX 3060",
@@ -186,8 +187,8 @@
      "mmlu_pro": 5
     },
     "wrong": [
+     "gsm8k_main:1035",
      "gsm8k_main:1046",
-     "gsm8k_main:1166",
      "gsm8k_main:12",
      "gsm8k_main:163",
      "gsm8k_main:242",
@@ -195,7 +196,7 @@
      "gsm8k_main:835",
      "math_500_Level 2:31",
      "math_500_Level 3:26",
-     "math_500_Level 3:83",
+     "math_500_Level 3:39",
      "math_500_Level 4:22",
      "math_500_Level 4:25",
      "math_500_Level 4:50",
@@ -207,32 +208,181 @@
      "math_500_Level 5:46",
      "math_500_Level 5:85",
      "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
      "mmlu_pro_history:374",
      "mmlu_pro_history:50",
-     "mmlu_pro_philosophy:436",
-     "mmlu_pro_physics:1224"
+     "mmlu_pro_philosophy:436"
     ],
-    "date": "2026-10-28"
+    "date": "2026-10-29"
    },
    {
     "card": "NVIDIA GeForce RTX 4060 Ti",
-    "correct": 27,
+    "correct": 28,
     "by_dataset": {
-     "gsm8k": 12,
-     "math_500": 7,
-     "mmlu_pro": 8
+     "gsm8k": 13,
+     "math_500": 9,
+     "mmlu_pro": 6
     },
     "wrong": [
+     "gsm8k_main:1046",
+     "gsm8k_main:1105",
+     "gsm8k_main:1166",
+     "gsm8k_main:12",
+     "gsm8k_main:205",
+     "gsm8k_main:779",
+     "gsm8k_main:835",
+     "math_500_Level 3:26",
+     "math_500_Level 3:39",
+     "math_500_Level 3:7",
+     "math_500_Level 4:22",
+     "math_500_Level 4:25",
+     "math_500_Level 4:82",
+     "math_500_Level 5:131",
+     "math_500_Level 5:33",
+     "math_500_Level 5:40",
+     "math_500_Level 5:42",
+     "math_500_Level 5:46",
+     "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
+     "mmlu_pro_history:374",
+     "mmlu_pro_history:50"
+    ],
+    "date": "2026-10-29"
+   },
+   {
+    "card": "NVIDIA GeForce RTX 4070 Ti",
+    "correct": 27,
+    "by_dataset": {
+     "gsm8k": 14,
+     "math_500": 6,
+     "mmlu_pro": 7
+    },
+    "wrong": [
+     "gsm8k_main:12",
+     "gsm8k_main:163",
+     "gsm8k_main:242",
+     "gsm8k_main:635",
+     "gsm8k_main:779",
+     "gsm8k_main:835",
+     "math_500_Level 2:31",
+     "math_500_Level 3:26",
+     "math_500_Level 3:39",
+     "math_500_Level 3:4",
+     "math_500_Level 3:83",
+     "math_500_Level 4:22",
+     "math_500_Level 4:25",
+     "math_500_Level 4:82",
+     "math_500_Level 5:131",
+     "math_500_Level 5:33",
+     "math_500_Level 5:40",
+     "math_500_Level 5:42",
+     "math_500_Level 5:46",
+     "math_500_Level 5:85",
+     "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
+     "mmlu_pro_history:374"
+    ],
+    "date": "2026-10-29"
+   },
+   {
+    "card": "NVIDIA GeForce RTX 4090",
+    "correct": 18,
+    "by_dataset": {
+     "gsm8k": 10,
+     "math_500": 5,
+     "mmlu_pro": 3
+    },
+    "wrong": [
+     "gsm8k_main:1035",
+     "gsm8k_main:1046",
+     "gsm8k_main:1166",
+     "gsm8k_main:12",
+     "gsm8k_main:163",
+     "gsm8k_main:242",
+     "gsm8k_main:520",
+     "gsm8k_main:635",
+     "gsm8k_main:779",
+     "gsm8k_main:835",
+     "math_500_Level 2:31",
+     "math_500_Level 3:26",
+     "math_500_Level 3:7",
+     "math_500_Level 3:78",
+     "math_500_Level 4:22",
+     "math_500_Level 4:25",
+     "math_500_Level 4:50",
+     "math_500_Level 4:82",
+     "math_500_Level 5:131",
+     "math_500_Level 5:33",
+     "math_500_Level 5:40",
+     "math_500_Level 5:42",
+     "math_500_Level 5:46",
+     "math_500_Level 5:70",
+     "math_500_Level 5:85",
+     "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:452",
+     "mmlu_pro_history:374",
+     "mmlu_pro_history:50",
+     "mmlu_pro_philosophy:436",
+     "mmlu_pro_physics:1224",
+     "mmlu_pro_psychology:645"
+    ],
+    "date": "2026-10-29"
+   },
+   {
+    "card": "NVIDIA GeForce RTX 5070 Ti",
+    "correct": 24,
+    "by_dataset": {
+     "gsm8k": 13,
+     "math_500": 7,
+     "mmlu_pro": 4
+    },
+    "wrong": [
+     "gsm8k_main:1035",
      "gsm8k_main:1046",
      "gsm8k_main:12",
      "gsm8k_main:163",
      "gsm8k_main:242",
-     "gsm8k_main:450",
-     "gsm8k_main:520",
      "gsm8k_main:779",
      "gsm8k_main:835",
      "math_500_Level 2:31",
+     "math_500_Level 3:26",
      "math_500_Level 3:39",
+     "math_500_Level 4:22",
+     "math_500_Level 4:25",
+     "math_500_Level 4:50",
+     "math_500_Level 4:82",
+     "math_500_Level 5:131",
+     "math_500_Level 5:33",
+     "math_500_Level 5:40",
+     "math_500_Level 5:42",
+     "math_500_Level 5:46",
+     "math_500_Level 5:70",
+     "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
+     "mmlu_pro_history:374",
+     "mmlu_pro_history:50",
+     "mmlu_pro_philosophy:436",
+     "mmlu_pro_psychology:645"
+    ],
+    "date": "2026-10-29"
+   },
+   {
+    "card": "NVIDIA GeForce RTX 5090",
+    "correct": 27,
+    "by_dataset": {
+     "gsm8k": 14,
+     "math_500": 6,
+     "mmlu_pro": 7
+    },
+    "wrong": [
+     "gsm8k_main:12",
+     "gsm8k_main:163",
+     "gsm8k_main:242",
+     "gsm8k_main:450",
+     "gsm8k_main:779",
+     "gsm8k_main:835",
+     "math_500_Level 2:31",
+     "math_500_Level 3:26",
      "math_500_Level 3:78",
      "math_500_Level 3:83",
      "math_500_Level 4:22",
@@ -244,147 +394,12 @@
      "math_500_Level 5:40",
      "math_500_Level 5:42",
      "math_500_Level 5:46",
+     "math_500_Level 5:85",
      "mmlu_pro_chemistry:343",
+     "mmlu_pro_health:501",
      "mmlu_pro_history:374"
     ],
-    "date": "2026-10-28"
-   },
-   {
-    "card": "NVIDIA GeForce RTX 4070 Ti",
-    "correct": 26,
-    "by_dataset": {
-     "gsm8k": 13,
-     "math_500": 7,
-     "mmlu_pro": 6
-    },
-    "wrong": [
-     "gsm8k_main:1046",
-     "gsm8k_main:12",
-     "gsm8k_main:163",
-     "gsm8k_main:242",
-     "gsm8k_main:450",
-     "gsm8k_main:779",
-     "gsm8k_main:835",
-     "math_500_Level 2:31",
-     "math_500_Level 3:26",
-     "math_500_Level 3:39",
-     "math_500_Level 4:22",
-     "math_500_Level 4:25",
-     "math_500_Level 4:50",
-     "math_500_Level 4:82",
-     "math_500_Level 5:131",
-     "math_500_Level 5:40",
-     "math_500_Level 5:42",
-     "math_500_Level 5:46",
-     "math_500_Level 5:70",
-     "math_500_Level 5:85",
-     "mmlu_pro_chemistry:343",
-     "mmlu_pro_health:501",
-     "mmlu_pro_history:374",
-     "mmlu_pro_physics:1224"
-    ],
-    "date": "2026-10-28"
-   },
-   {
-    "card": "NVIDIA GeForce RTX 4090",
-    "correct": 25,
-    "by_dataset": {
-     "gsm8k": 13,
-     "math_500": 8,
-     "mmlu_pro": 4
-    },
-    "wrong": [
-     "gsm8k_main:12",
-     "gsm8k_main:163",
-     "gsm8k_main:242",
-     "gsm8k_main:450",
-     "gsm8k_main:520",
-     "gsm8k_main:779",
-     "gsm8k_main:835",
-     "math_500_Level 3:26",
-     "math_500_Level 3:39",
-     "math_500_Level 3:7",
-     "math_500_Level 3:83",
-     "math_500_Level 4:22",
-     "math_500_Level 4:25",
-     "math_500_Level 5:131",
-     "math_500_Level 5:33",
-     "math_500_Level 5:40",
-     "math_500_Level 5:42",
-     "math_500_Level 5:46",
-     "math_500_Level 5:70",
-     "mmlu_pro_chemistry:343",
-     "mmlu_pro_health:452",
-     "mmlu_pro_health:501",
-     "mmlu_pro_history:374",
-     "mmlu_pro_history:50",
-     "mmlu_pro_philosophy:436"
-    ],
-    "date": "2026-10-28"
-   },
-   {
-    "card": "NVIDIA GeForce RTX 5070 Ti",
-    "correct": 31,
-    "by_dataset": {
-     "gsm8k": 14,
-     "math_500": 10,
-     "mmlu_pro": 7
-    },
-    "wrong": [
-     "gsm8k_main:1046",
-     "gsm8k_main:12",
-     "gsm8k_main:163",
-     "gsm8k_main:242",
-     "gsm8k_main:779",
-     "gsm8k_main:835",
-     "math_500_Level 3:39",
-     "math_500_Level 4:22",
-     "math_500_Level 4:25",
-     "math_500_Level 4:50",
-     "math_500_Level 4:82",
-     "math_500_Level 5:131",
-     "math_500_Level 5:40",
-     "math_500_Level 5:42",
-     "math_500_Level 5:46",
-     "math_500_Level 5:70",
-     "mmlu_pro_chemistry:343",
-     "mmlu_pro_history:374",
-     "mmlu_pro_psychology:645"
-    ],
-    "date": "2026-10-28"
-   },
-   {
-    "card": "NVIDIA GeForce RTX 5090",
-    "correct": 29,
-    "by_dataset": {
-     "gsm8k": 14,
-     "math_500": 8,
-     "mmlu_pro": 7
-    },
-    "wrong": [
-     "gsm8k_main:12",
-     "gsm8k_main:163",
-     "gsm8k_main:242",
-     "gsm8k_main:450",
-     "gsm8k_main:779",
-     "gsm8k_main:835",
-     "math_500_Level 3:26",
-     "math_500_Level 3:7",
-     "math_500_Level 4:22",
-     "math_500_Level 4:25",
-     "math_500_Level 4:82",
-     "math_500_Level 5:131",
-     "math_500_Level 5:33",
-     "math_500_Level 5:40",
-     "math_500_Level 5:42",
-     "math_500_Level 5:46",
-     "math_500_Level 5:70",
-     "math_500_Level 5:85",
-     "mmlu_pro_chemistry:343",
-     "mmlu_pro_history:374",
-     "mmlu_pro_history:50"
-    ],
-    "date": "2026-10-28"
+    "date": "2026-10-29"
    }
   ],
   "unsloth/Qwen3.6-35B-A3B-GGUF UD-Q3_K_S": [
