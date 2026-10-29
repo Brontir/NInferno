@@ -1514,7 +1514,7 @@ candidate without its drafter, in the prefill rate and in a task's time, and its
 `prefill (3 tail calls)`. The calls of the RTX 4070 Ti profiles (the embedding's grid gives each
 call's tokens; 962 / 1912 / 2862-token requests):
 - Qwen 9B: 896 | 59 | 3 | 4, 1024 + 832 | 49 | 3 | 4, 1024 + 1024 + 768 | 39 | 3 | 4.
-- Gemma 12B: 960 | 40 | 3 | 3 | 1 and the like.
+- Gemma 12B (2863 tokens): 1024 + 1024 + 768 | 40 | 3 | 3 | 1.
 
 The last two (Qwen) or three (Gemma) are the generation prompt's: Qwen 3.5 counts 2 with thinking
 on or off (`<|im_start|>assistant\n` and the reasoning block; the boundary after `<think>\n` falls
