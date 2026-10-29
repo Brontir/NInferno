@@ -328,6 +328,26 @@ class RoundFactsTest(unittest.TestCase):
         self.assertEqual(elems, {"x": 64, "y": 32})
         self.assertEqual(shapes, {"x": ["gguf:type99", [64]], "y": ["gguf:F16", [32]]})
 
+    def test_a_table_read_on_a_later_try_is_no_longer_unread(self):
+        # Two pairs share a drafter table: the first pair's read fails, the second's succeeds.
+        pair = lambda target: {"target_repo": f"org/{target}@1 Q4_K_M", "target": "a",
+                               "drafters": {"dflash": "z/d@2"}}
+        registry = {"pairs": [pair("t1"), pair("t2")]}
+        calls = []
+
+        def read(at, files, shas):
+            calls.append(at)
+            if at == "z/d@2" and calls.count("z/d@2") == 1:
+                raise OSError("HTTP 503")
+            return {"meta": {}, "tensors": {"w": 1}, "elems": {"w": 1}, "shapes": {"w": ["bf16", [1]]}}
+
+        saved = []
+        with contextlib.redirect_stderr(io.StringIO()):
+            failed = round_facts.refresh_tables(registry, {}, read, lambda t: saved.append(len(t)))
+        self.assertEqual(failed, set())  # read on the second pair's try
+        self.assertEqual(calls.count("z/d@2"), 2)
+        self.assertEqual(saved[-1], 3)  # both targets and the drafter, saved after each read
+
     def test_nested_quantization_and_newer_ggml_types(self):
         meta, bits = round_facts._config_meta({"text_config": {"quantization_config": {"quant_method": "gptq",
                                                                                        "bits": 4}}})
