@@ -396,8 +396,8 @@ struct QuantKldPoint {
     double bits_per_weight;
     double kld;
     std::string_view label;
-    // A point of the curve other bits interpolate on (two cards); false: the measured file's own
-    // value only (one card, matched by its label and bits), which moves no other model's estimate.
+    // Measured on two cards: it prices the choice (its own file by label and bits, others by
+    // interpolation). false: one card, recorded only; a second card's run makes it decide.
     bool curve = true;
 };
 
