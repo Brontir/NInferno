@@ -1582,13 +1582,17 @@ MMQ's side kernels are not the gap either. Under PDL (sm_90 on) a dependent kern
 waits, so nsys's kernel durations overstate it: their sum puts the stream-K fixup, the epilogue
 (FP32 plane to BF16) and the Q8_1 quantization at 17 % of the 5090's Qwen 9B prefill, but the time
 they add to the union of the kernels' intervals is 9.7 % (fixup 4.4, quantize 2.9, epilogue 2.4),
-against 7.9 % on the 4090 (no PDL: the durations are exact). The main kernel is: the 5090 takes
-0.805 of the 4090's time where the SMs times the clock predict 0.723 (the same int8 rate a SM and
-clock), and 468 of its 480 Q4_K calls run stream-K with a fixup, against 140 on the 4090 (ggml's
+against 7.9 % on the 4090 (no PDL: the durations are exact). The main kernel takes 0.805 of the 4090's
+time where the SMs times the boost clocks predict 0.723 (the same int8 rate a SM and clock), and 468 of its 480 Q4_K calls run stream-K with a fixup, against 140 on the 4090 (ggml's
 rule: whole waves only at 90 % wave efficiency). Stream-K is not the loss: whole waves instead
 (`exp/mmq-no-streamk`, A/B/A) are 11 .. 15 % slower on the 5090 (Qwen 9B; Gemma 12B 7 .. 12 %), 7 %
-on the 4070 Ti (Qwen; Gemma 1.5 %) and even on the 4060 Ti and the 3060. The main kernel's 11 %
-on the 5090 is still open.
+on the 4070 Ti (Qwen; Gemma 1.5 %) and even on the 4060 Ti and the 3060. What the 5090 loses
+depends on the shape: one Q4_K call at 2048 tokens (route sweep bench, prefill profile) takes 0.71
+.. 0.74 of the 4090's time on the large matrices (15360x3840, 3840x15360) but 0.87 .. 0.90 on the
+small ones (4096x4096, 3840x3840, 8192x3840: fewer output tiles than two of its waves), while
+both boards' MMQ reaches 27 .. 31 % of the int8 tensor peak. The prefill estimate's rate per
+generation does not see the shape: a Qwen 9B or Gemma 12B layer is mostly small matrices for 170
+SMs. The nsys ratio above (0.805) mixed both and the profile's clocks, which were not recorded.
 
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
