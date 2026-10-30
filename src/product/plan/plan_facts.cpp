@@ -839,6 +839,8 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     enum Part : std::uint8_t { Vision, Mtp, Drafter, Proposal, Other, Parts };
 
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
+    // The trunk's routed expert banks (`.../experts/<e>/...`; the shared expert is not one).
+    std::vector<bool> routed(dir.objects.size(), false);
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
     std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
@@ -875,10 +877,14 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
                                                                                           : Other;
         for (const auto& piece : binding.parts) {
             if (piece.object.index < marks.size()) { marks[piece.object.index][part] = true; }
+            if (part == Other && name.find("/experts/") != std::string::npos &&
+                piece.object.index < routed.size()) {
+                routed[piece.object.index] = true;
+            }
         }
     }
     std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0,
-                  proposal_bytes = 0;
+                  proposal_bytes = 0, routed_bytes = 0;
     // The weights' elements the bytes cover, the own drafter and the proposal head left out: as a
     // GGUF's tensor table counts the model it converts from (bits_per_weight's denominator on both
     // paths).
@@ -901,6 +907,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             layer_formats.insert(tensor->format); // the trunk's layers
         }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
+        if (routed[i] && m[Other]) { routed_bytes += tensor->bytes; }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;
         } else if (alone && m[Proposal]) {
@@ -916,6 +923,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.vision_bytes      = vision_bytes;
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
+    out.model.routed_expert_bytes = routed_bytes;
     out.shape.input_table_bytes = input_table_bytes;
     out.model.weight_elements   = elements;
     // The source quantization the converter recorded (a GGUF file name's label), where the
