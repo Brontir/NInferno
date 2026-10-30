@@ -1013,8 +1013,9 @@ void prefills_moe_by_tiles(const json& fixture) {
 
 // A prompt's full attention by its CTAs (DECISIONS 68): Qwen3.5 9B's eight full layers (16 heads of
 // 256) over INT8 keys, the census's per-chunk calls (a layer's median) against the grid dealt in
-// the kernel's layout and longest-first issue order: the first seven 1024-token chunks of the 21K
-// prompts the costs were read from (RTX 5090 without PDL and 5070 Ti, 4060 Ti and 4070 Ti, 3060).
+// the kernel's layout and longest-first issue order: a 7K prompt's 1024-token chunks on the RTX
+// 5090 (no PDL), 5070 Ti, 4060 Ti and 3060, the 4070 Ti's the 21K prompt's first seven (the costs
+// were read on the 21K prompts).
 void prices_attention_tiles() {
     ch::ModelFacts m;
     m.family               = "qwen3_5_text";
