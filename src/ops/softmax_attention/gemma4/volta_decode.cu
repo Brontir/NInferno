@@ -146,18 +146,18 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
     __syncthreads();
 
     for (int k0 = begin; k0 < end; k0 += kVoltaTile) {
-        // Scores: warp w takes keys k0 + w * PerWarp .. + PerWarp - 1.
+        // The tile's keys this CTA has: a split of kGemma4VoltaDecodeBc keys fills a quarter.
+        const int tile_keys = min(kVoltaTile, end - k0);
+        // Scores: warp w takes keys k0 + w, k0 + w + Warps, ...: a short tile's keys spread over
+        // every warp (its instructions wait out their latencies one warp a scheduler).
 #pragma unroll 1
         for (int i = 0; i < PerWarp; ++i) {
-            const int kk  = warp * PerWarp + i;
-            const int key = k0 + kk;
+            const int kk = i * Warps + warp;
+            if (kk >= tile_keys) break;
             float kf[E];
-            if (key < end) {
-                const int slot = gemma4_kv_slot(args.kv, binding, key);
+            {
+                const int slot = gemma4_kv_slot(args.kv, binding, k0 + kk);
                 load_dims<E>(k_plane, k_scales, slot, lane * E, D, kf);
-            } else {
-#pragma unroll
-                for (int e = 0; e < E; ++e) kf[e] = 0.0F;
             }
 #pragma unroll
             for (int r = 0; r < MaxRows; ++r) {
@@ -190,9 +190,9 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
             const int vis_h = args.block != 0 ? p_call : p;
             float m         = m_s[r];
             float m_tile    = NegInf;
-            for (int kk = 0; kk < kVoltaTile; ++kk) {
+            for (int kk = 0; kk < tile_keys; ++kk) {
                 const int key = k0 + kk;
-                if (key < end && key >= vis_l && key <= vis_h) m_tile = fmaxf(m_tile, s_s[r][kk]);
+                if (key >= vis_l && key <= vis_h) m_tile = fmaxf(m_tile, s_s[r][kk]);
             }
             const float m_new = fmaxf(m, m_tile);
             float alpha       = 1.0F;
@@ -200,16 +200,16 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
             if (m_new != NegInf) {
                 alpha = m == NegInf ? 0.0F : exp2f((m - m_new) * sl);
                 l *= alpha;
-                for (int kk = 0; kk < kVoltaTile; ++kk) {
+                for (int kk = 0; kk < tile_keys; ++kk) {
                     const int key  = k0 + kk;
-                    const float pv = key < end && key >= vis_l && key <= vis_h
+                    const float pv = key >= vis_l && key <= vis_h
                                          ? exp2f((s_s[r][kk] - m_new) * sl)
                                          : 0.0F;
                     s_s[r][kk]     = pv;
                     l += pv;
                 }
             } else {
-                for (int kk = 0; kk < kVoltaTile; ++kk) s_s[r][kk] = 0.0F;
+                for (int kk = 0; kk < tile_keys; ++kk) s_s[r][kk] = 0.0F;
             }
             m_s[r]     = m_new;
             l_s[r]     = l;
@@ -224,7 +224,7 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
 #pragma unroll
             for (int j = 0; j < J; ++j) acc[r][j] *= a;
         }
-        const int keys = tid * J < D ? min(kVoltaTile, end - k0) : 0;
+        const int keys = tid * J < D ? tile_keys : 0;
 #pragma unroll 1
         for (int kk = 0; kk < keys; ++kk) {
             const int slot = gemma4_kv_slot(args.kv, binding, k0 + kk);
