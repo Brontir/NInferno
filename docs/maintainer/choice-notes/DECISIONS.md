@@ -1813,3 +1813,42 @@ eight rows once its constants were gone.
   - The GV100's decode reads its dense Q8 linears at 0.44 of the DRAM rate and the routed MXFP4
     banks at 0.28: about 3-4 weights a SM-clock unpacked on the CUDA cores, not bytes (79.7 tok/s,
     the estimate 185).
+
+## 66. Prefill linears from a tile's cost (30.10, open, measured)
+
+A prefill linear runs as a grid of tiles: a tile of the int8 kernels (the dense `w4a8_kernel`, the
+MoE experts' `moe_w4a8_kernel`) is 64 tokens x 64 output rows, the whole K deep. The census (nsys of
+one ~1.8K-token prompt after a warm-up, master kit build; the RTX 4090 without PDL, the RTX 5070 Ti
+on a lab build with `pdl::supported()` false, so a kernel's time is its own) gives one law for every
+such call:
+
+    t(call) = waves * (c0 + K * c1),   waves = CTAs / SMs,   CTAs = ceil(T / 64) * N / 64
+
+| kernel | generation | c0 | c1 (a K step) | calls it was read from |
+|---|---|---|---|---|
+| int8 tile (W4A8) | Ada | 1.33 us | 4.82 ns | Qwen3.6 experts K 2048 / 512, gpt-oss K 2880; dense K 2048 |
+| int8 tile (W4A8) | Blackwell | 0.5 us | 4.74 ns | dense K 2048 / 2880 / 4096 |
+| block-scaled MX (MXFP4 experts) | Blackwell | ~0.5 us | ~3.4 ns | gpt-oss experts K 2880 |
+
+On the RTX 4090 the law gives the dense calls of Qwen3.6-35B-A3B within 1-6 % (the Gated DeltaNet
+in-projection 11.2 against 11.5 us a CTA, attention's qkv 370 against 375 us, the shared expert's
+gate/up 45 against 47 us) and gpt-oss's experts from Qwen's (15.2 against 15.0 / 13.6 us a CTA).
+c1 is the same in nanoseconds on both generations at their different clocks: 1.7 int8 TOPS a SM,
+a third of the tensor peak, in every call.
+
+An MoE's expert grid counts jobs, not tokens: a job is an expert's run of up to 64 of the chunk's
+slots (token x pick), so the jobs are the sum over experts of ceil(n_e / 64), and routing that
+favours some experts makes more partial jobs. Slots a job: Qwen3.6-35B-A3B 30.1 at 57 a expert
+(chunk 2048), gpt-oss-20b 42.7 at 128 and 37.7 at 93 (chunks of 1024 and 744): the model's routing
+on the text, the same on every card (as its acceptance, DECISIONS 64). With K and the jobs the law
+gives the RTX 4090's Qwen3.6 experts at 0.61 of gpt-oss's efficiency; measured 0.62.
+
+What this replaces: the per-generation prefill efficiencies (kPrefillEta's rows, kPrefillTilesEta,
+the MoE rows and kMoeChunkShare) are one number a generation for every shape; a narrow model's
+linears (Qwen3.6's 2048 hidden) are 11 % (Ada) to 31 % (Blackwell) slower than its row says, and
+an MoE's expert route (int8, the 16-bit register MMA, MXFP4) changes the kernel, not a share.
+
+Next: the plan's linear shapes from the geometry it reads (attention, recurrent, FFN, experts,
+shared expert), the remaining kernels' constants (the 16-bit register MMA, ggml's MMQ — its tile
+cost per K step was read before, about 47-48 SM-clocks — Volta's dp4a route), the jobs as a
+model fact, and the check against the prefill rows of data/prefill/rows.json and the MoE campaign.
