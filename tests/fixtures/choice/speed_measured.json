@@ -1,5 +1,5 @@
 {
- "about": "Stand measurements the choice constants were fitted on (scratchpad fit_choice.py, 2026-10-23): decode tokens a second per stream at `context` tokens with `concurrency` rows, prefill tokens a second (null: not measured). Short-chat rows are C-stream aggregates over C at a 512-token context.",
+ "about": "Stand measurements the choice constants were fitted on (scratchpad fit_choice.py, 2026-10-23): decode tokens a second per stream at `context` tokens with `concurrency` rows, prefill tokens a second (null: not measured). Short-chat rows are C-stream aggregates over C at a 512-token context. A row marked \"step\" is the step itself: the decode of C concurrent requests apart from their prompts.",
  "models": {
   "Qwen3.5-9B": {
    "family": "qwen3_5_text",
@@ -92,12 +92,20 @@
     "UD-IQ3_XXS": {
      "bits_per_weight": 3.05,
      "weight_bytes": 13211155424,
-     "routed_expert_bytes": 11108614144
+     "routed_expert_bytes": 11108614144,
+     "input_table_bytes": 417177600
     },
     "UD-Q4_K_M": {
      "bits_per_weight": 5.11,
      "weight_bytes": 22134528992,
-     "routed_expert_bytes": 19568525312
+     "routed_expert_bytes": 19568525312,
+     "input_table_bytes": 540344320
+    },
+    "UD-Q3_K_S": {
+     "bits_per_weight": 3.55,
+     "weight_bytes": 15348206080,
+     "routed_expert_bytes": 12916359168,
+     "input_table_bytes": 417177600
     }
    },
    "full_attention_width": 81920.0,
@@ -798,6 +806,202 @@
    "prefill": 13777,
    "source": "run_calib.sh 2026-10-23 long24k",
    "prompt": 21365
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-IQ3_XXS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 1,
+   "context": 256,
+   "decode": 273.3,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-IQ3_XXS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 2,
+   "context": 256,
+   "decode": 224.6,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-IQ3_XXS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 4,
+   "context": 256,
+   "decode": 170.8,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 1,
+   "context": 256,
+   "decode": 247.5,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 2,
+   "context": 256,
+   "decode": 215.6,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 4,
+   "context": 256,
+   "decode": 167.3,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 1,
+   "context": 256,
+   "decode": 255.4,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 2,
+   "context": 256,
+   "decode": 214.1,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 4,
+   "context": 256,
+   "decode": 175.3,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 8,
+   "context": 256,
+   "decode": 128.9,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 1,
+   "context": 256,
+   "decode": 267.0,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 2,
+   "context": 256,
+   "decode": 229.9,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 4,
+   "context": 256,
+   "decode": 194.5,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.6-35B-A3B",
+   "quant": "UD-Q3_K_S",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "concurrency": 8,
+   "context": 256,
+   "decode": 143.4,
+   "prefill": null,
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "step": true
   }
  ]
 }

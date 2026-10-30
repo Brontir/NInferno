@@ -130,7 +130,11 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
                                          row.at("context").get<double>(), row.value("prompt", 0U));
         const double d    = s.decode_per_stream / row.at("decode").get<double>() - 1;
-        if (mf.moe()) {
+        // A step's rate: one stream, or a row measured as the step itself ("step": the decode of C
+        // concurrent requests apart from their prompts); the other several-stream rows are wave
+        // aggregates.
+        const bool step = row.at("concurrency").get<std::uint32_t>() == 1 || row.value("step", false);
+        if (mf.moe() && step) {
             std::cout << "MoE " << row.at("card").get<std::string>() << " " << q << " x"
                       << row.at("concurrency").get<std::uint32_t>() << " at " << row.at("context").get<double>()
                       << ": predicted " << s.decode_per_stream << " measured " << row.at("decode").get<double>()
@@ -138,7 +142,7 @@ void reproduces_the_measurements(const json& fixture) {
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
-        } else if (row.at("concurrency").get<std::uint32_t>() == 1) {
+        } else if (!mf.moe() && row.at("concurrency").get<std::uint32_t>() == 1) {
             decode_sq += d * d;
             decode_worst = std::max(decode_worst, std::abs(d));
             ++decodes;
