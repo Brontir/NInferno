@@ -1390,24 +1390,6 @@ constexpr bool r8_one_slot_build() {
 #endif
 }
 
-// NINFERNO-SPECIAL(arch:sm70): Volta's decode R8 reads the activation quantized once per call
-// (launch_w4a8_quantize, the same arithmetic) instead of quantizing all of it in every CTA. A CTA's
-// quantization holds none of its weight loads in flight: clock64 phases of the one-slot kernel on
-// the GV100 (r8_schedule_bench, Gemma 4 12B Q4_K shapes) put it at 23 % of a CTA's cycles for the
-// 15360x3840 SwiGLU, 38 % for the 3840x15360 add (four passes of 128 threads) and 57 % for the
-// 3840x4096 store, whose two waves of CTAs read x while the weights stream; the kernel ran at
-// 51 .. 67 % of DRAM with the issue slots 30 .. 42 % busy, and neither the two-slot form nor
-// eight warps a CTA moved it. One extra launch a call (Volta has no programmatic dependent
-// launch to hide it) against a CTA that starts on its weights.
-std::int32_t r8_pre_min_tokens() {
-    if (r8_one_slot_build()) {
-        try {
-            if (!device_class().features.mma_tensor) return 1;
-        } catch (const std::exception&) {}
-    }
-    return 2;
-}
-
 int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them.
@@ -1595,6 +1577,24 @@ bool w4a8_fits(int schedule, QType qtype) {
     return 2 * ((s.block_m + s.block_n) * (128 + 32) + half_min) <=
            static_cast<int>(kMaxSharedBytesPerBlock);
 }
+// NINFERNO-SPECIAL(arch:sm70): Volta's decode R8 reads the activation quantized once per call
+// (launch_w4a8_quantize, the same arithmetic) instead of quantizing all of it in every CTA. A CTA's
+// quantization holds none of its weight loads in flight: clock64 phases of the one-slot kernel on
+// the GV100 (r8_schedule_bench, Gemma 4 12B Q4_K shapes) put it at 23 % of a CTA's cycles for the
+// 15360x3840 SwiGLU, 38 % for the 3840x15360 add (four passes of 128 threads) and 57 % for the
+// 3840x4096 store, whose two waves of CTAs read x while the weights stream; the kernel ran at
+// 51 .. 67 % of DRAM with the issue slots 30 .. 42 % busy, and neither the two-slot form nor
+// eight warps a CTA moved it. One extra launch a call (Volta has no programmatic dependent
+// launch to hide it) against a CTA that starts on its weights.
+std::int32_t r8_pre_min_tokens() {
+    if (r8_one_slot_build()) {
+        try {
+            if (!device_class().features.mma_tensor) return 1;
+        } catch (const std::exception&) {}
+    }
+    return 2;
+}
+
 int r8_schedule_count() { return static_cast<int>(kR8Schedules.size()); }
 R8ScheduleInfo r8_schedule_info(int index) {
     return kR8Schedules.at(static_cast<std::size_t>(index));
