@@ -1585,8 +1585,10 @@ they add to the union of the kernels' intervals is 9.7 % (fixup 4.4, quantize 2.
 against 7.9 % on the 4090 (no PDL: the durations are exact). The main kernel is: the 5090 takes
 0.805 of the 4090's time where the SMs times the clock predict 0.723 (the same int8 rate a SM and
 clock), and 468 of its 480 Q4_K calls run stream-K with a fixup, against 140 on the 4090 (ggml's
-rule: whole waves only at 90 % wave efficiency). Next: an A/B of whole waves against stream-K
-(`exp/mmq-no-streamk`) on the 5090, the 4090, the 4070 Ti, the 4060 Ti and the 3060.
+rule: whole waves only at 90 % wave efficiency). Stream-K is not the loss: whole waves instead
+(`exp/mmq-no-streamk`, A/B/A) are 11 .. 15 % slower on the 5090 (Qwen 9B; Gemma 12B 7 .. 12 %), 7 %
+on the 4070 Ti (Qwen; Gemma 1.5 %) and even on the 4060 Ti and the 3060. The main kernel's 11 %
+on the 5090 is still open.
 
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
