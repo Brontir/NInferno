@@ -1923,6 +1923,18 @@ token a recurrent layer. The rest (the activations' quantization, the norms, the
 the gates) is bytes: about 7 GB on Ada and Blackwell, some 15 passes over a token's 8 KB hidden
 row a layer; the RTX 3060's 3 MB L2 and Turing's kernels double it.
 
+`prefill_small_seconds` prices them so (`kSmallKernelCost`: the scan's SM-clocks a token and state
+element, 0.058 Ada / 0.048 Blackwell / 0.051 Ampere / 0.196 Turing; the rest's bytes a token, layer
+and hidden element, 30 / 30 / 60 / 88), within -16 .. +14 % of the seven points it was read from.
+**Checked on another model**, predicted before reading (Gemma 4 12B Q4_K_M, no recurrence, hidden
+3840 in 48 layers, a 1714-token prompt; the census's norms, the q/k/v preparation and the
+activations' quantization, MMQ's epilogue left with its linears): RTX 4090 9.4 against 12.9 ms,
+4070 Ti 18.8 / 23.9, 4060 Ti 33.0 / 43.7, 5070 Ti 10.6 / 12.5 (its K-quant runs the int8 tiles),
+RTX 3060 52.4 / 53.5, 2080 Ti 45.0 / 35.8: -27 .. +26 %. Ada's shortfall is MMQ's quantization
+(q8_1 of every linear's input, 5.9 of the 4090's 12.9 ms against the Q8 tiles' 3.3 on Qwen): the
+quantization's bytes follow the route's codec and the linears' input widths, the next refinement.
+At 5-10 % of a prompt the term's error is 1-3 % of it.
+
 Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
