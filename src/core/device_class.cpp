@@ -701,12 +701,13 @@ DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int m
 
 DeviceIdentity query_device_identity(int device) {
     char bus_id[32] = {};
-    check(cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device), "cudaDeviceGetPCIBusId", device);
-    std::optional<DeviceIdentity> identity = parse_pci_bus_id(bus_id);
-    if (!identity) {
-        throw std::runtime_error(std::string("device class: unreadable PCI bus id \"") + bus_id +
-                                 "\" for device " + std::to_string(device));
+    std::optional<DeviceIdentity> identity;
+    if (cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), device) == cudaSuccess) {
+        identity = parse_pci_bus_id(bus_id);
+    } else {
+        (void)cudaGetLastError();
     }
+    if (!identity) { identity = DeviceIdentity{.pci_domain = kUnknownPciDomain}; }
     // A UUID the driver does not report stays zero: the PCI address still orders the board.
     cudaDeviceProp prop{};
     if (cudaGetDeviceProperties(&prop, device) == cudaSuccess) {

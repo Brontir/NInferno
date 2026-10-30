@@ -232,7 +232,12 @@ int print_version(const std::vector<Engine>& engines, const Driver* driver) {
         if (gpu.cc == 0) { continue; }
         const auto engine = choose(engines, gpu.cc);
         runnable += engine ? 1 : 0;
-        std::cout << "GPU " << n << " (" << ninferno::pci_bus_id_text(gpu.identity)
+        // The forms --device takes: the bus id and, where the driver reports it, the UUID.
+        std::cout << "GPU " << n << " ("
+                  << (ninferno::pci_known(gpu.identity) ? ninferno::pci_bus_id_text(gpu.identity)
+                                                        : std::string("PCI address unknown"))
+                  << (ninferno::uuid_known(gpu.identity) ? ' ' + ninferno::uuid_text(gpu.identity)
+                                                         : std::string())
                   << "): " << gpu.name << ", sm_" << gpu.cc << " -> "
                   << (engine ? "engine sm_" + engine->tag
                              : std::string("no engine in this release"))

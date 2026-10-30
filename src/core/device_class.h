@@ -259,9 +259,10 @@ template <class Measured, std::size_t Extent>
 [[nodiscard]] const DeviceClass& device_class(int device);
 
 // The identity of ordinal `device`: cudaDeviceGetPCIBusId and cudaGetDeviceProperties' uuid,
-// without the rest of the class (no NVML, no kernel probe). Throws std::runtime_error when CUDA
-// cannot report the PCI address; a UUID it cannot report stays zero. DeviceClass::identity keeps
-// an unreadable board as unknown (domain 0xFFFFFFFF) instead of failing the start.
+// without the rest of the class (no NVML, no kernel probe). Each part stands alone: an address CUDA
+// cannot report leaves pci_domain kUnknownPciDomain (sorted last, never named) and keeps the UUID
+// (a paravirtual or vGPU host's boards still order and select by it); a UUID it cannot report
+// stays zero.
 [[nodiscard]] DeviceIdentity query_device_identity(int device);
 
 // Every ordinal's identity, entry i for ordinal i. A board CUDA cannot report is sorted last
