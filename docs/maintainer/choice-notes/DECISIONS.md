@@ -1825,3 +1825,23 @@ eight rows once its constants were gone.
   - The GV100's decode reads its dense Q8 linears at 0.44 of the DRAM rate and the routed MXFP4
     banks at 0.28: about 3-4 weights a SM-clock unpacked on the CUDA cores, not bytes (79.7 tok/s,
     the estimate 185).
+
+## 67. A dense model's Q8 prefill from the int8 tile's clock count (30.10, measured)
+
+**What changed.** Since PR #249 the 64-token W4A8 tiles (the Q8 codec of `q8_prefill_a8` among
+them) run token-major, so a call no longer streams a matrix larger than L2 from DRAM once per 64
+tokens. Qwen3.5 9B Q8_0's prefill (sm_bench.py prefill, 3K-14K-token prompts, the choice test's
+`prefill_measured.json` points) rose 1.65x on the RTX 4060 Ti, 1.46x on the 4070 Ti, 1.35x on the
+4090 and 1.18x on the 5070 Ti, and the fitted `kPrefillTilesEta` rows (master 03afc418 points)
+priced it 25-40 % slow.
+
+**The fact instead of a fit.** A call bound by its tiles' own work takes, per 64 x 64 tile,
+c0 + K c1 SM-clocks. The census (nsys, the token-major grid) reads c1 at 12.1 SM-clocks a K step on
+the RTX 4090, 12.8 on the 4070 Ti, 12.5 on the RTX 3060 (Ampere) and 11.6 on the 5070 Ti
+(Blackwell): the same count on every generation with an int8 MMA, a third of its tensor peak
+(decoding the weights on the CUDA cores bounds it). The share of the int8 peak a dense model's Q8
+linears reach is then 2 x 64 x 64 / ((c0 / K + c1) x s8) at a hidden width of 4096: Ada and Ampere
+0.308 (c0 3352, c1 12.15), Blackwell 0.336 (1226, 11.62). Turing's int8 tile is another kernel
+with no clock count read: its row stays the measured one.
+
+**Predicted / measured** (the choice test, every Q8_0 point): see the PR.
