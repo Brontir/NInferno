@@ -251,8 +251,10 @@ struct Reference {
 // of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
 // seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0
 // weights; an MoE: its banks' route and Q8_0 beside them).
+// `transferred` (when given) is set where a tile row rests on one card.
 [[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
-                                             const QuantOption& quant, double tokens) noexcept;
+                                             const QuantOption& quant, double tokens,
+                                             bool* transferred = nullptr) noexcept;
 // The rest of a prefill's chunk of `tokens` beside its linears and attention (DECISIONS 66): the
 // recurrent layers' chunked scan in SM-clocks, the norms, activations' quantization, convolution
 // and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.

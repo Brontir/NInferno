@@ -321,11 +321,12 @@ struct TileCost {
     std::string_view generation;
     TileKernel kernel;
     double c0, c1; // SM-clocks a tile, and a K step
+    int cards;     // the cards whose census reads it (one: its boards' estimate only)
 };
 inline constexpr TileCost kTileCost[] = {
-    {"ada", TileKernel::Int8, 3352, 12.15},  {"ga10x", TileKernel::Int8, 3352, 12.5},
-    {"gb20x", TileKernel::Int8, 1226, 11.62}, {"ada", TileKernel::A16, 2344, 17.9},
-    {"gb20x", TileKernel::A16, 785, 14.96},   {"gb20x", TileKernel::Mx, 1226, 8.34},
+    {"ada", TileKernel::Int8, 3352, 12.15, 3},  {"ga10x", TileKernel::Int8, 3352, 12.5, 1},
+    {"gb20x", TileKernel::Int8, 1226, 11.62, 1}, {"ada", TileKernel::A16, 2344, 17.9, 1},
+    {"gb20x", TileKernel::A16, 785, 14.96, 1},   {"gb20x", TileKernel::Mx, 1226, 8.34, 1},
 };
 
 // A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside

@@ -506,8 +506,11 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 } // namespace
 
 double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                                double tokens) noexcept {
-    if (model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0) { return 0; }
+                                double tokens, bool* transferred) noexcept {
+    if (model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 ||
+        card.dram_bytes_per_s <= 0) {
+        return 0;
+    }
     const bool moe = model.moe() && model.experts_per_token > 0;
     const std::string_view gen = generation_of(card);
     const auto cost = [gen](TileKernel kernel) -> const TileCost* {
@@ -532,6 +535,7 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);
     if (rest == nullptr || bank == nullptr) { return 0; }
+    if (transferred != nullptr && (rest->cards < 2 || (moe && bank->cards < 2))) { *transferred = true; }
     const double picks = moe ? model.experts_per_token : 1;
     const double slots = std::ceil(tokens) * picks;
     const double jobs  = moe ? std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts) : 0;
@@ -574,9 +578,11 @@ namespace {
 double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                            Route route, double tokens, bool& transferred) noexcept {
     if (route != Route::Int8) { return 0; }
-    const double linears = prefill_linears_seconds(model, card, quant, tokens);
-    const double small   = linears > 0 ? prefill_small_seconds(model, card, tokens) : 0;
+    bool tiles_transferred = false;
+    const double linears   = prefill_linears_seconds(model, card, quant, tokens, &tiles_transferred);
+    const double small     = linears > 0 ? prefill_small_seconds(model, card, tokens) : 0;
     if (small <= 0) { return 0; }
+    transferred = transferred || tiles_transferred;
     const std::string_view gen = generation_of(card);
     for (const SmallKernelCost& row : kSmallKernelCost) {
         if (row.generation == gen) { transferred = transferred || row.cards < 2; }

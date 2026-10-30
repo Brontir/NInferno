@@ -24,6 +24,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <functional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -359,7 +360,9 @@ std::vector<bool> gguf_sliding(const json& metadata, const std::string& arch, st
     return out;
 }
 
-Geometry geometry_of_gguf(const json& md) {
+// `has_tensor` (the file's tensor table, when read): a layer without its own value projection keeps
+// its keys as its values (Gemma 4's full layers, attention_k_eq_v: gguf_model.cpp).
+Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::string&)>& has_tensor = nullptr) {
     Geometry g;
     g.architecture = md.value("general.architecture", std::string());
     if (g.architecture.empty()) { return g; }
@@ -426,8 +429,10 @@ Geometry geometry_of_gguf(const json& md) {
             continue;
         }
         if (kv[i] <= 0) { continue; } // a feed-forward-only layer (NemotronH MoE)
+        const bool keys_are_values = has_tensor && has_tensor("blk." + std::to_string(i) + ".attn_k.weight") &&
+                                     !has_tensor("blk." + std::to_string(i) + ".attn_v.weight");
         add_attention(g, sliding[i], i < first_shared, heads[i], kv[i],
-                      sliding[i] ? key_swa : key, sliding[i] ? value_swa : value);
+                      sliding[i] ? key_swa : key, sliding[i] ? value_swa : value, keys_are_values);
     }
     g.ssm_inner    = number(md, p + "ssm.inner_size");
     g.ssm_state    = number(md, p + "ssm.state_size");
@@ -802,7 +807,9 @@ PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t 
 }
 
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
-    Geometry g      = geometry_of_gguf(head.metadata);
+    std::set<std::string> names;
+    for (const auto& t : head.tensors) { names.insert(t.name); }
+    Geometry g      = geometry_of_gguf(head.metadata, [&names](const std::string& n) { return names.count(n) > 0; });
     bool has_output = false;
     std::set<std::string> formats, layer_formats, rest_formats;
     std::uint64_t tensor_bytes = 0;
