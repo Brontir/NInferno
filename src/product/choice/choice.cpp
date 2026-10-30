@@ -500,8 +500,9 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
         return nullptr;
     };
     // The banks' GEMM (product/plan expert_prefill_of): MXFP4 takes the block-scaled MMA on
-    // Blackwell, Ada converts it to int8. The linears beside them take the int8 tiles when their
-    // weights are K-quants or Q8_0.
+    // Blackwell, Ada converts it to int8. The linears beside them take the classic int8 tiles when
+    // their weights are Q8_0; a K-quant's take a tile by format and card (generic_gemm.cpp
+    // w4a8_ws_wins: Q6_K on Blackwell the 128 x 64 producer-warp tile), not yet priced.
     TileKernel banks = TileKernel::Int8;
     switch (quant.expert_banks) {
     case ExpertBanks::Int8: banks = TileKernel::Int8; break;
@@ -509,7 +510,7 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
     case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
     case ExpertBanks::Unknown: return 0;
     }
-    if (quant.rest_weights != WeightClass::KQuant && quant.rest_weights != WeightClass::Q8) { return 0; }
+    if (quant.rest_weights != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);
     if (rest == nullptr || bank == nullptr) { return 0; }

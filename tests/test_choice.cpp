@@ -807,7 +807,7 @@ void prices_moe_prefill_tiles() {
     ch::CardFacts rtx4090{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9};
     ch::QuantOption q;
     q.expert_banks = ch::ExpertBanks::Int8;
-    q.rest_weights = ch::WeightClass::KQuant;
+    q.rest_weights = ch::WeightClass::Q8; // UD-Q4_K_M's linears beside the experts: Q8_0
     const double t = ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819);
     std::cout << "MoE prefill tiles, Qwen3.6 UD-Q4_K_M RTX 4090 1819 tokens: " << t * 1e3 << " ms against 86.4\n";
     check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
