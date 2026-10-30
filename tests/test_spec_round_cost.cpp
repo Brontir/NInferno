@@ -361,6 +361,15 @@ int main() {
         expect(!sp::round_cost_estimate(no_facts, rtx4060ti).known &&
                    !sp::round_cost_estimate(q9, sp::GpuKey{{"*"}, 0, false}).known,
                "no facts, or no rates: no estimate (the measured ratios stand)");
+        // Two lab cards of its generation (RTX 4090, RTX 4070 Ti): the nearer by rates prices it,
+        // whichever class id sorts first (the 4060 Ti is the 4070 Ti's size, not the 4090's).
+        const auto& gemma_4090 = pair_of(
+            "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M", "ad102:128sm");
+        std::string both_note, near_note;
+        (void)sp::profile_for_target({&gemma_4090, &gemma}, "sm89", {}, &rtx4060ti, &both_note);
+        (void)sp::profile_for_target({&gemma}, "sm89", {}, &rtx4060ti, &near_note);
+        expect(!both_note.empty() && both_note == near_note,
+               "the nearest lab board's pair prices a card of its generation: " + both_note);
     }
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
