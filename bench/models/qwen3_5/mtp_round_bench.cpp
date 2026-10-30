@@ -29,7 +29,7 @@ namespace qwen = ninferno::models::qwen3_5;
 
 struct Options {
     std::filesystem::path artifact = "out/qwen3_6_27b.ninferno";
-    int device                     = 0;
+    int device                     = ninferno::kDefaultDevice; // resolved in PCI order
     int warmup                     = 2;
     int repetitions                = 10;
     std::uint32_t draft_tokens     = 5;
@@ -127,7 +127,9 @@ int run(const Options& options) {
         static_cast<std::uint32_t>(options.warmup + options.repetitions);
     ninferno::EngineOptions engine;
     engine.artifact_path       = options.artifact;
-    engine.device              = options.device;
+    // No --device: the first GPU in PCI bus order, as --device 0 and the engine take it.
+    const int device_ordinal = ninferno::resolve_device(options.device);
+    engine.device              = device_ordinal;
     engine.max_context         = static_cast<std::uint32_t>(seed.size() + 64ULL +
                                                             static_cast<std::uint64_t>(measured_rounds) *
                                                                 (options.draft_tokens + 1ULL) +
@@ -141,7 +143,7 @@ int run(const Options& options) {
     engine.use_cuda_graph            = options.use_cuda_graph;
 
     engine = ninferno::runtime::normalize_engine_options(std::move(engine));
-    ninferno::DeviceContext device(options.device);
+    ninferno::DeviceContext device(device_ordinal);
     auto constructed = ninferno::runtime::construct_model(engine, device);
     auto& frontend   = constructed.instance->frontend;
     auto& program    = constructed.instance->program;

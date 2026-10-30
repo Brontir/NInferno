@@ -30,7 +30,7 @@ using Clock    = std::chrono::steady_clock;
 
 struct Options {
     std::filesystem::path artifact = "out/qwen3_6_35b_a3b.ninferno";
-    int device                     = 0;
+    int device                     = ninferno::kDefaultDevice; // resolved in PCI order
     int warmup                     = 2;
     int repetitions                = 10;
     std::uint32_t context_tokens   = 128;
@@ -199,7 +199,9 @@ int run(const Options& options) {
 
     ninferno::EngineOptions engine;
     engine.artifact_path = options.artifact;
-    engine.device        = options.device;
+    // No --device: the first GPU in PCI bus order, as --device 0 and the engine take it.
+    const int device_ordinal = ninferno::resolve_device(options.device);
+    engine.device        = device_ordinal;
     engine.max_context   = static_cast<std::uint32_t>(per_request_capacity);
     engine.kv_capacity =
         ninferno::KvCapacityPolicy::explicit_capacity(static_cast<std::uint32_t>(capacity));
@@ -212,7 +214,7 @@ int run(const Options& options) {
     engine.max_concurrency           = options.batch_size;
 
     engine = ninferno::runtime::normalize_engine_options(std::move(engine));
-    ninferno::DeviceContext device(options.device);
+    ninferno::DeviceContext device(device_ordinal);
     auto constructed = ninferno::runtime::construct_model(engine, device);
     auto& frontend   = constructed.instance->frontend;
     auto& program    = constructed.instance->program;
