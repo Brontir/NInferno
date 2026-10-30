@@ -517,11 +517,11 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
     const double reads = weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
                          rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
-    bool prefill_transferred = false;
+    bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
     decode_quant.weights     = WeightClass::KQuant;
-    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
+    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred) * 2 * params;
     const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
     const double step        = std::max(reads + launches + exact, flops);
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
