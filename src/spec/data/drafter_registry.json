@@ -37016,7 +37016,179 @@
       "drafters": {
         "dflash": "z-lab/Qwen3.6-35B-A3B-DFlash@f181eece646affea2c38b2765f1aaa01a9734ccd"
       },
-      "lab_board": "0x2C05"
+      "lab_board": "0x2C05",
+      "round_facts": {
+        "target": {
+          "bytes": 2014669312,
+          "params": 1939796608,
+          "expert_bytes": 12916359168,
+          "expert_params": 32212254720,
+          "experts": 256,
+          "experts_used": 8,
+          "linears": [
+            {
+              "format": "gguf:F32",
+              "n": 32,
+              "k": 2048,
+              "count": 60,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:F32",
+              "n": 256,
+              "k": 2048,
+              "count": 40,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:Q8_0",
+              "n": 512,
+              "k": 2048,
+              "count": 100,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:Q8_0",
+              "n": 2048,
+              "k": 512,
+              "count": 40,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:Q8_0",
+              "n": 2048,
+              "k": 4096,
+              "count": 40,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:Q8_0",
+              "n": 4096,
+              "k": 2048,
+              "count": 30,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:Q8_0",
+              "n": 8192,
+              "k": 2048,
+              "count": 40,
+              "head": false,
+              "expert": false
+            },
+            {
+              "format": "gguf:IQ3_S",
+              "n": 2048,
+              "k": 512,
+              "count": 9472,
+              "head": false,
+              "expert": true
+            },
+            {
+              "format": "gguf:IQ3_XXS",
+              "n": 512,
+              "k": 2048,
+              "count": 20480,
+              "head": false,
+              "expert": true
+            },
+            {
+              "format": "gguf:IQ4_XS",
+              "n": 2048,
+              "k": 512,
+              "count": 768,
+              "head": false,
+              "expert": true
+            },
+            {
+              "format": "gguf:Q6_K",
+              "n": 248320,
+              "k": 2048,
+              "count": 1,
+              "head": true,
+              "expert": false
+            }
+          ]
+        },
+        "drafters": {
+          "dflash": {
+            "bytes": 410053632,
+            "params": 385906176,
+            "rows": 16,
+            "per_draft": false,
+            "head": {
+              "bytes": 417177600,
+              "params": 508559360,
+              "linears": [
+                {
+                  "format": "gguf:Q6_K",
+                  "n": 248320,
+                  "k": 2048,
+                  "count": 1,
+                  "head": true,
+                  "expert": false
+                }
+              ]
+            },
+            "linears": [
+              {
+                "format": "conv:q8",
+                "n": 1024,
+                "k": 2048,
+                "count": 12,
+                "head": false,
+                "expert": false
+              },
+              {
+                "format": "conv:q8",
+                "n": 2048,
+                "k": 4096,
+                "count": 6,
+                "head": false,
+                "expert": false
+              },
+              {
+                "format": "conv:q8",
+                "n": 2048,
+                "k": 6144,
+                "count": 6,
+                "head": false,
+                "expert": false
+              },
+              {
+                "format": "conv:q8",
+                "n": 2048,
+                "k": 16384,
+                "count": 1,
+                "head": false,
+                "expert": false
+              },
+              {
+                "format": "conv:q8",
+                "n": 4096,
+                "k": 2048,
+                "count": 6,
+                "head": false,
+                "expert": false
+              },
+              {
+                "format": "conv:q8",
+                "n": 6144,
+                "k": 2048,
+                "count": 12,
+                "head": false,
+                "expert": false
+              }
+            ]
+          }
+        }
+      }
     },
     {
       "target": "ab639a7f330f96c47d3e6c2dd2d6445182e7b763e17e6048dc850a71bbc9f27f",
