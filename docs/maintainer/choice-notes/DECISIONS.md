@@ -1902,7 +1902,28 @@ the DRAM rate 18.6), attention 2.6 ms, and the small kernels (the recurrence 3.5
 quantization 3.3, the convolution 1.4, the norms 1.7, the preparation 0.9: about 10 % of the
 prompt on the 4090, 8 % on the RTX 3060). The small kernels read activations a few times a layer:
 on the 4090 from its 72 MB L2 (the quantization 4.7 us a call against 12.5 at the DRAM rate),
-on the RTX 3060 from DRAM (26 against 35); their bytes against the L2 is the next term. Next: a dense K-quant's prefill runs
+on the RTX 3060 from DRAM (26 against 35); their bytes against the L2 is the next term.
+
+The small kernels split by what bounds them (Qwen3.5 9B Q8_0, the 1819-token prompt, the census
+outside the linears, the tail calls and attention; seven cards):
+
+| card | Gated DeltaNet scan ms | x SMs x GHz | the rest ms | x DRAM TB/s |
+|---|---|---|---|---|
+| RTX 3060 | 23.4 | 1165 | 40.4 | 14.6 |
+| RTX 4060 Ti | 13.0 | 1121 | 22.3 | 6.4 |
+| RTX 4070 Ti | 9.3 | 1457 | 12.3 | 6.2 |
+| RTX 4090 | 4.4 | 1419 | 7.1 | 7.2 |
+| RTX 5070 Ti | 5.3 | 909 | 8.8 | 7.9 |
+| RTX 5090 | 3.2 | 1309 | 4.7 | 8.4 |
+| RTX 2080 Ti | 42.7 | 4483 | 34.2 | 21.1 |
+
+The chunked scan is a count of SM-clocks (about 1.1-1.5 G on Ampere and Ada, 0.9-1.3 G on
+Blackwell, three times that on Turing, whose scan has no tensor path): about 30 K SM-clocks a
+token a recurrent layer. The rest (the activations' quantization, the norms, the convolution,
+the gates) is bytes: about 7 GB on Ada and Blackwell, some 15 passes over a token's 8 KB hidden
+row a layer; the RTX 3060's 3 MB L2 and Turing's kernels double it.
+
+Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
 kernels, Volta's dp4a route; then the estimate, checked against data/prefill/rows.json and the
