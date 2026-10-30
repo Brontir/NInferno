@@ -30,6 +30,25 @@ inline constexpr std::size_t kMaxSharedBytesPerBlock =
 inline constexpr std::size_t kMaxSharedBytesPerBlock = 99 * 1024;
 #endif
 
+// The shared memory of one SM, which its resident blocks share (CUDA programming guide, compute
+// capabilities table): Volta 96 KiB, Turing 64 KiB, GA100 and Orin 164 KiB, GA10x Ampere, Ada and
+// consumer Blackwell 100 KiB. From sm_80 the driver reserves 1 KiB of it per resident block.
+inline constexpr std::size_t shared_bytes_per_sm_for_arch(int arch) {
+    if (arch == 75) { return 64 * 1024; }
+    if (arch >= 70 && arch < 75) { return 96 * 1024; }
+    if (arch == 80 || arch == 87) { return 164 * 1024; }
+    return 100 * 1024;
+}
+inline constexpr int shared_bytes_reserved_per_block_for_arch(int arch) { return arch >= 80 ? 1024 : 0; }
+#if defined(NINFERNO_BUILD_ARCH)
+inline constexpr std::size_t kSharedBytesPerSm = shared_bytes_per_sm_for_arch(NINFERNO_BUILD_ARCH);
+inline constexpr int kSharedBytesReservedPerBlock =
+    shared_bytes_reserved_per_block_for_arch(NINFERNO_BUILD_ARCH);
+#else
+inline constexpr std::size_t kSharedBytesPerSm     = 100 * 1024;
+inline constexpr int kSharedBytesReservedPerBlock = 1024;
+#endif
+
 // The shared memory a block gets without opting in (cudaFuncAttributeMaxDynamicSharedMemorySize):
 // static arrays above it do not compile, and a launch that needs more must raise the attribute.
 inline constexpr int kStaticSharedBytesPerBlock = 48 * 1024;
