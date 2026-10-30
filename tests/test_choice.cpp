@@ -289,11 +289,11 @@ void prefills_pay_tail_calls(const json& fixture) {
               << prompt / t2 << " tok/s\n";
 }
 
-// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of the
-// 2026-10-28 campaign (tests/fixtures/choice/prefill_measured.json), Q8_0 on the int8 tiles, Q4_K_M on
-// MMQ's int8 rows; Q8_0 had taken the MMQ rows (+35-61 % at 14K before). The Q8 rows are the mean of
-// these same points (Ada, Blackwell: each card within 7 % of its generation's mean; Ampere and Turing
-// one card each, so in sample).
+// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of
+// tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on six; Q8_0
+// re-measured after PR #249, master f8d4399d), Q8_0 on the int8 tiles, Q4_K_M on MMQ's int8 rows.
+// The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
+// measured row.
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0};
     std::map<std::string, std::vector<double>> by_card;
@@ -345,8 +345,13 @@ void prefills_by_format(const json& fixture) {
         return ch::speed_of(model, card_of(fixture.at("cards").at(card)), q, c, rows, 4096, 2048);
     };
     const ch::Speed ada_q8 = at("RTX 4090", q8, mf, 1), ada_kq = at("RTX 4090", kq, mf, 1);
-    // Since PR #249 the tiles row (the tile's clock count, 0.308) is MMQ's int8 row (0.306) within 1 %.
-    check(std::abs(ada_q8.prefill / ada_kq.prefill - 1) < 0.05, "Ada: a Q8 prefill takes the tiles row (0.308 against 0.306)");
+    // Without attention the prefill is the linears alone: their rates are the tiles row (the tile's
+    // clock count, 0.308) and MMQ's int8 row (0.306), exactly.
+    ch::ModelFacts linears_only          = mf;
+    linears_only.full_attention_width    = 0;
+    linears_only.sliding_attention_width = 0;
+    const double ratio = at("RTX 4090", q8, linears_only, 1).prefill / at("RTX 4090", kq, linears_only, 1).prefill;
+    check(std::abs(ratio - 0.308 / 0.306) < 1e-9, "Ada: a Q8 prefill takes the tiles row (0.308 against 0.306)");
     check(!ada_q8.transferred, "Ada: the tiles row rests on three cards");
     // One card's rows price only their own boards: marked transferred.
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&

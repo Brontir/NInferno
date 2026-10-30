@@ -285,18 +285,19 @@ inline constexpr PrefillEta kPrefillEta[] = {
 // c0 + K c1 SM-clocks, c1 about 12 clocks a K step on every generation with an int8 MMA (decoding
 // the weights on the CUDA cores, a third of the tensor peak), c0 the tile's start. The share of the
 // int8 peak is then 2 x 64 x 64 / ((c0 / K + c1) x the s8 rate), at a hidden width K of 4096:
-// Ada and Ampere (c0 3352, c1 12.15 clocks, the RTX 4090's nsys census) 0.308, Blackwell (1226,
-// 11.62, the RTX 5070 Ti's) 0.336. Measured (sm_bench.py prefill, master f8d4399d, Qwen3.5-9B Q8_0
+// Ada (c0 3352, c1 12.15 clocks, the RTX 4090's nsys census) 0.308, Blackwell (1226, 11.62, the RTX
+// 5070 Ti's) 0.336, Ampere (its RTX 3060's c1 12.5 with Ada's c0; one card, transferred) 0.300. Measured (sm_bench.py prefill, master f8d4399d, Qwen3.5-9B Q8_0
 // at 3K-14K prompts, attention apart): RTX 4060 Ti 0.325, 4070 Ti 0.317, 4090 0.301, 5070 Ti 0.357.
-// Turing's int8 tile is another kernel without a clock count: its row stays measured (one card,
-// transferred), and so does any generation without an int8 MMA (Volta keeps its int8 row).
+// Turing's int8 tile is another kernel without a clock count: its row stays the one fitted on the
+// master 03afc418 points (one card, transferred; within 4 % of the RTX 2080 Ti's points after
+// PR #249, which rose 1.11x), and a generation without an int8 MMA keeps its int8 row (Volta).
 struct TilesEta {
     std::string_view generation;
     double eta;
     int cards;
 };
 inline constexpr TilesEta kPrefillTilesEta[] = {
-    {"ada", 0.308, 3}, {"gb20x", 0.336, 2}, {"ga10x", 0.308, 2}, {"turing", 0.147, 1}};
+    {"ada", 0.308, 3}, {"gb20x", 0.336, 2}, {"ga10x", 0.300, 1}, {"turing", 0.147, 1}};
 
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak

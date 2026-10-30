@@ -1840,9 +1840,10 @@ c0 + K c1 SM-clocks. The census (nsys, the token-major grid) reads c1 at 12.1 SM
 the RTX 4090, 12.8 on the 4070 Ti, 12.5 on the RTX 3060 (Ampere) and 11.6 on the 5070 Ti
 (Blackwell): the same count on every generation with an int8 MMA, a third of its tensor peak
 (decoding the weights on the CUDA cores bounds it). The share of the int8 peak a dense model's Q8
-linears reach is then 2 x 64 x 64 / ((c0 / K + c1) x s8) at a hidden width of 4096: Ada and Ampere
-0.308 (c0 3352, c1 12.15), Blackwell 0.336 (1226, 11.62). Turing's int8 tile is another kernel
-with no clock count read: its row stays the measured one.
+linears reach is then 2 x 64 x 64 / ((c0 / K + c1) x s8) at a hidden width of 4096: Ada 0.308 (c0
+3352, c1 12.15), Blackwell 0.336 (1226, 11.62), Ampere 0.300 (the RTX 3060's c1 12.5 with Ada's c0:
+one card, so transferred). Turing's int8 tile is another kernel with no clock count read: its row
+stays the 03afc418 fit (its points rose 1.11x and it lands within 4 % of them).
 
 **Predicted / measured** (`ninferno_choice_test`, `prefill_measured.json`: sm_bench.py prefill on
 master f8d4399d, 3K-14K-token prompts, estimate / measured - 1):
