@@ -118,6 +118,9 @@ StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double ro
         transferred = true;
         row         = find(model.family, WeightClass::KQuant);
     }
+    for (const DecodeLaunches& r : kDecodeLaunches) {
+        if (row == nullptr && r.family == model.family) { row = &r; }
+    }
     if (row == nullptr) { row = find(kDecodeLaunches[0].family, weights); }
     if (row == nullptr) { row = &kDecodeLaunches[0]; }
     if (model.layers == 0) { transferred = true; } // unknown layers: the census model's
@@ -210,11 +213,6 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     }
     transferred = true;
     return kPrefillEta[2].eta;
-}
-
-double moe_exact_factor(std::string_view generation, bool& transferred) noexcept {
-    const RouteFactor* row = generation_row_of(kMoeExactFactor, generation, transferred);
-    return row != nullptr ? row->factor : 1.0;
 }
 
 double exact_eta(std::string_view generation, bool& transferred) noexcept {
@@ -488,56 +486,44 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // A row's own reads: its KV over the context, its recurrent state (read and written), its ring.
     const double row_bytes = context * kv * kkv + 2 * state + window_rows * ring;
     // The exact route's compute beyond the fast route's (choice_constants.h kExactComputeEta).
-    const double exact = route == Route::Bf16 && !model.moe() ? rows * 2 * params /
+    const double exact = route == Route::Bf16 ? rows * 2 * params /
                                                     (exact_eta(gen, transferred) * peak(card, Route::Int8))
                                               : 0;
     if (route == Route::Fp4) { transferred = true; } // decodes as the int8 route (not measured)
 
-    double step = 0;
-    if (model.moe()) {
-        // An MoE (kMoeDecode, fitted on 35B-A3B): the weights a step reads all but an untied input
-        // table's rows at the average bits, its routed experts as rows routed apart add them.
-        const DecodeConstants& k = kMoeDecode;
-        double weights           = quant.weight_bytes - model.input_table_params * quant.bits_per_weight / 8;
-        if (model.params > 0) {
-            const double routed = std::clamp(model.routed_expert_params / model.params, 0.0, 1.0);
-            const double pick   = static_cast<double>(model.experts_per_token) / model.experts;
-            const double apart  = 1 - std::pow(1 - pick, rows);
-            weights *= (1 - routed) + routed * (pick + kMoeRoutedShare * (apart - pick));
-        }
-        const double compute = rows * 2 * params /
-                               (k.eta_compute * (route == Route::Int8 ? decode_int8_peak(card) : peak(card, Route::Int8))) *
-                               (route == Route::Fp4 ? 0.5 : 1.0); // FP4: twice the int8 rate (not measured)
-        // The exact route at kMoeExactFactor times its compute (as fitted; kExactComputeEta is the
-        // dense route's, measured on 9B).
-        const double factor = route == Route::Bf16 ? moe_exact_factor(gen, transferred) : 1.0;
-        step = k.step_seconds + (weights + rows * row_bytes) / (k.eta_dram * card.dram_bytes_per_s) + compute * factor;
-    } else {
-        // A dense model, from facts (choice_constants.h): the weights a step reads (not the input
-        // table, of which it gathers one row, nor the MTP layers or own drafter), at the share of the
-        // DRAM rate C rows' reads reach, the rows' own reads, the launches; no less than the rows'
-        // flops at the prefill route's rate.
-        const double table   = model.input_table_bytes > 0 ? model.input_table_bytes
-                                                           : model.input_table_params * quant.bits_per_weight / 8;
-        const double weights = std::max(0.0, quant.weight_bytes - table);
-        // A generation without a row: the one whose launches it shares (Volta: Turing's, neither
-        // has PDL nor Ada's L2), else Ada's; transferred either way.
-        const KernelCost* cost = measured_row_of(kKernelCost, gen == "volta" ? std::string_view("turing") : gen,
-                                                 transferred);
-        if (gen == "volta") { transferred = true; }
-        if (quant.weights == WeightClass::Other) { transferred = true; } // no census of its routes
-        const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
-        const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
-        const double reads = weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
-                             rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
-        bool prefill_transferred = false;
-        // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
-        QuantOption decode_quant = quant;
-        decode_quant.weights     = WeightClass::KQuant;
-        const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
-        const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
-        step = std::max(reads + launches + exact, flops);
+    // A model from facts (choice_constants.h): the weights a step reads (not the input table, of
+    // which it gathers one row, nor the MTP layers or own drafter plain decode leaves; an MoE's
+    // routed banks at the share of them its rows route to, DECISIONS 65), at the share of the DRAM
+    // rate C rows' reads reach, the rows' own reads, the launches; no less than the rows' flops at
+    // the prefill route's rate.
+    const double table = model.input_table_bytes > 0 ? model.input_table_bytes
+                                                     : model.input_table_params * quant.bits_per_weight / 8;
+    double weights     = std::max(0.0, quant.weight_bytes - table);
+    if (model.moe() && model.params > 0) {
+        const double routed = quant.routed_expert_bytes > 0
+                                  ? std::min(weights, quant.routed_expert_bytes)
+                                  : weights * std::clamp(model.routed_expert_params / model.params, 0.0, 1.0);
+        const double pick   = static_cast<double>(model.experts_per_token) / model.experts;
+        const double apart  = 1 - std::pow(1 - pick, rows);
+        weights -= routed * (1 - (pick + kMoeRoutedShare * (apart - pick)));
     }
+    // A generation without a row: the one whose launches it shares (Volta: Turing's, neither has
+    // PDL nor Ada's L2), else Ada's; transferred either way.
+    const KernelCost* cost = measured_row_of(kKernelCost, gen == "volta" ? std::string_view("turing") : gen,
+                                             transferred);
+    if (gen == "volta") { transferred = true; }
+    if (quant.weights == WeightClass::Other) { transferred = true; } // no census of its routes
+    const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
+    const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
+    const double reads = weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
+                         rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
+    bool prefill_transferred = false;
+    // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
+    QuantOption decode_quant = quant;
+    decode_quant.weights     = WeightClass::KQuant;
+    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, prefill_transferred) * 2 * params;
+    const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
+    const double step        = std::max(reads + launches + exact, flops);
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
     // A drafter's measured gain over plain decode, while its load table lets these many streams
     // speculate (a gain no measurement gives is not counted: DrafterOption::measured).

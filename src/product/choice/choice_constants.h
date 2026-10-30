@@ -67,12 +67,13 @@ enum class Route : std::uint8_t {
 
 // ---- Speed.
 
-// Decode of a dense model (2026-10-28; an MoE keeps kMoeDecode below). The fitted share of the int8
+// Decode (2026-10-28; an MoE's since 2026-10-30, DECISIONS 65). The fitted share of the int8
 // peak a step's flops reached (kDenseDecode) is replaced by measured per-generation efficiencies of
 // the kernels a step runs. A step of C rows at context n reads
 //   W + C (n b_kv k_kv + 2 s + min(n, window) b_ring)
 // bytes (W the weights it reads: every layer and the output head, not the input table a token
-// gathers one row of, nor the MTP layers or own drafter plain decode leaves) and takes
+// gathers one row of, nor the MTP layers or own drafter plain decode leaves; of an MoE's routed banks,
+// the share of its experts the C rows route to) and takes
 //   t(C) = W / (eta_rows(C) BW) + C (n b_kv k_kv + 2 s + min(n, window) b_ring) / (eta_dram BW)
 //          + N_gemv t_gemv + N_small(C) t_small,
 // and no less than its rows' flops at the prefill route's rate (a wide batch is compute-bound).
@@ -83,12 +84,6 @@ enum class Route : std::uint8_t {
 // decode_measured.json (Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, 1/2/4/8 streams, seven cards,
 // master 03afc418) and the census tests/fixtures/choice/decode_census.json;
 // choice-notes/lab/speed_model/fit_decode.py derives every row from the two.
-struct DecodeConstants {
-    double eta_dram     = 0; // the share of the DRAM rate a step's reads reach
-    double eta_compute  = 0; // the share of the int8 tensor peak a step's flops reach
-    double step_seconds = 0; // a step's fixed time (launches, routing)
-};
-
 // The share of the DRAM rate a weight read long enough to saturate it reaches: per kernel 0.946-0.952
 // on GDDR6, 6X and 7 (nsys census of Qwen3.5-9B decode, 28.10: RTX 4090, 4070 Ti, 4060 Ti, 5070 Ti;
 // its R8 GEMVs and the Q6_K output head). Volta's row: the Quadro GV100's HBM2 with ECC tops out at
@@ -121,8 +116,13 @@ enum class WeightClass : std::uint8_t {
 // Once a step, not a layer (the census's positions outside the layers): the output head's GEMV, and
 // the input gather, the final norm and the sampling (Qwen 3.5: the scatter, top-k, sample, copy and
 // finite check, 7; Gemma 4 also its embedding scale, logit soft-cap and two scalar sets, 9). Another
-// size of the family scales only the rest by its layers. A family or class without a row takes the
-// family's K-quant row, else Qwen 3.5's (transferred).
+// size of the family scales only the rest by its layers. The MoE rows (nsys, master 289a63af, RTX 5070
+// Ti, 60 decode steps of one row): Qwen3.6-35B-A3B UD-Q3_K_S 311 + 267 = 578 a step (the router,
+// select, combine and the routed banks' two calls a layer; the Gated DeltaNet layers' projections
+// read weights too), gpt-oss-20b MXFP4 97 + 199 = 296; the graph's count in the lab tunes (spec-tune
+// graph_kernels) is the same, 577 and 295. At 2-8 rows the one-row count (not measured). A family or
+// class without a row takes the family's K-quant row, else the family's other row, else Qwen 3.5's
+// (transferred).
 struct DecodeLaunches {
     std::string_view family;
     WeightClass weights;
@@ -136,6 +136,8 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}, 1, 7},
     {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}, 1, 7},
     {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
+    {"qwen3_5_moe_text", WeightClass::Other, 40, 311, {267, 267, 267}, 1, 6},
+    {"moe_decoder", WeightClass::Other, 24, 97, {199, 199, 199}, 1, 6},
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 
@@ -203,8 +205,6 @@ struct PredictionError {
     double rms;
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.028}, {"gb20x", 0.020}};
-
-inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
 // decode_int8_peak): core/cost_constants.h, a chip fact; kMoeRoutedShare: spec/moe_routed_share.h,
@@ -311,14 +311,6 @@ struct RouteEta {
 };
 
 inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.0243}};
-
-// An MoE's exact route: kMoeDecode's compute times this (the dense route's factor of the earlier
-// fit, kept with kMoeDecode: an MoE's exact decode is not measured).
-struct RouteFactor {
-    std::string_view generation;
-    double factor;
-};
-inline constexpr RouteFactor kMoeExactFactor[] = {{"turing", 4.28}, {"ada", 3.25}};
 
 // What reading a KV codec costs over its bytes (run_sw.sh, 9B at a 22K prompt, against INT8 on the
 // same card): Turing reads BF16 and FP8 without native support. Ada: the mean of the RTX 4070 Ti
