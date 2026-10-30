@@ -1947,10 +1947,14 @@ At 5-10 % of a prompt the term's error is 1-3 % of it.
 whose linears have a tile row (a dense model's Q8_0, an MoE's banks with Q8_0 beside them) costs its
 linears by the tiles plus the small kernels; attention and the tail calls as before; every other
 route keeps its generation's share. On the choice test's Q8_0 points (Qwen3.5 9B on seven cards,
-Gemma 4 12B on three, the fixture's models now carrying their linears): rms 8.7 %, as the clock-count
-share of DECISIONS 67 gave (8.9 %). Their spread is not the linears': the RTX 5090 stays +13 .. +24 %
-(its clock under a sustained int8 load sits below the reference, the power limit; the waves are
-priced now), the RTX 4090's Gemma +10 .. +18 %. The MoE campaign's 16-GB quants (UD-IQ3_XXS on the
+Gemma 4 12B on three, the fixture's models now carrying their linears): rms 7.6 % (worst 18 %),
+against 8.9 % (worst 25 %) for the clock-count share of DECISIONS 67. What closed most of the RTX
+5090's gap is the grid's rounds: the int8 tile holds two CTAs a SM (128 threads at 177-255
+registers, 40 KB), so a grid runs in rounds of SMs x 2, each two tiles' time; the 5090's N 4096
+calls at a 1024-token chunk (1024 CTAs) take 4 rounds of 340, 8 tiles' time, where 6.02 waves of
+170 said 7 (`TileCost::resident`; the other cards move 0-3 %). The 5090 is now +6 .. +17 %, the
+RTX 4090's Gemma +10 .. +18 %; its clock is not the cause (2546 MHz on average over the prompt
+against its reference 2407). The MoE campaign's 16-GB quants (UD-IQ3_XXS on the
 RTX 4060 Ti and 5070 Ti, master f8d4399d) keep the shares: their linears beside the experts are
 Q6_K (`w4a8_ws_kernel` on Blackwell, 55-66 ms of a 230 ms prompt; the Q6_K tile and MMQ on Ada),
 a tile without a clock count yet.

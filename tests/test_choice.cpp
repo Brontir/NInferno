@@ -332,10 +332,9 @@ void prefills_by_format(const json& fixture) {
     std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
-    // DECISIONS 67: the tile's clock count, no fit. Its worst points are the RTX 5090's (+14 .. +26 %):
-    // its N 4096 calls run 6.02 waves of 170 SMs in 7, which one share a generation cannot price
-    // (the tile law by linear, DECISIONS 66, does); the rest within -15 .. +15 %.
-    check(n[1] == 60 && tiles < 0.09 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
+    // DECISIONS 66: the tiles by linear in rounds of SMs x resident CTAs and the small kernels, no
+    // fit. Its worst points are the RTX 4090's Gemma and the RTX 5090's short prompts (+15 .. +18 %).
+    check(n[1] == 60 && tiles < 0.08 && worst[1] < 0.20, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(n[0] == 78 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
