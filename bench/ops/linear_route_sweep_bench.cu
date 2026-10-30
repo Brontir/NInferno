@@ -72,6 +72,9 @@ struct Options {
     bool quantized_both = false;
     bool random_weight  = false;
     bool class_table    = true;
+    // Times every W4A8 schedule the weight admits at each T as well (a tile's waves: a schedule
+    // the heuristic does not pick at that T is timed only here).
+    bool w4a8_schedules = false;
     int warmup          = 2;
     int repeat          = 10;
     std::string csv_out;
@@ -157,6 +160,7 @@ Options parse_args(int argc, char** argv) {
         else if (a == "--quantized") o.quantized_both = next() == "both";
         else if (a == "--random-weight") o.random_weight = true;
         else if (a == "--no-class-table") o.class_table = false;
+        else if (a == "--w4a8-schedules") o.w4a8_schedules = true;
         else if (a == "--warmup") o.warmup = std::atoi(std::string(next()).c_str());
         else if (a == "--repeat") o.repeat = std::atoi(std::string(next()).c_str());
         else if (a == "--csv-out") o.csv_out = std::string(next());
@@ -395,6 +399,35 @@ int main(int argc, char** argv) {
                     best    = timing.median_us;
                     best_as = as;
                     best_q  = quantized;
+                }
+            }
+            if (o.w4a8_schedules) {
+                namespace generic = ops::detail::generic;
+                for (int i = 0; i < generic::w4a8_schedule_count(); ++i) {
+                    const generic::Route route{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)};
+                    if (!generic::route_admits(route, weight.weight, o.policy)) continue;
+                    if (generic::route_workspace_bytes(route, o.k, t) > ws_bytes) continue;
+                    const auto info = generic::w4a8_schedule_info(i);
+                    generic::Call c;
+                    c.x               = &xt;
+                    c.weight          = &weight.weight;
+                    c.rows            = o.n;
+                    c.out[0]          = &ot;
+                    c.segment_rows[0] = o.n;
+                    const auto run    = [&](cudaStream_t s) {
+                        workspace.reset();
+                        generic::run_route(route, c, &workspace, s);
+                    };
+                    run(stream);
+                    CUDA_CHECK(cudaStreamSynchronize(stream));
+                    const double err =
+                        rel_l2(out, ref, static_cast<std::uint64_t>(o.n) * t, sums, stream);
+                    const auto timing =
+                        bench::measure_cold_launch(run, flush, stream, o.warmup, o.repeat);
+                    row(-(i + 1), 1, timing.median_us, timing.min_us, timing.p95_us, err,
+                        err <= kRankableRelL2 ? "ok" : "mismatch");
+                    std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d%s %9.2f us\n", t, info.block_m,
+                                 info.block_n, info.producers > 0 ? "ws" : "  ", timing.median_us);
                 }
             }
             std::fprintf(stderr, "T=%5d dispatcher %9.2f us | best %9.2f us (as=%d q=%d) %+6.1f%%\n",
