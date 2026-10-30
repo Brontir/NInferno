@@ -667,6 +667,46 @@ double gemma_attention_tiled_seconds(const ModelFacts& model, const CardFacts& c
 
 } // namespace
 
+namespace {
+
+// The INT8 prompt kernel's layout of a call (int8/template_launch.cuh int8_prompt_fast_layout): its
+// leading 64-row slots, every slot when `all`.
+struct Int8PromptLayout {
+    bool all  = false;
+    int slots = 0;
+};
+
+// The makespan the kernel weighs a layout by, in hundredths of a 128-row CTA (int8_prompt_fast_makespan).
+long long int8_prompt_makespan(int wide, int narrow, int sms) {
+    std::vector<long long> free(static_cast<std::size_t>(sms), 100LL * (wide / sms));
+    for (int sm = 0; sm < wide % sms; ++sm) { free[static_cast<std::size_t>(sm)] += 100; }
+    long long end = *std::max_element(free.begin(), free.end());
+    for (int i = 0; i < narrow; ++i) {
+        const auto sm = std::min_element(free.begin(), free.end());
+        *sm += 72;
+        end = std::max(end, *sm);
+    }
+    return end;
+}
+
+Int8PromptLayout int8_prompt_layout(int width, int heads, int sms) {
+    const auto up = [](int a, int b) { return (a + b - 1) / b; };
+    Int8PromptLayout best;
+    long long best_cost = int8_prompt_makespan(up(width, 128) * heads, 0, sms);
+    const int most      = std::min(up(width, 64), 2 * up(2 * sms, heads));
+    for (int slots = 1; slots <= most; ++slots) {
+        const long long cost = int8_prompt_makespan(up(std::max(width - slots * 64, 0), 128) * heads, slots * heads, sms);
+        if (cost < best_cost) {
+            best_cost  = cost;
+            best.slots = slots;
+        }
+    }
+    if (72LL * up(up(width, 64) * heads, sms) <= best_cost) { return {true, 0}; }
+    return best;
+}
+
+} // namespace
+
 double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card, KvCacheStorage kv,
                                        double prompt, std::uint32_t chunk, bool* transferred) {
     if (prompt > 0 && card.sms > 0 && card.clock_hz > 0 && model.family == "gemma4_text") {
@@ -707,17 +747,26 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
             if (transferred != nullptr && share_transferred) { *transferred = true; }
             continue;
         }
-        const double blocks = std::ceil(width / rows);
-        // The kernel's issue order, each CTA to the SM that frees first.
+        // The kernel's issue order, each CTA to the SM that frees first; a CTA of the rows up to `last`.
         std::vector<double> ctas;
-        const auto cta = [&](double b) { return prefix * cost->prefix + std::min((b + 1) * rows, width) * cost->in_chunk; };
+        const auto cta = [&](double last, double scale) {
+            return scale * (cost->cta + prefix * cost->prefix + std::min(last, width) * cost->in_chunk);
+        };
         if (bf16) {
+            const double blocks = std::ceil(width / rows);
             for (double h = 0; h < heads; ++h) {
-                for (double b = 0; b < blocks; ++b) { ctas.push_back(cta(b)); }
+                for (double b = 0; b < blocks; ++b) { ctas.push_back(cta((b + 1) * rows, 1)); }
             }
         } else { // longest first: the last row block of every head, then the one before
-            for (double b = blocks - 1; b >= 0; --b) {
-                for (double h = 0; h < heads; ++h) { ctas.push_back(cta(b)); }
+            const Int8PromptLayout layout = int8_prompt_layout(static_cast<int>(width), static_cast<int>(heads), card.sms);
+            const double half   = rows / 2;
+            const double narrow = layout.all ? std::ceil(width / half) : layout.slots;
+            const double wide   = layout.all ? 0 : std::ceil(std::max(width - narrow * half, 0.0) / rows);
+            for (double s = wide - 1; s >= 0; --s) {
+                for (double h = 0; h < heads; ++h) { ctas.push_back(cta(narrow * half + (s + 1) * rows, 1)); }
+            }
+            for (double s = narrow - 1; s >= 0; --s) {
+                for (double h = 0; h < heads; ++h) { ctas.push_back(cta((s + 1) * half, kAttentionHalfCta)); }
             }
         }
         clocks += deal(ctas, card.sms);

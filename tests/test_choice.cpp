@@ -1013,8 +1013,9 @@ void prefills_moe_by_tiles(const json& fixture) {
 
 // A prompt's full attention by its CTAs (DECISIONS 68): Qwen3.5 9B's eight full layers (16 heads of
 // 256) over INT8 keys, the census's per-chunk calls (a layer's median) against the grid dealt in
-// longest-first issue order: the RTX 5090 (no PDL), 4060 Ti and 3060 over a 7K prompt in 1024-token
-// chunks (read from), the RTX 5070 Ti's (checked).
+// the kernel's layout and longest-first issue order: a 7K prompt's 1024-token chunks on the RTX
+// 5090 (no PDL), 5070 Ti, 4060 Ti and 3060, the 4070 Ti's the 21K prompt's first seven (the costs
+// were read on the 21K prompts).
 void prices_attention_tiles() {
     ch::ModelFacts m;
     m.family               = "qwen3_5_text";
@@ -1034,6 +1035,9 @@ void prices_attention_tiles() {
          {566.2, 1110.8, 1646.7, 2190.3, 2734.7, 3275.4, 3833.7}},
         {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9},
          {109.5, 236.5, 362.2, 486.4, 611.5, 735.3, 860.2}},
+        // The RTX 4070 Ti: 60 SMs, its first two 64-row slots as half-height CTAs.
+        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9},
+         {174.1, 368.9, 560.4, 751.4, 946.8, 1133.5, 1354.6}},
     };
     double worst = 0;
     for (const Series& s : series) {
@@ -1048,7 +1052,7 @@ void prices_attention_tiles() {
                       << s.us[i] << "\n";
         }
     }
-    check(worst < 0.12, "a prompt's attention by its CTAs within 12 % of the census's calls");
+    check(worst < 0.10, "a prompt's attention by its CTAs within 10 % of the census's calls");
     check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Fp8E4M3Row256, 4096, 1024) == 0,
           "FP8 keys: another kernel, unknown");
     // BF16 keys: the BF16 prompt kernel (64 rows a CTA in plain order), the RTX 5090 read, the
