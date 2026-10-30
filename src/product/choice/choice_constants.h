@@ -8,7 +8,7 @@
 //      + C 2 P / (eta_compute peak_s8) f_route
 // and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) / (eta_attention
 // peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the weights C rows read
-// (an MoE's routed experts as rows routed apart add them, kMoeRoutedShare of independent routing),
+// (an MoE's routed experts as concurrent rows, routed independently, add them: DECISIONS 65),
 // b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and written), b_ring a
 // sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the layers a token runs
 // and the output head), BW the board's DRAM rate, peak the generation row's tensor rate times SMs
@@ -44,15 +44,12 @@
 // 4070 Ti's two were within 0.01 of each other: no clear "about the same".
 
 #include "core/cost_constants.h"
-#include "spec/moe_routed_share.h"
 #include "ninferno/types.h"
 
 #include <cstdint>
 #include <string_view>
 
 namespace ninferno::product::choice {
-
-using ::ninferno::spec::kMoeRoutedShare; // spec/moe_routed_share.h, a fitted calibration
 
 // The activation route a configuration's linears take (the peak its compute runs at).
 enum class Route : std::uint8_t {
@@ -67,12 +64,13 @@ enum class Route : std::uint8_t {
 
 // ---- Speed.
 
-// Decode of a dense model (2026-10-28; an MoE keeps kMoeDecode below). The fitted share of the int8
+// Decode (2026-10-28; an MoE's since 2026-10-30, DECISIONS 65). The fitted share of the int8
 // peak a step's flops reached (kDenseDecode) is replaced by measured per-generation efficiencies of
 // the kernels a step runs. A step of C rows at context n reads
 //   W + C (n b_kv k_kv + 2 s + min(n, window) b_ring)
 // bytes (W the weights it reads: every layer and the output head, not the input table a token
-// gathers one row of, nor the MTP layers or own drafter plain decode leaves) and takes
+// gathers one row of, nor the MTP layers or own drafter plain decode leaves; of an MoE's routed banks,
+// the share of its experts the C rows route to) and takes
 //   t(C) = W / (eta_rows(C) BW) + C (n b_kv k_kv + 2 s + min(n, window) b_ring) / (eta_dram BW)
 //          + N_gemv t_gemv + N_small(C) t_small,
 // and no less than its rows' flops at the prefill route's rate (a wide batch is compute-bound).
@@ -83,12 +81,6 @@ enum class Route : std::uint8_t {
 // decode_measured.json (Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, 1/2/4/8 streams, seven cards,
 // master 03afc418) and the census tests/fixtures/choice/decode_census.json;
 // choice-notes/lab/speed_model/fit_decode.py derives every row from the two.
-struct DecodeConstants {
-    double eta_dram     = 0; // the share of the DRAM rate a step's reads reach
-    double eta_compute  = 0; // the share of the int8 tensor peak a step's flops reach
-    double step_seconds = 0; // a step's fixed time (launches, routing)
-};
-
 // The share of the DRAM rate a weight read long enough to saturate it reaches: per kernel 0.946-0.952
 // on GDDR6, 6X and 7 (nsys census of Qwen3.5-9B decode, 28.10: RTX 4090, 4070 Ti, 4060 Ti, 5070 Ti;
 // its R8 GEMVs and the Q6_K output head). Volta's row: the Quadro GV100's HBM2 with ECC tops out at
@@ -121,8 +113,13 @@ enum class WeightClass : std::uint8_t {
 // Once a step, not a layer (the census's positions outside the layers): the output head's GEMV, and
 // the input gather, the final norm and the sampling (Qwen 3.5: the scatter, top-k, sample, copy and
 // finite check, 7; Gemma 4 also its embedding scale, logit soft-cap and two scalar sets, 9). Another
-// size of the family scales only the rest by its layers. A family or class without a row takes the
-// family's K-quant row, else Qwen 3.5's (transferred).
+// size of the family scales only the rest by its layers. The MoE rows (nsys, master 289a63af, RTX 5070
+// Ti, 60 decode steps of one row): Qwen3.6-35B-A3B UD-Q3_K_S 311 + 267 = 578 a step (the router,
+// select, combine and the routed banks' two calls a layer; the Gated DeltaNet layers' projections
+// read weights too), gpt-oss-20b MXFP4 97 + 199 = 296; the graph's count in the lab tunes (spec-tune
+// graph_kernels) is the same, 577 and 295. At 2-8 rows the one-row count (not measured). A family or
+// class without a row takes the family's K-quant row, else the family's other row, else Qwen 3.5's
+// (transferred).
 struct DecodeLaunches {
     std::string_view family;
     WeightClass weights;
@@ -131,11 +128,14 @@ struct DecodeLaunches {
     double small[3]; // the small ones at 1, 2-4 and 5-8 rows
     double fixed_gemv;  // of them once a step (the output head)
     double fixed_small; // of the small ones once a step (gather, final norm, sampling)
+    bool moe = false;   // an MoE's graph (router, select, combine): its family's every quantization
 };
 inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}, 1, 7},
     {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}, 1, 7},
     {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
+    {"qwen3_5_moe_text", WeightClass::Other, 40, 311, {267, 267, 267}, 1, 6, true},
+    {"moe_decoder", WeightClass::Other, 24, 97, {199, 199, 199}, 1, 6, true},
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 
@@ -194,6 +194,25 @@ inline constexpr RowsEta kRowsEta[] = {
     {"turing", WeightClass::Q8, 4, 0.898, 1},     {"turing", WeightClass::Q8, 8, 0.687, 1},
 };
 
+// An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
+// each for a row or two, many small reads apart from the dense GEMVs kRowsEta measures. Their share
+// of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
+// the step rows of speed_measured.json (the server's windows of exactly C rows, eight different
+// tasks) less every other term of the step, the mean over the generation's cards and quantizations
+// (lab/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
+struct MoeRoutedEta {
+    std::string_view generation;
+    double rows;
+    double eta;
+    int cards;
+};
+inline constexpr MoeRoutedEta kMoeRoutedEta[] = {
+    // Ada: RTX 4090 (UD-Q4_K_M, UD-Q3_K_S), 4060 Ti (UD-Q3_K_S, 7 rows its most: no 8-row point).
+    {"ada", 2, 0.928, 2}, {"ada", 4, 0.911, 2}, {"ada", 8, 0.806, 1},
+    // Blackwell: RTX 5070 Ti (UD-IQ3_XXS, UD-Q3_K_S), 5090 (UD-Q3_K_S).
+    {"gb20x", 2, 0.918, 2}, {"gb20x", 4, 0.740, 2}, {"gb20x", 8, 0.634, 2},
+};
+
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
 // measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
 // not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)
@@ -204,11 +223,8 @@ struct PredictionError {
 };
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.028}, {"gb20x", 0.020}};
 
-inline constexpr DecodeConstants kMoeDecode{0.72, 0.022, 0.0008};
-
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
-// decode_int8_peak): core/cost_constants.h, a chip fact; kMoeRoutedShare: spec/moe_routed_share.h,
-// a fitted calibration. Both shared with spec/round_cost.h.
+// decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16
@@ -311,14 +327,6 @@ struct RouteEta {
 };
 
 inline constexpr RouteEta kExactComputeEta[] = {{"turing", 0.0165}, {"ada", 0.0243}};
-
-// An MoE's exact route: kMoeDecode's compute times this (the dense route's factor of the earlier
-// fit, kept with kMoeDecode: an MoE's exact decode is not measured).
-struct RouteFactor {
-    std::string_view generation;
-    double factor;
-};
-inline constexpr RouteFactor kMoeExactFactor[] = {{"turing", 4.28}, {"ada", 3.25}};
 
 // What reading a KV codec costs over its bytes (run_sw.sh, 9B at a 22K prompt, against INT8 on the
 // same card): Turing reads BF16 and FP8 without native support. Ada: the mean of the RTX 4070 Ti

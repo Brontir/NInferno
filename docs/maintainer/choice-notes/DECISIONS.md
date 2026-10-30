@@ -1729,3 +1729,91 @@ x2.99 x 5.57 / 4.74 = x3.51 and x3.21 x 4.64 / 4.35 = x3.42, within 1 % of the p
 An earlier reading of this gap as the plan pricing a configuration the server does not run was
 wrong: the plan's and the server's choice come from the same `served_speculation`, and a pricing
 of the served configuration (`config_gain`) equalled the pick's speedup on every profile checked.
+
+## 65. An MoE's decode from facts: concurrent rows route apart (30.10, measured)
+
+The MoE decode estimate had its own fit (`kMoeDecode`: a share of the int8 peak and two terms,
+`kMoeExactFactor` for the exact route), apart from the dense model's facts (DECISIONS 60). It is
+replaced by the same step:
+
+    t(C) = (W_rest + R (1 - (1 - k/E)^C)) / (eta * BW) + C * row_bytes / (eta_dram * BW) + launches
+
+- W_rest: the weights outside the routed banks (not the input table): the attention, the shared
+  expert, the router, the output head. R: the routed banks as the GGUF stores them
+  (`ffn_*_exps`, `routed_expert_bytes` of the plan facts).
+- Concurrent rows are separate requests and route independently: a step reads the experts any of
+  them routes to, 1 - (1 - k/E)^C of the banks, each expert at the C k / E-th of the rows it was
+  picked for (its read at that many rows' rate). `kMoeRoutedShare` (0.30, DECISIONS 53) was
+  fitted on the speculation round, whose rows are consecutive tokens of one text and route
+  together; it stays there (`spec/round_cost.cpp`).
+- Launches: the census of the family's graph (nsys, RTX 5070 Ti, one row): Qwen3.6-35B-A3B 311
+  weight-reading + 267 small kernels a step, gpt-oss-20b 97 + 199; at Ada's and Blackwell's
+  `kKernelCost`.
+
+**How a step is measured.** Two traps:
+- The fixture's short-chat rows of 2-8 streams are wave aggregates (their prompts, ramp and
+  stragglers in), not a step: the dense check never used them.
+- Concurrent requests with the same text route the same experts (at temperature 0 they write
+  the same tokens): eight copies of one story ran Qwen3.6 Q4_K_M on the RTX 4090 at 128.9 tok/s a
+  stream, eight different tasks at 108.1, and the copies' step would read the routed banks at
+  1056 GB/s, above the board's 1008.
+
+The step rows (`"step": true` in `speed_measured.json`) are the server's own 5-second throughput
+windows whose mean batch is exactly C, eight different tasks (code, math, translation, prose),
+3000 tokens each, the median (`mbatch.sh`); at 1-8 rows they agree with the difference of 320- and
+64-token waves within 3 % where both batch fully (on the 16 GB cards short waves of eight do not).
+
+**The routed banks' share of the DRAM rate.** The census of Ada's step (RTX 4090, no PDL: kernel
+times are the kernels' own) puts the routed kernels (`moe_gemm`, `moe_r8`) at 0.68 / 0.83 / 0.81
+of the DRAM rate at 1 / 4 / 8 rows once their launches are off: the experts the rows route to are
+many small reads, one or two rows each, not the dense GEMVs kRowsEta measures. Their share is a
+measured row of its own (`kMoeRoutedEta`), derived like kRowsEta: the step rows less every other
+term of the step, the mean over the generation's cards and quantizations
+(`lab/speed_model/fit_moe_decode.py`):
+
+| generation | 2 rows | 4 rows | 8 rows | cards |
+|---|---|---|---|---|
+| Ada | 0.928 | 0.911 | 0.806 (4090 only) | RTX 4090, 4060 Ti |
+| Blackwell | 0.918 | 0.740 | 0.634 | RTX 5070 Ti, 5090 |
+
+Ada's are its K-quant rows within 0.035; Blackwell's are lower from four rows on (0.74 against the
+K-quants' 0.80, 0.63 against 0.73).
+
+**Predicted / measured** (tok/s a stream at C rows, Qwen3.6-35B-A3B, master kit build):
+
+| card | quant | C: predicted / measured |
+|---|---|---|
+| RTX 4090 | UD-Q4_K_M | 1: 244 / 254, 2: 203 / 205, 4: 156 / 158, 8: 101 / 107 |
+| RTX 4090 | UD-Q3_K_S | 1: 259 / 263, 2: 223 / 219, 4: 180 / 175, 8: 125 / 119 |
+| RTX 5070 Ti | UD-IQ3_XXS | 1: 271 / 270, 2: 235 / 218, 4: 168 / 153, 6: 135 / 119 |
+| RTX 5070 Ti | UD-Q3_K_S | 1: 241 / 245, 2: 209 / 207, 4: 149 / 150, 7: 108 / 106, 8: 99 / 98 |
+| RTX 5090 | UD-Q3_K_S | 1: 375 / 383, 2: 334 / 348, 4: 252 / 265, 8: 176 / 177 |
+| RTX 4060 Ti | UD-Q3_K_S | 1: 96 / 96, 2: 80 / 81, 4: 61 / 63, 7: 44 / 45 |
+
+29 points with the four one-row points of 2026-10-23: rms 4.2 %, worst 13 %
+(`ninferno_choice_test`). The old fit's check ran on the wave aggregates and missed by 68 % at
+eight rows once its constants were gone.
+
+**Open.**
+- UD-IQ3_XXS on the RTX 5070 Ti, 7-13 % slow at 2-6 rows: its banks are IQ3_XXS throughout (a
+  codebook decode a weight), UD-Q3_K_S's a mix. The census without PDL (a lab build with
+  `pdl::supported()` false, so the kernels' times are their own) puts its routed kernels at 6.1 /
+  6.9 / 6.9 weights a SM-clock at 1 / 4 / 8 rows: the same rate whatever the rows, compute-bound
+  on the 70-SM board (0.45-0.51 of its DRAM rate), where the RTX 4090's 128 SMs at that rate reach
+  their DRAM rate. A format's decode rate a SM-clock against the bytes is the candidate fact for
+  the routed share (Blackwell's lower row with it); the next decision.
+- gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation;
+  the next decision. What the censuses show (nsys, master kit build):
+  - Blackwell's prefill runs the experts on the block-scaled MMA (`moe_w4a8_kernel<W4a8Mxfp4Mx>`,
+    `kind::mxf8f6f4`, 71 % of the RTX 5070 Ti's prefill), the weights entering as stored: 1.29 x
+    (5090) and 1.57 x (5070 Ti) the MoE row's estimate. Ada converts them to int8
+    (`W4a8Mxfp4`) and stays on its row (4090 x1.03, 4060 Ti x1.14).
+  - The GV100's prefill runs the same int8 kernel (83 % of it) with no int8 MMA, on dp4a: 512
+    operations a SM-clock against the table's 1536, a third, and it measured 0.34 of the estimate.
+  - Its decode under this model (the server's windows, as above): one row within 1-5 % on the
+    RTX 4090, 4060 Ti, 5070 Ti and 5090; at 4-8 rows 3-26 % slow, the estimate the slower. Its
+    experts are ten times Qwen3.6's reads (about 13 MB a layer against 1.3 MB): the routed share
+    measured on Qwen's small reads is low for them. The read's size is the candidate fact.
+  - The GV100's decode reads its dense Q8 linears at 0.44 of the DRAM rate and the routed MXFP4
+    banks at 0.28: about 3-4 weights a SM-clock unpacked on the CUDA cores, not bytes (79.7 tok/s,
+    the estimate 185).

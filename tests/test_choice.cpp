@@ -103,12 +103,14 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
     out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
     out.weights         = ch::weight_class_of({}, label);
+    // An MoE's routed banks as its GGUF's tensor table stores them (ffn_*_exps).
+    out.routed_expert_bytes = q.value("routed_expert_bytes", 0.0);
     return out;
 }
 
-// The 2026-10-23 points: an MoE's decode within its fit's error (kMoeDecode: 5.2 % rms, worst 15.5 %);
-// a dense model's one-stream decode from facts (its several-stream rows are wave aggregates, not a
-// step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
+// The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
+// (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
+// aggregates, not a step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
 // attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
     double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
@@ -128,11 +130,15 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::Speed s = ch::speed_of(mf, cf, qo, c, row.at("concurrency").get<std::uint32_t>(),
                                          row.at("context").get<double>(), row.value("prompt", 0U));
         const double d    = s.decode_per_stream / row.at("decode").get<double>() - 1;
-        if (mf.moe()) {
+        // A step's rate: one stream, or a row measured as the step itself ("step": the decode of C
+        // concurrent requests apart from their prompts); the other several-stream rows are wave
+        // aggregates.
+        const bool step = row.at("concurrency").get<std::uint32_t>() == 1 || row.value("step", false);
+        if (mf.moe() && step) {
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
-        } else if (row.at("concurrency").get<std::uint32_t>() == 1) {
+        } else if (!mf.moe() && row.at("concurrency").get<std::uint32_t>() == 1) {
             decode_sq += d * d;
             decode_worst = std::max(decode_worst, std::abs(d));
             ++decodes;
@@ -153,7 +159,8 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
-    check(moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode within its fit's error");
+    // 29 points (2026-10-30): rms 4.2 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
+    check(moes == 29 && moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode from facts within the model's error");
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
 }
 

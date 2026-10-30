@@ -110,6 +110,9 @@ struct QuantOption {
     std::string label;          // as --quant takes it
     double bits_per_weight = 0;
     double weight_bytes    = 0; // what one decode step reads (product::quant_option_of)
+    // Of them, an MoE's routed expert banks as stored (0: unknown, their parameters' share stands in);
+    // a step reads the share of them its rows route to.
+    double routed_expert_bytes = 0;
     bool supported         = true;
     bool int8_route        = true;  // its linears take int8 activations (every GGUF format: AllowA8)
     bool nvfp4             = false; // NVFP4 weights
