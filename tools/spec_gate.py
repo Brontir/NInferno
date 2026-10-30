@@ -65,11 +65,13 @@ DECISION_FILES = (
     "src/models/qwen3_5/program/planning/startup.cpp",       # the speculative plan rung
     "src/models/qwen3_5/program/planning/request_plan.cpp",  # the per-request speculation plan
     "src/models/qwen3_5/program/planning/speculation_load.h",
+    "src/models/qwen3_5/program/planning/sequence_bytes.cpp",  # the speculative rung's bytes
+    "src/runtime/engine/plan_dry_run.cpp",                     # the plan the start serves from
     "src/models/qwen3_5/program/prefill.cpp",                # the request's depth at admission
     "src/models/qwen3_5/program/decode.cpp",                 # watchdog trips and step-downs
     "src/models/gemma4/program_family.cpp",                  # Gemma 4 draft depth
-    "src/models/gemma4/session.h",                           # Gemma 4 depth adaptation
-    "src/models/dense/session.h",                            # dense draft_tokens / min_draft
+    "src/models/gemma4/session.h",                           # Gemma 4 session draft depth
+    "src/models/dense/session.h",                            # dense draft_tokens
     "src/models/dense/program_family.cpp",                   # dense drafter window refusals
     "src/models/nemotron_h/program_family.cpp",              # speculative memory from the window
     "src/serve/serve_options.cpp",                           # no --spec -> --spec auto

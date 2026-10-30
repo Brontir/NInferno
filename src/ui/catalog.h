@@ -21,10 +21,15 @@
 #include <nlohmann/json.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace ninferno::product {
+struct PlanSourceFacts;
+}
 
 namespace ninferno::ui {
 
@@ -135,78 +140,27 @@ inline constexpr double kReserveGib = 2.0;
 // drafter}], as App keeps them) that fits with the reserve. A 16 GB card then gets the 3-bit
 // quantization of a 30B model instead of "does not fit". Unchanged when a source fits, or when no
 // listing has a quantization that fits.
-[[nodiscard]] CatalogModel
-with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
-                   const std::map<std::string, nlohmann::json>& listings);
-
-// The KV cache a model keeps per token of a request, from its GGUF metadata (general.architecture
-// and its keys): full-attention layers grow with the context, sliding-window layers stop at the
-// window, recurrent layers (GDN, Mamba) keep none. INT8 KV (the default storage): one byte per
-// element. known is false when the metadata lacks the attention geometry.
 //
-// The same metadata gives the parameter counts the speed estimates use (0: unknown): all of them,
-// those one token reads with one request (the routed experts it takes, the shared ones, attention,
-// the output head; not the embedding table), and the routed experts' share of all with the
-// fraction a token takes (more requests at once touch more experts: 1 - (1 - used)^requests).
-// Counted from the shapes (attention, feed-forward, experts, vocabulary), not from the file:
-// recurrent layers count as attention ones, so a hybrid's figures are approximate.
-//
-// Memory as ninferno-serve plans it (runtime/engine/kv_capacity.h), checked against its capacity
-// lines on the 4090 (Qwen3.6 35B at 1 x 8K: 160 MiB KV + 2 x 60 MiB states + 79 MiB workspace
-// = 357 MiB runtime, as logged; at 4 x 8K 1.12 GiB + 85 MiB = 1.18 GiB):
-//   weights + KV pool (requests x context x full_bytes_per_token)
-//   + per sequence, each active request and each cached device state of the context cache:
-//     state_bytes and a sliding ring of window + prefill chunk rows of window_bytes_per_token
-//   + workspace_bytes + kRuntimeOverheadGib (CUDA context, kernels, graphs).
-// KV is bf16, serve's default (--kv-dtype). The recurrent state is fp32, its convolution bf16.
-inline constexpr double kKvElementBytes     = 2;
-inline constexpr long kPrefillChunk         = 1024; // serve's default prefill chunk
-inline constexpr double kRuntimeOverheadGib = 0.75;
-struct KvModel {
-    std::string architecture; // general.architecture, or config.json's architectures[0]
-    bool known                    = false;
-    double full_bytes_per_token   = 0; // all full-attention layers together
-    double window_bytes_per_token = 0; // all sliding-window layers together
-    long window                   = 0; // their window in tokens
-    long native_context           = 0; // the model's trained context (0: unknown)
-    long layers                   = 0;
-    long full_layers              = 0; // full-attention layers that keep KV
-    double kv_head_dim            = 0; // their key size: int8/fp8/nvfp4 KV only at 256
-    double state_bytes            = 0; // recurrent (GatedDeltaNet, Mamba2) state of one sequence
-    double workspace_bytes        = 0; // activations of one prefill chunk
-    double params                 = 0;
-    double active_params          = 0;
-    double routed_share           = 0; // routed experts' parameters / all parameters
-    double experts_used           = 0; // experts a token takes / routed experts (0: dense)
-};
+// `fits(repo, quant)` is the plan without the weights (App::plan_json: an idle card of this GPU,
+// automatic context, one stream, the server's own ladder); nullopt where it cannot say (the
+// repository's shape not read yet), where the weights against the card with kReserveGib stand in.
+using QuantFits =
+    std::function<std::optional<bool>(const std::string& repo, const nlohmann::json& quant)>;
+// `pick(repo)`: the rule's pick for the repository at the user's context x streams (nullopt: not
+// planned); when it has one, that is the quant added, else the listing's largest 2-4 bit quant
+// that fits.
+using QuantPickOf = std::function<std::optional<std::string>(const std::string& repo)>;
+[[nodiscard]] CatalogModel with_fitting_quant(const CatalogModel& model, const TargetGpu& gpu,
+                                              const std::map<std::string, nlohmann::json>& listings,
+                                              const QuantFits& fits   = {},
+                                              const QuantPickOf& pick = {});
 
-// The parameter counts and the workspace of KvModel from shapes; exposed for the tests. Layers
-// are counted by kind: attention, recurrent mixers (GatedDeltaNet, Mamba2) and feed-forward
-// (dense or experts) each where the model has them (NemotronH interleaves the three; a Qwen3.5
-// layer is attention or GatedDeltaNet, then feed-forward). Zero counts mean every layer.
-struct ModelShape {
-    double layers = 0, hidden = 0, heads = 0, kv_heads = 0, head_dim = 0;
-    double attention_layers = 0, mixer_layers = 0, ffn_layers = 0;
-    double ffn     = 0; // a dense layer's feed-forward width
-    double experts = 0, experts_used = 0, expert_ffn = 0, shared_ffn = 0;
-    double ssm_inner = 0, ssm_state = 0, ssm_groups = 0, ssm_heads = 0, ssm_conv = 0;
-    double ffn_matrices = 3; // gate, up, down; NemotronH's squared-ReLU experts have no gate
-    double vocab = 0;
-    bool tied    = false; // the output head is the embedding table
-};
-
-void count_params(KvModel& kv, const ModelShape& shape);
-
-[[nodiscard]] KvModel kv_model_of_gguf(const nlohmann::json& metadata);
-// The same from a Hugging Face config.json (its text_config when it has one): layer_types
-// (full / sliding / linear attention), else hybrid_override_pattern (NemotronH: '*' attention),
-// else full_attention_interval, else every layer full; a global head geometry
-// (global_head_dim, num_global_key_value_heads) for the full layers where it differs. Unknown for
-// latent attention (kv_lora_rank), whose cache this estimate does not model.
-[[nodiscard]] KvModel kv_model_of_config(const nlohmann::json& config);
-// Bytes of KV one request of `context` tokens holds.
-[[nodiscard]] double kv_bytes(const KvModel& kv, long context);
-[[nodiscard]] nlohmann::json to_json(const KvModel& kv);
+// What the page reads of a model's KV, from the plan's facts (product::PlanSourceFacts: the one
+// reading of a GGUF header or a config.json): its architecture, whether its KV is known (layers
+// that keep KV: not latent attention, not an unread shape), the full layers' key size (the int8,
+// fp8 and nvfp4 codecs need 256) and its trained context (the context slider's end). Unknown
+// without facts.
+[[nodiscard]] nlohmann::json kv_summary(const product::PlanSourceFacts* facts);
 
 [[nodiscard]] ModelEstimate estimate(const Catalog& catalog, const CatalogModel& model,
                                      const TargetGpu& gpu, const SizeTable& sizes);

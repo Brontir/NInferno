@@ -17,7 +17,11 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/r8_decode_table.h"
+#include "ops/linear/linear_registry.h"
+#include "ops/linear_add/q8/q8_linear_add_plan.h"
+#include "ops/linear_swiglu/q8/q8_linear_swiglu_plan.h"
 #include "ops/op_tester.h"
 
 #include <cuda_runtime.h>
@@ -59,6 +63,11 @@ struct Format {
     int n_multiple; // layout requirement
     int k_multiple;
 };
+
+// check_mmq_code_sums: ggml's matrix kernel against the FP64 oracle of the int8 activation, relative
+// L2. RTX 5070 Ti: 0.0024 with the block sums from the codes (Q4_K and Q5_K alike), 0.056 with the
+// raw values' sum.
+constexpr double kMmqCodeSumAgreement = 0.01;
 
 const Format kFormats[] = {
     {"q4", QType::Q4_G64_FP16, 1, 1},
@@ -442,10 +451,18 @@ int check_case(const Format& f, Op op, std::int32_t out_rows, std::int32_t k, st
             call.out[0]          = &tout;
             call.segment_rows[0] = out_rows;
             const std::uint64_t fallbacks = generic::ggml_mmq_fallback_count();
+            const std::uint64_t demotions = generic::route_demotion_count();
             generic::run_route(*route, call, &workspace, nullptr);
             if (route->family == generic::Family::GgmlMmq &&
                 generic::ggml_mmq_fallback_count() != fallbacks) {
                 std::cerr << label << ": ggml_mmq ran A16 in a workspace sized for it\n";
+                return 1;
+            }
+            // The route asked for ran (or one of the same bytes): a call sized and aligned for it
+            // is never demoted.
+            if (generic::route_demotion_count() != demotions) {
+                std::cerr << label << ": " << generic::route_name(*route)
+                          << " ran another route in a call sized for it\n";
                 return 1;
             }
         } else if (op == Op::Linear) {
@@ -788,6 +805,156 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
                   << "]: " << routes.size() << " routes x 10 windows byte-identical\n";
     }
     return failures;
+}
+
+// Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): the dispatch takes it
+// for Q4_K / Q5_K / Q6_K / Q8 at 2..16 tokens (5..16 with an int8 route), and a token's output
+// bytes equal those of the same token in a call of any other width there (at any start), repeated
+// run to run: its sums read the token's own activation in one order.
+int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
+                                ops::LinearPolicy policy, std::uint32_t seed) {
+    const std::int32_t wide   = 40;
+    const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
+    const HostWeight host     = make_weight(f.qtype, rows_n, k, seed);
+    DeviceWeight device       = upload_weight(host);
+    const auto activation     = make_linear_activation(k, wide, seed + 3U, ActivationCompute::A16);
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    const auto residual = make_linear_activation(out_rows, wide, seed + 5U, ActivationCompute::A16);
+    DeviceArena workspace(256);
+    const generic::Problem problem{f.qtype, policy, out_rows, k,
+                                   gated(op)       ? generic::Epilogue::SwiGlu
+                                   : op == Op::Add ? generic::Epilogue::AddResidual
+                                                   : generic::Epilogue::Store};
+    const auto run = [&](std::int32_t offset, std::int32_t t, std::vector<std::uint16_t>& bits) {
+        const generic::Route route = generic::select_route(problem, device.weight, t, false);
+        if (route.family != generic::Family::RegisterMma) return false;
+        DeviceBuffer out(static_cast<std::size_t>(out_rows) * t * 2);
+        if (op == Op::Add) {
+            out.copy_from_host(residual.data() + static_cast<std::size_t>(offset) * out_rows,
+                               out.bytes);
+        } else {
+            cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+        }
+        Tensor tx(static_cast<std::uint16_t*>(x.p) + static_cast<std::size_t>(offset) * k,
+                  DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {out_rows, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &device.weight;
+        call.rows            = out_rows;
+        call.up_offset       = gated(op) ? out_rows : 0;
+        call.gelu_gate       = op == Op::GeGlu;
+        call.relu2           = op == Op::Relu2;
+        call.epilogue        = problem.epilogue;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = out_rows;
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "run");
+        bits = download_bf16(out.p, static_cast<std::size_t>(out_rows) * t);
+        return true;
+    };
+    std::vector<std::uint16_t> reference, again;
+    int failures = 0;
+    if (!run(0, 16, reference) || !run(0, 16, again) || reference != again) {
+        std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=16 not the register-MMA route"
+                  << " or not repeatable\n";
+        return 1;
+    }
+    const std::pair<std::int32_t, std::int32_t> windows[] = {
+        {0, 2}, {3, 2}, {0, 3}, {5, 4}, {0, 7}, {9, 8}, {0, 9}, {1, 13}, {7, 15}, {0, 16}};
+    for (const auto [offset, t] : windows) {
+        // A call with an int8 route keeps it through four tokens (volta_hmma_route).
+        if (policy == ops::LinearPolicy::AllowA8 && t <= 4) continue;
+        std::vector<std::uint16_t> bits;
+        if (!run(offset, t, bits)) {
+            std::cerr << f.name << " " << op_name(op) << " Volta HMMA: T=" << t
+                      << " not the register-MMA route\n";
+            ++failures;
+            continue;
+        }
+        for (std::int32_t token = 0; token < t; ++token) {
+            if (offset + token >= 16) break;
+            if (std::memcmp(bits.data() + static_cast<std::size_t>(token) * out_rows,
+                            reference.data() + static_cast<std::size_t>(offset + token) * out_rows,
+                            static_cast<std::size_t>(out_rows) * 2) != 0) {
+                std::cerr << f.name << " " << op_name(op) << " Volta HMMA: window " << offset << "+"
+                          << t << " token " << token << " differs from the T=16 call\n";
+                ++failures;
+                break;
+            }
+        }
+    }
+    if (failures == 0) {
+        std::cout << f.name << " " << op_name(op) << " Volta HMMA [" << rows_n << "," << k
+                  << "]: 10 windows byte-identical\n";
+    }
+    return failures;
+}
+
+// Volta's tensor-core verify route against an FP64 reference: the HMMA accumulator truncates
+// (Volta: products exact, sums aligned to the largest operand and cut), and Q4_K / Q5_K carry
+// 1024 under every code there (HK45::kBias). Activations of one sign over all of K (mean 1, sd
+// 0.5) keep that bias's error from cancelling, the worst case for it. The error of each output,
+// over the sum of |w x| it reduces, stays within one bf16 ulp (2^-8); STATS prints it.
+int check_volta_hmma_accuracy(const Format& f, std::int32_t k, float mean, std::uint32_t seed) {
+    const std::int32_t rows = 128, t = 8;
+    const HostWeight host   = make_weight(f.qtype, rows, k, seed);
+    DeviceWeight device     = upload_weight(host);
+    std::mt19937 rng(seed + 7U);
+    std::normal_distribution<float> normal(mean, mean != 0.0F ? 0.5F * mean : 1.0F);
+    std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
+    for (auto& v : activation) v = f32_to_bf16(normal(rng));
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceBuffer out(static_cast<std::size_t>(rows) * t * 2);
+    cuda_check(cudaMemset(out.p, 0, out.bytes), "zero");
+    DeviceArena workspace(256);
+    const generic::Problem problem{f.qtype, ops::LinearPolicy::A16Only, rows, k,
+                                   generic::Epilogue::Store};
+    const generic::Route route = generic::select_route(problem, device.weight, t, false);
+    if (route.family != generic::Family::RegisterMma) {
+        std::cerr << f.name << " Volta HMMA accuracy: T=8 not the register-MMA route\n";
+        return 1;
+    }
+    Tensor tx(x.p, DType::BF16, {k, t});
+    Tensor tout(out.p, DType::BF16, {rows, t});
+    generic::Call call;
+    call.x               = &tx;
+    call.weight          = &device.weight;
+    call.rows            = rows;
+    call.epilogue        = problem.epilogue;
+    call.out[0]          = &tout;
+    call.segment_rows[0] = rows;
+    generic::run_route(route, call, &workspace, nullptr);
+    cuda_check(cudaDeviceSynchronize(), "run");
+    const auto bits = download_bf16(out.p, static_cast<std::size_t>(rows) * t);
+    std::vector<std::int32_t> all(rows);
+    std::iota(all.begin(), all.end(), 0);
+    const std::vector<float> w = weight_rows(host, all);
+    double worst = 0.0, total = 0.0;
+    for (std::int32_t token = 0; token < t; ++token)
+        for (std::int32_t r = 0; r < rows; ++r) {
+            double ref = 0.0, scale = 0.0;
+            for (std::int32_t c = 0; c < k; ++c) {
+                const double wx = static_cast<double>(w[static_cast<std::size_t>(r) * k + c]) *
+                                  bf16_to_f32(activation[static_cast<std::size_t>(token) * k + c]);
+                ref += wx;
+                scale += std::fabs(wx);
+            }
+            const double got =
+                bf16_to_f32(bits[static_cast<std::size_t>(token) * rows + r]);
+            const double e = std::fabs(got - ref) / std::max(scale, 1e-30);
+            worst          = std::max(worst, e);
+            total += e;
+        }
+    const double average = total / (static_cast<double>(rows) * t);
+    std::cout << "VOLTA_HMMA_ACCURACY " << f.name << " k=" << k << " mean=" << mean
+              << " max=" << worst << " avg=" << average << '\n';
+    if (worst <= 1.0 / 256.0) return 0;
+    std::cerr << f.name << " Volta HMMA accuracy k=" << k << ": error " << worst
+              << " of the reduced |w x| above one bf16 ulp\n";
+    return 1;
 }
 
 // An R8 route: every token's output bytes equal those of the same token in a call of any other
@@ -1219,8 +1386,96 @@ int check_mmq_outlier_block(const Format& f) {
     return 0;
 }
 
+// ggml's matrix kernel on Q4_K / Q5_K where the offset term carries the product: centred weights
+// (m = sc and dmin = 7.5 d, so w = d sc (q - 7.5)) against activation blocks of one outlier (60)
+// among values of 2 +- 1, as a layer's input with a few large channels. The codes' dot and the
+// offset term are then both large and only their difference is the product, so both must see the
+// int8 activation: the oracle is the FP64 product of the independently decoded weights and the
+// activation quantized per 32 values (quantize_a8). With the block sum of the raw values (ggml's own
+// quantizer) the quantization noise of the dot stayed in the product.
+int check_mmq_code_sums(const Format& f) {
+    const std::int32_t n = 256, k = 2048, t = 64;
+    const generic::Route mmq{generic::Family::GgmlMmq, 0};
+    HostWeight host               = make_weight(f.qtype, n, k, 61U);
+    const std::size_t block_bytes = f.qtype == QType::GGML_Q4_K ? 144 : 176;
+    auto& bytes                   = host.packed.payload;
+    for (std::size_t b = 0; b + block_bytes <= bytes.size(); b += block_bytes) {
+        // The 12 scale bytes after d and dmin: m_j = sc_j for every sub-block.
+        std::uint8_t* sc = bytes.data() + b + 4;
+        for (int j = 0; j < 4; ++j) { sc[4 + j] = sc[j]; }
+        for (int j = 8; j < 12; ++j) { sc[j] = static_cast<std::uint8_t>((sc[j] & 0x0FU) * 0x11U); }
+        const float d = quantized_weight::detail::f16_to_f32(quantized_weight::detail::load_u16_le(bytes, b));
+        quantized_weight::detail::store_u16_le(bytes, b + 2,
+                                               quantized_weight::detail::f32_to_f16(
+                                                   (f.qtype == QType::GGML_Q4_K ? 7.5F : 15.5F) * d));
+    }
+    DeviceWeight device = upload_weight(host);
+    const Weight& weight = device.weight;
+    const auto policy    = ops::LinearPolicy::AllowA8;
+    if (!generic::route_admits(mmq, weight, policy)) {
+        std::cout << f.name << " ggml_mmq code sums: not admitted on this device\n";
+        return 0;
+    }
+    std::vector<std::uint16_t> activation(static_cast<std::size_t>(k) * t);
+    std::mt19937 rng(67U);
+    std::uniform_real_distribution<float> u(-1.0F, 1.0F);
+    for (std::size_t i = 0; i < activation.size(); ++i) {
+        activation[i] = f32_to_bf16(i % 32 == 5 ? 60.0F : 2.0F + u(rng));
+    }
+    DeviceBuffer x(activation.size() * 2);
+    x.copy_from_host(activation.data(), x.bytes);
+    DeviceArena workspace(std::max<std::size_t>({generic::route_workspace_bytes(mmq, k, t),
+                                                 generic::ggml_mmq_workspace_bytes(k, n, t), 256}));
+    const auto run = [&](generic::Route route) {
+        DeviceBuffer out(static_cast<std::size_t>(n) * t * 2);
+        Tensor tx(x.p, DType::BF16, {k, t});
+        Tensor tout(out.p, DType::BF16, {n, t});
+        generic::Call call;
+        call.x               = &tx;
+        call.weight          = &weight;
+        call.rows            = n;
+        call.epilogue        = generic::Epilogue::Store;
+        call.out[0]          = &tout;
+        call.segment_rows[0] = n;
+        workspace.reset();
+        generic::run_route(route, call, &workspace, nullptr);
+        cuda_check(cudaDeviceSynchronize(), "code-sum run");
+        return download_bf16(out.p, static_cast<std::size_t>(n) * t);
+    };
+    const std::uint64_t fallbacks = generic::ggml_mmq_fallback_count();
+    const auto got                = run(mmq);
+    if (generic::ggml_mmq_fallback_count() != fallbacks) {
+        std::cerr << f.name << " ggml_mmq code sums: ran A16, not ggml_mmq\n";
+        return 1;
+    }
+    std::vector<std::int32_t> rows(static_cast<std::size_t>(n));
+    for (std::int32_t i = 0; i < n; ++i) { rows[static_cast<std::size_t>(i)] = i; }
+    const std::vector<float> w = weight_rows(host, rows);
+    std::vector<float> xq(activation.size());
+    for (std::size_t i = 0; i < xq.size(); ++i) { xq[i] = bf16_to_f32(activation[i]); }
+    quantize_a8(xq, k);
+    std::vector<double> oracle(static_cast<std::size_t>(n) * t);
+    cpu_linear_gemm_fp64(w.data(), xq.data(), oracle.data(), n, k, t);
+    double err = 0.0, norm = 0.0;
+    for (std::size_t i = 0; i < got.size(); ++i) {
+        const double a = bf16_to_f32(got[i]);
+        err += (a - oracle[i]) * (a - oracle[i]);
+        norm += oracle[i] * oracle[i];
+    }
+    const double rel = std::sqrt(err / norm);
+    std::cout << f.name << " ggml_mmq code sums: rel_l2 to the int8 activation's FP64 oracle " << rel
+              << "\n";
+    if (!(rel < kMmqCodeSumAgreement)) {
+        std::cerr << f.name << " ggml_mmq on centred weights: rel_l2 " << rel << " to the oracle (at most "
+                  << kMmqCodeSumAgreement << ")\n";
+        return 1;
+    }
+    return 0;
+}
+
 // NVFP4 under a policy that allows A8 but not A4 (a W4A16 checkpoint under --activations int8):
-// the generic W4A8 from 17 tokens on every build, decode and verify widths unchanged; the same
+// the generic W4A8 from 17 tokens on every build, the tiled route there without tensor mma.sync
+// (Volta: volta_tiled_route), decode and verify widths unchanged; the same
 // weight under AllowA4 (it carries its activation divisor) keeps W4A4 where the build has it and
 // is never W4A8's there, nor is it without a divisor (A16 then, as before). Through the public
 // entry points the shapes the native NVFP4 plans own (sm_120a: linear 1024x2816, linear_add
@@ -1243,9 +1498,11 @@ int check_nvfp4_a8_routes() {
         const generic::Route r8 = generic::select_route(p8, dw.weight, t, false);
         const generic::Route r4 = generic::select_route(p4, dw.weight, t, false);
         const generic::Route r0 = generic::select_route(p4, no_divisor, t, false);
-        const bool wide         = t >= 17;
+        const bool tiled        = generic::volta_tiled_route(dw.weight, a8, t).has_value();
+        const bool wide         = t >= 17 && !tiled;
         const ops::ScopedPrefillRoutes prefill(true);
         if ((r8.family == generic::Family::W4a8Mma) != wide ||
+            (tiled && r8.family != generic::Family::TiledMma) ||
             generic::owned_prefill_w4a8(dw.weight, a8, t) != wide) {
             std::cerr << "nvfp4 A8 T=" << t << ": " << generic::route_name(r8) << "\n";
             ++failures;
@@ -1360,6 +1617,77 @@ int main() {
     int failures = 0;
     std::mt19937 rng(20260924U);
 
+    // 0. The wide-load Q6_K's choice (rmma_wide_rule) on the boards' facts: DRAM bytes per SM
+    // cycle and compute capability; as many CTAs and as much local memory as the plain kernel.
+    {
+        namespace g = ops::detail::generic;
+
+        struct Board {
+            const char* name;
+            double bytes;
+            int cc;
+            bool wide;
+        };
+
+        const Board boards[] = {{"RTX 4090", 3.1, 89, true},     {"RTX 4070 Ti", 3.2, 89, true},
+                                {"RTX 5090", 4.4, 120, true},    {"RTX 5070 Ti", 5.2, 120, true},
+                                {"RTX 2080 Ti", 5.9, 75, false}, {"RTX 3060", 7.2, 86, false},
+                                {"Tesla V100", 3.4, 70, false},  {"facts unknown", 0.0, 89, false}};
+        for (const Board& b : boards) {
+            if (g::rmma_wide_rule(b.bytes, b.cc, true, 0, 0) != b.wide) {
+                std::cerr << "rmma_wide_rule: " << b.name << " expected " << b.wide << "\n";
+                ++failures;
+            }
+        }
+        // Occupancy lost (rmma_variant_occupancy_rule), or a spill the plain kernel lacks: plain,
+        // on any board.
+        if (g::rmma_wide_rule(3.1, 89, false, 0, 0) || g::rmma_wide_rule(3.1, 89, true, 64, 0)) {
+            std::cerr << "rmma_wide_rule: took the wide kernel at lower occupancy or a spill\n";
+            ++failures;
+        }
+        if (!g::rmma_wide_rule(3.1, 89, true, 16, 16) || !g::rmma_wide_rule(3.1, 89, true, 8, 0) ||
+            g::rmma_wide_rule(3.1, 89, true, 160, 0)) {
+            std::cerr << "rmma_wide_rule: refused a spill within the slack or took a large one\n";
+            ++failures;
+        }
+    }
+
+    // 0b. A variant kernel's occupancy (rmma_variant_occupancy_rule): fewer resident CTAs per SM
+    // than the plain kernel's cost only where the call's grid takes another wave at them.
+    {
+        namespace g = ops::detail::generic;
+
+        struct Case {
+            std::int64_t grid;
+            int sms;
+            int variant;
+            int plain;
+            bool kept;
+        };
+
+        const Case cases[] = {
+            {256, 70, 4, 4, true},    // as many CTAs: always
+            {256, 70, 3, 4, false},   // 70 SMs, 256 CTAs: one wave at 4 (280), two at 3 (210)
+            {192, 70, 3, 4, true},    // 192 CTAs: one wave at either
+            {600, 70, 3, 4, true},    // three waves at either (280 and 210 a wave)
+            {768, 70, 3, 4, false},   // three waves at 4, four at 3
+            {1088, 128, 2, 3, false}, // 128 SMs, 1088 CTAs: three waves at 3, five at 2
+            {60, 68, 1, 2, true},     // fewer CTAs than SMs: one wave at either
+            {80, 68, 1, 2, false},    // 80 CTAs on 68 SMs: two waves at 1, one at 2
+            {80, 68, 0, 2, false},    // the variant fits no CTA
+            {80, 68, 2, 0, false},    // counts unknown
+            {80, 0, 2, 2, false},     // SMs unknown
+        };
+        for (const Case& c : cases) {
+            if (g::rmma_variant_occupancy_rule(c.grid, c.sms, c.variant, c.plain) != c.kept) {
+                std::cerr << "rmma_variant_occupancy_rule: grid " << c.grid << " on " << c.sms
+                          << " SMs at " << c.variant << " against " << c.plain << " expected "
+                          << c.kept << "\n";
+                ++failures;
+            }
+        }
+    }
+
     // 1. Public entry points at random and curated awkward shapes, every format and op.
     for (const Format& f : kFormats) {
         if (!on_build(f)) continue;
@@ -1442,13 +1770,55 @@ int main() {
             }
         }
     }
+    // 1c. A drafter's A16Only projection takes A8 exactly where R8 verifies an eight-token block
+    // of its format (Q8 on every chip); another recorded policy stays.
+    for (const Format& f : kFormats) {
+        if (!on_build(f)) continue;
+        const Weight w   = cached_weight(f.qtype, 333, 2560, 29U).device->weight;
+        const bool block = generic::r8_verify_widest(f.qtype) >= generic::kR8VerifyTokens &&
+                           generic::r8_takes_block(w);
+        const ops::LinearPolicy want = block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+        if (ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only, ops::DrafterOp::Linear) != want ||
+            ops::drafter_linear_policy(w, ops::LinearPolicy::AllowA4, ops::DrafterOp::Linear) !=
+                ops::LinearPolicy::AllowA4 ||
+            (f.qtype == QType::Q8_G32_FP16 && !block)) {
+            std::cout << "FAIL " << f.name << " drafter_linear_policy" << std::endl;
+            ++failures;
+        }
+    }
+    // A Q8 shape the table of the op that runs it owns keeps its A16 kernels, since that
+    // dispatcher sends only its one-token calls to R8; the segmented projection reads no table.
+    // Gemma 4 31B DFlash's 5376 x 10752 (plain table), the Qwen DFlash down 2048 x 6144 (fused
+    // add table only: lifted through plain linear), unowned shapes.
+    for (const auto& [n, k] : std::initializer_list<std::pair<std::int32_t, std::int32_t>>{
+             {5376, 10752}, {2048, 6144}, {4096, 4096}, {333, 2560}}) {
+        const Weight w   = cached_weight(QType::Q8_G32_FP16, n, k, 31U).device->weight;
+        const bool block = generic::r8_takes_block(w);
+        const auto want  = [&](bool owned) {
+            return !owned && block ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+        };
+        const auto got = [&](ops::DrafterOp op) {
+            return ops::drafter_linear_policy(w, ops::LinearPolicy::A16Only, op);
+        };
+        if (got(ops::DrafterOp::Linear) !=
+                want(ops::detail::linear_shape_registered(QType::Q8_G32_FP16, n, k)) ||
+            got(ops::DrafterOp::LinearAdd) != want(ops::detail::q8_linear_add_registered(n, k)) ||
+            got(ops::DrafterOp::LinearSwiGlu) !=
+                want(ops::detail::q8_linear_swiglu_registered(n, k)) ||
+            got(ops::DrafterOp::Generic) != want(false) ||
+            (n == 5376 && got(ops::DrafterOp::Linear) != ops::LinearPolicy::A16Only)) {
+            std::cout << "FAIL Q8 " << n << " x " << k << " drafter_linear_policy" << std::endl;
+            ++failures;
+        }
+    }
+
     // 2a. NVFP4 with A8 allowed and A4 not: W4A8 from 17 tokens, W4A4 kept under AllowA4.
     if (on_build(nvfp4)) failures += check_nvfp4_a8_routes();
 
     // 2b. W4A8 through the public entry points (AllowA8, T >= 17 takes it; K w4a8_k_admits: whole
     // tiles, or whole 32-value blocks for those formats, 2112 and 2880 among them), and R8
     // for the formats with an R8 codec at decode widths (kR8DecodeTokens) when the activation
-    // fits the CTA, and at verify widths (kR8VerifyTokens) for r8_verify_takes formats. R8 needs
+    // fits the CTA, and at verify widths (r8_verify_widest) for r8_verify_takes formats. R8 needs
     // K only in whole load groups (r8_k_values): 2112 (Gemma 4 26B's dense down projection) and
     // 2880 (gpt-oss's hidden) take it where the layout allows them.
     // A format with an R8 codec alone (Q3_K) stays A16 from 17 tokens.
@@ -1467,7 +1837,7 @@ int main() {
                     // The verify widths ask about the matrix itself (a gated op's weight holds
                     // both halves): a small Q4_0 one keeps A16 where the BF16 MMA is native.
                     const std::int64_t weight_rows = gated(op) ? 2 * n : n;
-                    const bool verify              = t >= 2 && t <= generic::kR8VerifyTokens &&
+                    const bool verify              = t >= 2 && t <= generic::r8_verify_widest(f.qtype) &&
                                         generic::r8_verify_takes_shape(f.qtype, weight_rows, k);
                     const bool a8 =
                         (w4a8_k && t >= 17) ||
@@ -1753,6 +2123,13 @@ int main() {
         if (!on_build(f) || !generic::ggml_mmq_format(f.qtype)) continue;
         failures += check_mmq_outlier_block(f);
     }
+    // 2f. The q8_1 block sums from the codes: ggml's matrix kernel on the K-quants against the int8
+    // activation's oracle.
+    for (const Format& f : kFormats) {
+        const bool k_quant = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K;
+        if (!on_build(f) || !k_quant || !generic::ggml_mmq_format(f.qtype)) continue;
+        failures += check_mmq_code_sums(f);
+    }
 
     // 3. Every compiled route qualified on one awkward shape per format and epilogue.
     for (const Format& f : kFormats) {
@@ -1943,6 +2320,28 @@ int main() {
     for (const Format& f : kFormats) {
         if (on_build(f) && f.qtype == QType::GGML_IQ3_XXS) {
             failures += check_w4a8_misaligned_signs(f);
+        }
+    }
+
+    // 4b. Volta's tensor-core verify route: token invariance over 2..16 (sm_70 only).
+    if (!device_class().features.mma_tensor) {
+        for (const Format& f : kFormats) {
+            if (!on_build(f) || (f.qtype != QType::GGML_Q4_K && f.qtype != QType::GGML_Q5_K &&
+                                 f.qtype != QType::GGML_Q6_K && f.qtype != QType::Q8_G32_FP16)) {
+                continue;
+            }
+            for (const Op op : {Op::Linear, Op::Add, Op::SwiGlu, Op::GeGlu, Op::Relu2}) {
+                failures +=
+                    check_volta_hmma_invariance(f, op, 72, 512, ops::LinearPolicy::A16Only, 79U);
+            }
+            failures +=
+                check_volta_hmma_invariance(f, Op::Add, 72, 512, ops::LinearPolicy::AllowA8, 81U);
+            failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 768,
+                                                    ops::LinearPolicy::A16Only, 83U);
+            for (const std::int32_t k : {4096, 17408}) {
+                failures += check_volta_hmma_accuracy(f, k, 1.0F, 87U);
+                failures += check_volta_hmma_accuracy(f, k, 0.0F, 89U);
+            }
         }
     }
 

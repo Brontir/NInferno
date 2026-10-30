@@ -439,6 +439,9 @@ struct MaintainerOptions {
     std::optional<std::uint8_t> debug_poison;
     // --debug-poison-skip SITE,...: sites left unpoisoned (kv, ingress, state, weights).
     std::vector<std::string> debug_poison_skip;
+    // --artifact-io auto|direct|buffered: how the weights are read at load (O_DIRECT or the page
+    // cache). An I/O mode, not a decision: the bytes read are the same.
+    ArtifactIo artifact_io = ArtifactIo::Auto;
 
     bool operator==(const MaintainerOptions&) const = default;
 };
@@ -634,7 +637,16 @@ struct ThinkingControlOptions {
     // Omitted means unlimited. Injected target-control tokens consume the total output budget but
     // not this model-origin budget.
     std::optional<std::uint32_t> budget;
+    // Without a budget, where the chat template can end thinking: the thinking is closed early
+    // enough that a quarter of the output limit (requested_output_tokens, or less where the
+    // context leaves less) stays for the answer, else a long thinking can spend the whole limit
+    // and leave no answer. A limit too small for the control suffix and an answer takes none.
+    // The engine leaves it true only where it set the budget.
+    bool answer_room = false;
 };
+
+// The share of the output limit answer_room keeps for the answer: 1 / kAnswerRoomShare.
+inline constexpr std::uint32_t kAnswerRoomShare = 4;
 
 // A request's speculation in a speculative engine: its draft depth, from 1 up to the engine's
 // window (SpeculativeOptions: the largest of draft_tokens and request_draft_tokens), or 0 for
@@ -689,6 +701,13 @@ struct ToolCallConstraintTool {
     std::string parameters_json;
     bool strict = false;
 };
+
+// Styles of a structural tag's json_schema format for a strict tool's arguments in call syntaxes
+// XGrammar has no style for (Gemma 4, Pythonic, ATEM). The constraint compiler turns such a
+// format into the grammar of that syntax's arguments held to the schema.
+inline constexpr std::string_view kGemma4ArgumentStyle   = "ninferno_gemma4";
+inline constexpr std::string_view kPythonicArgumentStyle = "ninferno_pythonic";
+inline constexpr std::string_view kAtemArgumentStyle     = "ninferno_atem";
 
 struct OutputConstraintSpec {
     OutputConstraintKind kind = OutputConstraintKind::JsonObject;
@@ -1308,6 +1327,9 @@ struct SpeculativeStats {
 
 struct ThinkingBudgetStats {
     std::optional<std::uint32_t> configured_budget;
+    // The budget is the engine's answer room (ThinkingControlOptions::answer_room), not one the
+    // request or the server named.
+    bool answer_room = false;
     // Model-origin tokens accepted while thinking remained open, including the token that closes
     // it; counted for every response that starts in thinking, with or without a budget.
     std::uint32_t model_thinking_tokens = 0;

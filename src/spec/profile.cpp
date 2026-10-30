@@ -17,6 +17,22 @@
 #include <system_error>
 
 namespace ninferno::spec {
+
+std::set<Mode> drafting_modes(const Profile& profile) {
+    std::set<Mode> out;
+    for (const Measurement& m : profile.measurements) {
+        if (m.config.enabled()) { out.insert(m.config.mode); }
+    }
+    if (profile.measurements.empty()) {
+        for (const Choice* c : {&profile.overall, &profile.thinking, &profile.non_thinking}) {
+            if (c->config.enabled()) { out.insert(c->config.mode); }
+        }
+        if (profile.fit_fallback && profile.fit_fallback->config.enabled()) {
+            out.insert(profile.fit_fallback->config.mode);
+        }
+    }
+    return out;
+}
 namespace {
 
 using Json = nlohmann::json;
@@ -30,6 +46,8 @@ Measurement& add_into(Measurement& total, const Measurement& m) {
     total.accepted += m.accepted;
     total.compared += m.compared;
     total.identical += m.identical;
+    total.graph_kernels += m.graph_kernels;
+    total.graph_rounds += m.graph_rounds;
     return total;
 }
 
@@ -51,6 +69,9 @@ aggregate(const std::vector<Measurement>& all) {
 double seconds_per_token(const Measurement& m) {
     return m.tokens > 0 ? m.seconds / double(m.tokens) : 0.0;
 }
+
+// A section's seconds per token weighted by its share of the mix (section_weight).
+double weighted_cost(const Measurement& m) { return section_weight(m.family) * seconds_per_token(m); }
 
 Choice plain_choice(double plain_tok_s) {
     Choice c;
@@ -141,6 +162,14 @@ std::optional<Choice> fit_fallback_from(const Json& doc) {
 
 } // namespace
 
+double section_weight(std::string_view family) {
+    if (family == "code") { return 7.0; }
+    if (family == "math") { return 4.0; }
+    if (family == "prose") { return 8.0; }
+    if (family == "thinking") { return 1.0; }
+    return 0.0;
+}
+
 void select(Profile& profile, const SelectOptions& options) {
     const auto table = aggregate(profile.measurements);
     const auto get   = [&](const std::string& label, const std::string& family) -> const Measurement* {
@@ -155,8 +184,8 @@ void select(Profile& profile, const SelectOptions& options) {
     const double gain = 1.0 + options.min_gain;
 
     // Drafters first: a mode whose drafter was rejected offers no configuration. A drafter is
-    // judged on the whole mix: its best configuration's speed over every section (each section
-    // weighs the same), never on the one section it suits.
+    // judged on every section at once, each weighing the same (a wrong drafter loses on all of
+    // them; one that loses only on prose still serves thinking), never on the one section it suits.
     std::set<std::string> rejected_modes;
     for (auto& d : profile.drafters) {
         double best = 0, drafted = 0, accepted = 0;
@@ -220,7 +249,7 @@ void select(Profile& profile, const SelectOptions& options) {
         const auto same_drafter = [](const SpecConfig& a, const SpecConfig& b) {
             return a.mode == b.mode && a.proposal_head == b.proposal_head;
         };
-        // A default over corpus sections: equal weight per section, one token of each.
+        // A default over corpus sections, each weighted by its share of the mix (section_weight).
         const auto group = [&](const std::vector<std::string>& wanted) {
             std::vector<std::string> members;
             for (const auto& f : wanted) {
@@ -228,12 +257,15 @@ void select(Profile& profile, const SelectOptions& options) {
             }
             Choice best;
             if (members.empty()) { return best; }
-            double plain_cost = 0;
-            for (const auto& f : members) { plain_cost += seconds_per_token(*get("plain", f)); }
-            best = plain_choice(double(members.size()) / plain_cost);
+            double plain_cost = 0, weight = 0;
+            for (const auto& f : members) {
+                plain_cost += weighted_cost(*get("plain", f));
+                weight += section_weight(f);
+            }
+            best = plain_choice(weight / plain_cost);
             struct Candidate {
                 SpecConfig config;
-                double cost = 0, seconds = 0, rounds = 0, drafted = 0, accepted = 0;
+                double cost = 0, round_cost = 0, rounds = 0, drafted = 0, accepted = 0;
             };
             std::vector<Candidate> candidates;
             for (const auto& label : labels) {
@@ -248,8 +280,10 @@ void select(Profile& profile, const SelectOptions& options) {
                         complete = false;
                         break;
                     }
-                    c.cost += seconds_per_token(*m);
-                    c.seconds += m->seconds;
+                    c.cost += weighted_cost(*m);
+                    if (m->rounds > 0) {
+                        c.round_cost += section_weight(f) * m->seconds / double(m->rounds);
+                    }
                     c.rounds += double(m->rounds);
                     c.drafted += double(m->drafted);
                     c.accepted += double(m->accepted);
@@ -278,14 +312,14 @@ void select(Profile& profile, const SelectOptions& options) {
                 }
             }
             best.config           = chosen->config;
-            best.tok_s            = double(members.size()) / chosen->cost;
+            best.tok_s            = weight / chosen->cost;
             best.tokens_per_round = chosen->rounds > 0
                                         ? (chosen->accepted + chosen->rounds) / chosen->rounds
                                         : 1.0;
             best.acceptance = chosen->drafted > 0 ? chosen->accepted / chosen->drafted : 0.0;
             best.floor_tokens_per_round =
                 chosen->rounds > 0
-                    ? (chosen->seconds / chosen->rounds) / (plain_cost / double(members.size()))
+                    ? chosen->round_cost / plain_cost
                     : 0.0;
             return best;
         };
@@ -353,7 +387,7 @@ Json to_json(const Profile& p) {
     }
     Json measurements = Json::array();
     for (const auto& m : p.measurements) {
-        measurements.push_back(Json{{"config", m.config.label()},
+        Json& j = measurements.emplace_back(Json{{"config", m.config.label()},
                                     {"family", m.family},
                                     {"prompts", m.prompts},
                                     {"tokens", m.tokens},
@@ -366,6 +400,10 @@ Json to_json(const Profile& p) {
                                     {"acceptance", m.acceptance()},
                                     {"compared", m.compared},
                                     {"identical", m.identical}});
+        if (m.graph_kernels > 0 && m.graph_rounds > 0) {
+            j["graph_kernels"] = m.graph_kernels;
+            j["graph_rounds"]  = m.graph_rounds;
+        }
     }
     Json out{{"schema", 1},
              {"key",
@@ -383,6 +421,11 @@ Json to_json(const Profile& p) {
              {"drafters", drafters},
              {"skipped", p.skipped},
              {"measurements", measurements}};
+    if (!p.proposal_rows.empty()) {
+        Json rows = Json::object();
+        for (const auto& [mode, n] : p.proposal_rows.rows) { rows[mode] = n; }
+        out["proposal_rows"] = std::move(rows);
+    }
     if (p.served) { out["served"] = served_json(*p.served); }
     if (p.portable) { out["portable"] = served_json(*p.portable); }
     if (p.fit_fallback) { out["fit_fallback"] = choice_json(*p.fit_fallback); }
@@ -406,6 +449,15 @@ Profile profile_from_json(const Json& doc) {
     p.created         = doc.value("created", std::string());
     p.settings        = doc.value("settings", std::string());
     p.tune_seconds    = doc.value("tune_seconds", 0.0);
+    if (const auto it = doc.find("proposal_rows"); it != doc.end()) {
+        for (const auto& [mode, n] : it->items()) {
+            if (!n.is_number_unsigned() || n.get<std::uint64_t>() == 0) {
+                throw std::runtime_error("spec profile: proposal_rows of " + mode +
+                                         " is no positive row count");
+            }
+            p.proposal_rows.rows[mode] = n.get<std::uint64_t>();
+        }
+    }
     p.overall         = choice_from(doc.at("default"));
     p.non_thinking    = choice_from(doc.at("non_thinking"));
     p.thinking        = choice_from(doc.at("thinking"));
@@ -435,6 +487,8 @@ Profile profile_from_json(const Json& doc) {
         x.accepted  = m.value("accepted", std::int64_t{0});
         x.compared  = m.value("compared", std::int64_t{0});
         x.identical = m.value("identical", std::int64_t{0});
+        x.graph_kernels = m.value("graph_kernels", std::int64_t{0});
+        x.graph_rounds  = m.value("graph_rounds", std::int64_t{0});
         p.measurements.push_back(std::move(x));
     }
     p.skipped = doc.value("skipped", std::vector<std::string>{});
@@ -496,6 +550,29 @@ const Choice& pick(const Profile& profile, std::optional<bool> thinking) {
     if (profile.disabled) { return plain; }
     if (thinking) { return *thinking ? profile.thinking : profile.non_thinking; }
     return profile.overall;
+}
+
+double per_request_gain(const Profile& profile, bool thinking_default) {
+    const Choice& fixed = pick(profile, thinking_default);
+    const Choice& own   = pick(profile, !thinking_default);
+    if (fixed.config.label() == own.config.label()) { return 1.0; }
+    const auto table = aggregate(profile.measurements);
+    const std::vector<std::string> sections =
+        thinking_default ? std::vector<std::string>{"math", "code", "prose"}
+                         : std::vector<std::string>{"thinking"};
+    // A section's seconds per token at a configuration; 0 when not measured.
+    const auto cost = [&](const SpecConfig& config) {
+        double out = 0;
+        for (const auto& f : sections) {
+            const auto it = table.find({config.enabled() ? config.label() : std::string("plain"), f});
+            if (it == table.end() || it->second.tokens == 0) { return 0.0; }
+            out += weighted_cost(it->second);
+        }
+        return out;
+    };
+    const double at_fixed = cost(fixed.config);
+    const double at_own   = cost(own.config);
+    return at_fixed > 0 && at_own > 0 ? at_fixed / at_own : 1.0;
 }
 
 bool memory_in_range(std::string_view range, std::uint64_t memory_bytes) {

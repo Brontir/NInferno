@@ -1259,10 +1259,14 @@ int test_aggregate_response() {
     masked.metrics.speculative_config                    = "dflash:7";
     masked.metrics.speculative_selection                 = "explicit";
     masked.metrics.speculative_constraint_fallback_steps = 3;
+    masked.metrics.speculative_rounds                    = 40;
+    masked.metrics.speculative_fallback_steps            = 2;
     const Json masked_speculation =
         Json::parse(make_chat_completion_response(identity(), masked))["timings"]["speculation"];
     failures += check(masked_speculation["constraint_fallback_steps"] == 3,
                       "timings.speculation counts the rounds a constraint ran without drafts");
+    failures += check(masked_speculation["rounds"] == 40 && masked_speculation["fallback_steps"] == 2,
+                      "timings.speculation counts the request's rounds and fallback steps");
 
     outcome.text.clear();
     outcome.tool_calls.push_back(ninferno::GeneratedToolCall{

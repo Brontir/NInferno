@@ -769,7 +769,9 @@ void vec_launch(const VecArgs& args, int columns, cudaStream_t stream) {
     }
 }
 
-// One warp per 32 values of a column: amax and sum by shuffles, ggml's q8_1 rounding.
+// One warp per 32 values of a column: amax by shuffles, ggml's q8_1 rounding, and the block's sum
+// of its codes (d * sum q, as ggml_mmq.cu's quantizer: the offset term of a format with one must see
+// the activation the dot sees), held to binary16's range.
 __global__ void vec_quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx, int k,
                                     std::int8_t* __restrict__ qs, half2* __restrict__ ds) {
     const int column = blockIdx.y;
@@ -781,16 +783,25 @@ __global__ void vec_quantize_kernel(const __nv_bfloat16* __restrict__ x, int ldx
     const std::int64_t at = std::int64_t(column) * k + 32 * slice + lane;
     const float v = __bfloat162float(x[std::int64_t(column) * ldx + 32 * slice + lane]);
     float amax    = fabsf(v);
-    float sum     = v;
 #pragma unroll
     for (int o = 16; o > 0; o >>= 1) {
         amax = fmaxf(amax, __shfl_xor_sync(0xFFFFFFFFu, amax, o));
-        sum += __shfl_xor_sync(0xFFFFFFFFu, sum, o);
     }
     // An all-zero group stores zero codes and a zero scale (ggml divides by amax).
-    const float d_inv = amax > 0.0f ? 127.0f / amax : 0.0f;
-    qs[at]            = static_cast<std::int8_t>(roundf(v * d_inv));
-    if (lane == 0) ds[std::int64_t(column) * (k / 32) + slice] = make_half2(amax / 127.0f, sum);
+    const float d_inv  = amax > 0.0f ? 127.0f / amax : 0.0f;
+    const std::int8_t q = static_cast<std::int8_t>(roundf(v * d_inv));
+    qs[at]             = q;
+    float sum          = static_cast<float>(q);
+#pragma unroll
+    for (int o = 16; o > 0; o >>= 1) {
+        sum += __shfl_xor_sync(0xFFFFFFFFu, sum, o);
+    }
+    constexpr float kHalfMax = 65504.0f;
+    const float d            = amax / 127.0f;
+    if (lane == 0) {
+        ds[std::int64_t(column) * (k / 32) + slice] =
+            make_half2(fminf(d, kHalfMax), fminf(fmaxf(d * sum, -kHalfMax), kHalfMax));
+    }
 }
 
 } // namespace

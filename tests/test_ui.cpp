@@ -6,6 +6,8 @@
 #include "core/sys.h"
 #include "spec/fingerprint.h"
 #include "spec/profile.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_dry_run.h"
 #include "ui/access.h"
 #include "ui/app.h"
 #include "ui/browser.h"
@@ -193,8 +195,8 @@ void test_access() {
 
 // The hub cache's directory names, both ways, as the page lists and deletes converted models.
 void test_hub_directories() {
-    using ninferno::convert::hub_repo_directory;
-    using ninferno::convert::hub_repo_of_directory;
+    using ninferno::hub_repo_directory;
+    using ninferno::hub_repo_of_directory;
     check(hub_repo_directory("Qwen/Qwen3.6-27B") == "models--Qwen--Qwen3.6-27B",
           "repo to directory");
     check(hub_repo_of_directory("models--Qwen--Qwen3.6-27B") == "Qwen/Qwen3.6-27B",
@@ -220,6 +222,25 @@ void test_launch() {
     request.max_context                 = 32768;
     request.spec                        = "mtp";
     request.precision                   = "exact";
+    {
+        // Under Auto the planned own context is the automatic context's ceiling.
+        LaunchRequest capped   = request;
+        capped.max_context     = 0;
+        capped.max_context_cap = 49152;
+        const auto capped_argv = make_launch(options, capped).argv;
+        const auto at = std::find(capped_argv.begin(), capped_argv.end(), "--max-context-cap");
+        check(at != capped_argv.end() && at + 1 != capped_argv.end() && *(at + 1) == "49152" &&
+                  std::find(capped_argv.begin(), capped_argv.end(), "--max-context") ==
+                      capped_argv.end(),
+              "a planned context launches as --max-context-cap");
+        LaunchRequest both   = request;
+        both.max_context_cap = 49152;
+        bool refused         = false;
+        try {
+            (void)make_launch(options, both);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "max_context with max_context_cap is refused");
+    }
     const auto spec                     = make_launch(options, request);
     const std::vector<std::string> want = {"/opt/ninferno/bin/ninferno-serve",
                                            "unsloth/Qwen3.5-9B-GGUF",
@@ -415,6 +436,33 @@ void test_launch() {
     bad           = request;
     bad.precision = "fp2";
     refused(bad, "bad precision");
+    bad             = request;
+    bad.activations = "fp4";
+    refused(bad, "bad activations");
+    {
+        // A mode the user pinned is ninferno-serve's --activations; none named leaves the choice
+        // to the server (no flag); the exact preset keeps exact.
+        const auto value_after = [](const std::vector<std::string>& argv, const std::string& flag) {
+            const auto at = std::find(argv.begin(), argv.end(), flag);
+            return at == argv.end() || at + 1 == argv.end() ? std::string() : *(at + 1);
+        };
+        LaunchRequest serve = request;
+        serve.prepare_only  = false; // a start (the request above became a prepare)
+        LaunchRequest pinned = serve;
+        pinned.precision.clear();
+        pinned.activations = "int8";
+        const auto argv    = make_launch(options, pinned).argv;
+        check(value_after(argv, "--activations") == "int8" && value_after(argv, "--kv-dtype").empty(),
+              "activations int8: --activations int8, the KV codec still automatic");
+        LaunchRequest automatic = serve;
+        automatic.precision.clear();
+        check(value_after(make_launch(options, automatic).argv, "--activations").empty(),
+              "no mode named: no --activations (the server's choice)");
+        LaunchRequest preset = serve;
+        preset.activations   = "fast";
+        check(value_after(make_launch(options, preset).argv, "--activations") == "exact",
+              "the exact preset keeps exact");
+    }
 }
 
 void test_catalog() {
@@ -525,6 +573,31 @@ void test_catalog() {
     check(estimate(catalog, fitted, gb203, small_sizes).recommended, "16 GB: recommended with IQ3");
     check(with_fitting_quant(*qwen, blackwell, listings).sources.size() == qwen->sources.size(),
           "32 GB: nothing added when a source fits");
+    // The plan without the weights decides where it can say: it refuses IQ3 and keeps IQ2 (the
+    // weights against the budget would take IQ3), and where it cannot (nullopt) the budget stands.
+    const QuantFits planned = [](const std::string&,
+                                 const nlohmann::json& q) -> std::optional<bool> {
+        const std::string label = q.value("quant", std::string());
+        if (label == "UD-IQ3_XXS") { return false; }
+        if (label == "UD-IQ2_M") { return true; }
+        return std::nullopt;
+    };
+    const auto by_plan = with_fitting_quant(*qwen, gb203, listings, planned);
+    check(by_plan.sources.size() == qwen->sources.size() + 1 &&
+              by_plan.sources.back().quant == "UD-IQ2_M",
+          "16 GB: the plan's fit decides which quant is added");
+    const QuantFits unknown = [](const std::string&, const nlohmann::json&) -> std::optional<bool> {
+        return std::nullopt;
+    };
+    check(with_fitting_quant(*qwen, gb203, listings, unknown).sources.back().quant == "UD-IQ3_XXS",
+          "16 GB: without the plan's word the weights against the budget decide");
+    // The rule's pick, where the repository is planned, is the quant the catalog adds.
+    const QuantPickOf rule = [](const std::string&) -> std::optional<std::string> {
+        return std::string("UD-IQ2_M");
+    };
+    check(with_fitting_quant(*qwen, gb203, listings, unknown, rule).sources.back().quant ==
+              "UD-IQ2_M",
+          "16 GB: the rule's pick is added");
 
     // The chat proxy names the served model when the page sends none, and keeps one it sends.
     check(first_model_id(R"({"object":"list","data":[{"id":"qwen3.5-4b","object":"model"}]})") ==
@@ -654,7 +727,8 @@ void test_catalog() {
         fs::create_directories(repo / "refs");
         fs::create_directories(repo / "ninferno/c0ffee");
         std::ofstream(repo / "refs/main") << "c0ffee\n";
-        for (const char* name : {"m-Q4_K_M.qwen3_5_bf16.ninferno", "m-Q8_0.qwen3_5_bf16.ninferno"}) {
+        for (const char* name : {"m-Q4_K_M.qwen3_5_bf16.ninferno", "m-Q8_0.qwen3_5_bf16.ninferno",
+                                 "m-UD-Q4_K_M.qwen3_5_bf16.ninferno"}) {
             std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
             std::ofstream(repo / "ninferno/c0ffee" / (std::string(name) + ".conversion.json"))
                 << "{}";
@@ -667,191 +741,247 @@ void test_catalog() {
                   kept_artifact(root, "org/m-GGUF", "", "8bit", "")->filename() ==
                       "m-Q8_0.qwen3_5_bf16.ninferno",
               "a kept artifact by label and by width");
+        // A label inside another (Q4_K_M of UD-Q4_K_M): the conversion whose own label it is.
+        const auto ud = kept_artifact(root, "org/m-GGUF", "", "UD-Q4_K_M", "");
+        check(ud && ud->filename() == "m-UD-Q4_K_M.qwen3_5_bf16.ninferno",
+              "a kept artifact by its exact label beside a longer one");
+        // The same of --vision conversions (<gguf-stem>.vision.<recipe>).
+        const auto vision = root / "models--org--v-GGUF";
+        fs::create_directories(vision / "refs");
+        fs::create_directories(vision / "ninferno/c0ffee");
+        std::ofstream(vision / "refs/main") << "c0ffee\n";
+        for (const char* name : {"v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
+                                 "v-UD-Q4_K_M.vision.qwen3_5_bf16.ninferno"}) {
+            std::ofstream(vision / "ninferno/c0ffee" / name) << "x";
+            std::ofstream(vision / "ninferno/c0ffee" / (std::string(name) + ".conversion.json"))
+                << "{}";
+        }
+        const auto vq4 = kept_artifact(root, "org/v-GGUF", "", "Q4_K_M", "");
+        check(vq4 && vq4->filename() == "v-Q4_K_M.vision.qwen3_5_bf16.ninferno",
+              "a kept --vision artifact by its exact label beside a longer one");
         check(!kept_artifact(root, "org/m-GGUF", "", "", "") &&
                   !kept_artifact(root, "org/m-GGUF", "", "IQ2_XXS", "") &&
                   !kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", "other_recipe") &&
                   !kept_artifact(root, "org/m-GGUF", "dev", "Q4_K_M", "") &&
                   !kept_artifact(root, "org/other", "", "Q4_K_M", ""),
               "no kept artifact: two match, unfinished, another recipe, ref or repository");
+        // The user kept this conversion while the hub named another commit: until it moves again.
+        using ninferno::convert::accept_converted;
+        using ninferno::convert::converted_accepted;
+        const auto commit_dir = repo / "ninferno/c0ffee";
+        check(!converted_accepted(commit_dir, "main", "d00d"), "nothing kept yet");
+        accept_converted(commit_dir, "main", "d00d");
+        check(converted_accepted(commit_dir, "main", "d00d") &&
+                  !converted_accepted(commit_dir, "main", "beef") &&
+                  !converted_accepted(commit_dir, "dev", "d00d"),
+              "kept for that ref and hub commit only");
+        // A conversion that carries drafters (a companion component, or a manifest beside it, as
+        // --with-drafters wrote them) is started with them: the plan counts them.
+        using ninferno::convert::cached_conversion_has_drafters;
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"components": {"text": {}, "mtp": {}, "dflash": {}}})";
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"components": {"text": {}, "mtp": {}, "vision": {}}})";
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "UD-Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "IQ2_XXS") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "dev", "Q4_K_M") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", ""),
+              "a conversion with a companion drafter; its own MTP and vision are no drafters");
+        // A manifest of this artifact with a drafter still there (the start serves it); a failed
+        // one, one whose artifact is gone, or another artifact's manifest: none.
+        std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.conversion.json")
+            << R"({"artifact_id": "a8", "components": {"text": {}, "mtp": {}}})";
+        const auto assistant = repo / "ninferno/c0ffee/assistant.ninferno";
+        const auto manifest  = [&](const std::string& id, const std::string& status) {
+            std::ofstream(repo / "ninferno/c0ffee/m-Q8_0.qwen3_5_bf16.ninferno.speculation.json")
+                << R"({"schema": 1, "target": {"artifact_id": ")" << id
+                << R"("}, "drafters": [{"name": "mtp", "kind": "mtp", "component": "mtp", "status": "embedded"},
+                   {"name": "assistant", "kind": "gemma4_assistant", "status": ")"
+                << status << R"(", "artifact": ")" << assistant.generic_string() << R"("}]})";
+        };
+        std::ofstream(assistant) << "x";
+        manifest("a8", "attached");
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a conversion with a usable drafter attached beside it");
+        manifest("a8", "failed: no network");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a manifest whose separate drafter failed (its MTP layers are no drafter)");
+        manifest("other", "attached");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "another artifact's manifest");
+        manifest("a8", "attached");
+        fs::remove(assistant);
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q8_0"),
+              "a manifest whose drafter artifact is gone");
+        // What the rule reads, stamped: an attached drafter, the commits downloaded, a ref.
+        {
+            using ninferno::convert::conversions_stamp;
+            const auto before = conversions_stamp(root, "org/m-GGUF");
+            check(conversions_stamp(root, "org/m-GGUF") == before, "a stamp of the same cache");
+            std::ofstream(assistant) << "x";
+            const auto attached = conversions_stamp(root, "org/m-GGUF");
+            fs::create_directories(repo / "snapshots/c0ffee");
+            const auto downloaded = conversions_stamp(root, "org/m-GGUF");
+            std::ofstream(repo / "refs/dev") << "c0ffee\n";
+            const auto moved = conversions_stamp(root, "org/m-GGUF");
+            check(attached != before && downloaded != attached && moved != downloaded,
+                  "a drafter, a download and a ref each change the stamp");
+            fs::remove_all(repo / "snapshots");
+            fs::remove(repo / "refs/dev");
+            fs::remove(assistant);
+            check(conversions_stamp(root, "org/m-GGUF") == before, "and back");
+        }
+        // The conversion the start takes: its --vision kind, its recipe.
+        const auto write = [&](const std::string& name, const char* components) {
+            std::ofstream(repo / "ninferno/c0ffee" / name) << "x";
+            std::ofstream(repo / "ninferno/c0ffee" / (name + ".conversion.json"))
+                << "{\"components\": {" << components << "}}";
+        };
+        write("m-Q6_K.qwen3_5_bf16.ninferno", R"("text": {}, "mtp": {})");
+        write("m-Q6_K.vision.qwen3_5_bf16.ninferno", R"("text": {}, "vision": {}, "dflash": {})");
+        write("m-Q5_K_M.qwen3_5_bf16.ninferno", R"("text": {}, "dflash": {})");
+        write("m-Q5_K_M.qwen3_5_q8.ninferno", R"("text": {})");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K") &&
+                  cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q6_K", "", true),
+              "the text conversion without --vision, the --vision one with it");
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M", "", true),
+              "--vision without a --vision conversion: the text one (no projector)");
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M") &&
+                  cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_bf16") &&
+                  !cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q5_K_M", "qwen3_5_q8"),
+              "the named recipe's conversion; two recipes unnamed: what both carry");
         fs::create_directories(repo / "snapshots/c0ffee");
         check(!kept_artifact(root, "org/m-GGUF", "", "Q4_K_M", ""),
               "with its download still there, the usual path asks the hub");
+        // Its download there, an older conversion revision is converted again (text only without
+        // --with-drafters): no drafters; one of the current revision keeps them.
+        check(!cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
+              "an older revision with its download there is converted again");
+        std::ofstream(repo / "ninferno/c0ffee/m-Q4_K_M.qwen3_5_bf16.ninferno.revision") << "5\n";
+        check(cached_conversion_has_drafters(root, "org/m-GGUF", "", "Q4_K_M"),
+              "a current conversion's drafters, its download there");
         fs::remove_all(root);
     }
-    // KV per token from GGUF metadata: a plain stack, a hybrid one, a sliding-window one.
+    // A prepare that downloads a moved branch's new commit and removes the old conversion; only a
+    // prepare does.
     {
-        const nlohmann::json dense{
-            {"general.architecture", "llama"},  {"llama.block_count", 32},
-            {"llama.context_length", 131072},   {"llama.embedding_length", 4096},
-            {"llama.attention.head_count", 32}, {"llama.attention.head_count_kv", 8}};
-        const auto kv = kv_model_of_gguf(dense);
-        check(kv.known && kv.full_bytes_per_token == 2 * 32 * 8 * 256 &&
-                  kv.native_context == 131072,
-              "KV of a dense GQA stack (INT8: 64 KiB per token)");
-        check(kv_bytes(kv, 1000) == 2 * 1000.0 * 32 * 8 * 256, "KV bytes scale with the context");
-        const nlohmann::json hybrid{
-            {"general.architecture", "qwen35"},    {"qwen35.block_count", 32},
-            {"qwen35.full_attention_interval", 4}, {"qwen35.attention.head_count", 16},
-            {"qwen35.attention.head_count_kv", 4}, {"qwen35.attention.key_length", 256},
-            {"qwen35.attention.value_length", 256}};
-        check(kv_model_of_gguf(hybrid).full_bytes_per_token == 2 * 8 * 4 * 512,
-              "KV of a hybrid stack: its attention layers only");
-        const nlohmann::json swa{
-            {"general.architecture", "gemma4"},
-            {"gemma4.block_count", 4},
-            {"gemma4.attention.head_count", 8},
-            {"gemma4.attention.head_count_kv", 2},
-            {"gemma4.attention.key_length", 128},
-            {"gemma4.attention.sliding_window", 1024},
-            {"gemma4.attention.sliding_window_pattern", {true, true, true, false}}};
-        const auto s = kv_model_of_gguf(swa);
-        check(s.full_bytes_per_token == 2 * 2 * 256 &&
-                  s.window_bytes_per_token == 2 * 3 * 2 * 256 &&
-                  kv_bytes(s, 4096) == 2 * (4096.0 * 512 + 1024.0 * 1536),
-              "KV of a sliding-window stack stops at the window");
-        check(!kv_model_of_gguf(nlohmann::json{{"general.architecture", "x"}}).known,
-              "unknown geometry");
-
-        // The same from config.json: a hybrid's layer_types under text_config (Qwen3.5: one full
-        // layer in four), gpt-oss's sliding layers, NemotronH's pattern, a dense model's
-        // hidden_size / heads, a global head geometry; latent attention unknown.
-        const nlohmann::json qwen{
-            {"text_config",
-             {{"num_hidden_layers", 8},
-              {"num_attention_heads", 16},
-              {"num_key_value_heads", 4},
-              {"head_dim", 256},
-              {"max_position_embeddings", 262144},
-              {"layer_types",
-               {"linear_attention", "linear_attention", "linear_attention", "full_attention",
-                "linear_attention", "linear_attention", "linear_attention", "full_attention"}}}}};
-        const auto q = kv_model_of_config(qwen);
-        check(q.known && q.full_bytes_per_token == 2 * 2 * 4 * 2 * 256 &&
-                  q.window_bytes_per_token == 0 && q.native_context == 262144,
-              "config.json KV: full layers of a hybrid under text_config");
-        const auto g = kv_model_of_config(
-            {{"num_hidden_layers", 4},
-             {"num_attention_heads", 64},
-             {"num_key_value_heads", 8},
-             {"head_dim", 64},
-             {"sliding_window", 128},
-             {"layer_types",
-              {"sliding_attention", "full_attention", "sliding_attention", "full_attention"}}});
-        check(g.full_bytes_per_token == 2 * 2 * 8 * 2 * 64 &&
-                  g.window_bytes_per_token == 2 * 2 * 8 * 2 * 64 && g.window == 128 &&
-                  kv_bytes(g, 4096) == 2 * (4096.0 * 2048 + 128.0 * 2048),
-              "config.json KV: sliding layers stop at the window");
-        const auto n = kv_model_of_config({{"num_hidden_layers", 6},
-                                           {"num_attention_heads", 32},
-                                           {"num_key_value_heads", 2},
-                                           {"head_dim", 128},
-                                           {"hybrid_override_pattern", "M-M*-M"}});
-        check(n.full_bytes_per_token == 2 * 2 * 2 * 128,
-              "config.json KV: NemotronH's attention layer");
-        const auto d = kv_model_of_config({{"num_hidden_layers", 2},
-                                           {"num_attention_heads", 32},
-                                           {"num_key_value_heads", 8},
-                                           {"hidden_size", 4096}});
-        check(d.full_bytes_per_token == 2 * 2 * 8 * 2 * 128,
-              "config.json KV: head_dim from the width");
-        const auto w =
-            kv_model_of_config({{"num_hidden_layers", 2},
-                                {"num_attention_heads", 16},
-                                {"num_key_value_heads", 8},
-                                {"head_dim", 256},
-                                {"global_head_dim", 512},
-                                {"num_global_key_value_heads", 2},
-                                {"sliding_window", 1024},
-                                {"layer_types", {"sliding_attention", "full_attention"}}});
-        check(w.full_bytes_per_token == 2 * 2 * 2 * 512 &&
-                  w.window_bytes_per_token == 2 * 8 * 2 * 256,
-              "config.json KV: the full layers' own geometry");
-        check(!kv_model_of_config({{"num_hidden_layers", 2},
-                                   {"num_attention_heads", 16},
-                                   {"head_dim", 128},
-                                   {"kv_lora_rank", 512}})
-                   .known,
-              "config.json KV: latent attention is not estimated");
-        // gpt-oss-20b: 20.9B parameters, 3.6B a token reads (4 of 32 experts).
-        const auto o = kv_model_of_config({{"num_hidden_layers", 24},
-                                           {"num_attention_heads", 64},
-                                           {"num_key_value_heads", 8},
-                                           {"head_dim", 64},
-                                           {"hidden_size", 2880},
-                                           {"intermediate_size", 2880},
-                                           {"num_local_experts", 32},
-                                           {"num_experts_per_tok", 4},
-                                           {"vocab_size", 201088}});
-        check(o.params > 20.5e9 && o.params < 21.5e9 && o.active_params > 3.3e9 &&
-                  o.active_params < 3.9e9 && o.experts_used == 0.125 && o.routed_share > 0.85,
-              "config.json shape: a mixture of experts' total and active parameters");
-        const auto t       = kv_model_of_config({{"num_hidden_layers", 2},
-                                                 {"num_attention_heads", 32},
-                                                 {"num_key_value_heads", 8},
-                                                 {"hidden_size", 4096},
-                                                 {"intermediate_size", 14336},
-                                                 {"vocab_size", 1000},
-                                                 {"tie_word_embeddings", true}});
-        const double layer = 4096.0 * 128 * (64 + 16) + 3.0 * 4096 * 14336;
-        check(t.params == 2 * layer + 1000.0 * 4096 && t.active_params == t.params &&
-                  t.experts_used == 0,
-              "config.json shape: a dense model reads all of it");
-        // Qwen3.6 35B's GGUF: 10 attention layers keep bf16 KV, 30 GatedDeltaNet layers a 2 MiB
-        // fp32 state each (what serve's capacity line showed on the 4090: 60 MiB a sequence).
-        const auto h = kv_model_of_gguf({{"general.architecture", "qwen35moe"},
-                                         {"qwen35moe.block_count", 40},
-                                         {"qwen35moe.embedding_length", 2048},
-                                         {"qwen35moe.attention.head_count", 16},
-                                         {"qwen35moe.attention.head_count_kv", 2},
-                                         {"qwen35moe.attention.key_length", 256},
-                                         {"qwen35moe.attention.value_length", 256},
-                                         {"qwen35moe.full_attention_interval", 4},
-                                         {"qwen35moe.expert_count", 256},
-                                         {"qwen35moe.expert_used_count", 8},
-                                         {"qwen35moe.expert_feed_forward_length", 512},
-                                         {"qwen35moe.expert_shared_feed_forward_length", 512},
-                                         {"qwen35moe.ssm.conv_kernel", 4},
-                                         {"qwen35moe.ssm.state_size", 128},
-                                         {"qwen35moe.ssm.group_count", 16},
-                                         {"qwen35moe.ssm.time_step_rank", 32},
-                                         {"qwen35moe.ssm.inner_size", 4096}});
-        check(h.full_layers == 10 && h.full_bytes_per_token == 10 * 2 * 512 * 2 &&
-                  h.state_bytes == 30 * (4096.0 * 128 * 4 + 3 * (4096 + 2 * 16 * 128) * 2) &&
-                  h.workspace_bytes == 1024.0 * (12 * 2048 + 3 * (8 * 512 + 512)) * 2,
-              "GGUF memory: a hybrid's KV layers, recurrent states and workspace");
-        // NemotronH: attention, Mamba2 and MoE layers apart (6 + 24 + 23 of 53), not every layer
-        // with experts.
-        std::vector<int> kv_heads(53, 0), ffn(53, 0);
-        for (int i : {5, 12, 19, 26, 33, 42}) { kv_heads[static_cast<std::size_t>(i)] = 2; }
-        for (int i = 1, n = 0; i < 53 && n < 23; i += 2) {
-            if (kv_heads[static_cast<std::size_t>(i)] == 0) {
-                ffn[static_cast<std::size_t>(i)] = 1856;
-                ++n;
-            }
-        }
-        const auto nh =
-            kv_model_of_gguf({{"general.architecture", "nemotron_h_moe"},
-                              {"nemotron_h_moe.block_count", 53},
-                              {"nemotron_h_moe.embedding_length", 2688},
-                              {"nemotron_h_moe.attention.head_count", 32},
-                              {"nemotron_h_moe.attention.head_count_kv", kv_heads},
-                              {"nemotron_h_moe.attention.key_length", 128},
-                              {"nemotron_h_moe.attention.value_length", 128},
-                              {"nemotron_h_moe.feed_forward_length", ffn},
-                              {"nemotron_h_moe.expert_count", 128},
-                              {"nemotron_h_moe.expert_used_count", 6},
-                              {"nemotron_h_moe.expert_feed_forward_length", 1856},
-                              {"nemotron_h_moe.expert_shared_feed_forward_length", 3712},
-                              {"nemotron_h_moe.vocab_size", 131072},
-                              {"nemotron_h_moe.ssm.conv_kernel", 4},
-                              {"nemotron_h_moe.ssm.state_size", 128},
-                              {"nemotron_h_moe.ssm.group_count", 8},
-                              {"nemotron_h_moe.ssm.inner_size", 4096},
-                              {"nemotron_h_moe.ssm.time_step_rank", 64}});
-        check(nh.full_layers == 6 && nh.params > 28e9 && nh.params < 34e9 &&
-                  nh.active_params > 2.5e9 && nh.active_params < 4.5e9 &&
-                  nh.state_bytes > 24 * 2.0 * 1024 * 1024,
-              "GGUF shape: NemotronH counts each layer by its kind");
+        UiOptions refetch_options;
+        refetch_options.serve_binary = "ninferno-serve";
+        LaunchRequest refetch;
+        refetch.model        = "org/m-GGUF";
+        refetch.quant        = "Q4_K_M";
+        refetch.prepare_only = true;
+        refetch.refetch      = true;
+        refetch.gpu          = -1;
+        const auto argv      = make_launch(refetch_options, refetch).argv;
+        check(std::find(argv.begin(), argv.end(), "--refetch") != argv.end() &&
+                  std::find(argv.begin(), argv.end(), "--prepare-only") != argv.end(),
+              "a refetch prepare");
+        refetch.recipe          = "qwen3_5_q8";
+        const auto with_recipe  = make_launch(refetch_options, refetch).argv;
+        const auto recipe_flag  = std::find(with_recipe.begin(), with_recipe.end(), "--recipe");
+        check(recipe_flag != with_recipe.end() && recipe_flag + 1 != with_recipe.end() &&
+                  recipe_flag[1] == "qwen3_5_q8",
+              "a refetch keeps the replaced artifact's recipe");
+        refetch.prepare_only = false;
+        bool refused         = false;
+        try {
+            (void)make_launch(refetch_options, refetch);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "a serve start does not refetch");
+        refetch.prepare_only  = true;
+        refetch.keep_replaced = true;
+        const auto kept       = make_launch(refetch_options, refetch).argv;
+        check(std::find(kept.begin(), kept.end(), "--keep-replaced") != kept.end(),
+              "ninferno-ui's update keeps the replaced conversion for itself to remove");
+        check(std::find(kept.begin(), kept.end(), "--vision") == kept.end(),
+              "a text conversion's refetch stays text");
+        refetch.vision        = true;
+        const auto with_vision = make_launch(refetch_options, refetch).argv;
+        check(std::find(with_vision.begin(), with_vision.end(), "--vision") != with_vision.end(),
+              "a Vision conversion's refetch keeps its Vision encoder");
+        refetch.vision = false;
+        check(std::find(with_vision.begin(), with_vision.end(), "--round-tiny-scales") ==
+                  with_vision.end(),
+              "a conversion rounds no tiny scales unless asked");
+        // A refused prepare again as it was (refetch, the replaced artifact's recipe), the flag
+        // added once.
+        refetch.vision         = true;
+        const auto prepare      = make_launch(refetch_options, refetch);
+        const auto rounded      = with_tiny_scales_rounded(prepare, 0);
+        const auto once         = with_tiny_scales_rounded(rounded, 0);
+        check(rounded.argv.size() == prepare.argv.size() + 1 &&
+                  std::equal(prepare.argv.begin(), prepare.argv.end(), rounded.argv.begin()) &&
+                  rounded.argv.back() == "--round-tiny-scales" && once.argv == rounded.argv,
+              "a refused prepare retried as it was, with --round-tiny-scales");
+        refetch.vision = false;
+        refetch.refetch = false;
+        refused         = false;
+        try {
+            (void)make_launch(refetch_options, refetch);
+        } catch (const std::invalid_argument&) { refused = true; }
+        check(refused, "keep_replaced only with a refetch");
+    }
+    // The Vision projector a start fetches and the plan charges: one choice from the listing, every
+    // part of a split one.
+    {
+        using ninferno::convert::best_projector;
+        using Names = std::vector<std::string>;
+        check(best_projector({"m-Q4_K_M.gguf", "mmproj-F16.gguf", "mmproj-model-bf16.gguf",
+                              "mmproj-F32.gguf"}) == Names{"mmproj-model-bf16.gguf"} &&
+                  best_projector({"mmproj-F16.gguf", "mmproj-F32.gguf"}) ==
+                      Names{"mmproj-F32.gguf"} &&
+                  best_projector({"sub/mmproj-b.gguf", "sub/mmproj-a.gguf"}) ==
+                      Names{"sub/mmproj-a.gguf"} &&
+                  best_projector({"mmproj-BF16-00002-of-00002.gguf", "mmproj-F16.gguf",
+                                  "mmproj-BF16-00001-of-00002.gguf"}) ==
+                      Names{"mmproj-BF16-00001-of-00002.gguf", "mmproj-BF16-00002-of-00002.gguf"} &&
+                  best_projector({"m-Q4_K_M.gguf", "README.md"}).empty(),
+              "the projector: BF16, F32, F16, then any; ties to the first name; all its parts");
+    }
+    // What the page reads of a model's KV, from the plan's facts (their own tests cover the
+    // geometry): a dense GGUF, a config's full layers with their own key size, latent attention and
+    // an unread shape unknown, and nothing without facts.
+    {
+        namespace pr      = ninferno::product;
+        const auto basis  = ninferno::runtime::WeightBasis::Unknown;
+        const auto dense  = pr::plan_facts_of_gguf_metadata(
+            {{"general.architecture", "llama"},  {"llama.block_count", 32},
+             {"llama.context_length", 131072},   {"llama.embedding_length", 4096},
+             {"llama.attention.head_count", 32}, {"llama.attention.head_count_kv", 8}},
+            0);
+        const auto kv = kv_summary(&dense);
+        check(kv["known"] == true && kv["architecture"] == "llama" && kv["kv_head_dim"] == 128 &&
+                  kv["native_context"] == 131072,
+              "a dense stack's KV: its key size and context");
+        const auto global = pr::plan_facts_of_config({{"architectures", {"Gemma4ForCausalLM"}},
+                                                      {"num_hidden_layers", 2},
+                                                      {"num_attention_heads", 16},
+                                                      {"num_key_value_heads", 8},
+                                                      {"head_dim", 256},
+                                                      {"global_head_dim", 512},
+                                                      {"num_global_key_value_heads", 2},
+                                                      {"sliding_window", 1024},
+                                                      {"max_position_embeddings", 262144},
+                                                      {"layer_types",
+                                                       {"sliding_attention", "full_attention"}}},
+                                                     0, basis);
+        check(kv_summary(&global)["kv_head_dim"] == 512 &&
+                  kv_summary(&global)["architecture"] == "Gemma4ForCausalLM",
+              "the full layers' own key size");
+        const auto latent = pr::plan_facts_of_config({{"num_hidden_layers", 2},
+                                                      {"num_attention_heads", 16},
+                                                      {"head_dim", 128},
+                                                      {"kv_lora_rank", 512}},
+                                                     0, basis);
+        const auto unread = pr::plan_facts_of_gguf_metadata({{"general.architecture", "x"}}, 0);
+        check(kv_summary(&latent)["known"] == false && kv_summary(&unread)["known"] == false &&
+                  kv_summary(&unread)["architecture"] == "x",
+              "latent attention and an unread shape: KV unknown");
+        check(kv_summary(nullptr)["known"] == false && kv_summary(nullptr)["architecture"] == "",
+              "no facts");
     }
 
     // Parallel requests reach ninferno-serve as --max-concurrency.
@@ -1022,10 +1152,29 @@ void test_http() {
                       "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "spec_profile is a boolean");
+    res = client.Post("/api/launch", R"({"model":"org/m","activations":"fp4"})",
+                      "application/json");
+    check(res && res->status == 400 && res->body.find("activations") != std::string::npos,
+          "an activation mode serve does not know answered 400");
     res = client.Post("/api/tune", "{", "application/json");
     check(res && res->status == 400 && res->body.find("bad request body") != std::string::npos,
           "a broken JSON body answered 400");
-    for (const char* query : {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx"}) {
+    // The plan without the weights: its parameters as ninferno-serve takes them, refused with 400;
+    // offline the repository's shape cannot be read (502 with the reason, never a guess).
+    for (const char* query : {"/api/plan?repo=a/b&ctx=abc", "/api/plan?repo=a/b&par=9",
+                              "/api/plan?repo=a/b&par=0", "/api/plan?repo=a/b&kv=fp16",
+                              "/api/plan?repo=a/b&spec=eagle", "/api/plan?artifact=%2Fetc%2Fpasswd", "/api/plan?repo=a/b&act=fp4",
+                              "/api/quants?repo=a/b&gpu=0&ctx=-5",
+                              "/api/catalog?gpu=0&ctx=abc", "/api/catalog?gpu=0&par=12"}) {
+        res = client.Get(query);
+        check(res && res->status == 400 && res->body.find("\"error\"") != std::string::npos,
+              std::string("a bad plan parameter answered 400: ") + query);
+    }
+    res = client.Get("/api/plan?repo=a/b&ctx=auto&par=4&kv=auto&spec=auto");
+    check(res && res->status == 502 && res->body.find("\"error\"") != std::string::npos,
+          "offline: the plan says it cannot read the repository");
+    for (const char* query :
+         {"/api/arch?repo=..%2Fx", "/api/quants?repo=..%2Fx", "/api/plan?repo=..%2Fx"}) {
         res = client.Get(query);
         check(res && res->status == 400 &&
                   res->body.find("repo must be org/name") != std::string::npos,

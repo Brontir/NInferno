@@ -71,7 +71,7 @@ ninferno_add_op_test(ninferno_qwen_prefill_token_invariance_test
 # Route tables of the generic projection path: lookup, prefill route, refusals.
 ninferno_add_op_test(ninferno_route_table_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_table.cpp"
-  LIBRARIES ninferno_linear_test_support ninferno_spec)
+  LIBRARIES ninferno_linear_test_support)
 # Every format and activation path over the scale domain (tensor scale 3e-4..2.5, block
 # scales across 2^16 with E4M3 and FP16 subnormals, N and K off the 512 grid, M = 1, 3, 127, 129).
 ninferno_add_op_test(ninferno_linear_scale_domain_test

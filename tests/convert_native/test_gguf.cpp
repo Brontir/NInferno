@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -77,6 +78,23 @@ void test_metadata_and_tensors() {
     const auto bytes = w.finish();
     const auto file  = parse(bytes);
     check(file.version == 3, "version");
+    // A tensor's bytes by its info in a window of the header (gguf_tensor_info_bytes): the plan's
+    // read of another quantization's head. Any window holding the info whole finds it; a shape
+    // the file has not is none.
+    {
+        using ninferno::convert::gguf_tensor_info_bytes;
+        const auto* data = reinterpret_cast<const std::byte*>(bytes.data());
+        const std::size_t end = static_cast<std::size_t>(file.data_offset);
+        check(gguf_tensor_info_bytes(data, end, "blk.0.ffn_up.weight", {32, 2}) ==
+                  std::optional<std::uint64_t>(2 * 34),
+              "a Q8_0 tensor info found in the header: two 34-byte blocks");
+        check(gguf_tensor_info_bytes(data + 16, end - 16, "blk.0.ffn_up.weight", {32, 2}) ==
+                  std::optional<std::uint64_t>(2 * 34),
+              "and in a window that starts inside the metadata");
+        check(!gguf_tensor_info_bytes(data, end, "blk.0.ffn_up.weight", {32, 4}),
+              "a shape the file has not: none");
+        check(!gguf_tensor_info_bytes(data, end, "output.weight", {32, 2}), "a name it has not: none");
+    }
     check(file.alignment == 64 && file.data_offset % 64 == 0, "general.alignment is honoured");
     check(file.metadata.at("general.architecture") == "qwen35", "string value");
     check(file.metadata.at("qwen35.block_count") == 3, "u32 value");
@@ -272,7 +290,117 @@ void test_resources_beside() {
 
 } // namespace
 
+// Which GGUF files beside a model are not the model (listings on the hub).
+void test_auxiliary_files() {
+    for (const char* aux : {"mmproj-Qwen3.8-27B-F16.gguf", "imatrix.gguf", "imatrix_unsloth.gguf",
+                            "NVIDIA-Nemotron-imatrix.gguf", "mtp-NVIDIA-Nemotron-Q4_0.gguf",
+                            "Qwen3.6-35B-MTP-ONLY-Q8_0.gguf", "dflash-Muse-Glimmer-30B-Q4_K_M.gguf",
+                            "sub/DFlash2-Qwen3.8-27B-Q4_0.gguf", "eagle3-gpt-oss-20b-Q8_0.gguf"}) {
+        check(gguf_auxiliary_file(aux), std::string("auxiliary: ") + aux);
+    }
+    for (const char* model : {"Qwen3.8-27B-iMatrix-NVFP4-MTP.gguf", "Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf",
+                              "Qwen3.6-35B-A3B-MTP-Q4_K_M.gguf", "gemma-4-12b-it-Q4_K_M.gguf"}) {
+        check(!gguf_auxiliary_file(model), std::string("a model: ") + model);
+    }
+}
+
+// The repository a GGUF's metadata names as its source: the first key that names one, org/name.
+void test_base_repository() {
+    using J = nlohmann::json;
+    const auto of = [](const J& md) { return gguf_metadata_base_repository(md); };
+    check(of(J{{"general.base_model.0.repo_url", "https://huggingface.co/Qwen/Qwen3.5-9B"}}) ==
+              std::optional<std::string>("Qwen/Qwen3.5-9B"),
+          "a base model's address");
+    check(of(J{{"general.base_model.0.repo_url", "https://hf.co/org/m/tree/main/"}}) ==
+              std::optional<std::string>("org/m"),
+          "a /tree tail is not the repository");
+    check(of(J{{"general.base_model.0.repo_url", "https://github.com/org/m"},
+               {"general.source.huggingface.repository", "org/src"}}) ==
+              std::optional<std::string>("org/src"),
+          "another site's address names none: the next key");
+    check(of(J{{"general.source.url", "https://huggingface.co/org/s"}}) ==
+              std::optional<std::string>("org/s") &&
+              of(J{{"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+                  std::optional<std::string>("org/r"),
+          "the source address, the specification's source repository");
+    check(of(J{{"general.base_model.0.repo_url", "http://hf.co/org/m?library=gguf#top"}}) ==
+              std::optional<std::string>("org/m"),
+          "a query or an anchor is no part of it");
+    check(!of(J{{"general.base_model.0.repo_url", "https://huggingface.co/datasets/org/d"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "https://huggingface.co/spaces/org/s"}}) &&
+              !of(J{{"general.base_model.0.repo_url", "github.com/org/m"}}),
+          "a dataset, a Space, another host: no model repository");
+    check(of(J{{"general.base_model.0.repo_url", "acme.ai/model"}}) ==
+              std::optional<std::string>("acme.ai/model"),
+          "a bare id whose organization has a dot");
+    check(of(J{{"general.source.url", "https://huggingface.co/blog/foo"},
+               {"general.source.repo_url", "https://huggingface.co/org/r"}}) ==
+              std::optional<std::string>("org/r"),
+          "the source repository before the homepage");
+    check(!of(J{{"general.base_model.0.repo_url", "org"}}) && !of(J{{"general.base_model.0.repo_url", 3}}) &&
+              !of(J::object()),
+          "none named");
+}
+
+// The metadata a head holds before it ends, and the MTP layers it names: the architecture's
+// nextn_predict_layers, none where a tokenizer key (written after the architecture's) came without
+// it, unknown where the head ends before.
+void test_metadata_prefix() {
+    GgufWriter w;
+    w.kv_str("general.architecture", "qwen35");
+    w.kv_u32("qwen35.block_count", 65);
+    w.kv_u32("qwen35.nextn_predict_layers", 1);
+    w.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    w.tensor("t", {32}, ggml::Q8_0, q8_block(true));
+    const auto bytes = w.finish();
+    const auto prefix_of = [&](std::size_t n) {
+        return parse_gguf_metadata_prefix(reinterpret_cast<const std::byte*>(bytes.data()),
+                                          std::min(n, bytes.size()), "test.gguf");
+    };
+    const auto whole = prefix_of(bytes.size());
+    const auto head  = prefix_of(200);
+    check(whole.complete && whole.metadata.size() == 4 && !head.complete &&
+              head.metadata.contains("qwen35.nextn_predict_layers") &&
+              !head.metadata.contains("tokenizer.ggml.tokens"),
+          "a head's metadata: the pairs read whole");
+    check(gguf_metadata_carries_mtp(head) == std::optional<bool>(true), "MTP layers named");
+    check(!gguf_metadata_carries_mtp(prefix_of(40)), "a head ending before them: unknown");
+    GgufWriter none;
+    none.kv_str("general.architecture", "qwen35");
+    none.kv_u32("qwen35.block_count", 64);
+    none.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(8, "token"));
+    const auto plain = none.finish();
+    check(gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(plain.data()), plain.size(), "plain.gguf")) ==
+              std::optional<bool>(false),
+          "all the metadata read, none named: no MTP layers");
+    // A head that ends within the tokenizer: the architecture's block closed before it says none;
+    // a tokenizer written before the architecture's keys leaves it unknown.
+    GgufWriter cut;
+    cut.kv_str("general.architecture", "qwen35");
+    cut.kv_u32("qwen35.block_count", 64);
+    cut.kv_str("tokenizer.ggml.model", "gpt2");
+    cut.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    const auto closed = cut.finish();
+    check(gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(closed.data()), 200, "cut.gguf")) ==
+              std::optional<bool>(false),
+          "the architecture's block closed before the head ends: no MTP layers");
+    GgufWriter early;
+    early.kv_str("general.architecture", "qwen35");
+    early.kv_str("tokenizer.ggml.model", "gpt2");
+    early.kv_u32("qwen35.block_count", 64);
+    early.kv_arr_str("tokenizer.ggml.tokens", std::vector<std::string>(4096, "token"));
+    const auto mixed = early.finish();
+    check(!gguf_metadata_carries_mtp(parse_gguf_metadata_prefix(
+              reinterpret_cast<const std::byte*>(mixed.data()), 200, "early.gguf")),
+          "a tokenizer key before the architecture's: unknown");
+}
+
 int main() {
+    test_base_repository();
+    test_metadata_prefix();
+    test_auxiliary_files();
     test_resources_beside();
     test_metadata_and_tensors();
     test_errors();

@@ -25,7 +25,7 @@ struct CompilerOptions {
     int compile_threads     = 8;
     // Longest insignificant whitespace run between JSON tokens (unless compact_json), and longest
     // leading whitespace run after a reasoning section (follows_reasoning).
-    int json_whitespace_run      = 24;
+    int json_whitespace_run      = 64;
     int reasoning_whitespace_run = 4;
 };
 
@@ -107,5 +107,8 @@ struct ConstraintVocabularyView {
 // spec, whose every input the compile cache's key holds: nothing is measured.
 [[nodiscard]] bool declares_free_grammar(const OutputConstraintSpec& spec);
 [[nodiscard]] bool declares_free_grammar(const CompiledConstraint& compiled) noexcept;
+
+// Host memory of the compiled grammar, as the compile cache counts it.
+[[nodiscard]] std::size_t memory_bytes(const CompiledConstraint& compiled) noexcept;
 
 } // namespace ninferno::structured

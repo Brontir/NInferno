@@ -9,7 +9,8 @@
 //
 // Selection rules (select()):
 //   overall        the configuration with the lowest total seconds-per-token summed over every
-//                  section (each section weighs the same), measured on all of them and no slower
+//                  section (each weighted by its share of the mix: section_weight), measured on
+//                  all of them and no slower
 //                  than plain decode on any of them; plain decode unless it beats plain by at
 //                  least min_gain
 //   non_thinking   the same over the math, code and prose sections
@@ -22,6 +23,7 @@
 
 #include "spec/config.h"
 #include "spec/engine_support.h"
+#include "spec/proposal_rows.h"
 
 #include <nlohmann/json.hpp>
 
@@ -29,6 +31,7 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -38,6 +41,15 @@ namespace ninferno::spec {
 // Bumped whenever an engine change moves speculation speed or acceptance enough to invalidate
 // earlier profiles (verify routes, drafter kernels, round structure).
 inline constexpr const char* kSpecEngineVersion = "ninferno-spec-1";
+
+// A corpus section's share of the mix every choice is judged on: the lab's benchmark tasks
+// (examples/cli/messages, the text ones that decode an answer, each one request of its section,
+// their answers of a few hundred tokens alike). Code (Python, CUDA, TypeScript, a code review,
+// CSV/JSONL/SQL output) 7, math (three long derivations, a Jacobian counterexample) 4, prose
+// (stories, translations, chat) 8, thinking (a logic grid) 1; the needle-in-a-haystack tasks
+// answer in one line and are left out. Equal weights overstated a mixed workload's speed 1.2-1.5 times:
+// prose gains least and our tasks are mostly prose (choice/DECISIONS 50). 0 for another name.
+[[nodiscard]] double section_weight(std::string_view family);
 
 struct Measurement {
     SpecConfig config;
@@ -51,6 +63,14 @@ struct Measurement {
     // Greedy parity with plain decode over the same prompts: tokens compared and the identical
     // prefix before the first difference (summed over prompts).
     std::int64_t compared = 0, identical = 0;
+    // The kernels its decode launched through the captured graphs (core/decode_graph.h
+    // graph_kernels_launched; 0: not recorded) and the launches they belong to (graph_rounds: its
+    // rounds and the fallback steps that replay the round's graph; a plain decode's steps): a
+    // round's (or a plain step's) kernels, each paying the generation's launch time
+    // (spec/round_cost.h). Requests whose watchdog tripped, that decoded plain steps or ran rounds
+    // without their graph are left out of both.
+    std::int64_t graph_kernels = 0;
+    std::int64_t graph_rounds  = 0;
 
     [[nodiscard]] double tok_s() const noexcept { return seconds > 0 ? tokens / seconds : 0.0; }
     [[nodiscard]] double tokens_per_round() const noexcept {
@@ -160,6 +180,11 @@ struct ServedChoices {
 struct Profile {
     ProfileKey key;
     std::string artifact;
+    // The draft head rows the tuned artifact's drafters read ("proposal_rows": {"mtp": 57344},
+    // spec::artifact_proposal_rows): what the measured rounds paid for the head. Empty: the full
+    // head (no proposal head; a tune before it was recorded, all of them before #170's default
+    // proposal head).
+    ProposalRows proposal_rows;
     std::string created;
     std::string settings; // engine settings the tune ran with (context, chunk, KV codec)
     double tune_seconds = 0;
@@ -191,6 +216,10 @@ struct Profile {
     std::optional<RuntimeDisable> disabled;
 };
 
+// The modes a profile drafts with: its measurements', else (a published profile) its choices' and
+// its fit fallback's.
+[[nodiscard]] std::set<Mode> drafting_modes(const Profile& profile);
+
 struct SelectOptions {
     double min_gain = 0.03;
     // Profile::portable: the shallowest configuration within this fraction of the best (0: none).
@@ -198,6 +227,9 @@ struct SelectOptions {
     // The serving Engine's support for this model: when given and some choice needs a
     // configuration it cannot run, select() also fills Profile::served.
     std::optional<EngineSupport> served;
+    // The draft head rows the target's artifact reads by mode (spec/proposal_rows.h), round cost's
+    // on the card it runs on (round_cost_estimate); absent: the lab artifact's (the pair's own).
+    std::optional<ProposalRows> proposal_rows;
 };
 
 // Fills overall, non_thinking and thinking, and every drafter's status (drafters are
@@ -223,6 +255,16 @@ void write_json_file(const std::filesystem::path& path, const nlohmann::json& do
 // The configuration for a request: the thinking or non-thinking default when the request says,
 // else the overall default; plain decode when the profile was disabled at run time.
 [[nodiscard]] const Choice& pick(const Profile& profile, std::optional<bool> thinking);
+
+// What running each request at its own thinking flag's choice gains over running every request at
+// the server's default (`thinking_default`'s choice), for the requests of the other flag: their
+// cost at the default's configuration over their cost at their own, on the profile's measurements
+// of their sections (the thinking section, or math, code and prose: as select groups them). 1
+// when the two choices are one configuration, or the measurements do not price the default's on
+// the other flag's sections. Measured (lab pairs, 25.10): with thinking on by default the requests
+// without it lose at most 2 % (9B Q4 DFlash on Ada: dflash:15 for dflash:7); with it off, those
+// with it lose 16 % there.
+[[nodiscard]] double per_request_gain(const Profile& profile, bool thinking_default);
 
 // ---------------------------------------------------------------------------------------------
 // Published profiles: the "profiles" list of a registry model entry or a bundle declaration, one
@@ -254,18 +296,11 @@ struct GpuKey {
     // past them is another card's standing in (0: every key counts as the device's own).
     std::size_t own_keys = 0;
     int sms              = 0; // multiprocessors (0: unknown, no stand-in load cap)
-    // The rates the speculation load model prices a verify round with (0: unknown, no model).
+    // The card's rates, as the configuration choice reads them (product::choice_card_of; 0:
+    // unknown).
     int compute_capability = 0;   // 89: Ada
     int sm_clock_khz       = 0;   // reference SM clock (DeviceClass::facts, not the driver's)
     double dram_gbps       = 0;   // nominal memory bandwidth (DeviceClass::facts)
-    // mma.sync without tensor cores (DeviceFeatures::mma_slow, board_mma_slow): the verify MMA is
-    // emulated, which the load model has no price for.
-    bool mma_slow = false;
-    // Whether the clock and bandwidth above are not the PCI-ID table's verified row (MachineFacts::
-    // source other than Verified, or a driver value read: an unlisted id on the driver's clocks, a
-    // laptop, a MIG slice).
-    // The load model then prices the card but does not stand behind it.
-    bool facts_extrapolated = false;
 };
 
 // Whether the published profile's class is one of the device's own keys, and if not, the note

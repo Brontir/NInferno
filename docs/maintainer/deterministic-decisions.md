@@ -32,13 +32,24 @@ This page states the rule and its target. The engine does not meet all of it yet
 - `tools/audit/decision_inputs.sh` reads each listed decision file's own text, not what it includes:
   the Qwen3.5 planning files still reach the Program's CUDA event timers through `program_impl.h`;
 - MMQ prefill bytes depend on where a chunk is cut;
+- a speculation round's cost from facts (`spec/round_cost.h`) has its small-T tensor share (eta)
+  only for Ada and Blackwell, each fitted on two lab cards (DECISIONS 53, 56); Ampere (RTX 3060),
+  Turing (RTX 2080 Ti) and Volta (Quadro GV100) each rest on one lab card, so their cards keep the
+  lab-measured profiles until a second card of the generation measures registry pairs: the
+  generation's lab card's own rounds, else the median round cost of every lab card that measured
+  the target, said as a transfer (`spec::profile_for_target`; the records' order never decides,
+  DECISIONS 57);
 - the plan ladder's rungs are declared, but under `--spec auto` each Engine build the server tries
   (the profile's choice, its fit fallback, shallower drafts, plain decode) picks its own rung from
   its own free reading, and the kernel warm-up may still move the plan to a lower rung when it took
   more than its declared allowance (recorded as `selected_rung` in the plan summary, and as
   `observed.rung_selected` in the fingerprint's manifest);
 - the dry run (`ninferno-serve --plan`) uploads the weights to size the rungs: the planner reads
-  the bound model, and no family plans from the artifact alone yet;
+  the bound model. `--plan --no-load` (and ninferno-ui's `/api/plan`, and the quantization a GGUF
+  hub repository is fetched at) builds the same ladder with the same seams
+  (`runtime/engine/plan_dry_run.h`), but it sizes each rung from the shape (`plan_rung_estimate`),
+  not from the family's SequencePlanner. It is an estimate, and the start stays the authority;
+  no family plans its exact bytes from the artifact alone yet;
 - `ninferno-gemma4`'s session fit (a maintainer tool) still bisects the context on the free memory;
 - without NVML the chip is guessed from its SM count, and an unknown PCI ID still has
   speed estimates where it should have *no estimate*;
@@ -124,12 +135,10 @@ This page states the rule and its target. The engine does not meet all of it yet
   route each shape took: two runs with equal fingerprints read the same inputs, which is not yet
   proof of the same decisions.
 
-The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model, the
-board distance and the speculation load model read its facts (`DeviceClass::facts`). For a listed
-board that is the table's reference (boost) clock, a chip fact. An unknown PCI id, and a laptop row
-without the bottom of its boost range, take the driver's clock (on the 2^(1/16) grid); the
-speculation load model prices such a device but never trusts it (`GpuKey::facts_extrapolated`:
-unsure, the conservative fallback).
+The PCI-ID reference table is [`src/core/data/gpu_facts.json`](gpu-facts.md). The cost model and
+the board distance read its facts (`DeviceClass::facts`). For a listed board that is the table's
+reference (boost) clock, a chip fact. An unknown PCI id, and a laptop row without the bottom of its
+boost range, take the driver's clock (on the 2^(1/16) grid).
 
 Each gap is closed in its own change, which updates this list.
 
@@ -169,7 +178,7 @@ What the design guarantees once complete:
    kernels (a cost, an efficiency, a rate) is fitted on two cards of its generation and records
    the hash of the kernels it was fitted on. When those kernels change and nobody refits, the
    generation's speed estimates become "no estimate".
-   A constant about a model, such as a drafter's acceptance per context class, records instead
+   A constant about a model, such as a drafter's acceptance on its target, records instead
    what it depends on:
    - the target and drafter by their source identity (below), never by artifact id;
    - the whole B1 byte class it was measured under (activation precision, summation class, KV
@@ -364,8 +373,12 @@ allowance and a margin:
 | Class reserve | under WDDM (native Windows, WSL 2) an 8th of the VRAM class, at most 4 GiB, on a card driving the display, a 32nd, at most 1 GiB, headless; an 8th, at least 4 GiB, on a GPU sharing the host's memory; else 0. The VRAM class is the total memory rounded down to 256 MiB | driver model, display, integrated: discrete facts |
 | Warm-up allowance | 64 MiB (kernel code and the per-thread stack, measured at 6-40 MiB on an RTX 5080), 0 when nothing is automatic | declared |
 
-- The class reserve covers the growth of what Windows already holds: the free memory is measured
-  with the desktop's current use taken, so the reserve is not a guess of that use.
+- The class reserve covers what Windows will add beyond what the free memory shows. Under WDDM
+  `cudaMemGetInfo` may not see the desktop's use at all (the driver pages the card's memory), so
+  the reserve is kept whole beside the measured free memory, never reduced by a declared desktop
+  share: on the owner's RTX 5090 desktop 0.55 GiB left stalled the screen for 1.8 s, 4 GiB left
+  0.29 s, 5.5 GiB 51 ms. The dry run's idle card takes the desktop's declared share out of the
+  free memory and keeps the same whole reserve beside it: the conservative side of a start.
 - The class reserve is given up in three cases only: a survival rung (below the floor quality), a
   `warm_up` admission (nothing else fits), and the options that keep none (below). Down to the
   floor quality it is kept, so a desktop on a small card gets the floor before the reserve is given
@@ -428,6 +441,53 @@ check, and the shortfall that moves a rung down.
   load-time route tuner before it reads the free memory, and the code of the kernels it launched
   stays loaded, so `--plan` can read a little more free memory than the start; the start may then
   land a rung lower, and its warm-up may move it down again, never up.
+
+### Without the weights
+
+`runtime/engine/plan_dry_run.h` builds the ladder of a start from facts alone. Those facts are:
+- the model's shape, from a GGUF header, a config.json or an artifact's text config;
+- its weight bytes, from the tensor table or the listed file sizes;
+- the device's VRAM class, compute capability and class-reserve facts, from the CUDA device or a
+  named board of `gpu_facts.json`.
+
+It uses the functions a start uses: `plan_axes`, `plan_ladder_inputs`, `plan_margins` and
+`plan_advice_margins`, then `plan_ladder`, `prune_plan_ladder` and `select_plan_rung`.
+`construct_or_plan` calls the same seams. `tests/test_plan_dry_run.cpp` checks that the two
+build the same rungs for the same options, and that every family the Engine serves has its row in
+the one table of automatic storages the dry run and the Engine read (`family_storage`).
+
+Only the rung bytes differ: a declared estimate of KV pages, states, rings, workspace and a graph
+allowance.
+
+Known gap, on the conservative side (principle 7): the dry prefill workspace is an upper estimate
+(about chunk·(12·hidden + 3·ffn)·2 bytes plus the logits). A start sizes it from the family's
+activation layout and the bound weights' route scratch (`build_workspace_plan`). For Qwen 3.5 9B
+Q8_0 the dry workspace is 169 MiB where a start takes about 77 MiB at chunk 1024 (22 against about
+17.5 MiB at chunk 128). On a card where the free memory sits near a rung boundary, the dry plan
+(and so the quant rule and the planned context ceiling) can land one rung below the start: the
+RTX 4070 Ti Q8_0 row of 21.10. It never lands higher. The fix (the dry workspace from the
+family's layout plus each format's route scratch, tested equal to a start's) is separate work.
+
+The free memory is either the device's now, less the weights, or that of an idle card of the class:
+the VRAM less a declared driver share and a desktop share. It still only selects a declared rung.
+
+The quantization rule (`largest_fitting_quant`, `runtime/engine/quant_rule.h`) is a pure function
+of the listing, the shape and those facts, through declared constants: the own context per stream
+it aims for (an asked one, or min(the model's own, 32K), stepping to 16K and 8K under Auto), the
+quality floor (3.5 bits per weight) and the low-quality mark (3). Its tiers: own at or above the
+floor, shared at or above it, then the same below it, then a survival rung (the desktop's reserve
+given up). Within a tier the most bits per weight, then the bytes, then the label (a strict order).
+The own context is probed at declared pinned contexts with the same plan, never measured. The rule
+reads the idle-card free memory, so the same card type gets the same quantization.
+
+### The configuration choice
+
+The KV codec and the activation mode a start leaves automatic, and the speeds the plan shows, come
+from `src/product/choice` ([Configuration choice](configuration-choice.md)). The decision (B1)
+prices its candidates on the generation's reference card, a declared constant per generation,
+never on the board: the board's clock and bandwidth enter only the estimates shown. It decides only
+where its constants rest on two lab cards of the generation; elsewhere the family's defaults stand.
+The quantization stays the rule above until a measured KLD curve over the quantizations exists.
 
 ### The fingerprint
 
@@ -517,7 +577,7 @@ logged or exported only; (b) moves only scheduling or latency, not the bytes of 
 | Second transient CUDA error within 5 minutes | `src/runtime/engine/engine_core.h` (`kTransientCudaErrorWindow`) | (b), restarts the server instead of going on |
 | Mask fill order, constrained DFlash drafting | `src/runtime/contract/token_mask.h` → `src/models/qwen3_5/program/decode.cpp` | declared mask time by constraint class, reasoning gate and draft shape, no clock |
 | Device mask-release wait bound | `src/ops/kernel/sampling_device.cuh` | (c), open: ends a request |
-| Load-time MoE and dense tuners | `src/ops/moe/moe_tune.cpp`, `src/ops/generic/generic_tune.cpp` | (c), opt-in by option (`--dense-tune`, `--moe-tune`), off by default |
+| Load-time MoE and dense tuners | `src/ops/moe/moe_tune.cpp`, `src/ops/generic/generic_tune.cpp` | (c), maintainer tools only (`ninferno-perplexity`, `ninferno-dense`, `ninferno-gemma4`: `--dense-tune`, `--moe-tune`), off by default; `ninferno` and `ninferno-serve` refuse them. Off still reads the shipped measurements `routes/tuner/dense_tune.json` (choice-notes DECISIONS 55) |
 | Local speculation tune (`ninferno spec-tune`, `ninferno-ui`'s calibrate action) | `src/spec/manifest.cpp` (`resolve_speculation`), `src/ui/app.cpp` (`make_launch`) | (c), opt-in: read only when named (`--spec-profile`; `ninferno-ui` names it only for a start that asks, `spec_profile`, never by itself), taint `local_spec_tune` |
 | Free memory after warm-up | `src/runtime/engine/model_instance.cpp` | (c), open (gaps above) |
 | Acceptance watchdog | `src/spec/watchdog.h` | counts of the request's own drafts, not a timing |

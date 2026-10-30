@@ -4,15 +4,13 @@
 #include "artifact/schema.h"
 
 #include <algorithm>
-#include <cctype>
+#include <atomic>
 #include <cerrno>
-#include <cstdlib>
 #include <cstring>
 #include <limits>
 #include <string>
 #include <utility>
 
-#include "core/ascii.h"
 #include "core/sys.h"
 #include "core/units.h"
 
@@ -34,26 +32,8 @@ std::int64_t file_offset(std::uint64_t offset) {
     return static_cast<std::int64_t>(offset);
 }
 
-// NINFERNO_ARTIFACT_DIRECT_IO: 1/true/yes/on forces O_DIRECT payload reads, 0/false/no/off forces
-// buffered ones (case-insensitive, surrounding blanks ignored). Unset or any other value: automatic.
-enum class DirectIoChoice { Automatic, Direct, Buffered };
-
-DirectIoChoice direct_io_choice() {
-    const char* raw = std::getenv("NINFERNO_ARTIFACT_DIRECT_IO");
-    if (raw == nullptr) { return DirectIoChoice::Automatic; }
-    std::string value(raw);
-    const auto blank = [](unsigned char c) { return std::isspace(c) != 0; };
-    while (!value.empty() && blank(value.back())) { value.pop_back(); }
-    value.erase(value.begin(), std::find_if_not(value.begin(), value.end(), blank));
-    value = ascii_lower(value);
-    if (value == "1" || value == "true" || value == "yes" || value == "on") {
-        return DirectIoChoice::Direct;
-    }
-    if (value == "0" || value == "false" || value == "no" || value == "off") {
-        return DirectIoChoice::Buffered;
-    }
-    return DirectIoChoice::Automatic;
-}
+// The process's payload I/O mode (set_artifact_io, --artifact-io), auto until set.
+std::atomic<ArtifactIo> g_artifact_io{ArtifactIo::Auto};
 
 // Network, FUSE and host-shared file systems: O_DIRECT bypasses their cache layers (an object
 // store behind FUSE read 13.8 MiB/s direct against 177 MiB/s buffered), so the
@@ -84,6 +64,8 @@ bool remote_file_system(int fd) {
 }
 
 } // namespace
+
+void set_artifact_io(ArtifactIo io) noexcept { g_artifact_io.store(io, std::memory_order_relaxed); }
 
 InputFile::InputFile(std::filesystem::path path) : path_(std::move(path)) {
     std::error_code ec;
@@ -133,15 +115,15 @@ std::size_t InputFile::read_direct(std::uint64_t offset, std::span<std::byte> de
     }
     if (destination.empty()) { return 0; }
     if (direct_fd_ < 0) {
-        const DirectIoChoice choice = direct_io_choice();
-        const bool direct           = choice == DirectIoChoice::Direct ||
-                            (choice == DirectIoChoice::Automatic && !remote_file_system(fd_));
+        const ArtifactIo choice = g_artifact_io.load(std::memory_order_relaxed);
+        const bool direct       = choice == ArtifactIo::Direct ||
+                            (choice == ArtifactIo::Auto && !remote_file_system(fd_));
         if (direct) {
             direct_fd_   = sys::open(path_, O_RDONLY | O_CLOEXEC | O_DIRECT);
             direct_mode_ = direct_fd_ >= 0;
             // A file system without O_DIRECT support refuses the flag: read it buffered unless
             // direct reads were asked for.
-            if (direct_fd_ < 0 && (errno != EINVAL || choice == DirectIoChoice::Direct)) {
+            if (direct_fd_ < 0 && (errno != EINVAL || choice == ArtifactIo::Direct)) {
                 fail(path_, "open direct");
             }
         }

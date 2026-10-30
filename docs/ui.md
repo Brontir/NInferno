@@ -19,10 +19,31 @@ Once it listens, it opens `http://localhost:8090` in the desktop's default brows
 ## What the page does
 
 - **GPUs:** each card's memory, load, temperature and power, and the models running on it.
-- **My models:** the models downloaded or converted on this machine, ready to start.
+- **My models:** the models downloaded or converted on this machine, ready to start. "Model from
+  disk" starts a GGUF file or a Hugging Face checkpoint folder already on this machine (converted
+  on the first start), after the converter's rule set says the engine runs it. A converted hub
+  model whose branch has moved on the hub since (its download removed or still in the cache) is
+  marked "newer weights on the hub", and a popup asks once per new commit. It still starts from
+  its converted weights; nothing downloads by itself. The choices:
+  - **Keep these:** treat them as valid from now on (no mark until the branch moves again).
+  - **Download new:** download and convert the new commit in the background, beside the old
+    conversion. A model running on the old conversion restarts on the new one once, when it has no
+    request in flight; then the old conversion is deleted. If the new one does not start, the
+    model starts on the old one once more and the update ends, saying why; nothing is retried.
+  - **Later:** ask again at the next new commit.
+
+  The hub is asked at most hourly per model, never with `--offline`.
 - **Find:** Hugging Face search by downloads, likes, update or trend, with a mark for what
-  NInferno runs; each repository's quantizations with their size and the context, concurrency and
-  speed they leave on your GPU.
+  NInferno runs (the converter's rule set, [weight conversion](weight-conversion.md): runs, a
+  drafter, needs a token, or not supported with the reason); a line for the Hugging Face token
+  gated repositories need (shown by account; saved where `hf auth login` keeps it, and one that
+  login saved is used as it is; a token from `$HF_TOKEN` is changed there); each repository's quantizations with their size and the context, concurrency and
+  speed they leave on your GPU. The speeds are the engine's estimates from the card's and the
+  model's facts ([Configuration choice](maintainer/configuration-choice.md)), not measurements.
+  Under the pick, "Engine's choice" says which KV cache, activations and state a start would take
+  when you leave them automatic, and "What another value would change" lists, for every other
+  value, the context each stream keeps, decode, prefill, a typical request's time, the accuracy
+  (KLD) and why it was not chosen.
 - **Downloads:** progress of every download and conversion.
 - **Start:** a model with the measured speculation and its precision (exact output or the
   faster default), then a chat window on it, or its OpenAI-compatible address for other apps.

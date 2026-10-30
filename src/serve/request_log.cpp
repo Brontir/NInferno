@@ -123,6 +123,7 @@ Json maintainer_record(const ninferno::MaintainerOptions& m,
                 {"debug_prefill_cuts", m.debug_prefill_cuts},
                 {"debug_poison", poison},
                 {"debug_poison_skip", m.debug_poison_skip},
+                {"artifact_io", ninferno::artifact_io_name(m.artifact_io)},
                 {"drafter_registry", ninferno::utf8_path(drafter_registry)}};
 }
 
@@ -460,6 +461,7 @@ std::string format_server_start_json(
              {"default_thinking",
               options.enable_thinking ? Json(*options.enable_thinking) : Json(nullptr)},
              {"default_thinking_budget", std::move(default_thinking_budget)},
+             {"answer_room", options.answer_room},
              {"repetition_stop", options.repetition_stop},
              {"default_preserve_thinking",
               options.preserve_thinking ? Json(*options.preserve_thinking) : Json(nullptr)}};
@@ -637,6 +639,7 @@ std::string format_request_done_json(const std::string& server_instance_id, std:
              {"thinking_budget", outcome.thinking.configured_budget
                                      ? Json(*outcome.thinking.configured_budget)
                                      : Json(nullptr)},
+             {"thinking_budget_answer_room", outcome.thinking.answer_room},
              {"model_thinking_tokens", outcome.thinking.model_thinking_tokens},
              {"thinking_control_tokens", outcome.thinking.injected_tokens},
              {"thinking_control_applied", outcome.thinking.applied},

@@ -62,6 +62,110 @@ int main() {
     const auto dflash = [&] { return model_drafter(target, SpeculativeBackend::DFlash); };
 
     failures += check(mtp().empty(), "no manifest: no drafter");
+    // The head a backend drafts with (model_draft_head): MTP and DFlash take the artifact's head
+    // when it serves them; DFlash2 keeps what it was asked for; an asked-for head stays.
+    {
+        using ninferno::ProposalHead;
+        using ninferno::product::model_draft_head;
+        failures += check(model_draft_head(true, SpeculativeBackend::DFlash, ProposalHead::Full) ==
+                              ProposalHead::Optimized,
+                          "DFlash drafts with a head that serves it");
+        failures += check(model_draft_head(false, SpeculativeBackend::DFlash, ProposalHead::Full) ==
+                              ProposalHead::Full,
+                          "DFlash keeps the full head without one");
+        failures += check(model_draft_head(true, SpeculativeBackend::Mtp, ProposalHead::Full) ==
+                              ProposalHead::Optimized,
+                          "MTP drafts with a head that serves it");
+        failures += check(model_draft_head(false, SpeculativeBackend::Mtp, ProposalHead::Full) ==
+                              ProposalHead::Full,
+                          "MTP keeps the full head without one");
+        failures += check(model_draft_head(true, SpeculativeBackend::DFlash2, ProposalHead::Full) ==
+                              ProposalHead::Full,
+                          "DFlash2 keeps the full head");
+        failures += check(model_draft_head(false, SpeculativeBackend::Mtp, ProposalHead::Optimized) ==
+                              ProposalHead::Optimized,
+                          "an asked-for head stays");
+        failures += check(model_draft_head(target, SpeculativeBackend::DFlash,
+                                           std::filesystem::path("drafter.ninferno"),
+                                           ProposalHead::Full) == ProposalHead::Full,
+                          "a separate DFlash drafter keeps the full head");
+    }
+    // A "+head" choice of a drafter binds the head only through that drafter's Use (Codex on
+    // #170: DFlash + DFlash2 with a DFlash-only head chose dflash2:7+head).
+    {
+        using ninferno::product::proposal_head_drafters;
+        namespace art = ninferno::artifact;
+        art::Directory dir;
+        dir.components["text"].proposal = art::Proposal{.indexed = true, .rows = 147456};
+        dir.components["dflash"];
+        dir.components["dflash2"];
+        dir.components["mtp"];
+        const auto use = [&](const std::string& input) {
+            art::Use u;
+            u.parameter = "proposal/head";
+            u.input     = input;
+            dir.uses.emplace(std::pair{u.parameter, u.input}, u);
+        };
+        use("dflash/final_hidden");
+        failures += check(proposal_head_drafters(dir) == std::set<std::string>{"dflash"},
+                          "a DFlash-only head serves DFlash alone");
+        use("mtp/final_hidden");
+        failures += check(proposal_head_drafters(dir) == std::set<std::string>{"dflash", "mtp"},
+                          "the default head serves MTP and DFlash, not DFlash2");
+        dir.components["text"].proposal.reset();
+        failures += check(proposal_head_drafters(dir).empty(), "no proposal: no head");
+    }
+    // One mode of a published profile (no measurements): its fit fallback of that mode becomes its
+    // choice, and the load table measured with the default's drafter gives way to one request at a
+    // time (Codex on #117).
+    {
+        ninferno::product::SpeculationSubject subject;
+        subject.support = ninferno::spec::engine_support("qwen3_5_text");
+        ninferno::spec::ResolvedSpeculation resolved;
+        resolved.source                       = "test";
+        resolved.profile.overall.config       = ninferno::spec::SpecConfig::parse("dflash2:7");
+        resolved.profile.thinking             = resolved.profile.overall;
+        resolved.profile.non_thinking         = resolved.profile.overall;
+        ninferno::spec::Choice fallback;
+        fallback.config                       = ninferno::spec::SpecConfig::parse("mtp:3");
+        resolved.profile.fit_fallback         = fallback;
+        resolved.profile.load                 = {ninferno::spec::LoadBound{.lanes = 4, .depth = 3}};
+        subject.resolved                      = resolved;
+        const auto mtp = ninferno::product::subject_of_mode(subject, ninferno::spec::Mode::Mtp);
+        failures += check(mtp.resolved->profile.overall.config.label() == "mtp:3" &&
+                              !mtp.resolved->profile.fit_fallback &&
+                              mtp.resolved->profile.load.size() == 1 &&
+                              mtp.resolved->profile.load[0].lanes == 2 &&
+                              mtp.resolved->profile.load[0].depth == 0,
+                          "a published profile's MTP fit fallback as its MTP choice, one request at a time");
+        const auto same = ninferno::product::subject_of_mode(subject, ninferno::spec::Mode::DFlash2);
+        failures += check(same.resolved->profile.overall.config.label() == "dflash2:7" &&
+                              same.resolved->profile.load.size() == 1 &&
+                              same.resolved->profile.load[0].lanes == 4,
+                          "its own mode: kept as it is");
+    }
+    // Per request, a default that decodes plainly loads the other flag's drafter: those requests
+    // speculate, the default's decode plainly (Codex on #117).
+    {
+        ninferno::product::SpeculationSubject subject;
+        subject.support = ninferno::spec::engine_support("qwen3_5_text");
+        ninferno::spec::ResolvedSpeculation resolved;
+        resolved.source                    = "test";
+        resolved.profile.thinking.config     = ninferno::spec::SpecConfig::parse("mtp:4");
+        resolved.profile.thinking.drafter    = "mtp";
+        resolved.profile.overall           = resolved.profile.thinking;
+        resolved.drafters["mtp"]           = "component:mtp";
+        subject.components                 = {"text", "mtp"};
+        subject.resolved                   = resolved;
+        const auto fixed = ninferno::product::served_speculation(subject, false, false);
+        const auto each  = ninferno::product::served_speculation(subject, false, true);
+        failures += check(fixed && fixed->menu.mode == ninferno::spec::Mode::None,
+                          "fixed at the plain default: no drafter");
+        failures += check(each && each->menu.mode == ninferno::spec::Mode::Mtp &&
+                              each->menu.thinking.config.enabled() &&
+                              !each->menu.non_thinking.config.enabled(),
+                          "per request: MTP loaded for thinking, the default plain");
+    }
     // Nothing shallower than one draft, nothing for plain decode, nothing without a profile.
     {
         using ninferno::product::served_shallower;
@@ -71,9 +175,10 @@ int main() {
             c.k    = k;
             return c;
         };
-        failures += check(!served_shallower(target, 0, true, dflash_at(1), 1.5) &&
-                              !served_shallower(target, 0, true, ninferno::spec::SpecConfig{}, 0) &&
-                              !served_shallower(target, 0, true, dflash_at(3), 1.5),
+        const auto subject = ninferno::product::speculation_subject(target, 0);
+        failures += check(!served_shallower(subject, true, dflash_at(1), 1.5) &&
+                              !served_shallower(subject, true, ninferno::spec::SpecConfig{}, 0) &&
+                              !served_shallower(subject, true, dflash_at(3), 1.5),
                           "served_shallower ran below depth 1, for plain, or without a profile");
     }
     // A server whose choice does not fit runs the deepest depth that fits, with the same drafter:
@@ -197,11 +302,10 @@ int main() {
         profile.fit_fallback                   = choice(Mode::Mtp, 2, "mtp", 1.3);
         profile.served                         = ninferno::spec::ServedChoices{};
 
-        ninferno::spec::SpecConfig tried = profile.overall.config;
-        tried.k_min                    = 2;
-        const auto dflash6             = shallower_profile(profile, tried, 2.14);
+        const ninferno::spec::SpecConfig tried = profile.overall.config;
+        const auto dflash6                     = shallower_profile(profile, tried, 2.14);
         failures +=
-            check(dflash6 && dflash6->overall.config.k == 6 && dflash6->overall.config.k_min == 2 &&
+            check(dflash6 && dflash6->overall.config.k == 6 &&
                       dflash6->overall.drafter == "dflash" &&
                       near(dflash6->overall.floor_tokens_per_round, 1.9 + 0.5 * 0.24) &&
                       dflash6->thinking.config.k == 6 && dflash6->non_thinking.config.k == 6 &&
@@ -209,12 +313,11 @@ int main() {
                   "DFlash k7 serves k6 everywhere with the floor between k5 and k7");
 
         // The fit fallback's MTP at k3 serves k2 with the fallback's drafter and its measured
-        // floor; a minimum depth not below the new depth is dropped.
-        ninferno::spec::SpecConfig mtp3 = choice(Mode::Mtp, 3, "", 0).config;
-        mtp3.k_min                    = 2;
-        const auto mtp2               = shallower_profile(profile, mtp3, 1.6);
+        // floor.
+        const ninferno::spec::SpecConfig mtp3 = choice(Mode::Mtp, 3, "", 0).config;
+        const auto mtp2                       = shallower_profile(profile, mtp3, 1.6);
         failures += check(mtp2 && mtp2->overall.config.mode == Mode::Mtp &&
-                              mtp2->overall.config.k == 2 && mtp2->overall.config.k_min == 0 &&
+                              mtp2->overall.config.k == 2 &&
                               mtp2->overall.drafter == "mtp" &&
                               near(mtp2->overall.floor_tokens_per_round, 1.3),
                           "MTP k3 serves k2 with the fallback's drafter and floor");

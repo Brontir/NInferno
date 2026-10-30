@@ -332,35 +332,58 @@ std::uint32_t pool_contexts(const ninferno::MemorySummary& memory) {
     return memory.kv_capacity / memory.max_context;
 }
 
+ninferno::EngineOptions engine_options_of(const ServeOptions& options) {
+    ninferno::EngineOptions engine_options;
+    engine_options.artifact_path           = options.artifact_path;
+    engine_options.chat_template_path      = options.chat_template_path;
+    engine_options.device                  = options.device;
+    // An automatic context under --max-context-cap: its ceiling (plan_context_ceiling).
+    engine_options.max_context =
+        options.max_context != 0 ? options.max_context : options.max_context_cap;
+    engine_options.max_context_automatic   = options.max_context == 0;
+    engine_options.kv_capacity             = options.kv_capacity;
+    engine_options.max_concurrency         = options.max_concurrency;
+    engine_options.max_pending_requests    = options.max_pending_requests;
+    engine_options.pending_timeout_ms      = options.pending_timeout_ms;
+    engine_options.concurrent_prefill      = options.concurrent_prefill;
+    engine_options.prefill_chunk           = options.prefill_chunk;
+    engine_options.prefill_chunk_automatic = !options.prefill_chunk_explicit;
+    engine_options.kv_lease_window         = options.kv_lease_window;
+    engine_options.kv_cache                = options.kv_cache.value_or(KvCacheStorage::BFloat16);
+    engine_options.kv_cache_automatic      = !options.kv_cache.has_value();
+    engine_options.sliding_kv_cache        = options.sliding_kv_cache;
+    engine_options.recurrent_state = options.recurrent_state.value_or(RecurrentStateStorage::FP32);
+    engine_options.recurrent_state_automatic = !options.recurrent_state.has_value();
+    engine_options.activations               = options.activations;
+    engine_options.rope_yarn_factor          = options.rope_yarn_factor;
+    engine_options.enable_vision             = options.enable_vision;
+    engine_options.use_cuda_graph            = options.use_cuda_graph;
+    engine_options.pacing                    = options.pacing;
+    engine_options.maintainer                = options.maintainer;
+    engine_options.speculative               = options.speculative;
+    engine_options.context_cache             = options.context_cache;
+    engine_options.context_cost.preset_path  = options.context_cost_presets;
+    engine_options.media_cache_bytes         = options.media_cache_bytes;
+    engine_options.media_live_bytes          = options.media_live_bytes;
+    engine_options.media_preprocess_threads  = options.media_preprocess_threads;
+    return engine_options;
+}
+
+const product::SpeculationSubject& GenerationService::speculation_subject() {
+    if (!speculation_subject_) {
+        auto subject = product::speculation_subject(options_.artifact_path, options_.device,
+                                                    options_.spec_profile);
+        if (options_.speculation_mode) {
+            subject = product::subject_of_mode(std::move(subject), *options_.speculation_mode);
+        }
+        speculation_subject_ = std::move(subject);
+    }
+    return *speculation_subject_;
+}
+
 GenerationService::GenerationService(ServeOptions options, StartupObserver startup_observer)
     : options_(std::move(options)) {
-    ninferno::EngineOptions engine_options;
-    engine_options.artifact_path            = options_.artifact_path;
-    engine_options.chat_template_path       = options_.chat_template_path;
-    engine_options.device                   = options_.device;
-    engine_options.max_context              = options_.max_context;
-    engine_options.max_context_automatic    = options_.max_context == 0;
-    engine_options.kv_capacity              = options_.kv_capacity;
-    engine_options.max_concurrency          = options_.max_concurrency;
-    engine_options.max_pending_requests     = options_.max_pending_requests;
-    engine_options.pending_timeout_ms       = options_.pending_timeout_ms;
-    engine_options.concurrent_prefill       = options_.concurrent_prefill;
-    engine_options.prefill_chunk            = options_.prefill_chunk;
-    engine_options.prefill_chunk_automatic  = !options_.prefill_chunk_explicit;
-    engine_options.kv_lease_window          = options_.kv_lease_window;
-    engine_options.kv_cache                 = options_.kv_cache.value_or(KvCacheStorage::BFloat16);
-    engine_options.kv_cache_automatic       = !options_.kv_cache.has_value();
-    engine_options.sliding_kv_cache         = options_.sliding_kv_cache;
-    engine_options.recurrent_state =
-        options_.recurrent_state.value_or(RecurrentStateStorage::FP32);
-    engine_options.recurrent_state_automatic = !options_.recurrent_state.has_value();
-    engine_options.activations              = options_.activations;
-    engine_options.rope_yarn_factor         = options_.rope_yarn_factor;
-    engine_options.enable_vision            = options_.enable_vision;
-    engine_options.use_cuda_graph           = options_.use_cuda_graph;
-    engine_options.pacing                    = options_.pacing;
-    engine_options.maintainer                = options_.maintainer;
-    engine_options.speculative              = options_.speculative;
+    ninferno::EngineOptions engine_options = engine_options_of(options_);
     // A tune named by --spec-profile serves or the server does not start (whatever --spec says).
     product::require_named_tune(options_.artifact_path, options_.device, options_.spec_profile);
     // An explicit --spec without --drafter drafts with the drafter that came with the model.
@@ -368,31 +391,37 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         engine_options.speculative.drafter =
             product::model_drafter(options_.artifact_path, engine_options.speculative.backend);
     }
+    // MTP and DFlash draft with the artifact's proposal head when it has one for them.
+    engine_options.speculative.proposal_head = product::model_draft_head(
+        options_.artifact_path, engine_options.speculative.backend,
+        engine_options.speculative.drafter, engine_options.speculative.proposal_head);
     // An explicit --spec without --draft-tokens drafts at the depth the model's profile runs that
     // backend with on this GPU (its default for the server's thinking flag), else at the default.
     if (options_.draft_tokens_from_model) {
+        // The profile's depth for this backend (product::profile_depth, as the plan reads it).
         std::string source;
-        std::vector<std::string> notes;
-        const auto profiled =
-            product::profile_speculation(options_.artifact_path, options_.device,
-                                         options_.enable_thinking.value_or(true), &source, &notes,
-                                         options_.spec_profile);
         const SpeculativeBackend backend = engine_options.speculative.backend;
-        if (profiled && profiled->backend == backend && profiled->draft_tokens != 0) {
-            engine_options.speculative.draft_tokens = profiled->draft_tokens;
+        const auto& resolved             = speculation_subject().resolved;
+        if (const auto depth = product::profile_depth(speculation_subject(), backend,
+                                                      options_.enable_thinking.value_or(true), &source)) {
+            engine_options.speculative.draft_tokens = *depth;
             draft_depth_source_                     = "the model's profile (" + source + ")";
         } else {
             engine_options.speculative.draft_tokens = product::default_draft_tokens(backend);
-            draft_depth_source_ = profiled ? "the default (the model's profile drafts with "
-                                             "another backend)"
-                                           : "the default (the model has no profile for this GPU)";
+            draft_depth_source_ = resolved && resolved->found()
+                                      ? "the default (the model's profile drafts otherwise)"
+                                      : "the default (the model has no profile for this GPU)";
         }
         options_.speculative.draft_tokens = engine_options.speculative.draft_tokens;
     }
+    if (options_.speculation_from_profile && !options_.per_request_given) {
+        options_.per_request_speculation =
+            product::per_request_pays(speculation_subject(), options_.enable_thinking.value_or(true));
+    }
     if (options_.speculation_from_profile) {
         served_speculation_ = product::served_speculation(
-            options_.artifact_path, options_.device, options_.enable_thinking.value_or(true),
-            options_.per_request_speculation, options_.spec_profile);
+            speculation_subject(), options_.enable_thinking.value_or(true),
+            options_.per_request_speculation);
         if (served_speculation_) {
             engine_options.speculative =
                 product::with_given_settings(served_speculation_->engine, options_.speculative);
@@ -427,11 +456,6 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         served_speculation_->engine.draft_width = speculative.draft_width;
     };
     bound_load(engine_options.speculative);
-    engine_options.context_cache            = options_.context_cache;
-    engine_options.context_cost.preset_path = options_.context_cost_presets;
-    engine_options.media_cache_bytes        = options_.media_cache_bytes;
-    engine_options.media_live_bytes         = options_.media_live_bytes;
-    engine_options.media_preprocess_threads = options_.media_preprocess_threads;
     engine_options.startup_observer         = std::move(startup_observer);
     // The --plan dry run stops here: the ladder of the first Engine the server would build.
     if (options_.plan_only) {
@@ -490,77 +514,48 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         // says so. When that does not fit either, or the profile has none, --spec auto decodes
         // plainly rather than keep a server from starting that plain decode lets start. An
         // explicit --spec keeps the refusal.
-        if (!served_speculation_) { throw; }
+        // A plain choice that does not fit has no drafter to step back from: plain decode's
+        // refusal stands, as the CLI's and the plan's.
+        if (!served_speculation_ || !served_speculation_->drafts()) { throw; }
         const std::string refused_label = product::speculation_label(engine_options.speculative);
-        std::string why = refused.what();
-        bool built      = false;
-        if (auto fallback = product::served_fit_fallback(options_.artifact_path, options_.device,
-                                                         options_.per_request_speculation,
-                                                         options_.spec_profile)) {
-            fallback->fit_fallback =
-                product::fit_refusal(refused_label, engine_options.max_context, why);
+        const std::string first_refusal = refused.what();
+        std::string why                 = first_refusal;
+        // The start's order (product::fit_fallbacks): the profile's fit fallback, the deepest
+        // shallower draft (a few builds; the Engine's plan ladder has already narrowed an automatic
+        // prefill chunk: 1024 halved down to 128), the model's own MTP head. An explicit
+        // --prefill-chunk stays as given and the shallower drafts are tried beside it: --spec auto
+        // asks for what fits, and a depth step costs far less than plain decode (RTX 4080 SUPER,
+        // Qwen3.8-27B IQ3 dflash2 K=7 missed 26 MB at max_context 32768 with --prefill-chunk 2048
+        // and decoded a 24K prompt plainly at 50.9 tok/s against 99.9 speculating). A candidate
+        // replaces the served speculation and builds the Engine (dropping one an earlier candidate
+        // built, so each is planned on the whole device): true when it fits.
+        const product::ServedSpeculation profile_choice = *served_speculation_;
+        const auto fits = [&](const product::ServedSpeculation& candidate,
+                              product::FallbackStep step) {
+            engine_.reset();
+            auto served         = candidate;
+            served.fit_fallback =
+                product::fit_refusal(refused_label, engine_options.max_context, first_refusal,
+                                     engine_options.max_context_automatic);
             engine_options.speculative =
-                product::with_given_settings(fallback->engine, options_.speculative);
-            mark_fit_fallback(engine_options.speculative, "profile_fit_fallback");
-            served_speculation_ = std::move(fallback);
+                product::with_given_settings(served.engine, options_.speculative);
+            mark_fit_fallback(engine_options.speculative,
+                              step == product::FallbackStep::FitFallback
+                                  ? std::string_view("profile_fit_fallback")
+                                  : std::string_view(product::fallback_step_name(step)));
+            served_speculation_ = std::move(served);
             bound_load(engine_options.speculative);
             try {
                 build();
-                built = true;
+                return true;
             } catch (const ninferno::CapacityError& again) {
                 why = again.what();
+                return false;
             }
-        }
-        // Then shallower drafts with the same drafter: the deepest that fits runs (a few builds,
-        // product::deepest_fitting_shallower; the Engine's plan ladder has already narrowed an
-        // automatic prefill chunk: 1024 halved down to 128). An explicit --prefill-chunk stays as
-        // given and the shallower drafts are tried beside it: --spec auto asks for what fits, and
-        // a depth step costs far less than plain decode (RTX 4080 SUPER, Qwen3.8-27B IQ3 dflash2
-        // K=7 missed 26 MB at max_context 32768 with --prefill-chunk 2048 and decoded a 24K
-        // prompt plainly at 50.9 tok/s against 99.9 speculating).
-        if (!built) {
-            const auto shallower = [&](const spec::SpecConfig& config, double floor) {
-                return product::served_shallower(options_.artifact_path, options_.device,
-                                                 options_.per_request_speculation, config, floor,
-                                                 options_.spec_profile);
-            };
-            const std::string first_refusal = refused.what();
-            // A candidate replaces the served speculation and builds the Engine (dropping one an
-            // earlier candidate built, so each is planned on the whole device): true when it fits.
-            const auto fits = [&](const product::ServedSpeculation& candidate,
-                                  std::string_view fallback) {
-                engine_.reset();
-                auto served         = candidate;
-                served.fit_fallback =
-                    product::fit_refusal(refused_label, engine_options.max_context, first_refusal);
-                engine_options.speculative =
-                    product::with_given_settings(served.engine, options_.speculative);
-                mark_fit_fallback(engine_options.speculative, fallback);
-                served_speculation_ = std::move(served);
-                bound_load(engine_options.speculative);
-                try {
-                    build();
-                    return true;
-                } catch (const ninferno::CapacityError& again) {
-                    why = again.what();
-                    return false;
-                }
-            };
-            built = product::deepest_fitting_shallower(
-                        served_speculation_->menu.primary, shallower,
-                        [&](const product::ServedSpeculation& candidate) {
-                            return fits(candidate, "shallower");
-                        })
-                        .has_value();
-            // Then the model's own MTP head, before plain decode.
-            if (!built) {
-                if (auto head = product::served_head_fallback(
-                        options_.artifact_path, options_.device,
-                        options_.per_request_speculation, options_.spec_profile)) {
-                    built = fits(*head, "head");
-                }
-            }
-        }
+        };
+        const bool built = product::fit_fallbacks(speculation_subject(), profile_choice,
+                                                  options_.per_request_speculation, fits)
+                               .has_value();
         if (!built) {
             speculation_plain_reason_ =
                 auto_plain_reason(refused_label, why, options_.prefill_chunk_explicit);
@@ -576,83 +571,82 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
             }
         }
     }
-    // --spec auto with an automatic KV pool: when the drafter (its weights, KV and graphs) leaves
-    // the pool fewer full contexts than --max-concurrency and plain decode holds more, the server
-    // decodes plainly, since requests waiting for pages cost more than drafting saves (RTX
-    // 4090, gpt-oss-20b 4 x 129K: auto pool 262K of 516K tokens, 34.9 tok/s aggregate; plain 506K,
-    // 239.4). One context always fits, so one request at a time never loses its drafter, and an
-    // explicit --spec keeps it.
-    if (served_speculation_ && options_.speculation_from_profile) {
+    if (served_speculation_ && served_speculation_->drafts() && options_.speculation_from_profile) {
         const ninferno::MemorySummary drafting = engine_->memory_summary();
         const std::uint32_t with_drafter     = pool_contexts(drafting);
-        if (with_drafter > 0 && with_drafter < options_.max_concurrency) {
-            const std::string drafted_label =
-                product::speculation_label(engine_options.speculative);
-            const SpeculativeOptions speculative = engine_options.speculative;
+        const std::string drafted_label = product::speculation_label(engine_options.speculative);
+        const SpeculativeOptions speculative    = engine_options.speculative;
+        const product::ServedSpeculation drafted = *served_speculation_;
+        // The configuration the Engine standing was built with, as the rule's steps build them.
+        enum class Built { Drafter, Plain, Head } standing = Built::Drafter;
+        std::uint32_t plain_tokens = 0;
+        const auto plain_contexts = [&]() -> std::uint32_t {
             engine_.reset();
             engine_options.speculative = SpeculativeOptions{};
             mark_fit_fallback(engine_options.speculative, "pool_plain");
-            std::uint32_t plain        = 0;
-            std::uint32_t plain_tokens = 0;
+            standing = Built::Plain;
             try {
                 engine_ = std::make_unique<ninferno::Engine>(engine_options);
                 const ninferno::MemorySummary memory = engine_->memory_summary();
-                plain                              = pool_contexts(memory);
-                plain_tokens                       = memory.kv_capacity;
-            } catch (const ninferno::CapacityError&) { engine_.reset(); }
-            // The model's own MTP head before plain decode: it weighs far less than a separate
-            // drafter, so it can leave the pool every context plain decode does, and drafting
-            // still pays at these loads (RTX 4090, Qwen3.8 27B at --max-context 32768 and
-            // --max-concurrency 4: dflash2 K=7 left 3 of 4 contexts and the server decoded plainly
-            // at 48.9 tok/s a request; MTP 3 88.8, at 8: 46.2 against 69.4). It runs
-            // when it holds at least four fifths of the contexts plain decode does (or of every one
-            // served): one context fewer costs only when every request runs a full one, while plain
-            // decode costs every request (RTX 3090, the same at 8: plain 38.3 tok/s a request in 5
-            // contexts, MTP 3 51.1 in 4).
-            bool head_kept = false;
-            if (plain > with_drafter) {
-                if (auto head = product::served_head_fallback(
-                        options_.artifact_path, options_.device, options_.per_request_speculation,
-                        options_.spec_profile)) {
-                    engine_.reset();
-                    head->fit_fallback = drafted_label + " leaves the KV pool " +
-                                         std::to_string(with_drafter) + " of " +
-                                         std::to_string(options_.max_concurrency) +
-                                         " full contexts beside its drafter";
-                    engine_options.speculative =
-                        product::with_given_settings(head->engine, options_.speculative);
-                    mark_fit_fallback(engine_options.speculative, "pool_head");
-                    served_speculation_ = std::move(head);
-                    bound_load(engine_options.speculative);
-                    try {
-                        build();
-                        head_kept = 5 * pool_contexts(engine_->memory_summary()) >=
-                                    4 * std::min(plain, options_.max_concurrency);
-                    } catch (const ninferno::CapacityError&) {}
-                    if (!head_kept) {
-                        engine_.reset();
-                        served_speculation_.reset();
-                        engine_options.speculative = SpeculativeOptions{};
-                        mark_fit_fallback(engine_options.speculative, "pool_plain");
-                        engine_ = std::make_unique<ninferno::Engine>(engine_options);
-                    }
-                }
-            }
-            if (!head_kept && plain > with_drafter) {
-                speculation_plain_reason_ =
-                    "--spec auto (" + drafted_label + ") leaves the KV pool " +
-                    std::to_string(with_drafter) + " of " +
-                    std::to_string(options_.max_concurrency) + " full contexts (" +
-                    std::to_string(drafting.kv_capacity) +
-                    " tokens) beside its drafter; plain "
-                    "decode holds " +
-                    std::to_string(plain) + " (" + std::to_string(plain_tokens) +
-                    "), so the server decodes plainly (an explicit --spec keeps the drafter)";
-                served_speculation_.reset();
-            } else if (!head_kept) {
+                plain_tokens                         = memory.kv_capacity;
+                return pool_contexts(memory);
+            } catch (const ninferno::CapacityError&) {
                 engine_.reset();
-                engine_options.speculative = speculative;
+                return 0;
+            }
+        };
+        // The model's own MTP head weighs far less than a separate drafter, so it can leave the
+        // pool every context plain decode does, and drafting still pays at these loads (RTX 4090,
+        // Qwen3.8 27B at --max-context 32768 and --max-concurrency 4: dflash2 K=7 left 3 of 4
+        // contexts and the server decoded plainly at 48.9 tok/s a request; MTP 3 88.8, at 8: 46.2
+        // against 69.4). Four fifths: one context fewer costs only when every request runs a full
+        // one, while plain decode costs every request (RTX 3090, the same at 8: plain 38.3 tok/s a
+        // request in 5 contexts, MTP 3 51.1 in 4).
+        const auto head_contexts =
+            [&](const product::ServedSpeculation& head) -> std::optional<std::uint32_t> {
+            engine_.reset();
+            auto served         = head;
+            served.fit_fallback = drafted_label + " leaves the KV pool " +
+                                  std::to_string(with_drafter) + " of " +
+                                  std::to_string(options_.max_concurrency) +
+                                  " full contexts beside its drafter";
+            engine_options.speculative =
+                product::with_given_settings(served.engine, options_.speculative);
+            mark_fit_fallback(engine_options.speculative, "pool_head");
+            served_speculation_ = std::move(served);
+            bound_load(engine_options.speculative);
+            standing = Built::Head;
+            try {
                 build();
+                return pool_contexts(engine_->memory_summary());
+            } catch (const ninferno::CapacityError&) { return std::nullopt; }
+        };
+        // --spec auto with an automatic KV pool (product::pool_rule): requests waiting for pages
+        // cost more than drafting saves (RTX 4090, gpt-oss-20b 4 x 129K: auto pool 262K of 516K
+        // tokens, 34.9 tok/s aggregate; plain 506K, 239.4). An explicit --spec keeps its drafter.
+        const product::PoolDecision pool =
+            product::pool_rule(speculation_subject(), options_.per_request_speculation,
+                               with_drafter, options_.max_concurrency, plain_contexts,
+                               head_contexts);
+        if (pool.keep == product::PoolKeep::Drafter && standing != Built::Drafter) {
+            engine_.reset();
+            served_speculation_        = drafted;
+            engine_options.speculative = speculative;
+            build();
+        } else if (pool.keep == product::PoolKeep::Plain) {
+            speculation_plain_reason_ =
+                "--spec auto (" + drafted_label + ") leaves the KV pool " +
+                std::to_string(with_drafter) + " of " + std::to_string(options_.max_concurrency) +
+                " full contexts (" + std::to_string(drafting.kv_capacity) +
+                " tokens) beside its drafter; plain decode holds " + std::to_string(pool.plain) +
+                " (" + std::to_string(plain_tokens) +
+                "), so the server decodes plainly (an explicit --spec keeps the drafter)";
+            served_speculation_.reset();
+            if (standing != Built::Plain) {
+                engine_.reset();
+                engine_options.speculative = SpeculativeOptions{};
+                mark_fit_fallback(engine_options.speculative, "pool_plain");
+                engine_ = std::make_unique<ninferno::Engine>(engine_options);
             }
         }
     }

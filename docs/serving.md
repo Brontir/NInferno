@@ -36,7 +36,7 @@ The model argument can be:
 | Argument | What happens |
 |---|---|
 | hub id `org/name[@revision]` | downloaded into the Hugging Face cache, converted, and reused on later starts |
-| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/` |
+| checkpoint directory or GGUF file | converted once into `<dir>/.ninferno-cache/`, again when its files change |
 | `.ninferno` file | served as is |
 
 For a hub id:
@@ -50,11 +50,45 @@ For a hub id:
 - `--plan` prints the memory plan these options give on this GPU now (the plan ladder, every rung's
   bytes, the rung that fits and what would get more), then exits; `--plan --json` prints it as
   JSON for a UI's fit bar ([reference](reference/serving.md#automatic-context-selection)).
+- `--plan --no-load` plans without loading or downloading the weights and without a GPU. It reads
+  only the model's header or config: for a hub id, the file listing and one GGUF header. For a GGUF
+  repository it lists every quantization, says whether each fits the asked `--max-context` x
+  `--max-concurrency`, and names the largest that fits. `--plan-device "RTX 4090"` plans for another
+  card. It is an estimate; the start decides
+  ([reference](reference/serving.md#the-plan-without-the-weights)).
 - `--recipe NAME` picks another conversion recipe. `--quant LABEL` picks a GGUF quantization.
+  Without `--quant`, a GGUF repository is fetched at the largest quantization that fits the asked
+  context and streams on this GPU's card type, and the log says which (`quant | ...`):
+  - "fits" means each stream holds the asked context of its own; with an automatic context, at
+    least 32K each (or the model's own length), then 16K, then 8K, before the streams share one
+    pool, and that is logged in plain words; with several streams and no `--max-context`, the
+    start keeps the context it chose the file for as the automatic context's ceiling
+    (`--max-context-cap`);
+  - below 3.5 bits per weight only when nothing larger fits at all;
+  - a quantization already downloaded that fits is kept, so other flags do not download another
+    file;
+  - when none fits, nothing is downloaded and the refusal says what fits instead;
+  - when the hub cannot be reached, it takes the largest cached file that fits; with none it can
+    plan, the fetch's own default applies;
+  - the fetch's own default order (when no plan applies) now puts BF16 and F16 files last: the
+    engine serves 8 bits or fewer, so a repository without Q8_0 gets a K-quant, not BF16.
+- A model already here, whether its download was converted and removed (ninferno-ui removes it
+  once the model loads) or is still in the cache, is served from the commit it came from. The hub
+  is asked whether its branch still names that commit. If the branch moved, the start says so and
+  serves the weights here anyway, after a 10-second count-down on a terminal (a new download is
+  many gigabytes); with the download still in the cache the start runs pinned to its commit.
+  - `--accept-converted` keeps them from now on without the notice, until the branch moves again.
+  - `--refetch` downloads the new commit, converts it and removes the old conversion
+    (`--keep-replaced` leaves it, for ninferno-ui to remove once the new one serves).
+- `--round-tiny-scales` passes the converter's flag (docs/weight-conversion.md): a published integer
+  matrix whose only inexact binary16 scales lie below binary16's normal range is kept with them
+  rounded, the report counting them. Off by default: such a model is refused, naming the flag.
+  - A hub that cannot be reached leaves the converted weights in use, with a warning.
 
 The server checks before downloading any weight and refuses with a reason if the architecture is not
 supported, the repository is gated or missing, the weights do not fit the GPU memory, or the disk is
-too small.
+too small. Whether the weights fit is the plan without the weights at the asked context and
+streams on this GPU's free memory (the same plan the start makes), with `--quant` named too.
 
 A fuller example for a converted file:
 
@@ -82,19 +116,21 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--api-key KEY`, `--api-key-file PATH` | unset | require a bearer / `x-api-key` value |
 | `--model-id ID` | `metadata.name`, else the file name | public model alias; it does not change execution |
 | `--max-context N` | auto: the first rung of the plan ladder that fits (the model's own context at the top) | per-request context ceiling |
+| `--max-context-cap N` | none; a GGUF repository fetched without `--quant` for several requests: the context each was planned to keep of its own | keeps the context automatic (the free memory picks the rung, a busy card steps down) but at most N; not with `--max-context` |
 | `--kv-capacity N\|auto` | `auto`; with `--max-context` and one request, that context | shared KV pool size |
 | `--max-concurrency N` | `1` | requests generated at once, `1..8` |
 | `--max-pending-requests N` | `16` | requests allowed to wait for admission |
 | `--pending-timeout-ms N` | `600000` (10 min) | longest wait before admission |
-| `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short) |
-| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` picks per model family |
-| `--activations exact\|fast\|int8` | `fast` | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it) |
+| `--prefill-chunk N` | `1024` | text prefill chunk, a multiple of 128 (lowered automatically if memory is short); omitted, an MoE may take a wider one from the configuration choice |
+| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV-cache storage; `auto` is chosen for the model on your GPU ([configuration choice](maintainer/configuration-choice.md); the start logs it on a `choice \|` line) |
+| `--activations exact\|fast\|int8` | chosen (`fast`) | `exact` makes answers independent of load, but is slower; `int8` is for Qwen models (other families refuse it). Omitted, the configuration choice picks it (`fast` unless `exact` costs little) |
 | `--spec mtp\|dflash\|dflash2\|auto\|none` | `auto` | speculative decoding backend |
 | `--draft-tokens N` | profile's depth, else 3 (MTP) or 7 (DFlash) | draft depth, `1..15` |
 | `--vision` | off | accept image input (Qwen3.5, 3.6, 3.8, Gemma 4 26B-A4B and 31B) and video input (Qwen); a GGUF needs its `mmproj` file beside it |
 | `--default-max-tokens N` | `8192` | output limit when the request gives none |
 | `--no-thinking` | the template's default | disable thinking by default |
 | `--default-thinking-budget N` | unset | cap on thinking tokens, where the chat template can end thinking (Qwen, Gemma 4; not gpt-oss) |
+| `--no-answer-room` | room kept | without a budget, thinking may take the whole output limit (by default it closes at three quarters, leaving the rest for the answer) |
 | `--no-prefix-reuse` | reuse on | disable prefix caching |
 | `--cors` | off | permissive browser CORS headers |
 | `--request-log-jsonl FILE` | off | machine-readable request log |
@@ -105,9 +141,10 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 All other options (media, Host cache, response store, penalties, limits, decode pacing with
 `--decode-steps`, `--decode-wait` and `--cuda-sync`) are in the
 [option tables](reference/serving.md#11-server-options). The maintainer options (`--route-table`,
-`--route-dir`, `--dense-tune`, `--moe-tune`, `--tune-cache`, `--drafter-registry`, `--debug-*`)
-are in [maintainer options](maintainer/environment.md); no environment variable changes what the
-server decides.
+`--route-dir`, `--drafter-registry`, `--debug-*`) are in
+[maintainer options](maintainer/environment.md); no environment variable changes what the server
+decides. The server refuses the lab tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`): they
+time kernels on the machine, and run only in the maintainer tools.
 
 ## Endpoints
 
@@ -233,6 +270,8 @@ Notes that often matter:
 - Force a backend with `--spec mtp`, `--spec dflash` or `--spec dflash2`, and a depth with
   `--draft-tokens N`. Add `--lm-head-draft` for the optimized proposal head.
 - Disable it with `--spec none`.
+- Every round drafts a fixed depth. There is no adaptive depth (one that moves with the drafts
+  accepted): it was measured and removed, as it gained only on synthetic text.
 - Under concurrency the profile lowers the draft depth per decode step, because deep drafts stop
   paying off on a busy server. `--spec-load LANES:DEPTH,...` replaces those bounds (`none` removes
   them).
@@ -273,10 +312,13 @@ Notes that often matter:
   carry `Retry-After`. A streamed request has its HTTP 200 and event-stream headers sent when it
   is admitted to the queue, so its queue timeout arrives as the dialect's error event
   (the same code and message) and the stream ends.
-- **Speculation needs a profile.** `--spec auto` speculates with the profile measured for the
-  model and GPU. A model without one for this GPU (most GGUF conversions of models nobody
-  measured) decodes plainly, and the startup log says so; `--spec mtp` or `--spec dflash`
-  speculates anyway at the default depth.
+- **Speculation without a profile.** `--spec auto` speculates with the profile measured for the
+  model and GPU (the lab's measured pair for these weights, that of the repository's nearest
+  measured quantization, its group's, or a published profile).
+  A model without one for this GPU drafts with the drafter it carries at its default (MTP 3, with
+  the proposal head when it has one; else DFlash2 or DFlash 7), its watchdog floors raised so a
+  configuration that does not pay stops, and the startup log says so; a model without a drafter
+  decodes plainly. `--spec mtp` or `--spec dflash` speculates at the default depth.
 - **Speculation needs room.** With `--spec auto`, an explicit `--max-context`, more than one
   request and the automatic KV pool, the drafter's weights and state come out of the pool. When
   the pool then holds fewer full contexts than `--max-concurrency` and plain decode holds more, the server

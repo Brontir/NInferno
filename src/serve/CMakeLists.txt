@@ -18,6 +18,7 @@ add_library(ninferno_serve STATIC
   request_events.cpp
   operational_log.cpp
   plan_report.cpp
+  plan_offline.cpp
   request_log.cpp
   http_server.cpp
   openai_responses_http.cpp
@@ -27,4 +28,4 @@ add_library(ninferno_serve STATIC
 ninferno_internal_includes(ninferno_serve)
 target_link_libraries(ninferno_serve
   PUBLIC ninferno_engine ninferno_product_speculation Threads::Threads ninferno::json ninferno::httplib
-  PRIVATE ninferno_media_acquire ninferno_media_pdf ninferno_product_logging ninferno_convert ninferno::cudart)
+  PRIVATE ninferno_media_acquire ninferno_media_pdf ninferno_product_logging ninferno_convert ninferno_product_plan ninferno::cudart)

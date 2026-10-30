@@ -48,6 +48,14 @@ decision_patterns=(
   src/runtime/engine/interleave_cost.h
   src/runtime/engine/kv_capacity.cpp
   src/runtime/engine/kv_capacity.h
+  src/runtime/engine/plan_dry_run.cpp
+  src/runtime/engine/plan_dry_run.h
+  src/runtime/engine/quant_rule.cpp
+  src/runtime/engine/quant_rule.h
+  src/product/plan/plan_quants.cpp
+  src/product/plan/plan_quants.h
+  src/product/plan/plan_speculation.cpp
+  src/product/plan/plan_speculation.h
   src/runtime/engine/scheduler.h
   src/runtime/engine/warmup_widths.cpp
   src/runtime/engine/warmup_widths.h
@@ -60,6 +68,11 @@ decision_patterns=(
   src/ops/route_table.cpp
   src/runtime/engine/process_options_lease.h
   src/product/engine_flags.h
+  src/product/choice/choice.cpp
+  src/product/choice/choice.h
+  src/product/choice/choice_constants.h
+  src/product/plan/plan_choice.cpp
+  src/product/plan/plan_choice.h
   src/ops/generic/route_table.h
   src/ops/wrapper/candidate_selector.cpp
   src/ops/candidate_selector/bf16/candidate_selector_path_plan.cpp

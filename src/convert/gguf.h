@@ -13,8 +13,10 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::convert {
@@ -74,13 +76,49 @@ struct GgufFile {
 [[nodiscard]] GgufFile parse_gguf_head(const std::byte* data, std::size_t size,
                                        std::uint64_t file_size, const std::string& label);
 
+// The Hugging Face repository (org/name) a GGUF's metadata names as the model's source: the first
+// of general.base_model.0.repo_url, general.source.repo_url, general.source.huggingface.repository
+// and general.source.url that is a Hugging Face address or an org/name
+// ("https://huggingface.co/Qwen/Qwen3.5-9B/tree/main" -> "Qwen/Qwen3.5-9B"); nullopt when none is. The model's lineage, one reading for the plan and the
+// converter's drafter lookup alike.
+[[nodiscard]] std::optional<std::string> gguf_metadata_base_repository(const nlohmann::json& metadata);
+
+// The metadata key/value pairs the first `size` bytes of a GGUF file hold, in order, up to the
+// first one they end inside (no tensor infos); `complete` when every pair was read. Throws where
+// the header is no GGUF one, as parse_gguf does.
+struct GgufMetadataPrefix {
+    nlohmann::json metadata = nlohmann::json::object();
+    std::vector<std::string> keys; // in the file's order
+    bool complete           = false;
+};
+[[nodiscard]] GgufMetadataPrefix parse_gguf_metadata_prefix(const std::byte* data, std::size_t size,
+                                                            const std::string& label);
+
+// Whether a GGUF model carries MTP (NextN) layers by its metadata (<arch>.nextn_predict_layers,
+// as plan_facts and gguf_model.cpp read it): false when all the metadata was read without it, or
+// the architecture's block of keys was (its keys, then another namespace's, none of its after: the
+// order llama.cpp's writers keep; the specification orders no keys); nullopt when the read ends
+// before.
+[[nodiscard]] std::optional<bool> gguf_metadata_carries_mtp(const GgufMetadataPrefix& prefix);
+
+// The bytes of the tensor `name` of shape `ne` (ggml order) by its tensor info, found in a window
+// of a GGUF file's tensor table (`data`, any part of the file holding that info whole): its name
+// length and name, then its dimensions, type and offset. nullopt when the window holds none of
+// that shape or its type is unknown.
+[[nodiscard]] std::optional<std::uint64_t>
+gguf_tensor_info_bytes(const std::byte* data, std::size_t size, std::string_view name,
+                       const std::vector<std::uint64_t>& ne);
+
 struct GgufTruncated : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
 // A GGUF file beside a model that is not the model: a vision projector (mmproj-*), an importance
-// matrix, an MTP-only sidecar (a4lg's <model>-MTP-ONLY-<quant>.gguf, mtp-*.gguf: the NextN block
-// of a model whose GGUF dropped it, read as a target's mtp source). By file name, case ignored.
+// matrix (imatrix*.gguf, *-imatrix.gguf: not a model named "iMatrix" in the middle, cdiamond's
+// Qwen3.8-27B-iMatrix-NVFP4-MTP.gguf), an MTP-only sidecar (a4lg's <model>-MTP-ONLY-<quant>.gguf,
+// mtp-*.gguf: the NextN block of a model whose GGUF dropped it, read as a target's mtp source), a
+// drafter published beside the model (dflash-*.gguf, eagle*.gguf: meta-models'
+// dflash-Muse-Glimmer-30B-Q4_K_M.gguf next to the Q4_K_M model). By file name, case ignored.
 [[nodiscard]] bool gguf_auxiliary_file(const std::string& file_name);
 
 // The binary32 value `value` as the double of its shortest round-trip decimal.

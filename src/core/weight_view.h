@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -51,6 +52,11 @@ struct WeightGeometry {
     std::uint64_t order_offset        = 0; // RowGroupZpOrdered: the K int32 column indices
 };
 
+// The layout the converter stores a matrix of `format` in (convert/planner.cpp): the layout an
+// artifact's weight of that format has, and what a weight descriptor without bytes assumes
+// (ops/generic/route_query.h).
+[[nodiscard]] QuantLayout default_weight_layout(QType format) noexcept;
+
 [[nodiscard]] WeightGeometry weight_geometry(QType format, QuantLayout layout,
                                              std::span<const std::uint64_t> shape,
                                              std::uint64_t divisors = 1);
@@ -94,6 +100,13 @@ struct WeightRowPlanes {
 };
 
 [[nodiscard]] WeightRowPlanes weight_row_planes(const WeightRegion& region);
+// The leading `rows` rows of a matrix view: its regions cut at rows x columns elements, every byte
+// where it was (a table stored in ranking order read over its first rows: the proposal head a
+// drafter asking fewer rows reads). None where the parent's layout has no row views (FP8 and NVFP4
+// block scales, RowScale: native_weight reads those parents whole) or `rows` is not below the
+// view's.
+[[nodiscard]] std::optional<WeightView> weight_row_prefix(const WeightView& view,
+                                                          std::uint64_t rows);
 [[nodiscard]] Tensor weight_tensor(const WeightView& view,
                                    std::initializer_list<std::int32_t> internal_shape);
 // Existing Weight ABI: complete quantized parents, direct regions, and RowSplit row views.

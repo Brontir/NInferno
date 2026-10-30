@@ -113,4 +113,8 @@ void clear_route_table();
 
 [[nodiscard]] RouteTableStatus route_table_status();
 
+// Whether the table at `path` (UTF-8) is this device's explicit table (load_route_table), without
+// running the default lookup (which refuses a broken directory the explicit table stands in for).
+[[nodiscard]] bool route_table_loaded(const std::string& path);
+
 } // namespace ninferno::ops

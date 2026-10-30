@@ -84,6 +84,7 @@ int check_kld() {
     written.top_k             = 2;
     written.context           = 4096;
     written.stride            = 2048;
+    written.window_start      = 2;
     written.model             = "reference";
     written.prefill_signature = "bf16";
     written.streams.push_back({"wiki",
@@ -97,6 +98,7 @@ int check_kld() {
     pp::write_kld_reference(path, written);
     const pp::KldReference read = pp::read_kld_reference(path);
     failures += require(read.top_k == 2 && read.context == 4096 && read.stride == 2048 &&
+                            read.window_start == 2 &&
                             read.model == "reference" && read.prefill_signature == "bf16" &&
                             read.streams.size() == 1 && read.streams[0].id == "wiki" &&
                             read.streams[0].token_hash == written.streams[0].token_hash &&

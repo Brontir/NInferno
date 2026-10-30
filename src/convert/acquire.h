@@ -16,10 +16,12 @@
 //              next one finds the artifact;
 //   kept       with `reuse`, an artifact whose download was removed after it was converted
 //              (ninferno-ui removes the original once the model loaded: blobs/ and snapshots/ go,
-//              refs/ and ninferno/ stay) is loaded at the commit the cache's ref names, without
-//              asking the hub: fetching would download the weights again only to find the
-//              artifact. Taken when exactly one complete artifact there matches the quantization
-//              asked for (any, a label, or a width: "4bit").
+//              refs/ and ninferno/ stay) is loaded at the commit the cache's ref names. Taken when
+//              exactly one complete artifact there matches the quantization asked for (any, a
+//              label, or a width: "4bit"). The hub is asked (one listing request) whether the ref
+//              still names that commit; where it moved, `moved_ref` decides (a download is many
+//              gigabytes, so the converted weights stay unless the user asks otherwise), and a
+//              hub that cannot be reached leaves them, said.
 //
 // Nothing is searched for on the machine: only the hub cache entry of the named repository.
 
@@ -34,6 +36,15 @@
 #include <string>
 
 namespace ninferno::convert {
+
+// What a start does with a kept artifact whose ref the hub now names at another commit (the
+// branch moved after the model was converted and its download removed).
+enum class MovedRef {
+    Notice,  // keep the converted weights for this start, after a notice (on_moved_ref)
+    Accept,  // keep them now and later: recorded beside them (accept_converted), no more notice
+             // until the ref moves again
+    Refetch, // download the commit the ref names now, convert it, then remove the old conversion
+};
 
 struct AcquireOptions {
     FetchOptions fetch;
@@ -54,6 +65,13 @@ struct AcquireOptions {
     // from its repository. Other models are converted as without it (the Engine then says why).
     bool vision               = false;
     bool reuse                = false; // load an earlier run's artifact for the same commit
+    MovedRef moved_ref        = MovedRef::Notice;
+    // MovedRef::Refetch leaves the replaced conversion in place for the caller to remove once the
+    // new one serves (ninferno-ui switches a running model over first): --keep-replaced.
+    bool keep_replaced        = false;
+    // Called with the notice of MovedRef::Notice once it is logged; a console counts down here
+    // before the start goes on with the converted weights.
+    std::function<void(const std::string& notice)> on_moved_ref;
     // Called before the weights are downloaded, with the recipe chosen from config.json ("" for a
     // GGUF or a URL, whose recipe is known only once fetched); throwing stops the acquisition.
     std::function<void(const FetchPlan&, const std::string& recipe)> before_download;
@@ -76,9 +94,69 @@ struct AcquiredModel {
 kept_artifact(const std::filesystem::path& cache, const std::string& repo,
               const std::string& revision, const std::string& quant, const std::string& recipe);
 
+// The one complete conversion in `commit_dir` (<cache>/models--org--name/ninferno/<commit>)
+// that matches `quant` (any, a label, or a width: "4bit") and `recipe` (any when empty); nullopt
+// when none or several do.
+[[nodiscard]] std::optional<std::filesystem::path>
+converted_artifact(const std::filesystem::path& commit_dir, const std::string& quant,
+                   const std::string& recipe);
+
+// Whether the conversion of `repo`'s GGUF quantization `quant` at the commit `revision` names (a
+// commit, or a ref: "" for main) under `cache` carries drafters: a component from a repository of
+// its own (a Qwen DFlash companion), or a speculation manifest of this artifact beside it with a
+// drafter still usable (not failed, its artifact there), as an earlier --with-drafters wrote them.
+// A start reuses that conversion, flag or not, and serves them: a plan of these weights counts them
+// (product::PlannedTarget::with_drafters). The conversion is the one the start takes: of `recipe`
+// (any when empty), a --vision one with `vision` (the text one when none is: a GGUF model without
+// a projector converts without it); several left (two recipes, none named) answer what all of them
+// carry. That conversion (the first by path when several recipes all carry them), for a plan to
+// resolve as the start does; nullopt where none carries them.
+[[nodiscard]] std::optional<std::filesystem::path>
+cached_conversion_with_drafters(const std::filesystem::path& cache, const std::string& repo,
+                                const std::string& revision, const std::string& quant,
+                                const std::string& recipe = {}, bool vision = false);
+// Whether cached_conversion_with_drafters finds one.
+[[nodiscard]] bool cached_conversion_has_drafters(const std::filesystem::path& cache,
+                                                  const std::string& repo,
+                                                  const std::string& revision,
+                                                  const std::string& quant,
+                                                  const std::string& recipe = {},
+                                                  bool vision                = false);
+// A stamp of everything under `cache` that cached_conversion_with_drafters reads for `repo`: its
+// refs, which commits' downloads are there, its conversions (names, sizes, times) and the separate
+// drafters their manifests attach (another repository's, removed or replaced apart from them): a
+// plan that depends on what a conversion carries is kept until the stamp changes.
+[[nodiscard]] std::string conversions_stamp(const std::filesystem::path& cache,
+                                            const std::string& repo);
+
+// A conversion's file name in a commit's directory, <gguf stem>[.vision].<recipe>.ninferno:
+// the GGUF's stem, whether it is a --vision conversion, its recipe, and the GGUF's quantization
+// label (gguf_quant_label); nullopt for another name.
+struct ConvertedName {
+    std::string stem;
+    bool vision = false;
+    std::string recipe;
+    std::string label;
+};
+[[nodiscard]] std::optional<ConvertedName> converted_name(const std::filesystem::path& artifact);
+
+// The record that the user keeps the conversion in `commit_dir` (<cache>/models--org--name/
+// ninferno/<commit>) for the ref `ref` while the hub names `hub_commit` (accepted.json there), and
+// whether it is there: a start then serves it without a notice, until the ref moves again.
+void accept_converted(const std::filesystem::path& commit_dir, const std::string& ref,
+                      const std::string& hub_commit);
+[[nodiscard]] bool converted_accepted(const std::filesystem::path& commit_dir,
+                                      const std::string& ref, const std::string& hub_commit);
+
 // `spec` is org/name[@revision] on the options' hub, or an http(s) URL of one file. Throws naming
 // what failed and what to do about it.
 [[nodiscard]] AcquiredModel acquire_model(const std::string& spec, AcquireOptions options);
+
+// Of a repository's file names, the Vision projector a start takes under --vision (mmproj-*.gguf):
+// BF16 first, then F32, then F16, then any; ties to the first name. Every part of it (one file, or
+// a split projector's parts), first part first: the start fetches them and the plan without the
+// weights charges them. Empty when there is none.
+[[nodiscard]] std::vector<std::string> best_projector(const std::vector<std::string>& files);
 
 // The Vision projector beside a GGUF model file (mmproj-*.gguf in its directory): BF16 first,
 // then F32, then F16; nullopt when there is none.

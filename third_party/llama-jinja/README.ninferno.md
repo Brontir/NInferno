@@ -16,6 +16,11 @@ python3 tools/generate_jinja_unicode.py /path/to/unicode-17.0.0
 Adopted and local fixes, each pinned by `tests/text/test_jinja.cpp`:
 
 - llama.cpp #20782 (GHSA-q9j6-4hhc-rq9p, GHSA-2q4c-9gq5-5vfp) and #20913 are part of the base.
+- llama.cpp #30533 (a `{% set %}` in a loop body stays in its iteration), #30941 (a namespace has
+  no dict methods), #31059 (`select`/`reject` take a test, `selectattr`/`rejectattr` an attribute
+  and a test), #30819 (`unique`; here strings fold case unless `case_sensitive`, as jinja2) and
+  #30929 (`\xHH` escapes), ported by hand to this fork's layout. #30362 and #30483 (`tojson`
+  floats, NaN and Infinity as Python writes them) were already this fork's behaviour.
 - Local: `lstrip_blocks` no longer drops a template's first character when only blanks separate
   it from the first block tag (`lexer.cpp`; upstream master still has the off-by-one).
 - Local: `raise_exception()` throws `template_raised_exception`, which `statement::execute` passes

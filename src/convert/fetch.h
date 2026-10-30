@@ -16,12 +16,17 @@
 //              LFS sha256; the CDN's own ETag is not it) verified before an atomic rename;
 //   auth       $HF_TOKEN (or $HUGGING_FACE_HUB_TOKEN) / $MODELSCOPE_API_TOKEN, sent to the hub
 //              only, never to the CDN a download redirects to, never logged;
-//   offline    a listing that fails (or $HF_HUB_OFFLINE) falls back to the snapshot the revision
-//              resolved to before, as it lies in the cache.
+//   offline    under $HF_HUB_OFFLINE, the snapshot the revision resolved to before, as it lies in
+//              the cache; a listing that fails falls back to it only for a commit (a branch or a
+//              tag may have moved: the error says so).
+
+#include "core/hub_revision.h"
 
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
+#include <set>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -92,10 +97,27 @@ struct FetchResult {
 // ~/.cache/huggingface/hub.
 [[nodiscard]] std::filesystem::path default_hub_cache();
 
-// A repository's directory in a hub cache, as Hugging Face's own tools name it: org/name ->
-// models--org--name; and back, "" for a directory that is no repository's.
-[[nodiscard]] std::string hub_repo_directory(std::string_view repo);
-[[nodiscard]] std::string hub_repo_of_directory(std::string_view directory);
+// The Hugging Face token the hub is asked with, as huggingface_hub finds it: $HF_TOKEN (or
+// $HUGGING_FACE_HUB_TOKEN), else the file `hf auth login` writes (hub_token_path()). `source`
+// names where it came from ("" with no token).
+struct HubToken {
+    std::string value;
+    std::string source;
+};
+[[nodiscard]] HubToken hub_token();
+// $HF_TOKEN_PATH, else $HF_HOME/token, else ~/.cache/huggingface/token.
+[[nodiscard]] std::filesystem::path hub_token_path();
+// Writes the token where `hf auth login` keeps it (read by its owner only); "" removes it.
+void save_hub_token(const std::string& token);
+// The account a Hugging Face token belongs to (/api/whoami-v2); throws naming why the hub refused
+// it (an invalid token: HTTP 401).
+[[nodiscard]] std::string hub_account(const std::string& token, const FetchOptions& options);
+
+// The commit `revision` ("" for main) names in a hub cache's repository directory `repo_dir`
+// (<cache>/models--org--name): a commit id itself, else the commit its ref file (refs/<revision>)
+// records; nullopt when none is recorded or what is recorded is no commit id.
+[[nodiscard]] std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
+                                                      const std::string& revision);
 
 // org/name[@revision] -> (org/name, revision); without @, the options' revision ("": the hub's
 // default branch). Throws for anything that is not one org and one name.
@@ -106,6 +128,20 @@ struct FetchResult {
 // (cached under <root>/urls/). Throws naming what failed; a failed download leaves its partial
 // file to resume.
 [[nodiscard]] FetchResult fetch_model(const std::string& spec, const FetchOptions& options);
+
+// Whether the cached `snapshot` holds the whole model fetch_model() would choose for `options`
+// (options.quant's GGUF model, else the weights; every shard a safetensors index names): what a
+// start may serve from it without the hub. With `projector` (--vision), a GGUF model's Vision
+// projector (mmproj-*.gguf, every part) too, and a checkpoint's Vision encoder (vision_config).
+[[nodiscard]] bool snapshot_holds_model(const std::filesystem::path& snapshot,
+                                        const FetchOptions& options, const std::string& repo,
+                                        bool projector = false);
+
+// The quantization label of the GGUF model fetch_model() would choose from the cached `snapshot`
+// for `options` ("" for safetensors weights or none): which of several conversions of a commit is
+// that model's.
+[[nodiscard]] std::string snapshot_quant_label(const std::filesystem::path& snapshot,
+                                               const FetchOptions& options, const std::string& repo);
 
 // The first bytes of the GGUF model fetch_model() would choose for `spec` (options.revision,
 // options.quant), to read its metadata before the whole file is downloaded: `bytes` of it by an
@@ -118,14 +154,47 @@ struct GgufHead {
     std::string bytes;      // its first bytes
     bool cached  = false;   // read from the hub cache
     bool offline = false;   // the hub was not asked
+    // The model's parts (a split GGUF's -0000N-of-0000M files, in their order): this is `part`
+    // of them. Offline, the cached first part only (1).
+    std::size_t parts = 1;
 };
 
+// `begin`: the bytes from there instead of the file's first (a window of its header).
 [[nodiscard]] GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
-                                       std::uint64_t bytes);
+                                       std::uint64_t bytes, std::size_t part = 0,
+                                       std::uint64_t begin = 0);
+
+// Each of `quants`' output head bytes (output.weight of shape [hidden, vocab]; token_embd.weight
+// for a model that ties its head, `tied`), from a 1 MiB window of its header around `table_end`
+// (where another quantization's tensor table ends: a repository's quantizations share their
+// metadata but for a few keys), else, for a split model, the first 1 MiB of each later part (each
+// part's header lists its own tensors); read several at a time; 0 where not found. A split model
+// whose parts were all read and name no output.weight ties its head (the parsed part's table alone
+// cannot say): its token_embd.weight's bytes, the quantization listed in `tied_found` (as is every
+// one read with `tied`, whose head is its embedding). Kept per commit beside its conversions
+// (<cache>/models--org--name/ninferno/<commit>/gguf_heads.v4.json, the tie with the bytes):
+// a second plan reads none.
+[[nodiscard]] std::map<std::string, std::uint64_t>
+gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
+                       const std::vector<std::string>& quants, std::uint64_t table_end,
+                       std::uint64_t hidden, std::uint64_t vocab, bool tied = false,
+                       std::set<std::string>* tied_found = nullptr);
 
 // The Hugging Face repository a GGUF file names as its base model
-// (general.base_model.0.repo_url / general.source.huggingface.repository), if any.
+// (gguf_metadata_base_repository of its metadata), if any.
 [[nodiscard]] std::optional<std::string> gguf_base_repository(const std::filesystem::path& gguf);
+
+// Whether the GGUF model a fetch takes for `options.quant` carries MTP (NextN) layers, by its
+// metadata (gguf_metadata_carries_mtp of the first MiB of its file, then of 8 MiB where that ended
+// first): a repository's quantizations differ (unsloth drops them from its smallest). nullopt when
+// it cannot be read.
+[[nodiscard]] std::optional<bool> gguf_carries_mtp(const std::string& spec,
+                                                   const FetchOptions& options);
+// The same for each of `quants` (FetchOptions::quant each), read together (a few at a time): a
+// repository's table plans every one.
+[[nodiscard]] std::map<std::string, std::optional<bool>>
+gguf_quants_carry_mtp(const std::string& spec, const FetchOptions& options,
+                      const std::vector<std::string>& quants);
 
 // One file: `url` (resolved through redirects) into `target`, `size` bytes (0: unknown),
 // checked against `sha256` (lowercase hex) or `git_sha1` when given. Exposed for tests.
@@ -147,10 +216,29 @@ struct DownloadRequest {
 // be read.
 [[nodiscard]] std::string file_sha256(const std::filesystem::path& path);
 
+// The seconds a rate-limited answer (HTTP 429) asks a client to wait, by its headers (lowercase
+// names): the largest t= of RateLimit's exhausted quotas (the hub's, after the IETF draft:
+// "api";r=0;t=89, the seconds until its window resets), else Retry-After in seconds; nullopt when
+// neither says.
+[[nodiscard]] std::optional<int>
+rate_limit_reset_seconds(const std::map<std::string, std::string>& headers);
+
 // The quantization label a GGUF file name ends with, as --quant takes it:
 // "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" -> "UD-Q4_K_M", "m-Q6_K-00001-of-00002.gguf" -> "Q6_K";
 // "" when the name ends with none.
 [[nodiscard]] std::string gguf_quant_label(const std::string& file_name);
+
+// Whether a fetch takes the repository file `path` by its --include globs (none: what the
+// converter needs, so true).
+[[nodiscard]] bool include_selects(const FetchOptions& options, const std::string& path);
+
+// A file of a hub repository, as its listing shows it.
+struct RemoteFile {
+    std::string path;
+    std::uint64_t size = 0;
+    std::string sha256;   // LFS files
+    std::string git_sha1; // small files kept in git
+};
 
 // One model a repository offers, as a listing shows it: a GGUF quantization (its split parts
 // together), a safetensors checkpoint (quant ""), an artifact in the engine's own format (.ninferno,
@@ -162,13 +250,43 @@ struct RepoQuant {
     std::uint64_t bytes = 0;
     int bits            = 0; // from the label (Q4_K_M -> 4, BF16 -> 16); 0 when it says none
     bool drafter        = false;
-    std::vector<std::string> files;
+    std::vector<RemoteFile> files;
+    // Of `bytes`, the safetensors weights' own part for the MTP layers (model_mtp.safetensors):
+    // fetched with the model, loaded only under MTP (PlanModelFacts::mtp_bytes).
+    std::uint64_t mtp_bytes = 0;
+
+    [[nodiscard]] std::vector<std::string> paths() const;
+    // Each file's LFS digest, as files lists them ("": a file kept in git).
+    [[nodiscard]] std::vector<std::string> digests() const;
 };
+
+// A repository's models at one commit (list_quants).
+struct RepoListing {
+    std::string commit; // the commit the listing was read at ("" unknown)
+    std::vector<RepoQuant> quants;
+};
+
+// The commit `spec`'s revision names on the hub now (one listing request); nullopt under
+// $HF_HUB_OFFLINE. Throws when the hub cannot be reached.
+[[nodiscard]] std::optional<std::string> current_commit(const std::string& spec,
+                                                        const FetchOptions& options);
+
+// The GGUF model `quant` names among `groups` (each model's split stem and its bytes), as the
+// fetch picks it: a width ("4bit") the largest model of that width; else the models whose stem
+// holds the label, "Q4_K_M" matching "UD-Q4_K_M", an exact label when several do. Throws naming
+// the models when none or several match.
+[[nodiscard]] std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& groups,
+                                               const std::string& quant, const std::string& repo);
+// The listing's GGUF quantization the fetch takes for --quant `quant` (gguf_group_for_quant over
+// list_quants' models): the plan without weights plans the files the start downloads. A split
+// model the listing gives a part at a time (no quantization label in its names) is one entry of
+// all its parts, named by its group.
+[[nodiscard]] RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants,
+                                         const std::string& quant, const std::string& repo);
 
 // The models of `spec` (org/name[@revision]) with their sizes, from one listing request: nothing
 // is downloaded. GGUF quantizations in the listing's order, then the safetensors weights.
-[[nodiscard]] std::vector<RepoQuant> list_quants(const std::string& spec,
-                                                 const FetchOptions& options);
+[[nodiscard]] RepoListing list_quants(const std::string& spec, const FetchOptions& options);
 
 // A model the hub's search found: its id and what the hub says of it.
 struct HubModel {
@@ -184,10 +302,9 @@ struct HubModel {
     std::string architecture;
     std::int64_t context = 0;
     std::string library; // the weights' library: transformers, gguf, mlx, ... ("" unsaid)
-    // A quantization of the weights the converter does not read (config.json's quant_method:
-    // "bitsandbytes", "hqq", ...; compressed-tensors with transforms or sparse packings); "" when
-    // it reads them (unquantized, FP8, AWQ, GPTQ, compressed-tensors, ModelOpt, AutoRound, MXFP4).
-    std::string unread_quantization;
+    // The search's answer for the model as the hub gave it (Hugging Face; null on ModelScope): the
+    // facts convert::search_support_facts reads.
+    nlohmann::json card;
 };
 
 // The hub's model search, at most `limit` (1 to 100), largest first by `sort`: downloads, likes,
@@ -209,14 +326,34 @@ struct HubModel {
 // what failed (absent, not JSON); ModelScope is not read.
 [[nodiscard]] nlohmann::json fetch_config(const std::string& spec, const FetchOptions& options);
 
+// What Hugging Face says of a repository before any file is downloaded: its model card fields
+// (/api/models/<repo>/revision/<rev>): pipeline_tag, library_name, gated, the part of config.json
+// the hub reads (architectures, model_type, quantization_config, tokenizer_config), gguf (the
+// architecture and chat template of a GGUF model), safetensors (parameters by dtype) and
+// siblings. nullopt on another hub or under $HF_HUB_OFFLINE. Throws when the hub cannot answer.
+[[nodiscard]] std::optional<nlohmann::json> fetch_model_card(const std::string& spec,
+                                                             const FetchOptions& options);
+
+// The base models a model card (fetch_model_card's answer) names, in its order
+// (cardData.base_model: its README's YAML front matter, what the converter's drafter plan reads
+// from the downloaded README; a merge names several), none when it names none. The plan of a
+// checkpoint not downloaded yet matches the registry by them as the converter will (a fine-tune
+// finds its base's entry).
+[[nodiscard]] std::vector<std::string> card_base_models(const nlohmann::json& card);
+// card_base_models of `spec`'s model card: none offline or when the hub does not answer.
+[[nodiscard]] std::vector<std::string> hub_base_models(const std::string& spec,
+                                                       const FetchOptions& options);
+
+// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
+// quant_config and the matrix sources it picks): "bitsandbytes", "hqq", compressed-tensors with
+// transforms or sparse packings; "" when it reads it (unquantized, FP8, AWQ, GPTQ,
+// compressed-tensors, ModelOpt, AutoRound, MXFP4).
+[[nodiscard]] std::string unread_quantization(const nlohmann::json& config);
+
 // Another small JSON file of the repository the same way (a native repository's
 // artifact-manifest.json).
 [[nodiscard]] nlohmann::json fetch_repo_json(const std::string& spec, const FetchOptions& options,
                                              const std::string& file);
-
-// The bits per weight a quantization label names: "UD-Q4_K_XL" -> 4, "IQ2_XXS" -> 2,
-// "MXFP4_MOE" -> 4, "BF16" -> 16, "Q8_0" -> 8; 0 when it names none.
-[[nodiscard]] int quant_label_bits(const std::string& label);
 
 // A width tag in place of a quantization name: "4bit", "4-bit", "8bits" -> 4, 4, 8 (1 to 16); 0
 // when `quant` is a name. --quant 4bit takes the largest GGUF model of that width.

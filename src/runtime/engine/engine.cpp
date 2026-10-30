@@ -1,5 +1,6 @@
 #include "ninferno/engine.h"
 
+#include "artifact/file_io.h"
 #include "core/debug_poison.h"
 #include "core/host_cpu_quota.h"
 #include "core/device.h"
@@ -58,7 +59,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
         ops::set_route_table_dir(m.route_dir);
     }
     if (!m.route_table.empty() &&
-        (first || ops::route_table_status().path != utf8_path(m.route_table))) {
+        (first || !ops::route_table_loaded(utf8_path(m.route_table)))) {
         (void)ops::load_route_table_option(m.route_table);
     }
     if (!first) { return; }
@@ -66,6 +67,7 @@ void apply_maintainer_options(const MaintainerOptions& m, bool first) {
     ops::set_moe_tune(m.moe_tune, m.tune_cache);
     models::qwen3_5::execution::set_debug_prefill_cuts(m.debug_prefill_cuts);
     set_debug_poison(m.debug_poison, m.debug_poison_skip);
+    artifact::set_artifact_io(m.artifact_io);
 }
 
 DeviceContext initialize_device(const EngineOptions& options, ProcessOptionsLease& lease) {
@@ -402,6 +404,11 @@ PreparedPrompt Engine::prepare_tokens(std::vector<TokenId> token_ids,
 std::vector<TokenId> Engine::tokenize_text(std::string_view text) const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
     return impl_->backend->tokenize_text(text);
+}
+
+std::optional<TokenId> Engine::document_start_token() const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    return impl_->backend->document_start_token();
 }
 
 std::vector<float> Engine::score_tokens(std::vector<TokenId> tokens, std::uint32_t first_target) {

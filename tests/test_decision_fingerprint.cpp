@@ -813,7 +813,7 @@ int removed_environment() {
     failures +=
         check(warnings.size() == 3 && warnings[0].starts_with("NINFERNO_DECODE_STEPS is set") &&
                   warnings[0].ends_with("use --decode-steps instead") &&
-                  warnings[1].ends_with("use --tune-cache instead") &&
+                  warnings[1].ends_with("use --tune-cache in ninferno-perplexity instead") &&
                   warnings[2].ends_with("removed with no replacement"),
               "removed variables: the warnings do not name their replacements");
     std::set<std::string> names;

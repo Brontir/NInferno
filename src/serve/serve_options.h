@@ -37,9 +37,27 @@ struct ServeOptions {
     // serving (GenerationService::plan); --json prints it as JSON.
     bool plan_only = false;
     bool plan_json = false;
+    // --no-load (with --plan): plan without loading or downloading the weights and without a GPU,
+    // from the model's header or config (serve/plan_offline.h); --plan-device NAME plans for a
+    // named board of the PCI-ID table instead of the CUDA device.
+    bool plan_no_load = false;
+    std::string plan_device;
     // --with-drafters: attach the drafters the registry names to a GGUF hub model too (fetched
     // and converted beside it); a checkpoint's are attached without it.
     bool with_drafters = false;
+    // A hub model whose branch moved after it was converted and its download removed: false
+    // keeps the converted weights after a notice (a terminal counts down first);
+    // --accept-converted keeps them without one from now on; --refetch downloads the new commit,
+    // converts it and removes the old conversion. Refused together.
+    bool accept_converted = false;
+    bool refetch          = false;
+    // --keep-replaced (with --refetch): the old conversion stays for the caller to remove once the
+    // new one serves (ninferno-ui switches a running model over first).
+    bool keep_replaced = false;
+    // --round-tiny-scales: the conversion keeps an integer matrix whose only inexact binary16
+    // scales lie below binary16's normal range, with those scales rounded (ninferno-convert's
+    // flag; the report counts them). Off: such a matrix is refused, naming the flag.
+    bool round_tiny_scales = false;
     std::filesystem::path chat_template_path;
     std::string host = "127.0.0.1";
     int port         = 8080;
@@ -49,6 +67,11 @@ struct ServeOptions {
     // 0 (no --max-context): automatic, the context of the plan ladder's rung the free Device
     // memory picks (EngineOptions::max_context_automatic); the Engine reports the rung.
     std::uint32_t max_context          = 0;
+    // --max-context-cap N: the context stays automatic (the free memory picks the rung, stepping
+    // down on a busy card as without it) but at most N tokens. The quantization a GGUF hub
+    // repository is fetched at without --quant sets it to the context each of several streams
+    // was planned to keep (serve/plan_offline.h), as ninferno-ui's launch passes it. 0: none.
+    std::uint32_t max_context_cap = 0;
     // Unset --kv-capacity: automatic with an automatic context, else max_context tokens.
     KvCapacityPolicy kv_capacity       = KvCapacityPolicy::automatic();
     std::uint32_t max_concurrency      = 1;
@@ -85,6 +108,10 @@ struct ServeOptions {
     // --activations exact|fast (ninferno/types.h): BF16 activations on every quantized linear, or
     // the width-dependent routes. The default is the product's one (kDefaultActivationMode).
     ActivationMode activations = kDefaultActivationMode;
+    // Whether --activations and --sliding-kv-dtype were given: the configuration choice
+    // (product/choice/choice.h) picks what the user left automatic.
+    bool activations_given = false;
+    bool sliding_kv_given  = false;
     float rope_yarn_factor     = 1.0F; // --rope-yarn-factor (EngineOptions::rope_yarn_factor)
     SpeculativeOptions speculative;
     // --spec auto (the default without an explicit --spec, --draft-tokens, --drafter or
@@ -94,13 +121,18 @@ struct ServeOptions {
     // The profile was asked for by default rather than by --spec auto: a model without one for
     // this GPU decodes plain without a warning.
     bool speculation_by_default = false;
+    // The configuration choice's speculation mode (product::StartAxes::drafter) for --spec auto:
+    // the profile chosen again for it (product::subject_of_mode). nullopt: the profile's own.
+    std::optional<spec::Mode> speculation_mode;
     // An explicit --spec without --draft-tokens: the service takes the depth the model's profile
     // runs that backend with on this GPU, else product::default_draft_tokens.
     bool draft_tokens_from_model = false;
-    // --spec-select fixed (default) | thinking: with a profile, fixed runs the engine's default
-    // configuration (measured on the whole mixed corpus) for every request; thinking runs each
-    // request at the profile's default for its own thinking flag, at its own depth in one engine.
+    // --spec-select fixed | thinking: with a profile, fixed runs the engine's default
+    // configuration (the default thinking flag's) for every request; thinking runs each request at
+    // the profile's default for its own thinking flag, at its own depth in one engine. Not given:
+    // per request where the profile's measurements say it pays (product::per_request_pays).
     bool per_request_speculation = false;
+    bool per_request_given       = false; // --spec-select given
     // --spec-load LANES:DEPTH,...|none: the speculation's bounds under decode load
     // (SpeculativeOptions::load) instead of the profile's table (spec::Profile::load); with an
     // explicit --spec, its only bounds. Absent: the profile's table (none with an explicit --spec).
@@ -118,6 +150,9 @@ struct ServeOptions {
     std::optional<bool> enable_thinking;
     std::optional<bool> preserve_thinking;
     std::optional<std::uint32_t> default_thinking_budget;
+    // A thinking request without a budget keeps a quarter of its output limit for the answer
+    // (ThinkingControlOptions::answer_room); --no-answer-room lets the thinking take it all.
+    bool answer_room = true;
     // --repetition-stop N: end an output whose last N tokens repeat one short period (0: off).
     std::uint32_t repetition_stop = 0;
     // --repetition-thinking conclude: a loop --repetition-stop finds inside the thinking closes the

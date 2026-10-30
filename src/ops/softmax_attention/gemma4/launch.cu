@@ -2,6 +2,7 @@
 #include "core/per_device.h"
 
 #include "core/device.h"
+#include "core/generation.h"
 #include "core/pdl.cuh"
 #include "ops/common/arch_limits.h"
 #include "ops/common/math.h"
@@ -111,10 +112,38 @@ inline constexpr int kFittingBc = std::max(Gemma4Tile<Geo, WR, Bc, false>::SmemB
                                       ? Bc
                                       : Bc / 2;
 
+// The prefill key tile: kFittingBc, halved while the SM's shared memory holds fewer than the eight
+// warps the measured tiles run (PrefillConfig: D=256 on 2x2 warps, two CTAs an SM; D=512 on 2x4,
+// one). NINFERNO-SPECIAL(arch:sm75): Turing's 64 KiB a SM holds one 40 KiB D=256 tile: four warps
+// stalled on their own ldmatrix and MMA latencies (RTX 2080 Ti, Gemma 4 12B 2K prefill, ncu:
+// issue slots 18 % busy, occupancy 12.5 %, 1.36 ms a sliding layer). Its 16-key tile (20 KiB)
+// fits three CTAs by shared memory, and the registers hold two (ncu's block limit). Every other
+// build holds the measured tiles at 32 keys (Ampere, Ada and Blackwell 100 KiB a SM, Volta 96).
+template <class Geo, int WR, int Bc, bool WithFp8 = true>
+constexpr int prefill_bc() {
+    constexpr int fitting = kFittingBc<Geo, WR, Bc, WithFp8>;
+    constexpr int bytes   = std::max(Gemma4Tile<Geo, WR, fitting, false>::SmemBytes,
+                                     WithFp8 ? Gemma4Tile<Geo, WR, fitting, true>::SmemBytes : 0);
+    constexpr int ctas  = static_cast<int>(kSharedBytesPerSm) / (bytes + kSharedBytesReservedPerBlock);
+    constexpr int warps = Gemma4Tile<Geo, WR, fitting, false>::Warps;
+    if constexpr (ctas * warps < 8 && fitting > 16) {
+        return prefill_bc<Geo, WR, fitting / 2, WithFp8>();
+    } else {
+        return fitting;
+    }
+}
+template <class Geo, int WR, int Bc, bool WithFp8 = true>
+inline constexpr int kPrefillBc = prefill_bc<Geo, WR, Bc, WithFp8>();
+
 // The wide tile only where it keeps the 32-row tile's keys per tile: a halved key tile would fold
 // the online softmax over other key tiles and change the bytes (V100: 96 KiB per block, which the
 // wide tile's BF16 planes and score exchange fill exactly; Turing's 64 KiB holds neither at 32).
+// Nor where the narrow tile runs Volta's m8n8k4 (Gemma4Tile::Volta) and the wide one cannot (its
+// 256-column accumulators do not fit the planes for the output conversion): the two would sum in
+// other orders, and a call's bytes would follow its width.
 inline constexpr bool kWidePrefillFits =
+    Gemma4Tile<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc>::Volta ==
+        Gemma4Tile<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc>::Volta &&
     kFittingBc<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc, false> ==
         PrefillConfig<512>::Bc &&
     kFittingBc<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc> ==
@@ -443,15 +472,17 @@ int chain_resident() {
 // chained unit pays its prologue (Q fragments, the first key tile, the state hand-off), which
 // lost 2-3 % where the plain waves were already full (RTX 5090: 31B T=4096, 24.1 waves).
 //
-// Only where the chained tile measured near the plain one's speed in full waves: sm_120 (RTX 5090
-// 31B T=4096 -2.2 %; RTX 5080 26B T=1024 at 16K keys +5.5 %). On sm_89 the chained
-// wide tile runs 25-35 % slower even in whole waves (RTX 4090: 26B 96 -> 72 TFLOP/s at
-// 16K-60K keys, same registers and no spills as the plain tile), so the tail it fills never pays
-// (RTX 4080 SUPER: Gemma 4 26B 16K prefill 6566 -> 6455 t/s). Other architectures are
-// unmeasured and keep the plain launch.
+// Only where the chained tile measured near the plain one's speed in full waves: the generation
+// row's attention_chain (core/generation.h: gb20x, RTX 5090 31B T=4096 -2.2 %; RTX 5080 26B
+// T=1024 at 16K keys +5.5 %). On Ada the chained wide tile runs 25-35 % slower even in whole
+// waves (RTX 4090: 26B 96 -> 72 TFLOP/s at 16K-60K keys, same registers and no spills as the
+// plain tile), so the tail it fills never pays (RTX 4080 SUPER: Gemma 4 26B 16K prefill 6566 ->
+// 6455 t/s). Every other generation keeps the plain launch (Ada measured, the rest unmeasured);
+// one newer than the table takes its newest row's value, as every generation-row property does.
 bool chain_measured_fast() {
     try {
-        return device_class().major == 12;
+        const DeviceClass& d = device_class();
+        return generation_row(d.major, d.minor).attention_chain;
     } catch (const std::exception&) { return false; }
 }
 
@@ -474,7 +505,7 @@ struct ChainPlan {
 template <class Geo, class TileGeo, int WR, bool Bf16Only>
 ChainPlan chain_plan(std::int32_t group, std::int32_t kv_heads, std::int32_t window, bool block,
                      std::int32_t tokens) {
-    constexpr int Bc = kFittingBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
+    constexpr int Bc = kPrefillBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
     using Tile       = Gemma4Tile<TileGeo, WR, Bc, false>;
     // A row block inside one key tile (no span blocks: the last row's keys bound every block's)
     // of a full causal layer, wider than a decode call. D >= 256: the layers whose CTAs are few
@@ -534,7 +565,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
     with_prefill_tile(
         launch.q.ne[0], launch.q.ne[1], args.kv_heads, args.tokens, fp8,
         [&]<class Geo, class TileGeo, int WR, bool Bf16Only>() {
-            constexpr int Bc = kFittingBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
+            constexpr int Bc = kPrefillBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
             // One block more than the rows need: row blocks sit on the absolute-position grid, and
             // a call that starts off it spans one block more (see the kernel). A block holds Br / G
             // whole tokens (Br rows for a power-of-two group).
@@ -542,7 +573,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
             const std::int32_t block_rows = (16 * WR / group) * group;
             const std::int32_t blocks     = div_up(args.tokens * group, block_rows) + 1;
             // A full layer of a geometry with its own full-layer key tile (no chain below D=256).
-            constexpr int FullBc = kFittingBc<TileGeo, WR, prefill_full_bc<Geo::D>(), !Bf16Only>;
+            constexpr int FullBc = kPrefillBc<TileGeo, WR, prefill_full_bc<Geo::D>(), !Bf16Only>;
             if constexpr (FullBc != Bc) {
                 if (args.window == 0) {
                     const dim3 grid(static_cast<unsigned>(blocks),
@@ -614,8 +645,9 @@ void gemma4_attention_decode_launch(const Gemma4AttentionLaunch& launch,
                                     static_cast<unsigned>(args.q_heads),
                                     static_cast<unsigned>(args.tokens) * rows);
             const Gemma4AttentionArgs row = row_args(args, b, Geo::D);
-            if (gemma4_volta_decode_takes(Geo::D, plan.rows)) {
-                gemma4_volta_decode_launch(row, Geo::D, kGeoDecodeBc<Geo>,
+            const bool volta = gemma4_volta_decode_takes(Geo::D, plan.rows);
+            if (volta) {
+                gemma4_volta_decode_launch(row, Geo::D, kGemma4VoltaDecodeBc,
                                            dim3(grid.y, grid.z), stream);
             } else {
                 with_warp_rows<Geo>(plan.warp_rows, [&]<int WR>() {
@@ -624,7 +656,9 @@ void gemma4_attention_decode_launch(const Gemma4AttentionLaunch& launch,
             }
             // The combine launches under the attention grid's tail (programmatic dependent): its
             // launch and prologue leave the chain.
-            const auto combine = gemma4_attention_combine_kernel<Geo, kGeoDecodeBc<Geo>>;
+            // The split boundaries of the route that wrote the partials.
+            const auto combine = volta ? gemma4_attention_combine_kernel<Geo, kGemma4VoltaDecodeBc>
+                                       : gemma4_attention_combine_kernel<Geo, kGeoDecodeBc<Geo>>;
             CUDA_CHECK(pdl::launch({combine_grid, dim3(kGemma4CombineWarps * 32), 0, stream},
                                    device_class().features.pdl, false, combine, row));
         }

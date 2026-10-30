@@ -53,7 +53,9 @@ python3 -m tools.convert \
   layout (`$HF_HUB_CACHE`, `$HF_HOME/hub`, `$XDG_CACHE_HOME/huggingface/hub`, `~/.cache/huggingface/hub`). `$HF_TOKEN` (else
   `$HUGGING_FACE_HUB_TOKEN`) authorizes gated repositories, `$HF_ENDPOINT` points at another hub
   (`$MODELSCOPE_ENDPOINT` and `$MODELSCOPE_API_TOKEN` for ModelScope). `$HF_HUB_OFFLINE` (`1`,
-  `true`, `yes` or `on`) uses the cached snapshot only.
+  `true`, `yes` or `on`) uses the cached snapshot only. Without it a hub that cannot be reached is
+  an error for a branch or tag (it may have moved since the snapshot was cached); a commit's cached
+  snapshot is served.
 - Before downloading weights, `config.json` alone decides whether the architecture converts, and the
   cache's free space is checked.
 - `--fetch` without `--out` writes the artifact to
@@ -62,6 +64,18 @@ python3 -m tools.convert \
   that changes what is written (`--components`, `--layout`, `--vocab`, `--drafter-quant`,
   `--proposal`, `--include`, `--no-drafters`, `--max-file-bytes`, ...) converts again and
   replaces it, and an explicit `--out` is never reused. `--model` needs `--out`.
+- Before any weight is downloaded, a hub model is checked against one rule set
+  (`convert/support.h`), the same one the plan without weights and the UI's search use. It reads
+  only what the hub shows: the model card (task, library, gated, the hub's part of `config.json`,
+  a GGUF's architecture and chat template, safetensors dtypes, the files), the whole `config.json`
+  and the chosen GGUF model's header. A model is refused, nothing downloaded, when its task is not
+  text generation, its weights are a format the converter does not read (MLX, bitsandbytes, ...),
+  no engine runs its architecture (the converter's own recipe choice and field checks; a drafter of
+  a kind no engine runs), its repository is gated and no token is set, or it ships no chat template
+  (a base model; a GGUF naming its base model takes the base's). A model on disk (a GGUF file or a
+  checkpoint folder given to `ninferno-serve`) is checked the same way before it is converted. A
+  gated repository is read with `$HF_TOKEN`, else the token `hf auth login` saved
+  (`$HF_TOKEN_PATH`, `$HF_HOME/token`, `~/.cache/huggingface/token`).
 - Without `--recipe`, the official recipe for the checkpoint's architecture is chosen (with its
   quantized source when it needs one).
 - A model runs as published. A quantized checkpoint keeps its encoding (NVFP4, MXFP4, FP8 with
@@ -98,8 +112,8 @@ select kernels. Recipes are Python functions in
 | Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing but the DFlash drafter (Q8) | MTP, DFlash |
 | Gemma 4 text | `gemma4_published` (default) | NVFP4 and FP8 projections kept, rest BF16 | Gemma 4 assistant |
 | Gemma 4 26B-A4B / 31B | `gemma4_26b_a4b_nvfp4`, `gemma4_31b_nvfp4` | Sites the checkpoint encodes are kept; the rest Q8 | Gemma 4 assistant |
-| Gemma 4 assistant | `gemma4_assistant_published` (default), `gemma4_assistant_q8` | BF16 as is / GGUF Q8_0 kept; `_q8` is NInferno's own Q8, only when named | (is a drafter) |
-| Gemma 4 DFlash drafter | `gemma4_dflash_published` (default), `gemma4_dflash_q8` | BF16 as is; `_q8` only when named | (a drafter for the `ninferno-gemma4` tool; the server runs Gemma 4 with its assistant) |
+| Gemma 4 assistant | `gemma4_assistant_published` (default), `gemma4_assistant_q8` | BF16 as is / GGUF Q8_0 kept; attached from the registry: Q8 with a restricted head ([Drafters](#drafters)) | (is a drafter) |
+| Gemma 4 DFlash drafter | `gemma4_dflash_published` (default), `gemma4_dflash_q8` | BF16 as is; attached from the registry: Q8 | (a drafter for the `ninferno-gemma4` tool; the server runs Gemma 4 with its assistant) |
 | Dense decoders (Llama, Mistral, Granite, OLMo, Phi-3, SmolLM3, Gemma 3, Seed-OSS, Qwen2/Qwen3, ...) | `dense_published`, `dense_encoded`, `dense_bf16`, `dense_q8`, `dense_fp8`, `dense_nvfp4` | `dense_published` quantizes nothing; `dense_encoded` (the default for a quantized checkpoint) keeps its NVFP4 or FP8 projections and takes Q8 for the projections the checkpoint left unquantized; the last three are NInferno's own quantization | DFlash |
 | MoE decoders (gpt-oss, Qwen3-MoE, Nemotron-H) | `moe_published`, `moe_q8` | `moe_published` keeps MXFP4 and NVFP4 experts as published | DFlash |
 | NemotronH MTP sidecar | `nemotron_h_mtp_published` (default) | GGUF Q4_0/Q8_0 blocks kept word for word, rest as stored | (is a drafter) |
@@ -169,6 +183,7 @@ speculative backend.
 | `--relayout auto\|published\|frag` | none | Move an existing artifact between layouts. Needs `--target-artifact`; takes no conversion flag. |
 | `--proposal` | off | Add the indexed proposal head for speculative decoding. The ordinary output head is kept. |
 | `--proposal-rows N` | `131072` | Rows of the proposal head. |
+| `--no-proposal` | off | Keep the full draft head. Without `--proposal`, a Qwen target with MTP layers or a DFlash drafter gets a proposal head for them (DFlash2 keeps the full head), whose rows a bytes/acceptance bound chooses per drafter, the most any asks for (`src/spec/draft_head.h`: Qwen3.5-9B Q4_K_M MTP 3 asks 57,344 and DFlash 7 147,456 of 248,320 rows). |
 | `--ranking PATH` | repository token ranking | Token ranking used by the proposal head. |
 
 ### Performance and files
@@ -319,6 +334,8 @@ order, they are:
    declares. There is never a search.
 
 Each is checked against the target (vocabulary, geometry, taps) before it is fetched and converted.
+Under `--with-drafters` a drafter that cannot be planned, fetched or converted is an error;
+otherwise the model converts without it and says why.
 
 - A separate drafter (Gemma 4 assistant, DFlash) becomes its own artifact.
 - A companion (Qwen DFlash/DFlash2) becomes a component of the target.
@@ -330,6 +347,11 @@ Each is checked against the target (vocabulary, geometry, taps) before it is fet
   only the speed differs. A published encoding is kept, never quantized again. Of a target, only
   its companions (DFlash, DFlash2) are quantized, and a target without one is refused. A
   companion the registry declares with a `quant` is converted so unless the flag says otherwise.
+- A drafter the registry attaches takes its kind's rule unless its entry names its own (`kinds` in
+  the registry): Gemma 4 assistants and DFlash drafters `q8` (BF16 doubles the bytes every proposal
+  reads, as for the Qwen companions, which take Q8 in every recipe), and a Gemma 4 assistant's head
+  restricted to the 98,304 most frequent tokens (`gemma4_ranking2.i64`, the family's one vocabulary).
+  The artifact is named by what it holds (`<repo>.<recipe>.q8_sl98304.ninferno`).
 
 A block-diffusion drafter converts on its own and is paired with its target at load time: Meta's
 Muse Glimmer assistant (`MuseGlimmerAssistantModel`, BF16) or the `dflash` GGUF, with the

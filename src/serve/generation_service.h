@@ -169,6 +169,11 @@ struct PreparedRequest {
 [[nodiscard]] std::string auto_then_plain_refusal(const std::string& refused,
                                                   const std::string& plain);
 
+// The Engine options a server's options give before any speculation is chosen (the speculative
+// settings as given: --spec auto replaces them with the profile's choice): what a start and the
+// plan without the weights (serve/plan_offline.h) both build from.
+[[nodiscard]] ninferno::EngineOptions engine_options_of(const ServeOptions& options);
+
 // The --plan dry run of a server's options: the plan ladder of the Engine it would build first
 // (with the speculation --spec auto chooses, or as asked) and the rung the free memory picks now.
 struct ServePlan {
@@ -297,6 +302,10 @@ private:
     std::optional<ServePlan> plan_; // ServeOptions::plan_only: the dry run's result, no Engine
     std::uint32_t plan_level_ = 0;  // the served plan ladder's rung (PlanSummary::rung)
     std::optional<product::ServedSpeculation> served_speculation_;
+    // The speculation subject of the artifact on this device (its profile chosen again for
+    // ServeOptions::speculation_mode), resolved once: every served function reads it.
+    std::optional<product::SpeculationSubject> speculation_subject_;
+    const product::SpeculationSubject& speculation_subject();
     std::string speculation_plain_reason_;
     std::vector<std::string> speculation_absent_notes_;
     StartupSpeculation startup_speculation_;

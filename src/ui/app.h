@@ -6,6 +6,8 @@
 //   GET  /api/state        GPUs (NVML), running processes, UI settings: polled by the page
 //   GET  /api/catalog?gpu  recommended models with fit, speed and context for that GPU
 //   GET  /api/quants?repo&gpu   a hub repository's quantizations with sizes and fit (one listing)
+//   GET  /api/plan?repo&gpu&quant&ctx&par&kv&spec&act  the plan without the weights of one or every
+//                          quantization and the largest that fits (ninferno-dry-plan/1)
 //   GET  /api/local        models already converted (hub cache, --models-dir): architecture,
 //                          size, quantization, what they take, the original kept beside them
 //   GET  /api/search?q     the catalog's models and Hugging Face's search for q
@@ -13,7 +15,8 @@
 //                          of that repository is left)
 //   POST /api/delete_original {repo}: a converted hub model's downloaded original
 //   GET  /api/log?id&n     the last lines of a process's output
-//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?, spec_profile?}
+//   POST /api/launch       {model, quant?, gpu, max_context?, spec?, precision?, activations?,
+//                          spec_profile?}
 //                          -> ninferno-serve (spec_profile: the tune beside the model, by request)
 //   POST /api/tune         {artifact, gpu}: spec-tune on that GPU writes a tune beside the model
 //   POST /api/prepare      {model, quant?} -> download and convert only (--prepare-only)
@@ -31,8 +34,10 @@
 #include "ui/catalog.h"
 #include "ui/gpu_stats.h"
 #include "ui/processes.h"
+#include "product/plan/plan_quants.h"
 #include "product/update/update_check.h"
 
+#include <chrono>
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
@@ -88,9 +93,11 @@ struct LaunchRequest {
     int gpu          = 0;
     int port         = 0;
     long max_context = 0;  // 0: automatic
+    long max_context_cap = 0;  // with an automatic context: its ceiling (--max-context-cap)
     int max_concurrency = 0;  // requests at once; 0: ninferno-serve's default
     std::string spec;      // "" or auto | none | mtp | dflash | dflash2
-    std::string precision; // "" or exact | balanced | fast
+    std::string precision; // "" or exact | balanced | compact (exact: --activations exact, BF16 KV)
+    std::string activations; // "" (the choice's) or exact | fast | int8 (--activations)
     std::string kv_dtype;  // "" or bf16 | int8 | fp8 | nvfp4 | k8v4 (serve's --kv-dtype)
     std::string hub;       // "" (Hugging Face) or modelscope: where a hub id is fetched
     // Name the tune beside the artifact (<artifact>.spec_profile.json, /api/tune's) for this start
@@ -98,7 +105,24 @@ struct LaunchRequest {
     // and asked for, one that would not serve on the request's GPU refuses the start.
     bool spec_profile = false;
     bool prepare_only = false;
+    // A prepare of a hub model whose branch moved after its conversion: download the new commit,
+    // convert it and remove the old conversion (ninferno-serve --refetch).
+    bool refetch = false;
+    // The conversion recipe (ninferno-serve --recipe; "": the official one): a refetch keeps the
+    // replaced artifact's.
+    std::string recipe;
+    // With refetch: the replaced conversion stays for the caller to remove once nothing serves it
+    // (ninferno-serve --keep-replaced): ninferno-ui's update of a running model.
+    bool keep_replaced = false;
+    // The conversion takes the model's Vision encoder (ninferno-serve --vision): a refetch keeps
+    // the replaced artifact's.
+    bool vision = false;
 };
+
+// A refused launch again as it was (its context, streams, KV, speculation, a prepare's refetch and
+// recipe), with ninferno-serve --round-tiny-scales added: the converter keeps a matrix whose only
+// inexact scales lie below binary16's normal range, with them rounded. A serve listens on `port`.
+[[nodiscard]] LaunchSpec with_tiny_scales_rounded(LaunchSpec spec, int port);
 
 // Throws std::invalid_argument on a value outside the allowed set, and when spec_profile is set but
 // the model is not started by its .ninferno path or the tune beside it does not serve on `gpu`
@@ -191,22 +215,97 @@ private:
     std::uint64_t install_update();
     void restart();
     nlohmann::json state_json();
-    nlohmann::json catalog_json(int gpu);
+    nlohmann::json catalog_json(int gpu, const product::LaunchAsk& launch = {});
     nlohmann::json quants_json(const std::string& repo, int gpu,
-                               const std::string& hub = "huggingface");
+                               const std::string& hub           = "huggingface",
+                               const product::LaunchAsk& launch = {});
+    // The plan without the weights of a repository's quantization (all of them when `quant` is
+    // empty, with the largest that fits) on GPU `gpu` for what a launch asks: the
+    // "ninferno-dry-plan/1" document (product/plan/plan_quants.h), as ninferno-serve <repo> --plan
+    // --no-load --json would print it for an idle card of that GPU. Throws when the repository's
+    // shape cannot be read.
+    // The plan of a model converted here (My models), as its start plans it (product::plan_artifact).
+    nlohmann::json artifact_plan_json(const std::filesystem::path& artifact, int gpu,
+                                      const product::LaunchAsk& launch);
+    nlohmann::json plan_json(const std::string& repo, const std::string& hub, int gpu,
+                             const std::string& quant, const product::LaunchAsk& launch);
+    // read_tables: the chosen GGUF row's own tensor table is read when not known (a user's plan);
+    // the catalog's plans (no network) price the tables known. `now_out`: the "now" context of
+    // this plan (also when it is not cached).
+    struct PlanNowContext;
+    nlohmann::json plan_json_idle(const std::string& repo, const std::string& hub, int gpu,
+                                  const std::string& quant, const product::LaunchAsk& launch,
+                                  bool read_tables = false,
+                                  std::shared_ptr<const PlanNowContext>* now_out = nullptr);
+    [[nodiscard]] std::string plan_key(const std::string& repo, const std::string& hub, int gpu,
+                                       const std::string& quant,
+                                       const product::LaunchAsk& launch) const;
+    // The facts of a repository's model (kv_json reads them from the same header); nullopt
+    // offline or unreadable.
+    std::optional<product::PlanSourceFacts>
+    plan_facts(const std::string& repo, const nlohmann::json& listing, const std::string& hub);
     // The architecture the repository's main weights name, read from them (the head of its
     // smallest GGUF model, else config.json), with how far the engine runs it.
     nlohmann::json arch_json(const std::string& repo, const std::string& hub);
     nlohmann::json listing_of(const std::string& repo, const std::string& hub);
     nlohmann::json local_json();
+    // The converted hub models whose branch the hub now names at another commit (their download
+    // removed or not): what each start of them would warn about (ninferno-serve keeps the
+    // converted weights unless asked). One listing request per repository and branch, at most
+    // hourly; none with --offline. With the updates the user asked for and how far each is.
+    nlohmann::json moved_json();
+    // The user's answer for one such conversion: "accept" keeps it as valid now and later
+    // (convert::accept_converted), "refetch" starts its update (ModelUpdate). Nothing else
+    // starts one: the GUI only offers it.
+    nlohmann::json answer_moved(const std::string& repo, const std::string& ref,
+                                const std::string& commit, const std::string& action);
+    // One update of a moved hub model (repo@ref), asked for once, advanced by watch_health:
+    // a prepare per converted quantization downloads the new commit and converts it beside the
+    // old conversion (--keep-replaced); then each model serving an old conversion is restarted
+    // once on the new one, when it has no request in flight; then the old conversions go. Nothing
+    // is retried: a failed download keeps the old conversion; a model whose new conversion does
+    // not come up starts once more on the old one, and the update ends there (failed).
+    struct ModelUpdate {
+        struct Part {
+            std::filesystem::path old_artifact, new_artifact;
+            std::uint64_t prepare = 0;
+        };
+        struct Switch {
+            std::uint64_t old_serve = 0;
+            LaunchSpec back, next; // the start on the old conversion, and on the new one
+            std::uint64_t serve = 0; // the restart (0: not yet)
+            bool stopping = false, reverted = false, done = false;
+        };
+        std::string repo, ref, old_commit, hub_commit;
+        std::vector<Part> parts;
+        std::vector<Switch> switches;
+        std::string state; // downloading | switching | done | failed
+        std::string error;
+    };
+    void advance_updates();
     nlohmann::json search_json(const std::string& query, const std::string& sort = "downloads",
                                const std::string& hub = "huggingface");
     nlohmann::json kv_json(const std::string& repo, const nlohmann::json& listing,
                            const std::string& hub = "huggingface");
-    // What --spec auto runs for `repo` on GPU `gpu` (the registry's profile for its class), with
-    // the drafter's weights and KV the memory estimate adds.
-    nlohmann::json speculation_json(const std::string& repo, int gpu, const nlohmann::json& kv,
-                                    const nlohmann::json& listing);
+    // Whether GGUF quantization `quant` of `repo` at `commit` carries MTP layers
+    // (convert::gguf_carries_mtp), read once; nullopt when it cannot be read.
+    std::optional<bool> gguf_mtp(const std::string& repo, const std::string& hub,
+                                 const std::string& commit, const std::string& quant);
+    // A GGUF quantization's own tensor table (its header read by HTTP ranges; nullopt: not read,
+    // a split part, metadata past 128 MiB), kept by hub key, commit and quantization. A read that
+    // failed (the network) is not kept and sets `failed`; one kept sets `stored`.
+    struct TableRead {
+        bool failed = false;
+        bool stored = false;
+    };
+    std::optional<product::GgufTensorTable> gguf_table(const std::string& repo,
+                                                       const std::string& hub,
+                                                       const std::string& commit,
+                                                       const std::string& quant,
+                                                       TableRead* read = nullptr);
+    // The same for each of `quants` not read yet, read together.
+    void gguf_mtps(const std::string& repo, const std::string& hub, const std::string& commit,
+                   const std::vector<std::string>& quants);
     // Bytes freed; throws std::invalid_argument for what may not be deleted.
     std::uint64_t delete_artifact(const std::filesystem::path& artifact);
     std::uint64_t delete_original(const std::string& repo);
@@ -224,25 +323,59 @@ private:
     ProcessPool processes_;
     std::unique_ptr<httplib::Server> server_;
     mutable std::mutex sizes_mutex_;
+    // Which Hugging Face token the caches below hold answers for (under sizes_mutex_): a new one
+    // counts up, and a request started before it keeps nothing.
+    std::uint64_t hub_generation_ = 0;
+    [[nodiscard]] std::uint64_t hub_generation() const {
+        std::lock_guard lock(sizes_mutex_);
+        return hub_generation_;
+    }
     SizeTable sizes_;
     std::map<std::string, nlohmann::json> listings_; // repo -> quant list
     // Artifact path -> (modification time, what its header says).
     std::mutex kinds_mutex_;
     std::map<std::string, std::pair<std::filesystem::file_time_type, ArtifactFacts>> kinds_;
-    std::map<std::string, nlohmann::json> kv_; // repo -> KvModel json
+    std::map<std::string, nlohmann::json> kv_; // repo -> kv_summary
+    // Whether a GGUF quantization's file carries MTP layers (gguf_mtp), by hub key, commit and
+    // quantization.
+    std::map<std::string, std::optional<bool>> mtp_;
+    // gguf_table's reads (nullopt: read, no whole table; a read that failed is tried again), and
+    // their generation: one step per table kept (a plan begun before it is not cached).
+    std::map<std::string, std::optional<product::GgufTensorTable>> gguf_tables_;
+    std::map<std::string, std::uint64_t> tables_generation_; // by hub key
+    // A table read that failed (the network): not tried again for a minute.
+    std::map<std::string, std::chrono::steady_clock::time_point> gguf_failed_;
+    // hub_key -> the plan facts kv_json read with it (product/plan/plan_facts.h)
+    std::map<std::string, product::PlanSourceFacts> plan_facts_;
+    // plan_json's documents by their inputs (the listing and the GPU's facts do not change;
+    // bounded: plan_json clears it beyond kMaxKeptPlans)
+    std::map<std::string, nlohmann::json> plans_;
+    // What plan_json's "now" (product::plan_now) re-plans per request at the GPU's free memory: the
+    // shown quantization's facts, inputs (their subjects kept alive here), choice and pins.
+    std::map<std::string, std::shared_ptr<const PlanNowContext>> plan_now_;
+    // hub_key -> the config.json kv_json read (a checkpoint's converted size reads it)
+    std::map<std::string, nlohmann::json> configs_;
+    // hub_key -> when a header or config read last failed (tried again after a minute)
+    std::map<std::string, std::chrono::steady_clock::time_point> kv_failed_;
     std::map<std::string, nlohmann::json> archs_;    // arch_json, by hub_key
-    std::map<std::string, std::string> base_models_; // repo -> its card's base_model ("-": none)
     std::map<std::string, std::pair<std::int64_t, nlohmann::json>> searches_; // q -> (time, hits)
     std::set<std::uint64_t> originals_done_; // processes already handled
+    std::mutex moved_mutex_;
+    // repo@ref -> (when asked, the commit the hub names; "" when it could not be asked)
+    std::map<std::string, std::pair<std::int64_t, std::string>> hub_commits_;
+    std::map<std::string, ModelUpdate> updates_; // repo@ref -> its update (moved_mutex_)
     mutable std::mutex catalog_mutex_;
     std::shared_ptr<const Catalog> catalog_;
     std::string catalog_source_; // "built in", or the feed and when it was read
     std::atomic<bool> stopping_{false};
+    std::atomic<bool> catalog_wake_{false}; // a new token: the catalog thread reads the feed again
     std::atomic<bool> restart_requested_{false};
     std::mutex update_mutex_;
     std::optional<update::Release> release_; // the manifest's answer, once read
     std::uint64_t update_job_ = 0;            // the updater's process (0: none started)
     std::thread health_thread_, prefetch_thread_, catalog_thread_, update_thread_;
+    // The stops of old servers an update restarts (advance_updates, on the health thread).
+    std::vector<std::thread> update_stoppers_;
 };
 
 } // namespace ninferno::ui

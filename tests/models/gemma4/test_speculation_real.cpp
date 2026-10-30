@@ -7,8 +7,7 @@
 //     disagreement (the bonus token after a fully accepted round);
 //   * a continuation split over several calls equals one call (the pending token and the MTP
 //     carry survive the boundary), and a traced continuation equals an untraced one;
-//   * the adaptive depth schedule does not leak from one sequence into the next, and A, B, A in
-//     one session drafts the second A exactly as the first;
+//   * A, B, A in one session drafts the second A exactly as the first;
 //   * speculate_until meets a token budget exactly and stops right after a stop id that arrives
 //     among a round's accepted drafts;
 //   * the DFlash drafter's block near the end of the context budget drafts what it drafts with
@@ -68,7 +67,7 @@ struct Drafters {
     const DFlashDrafter* dflash;
 };
 
-SessionOptions options(const Drafters& d, bool dflash, std::int32_t k, std::int32_t k_min = 0,
+SessionOptions options(const Drafters& d, bool dflash, std::int32_t k,
                        std::int32_t context = 4096) {
     SessionOptions o;
     o.max_context      = context;
@@ -76,7 +75,6 @@ SessionOptions options(const Drafters& d, bool dflash, std::int32_t k, std::int3
     o.drafter          = dflash ? nullptr : d.mtp;
     o.dflash           = dflash ? d.dflash : nullptr;
     o.draft_tokens     = k;
-    o.min_draft_tokens = k_min;
     return o;
 }
 
@@ -99,15 +97,15 @@ std::string label(bool dflash, std::int32_t k) {
 // One call of 24 rounds against three of 8, and a traced call against both; then the trace's
 // own account of every round against the stream it emitted.
 void check_rounds(const Model& model, DeviceContext& device, const Drafters& d, bool dflash,
-                  std::int32_t k, std::int32_t k_min) {
-    const auto name = label(dflash, k) + (k_min ? " adaptive" : "");
-    Session one(model, device, options(d, dflash, k, k_min));
+                  std::int32_t k) {
+    const auto name = label(dflash, k);
+    Session one(model, device, options(d, dflash, k));
     const auto whole = continuation(one, kMath, {24});
-    Session split(model, device, options(d, dflash, k, k_min));
+    Session split(model, device, options(d, dflash, k));
     const auto parts = continuation(split, kMath, {8, 8, 8});
     check(whole == parts, name + ": a continuation split over three calls equals one call");
 
-    Session traced(model, device, options(d, dflash, k, k_min));
+    Session traced(model, device, options(d, dflash, k));
     traced.prefill(kMath);
     std::vector<SpeculationRoundTrace> trace;
     const auto stream = traced.speculate_traced(24, trace, true);
@@ -119,8 +117,7 @@ void check_rounds(const Model& model, DeviceContext& device, const Drafters& d, 
         const auto& t   = trace[r];
         const auto what = name + " round " + std::to_string(r);
         check(t.position == position, what + ": opens at the previous round's P + accepted + 1");
-        check(t.depth >= std::max<std::int32_t>(k_min, 1) && t.depth <= k,
-              what + ": depth inside the schedule's range");
+        check(t.depth == k, what + ": every round at the session's depth");
         check(static_cast<std::int32_t>(t.target.size()) == t.depth + 1,
               what + ": one target argmax per verified column");
         check(static_cast<std::int32_t>(t.drafts.size()) ==
@@ -146,28 +143,6 @@ void check_rounds(const Model& model, DeviceContext& device, const Drafters& d, 
     }
 }
 
-// The adaptive schedule's depth after one sequence must not steer the next one's rounds.
-void check_schedule_reset(const Model& model, DeviceContext& device, const Drafters& d) {
-    // The depth of every round is compared, not only the text: the text of this prompt does not
-    // depend on how its rounds are cut.
-    const auto depths = [&](Session& s) {
-        s.reset();
-        s.prefill(kMath);
-        std::vector<SpeculationRoundTrace> trace;
-        const auto stream = s.speculate_traced(20, trace, false);
-        std::vector<std::int32_t> out(stream);
-        for (const auto& t : trace) { out.push_back(-t.depth); }
-        return out;
-    };
-    Session used(model, device, options(d, false, 8, 2));
-    (void)continuation(used, kProse, {12});
-    const auto after_prose = depths(used);
-    Session fresh(model, device, options(d, false, 8, 2));
-    const auto from_scratch = depths(fresh);
-    check(after_prose == from_scratch,
-          "adaptive mtp: a sequence runs the rounds it would run in a fresh session");
-}
-
 // DFlash drafts a 16-wide block whatever its depth: close to the end of a session's context the
 // block's tail lies past the last position the session admits. With a budget just large enough
 // for the rounds, every round must draft exactly what it drafts with room to spare.
@@ -179,10 +154,10 @@ void check_context_edge(const Model& model, DeviceContext& device, const Drafter
     const std::int32_t rounds = 520;
     const auto tight          = prompt + rounds * (k + 1) + 1;
     std::vector<SpeculationRoundTrace> edge, roomy;
-    Session a(model, device, options(d, true, k, 0, tight));
+    Session a(model, device, options(d, true, k, tight));
     a.prefill(kMath);
     const auto stream_a = a.speculate_traced(rounds, edge, false);
-    Session b(model, device, options(d, true, k, 0, 4096));
+    Session b(model, device, options(d, true, k, 4096));
     b.prefill(kMath);
     const auto stream_b = b.speculate_traced(rounds, roomy, false);
     check(stream_a == stream_b, "dflash at the context edge: the same continuation");
@@ -239,9 +214,9 @@ void check_stop_and_budget(const Model& model, DeviceContext& device, const Draf
 // A, then B, then A again in one session: the second A must run exactly the rounds of the first
 // (the drafter keeps nothing from the sequence in between).
 void check_aba(const Model& model, DeviceContext& device, const Drafters& d, bool dflash,
-               std::int32_t k, std::int32_t k_min) {
-    const auto name = label(dflash, k) + (k_min ? " adaptive" : "");
-    Session s(model, device, options(d, dflash, k, k_min));
+               std::int32_t k) {
+    const auto name = label(dflash, k);
+    Session s(model, device, options(d, dflash, k));
     const auto run = [&](const std::vector<std::int32_t>& prompt) {
         s.reset();
         s.prefill(prompt);
@@ -297,14 +272,14 @@ void check_depth_one(const Model& model, DeviceContext& device, const Drafters& 
 // speculation, after a full prompt and after one shorter than the deepest round's k + 1 columns
 // (the warm-up's keys past the prompt are rewritten before any round reads them).
 void check_warm_up(const Model& model, DeviceContext& device, const Drafters& d, bool dflash,
-                   std::int32_t k, std::int32_t k_min) {
-    const auto name = label(dflash, k) + (k_min ? " adaptive" : "") + " warm_up";
+                   std::int32_t k) {
+    const auto name = label(dflash, k) + " warm_up";
     const std::vector<std::int32_t> short_prompt(kMath.begin(), kMath.begin() + 6);
     for (const auto* prompt : {&kMath, &short_prompt}) {
         const auto what = name + (prompt == &kMath ? "" : " (short prompt)");
-        Session cold(model, device, options(d, dflash, k, k_min));
+        Session cold(model, device, options(d, dflash, k));
         const auto expected = continuation(cold, *prompt, {12, 12});
-        Session warm(model, device, options(d, dflash, k, k_min));
+        Session warm(model, device, options(d, dflash, k));
         warm.warm_up();
         check(continuation(warm, *prompt, {12, 12}) == expected,
               what + ": speculation after warm_up emits what first-use capture does");
@@ -353,21 +328,20 @@ int main() {
                 check(false, name + " threw: " + error.what());
             }
         };
-        run("mtp k=4", [&] { check_rounds(*target, device, d, false, 4, 0); });
-        run("mtp adaptive", [&] { check_rounds(*target, device, d, false, 8, 2); });
-        run("dflash k=7", [&] { check_rounds(*target, device, d, true, 7, 0); });
-        run("dflash k=15", [&] { check_rounds(*target, device, d, true, 15, 0); });
-        run("schedule reset", [&] { check_schedule_reset(*target, device, d); });
+        run("mtp k=4", [&] { check_rounds(*target, device, d, false, 4); });
+        run("mtp k=8", [&] { check_rounds(*target, device, d, false, 8); });
+        run("dflash k=7", [&] { check_rounds(*target, device, d, true, 7); });
+        run("dflash k=15", [&] { check_rounds(*target, device, d, true, 15); });
         run("context edge", [&] { check_context_edge(*target, device, d); });
         run("stop mtp", [&] { check_stop_and_budget(*target, device, d, false, 4); });
         run("stop dflash", [&] { check_stop_and_budget(*target, device, d, true, 7); });
-        run("aba mtp", [&] { check_aba(*target, device, d, false, 4, 0); });
-        run("aba mtp adaptive", [&] { check_aba(*target, device, d, false, 8, 2); });
-        run("aba dflash", [&] { check_aba(*target, device, d, true, 7, 0); });
+        run("aba mtp", [&] { check_aba(*target, device, d, false, 4); });
+        run("aba mtp k=8", [&] { check_aba(*target, device, d, false, 8); });
+        run("aba dflash", [&] { check_aba(*target, device, d, true, 7); });
         run("mtp k=1", [&] { check_depth_one(*target, device, d, false); });
         run("dflash k=1", [&] { check_depth_one(*target, device, d, true); });
-        run("warm_up mtp adaptive", [&] { check_warm_up(*target, device, d, false, 15, 2); });
-        run("warm_up dflash", [&] { check_warm_up(*target, device, d, true, 15, 0); });
+        run("warm_up mtp", [&] { check_warm_up(*target, device, d, false, 15); });
+        run("warm_up dflash", [&] { check_warm_up(*target, device, d, true, 15); });
     } catch (const std::exception& error) {
         std::cerr << "FAIL: " << error.what() << '\n';
         return 1;

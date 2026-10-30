@@ -126,6 +126,9 @@ struct ProposalWeights {
     WeightId head;
     std::optional<WeightId> token_ids;
     std::uint32_t rows = 0;
+    // The rows the loaded drafter reads: `rows`, or fewer where the artifact names its own
+    // (proposal.drafter_rows), the head's leading rows and ids.
+    std::uint32_t draft_rows = 0;
     std::vector<std::int32_t> global_token_ids;
 };
 
