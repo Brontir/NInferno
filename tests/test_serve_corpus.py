@@ -287,3 +287,11 @@ def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
     corpus.bind_route_pins(tmp_path, pins)
     with pytest.raises(corpus.CampaignError, match="another --output"):
         corpus.bind_route_pins(tmp_path, {**pins, "decode_route": "auto"})
+    # A campaign from before the marker holds automatic-route results only.
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "run.jsonl").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(corpus.CampaignError, match="before route pins were recorded"):
+        corpus.bind_route_pins(legacy, pins)
+    corpus.bind_route_pins(legacy, {})
+    assert json.loads((legacy / "route_pins.json").read_text(encoding="utf-8")) == {}

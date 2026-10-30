@@ -331,9 +331,19 @@ def require_route_pins(event: dict[str, Any], pins: dict[str, str]) -> None:
 def bind_route_pins(output_dir: Path, pins: dict[str, str]) -> None:
     """One campaign directory, one set of pins: records of another pin set are never mixed in."""
     path = output_dir / "route_pins.json"
+    full = {name: pins.get(name, "auto") for name in ROUTE_PINS}
+    runs = output_dir / "run.jsonl"
+    if not path.exists() and runs.exists() and runs.stat().st_size > 0:
+        # A campaign from before the marker measured the automatic routes only.
+        if any(value != "auto" for value in full.values()):
+            raise CampaignError(
+                f"{output_dir} holds results measured before route pins were recorded (all auto), "
+                f"not {pins!r}; use another --output"
+            )
     if path.exists():
-        recorded = json.loads(path.read_text(encoding="utf-8"))
-        if recorded != pins:
+        stored = json.loads(path.read_text(encoding="utf-8"))
+        recorded = {name: stored.get(name, "auto") for name in ROUTE_PINS}
+        if recorded != full:
             raise CampaignError(
                 f"{output_dir} holds results measured with route pins {recorded!r}, not {pins!r}; "
                 "use another --output"
