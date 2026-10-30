@@ -11,6 +11,8 @@
    "input_table_params": 1017118720,
    "layers": 32,
    "hidden": 4096,
+   "full_layers": 8,
+   "full_head_dim": 256,
    "recurrent_state_elements": 12582912,
    "linears": [[10240, 4096, 8], [4096, 4096, 8], [12288, 4096, 24], [4096, 4096, 24], [24576, 4096, 32], [4096, 12288, 32]],
    "recurrent": true,

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <string_view>
@@ -579,6 +580,55 @@ double prefill_small_seconds(const ModelFacts& model, const CardFacts& card, dou
     return 0;
 }
 
+double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card, KvCacheStorage kv,
+                                       double prompt, std::uint32_t chunk, bool* transferred) {
+    if (prompt <= 0 || chunk == 0 || kv != KvCacheStorage::Int8Group64 || model.full_layers == 0 ||
+        model.full_head_dim != kAttentionTileHeadDim || model.sliding_attention_width > 0 ||
+        model.family.rfind("qwen3_5", 0) != 0 || card.sms <= 0 || card.clock_hz <= 0) {
+        return 0;
+    }
+    const std::string_view gen = generation_of(card);
+    const AttentionTileCost* cost = nullptr;
+    for (const AttentionTileCost& row : kAttentionTileCost) {
+        if (row.generation == gen) { cost = &row; }
+    }
+    if (cost == nullptr) { return 0; }
+    const double heads = std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim));
+    if (heads < 1) { return 0; }
+    // A call of at most kAttentionTiledMinWidth tokens takes the grouped kernels (int8/plan.cpp: the
+    // keys split over the SMs), not this one: its share of the BF16 peak, as attention_seconds.
+    if (prompt <= kAttentionTiledMinWidth) { return 0; }
+    if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
+    bool share_transferred = false;
+    const double share     = attention_eta(gen, share_transferred) * peak(card, Route::Bf16);
+    double clocks = 0, seconds = 0;
+    std::vector<double> free(static_cast<std::size_t>(card.sms));
+    for (double prefix = 0; prefix < prompt; prefix += chunk) {
+        const double width  = std::min<double>(chunk, prompt - prefix);
+        if (width <= kAttentionTiledMinWidth) {
+            seconds += model.full_layers * 2 * (model.full_attention_width / model.full_layers) *
+                       (width * prefix + width * width / 2) / share;
+            if (transferred != nullptr && share_transferred) { *transferred = true; }
+            continue;
+        }
+        const double blocks = std::ceil(width / kAttentionQueryRows);
+        // The kernel's issue order, longest first (the last row block of every head, then the one
+        // before), each CTA to the SM that frees first.
+        std::fill(free.begin(), free.end(), 0.0);
+        std::make_heap(free.begin(), free.end(), std::greater<>());
+        for (double b = blocks - 1; b >= 0; --b) {
+            for (double h = 0; h < heads; ++h) {
+                const double keys = std::min((b + 1) * kAttentionQueryRows, width);
+                std::pop_heap(free.begin(), free.end(), std::greater<>());
+                free.back() += prefix * cost->prefix + keys * cost->in_chunk;
+                std::push_heap(free.begin(), free.end(), std::greater<>());
+            }
+        }
+        clocks += *std::max_element(free.begin(), free.end());
+    }
+    return model.full_layers * clocks / card.clock_hz + seconds;
+}
+
 namespace {
 
 double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
@@ -695,7 +745,12 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
     out.prefill = linear_prefill(model, card, quant, route, filled, prefill_transferred);
     if (prompt > 0 && out.prefill > 0) {
-        const double attention = attention_seconds(model, card, prompt, prefill_transferred);
+        // Exact activations run every route invariant (ScopedInvariantRoutes): attention on the grouped
+        // kernels at every width, never the prompt kernel.
+        const bool exact       = candidate.activations == ActivationMode::Exact;
+        const double tiled     = exact ? 0 : prefill_attention_tiled_seconds(model, card, candidate.kv, prompt, candidate.chunk,
+                                                                   &prefill_transferred);
+        const double attention = tiled > 0 ? tiled : attention_seconds(model, card, prompt, prefill_transferred);
         out.prefill            = prompt / (prompt / out.prefill + attention +
                                 tail_calls_seconds(model, card, quant, candidate, prompt));
     }
@@ -793,7 +848,11 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const std::uint32_t whole = task.prompt / chunk * chunk;
     const std::uint32_t rest  = task.prompt - whole;
     bool transferred          = false;
-    double prefill_seconds    = attention_seconds(model, card, task.prompt, transferred);
+    const double tiled        = candidate.activations == ActivationMode::Exact
+                                    ? 0
+                                    : prefill_attention_tiled_seconds(model, card, candidate.kv, task.prompt, chunk,
+                                                                      &transferred);
+    double prefill_seconds    = tiled > 0 ? tiled : attention_seconds(model, card, task.prompt, transferred);
     prefill_seconds += tail_calls_seconds(model, card, quant, candidate, task.prompt);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
     if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }

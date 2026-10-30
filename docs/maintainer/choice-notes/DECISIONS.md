@@ -2028,3 +2028,41 @@ reference clock (2407 MHz: about 20 us a wave at K 4096, the law 20.3), yet a ca
 the linears, which one share a generation cannot see. The tile law by linear with its waves
 (DECISIONS 66, `prefill_linears_seconds` on the prefill branch) prices it; it replaces these rows
 when the rest of a prompt (the small kernels) is priced too.
+
+## 68. A prompt's attention from its CTAs (30.10, measured)
+
+**What changed.** `kPrefillAttentionEta` priced attention as one share of the BF16 peak a
+generation, read on Qwen's points; Gemma 4's kernel ran 1.3-1.9x that term on the cards with most
+SMs (DECISIONS 66), and Qwen's own grid leaves SMs idle on a large card. `prefill_attention_tiled_seconds`
+prices the INT8-KV prompt kernel (int8/prompt_fast.cuh: sm_80 on, head width 256, Qwen 3.5's full
+layers at `--kv-dtype int8`, the default) from its grid, the way the kernel issues it:
+
+- a CTA is 128 query rows of one head over every key before its last row; one CTA a SM (98 KiB of
+  shared memory); the grid is ceil(chunk / 128) row blocks x the heads, issued longest first (the
+  last row block of every head, then the one before) to the SM that frees first;
+- a CTA takes `in_chunk` SM-clocks a key of its own chunk and `prefix` a key before it
+  (`kAttentionTileCost`): Ada 304 / 194, Ampere 374 / 188, Blackwell 210 / 154;
+- a prompt is its chunks in turn, each over the keys of the chunks before.
+
+**Read** on the census of a 7K-token prompt (seven 1024-token chunks, a layer's median a chunk; the
+RTX 5090 on a lab build without PDL): RTX 4060 Ti and 4090 (its 1.8K prompt) -4 .. +2 %, RTX 3060
+-1 .. 0 %, RTX 5090 -1 .. +1 %. **Checked** where it was not read: a 21K prompt's 21 chunks on the
+RTX 3060 -1 .. 0 %, 4060 Ti -1 .. +2 %, 5090 -1 .. +2 %; the RTX 5070 Ti's 7K prompt -10 .. +1 %
+(its first chunk, where the kernel's half-height slots fill the last wave, is the -10 %).
+
+What it showed on the way: issued in plain launch order the same constants missed the 70-SM and
+34-SM cards' first chunk by +10 .. +30 %; the kernel issues longest first, and with that order one
+pair of constants holds on both Ada cards. On a 170-SM card the grid of 128 CTAs (16 heads x 8
+blocks at a 1024-token chunk) is one round with 42 SMs idle: the RTX 5090's attention is the
+longest CTA's time, not the work over the SMs.
+
+A call of 256 tokens or fewer (a short prompt, a short last chunk, a chunk pinned that narrow) takes
+the grouped kernels (int8/plan.cpp, the keys split over the SMs), not this one: it keeps the share.
+Not modelled: the kernel's narrow layouts (four-warp CTAs, or half-height leading slots where they
+shorten the last wave: up to 1/0.72 of a full CTA's cost; at 1024-token chunks only the RTX 5070 Ti's
+first chunk shows it, -10 %), and the invariant route profile (every width on ParallelGrouped).
+
+In the estimate (Qwen3.5 9B's points): Q8_0 rms 7.6 -> 7.1 %, Q4_K_M 6.0 -> 6.4 % (MMQ's shares were
+read with the old attention term beside them). Not yet: Gemma 4's kernel (sliding layers: 2 CTAs a SM,
+a round of 352-520 CTAs about 160-177 K SM-clocks on Ada and Blackwell; full layers a persistent grid
+on the RTX 5090), the BF16 and FP8 KV kernels, Turing and Volta's kernels (no row: the shares stand).

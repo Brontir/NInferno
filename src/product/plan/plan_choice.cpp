@@ -131,6 +131,8 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     out.experts_per_token    = s.experts_per_token;
     out.routed_expert_params = s.routed_expert_params;
     out.full_attention_width    = s.full_attention_width;
+    out.full_layers             = m.full_layers;
+    out.full_head_dim           = m.full_key_dim;
     out.sliding_attention_width = s.sliding_attention_width;
     out.input_table_params =
         s.tied_embeddings ? 0.0 : static_cast<double>(s.vocab_size) * static_cast<double>(s.hidden_size);
