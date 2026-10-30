@@ -1706,7 +1706,9 @@ weighs 8 of 19), while math alone would take mtp:5 (predicted ×2.78 on hard50).
 defaults to true), so the plan prices the served configuration on the corpus's thinking section:
 on the RTX 4090 with the #244 registry Qwen 9B serves dflash:7+head fixed and the plan says 580 tok/s
 (x3.54 of 163.7), Gemma 12B serves mtp:5 and the plan says 395 (x3.41 of 115.9); hard50 measured x2.99
-and x3.21. Same configuration, same round cost: the difference is the text alone (the table above).
+and x3.21, its requests asking with thinking off (a fixed server serves both flags the same
+configuration). Same configuration, same round cost: the difference is the text alone (the table
+above).
 An earlier reading of this gap as the plan pricing a configuration the server does not run was
 wrong: the plan's and the server's choice come from the same `served_speculation`, and a pricing
 of the served configuration (`config_gain`) equalled the pick's speedup on every profile checked.
