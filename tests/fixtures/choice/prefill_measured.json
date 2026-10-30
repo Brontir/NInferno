@@ -771,48 +771,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 13401.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "prefill": 14182.0,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
   },
   {
    "card": "RTX 5090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 13259.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "prefill": 14033.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
   },
   {
    "card": "RTX 5090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 13680.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "prefill": 14476.8,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
   },
   {
    "card": "RTX 5090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 13630.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "prefill": 14434.2,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
   },
   {
    "card": "RTX 5090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 13444.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "prefill": 14211.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
   },
   {
    "card": "RTX 5090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 13514.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+   "prefill": 14307.4,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5090)"
   },
   {
    "card": "RTX 2080 Ti",
