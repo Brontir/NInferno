@@ -106,6 +106,11 @@ struct ModelFacts {
     // The full-attention layers and their head width (a key's; 0: unknown): the prompt kernel's grid.
     std::uint32_t full_layers = 0;
     double full_head_dim      = 0;
+    double full_kv_heads      = 0; // a full layer's KV heads (0: unknown)
+    // The sliding layers likewise (Gemma 4's own attention kernel deals both).
+    std::uint32_t sliding_layers = 0;
+    double sliding_head_dim      = 0;
+    double sliding_kv_heads      = 0;
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)
