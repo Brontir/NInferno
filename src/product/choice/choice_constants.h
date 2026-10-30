@@ -128,13 +128,14 @@ struct DecodeLaunches {
     double small[3]; // the small ones at 1, 2-4 and 5-8 rows
     double fixed_gemv;  // of them once a step (the output head)
     double fixed_small; // of the small ones once a step (gather, final norm, sampling)
+    bool moe = false;   // an MoE's graph (router, select, combine): its family's every quantization
 };
 inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"qwen3_5_text", WeightClass::KQuant, 32, 145, {167, 295, 215}, 1, 7},
     {"qwen3_5_text", WeightClass::Q8, 32, 177, {191, 367, 367}, 1, 7},
     {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
-    {"qwen3_5_moe_text", WeightClass::Other, 40, 311, {267, 267, 267}, 1, 6},
-    {"moe_decoder", WeightClass::Other, 24, 97, {199, 199, 199}, 1, 6},
+    {"qwen3_5_moe_text", WeightClass::Other, 40, 311, {267, 267, 267}, 1, 6, true},
+    {"moe_decoder", WeightClass::Other, 24, 97, {199, 199, 199}, 1, 6, true},
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 

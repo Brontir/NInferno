@@ -124,13 +124,23 @@ double moe_routed_eta(std::string_view generation, double rows, bool& transferre
     return scale * lo_eta;
 }
 
-// The kernels a step of `rows` rows launches (kDecodeLaunches by the family's layers): the
-// family's row for the class; else the family's K-quant row, Qwen 3.5's row for the class, Qwen 3.5's
-// K-quant row, in that order (transferred).
+// The kernels a step of `rows` rows launches (kDecodeLaunches by the family's layers): an MoE's
+// family's MoE row (its graph whatever the quantization); else the family's row for the class; else
+// the family's K-quant row, the family's other row, Qwen 3.5's row for the class, Qwen 3.5's
+// first row, in that order (transferred).
 struct StepKernels {
     double gemv  = 0;
     double small = 0;
 };
+// A row's kernels at the model's layers: the layers' share scales; the once-a-step kernels do not.
+StepKernels kernels_of(const ModelFacts& model, const DecodeLaunches& row, double rows, bool& transferred) noexcept {
+    if (model.layers == 0) { transferred = true; } // unknown layers: the census model's
+    const double scale = model.layers > 0 ? model.layers / row.layers : 1.0;
+    const int at       = rows <= 1 ? 0 : rows <= 4 ? 1 : 2;
+    return {row.fixed_gemv + (row.gemv - row.fixed_gemv) * scale,
+            row.fixed_small + (row.small[at] - row.fixed_small) * scale};
+}
+
 StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double rows, bool& transferred) noexcept {
     const auto find = [](std::string_view family, WeightClass w) -> const DecodeLaunches* {
         for (const DecodeLaunches& r : kDecodeLaunches) {
@@ -138,6 +148,12 @@ StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double ro
         }
         return nullptr;
     };
+    if (model.moe()) {
+        for (const DecodeLaunches& r : kDecodeLaunches) {
+            if (r.moe && r.family == model.family) { return kernels_of(model, r, rows, transferred); }
+        }
+        transferred = true; // an MoE without its graph's census: a dense row's launches
+    }
     const DecodeLaunches* row = find(model.family, weights);
     if (row == nullptr) {
         transferred = true;
@@ -148,12 +164,7 @@ StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double ro
     }
     if (row == nullptr) { row = find(kDecodeLaunches[0].family, weights); }
     if (row == nullptr) { row = &kDecodeLaunches[0]; }
-    if (model.layers == 0) { transferred = true; } // unknown layers: the census model's
-    // The layers' share scales with the model's layers; the once-a-step kernels do not.
-    const double scale = model.layers > 0 ? model.layers / row->layers : 1.0;
-    const int at       = rows <= 1 ? 0 : rows <= 4 ? 1 : 2;
-    return {row->fixed_gemv + (row->gemv - row->fixed_gemv) * scale,
-            row->fixed_small + (row->small[at] - row->fixed_small) * scale};
+    return kernels_of(model, *row, rows, transferred);
 }
 
 const PrefillEta* prefill_row(bool moe, std::string_view generation, Route route) noexcept {
@@ -533,7 +544,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double routed = quant.routed_expert_bytes > 0
                                   ? std::min(weights, quant.routed_expert_bytes)
                                   : weights * std::clamp(model.routed_expert_params / model.params, 0.0, 1.0);
-        const double pick   = static_cast<double>(model.experts_per_token) / model.experts;
+        const double pick   = std::clamp(static_cast<double>(model.experts_per_token) / model.experts, 0.0, 1.0);
         const double apart  = 1 - std::pow(1 - pick, rows);
         weights -= routed;
         routed_read = routed * apart;
@@ -543,13 +554,15 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const KernelCost* cost = measured_row_of(kKernelCost, gen == "volta" ? std::string_view("turing") : gen,
                                              transferred);
     if (gen == "volta") { transferred = true; }
-    if (quant.weights == WeightClass::Other) { transferred = true; } // no census of its routes
+    // A dense model of another class: no census of its routes. An MoE's rest reads at the K-quant
+    // rows, the rows its routed banks' share was measured against (kMoeRoutedEta).
+    if (quant.weights == WeightClass::Other && !model.moe()) { transferred = true; }
+    const WeightClass rest = model.moe() ? WeightClass::KQuant : quant.weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
-    const double reads =
-        weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
-        routed_read / (moe_routed_eta(gen, rows, transferred) * card.dram_bytes_per_s) +
-        rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
+    double reads = weights / (rows_eta(gen, rest, rows, transferred) * card.dram_bytes_per_s) +
+                   rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
+    if (routed_read > 0) { reads += routed_read / (moe_routed_eta(gen, rows, transferred) * card.dram_bytes_per_s); }
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
