@@ -309,22 +309,24 @@ void prefills_by_format(const json& fixture) {
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
-        if (i == 1) { by_card[row.at("card").get<std::string>()].push_back(d); }
+        by_card[std::string(i == 1 ? "Q8_0 " : "Q4_K_M ") + row.at("model").get<std::string>() + " " +
+                row.at("card").get<std::string>()]
+            .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
         ++n[i];
     }
     const double mmq = std::sqrt(sq[0] / n[0]), tiles = std::sqrt(sq[1] / n[1]);
     for (const auto& [card, ds] : by_card) {
-        std::cout << "  Q8_0 " << card << ":";
+        std::cout << "  " << card << ":";
         for (const double d : ds) { std::cout << " " << std::lround(d * 100) << " %"; }
         std::cout << "\n";
     }
     std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
-    check(n[1] == 42 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
-    check(n[0] == 42 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+    check(n[1] == 60 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
+    check(n[0] == 78 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.

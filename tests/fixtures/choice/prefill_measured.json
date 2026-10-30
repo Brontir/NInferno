@@ -38,6 +38,49 @@
      "speculation_bytes": 258557952
     }
    }
+  },
+  "gemma-4-12b": {
+   "family": "gemma4_text",
+   "params": 11922309120.0,
+   "active_params": 11922309120.0,
+   "experts": 0,
+   "experts_per_token": 0,
+   "routed_expert_params": 0,
+   "input_table_params": 0,
+   "layers": 48,
+   "recurrent": false,
+   "window": 1024,
+   "kv_bytes_per_token": {
+    "bf16": 16384,
+    "fp8": 8224,
+    "int8": 8448,
+    "k8v4": 6416,
+    "nvfp4": 4608
+   },
+   "ring_bytes_per_token": {
+    "bf16": 327680,
+    "fp8": 165120
+   },
+   "state_bytes": {
+    "f16": 0,
+    "f32": 0
+   },
+   "full_attention_width": 131072.0,
+   "sliding_attention_width": 327680.0,
+   "quants": {
+    "Q4_K_M": {
+     "bits_per_weight": 4.774,
+     "weight_bytes": 7106035904,
+     "input_table_bytes": 0,
+     "speculation_bytes": 0
+    },
+    "Q8_0": {
+     "bits_per_weight": 8.49,
+     "weight_bytes": 12653822144,
+     "input_table_bytes": 0,
+     "speculation_bytes": 0
+    }
+   }
   }
  },
  "cards": {
@@ -770,6 +813,438 @@
    "prompt": 13923,
    "prefill": 13514.8,
    "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5090)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 1502.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 1507.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 1433.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 1440.3,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 1285.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 1295.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l2080)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 1281.5,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 1283.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 1239.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 1246.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 1143.5,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 1150.5,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l3060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 2011.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 2014.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 1983.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 1990.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 1852.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 1862.8,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3162,
+   "prefill": 2049.5,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3122,
+   "prefill": 2034.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6837,
+   "prefill": 2071.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6593,
+   "prefill": 2074.0,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 14381,
+   "prefill": 1922.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 13935,
+   "prefill": 1938.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4060)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 3722.6,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 3716.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 3688.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 3696.8,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 3424.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 3447.0,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4070)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 7145.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 7252.0,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 7224.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 7279.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 6792.0,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 6846.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3162,
+   "prefill": 7018.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3122,
+   "prefill": 6955.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6837,
+   "prefill": 7180.8,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6593,
+   "prefill": 7191.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 14381,
+   "prefill": 6740.3,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 13935,
+   "prefill": 6809.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l4090)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 4478.6,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 4495.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 4420.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 4434.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 4140.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 4167.5,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3162,
+   "prefill": 4552.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3122,
+   "prefill": 4547.1,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6837,
+   "prefill": 4572.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6593,
+   "prefill": 4579.8,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 14381,
+   "prefill": 4251.3,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 13935,
+   "prefill": 4284.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
   }
  ]
 }
