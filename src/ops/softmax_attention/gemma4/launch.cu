@@ -112,6 +112,29 @@ inline constexpr int kFittingBc = std::max(Gemma4Tile<Geo, WR, Bc, false>::SmemB
                                       ? Bc
                                       : Bc / 2;
 
+// The prefill key tile: kFittingBc, halved while the SM's shared memory holds fewer than the eight
+// warps the measured tiles run (PrefillConfig: D=256 on 2x2 warps, two CTAs an SM; D=512 on 2x4,
+// one). NINFERNO-SPECIAL(arch:sm75): Turing's 64 KiB a SM holds one 40 KiB D=256 tile: four warps
+// stalled on their own ldmatrix and MMA latencies (RTX 2080 Ti, Gemma 4 12B 2K prefill, ncu:
+// issue slots 18 % busy, occupancy 12.5 %, 1.36 ms a sliding layer). Its 16-key tile (20 KiB)
+// gives two CTAs an SM. Every other build holds the measured tiles at 32 keys (Ampere, Ada and
+// Blackwell 100 KiB a SM, Volta 96).
+template <class Geo, int WR, int Bc, bool WithFp8 = true>
+constexpr int prefill_bc() {
+    constexpr int fitting = kFittingBc<Geo, WR, Bc, WithFp8>;
+    constexpr int bytes   = std::max(Gemma4Tile<Geo, WR, fitting, false>::SmemBytes,
+                                     WithFp8 ? Gemma4Tile<Geo, WR, fitting, true>::SmemBytes : 0);
+    constexpr int ctas  = static_cast<int>(kSharedBytesPerSm) / (bytes + kSharedBytesReservedPerBlock);
+    constexpr int warps = Gemma4Tile<Geo, WR, fitting, false>::Warps;
+    if constexpr (ctas * warps < 8 && fitting > 16) {
+        return prefill_bc<Geo, WR, fitting / 2, WithFp8>();
+    } else {
+        return fitting;
+    }
+}
+template <class Geo, int WR, int Bc, bool WithFp8 = true>
+inline constexpr int kPrefillBc = prefill_bc<Geo, WR, Bc, WithFp8>();
+
 // The wide tile only where it keeps the 32-row tile's keys per tile: a halved key tile would fold
 // the online softmax over other key tiles and change the bytes (V100: 96 KiB per block, which the
 // wide tile's BF16 planes and score exchange fill exactly; Turing's 64 KiB holds neither at 32).
@@ -477,7 +500,7 @@ struct ChainPlan {
 template <class Geo, class TileGeo, int WR, bool Bf16Only>
 ChainPlan chain_plan(std::int32_t group, std::int32_t kv_heads, std::int32_t window, bool block,
                      std::int32_t tokens) {
-    constexpr int Bc = kFittingBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
+    constexpr int Bc = kPrefillBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
     using Tile       = Gemma4Tile<TileGeo, WR, Bc, false>;
     // A row block inside one key tile (no span blocks: the last row's keys bound every block's)
     // of a full causal layer, wider than a decode call. D >= 256: the layers whose CTAs are few
@@ -537,7 +560,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
     with_prefill_tile(
         launch.q.ne[0], launch.q.ne[1], args.kv_heads, args.tokens, fp8,
         [&]<class Geo, class TileGeo, int WR, bool Bf16Only>() {
-            constexpr int Bc = kFittingBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
+            constexpr int Bc = kPrefillBc<TileGeo, WR, PrefillConfig<Geo::D>::Bc, !Bf16Only>;
             // One block more than the rows need: row blocks sit on the absolute-position grid, and
             // a call that starts off it spans one block more (see the kernel). A block holds Br / G
             // whole tokens (Br rows for a power-of-two group).
@@ -545,7 +568,7 @@ void gemma4_attention_prefill_launch(const Gemma4AttentionLaunch& launch, std::i
             const std::int32_t block_rows = (16 * WR / group) * group;
             const std::int32_t blocks     = div_up(args.tokens * group, block_rows) + 1;
             // A full layer of a geometry with its own full-layer key tile (no chain below D=256).
-            constexpr int FullBc = kFittingBc<TileGeo, WR, prefill_full_bc<Geo::D>(), !Bf16Only>;
+            constexpr int FullBc = kPrefillBc<TileGeo, WR, prefill_full_bc<Geo::D>(), !Bf16Only>;
             if constexpr (FullBc != Bc) {
                 if (args.window == 0) {
                     const dim3 grid(static_cast<unsigned>(blocks),
