@@ -8,7 +8,7 @@
 //      + C 2 P / (eta_compute peak_s8) f_route
 // and a prefill of n tokens takes n 2 P / (eta_prefill share peak_route) + F_att(n) / (eta_attention
 // peak_bf16) seconds (choice.cpp attention_seconds, linear_prefill): W(C) the weights C rows read
-// (an MoE's routed experts as rows routed apart add them, kMoeRoutedShare of independent routing),
+// (an MoE's routed experts as concurrent rows, routed independently, add them: DECISIONS 65),
 // b_kv the full layers' KV bytes a token, s a lane's recurrent state (read and written), b_ring a
 // sliding ring's bytes a token, P the active parameters (plan_facts.cpp: the layers a token runs
 // and the output head), BW the board's DRAM rate, peak the generation row's tensor rate times SMs
@@ -44,15 +44,12 @@
 // 4070 Ti's two were within 0.01 of each other: no clear "about the same".
 
 #include "core/cost_constants.h"
-#include "spec/moe_routed_share.h"
 #include "ninferno/types.h"
 
 #include <cstdint>
 #include <string_view>
 
 namespace ninferno::product::choice {
-
-using ::ninferno::spec::kMoeRoutedShare; // spec/moe_routed_share.h, a fitted calibration
 
 // The activation route a configuration's linears take (the peak its compute runs at).
 enum class Route : std::uint8_t {
@@ -207,8 +204,7 @@ struct PredictionError {
 inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.028}, {"gb20x", 0.020}};
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
-// decode_int8_peak): core/cost_constants.h, a chip fact; kMoeRoutedShare: spec/moe_routed_share.h,
-// a fitted calibration. Both shared with spec/round_cost.h.
+// decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
 
 // A row per generation (core/generation.h's names) and kind; a generation without its own row
 // takes kTransferGeneration's, marked as a transfer (its prefill: a generation's with the same BF16

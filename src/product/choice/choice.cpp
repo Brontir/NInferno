@@ -499,13 +499,20 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double table = model.input_table_bytes > 0 ? model.input_table_bytes
                                                      : model.input_table_params * quant.bits_per_weight / 8;
     double weights     = std::max(0.0, quant.weight_bytes - table);
+    // An MoE's routed banks: the experts any of the rows routes to, each read once. Concurrent
+    // rows are separate requests and route independently (1 - (1 - k/E)^C of the banks; the
+    // speculation round's correlated rows keep kMoeRoutedShare, spec/round_cost.cpp), and an
+    // expert serves the C k / E-th of them it was picked for: its read at that many rows' rate.
+    double routed_read = 0, rows_per_expert = rows;
     if (model.moe() && model.params > 0) {
         const double routed = quant.routed_expert_bytes > 0
                                   ? std::min(weights, quant.routed_expert_bytes)
                                   : weights * std::clamp(model.routed_expert_params / model.params, 0.0, 1.0);
         const double pick   = static_cast<double>(model.experts_per_token) / model.experts;
         const double apart  = 1 - std::pow(1 - pick, rows);
-        weights -= routed * (1 - (pick + kMoeRoutedShare * (apart - pick)));
+        weights -= routed;
+        routed_read     = routed * apart;
+        rows_per_expert = std::max(1.0, rows * pick / apart);
     }
     // A generation without a row: the one whose launches it shares (Volta: Turing's, neither has
     // PDL nor Ada's L2), else Ada's; transferred either way.
@@ -515,8 +522,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     if (quant.weights == WeightClass::Other) { transferred = true; } // no census of its routes
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
-    const double reads = weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
-                         rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
+    const double reads =
+        weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
+        routed_read / (rows_eta(gen, quant.weights, rows_per_expert, transferred) * card.dram_bytes_per_s) +
+        rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
