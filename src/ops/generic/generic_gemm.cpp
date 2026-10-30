@@ -3527,7 +3527,7 @@ struct SpreadMeasured {
 };
 constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true},
                                               {measured::kRtx5080, true},
-                                              {measured::kRtx5060Ti, true},
+                                              {measured::kRtx5060Ti, false},
                                               {measured::kRtx4080Super, false}};
 
 bool spread_by_board(const DeviceClass& d) {
