@@ -358,6 +358,9 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // "staged.<rows>x<tokens>.w<WM>x<WN>.s<stages>",
 // "nvfp4t.c<classes>.<BM>x<BN>", "scalar".
 [[nodiscard]] std::string route_name(Route route);
+// The W4A8 schedule run_route executes for a W4A8 route of this weight (its producer-warp or
+// classic twin where the weight takes the other one); any other route unchanged.
+[[nodiscard]] Route w4a8_executed_route(Route route, const Weight& weight);
 [[nodiscard]] std::optional<Route> parse_route(std::string_view name);
 
 [[nodiscard]] WeightCodec codec_of(const Weight& weight);

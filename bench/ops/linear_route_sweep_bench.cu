@@ -433,6 +433,13 @@ int main(int argc, char** argv) {
                     const generic::Route route{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)};
                     const auto info = generic::w4a8_schedule_info(i);
                     if (!generic::route_admits(route, weight.weight, o.policy)) continue;
+                    // run_route may execute the schedule's twin: time each executed kernel once.
+                    const generic::Route executed = generic::w4a8_executed_route(route, weight.weight);
+                    if (executed.schedule != route.schedule) {
+                        std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d runs as %s\n", t, info.block_m,
+                                     info.block_n, generic::route_name(executed).c_str());
+                        continue;
+                    }
                     if (generic::route_workspace_bytes(route, o.k, t) > ws_bytes) {
                         std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d skipped: workspace\n", t,
                                      info.block_m, info.block_n);
