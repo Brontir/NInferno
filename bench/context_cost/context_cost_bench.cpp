@@ -3,6 +3,7 @@
 
 #include "core/device.h"
 #include "core/device_class.h"
+#include "core/device_identity.h"
 #include "runtime/engine/context_cache/context_cost.h"
 
 #include <nlohmann/json.hpp>
@@ -136,7 +137,10 @@ Options parse_options(int argc, char** argv) {
                 throw std::invalid_argument("--suite must be all, transfer, or prefill");
             }
         } else if (argument == "--device") {
-            options.measurement.device = parse_nonnegative_int(value("--device"), "--device");
+            // N counts GPUs in PCI bus order, as ninferno-serve's --device does; pci:BUSID or
+            // GPU-UUID names one board (core/device_identity.h).
+            options.measurement.device =
+                ninferno::select_device(ninferno::parse_device_option(value("--device")));
         } else if (argument == "--max-context") {
             options.measurement.max_context = parse_u32(value("--max-context"), "--max-context");
         } else if (argument == "--prefill-chunk") {
