@@ -2083,3 +2083,11 @@ kLoneTile's effect: +14 .. +80 % on that chunk, not modelled). A group-8 model's
 In the estimate: Gemma 4 12B on the RTX 5090 Q8_0 +17 .. +26 % -> +12 .. +22 %, Q4_K_M +12 .. +17 %
 -> +7 .. +14 %; Q8_0 points rms 9.2 -> 8.0 %. What is left on Gemma is not attention: its small
 kernels (four norms a layer, GELU) ran 21-27 % over the term on Ada (DECISIONS 66).
+
+**BF16 keys by their kernel's CTAs** (`kBf16AttentionTileCost`, bf16/tiled_mma.cuh at `--kv-dtype
+bf16`): a CTA is 64 query rows of one head (98 KiB, one a SM), issued in plain launch order (a head's
+row blocks first to last, then the next head) — the opposite of the INT8 kernel's longest first, and
+with it the same deal holds. SM-clocks a key of a CTA, in its chunk / before it: RTX 5090 144 / 120
+(-1 .. +2 %), RTX 4060 Ti 168 / 144 (-2 .. +1 %), RTX 3060 168 / 142 (0 %); checked where not read,
+the RTX 5070 Ti's 7K prompt: 0 .. +1 %. FP8 keys run another kernel (mxfp8/fp8 tiled with the keys
+split over a third grid axis and a merge): their share stands.
