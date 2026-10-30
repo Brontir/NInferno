@@ -3344,16 +3344,19 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
 }
 
 // Volta prefill (generic_volta_cutlass.cu): a tiled-route call of the prefill band (17 tokens on,
-// kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. Volta has no
-// tensor mma.sync, so the tiled kernel's one 128-token block multiplies on FP32 FMAs: 2 x 128 x N x
-// K flops at 15.7 TFLOPS (V100), 16 ps per weight, where the decoded copy writes and reads two FP16
-// bytes a weight, 4.6 ps at 870 GB/s, and its HMMA GEMM of a block is a few percent of that. The
-// copy pays from the first block. V100 (ninferno_linear_bench, T = 32..240, the tile's time against
-// the copy's): Q4_K 24576 x 4096 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 1.07..1.31 against
-// 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37 against
-// 0.90..0.94; one shape keeps the tile ahead below 129 tokens, 10240 x 4096 (80 tiles, one wave of
-// the 80 SMs: 0.37..0.47 ms against 0.50), and loses from 129 (0.82..0.93 against 0.52..0.54). A
-// Qwen3.5 9B layer's four linears: 14 % less time at T = 64, 35 % at T = 192.
+// kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
+// kernel (HMMA m8n8k4 on sm_70, generic_tiled.cuh) decodes a 128-row slice of the weight in each
+// CTA, once per 128-token block: ceil(N / 128) CTAs a block, in waves of the SMs, each wave as long
+// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded copy
+// spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so it
+// costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
+// wave. V100 (ninferno_linear_bench, T = 32..240, the tile's time against the copy's): Q4_K 24576 x
+// 4096 (192 CTAs: 2.4 waves) 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 (32 CTAs) 1.07..1.31
+// against 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37
+// against 0.90..0.94. The one shape whose grid is a whole wave, 10240 x 4096 (80 CTAs on 80 SMs),
+// keeps the tile ahead below 129 tokens (0.37..0.47 ms against 0.50) and loses from 129, two waves
+// (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
+// 35 % at T = 192.
 constexpr std::int32_t kVoltaCutlassMinTokens = 17;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
@@ -3936,7 +3939,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         }
         // Every call of the prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format
         // has no tile of its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a
-        // call, 360 -> 140 tok/s), and a tiled one's tile runs on FMAs.
+        // call, 360 -> 140 tok/s), and a tiled one's grid seldom fills the SMs' waves.
         if (workspace != nullptr && volta_cutlass_runs(volta_cutlass_only(codec), args.tokens) &&
             launch_volta_cutlass(codec, call.epilogue, args, *workspace, stream)) {
             return;
