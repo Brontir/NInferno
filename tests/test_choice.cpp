@@ -67,6 +67,8 @@ ch::ModelFacts model_of(const json& m) {
     out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
     out.layers                  = m.value("layers", 0U);
     out.hidden                  = m.value("hidden", 0.0);
+    out.full_layers             = m.value("full_layers", 0U);
+    out.full_head_dim           = m.value("full_head_dim", 0.0);
     out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
     if (m.contains("linears")) {
         for (const json& l : m.at("linears")) {
@@ -966,6 +968,7 @@ void prefills_moe_by_tiles(const json& fixture) {
         if (qwen) {
             mf.layers = 40, mf.hidden = 2048, mf.recurrent_state_elements = 30.0 * 32 * 128 * 128;
             mf.prompt_tail_calls = 2;
+            mf.full_layers = 10, mf.full_head_dim = 256;
             mf.linears = {{9216, 2048, 10, false}, {2048, 4096, 10, false}, {12288, 2048, 30, false},
                           {2048, 4096, 30, false}, {1024, 2048, 40, false}, {2048, 512, 40, false},
                           {1024, 2048, 320, true}, {2048, 512, 320, true}};
@@ -989,6 +992,45 @@ void prefills_moe_by_tiles(const json& fixture) {
                   << " against " << p.measured << " (" << (est / p.measured - 1) * 100 << " %)\n";
     }
     check(worst < 0.15, "an MoE's prefill through the tiles within 15 % of the rows");
+}
+
+// A prompt's full attention by its CTAs (DECISIONS 68): Qwen3.5 9B's eight full layers (16 heads of
+// 256) over INT8 keys, the census's per-chunk calls (a layer's median) against the grid dealt in
+// launch order: the RTX 5090 (no PDL), 4060 Ti and 3060 over a 7K prompt in 1024-token chunks.
+void prices_attention_tiles() {
+    ch::ModelFacts m;
+    m.family               = "qwen3_5_text";
+    m.full_layers          = 1;
+    m.full_head_dim        = 256;
+    m.full_attention_width = 16 * 2 * 256;
+    struct Series {
+        ch::CardFacts card;
+        std::vector<double> us; // chunk i of 1024 tokens after i x 1024
+    };
+    const Series series[] = {
+        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9},
+         {89.3, 154.7, 221.4, 285.5, 350.9, 414.2, 480.3}},
+        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9},
+         {272.4, 580.9, 890.2, 1231.7, 1528.9, 1821.7, 2152.4}},
+        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9},
+         {566.2, 1110.8, 1646.7, 2190.3, 2734.7, 3275.4, 3833.7}},
+    };
+    double worst = 0;
+    for (const Series& s : series) {
+        double before = 0;
+        for (std::size_t i = 0; i < s.us.size(); ++i) {
+            const double through = ch::prefill_attention_tiled_seconds(m, s.card, KvCacheStorage::Int8Group64,
+                                                                       1024.0 * (i + 1), 1024);
+            const double call = (through - before) * 1e6;
+            before            = through;
+            worst             = std::max(worst, std::abs(call / s.us[i] - 1));
+            std::cout << "attention tiles, " << s.card.sms << " SMs, chunk " << i << ": " << call << " us against "
+                      << s.us[i] << "\n";
+        }
+    }
+    check(worst < 0.12, "a prompt's attention by its CTAs within 12 % of the census's calls");
+    check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::BFloat16, 4096, 1024) == 0,
+          "BF16 keys: another kernel, unknown");
 }
 
 void contradictory_pins(const json& fixture) {
@@ -1145,6 +1187,7 @@ int main() {
     prices_moe_prefill_tiles();
     prices_dense_prefill_tiles();
     prices_prefill_small_kernels();
+    prices_attention_tiles();
     weighs_the_drafters(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

@@ -103,6 +103,9 @@ struct ModelFacts {
     // A token's attention: heads x (key + value) summed over the full layers (over every earlier
     // token) and the sliding ones (over at most the window); 2 flops each per position.
     double full_attention_width = 0, sliding_attention_width = 0;
+    // The full-attention layers and their head width (a key's; 0: unknown): the prompt kernel's grid.
+    std::uint32_t full_layers = 0;
+    double full_head_dim      = 0;
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)
@@ -260,6 +263,12 @@ struct Reference {
 // and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
 [[nodiscard]] double prefill_small_seconds(const ModelFacts& model, const CardFacts& card,
                                            double tokens) noexcept;
+// A prompt's full attention by its CTAs (DECISIONS 68): the INT8-KV prompt kernel's grid per chunk
+// of `chunk` tokens, each CTA's keys at its SM-clocks a key, dealt to the SMs in launch order;
+// seconds over every full layer, 0 where the kernel or the generation has no row.
+[[nodiscard]] double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card,
+                                                     KvCacheStorage kv, double prompt,
+                                                     std::uint32_t chunk, bool* transferred = nullptr);
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its

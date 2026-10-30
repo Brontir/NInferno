@@ -367,6 +367,24 @@ inline constexpr SmallKernelCost kSmallKernelCost[] = {
 // an expert), ceil(slots / 64) + min(slots, experts) rows of tiles, before the routing is known.
 inline constexpr double kExpertJobSlots = 64; // ops/moe kJobColumns at prefill widths
 
+// The INT8-KV prompt kernel (ops/softmax_attention int8/prompt_fast.cuh, sm_80 on, a head width of
+// 256 and int8 keys and values: Qwen 3.5's full layers): a CTA of 128 query rows of one head over
+// every key before its last row, one CTA a SM (98 KiB of shared memory), the grid (query blocks,
+// heads) dealt to the SMs in launch order. A CTA takes `in_chunk` SM-clocks a key of its own chunk
+// (the causal diagonal) and `prefix` a key before the chunk. Read on the census of a 7K-token
+// prompt in seven 1024-token chunks (nsys, the RTX 5090 on a lab build without PDL): the RTX 3060
+// 314 / 186 (-1 .. +1 % over its seven chunks), the 5090 210 / 154 (-1 .. +1 %), the RTX 4060 Ti
+// and 4090 (1.8K) 270 / 186 (-12 .. +10 %).
+struct AttentionTileCost {
+    std::string_view generation;
+    double in_chunk, prefix; // SM-clocks a key of a CTA
+    int cards;
+};
+inline constexpr AttentionTileCost kAttentionTileCost[] = {
+    {"ada", 270, 186, 2}, {"ga10x", 314, 186, 1}, {"gb20x", 210, 154, 1}};
+inline constexpr double kAttentionQueryRows = 128; // a CTA's query rows (8 warps x 16)
+inline constexpr double kAttentionTileHeadDim = 256;
+
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak
 // (fit_prefill.py, the same points; Turing's BF16 row is the composed aggregate, core/generation.h).
