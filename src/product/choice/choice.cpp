@@ -455,8 +455,8 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 
 namespace {
 
-// A dense model's int8 route on the int8 tiles (Q8 weights): the generation's tiles row, else its
-// int8 row (kPrefillTilesEta: the tiles' share of MMQ's differs by generation), transferred.
+// A dense model's int8 route on the int8 tiles (Q8 weights): the generation's tiles row (the tile's
+// clock count, or Turing's measured row), else its int8 row, transferred.
 double tiles_eta(std::string_view generation, bool& transferred) noexcept {
     for (const TilesEta& row : kPrefillTilesEta) {
         if (row.generation == generation) {
