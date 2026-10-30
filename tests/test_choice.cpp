@@ -327,7 +327,7 @@ void prefills_by_format(const json& fixture) {
               << " %)\n";
     // DECISIONS 67: the tile's clock count, no fit. Its worst points are the RTX 5090's (+14 .. +26 %):
     // its N 4096 calls run 6.02 waves of 170 SMs in 7, which one share a generation cannot price
-    // (the tile law by linear, DECISIONS 66, does); the rest within -14 .. +15 %.
+    // (the tile law by linear, DECISIONS 66, does); the rest within -15 .. +15 %.
     check(n[1] == 60 && tiles < 0.09 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(n[0] == 78 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 

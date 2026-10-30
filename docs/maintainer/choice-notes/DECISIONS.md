@@ -1851,14 +1851,14 @@ master f8d4399d, 3K-14K-token prompts, estimate / measured - 1):
 | card | Qwen3.5 9B Q8_0 | Gemma 4 12B Q8_0 |
 |---|---|---|
 | RTX 2080 Ti (Turing, its measured row) | -1 .. -4 % | |
-| RTX 3060 (Ampere) | -5 .. -14 % | |
+| RTX 3060 (Ampere, transferred) | -7 .. -15 % (it ran 1.82 GHz against the table's 1.78) | |
 | RTX 4060 Ti | -1 .. -9 % | 0 .. +5 % |
 | RTX 4070 Ti | +2 .. -7 % | |
 | RTX 4090 | +10 .. -1 % | +7 .. +15 % |
 | RTX 5070 Ti | -1 .. -9 % | -3 .. +1 % |
 | RTX 5090 | +14 .. +26 % | |
 
-60 points, rms 8.7 %; the fitted rows they replace priced the same points 25-40 % slow on Ada. The
+60 points, rms 8.9 %; the fitted rows they replace priced the same points 25-40 % slow on Ada. The
 error falls with the prompt on most cards (attention's term, the same as Q4_K_M's).
 
 **Open: the RTX 5090.** Its census (nsys, token-major) runs the tiles at the law's time at its
