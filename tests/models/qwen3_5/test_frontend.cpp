@@ -2025,8 +2025,11 @@ int test_last_part_boundary_at_turn_end() {
     if (found.size() == 2) {
         const std::uint32_t middle = std::min(found[0].frontier, found[1].frontier);
         const std::uint32_t last   = std::max(found[0].frontier, found[1].frontier);
-        failures += check(at_static(last) && last < data.token_ids.size(),
-                          "the boundary after the last part is the turn's end, a static frontier");
+        failures += check(at_static(last) && last < data.token_ids.size() &&
+                              data.identity.rewrite_checkpoint &&
+                              last == data.identity.rewrite_checkpoint->frontier,
+                          "the boundary after the last part is the turn's end, the turn closure's "
+                          "static frontier");
         failures += check(!at_static(middle) && middle < last,
                           "a boundary between parts stays where its part ends");
     }

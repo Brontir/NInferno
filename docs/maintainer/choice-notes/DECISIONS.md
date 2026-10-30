@@ -1524,11 +1524,15 @@ to the 64-token grid point below it (`neutral_frontier.h`: a capture elsewhere w
 bytes after it), and the last chunk stops there; the tokens up to the turn's end are a call of
 their own.
 
-**The change.** A boundary after a message's last part resolves to the closed turn's end
-(`message_boundaries`, the rendering's own proof that a continuation of the conversation renders
-the same bytes there), as a message boundary does. The turn's end is where the next turn opens, an
-execution frontier of the prompt (`prompt_layout.cpp`), so the capture needs no split; for the last
-message it is the turn closure checkpoint's frontier, and the two captures are one group. A
+**The change.** A boundary after a message's last part (a message without tool calls) resolves to
+the closed turn's end (`message_boundaries`: the layout's closed block, or a rendered prefix), as a
+message boundary does. Before the generation prompt or an assistant turn the turn's end is where
+the next turn opens, an execution frontier of the prompt (`prompt_layout.cpp`), so the capture
+needs no split; for the last message it is the turn closure checkpoint's frontier, and the shared
+candidate and the private capture become one group where the cache takes both
+(`select_shared_captures`). Where the turn's end is no execution frontier (a tool result followed
+by another tool turn, an assistant turn followed by a user one) the planner moves it down to the
+grid as before, from a point at or above the old one. A
 continuation of the conversation renders the turn closed the same way, so it matches the prefix as
 before; a sibling prompt that differs only after the content and before the close could not have
 followed the same messages.

@@ -1096,7 +1096,8 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     std::vector<std::size_t> message_parts;
     message_parts.reserve(message_count);
     for (const ChatMessage& message : input.messages) {
-        message_parts.push_back(message.parts.size());
+        // A message whose turn carries tool calls after its parts keeps its part boundaries.
+        message_parts.push_back(message.tool_calls.empty() ? message.parts.size() : 0U);
     }
     std::vector<fi::ChatMessage> messages = convert_messages(std::move(input.messages));
     const bool has_media =
