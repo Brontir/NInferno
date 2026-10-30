@@ -152,48 +152,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 2112.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "prefill": 3494.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 2087.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "prefill": 3445.7,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 2135.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "prefill": 3556.2,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 2136.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "prefill": 3551.0,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 2125.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "prefill": 3490.0,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 2125.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4060)"
+   "prefill": 3499.9,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4060)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -248,48 +248,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 4176.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "prefill": 6116.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 4133.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "prefill": 6065.3,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 4265.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "prefill": 6324.1,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 4260.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "prefill": 6312.9,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 4226.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "prefill": 6196.8,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 4231.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4070)"
+   "prefill": 6236.7,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4070)"
   },
   {
    "card": "RTX 4090",
@@ -344,48 +344,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 8775.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "prefill": 11875.1,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
   },
   {
    "card": "RTX 4090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 8670.8,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "prefill": 11570.1,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
   },
   {
    "card": "RTX 4090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 8980.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "prefill": 12115.8,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
   },
   {
    "card": "RTX 4090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 8978.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "prefill": 12120.3,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
   },
   {
    "card": "RTX 4090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 8917.3,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "prefill": 11952.9,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
   },
   {
    "card": "RTX 4090",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 8928.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l4090)"
+   "prefill": 11970.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l4090)"
   },
   {
    "card": "RTX 3060",
@@ -440,48 +440,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 2009.1,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "prefill": 2065.2,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 1989.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "prefill": 2045.7,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 2014.0,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "prefill": 2070.7,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 2013.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "prefill": 2070.8,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 1971.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "prefill": 2024.0,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 1974.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l3060)"
+   "prefill": 2029.0,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -536,48 +536,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 1828.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "prefill": 2033.2,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 1811.4,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "prefill": 2015.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 1819.5,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "prefill": 2033.1,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 1819.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "prefill": 2032.7,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 1778.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "prefill": 1974.7,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 1779.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l2080)"
+   "prefill": 1970.3,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l2080)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -632,48 +632,48 @@
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3203,
-   "prefill": 6360.2,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "prefill": 7523.1,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 3160,
-   "prefill": 6288.3,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "prefill": 7433.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6877,
-   "prefill": 6407.9,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "prefill": 7624.9,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 6629,
-   "prefill": 6409.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "prefill": 7620.0,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 14390,
-   "prefill": 6336.7,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "prefill": 7502.6,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q8_0",
    "prompt": 13923,
-   "prefill": 6316.6,
-   "source": "sm_bench.py prefill, master 03afc418, 2026-10-28 (l5070)"
+   "prefill": 7509.1,
+   "source": "sm_bench.py prefill, master f8d4399d (the token-major 64-token tiles, PR #249), 2026-10-30 (l5070)"
   },
   {
    "card": "RTX 5090",
