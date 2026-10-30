@@ -115,7 +115,12 @@ inline constexpr int kFittingBc = std::max(Gemma4Tile<Geo, WR, Bc, false>::SmemB
 // The wide tile only where it keeps the 32-row tile's keys per tile: a halved key tile would fold
 // the online softmax over other key tiles and change the bytes (V100: 96 KiB per block, which the
 // wide tile's BF16 planes and score exchange fill exactly; Turing's 64 KiB holds neither at 32).
+// Nor where the narrow tile runs Volta's m8n8k4 (Gemma4Tile::Volta) and the wide one cannot (its
+// 256-column accumulators do not fit the planes for the output conversion): the two would sum in
+// other orders, and a call's bytes would follow its width.
 inline constexpr bool kWidePrefillFits =
+    Gemma4Tile<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc>::Volta ==
+        Gemma4Tile<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc>::Volta &&
     kFittingBc<WideGemma4Geometry, kWidePrefillWR, PrefillConfig<512>::Bc, false> ==
         PrefillConfig<512>::Bc &&
     kFittingBc<Gemma4Geometry<512, 8>, PrefillConfig<512>::WR, PrefillConfig<512>::Bc> ==

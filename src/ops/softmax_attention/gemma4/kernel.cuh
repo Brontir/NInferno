@@ -128,6 +128,23 @@ inline constexpr bool kGemma4Fp8Hardware = NINFERNO_BUILD_ARCH >= 89;
 inline constexpr bool kGemma4Fp8Hardware = true;
 #endif
 
+// NINFERNO-SPECIAL(arch:sm70): Volta has none of the m16n8k16 MMAs the kernel is written in, and
+// their FP32-FMA form (ops/common/mma.cuh) held a Gemma 4 12B prefill's attention at 3.7 TFLOP/s
+// on the Quadro GV100 (383 ms of a 1913-token prefill's 1277). Its own mma.m8n8k4 takes f16
+// operands with FP32 accumulation: K and V are rounded to f16 once as they are staged (bf16's
+// 8-bit mantissa fits f16's 10; magnitudes saturate at 65504, as on Turing), Q as it is loaded and
+// P as it is made, and each quad-pair computes one 8 x 8 block of a 16 x 16 output pair over the
+// whole contraction (four m8n8k4 per 16-wide step), so no partial sums cross quad-pairs. The
+// accumulators keep Volta's layout through a tile: the scores reach the softmax through the score
+// exchange (scattered to the m16n8 lane layout the exchange holds), P and the rescale factors
+// through a per-warp scratch, and the output converts once, through the freed K/V planes. Only the
+// geometries with an exchange (D >= 256, Gemma 4's) take it.
+#if defined(NINFERNO_BUILD_ARCH)
+inline constexpr bool kGemma4VoltaHmma = NINFERNO_BUILD_ARCH >= 70 && NINFERNO_BUILD_ARCH < 75;
+#else
+inline constexpr bool kGemma4VoltaHmma = false;
+#endif
+
 template <class Geo, int WR, int Bc, bool Fp8 = false>
 struct Gemma4Tile {
     static constexpr int Warps      = WR * Geo::WC;
@@ -141,7 +158,13 @@ struct Gemma4Tile {
     // Slice-partial score exchange; a 128-wide head (one warp column) needs none.
     static constexpr int RedBytes   = Geo::Parts > 1 ? WR * Geo::Parts * (Bc / 8) * 32 * 16 : 0;
     static constexpr int ScaleBytes = Fp8 ? 2 * Bc * 4 : 0; // FP32 row scales of K and V
-    static constexpr int SmemBytes  = 2 * PlaneBytes + RedBytes + ScaleBytes;
+    // Volta's m8n8k4 route where the two planes hold every warp's 16 x Slice FP32 accumulators
+    // for the output conversion (not the wide D = 512 tile, which keeps the FMA form).
+    static constexpr bool Volta =
+        kGemma4VoltaHmma && Geo::Parts > 1 && Warps * 16 * Geo::Slice * 4 <= 2 * PlaneBytes;
+    // Volta's per-warp scratch: P of its 16 rows (f16, Bc keys) and their 16 rescale factors.
+    static constexpr int VoltaWarpBytes = Volta ? 16 * Bc * 2 + 16 * 4 : 0;
+    static constexpr int SmemBytes  = 2 * PlaneBytes + RedBytes + ScaleBytes + Warps * VoltaWarpBytes;
     static_assert(Bc % 16 == 0 && (Bc * Geo::D / 8) % Threads == 0);
     static_assert(!Fp8 || (Bc * Geo::D / 16) % Threads == 0);
 };
@@ -290,6 +313,11 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
     constexpr bool VDirect = Fp8 && kGemma4Fp8Hardware && D >= 512;
     static_assert(Tile::CodesOnly == (KDirect && VDirect),
                   "a codes-only tile is read only directly");
+    constexpr bool Volta = Tile::Volta;
+    static_assert(!Volta || (!KDirect && !VDirect));
+#if defined(__CUDA_ARCH__)
+    static_assert(!Volta || NINFERNO_HMMA884, "the Volta route compiles only where m8n8k4 does");
+#endif
     const float NegInf       = -CUDART_INF_F;
 
     extern __shared__ __align__(128) unsigned char gemma4_smem[];
@@ -300,6 +328,15 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
     const int tid  = static_cast<int>(threadIdx.x);
     const int warp = tid >> 5;
     const int lane = tid & 31;
+    // Volta (Tile::Volta): the lane's quad-pair (one 8 x 8 block of a 16 x 16 output pair: rows
+    // 8 * (vq & 1), columns 8 * (vq >> 1)), its row of A (vj, as the m8n8k4 fragments index), and
+    // the warp's scratch: P [16][Bc] f16, then 16 rescale factors.
+    [[maybe_unused]] const int vq = (lane >> 2) & 3;
+    [[maybe_unused]] const int vj = (lane & 3) + 4 * (lane >> 4);
+    [[maybe_unused]] __half* const vp = reinterpret_cast<__half*>(
+        gemma4_smem + 2 * Tile::PlaneBytes + Tile::RedBytes + Tile::ScaleBytes +
+        warp * Tile::VoltaWarpBytes);
+    [[maybe_unused]] float* const valpha = reinterpret_cast<float*>(vp + 16 * Bc);
     // A decode call's combine is its programmatic dependent: it may launch once every CTA here
     // has started (one row's grid is one resident wave, so its CTAs take only the slots left
     // over; a launch of several rows starts its last wave first) and waits for this grid before
@@ -384,8 +421,30 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
         // (mma_a_bf16). They do not depend on the positions, so their loads overlap the positions
         // load.
         unsigned qf[KS][4];
+        // Volta: the lane's row of A (8 * (vq & 1) + vj) over each 16-dim step, four m8n8k4
+        // fragments of 4 dims (two f16x2 each).
+        [[maybe_unused]] unsigned qv[KS][4][2];
+        if constexpr (Volta) {
+            const int row    = row_base + wr * 16 + 8 * (vq & 1) + vj;
+            const bool valid = row >= 0 && row < row_end;
+            const __nv_bfloat16* src =
+                row_.q +
+                (static_cast<std::int64_t>(group.token(row)) * args.q_heads + kv_head * G +
+                 group.member(row)) * D +
+                wc * Geo::Slice;
 #pragma unroll
-    for (int r = 0; r < 2; ++r) {
+            for (int ks = 0; ks < KS; ++ks) {
+#pragma unroll
+                for (int kk = 0; kk < 4; ++kk) {
+                    const uint2 v = valid ? __ldg(reinterpret_cast<const uint2*>(src + ks * 16 + kk * 4))
+                                          : make_uint2(0u, 0u);
+                    qv[ks][kk][0] = bf16x2_to_f16x2(v.x);
+                    qv[ks][kk][1] = bf16x2_to_f16x2(v.y);
+                }
+            }
+        }
+#pragma unroll
+    for (int r = 0; r < 2 && !Volta; ++r) {
         const int row            = row_base + wr * 16 + gid + 8 * r;
         const bool valid         = row >= 0 && row < row_end;
         const int token          = group.token(row);
@@ -505,8 +564,16 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                 __nv_bfloat16* d = dst + row * D + ((col ^ (row & 7)) << 3);
                 if (row < valid_rows && row >= dead_rows) {
                     const int slot = slot_of(row);
-                    cp_async<16, Cache::cg>(d,
-                                            head + static_cast<std::int64_t>(slot) * D + col * 8);
+                    if constexpr (Volta) {
+                        // Rounded to f16 once here, for every warp's m8n8k4 that reads it.
+                        const uint4 v = __ldcg(reinterpret_cast<const uint4*>(
+                            head + static_cast<std::int64_t>(slot) * D + col * 8));
+                        store_vec(d, make_uint4(bf16x2_to_f16x2(v.x), bf16x2_to_f16x2(v.y),
+                                                bf16x2_to_f16x2(v.z), bf16x2_to_f16x2(v.w)));
+                    } else {
+                        cp_async<16, Cache::cg>(
+                            d, head + static_cast<std::int64_t>(slot) * D + col * 8);
+                    }
                 } else {
                     store_vec(d, make_int4(0, 0, 0, 0));
                 }
@@ -567,10 +634,19 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                 const int row     = chunk / CodeChunks;
                 const int col     = chunk - row * CodeChunks;
                 const float scale = scale_src[row];
-                const uint2 a     = detail::gemma4_fp8x4_to_bf16(codes[i].x, scale);
-                const uint2 b     = detail::gemma4_fp8x4_to_bf16(codes[i].y, scale);
-                const uint2 c     = detail::gemma4_fp8x4_to_bf16(codes[i].z, scale);
-                const uint2 e     = detail::gemma4_fp8x4_to_bf16(codes[i].w, scale);
+                uint2 a           = detail::gemma4_fp8x4_to_bf16(codes[i].x, scale);
+                uint2 b           = detail::gemma4_fp8x4_to_bf16(codes[i].y, scale);
+                uint2 c           = detail::gemma4_fp8x4_to_bf16(codes[i].z, scale);
+                uint2 e           = detail::gemma4_fp8x4_to_bf16(codes[i].w, scale);
+                if constexpr (Volta) { // the BF16 widening, then f16 as a BF16 row is staged
+                    const auto f16 = [](uint2 w) {
+                        return make_uint2(bf16x2_to_f16x2(w.x), bf16x2_to_f16x2(w.y));
+                    };
+                    a = f16(a);
+                    b = f16(b);
+                    c = f16(c);
+                    e = f16(e);
+                }
                 store_vec(dst + row * D + (((2 * col) ^ (row & 7)) << 3),
                           make_uint4(a.x, a.y, b.x, b.y));
                 store_vec(dst + row * D + (((2 * col + 1) ^ (row & 7)) << 3),
@@ -634,6 +710,44 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
     constexpr int Parts    = Geo::Parts;
     constexpr int PartKS   = KS / Geo::Sub; // contraction steps of one part
     const auto score_tile = [&](float (&s)[QKN][4]) {
+#if NINFERNO_HMMA884
+        if constexpr (Volta) {
+            // Each quad-pair: rows 8 * (vq & 1) of the warp's 16 by keys 8 * (vq >> 1) of a 16-key
+            // pair; B (K^T, col-major) is the lane's key's four dims, one 8-byte read of the f16
+            // tile. The 8 x 8 blocks scatter into the exchange as the m16n8 lanes hold them.
+            const __half* kt = reinterpret_cast<const __half*>(gemma4_smem);
+            float* redf      = reinterpret_cast<float*>(red);
+#pragma unroll
+            for (int j = 0; j < Geo::Sub; ++j) {
+                const int part = wr * Parts + wc * Geo::Sub + j;
+#pragma unroll
+                for (int nt2 = 0; nt2 < QKN / 2; ++nt2) {
+                    float c[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+                    const int key   = nt2 * 16 + 8 * (vq >> 1) + vj;
+                    const __half* k = kt + key * D;
+#pragma unroll
+                    for (int ks = j * PartKS; ks < (j + 1) * PartKS; ++ks) {
+#pragma unroll
+                        for (int kk = 0; kk < 4; ++kk) {
+                            const int dim = wc * Geo::Slice + ks * 16 + kk * 4;
+                            const uint2 b = *reinterpret_cast<const uint2*>(
+                                k + ((((dim >> 3) ^ (key & 7))) << 3) + (dim & 7));
+                            mma_m8n8k4_f16(c, qv[ks][kk][0], qv[ks][kk][1], b.x, b.y);
+                        }
+                    }
+                    const int nt = 2 * nt2 + (vq >> 1);
+#pragma unroll
+                    for (int i = 0; i < 8; ++i) {
+                        const int r  = 8 * (vq & 1) + (lane & 1) + (i & 2) + 4 * (lane >> 4);
+                        const int cc = (i & 4) + (lane & 2) + (i & 1);
+                        redf[((part * QKN + nt) * 32 + 4 * (r & 7) + (cc >> 1)) * 4 + (cc & 1) +
+                             2 * (r >> 3)] = c[i];
+                    }
+                }
+            }
+            return;
+        }
+#endif
         const unsigned base = k_lane;
         // FP8: the K codes stay codes in shared memory. One ldmatrix.x4 reads, as 8x8 b16
         // matrices, keys (n-tiles 2*nt2, 2*nt2+1) x (k-steps ks, ks+1); a lane's word of each is
@@ -770,11 +884,25 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
             const float p11 = exp2_approx(__fmaf_rn(s[nt][3], scale_log2, -base1));
             bl0 += p00 + p01;
             bl1 += p10 + p11;
-            pa[nt >> 1][(nt & 1) * 2]     = mma_a_bf16(pack_bf16x2(p00, p01));
-            pa[nt >> 1][(nt & 1) * 2 + 1] = mma_a_bf16(pack_bf16x2(p10, p11));
+            if constexpr (Volta) {
+                // P rows gid, gid + 8 at keys nt * 8 + 2 tig, + 1, as value_tile's A reads them.
+                *reinterpret_cast<unsigned*>(vp + gid * Bc + nt * 8 + 2 * tig)       = pack_f16x2(p00, p01);
+                *reinterpret_cast<unsigned*>(vp + (gid + 8) * Bc + nt * 8 + 2 * tig) = pack_f16x2(p10, p11);
+            } else {
+                pa[nt >> 1][(nt & 1) * 2]     = mma_a_bf16(pack_bf16x2(p00, p01));
+                pa[nt >> 1][(nt & 1) * 2 + 1] = mma_a_bf16(pack_bf16x2(p10, p11));
+            }
         }
         l_run[0] = __fmaf_rn(l_run[0], alpha0, bl0);
         l_run[1] = __fmaf_rn(l_run[1], alpha1, bl1);
+        if constexpr (Volta) { // value_tile rescales its own layout's rows
+            if (tig == 0) {
+                valpha[gid]     = alpha0;
+                valpha[gid + 8] = alpha1;
+            }
+            __syncwarp();
+            return;
+        }
 #pragma unroll
         for (int n = 0; n < PVN; ++n) {
             acc[n][0] *= alpha0;
@@ -786,6 +914,51 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
 
     // O += P V over this warp's slice.
     const auto value_tile = [&](const unsigned (&pa)[PVK][4]) {
+#if NINFERNO_HMMA884
+        if constexpr (Volta) {
+            // acc[2 n2 + h][e] holds the 8 x 8 block's c[4 h + e] of dims pair n2: rows
+            // 8 * (vq & 1) + (lane & 1) + (c & 2) + 4 * (lane >> 4), dims 16 n2 + 8 * (vq >> 1) +
+            // (c & 4) + (lane & 2) + (c & 1). A is the lane's P row over four keys; B (V,
+            // row-major) is key lane % 4 of four, four dims.
+            const __half* vt = reinterpret_cast<const __half*>(gemma4_smem + Tile::PlaneBytes);
+            const int r0     = 8 * (vq & 1) + (lane & 1) + 4 * (lane >> 4);
+            const float al0  = valpha[r0];
+            const float al1  = valpha[r0 + 2];
+            unsigned pv[PVK][4][2];
+#pragma unroll
+            for (int pk = 0; pk < PVK; ++pk) {
+#pragma unroll
+                for (int kk = 0; kk < 4; ++kk) {
+                    const uint2 a = *reinterpret_cast<const uint2*>(
+                        vp + (8 * (vq & 1) + vj) * Bc + pk * 16 + kk * 4);
+                    pv[pk][kk][0] = a.x;
+                    pv[pk][kk][1] = a.y;
+                }
+            }
+#pragma unroll
+            for (int n2 = 0; n2 < PVN / 2; ++n2) {
+                float c[8];
+#pragma unroll
+                for (int i = 0; i < 8; ++i) {
+                    c[i] = acc[2 * n2 + (i >> 2)][i & 3] * ((i & 2) ? al1 : al0);
+                }
+                const int dim = wc * Geo::Slice + n2 * 16 + 8 * (vq >> 1) + 4 * (lane >> 4);
+#pragma unroll
+                for (int pk = 0; pk < PVK; ++pk) {
+#pragma unroll
+                    for (int kk = 0; kk < 4; ++kk) {
+                        const int key = pk * 16 + kk * 4 + (lane & 3);
+                        const uint2 b = *reinterpret_cast<const uint2*>(
+                            vt + key * D + ((((dim >> 3) ^ (key & 7))) << 3) + (dim & 7));
+                        mma_m8n8k4_f16_row_b(c, pv[pk][kk][0], pv[pk][kk][1], b.x, b.y);
+                    }
+                }
+#pragma unroll
+                for (int i = 0; i < 8; ++i) { acc[2 * n2 + (i >> 2)][i & 3] = c[i]; }
+            }
+            return;
+        }
+#endif
         const unsigned base = v_lane;
         if constexpr (VDirect) {
             // FP8: V stays codes in shared memory. One ldmatrix.x4.trans reads, as 8x8 b16
@@ -897,6 +1070,33 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
             __syncthreads();
             if (tid == 0) { gemma4_store_release(args.chain_flags + chain_block, span + 1); }
             continue;
+        }
+    }
+
+    if constexpr (Volta) {
+        // The accumulators to the m16n8 lane layout the stores below read, through this warp's
+        // 16 x Slice of the freed K/V planes.
+        __syncthreads();
+        float* o = reinterpret_cast<float*>(gemma4_smem) + warp * 16 * Geo::Slice;
+#pragma unroll
+        for (int n2 = 0; n2 < PVN / 2; ++n2) {
+#pragma unroll
+            for (int i = 0; i < 8; ++i) {
+                const int r   = 8 * (vq & 1) + (lane & 1) + (i & 2) + 4 * (lane >> 4);
+                const int col = n2 * 16 + 8 * (vq >> 1) + (i & 4) + (lane & 2) + (i & 1);
+                o[r * Geo::Slice + col] = acc[2 * n2 + (i >> 2)][i & 3];
+            }
+        }
+        __syncwarp();
+#pragma unroll
+        for (int n = 0; n < PVN; ++n) {
+            const float2 top = *reinterpret_cast<const float2*>(o + gid * Geo::Slice + n * 8 + 2 * tig);
+            const float2 bot =
+                *reinterpret_cast<const float2*>(o + (gid + 8) * Geo::Slice + n * 8 + 2 * tig);
+            acc[n][0] = top.x;
+            acc[n][1] = top.y;
+            acc[n][2] = bot.x;
+            acc[n][3] = bot.y;
         }
     }
 
