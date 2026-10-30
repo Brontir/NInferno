@@ -2952,6 +2952,12 @@ std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weig
 }
 } // namespace
 
+std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
+                                       std::int32_t tokens) {
+    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return r;
+    return volta_hmma_route(problem, weight, tokens);
+}
+
 Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    bool prefill) {
     // The invariant profile: one summation order per problem at every width, BF16 activations
@@ -2988,8 +2994,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         if (route_admits(r, weight, problem.policy)) return r;
         return Route{Family::Scalar, 0};
     }
-    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
-    if (const auto r = volta_hmma_route(problem, weight, tokens)) return *r;
+    if (const auto r = volta_fixed_route(problem, weight, tokens)) return *r;
     // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
     // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
     // path's, whose speed bands split K by width (heuristic_rmma: 4, 8, 2 or 1 K-warps from 17
