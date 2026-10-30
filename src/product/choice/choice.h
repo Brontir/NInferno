@@ -83,6 +83,9 @@ struct ModelFacts {
     // the average bits stands in.
     double input_table_bytes = 0;
     std::uint32_t layers = 0;         // the trunk's layers (a decode step launches kernels per layer)
+    // The whole-model calls a prefill runs after the prompt's chunks (the generation prompt's
+    // execution boundaries: PlanTargetShape::prompt_tail_calls), each a decode step's reads.
+    std::uint32_t prompt_tail_calls = 0;
     // Per-token and per-lane bytes of the state a step reads, by storage
     // (runtime::plan_kv_bytes_per_token, plan_ring_bytes_per_token, plan_state_bytes).
     std::function<std::uint64_t(KvCacheStorage)> kv_bytes_per_token;
