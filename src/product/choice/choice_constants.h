@@ -241,13 +241,15 @@ inline constexpr PrefillEta kPrefillEta[] = {
     {false, "turing", Route::Bf16, 0.073, 1}, // RTX 2080 Ti, 9B exact (stale: see above)
     // Volta's int8 route is not Turing's: without an int8 MMA its prefill linears dequantize each
     // chunk's weights to FP16 (decode_rows_kernel) and multiply them on the HMMA tiles (CUTLASS
-    // sm70, the m8n8k4 FP16 MMA, 1024 operations a SM-clock at FP32 accumulation), where the
+    // sm70, the m8n8k4 FP16 MMA: 1024 operations a SM-clock at FP32 accumulation, the row below
+// relative to this table's 1536 as every row), where the
     // Turing row it took before (MMQ on the int8 MMA) put the Quadro GV100's 2048-token prefill
     // 22 .. 28 % slow (user kits, master 59933708). The census of the GV100's prefill (nsys of the
     // server, 962 / 1912 / 2862-token prompts twice, master 59933708; kernel time without the
     // attention kernels and the tail calls, against this table's 1536 at the board's 1627 MHz
     // boost): Qwen3.5-9B Q4_K_M 0.235, Gemma 4 12B Q4_K_M 0.261 (the CUTLASS kernel alone at 0.70 of
     // the HMMA rate at the 1.28 GHz the board holds at its power limit). One card: transferred.
+    // Its exact route has no row: the int8 row times Turing's exact-to-int8 ratio (unmeasured).
     {false, "volta", Route::Int8, 0.248, 1},
     {false, "ada", Route::Int8, 0.306, 3},    // RTX 4060 Ti, 4070 Ti, 4090: 9B, 27B, Gemma 12B, 31B
     {false, "ada", Route::Bf16, 0.317, 1},    // RTX 4070 Ti, 9B exact
@@ -292,7 +294,7 @@ struct GenerationEta {
 // (gemma4_attention_kernel on the m8n8k4 FP16 MMA, 256- and 512-wide heads) 0.097 at 2863 tokens,
 // Qwen3.5-9B's (sm70_d256 split kernels) 0.139. One share cannot hold both; the row takes Gemma's,
 // where the attention is the larger part of a prefill (8 % against 2 %: Qwen's 2048-token prefill
-// priced 0.7 % slow by it).
+// priced 0.6 % slow by it).
 inline constexpr GenerationEta kPrefillAttentionEta[] = {
     {"ada", 0.742, 3}, {"gb20x", 0.740, 2}, {"turing", 0.160, 1}, {"ga10x", 0.497, 1},
     {"volta", 0.100, 1}};

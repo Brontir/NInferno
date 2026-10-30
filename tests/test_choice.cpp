@@ -331,7 +331,7 @@ void prefills_by_format(const json& fixture) {
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
               at("RTX 3060", q8, mf, 1).transferred,
           "Turing / Ampere prefill rows of one card are transferred");
-    // A generation without a tiles row keeps its int8 row, transferred (Volta: Turing's).
+    // A generation without a tiles row keeps its int8 row, transferred (Volta: its own).
     ch::CardFacts volta = card_of(fixture.at("cards").at("RTX 2080 Ti"));
     volta.major = 7;
     volta.minor = 0;
@@ -384,7 +384,7 @@ ch::OwnContextFn oracle(const Bench& b, double budget, std::size_t quant = 0) {
 const ch::Scored& chosen(const ch::Choice& c) { return c.scored[*c.chosen]; }
 
 // Attention over the prompt: a full layer's grows with the prompt, a sliding one's stops at its window;
-// a generation without prefill rows takes those of one with its BF16 tensor path.
+// Volta's prefill takes its own rows.
 void prices_attention(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Candidate c;

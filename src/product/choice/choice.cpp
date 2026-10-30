@@ -165,7 +165,9 @@ std::string_view prefill_stand_in(std::string_view generation) noexcept {
 // The prefill efficiency of (kind, generation, route): its own row, else its kind's on the
 // transfer generation; a route its kind has no row for takes its kind's int8 row times the dense
 // rows' ratio of the two routes (the route's cost is the kernels', not the model kind's); else the
-// dense row; another generation's: prefill_stand_in's. `transferred` when not its own.
+// dense row, an MoE's times its kind's ratio to the dense row on the transfer generation (the
+// grouped GEMMs' cost against the dense ones' is the kernels', as above); another generation's:
+// prefill_stand_in's. `transferred` when not its own.
 double prefill_eta(bool moe, std::string_view generation, Route route, bool& transferred) noexcept {
     const Route base            = route == Route::Fp4 ? Route::Int8 : route;
     const std::string_view away = prefill_stand_in(generation);
@@ -188,10 +190,15 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
             }
         }
     }
+    const PrefillEta* transfer_moe   = prefill_row(true, kTransferGeneration, Route::Int8);
+    const PrefillEta* transfer_dense = prefill_row(false, kTransferGeneration, Route::Int8);
+    const double kind = moe && transfer_moe != nullptr && transfer_dense != nullptr
+                            ? transfer_moe->eta / transfer_dense->eta
+                            : 1.0;
     for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(false, gen, base)) {
             transferred = true;
-            return row->eta;
+            return row->eta * kind;
         }
     }
     transferred = true;

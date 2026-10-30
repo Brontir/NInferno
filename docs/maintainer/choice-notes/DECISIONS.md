@@ -1608,9 +1608,10 @@ prefill against Qwen's 2 %). Predicted at 2048 tokens: Qwen 2977 tok/s against 3
 (x1.01), Gemma 1825 against 1807 (x0.99). One card: transferred.
 
 The same census shows item 3 three times larger on a PCIe 3 host: each Gemma request waits twice
-on about 670 MB of ring copies to the host (52 and 80 ms on the GV100, 6 % of a 2048-token prefill
-each), against 19 ms on the RTX 4090 and 7 ms on the RTX 5090 (340 MB at 17 and 48 GB/s: the
-intercepts' excess over the tail calls on those boards).
+on about 670 MB of copies to the host (52 and 80 ms on the GV100, 6 % of a 2048-token prefill
+each; twice the 340 MB the RTX 4070 Ti's profile copied, the KV storage the GV100's plan took not
+yet broken down), against 19 ms on the RTX 4090 and 7 ms on the RTX 5090 (340 MB at 17 and 48
+GB/s: the intercepts' excess over the tail calls on those boards).
 
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
