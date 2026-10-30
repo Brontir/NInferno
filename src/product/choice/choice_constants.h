@@ -377,12 +377,15 @@ inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75
 inline constexpr double kMmqTileFixed = 0.43;
 inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
 inline constexpr double kMmqTile        = 128;
-// Beside the tiles, a call's epilogue turns the FP32 output into 16 bits (4 bytes read, 2 written;
-// a gated pair's SwiGLU writes one row of the two), at the DRAM rate (with the input's quantization
-// the census's bytes: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2 holds part of them). The
-// input's quantization to q8_1 is the small kernels' (kSmallKernelCost's passes count the int8
-// route's). A stream-k call's fixup reads and writes a tile's FP32 partial a SM.
-inline constexpr double kMmqOutputBytes = 4;      // read, an output element of the tiles
+// Beside the tiles, every grid quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes
+// written: a gated pair's two grids each, the census's quantize calls one a grid) and the epilogue
+// turns the FP32 output into 16 bits (4 bytes read, 2 written; a gated pair's SwiGLU writes one row
+// of the two), at the DRAM rate (the census: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2 holds
+// part of them). The small kernels' passes (kSmallKernelCost, read on the int8 route) also count
+// that route's one quantization an input, which MMQ does not run: not taken out. A stream-k call's
+// fixup reads and writes a tile's FP32 partial a SM.
+inline constexpr double kMmqInputBytes   = 3.125; // an input element, a grid
+inline constexpr double kMmqOutputBytes  = 4;     // read, an output element of the tiles
 inline constexpr double kMmqWrittenBytes = 2;     // written, an element of the call's output
 
 // A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside

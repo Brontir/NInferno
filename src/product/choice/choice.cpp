@@ -563,7 +563,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                 clocks += grids * l.per_token * (cost->c0 + tiles * k_step / sms);
                 bytes += grids * l.per_token * sms * kMmqTile * columns * 4 * 2;
             }
-            bytes += l.per_token * t * (l.n * kMmqOutputBytes + n * kMmqWrittenBytes);
+            bytes += l.per_token * t * (grids * l.k * kMmqInputBytes + l.n * kMmqOutputBytes + n * kMmqWrittenBytes);
         }
     }
     return clocks / card.clock_hz + bytes / card.dram_bytes_per_s;
