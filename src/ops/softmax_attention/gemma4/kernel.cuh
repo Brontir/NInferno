@@ -453,7 +453,8 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
     // A partial first block (a call that starts off the row grid) reaches back past the oldest key
     // the call may see. Those rows are masked for every live row and may be dead in the ring, so
     // they are zero-filled like the rows past range_hi. They are fewer than Br / G, which is at most
-    // Bc except for a wide block (group 1 at D <= 128), whose second tile may hold some too.
+    // Bc except for a wide block (group 1 at D <= 128, or at D = 256 on Turing's 16-key tile),
+    // whose second tile may hold some too.
     const int first_dead =
         Partial || window == 0 ? 0 : max(0, max(0, p0 - window + 1) - range_lo);
 

@@ -117,8 +117,8 @@ inline constexpr int kFittingBc = std::max(Gemma4Tile<Geo, WR, Bc, false>::SmemB
 // one). NINFERNO-SPECIAL(arch:sm75): Turing's 64 KiB a SM holds one 40 KiB D=256 tile: four warps
 // stalled on their own ldmatrix and MMA latencies (RTX 2080 Ti, Gemma 4 12B 2K prefill, ncu:
 // issue slots 18 % busy, occupancy 12.5 %, 1.36 ms a sliding layer). Its 16-key tile (20 KiB)
-// gives two CTAs an SM. Every other build holds the measured tiles at 32 keys (Ampere, Ada and
-// Blackwell 100 KiB a SM, Volta 96).
+// fits three CTAs by shared memory, and the registers hold two (ncu's block limit). Every other
+// build holds the measured tiles at 32 keys (Ampere, Ada and Blackwell 100 KiB a SM, Volta 96).
 template <class Geo, int WR, int Bc, bool WithFp8 = true>
 constexpr int prefill_bc() {
     constexpr int fitting = kFittingBc<Geo, WR, Bc, WithFp8>;
