@@ -923,6 +923,56 @@ void prices_prefill_small_kernels() {
     check(ch::prefill_small_seconds(m, v100, 1819) == 0, "no small-kernel census on Volta: unknown");
 }
 
+// An MoE's whole prefill through the tiles (DECISIONS 66): the model's facts (speed_measured.json)
+// with its linears and recurrent state, against the prefill rows of master f8d4399d (fit_prefill.py's
+// method: 2K / 7K / 22K-token prompts, the median of three; the server's chunk). Printed, and the
+// estimate within a quarter of each (the router, the plan and the selection not yet priced).
+void prefills_moe_by_tiles(const json& fixture) {
+    struct Point {
+        const char* model;
+        const char* card;
+        std::uint32_t chunk, prompt;
+        double measured;
+    };
+    const Point points[] = {
+        {"Qwen3.6-35B-A3B", "RTX 4090", 2048, 1785, 17375.5}, {"Qwen3.6-35B-A3B", "RTX 4090", 2048, 7406, 17842.8},
+        {"Qwen3.6-35B-A3B", "RTX 4090", 2048, 21928, 16292.6}, {"Qwen3.6-35B-A3B", "RTX 5090", 1024, 1785, 20170.4},
+        {"Qwen3.6-35B-A3B", "RTX 5090", 1024, 7406, 20817.6}, {"Qwen3.6-35B-A3B", "RTX 5090", 1024, 21928, 19535.4},
+        {"gemma-4-26B-A4B", "RTX 4090", 2048, 1752, 15719.1}, {"gemma-4-26B-A4B", "RTX 4090", 2048, 7347, 16157.3},
+        {"gemma-4-26B-A4B", "RTX 4090", 2048, 21721, 14127.9},
+    };
+    double worst = 0;
+    for (const Point& p : points) {
+        const json& m    = fixture.at("models").at(p.model);
+        ch::ModelFacts mf = model_at(m, "UD-Q4_K_M");
+        const bool qwen  = std::string(p.model).rfind("Qwen", 0) == 0;
+        if (qwen) {
+            mf.layers = 40, mf.hidden = 2048, mf.recurrent_state_elements = 30.0 * 32 * 128 * 128;
+            mf.prompt_tail_calls = 2;
+            mf.linears = {{9216, 2048, 10, false}, {2048, 4096, 10, false}, {12288, 2048, 30, false},
+                          {2048, 4096, 30, false}, {1024, 2048, 40, false}, {2048, 512, 40, false},
+                          {1024, 2048, 320, true}, {2048, 512, 320, true}};
+        } else {
+            mf.layers = 30, mf.hidden = 2816;
+            mf.linears = {{8192, 2816, 25, false}, {2816, 4096, 25, false}, {9216, 2816, 5, false},
+                          {2816, 8192, 5, false},  {4224, 2816, 30, false}, {2816, 2112, 30, false},
+                          {1408, 2816, 240, true}, {2816, 704, 240, true}};
+        }
+        ch::QuantOption q  = quant_of("UD-Q4_K_M", m.at("quants").at("UD-Q4_K_M"));
+        q.expert_banks     = ch::ExpertBanks::Int8;
+        q.rest_weights     = ch::WeightClass::Q8; // UD-Q4_K_M's linears beside the experts
+        const ch::CardFacts cf = card_of(fixture.at("cards").at(p.card));
+        ch::Candidate c;
+        c.kv    = KvCacheStorage::Int8Group64;
+        c.chunk = p.chunk;
+        const double est = ch::speed_of(mf, cf, q, c, 1, p.prompt, p.prompt).prefill;
+        worst            = std::max(worst, std::abs(est / p.measured - 1));
+        std::cout << "MoE prefill by tiles, " << p.model << " UD-Q4_K_M " << p.card << " " << p.prompt << ": " << est
+                  << " against " << p.measured << " (" << (est / p.measured - 1) * 100 << " %)\n";
+    }
+    check(worst < 0.25, "an MoE's prefill through the tiles within a quarter of the rows");
+}
+
 void contradictory_pins(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Pins pins;
@@ -1062,6 +1112,7 @@ int main() {
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         counts_the_kernels(json::parse(census));
     }
+    prefills_moe_by_tiles(fixture);
     prices_attention(fixture);
     chooses(fixture);
     decides_by_generation(fixture);
