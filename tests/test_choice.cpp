@@ -123,6 +123,7 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv          = kv_of(row.at("kv").get<std::string>());
+        c.ring        = kv_of(row.value("ring", std::string("bf16")));
         c.state       = row.at("state").get<std::string>() == "f32" ? RecurrentStateStorage::FP32
                                                                     : RecurrentStateStorage::FP16;
         c.activations = row.at("activations").get<std::string>() == "exact" ? ActivationMode::Exact
@@ -159,8 +160,8 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
-    // 29 points (2026-10-30): rms 4.2 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
-    check(moes == 29 && moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode from facts within the model's error");
+    // 33 points (2026-10-30): rms 4.4 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
+    check(moes == 33 && moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode from facts within the model's error");
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
 }
 
@@ -228,7 +229,7 @@ void counts_the_kernels(const json& census) {
         const std::string family = model.rfind("gemma", 0) == 0 ? "gemma4_text" : "qwen3_5_text";
         const ch::WeightClass w  = ch::weight_class_of({}, row.at("quant").get<std::string>());
         const auto* l = std::find_if(std::begin(ch::kDecodeLaunches), std::end(ch::kDecodeLaunches),
-                                     [&](const ch::DecodeLaunches& r) { return r.family == family && r.weights == w; });
+                                     [&](const ch::DecodeLaunches& r) { return !r.moe && r.family == family && r.weights == w; });
         if (l == std::end(ch::kDecodeLaunches)) {
             check(false, "a census row has its family's launches");
             continue;
