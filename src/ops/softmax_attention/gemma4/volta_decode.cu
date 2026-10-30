@@ -26,13 +26,22 @@ constexpr int kVoltaThreads = 128;
 constexpr int kVoltaTile    = 32; // keys a CTA folds per step
 // Q of the call's rows a CTA holds (FP32, shared): Gemma 4's full-attention layers (D = 512, G = 16:
 // 8192 floats) fold here too; at 4096 they took the split-K kernel's emulated MMA (GV100, Gemma 4
-// 12B: 58 us a call). At most 64 rows: the scores tile and the softmax state stay within the 48 KB
-// of static shared memory (the largest, D = 128 at 64 rows: 41 KB). Volta only (96 KB of shared
-// memory an SM): Turing's 64 KB keeps one such CTA an SM, and its split-K kernel converts BF16 for
-// a native MMA instead of emulating it, so it keeps the 4096-float bound (kTuringQFloats).
+// 12B: 58 us a call). The rows stay at most the 4096-float bound's or 32: this route's FP32 sums
+// land about twice as far from an FP64 oracle as the MMA tiles' (FP8 planes, D = 128: rel_l2
+// 3.2e-3 against 1.7e-3), and at 64 rows (T = 16, G = 4) its worst element left the codec test's
+// bound (1.25). Volta only (96 KB of shared memory an SM): Turing's 64 KB keeps one 34 KB CTA an
+// SM, and its split-K kernel converts BF16 for a native MMA instead of emulating it, so it keeps
+// the 4096-float bound.
 constexpr int kVoltaQFloats  = 8192;
 constexpr int kTuringQFloats = 4096;
-constexpr int kVoltaMaxRows  = 64;
+constexpr int kVoltaWideRows = 32;
+
+// The most rows (T * G) of one KV head the route takes at head width D with `q_floats` of Q.
+constexpr int volta_max_rows(int D, int q_floats) {
+    const int narrow = kTuringQFloats / D;
+    const int wide   = q_floats / D < kVoltaWideRows ? q_floats / D : kVoltaWideRows;
+    return narrow > wide ? narrow : wide;
+}
 
 __device__ __forceinline__ float fp8_value(unsigned code) { return e4m3_to_float(code); }
 
@@ -319,18 +328,18 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
 
 template <int D>
 constexpr int max_rows() {
-    return kVoltaQFloats / D < kVoltaMaxRows ? kVoltaQFloats / D : kVoltaMaxRows;
+    return volta_max_rows(D, kVoltaQFloats);
 }
 
 } // namespace
 
 bool gemma4_volta_decode_takes(std::int32_t head_dim, std::int32_t rows) {
     if (head_dim != 64 && head_dim != 128 && head_dim != 256 && head_dim != 512) return false;
-    if (rows < 1 || rows > kVoltaMaxRows) return false;
+    if (rows < 1) return false;
     try {
         const auto& d = device_class();
         const int q_floats = d.major == 7 && d.minor < 5 ? kVoltaQFloats : kTuringQFloats;
-        if (rows * head_dim > q_floats) return false;
+        if (rows > volta_max_rows(head_dim, q_floats)) return false;
         // Turing's split-K kernel runs its BF16 MMA through f16 conversions: on the RTX 2080 Ti
         // this kernel decodes faster (SmolLM3 117.7 -> 167.5 tok/s, 6K context 70.5 -> 98.6;
         // granite-3.3-8b 65.5 -> 79.5, 8.7K context 20.0 -> 30.2).

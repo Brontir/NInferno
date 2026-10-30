@@ -12,7 +12,8 @@ namespace ninferno::ops::detail {
 
 // The Volta / Turing SIMT decode partials (volta_decode.cu): whether a decode call of `rows` query
 // rows per KV head (T * G) at this head width takes them on this device (no native BF16 MMA,
-// D = 64..512, at most 64 rows, rows * D <= 8192 on Volta and 4096 on Turing); the plan, the partials and the combine are the split-K route's.
+// D = 64..512, rows * D <= 4096, or on Volta 8192 at up to 32 rows: volta_decode.cu); the plan,
+// the partials and the combine are the split-K route's.
 [[nodiscard]] bool gemma4_volta_decode_takes(std::int32_t head_dim, std::int32_t rows);
 
 // The CTAs of the instance a call of `rows` query rows per KV head takes that the device keeps
