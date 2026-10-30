@@ -189,6 +189,8 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
             const int vis_h = args.block != 0 ? p_call : p;
             float m         = m_s[r];
             float m_tile    = NegInf;
+            // Not unrolled: one thread per row walks the tile, and the code is the call's cost.
+#pragma unroll 1
             for (int kk = 0; kk < kVoltaTile; ++kk) {
                 const int key = k0 + kk;
                 if (key < end && key >= vis_l && key <= vis_h) m_tile = fmaxf(m_tile, s_s[r][kk]);
@@ -199,6 +201,7 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
             if (m_new != NegInf) {
                 alpha = m == NegInf ? 0.0F : exp2f((m - m_new) * sl);
                 l *= alpha;
+#pragma unroll 1
                 for (int kk = 0; kk < kVoltaTile; ++kk) {
                     const int key  = k0 + kk;
                     const float pv = key < end && key >= vis_l && key <= vis_h
@@ -208,6 +211,7 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
                     l += pv;
                 }
             } else {
+#pragma unroll 1
                 for (int kk = 0; kk < kVoltaTile; ++kk) s_s[r][kk] = 0.0F;
             }
             m_s[r]     = m_new;
