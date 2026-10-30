@@ -177,7 +177,7 @@ inline int w4a8_ld(int k) { return (k + 127) / 128 * 128; }
 // W4A8 (generic_w4a8.cu): quantize the activation into `codes` [T,ld] int8, `scales` [T,ld/32]
 // (FP32 amax/127) and `sums` [T,ld/32] (the scale times the codes' sum; ld = w4a8_ld(K), the tail
 // blocks zero), then run the schedule. The
-// codec must be one w4a8_supports() admits. token_major: the grid order of the 128-token tiles
+// codec must be one w4a8_supports() admits. token_major: the grid order of the tiles
 // (W4a8Activation::token_major).
 void launch_w4a8(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                  std::int8_t* codes, float* scales, float* sums, bool token_major,

@@ -1743,9 +1743,9 @@ __device__ __forceinline__ int w4a8_token_tile(const W4a8Activation& act) {
     return static_cast<int>(act.token_major ? blockIdx.x : blockIdx.y);
 }
 
-// The grid of a W4A8 launch: row blocks along x and token tiles along y, or with token_major (tiles
-// of 128 tokens only, row blocks within the y limit) the other way round, so a wave's CTAs share
-// their weight rows through L2. The CTA order changes no operation of a CTA: the same bytes.
+// The grid of a W4A8 launch: row blocks along x and token tiles along y, or with token_major (row
+// blocks within the y limit) the other way round, so a wave's CTAs share their weight rows through
+// L2. The CTA order changes no operation of a CTA: the same bytes.
 template <class S, Epilogue E>
 dim3 w4a8_grid(const GemmArgs& args, W4a8Activation& act) {
     constexpr int kRowsPerBlock = E == Epilogue::SwiGlu ? S::kBlockN / 2 : S::kBlockN;

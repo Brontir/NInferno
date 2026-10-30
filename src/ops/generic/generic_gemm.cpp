@@ -800,6 +800,12 @@ void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16
 // Every GPU, then: the RTX 5090 (gb202: Gemma 4 31B UD-Q4_K_XL prefill of a 16K prompt 2508 /
 // 2484 -> 2595 / 2587 t/s, D TM TM D) gains as the 4090 did. The row-major order stays in the
 // kernel for the micro-bench's comparison.
+// The 64-token tiles take it too (the classic Q8 tile of q8_prefill_a8 among them): a matrix larger
+// than L2 streams from DRAM once per 64 tokens in row-major order, the call DRAM-bound where the
+// tile's compute is faster than those bytes. Qwen3.5 9B Q8_0, one 1819-token prompt (nsys, two runs
+// each, the same master): RTX 4060 Ti 0.908 -> 0.551 s, 4070 Ti 0.460 -> 0.315, 5070 Ti 0.299 ->
+// 0.257, RTX 3060 0.927 -> 0.901 (its tile compute-bound at that rate); greedy answers
+// byte-identical (4060 Ti, 4070 Ti, 3060).
 constexpr bool kW4a8TokenMajor = true;
 
 int sm_count() {
