@@ -510,7 +510,7 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 // measured board takes it; 0 elsewhere (the classic tiles: not read).
 double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                            double tokens, bool* transferred) noexcept {
-    const measured::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
+    const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
                                 card.dram_bytes_per_s / 1e9};
     if (quant.bits_per_weight <= 0 || !measured::mmq_prefill_pays(board)) { return 0; }
     const std::string_view gen = generation_of(card);
