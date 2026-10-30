@@ -818,7 +818,7 @@
    "context": 256,
    "decode": 273.3,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -830,9 +830,9 @@
    "state": "f16",
    "concurrency": 2,
    "context": 256,
-   "decode": 224.6,
+   "decode": 219.7,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -844,9 +844,9 @@
    "state": "f16",
    "concurrency": 4,
    "context": 256,
-   "decode": 170.8,
+   "decode": 154.6,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -860,7 +860,7 @@
    "context": 256,
    "decode": 247.5,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -872,9 +872,9 @@
    "state": "f16",
    "concurrency": 2,
    "context": 256,
-   "decode": 215.6,
+   "decode": 209.5,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -886,9 +886,9 @@
    "state": "f16",
    "concurrency": 4,
    "context": 256,
-   "decode": 167.3,
+   "decode": 152.7,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -902,7 +902,7 @@
    "context": 256,
    "decode": 255.4,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -914,9 +914,9 @@
    "state": "f16",
    "concurrency": 2,
    "context": 256,
-   "decode": 214.1,
+   "decode": 206.0,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -928,9 +928,9 @@
    "state": "f16",
    "concurrency": 4,
    "context": 256,
-   "decode": 175.3,
+   "decode": 158.1,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -942,9 +942,9 @@
    "state": "f16",
    "concurrency": 8,
    "context": 256,
-   "decode": 128.9,
+   "decode": 108.1,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -956,9 +956,9 @@
    "state": "f16",
    "concurrency": 1,
    "context": 256,
-   "decode": 267.0,
+   "decode": 267.4,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -970,9 +970,9 @@
    "state": "f16",
    "concurrency": 2,
    "context": 256,
-   "decode": 229.9,
+   "decode": 225.2,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -984,9 +984,9 @@
    "state": "f16",
    "concurrency": 4,
    "context": 256,
-   "decode": 194.5,
+   "decode": 180.4,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   },
   {
@@ -998,9 +998,9 @@
    "state": "f16",
    "concurrency": 8,
    "context": 256,
-   "decode": 143.4,
+   "decode": 122.4,
    "prefill": null,
-   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests (320 less 64 tokens over 256)",
+   "source": "mstep.sh 2026-10-30 master kit build: the step of C concurrent requests of eight different tasks (320 less 64 tokens over 256)",
    "step": true
   }
  ]
