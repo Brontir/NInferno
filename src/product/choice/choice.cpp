@@ -485,7 +485,76 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     return rate;
 }
 
+// The slots a job of an MoE's experts holds at `per_expert` tokens an expert (kJobSlots), 0 when the
+// family has no row.
+double job_slots(std::string_view family, double per_expert) noexcept {
+    const JobSlots* first = nullptr;
+    const JobSlots* last  = nullptr;
+    for (const JobSlots& row : kJobSlots) {
+        if (row.family != family) { continue; }
+        if (first == nullptr) { first = &row; }
+        if (last != nullptr && per_expert <= row.tokens_per_expert) {
+            const double at = std::log2(per_expert / last->tokens_per_expert) /
+                              std::log2(row.tokens_per_expert / last->tokens_per_expert);
+            return std::max(last->slots + at * (row.slots - last->slots), last->slots);
+        }
+        last = &row;
+    }
+    if (first == nullptr) { return 0; }
+    return per_expert <= first->tokens_per_expert ? first->slots : last->slots;
+}
+
 } // namespace
+
+double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                                   double tokens) noexcept {
+    if (!model.moe() || model.linears.empty() || tokens <= 0 || card.sms <= 0 || model.experts_per_token <= 0) {
+        return 0;
+    }
+    const std::string_view gen = generation_of(card);
+    const auto cost = [gen](TileKernel kernel) -> const TileCost* {
+        for (const TileCost& row : kTileCost) {
+            if (row.generation == gen && row.kernel == kernel) { return &row; }
+        }
+        return nullptr;
+    };
+    // The banks' GEMM (product/plan expert_prefill_of): MXFP4 takes the block-scaled MMA on
+    // Blackwell, Ada converts it to int8. The linears beside them take the int8 tiles when their
+    // weights are K-quants or Q8_0.
+    TileKernel banks = TileKernel::Int8;
+    switch (quant.expert_banks) {
+    case ExpertBanks::Int8: banks = TileKernel::Int8; break;
+    case ExpertBanks::A16: banks = TileKernel::A16; break;
+    case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
+    case ExpertBanks::Unknown: return 0;
+    }
+    if (quant.rest_weights != WeightClass::KQuant && quant.rest_weights != WeightClass::Q8) { return 0; }
+    const TileCost* rest = cost(TileKernel::Int8);
+    const TileCost* bank = cost(banks);
+    const double picks   = model.experts_per_token;
+    const double slots   = std::min(job_slots(model.family, tokens * picks / model.experts), 64.0);
+    if (rest == nullptr || bank == nullptr || slots <= 0) { return 0; }
+
+    const double sms = card.sms;
+    double seconds = 0, hidden = 0, moe_layers = 0;
+    for (const LinearShape& l : model.linears) {
+        const TileCost& c  = l.expert ? *bank : *rest;
+        const double tile  = c.c0 + l.k * c.c1;
+        const double cols  = std::ceil(l.n / 64);
+        if (l.expert) {
+            // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
+            const double layers = l.per_token / picks;
+            if (hidden == 0) { hidden = l.k, moe_layers = layers; }
+            seconds += layers * std::ceil(tokens * picks / slots * cols / sms) * tile;
+        } else {
+            seconds += l.per_token * std::ceil(std::ceil(tokens / 64) * cols / sms) * tile;
+        }
+    }
+    // The routing gathers every pick's token row into its expert's run and scatters the result
+    // back: 16-bit rows of the hidden width, read and written, a layer.
+    seconds += moe_layers * tokens * picks * hidden * 2 * 2 / (dram_eta(gen) * card.dram_bytes_per_s);
+    return seconds;
+}
 
 namespace {
 

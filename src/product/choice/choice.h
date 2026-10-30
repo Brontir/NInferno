@@ -71,6 +71,13 @@ struct DrafterOption {
     bool measured = true;
 };
 
+// A trunk linear by shape (runtime::PlanLinear): N outputs x K inputs, run per_token times a token
+// (a routed expert's bank: picks x layers, its grid counting jobs, not tokens).
+struct LinearShape {
+    double n = 0, k = 0, per_token = 0;
+    bool expert = false;
+};
+
 struct ModelFacts {
     std::string family;               // model_type (qwen3_5_text, gemma4_text, ...)
     double params = 0;                // every weight
@@ -97,6 +104,7 @@ struct ModelFacts {
     double full_attention_width = 0, sliding_attention_width = 0;
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
+    std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)
     // The drafters it carries, beside plain decode (Candidate::drafter 0); and the one the server
     // takes where the worth does not decide (its resolved profile's: an index into the candidates'
     // drafters, 0 for plain).
@@ -235,6 +243,12 @@ struct Reference {
     bool chunk_decides = false;
     std::string why; // "" when the factors decide, else why the family's defaults stand
 };
+// An MoE's prefill linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's
+// waves of tiles, the experts' by jobs, and the routing's gather and scatter of the tokens' rows;
+// seconds, 0 where the card's generation, the banks' GEMM or the model's jobs have no row.
+[[nodiscard]] double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
+                                                 const QuantOption& quant, double tokens) noexcept;
+
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
 // generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);

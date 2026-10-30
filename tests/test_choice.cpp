@@ -785,6 +785,39 @@ void moe_family(const json& fixture) {
 }
 
 // Contradictory pins say so instead of "nothing fits".
+// An MoE's prefill linears by their tiles (DECISIONS 66): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090,
+// one 1819-token chunk; the census (nsys, no PDL) put the experts at 50.5 ms, the int8 calls beside
+// them at 30.0 and the routing's gather and scatter at 5.9: 86.4 ms.
+void prices_moe_prefill_tiles() {
+    ch::ModelFacts m;
+    m.family               = "qwen3_5_moe_text";
+    m.experts              = 256;
+    m.experts_per_token    = 8;
+    m.routed_expert_params = 34e9;
+    for (int i = 0; i < 10; ++i) {
+        m.linears.push_back({9216, 2048, 1, false});
+        m.linears.push_back({2048, 4096, 1, false});
+    }
+    m.linears.push_back({12288, 2048, 30, false});
+    m.linears.push_back({2048, 4096, 30, false});
+    m.linears.push_back({1024, 2048, 40, false});
+    m.linears.push_back({2048, 512, 40, false});
+    m.linears.push_back({1024, 2048, 320, true});
+    m.linears.push_back({2048, 512, 320, true});
+    ch::CardFacts rtx4090{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9};
+    ch::QuantOption q;
+    q.expert_banks = ch::ExpertBanks::Int8;
+    q.rest_weights = ch::WeightClass::KQuant;
+    const double t = ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819);
+    std::cout << "MoE prefill tiles, Qwen3.6 UD-Q4_K_M RTX 4090 1819 tokens: " << t * 1e3 << " ms against 86.4
+";
+    check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
+    ch::CardFacts rtx3060{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.78e9, .dram_bytes_per_s = 360e9};
+    check(ch::moe_prefill_linears_seconds(m, rtx3060, q, 1819) == 0, "no tile row on Ampere: unknown");
+    q.expert_banks = ch::ExpertBanks::Unknown;
+    check(ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
+}
+
 void contradictory_pins(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Pins pins;
@@ -935,6 +968,7 @@ int main() {
     contradictory_pins(fixture);
     activations_by_generation(fixture);
     moe_family(fixture);
+    prices_moe_prefill_tiles();
     weighs_the_drafters(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
