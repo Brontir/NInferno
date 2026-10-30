@@ -787,8 +787,9 @@ void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16
                  static_cast<long long>(ldx), workspace, route_name(ran).c_str());
 }
 
-// The token-major grid of the 128-token W4A8 tiles (W4a8Activation::token_major) on the RTX 4090
-// (sm_89), where the row-major grid streams a large matrix from DRAM once per token tile: Muse 30B
+// The token-major grid of the W4A8 tiles (W4a8Activation::token_major), first the 128-token
+// ones on the RTX 4090 (sm_89), where the row-major grid streams a large matrix from DRAM once per
+// token tile: Muse 30B
 // Q4_K_M shapes (a W4A8 micro-bench, T = 1024 / 512 / 200, time against the row-major grid):
 // classic 128x64 Q4_K SwiGLU 19968x6656 0.94 / 0.96 / 0.99, Store 6656x19968 0.97 / 0.97 / 0.98,
 // the producer-warp tile Q6_K Store and AddResidual 6656x19968 0.92-0.96; no shape slower (Q5_K
@@ -800,6 +801,12 @@ void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16
 // Every GPU, then: the RTX 5090 (gb202: Gemma 4 31B UD-Q4_K_XL prefill of a 16K prompt 2508 /
 // 2484 -> 2595 / 2587 t/s, D TM TM D) gains as the 4090 did. The row-major order stays in the
 // kernel for the micro-bench's comparison.
+// The 64-token tiles take it too (the classic Q8 tile of q8_prefill_a8 among them): a matrix larger
+// than L2 streams from DRAM once per 64 tokens in row-major order, the call DRAM-bound where the
+// tile's compute is faster than those bytes. Qwen3.5 9B Q8_0, one 1819-token prompt (nsys, two
+// runs each, the same master): RTX 4060 Ti 0.908 -> 0.551 s, 4070 Ti 0.460 -> 0.315, 4090 0.222 ->
+// 0.164, 5070 Ti 0.299 -> 0.257, RTX 3060 0.927 -> 0.901 (its tile compute-bound at that rate);
+// greedy answers byte-identical (4060 Ti, 4070 Ti, 3060).
 constexpr bool kW4a8TokenMajor = true;
 
 int sm_count() {

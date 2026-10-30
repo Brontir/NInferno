@@ -164,7 +164,7 @@ struct W4a8Activation {
     const std::int8_t* codes = nullptr; // [T, K]
     const float* scales      = nullptr; // [T, K/32]
     const float* sums        = nullptr; // [T, K/32], scale times the codes' sum (min-term formats)
-    // W4A8 tiles of 128 tokens: the grid runs token tiles along x, so the CTAs of a wave are the
+    // W4A8 tiles: the grid runs token tiles along x, so the CTAs of a wave are the
     // token tiles of a few weight row blocks and read those rows once from DRAM (else row blocks
     // along x: every token tile streams the whole matrix). Changes no bit (w4a8_grid).
     int token_major = 0;
