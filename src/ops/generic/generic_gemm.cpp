@@ -498,6 +498,7 @@ constexpr measured::Gate kMmqPrefillPays[] = {
     {measured::kA100Sxm40, false}, {measured::kRtx2080Ti, true}};
 
 bool mmq_prefill_device() {
+    return false; // lab: the W4A8 tiles everywhere (token-major since #249)
     return measured::measured_gate(kMmqPrefillPays, std::numeric_limits<double>::max());
 }
 
