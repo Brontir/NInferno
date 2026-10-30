@@ -384,6 +384,14 @@ struct AttentionTileCost {
 };
 inline constexpr AttentionTileCost kAttentionTileCost[] = {
     {"ada", 304, 194, 2}, {"ga10x", 374, 188, 1}, {"gb20x", 210, 154, 2}};
+// The BF16-KV prompt kernel (ops/softmax_attention bf16/tiled_mma.cuh: `--kv-dtype bf16`): a CTA of 64
+// query rows of one head (98 KiB, one a SM), issued in plain launch order (a head's row blocks
+// first to last, then the next head). Read on the census of a 7K-token prompt (1024-token chunks):
+// RTX 5090 144 / 120 (-1 .. +2 %), RTX 4060 Ti 168 / 144 (-2 .. +1 %), RTX 3060 168 / 142 (0 %);
+// checked on the RTX 5070 Ti: 0 .. +1 %.
+inline constexpr AttentionTileCost kBf16AttentionTileCost[] = {
+    {"ada", 168, 144, 1}, {"ga10x", 168, 142, 1}, {"gb20x", 144, 120, 2}};
+inline constexpr double kBf16AttentionQueryRows = 64;
 inline constexpr double kAttentionQueryRows = 128; // a CTA's query rows (8 warps x 16)
 inline constexpr double kAttentionTileHeadDim = 256;
 // A call of at most this many tokens takes the grouped kernels instead (int8/plan.cpp

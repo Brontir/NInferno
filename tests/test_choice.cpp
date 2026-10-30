@@ -1049,8 +1049,27 @@ void prices_attention_tiles() {
         }
     }
     check(worst < 0.12, "a prompt's attention by its CTAs within 12 % of the census's calls");
-    check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::BFloat16, 4096, 1024) == 0,
-          "BF16 keys: another kernel, unknown");
+    check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Fp8E4M3Row256, 4096, 1024) == 0,
+          "FP8 keys: another kernel, unknown");
+    // BF16 keys: the BF16 prompt kernel (64 rows a CTA in plain order), the RTX 5090 read, the
+    // RTX 5070 Ti checked, a 7K prompt's chunks.
+    const Series bf16_series[] = {
+        {series[0].card, {87.5, 189.7, 298.8, 401.8, 504.9, 603.0, 706.2}},
+        {series[3].card, {154.0, 364.5, 564.3, 763.7, 962.9, 1161.6, 1361.9}},
+        {series[1].card, {312.6, 781.5, 1241.5, 1744.9, 2175.1, 2608.4, 3099.0}},
+        {series[2].card, {525.4, 1317.8, 2108.4, 2907.3, 3735.2, 4535.9, 5351.4}},
+    };
+    double bf16_worst = 0;
+    for (const Series& s : bf16_series) {
+        double before = 0;
+        for (std::size_t i = 0; i < s.us.size(); ++i) {
+            const double through = ch::prefill_attention_tiled_seconds(m, s.card, KvCacheStorage::BFloat16,
+                                                                       1024.0 * (i + 1), 1024);
+            bf16_worst = std::max(bf16_worst, std::abs((through - before) * 1e6 / s.us[i] - 1));
+            before     = through;
+        }
+    }
+    check(bf16_worst < 0.04, "BF16 keys: the BF16 prompt kernel within 4 % of the census's chunks");
     // A call of 256 tokens or fewer takes the grouped kernels: a 256-token prompt keeps the share, and
     // a 100-token tail after 32K costs its flops at the share, not 16 CTAs over the whole prefix.
     check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 256, 1024) == 0,

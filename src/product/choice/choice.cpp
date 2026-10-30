@@ -7,6 +7,7 @@
 #include <cmath>
 #include <functional>
 #include <iomanip>
+#include <span>
 #include <sstream>
 #include <string_view>
 #include <vector>
@@ -671,17 +672,20 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
     if (prompt > 0 && card.sms > 0 && card.clock_hz > 0 && model.family == "gemma4_text") {
         return gemma_attention_tiled_seconds(model, card, prompt, chunk, transferred);
     }
-    if (prompt <= 0 || chunk == 0 || kv != KvCacheStorage::Int8Group64 || model.full_layers == 0 ||
+    const bool bf16 = kv == KvCacheStorage::BFloat16;
+    if (prompt <= 0 || chunk == 0 || (kv != KvCacheStorage::Int8Group64 && !bf16) || model.full_layers == 0 ||
         model.full_head_dim != kAttentionTileHeadDim || model.sliding_attention_width > 0 ||
         model.family.rfind("qwen3_5", 0) != 0 || card.sms <= 0 || card.clock_hz <= 0) {
         return 0;
     }
     const std::string_view gen = generation_of(card);
     const AttentionTileCost* cost = nullptr;
-    for (const AttentionTileCost& row : kAttentionTileCost) {
+    for (const AttentionTileCost& row : bf16 ? std::span(kBf16AttentionTileCost) : std::span(kAttentionTileCost)) {
         if (row.generation == gen) { cost = &row; }
     }
     if (cost == nullptr) { return 0; }
+    // INT8 keys: 128 rows a CTA issued longest first; BF16 keys: 64 rows in plain launch order.
+    const double rows  = bf16 ? kBf16AttentionQueryRows : kAttentionQueryRows;
     const double heads = std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim));
     if (heads < 1) { return 0; }
     // A call of at most kAttentionTiledMinWidth tokens takes the grouped kernels (int8/plan.cpp: the
@@ -691,7 +695,6 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
     bool share_transferred = false;
     const double share     = attention_eta(gen, share_transferred) * peak(card, Route::Bf16);
     double clocks = 0, seconds = 0;
-    std::vector<double> free(static_cast<std::size_t>(card.sms));
     for (double prefix = 0; prefix < prompt; prefix += chunk) {
         const double width  = std::min<double>(chunk, prompt - prefix);
         if (width <= kAttentionTiledMinWidth) {
@@ -700,20 +703,20 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
             if (transferred != nullptr && share_transferred) { *transferred = true; }
             continue;
         }
-        const double blocks = std::ceil(width / kAttentionQueryRows);
-        // The kernel's issue order, longest first (the last row block of every head, then the one
-        // before), each CTA to the SM that frees first.
-        std::fill(free.begin(), free.end(), 0.0);
-        std::make_heap(free.begin(), free.end(), std::greater<>());
-        for (double b = blocks - 1; b >= 0; --b) {
+        const double blocks = std::ceil(width / rows);
+        // The kernel's issue order, each CTA to the SM that frees first.
+        std::vector<double> ctas;
+        const auto cta = [&](double b) { return prefix * cost->prefix + std::min((b + 1) * rows, width) * cost->in_chunk; };
+        if (bf16) {
             for (double h = 0; h < heads; ++h) {
-                const double keys = std::min((b + 1) * kAttentionQueryRows, width);
-                std::pop_heap(free.begin(), free.end(), std::greater<>());
-                free.back() += prefix * cost->prefix + keys * cost->in_chunk;
-                std::push_heap(free.begin(), free.end(), std::greater<>());
+                for (double b = 0; b < blocks; ++b) { ctas.push_back(cta(b)); }
+            }
+        } else { // longest first: the last row block of every head, then the one before
+            for (double b = blocks - 1; b >= 0; --b) {
+                for (double h = 0; h < heads; ++h) { ctas.push_back(cta(b)); }
             }
         }
-        clocks += *std::max_element(free.begin(), free.end());
+        clocks += deal(ctas, card.sms);
     }
     return model.full_layers * clocks / card.clock_hz + seconds;
 }
