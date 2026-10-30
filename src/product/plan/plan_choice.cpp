@@ -138,6 +138,7 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     // artifact holds a Q8 input table beside its Q6 head); 0 where one object serves both.
     out.input_table_bytes = static_cast<double>(s.input_table_bytes);
     out.layers            = static_cast<std::uint32_t>(s.num_hidden_layers);
+    out.prompt_tail_calls = s.prompt_tail_calls;
     out.kv_bytes_per_token = [m](KvCacheStorage storage) {
         return runtime::plan_kv_bytes_per_token(m, storage);
     };
@@ -330,6 +331,7 @@ std::optional<ServedChoice> choose_at_weights(const PlanSourceFacts& facts,
     out.drafter_options = axis.options;
     const std::uint32_t asked = ask.context != 0 ? ask.context : runtime::quant_own_targets(ask).front();
     out.depth                 = std::max<std::uint32_t>(512, asked / 4);
+    out.prompt_tail_calls     = model.prompt_tail_calls;
     if (out.choice.chosen) {
         out.decode_at_depth = choice::speed_of(model, card, quant, out.choice.scored[*out.choice.chosen].candidate,
                                                out.task.concurrency, out.depth)
@@ -636,7 +638,8 @@ std::string choice_line(const ServedChoice& served) {
     }
     if (s.candidate.chunk != choice::kDefaultChunk) { out << ", chunk " << s.candidate.chunk; }
     out << std::fixed << std::setprecision(1) << " | " << s.speed.decode_per_stream
-        << " tok/s decode, " << std::setprecision(0) << s.speed.prefill << " prefill, KLD "
+        << " tok/s decode, " << std::setprecision(0) << s.speed.prefill << " prefill ("
+        << served.prompt_tail_calls << " tail calls), KLD "
         << std::setprecision(4) << s.accuracy.kld << " (estimates) | " << served.choice.why;
     return out.str();
 }

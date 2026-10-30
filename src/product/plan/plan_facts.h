@@ -37,6 +37,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -64,6 +65,10 @@ struct PlanTargetShape {
     // text/token_embedding the output head does not share): a decode step gathers one row of it, so
     // the speed estimate leaves it out of the weights a step reads. 0: unknown or tied.
     std::uint64_t input_table_bytes = 0;
+    // The whole-model calls a prefill runs after a prompt's own chunks (the generation prompt's
+    // execution boundaries, read from the artifact's frontend: set_prompt_tail_calls_source); each
+    // costs a decode step. 0 where no frontend read it (a GGUF or checkpoint not yet converted).
+    std::uint32_t prompt_tail_calls = 0;
     // The quantized weight formats, as artifact::format_name spells them where known
     // ("ggml_q4_k", "mxfp4", "nvfp4", "bf16"); empty when unknown.
     std::vector<std::string> weight_formats;
@@ -109,6 +114,12 @@ struct PlanSourceFacts {
 // From a .ninferno artifact: its text config and its tensors (Artifact). Throws
 // std::runtime_error when the file is no artifact.
 [[nodiscard]] PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact);
+
+// Where plan_facts_of_artifact reads an artifact's prompt tail calls (PlanTargetShape): the
+// model's frontend lives above this library, so a program that links it registers its reader
+// (runtime::prompt_tail_calls) once at start; unset, the count stays 0.
+using PromptTailCallsSource = std::function<std::optional<std::uint32_t>(const std::filesystem::path&)>;
+void set_prompt_tail_calls_source(PromptTailCallsSource source);
 
 // A DFlash drafter's state from its config.json (a Qwen artifact's dflash / dflash2 component, or a
 // separate drafter's: z-lab's DFlash and DFlash2 checkpoints, a converted gemma4_dflash / dflash

@@ -4,6 +4,7 @@
 
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
+#include "runtime/engine/prompt_tail.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
 #include "spec/gpu_identity.h"
@@ -230,6 +231,11 @@ void print_generation_summary(const ninferno::GenerationResult& result,
 } // namespace
 
 int main(int argc, char** argv) {
+    // The prefill's tail calls come from the artifact's frontend (DECISIONS 62); the parsed
+    // options below name the served chat template.
+    ninferno::product::set_prompt_tail_calls_source([](const std::filesystem::path& artifact) {
+        return ninferno::runtime::prompt_tail_calls_or_warn(artifact, {}, false);
+    });
     if (ninferno::version_requested(argc, argv)) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;
@@ -264,6 +270,11 @@ int main(int argc, char** argv) {
         std::cout << ninferno::cli::usage_text(argv[0]);
         return 0;
     }
+    ninferno::product::set_prompt_tail_calls_source(
+        // One CLI request captures nothing (its context cache is off, below).
+        [chat_template = cli.chat_template_path](const std::filesystem::path& artifact) {
+            return ninferno::runtime::prompt_tail_calls_or_warn(artifact, chat_template, false);
+        });
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno");
 

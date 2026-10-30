@@ -439,6 +439,23 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 
 } // namespace
 
+namespace {
+
+// The calls a prefill runs after the prompt's chunks (ModelFacts::prompt_tail_calls): each a few
+// tokens through every layer, a plain decode step's reads at the prompt's depth (DECISIONS 62:
+// two such calls on Qwen3.5 9B, 2 x the weights over the DRAM rate predicted 22.5 / 11.3 / 12.7 ms
+// on the RTX 4070 Ti / 4090 / 5070 Ti, the profiled tail 20.0 / 10.4 / 12.6).
+double tail_calls_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                          const Candidate& candidate, double prompt) {
+    if (model.prompt_tail_calls == 0) { return 0; }
+    Candidate plain = candidate;
+    plain.drafter   = 0;
+    const double rate = speed_of(model, card, quant, plain, 1, prompt, 0).decode_per_stream;
+    return rate > 0 ? model.prompt_tail_calls / rate : 0;
+}
+
+} // namespace
+
 Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                const Candidate& candidate, std::uint32_t concurrency, double context,
                std::uint32_t prompt) {
@@ -522,7 +539,8 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     out.prefill = linear_prefill(model, card, quant, route, filled, prefill_transferred);
     if (prompt > 0 && out.prefill > 0) {
         const double attention = attention_seconds(model, card, prompt, prefill_transferred);
-        out.prefill            = prompt / (prompt / out.prefill + attention);
+        out.prefill            = prompt / (prompt / out.prefill + attention +
+                                tail_calls_seconds(model, card, quant, candidate, prompt));
     }
     out.transferred = transferred || prefill_transferred;
     return out;
@@ -619,6 +637,7 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const std::uint32_t rest  = task.prompt - whole;
     bool transferred          = false;
     double prefill_seconds    = attention_seconds(model, card, task.prompt, transferred);
+    prefill_seconds += tail_calls_seconds(model, card, quant, candidate, task.prompt);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
     if (rest > 0) { prefill_seconds += rest / linear_prefill(model, card, quant, route, rest, transferred); }
     return prefill_seconds + task.answer / speed.decode_per_stream;
