@@ -1853,6 +1853,13 @@ the MoE rows and kMoeChunkShare) are one number a generation for every shape; a 
 linears (Qwen3.6's 2048 hidden) are 11 % (Ada) to 31 % (Blackwell) slower than its row says, and
 an MoE's expert route (int8, the 16-bit register MMA, MXFP4) changes the kernel, not a share.
 
+**Checked whole** (every linear of the model from its geometry, the waves per call rounded up,
+against the census's kernel time): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090, the experts 45.7
+against 50.5 ms, the dense int8 calls 28.2 against 30.0 ms; gpt-oss-20b's experts 67.9 against
+68.6 ms (RTX 4090) and 83.7 against 80.0 ms (RTX 5070 Ti, MX). Not yet priced: the activations'
+quantization, attention, the recurrence, the MoE's routing kernels (about a quarter of the
+prompt's kernel time) and the prompt's tail calls (DECISIONS 62).
+
 Next: the plan's linear shapes from the geometry it reads (attention, recurrent, FFN, experts,
 shared expert), the remaining kernels' constants (the 16-bit register MMA, ggml's MMQ — its tile
 cost per K step was read before, about 47-48 SM-clocks — Volta's dp4a route), the jobs as a
