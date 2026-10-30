@@ -10,6 +10,7 @@
    "routed_expert_params": 0,
    "input_table_params": 1017118720,
    "layers": 32,
+   "hidden": 4096,
    "recurrent": true,
    "kv_bytes_per_token": {
     "bf16": 32768,
@@ -48,6 +49,7 @@
    "routed_expert_params": 0,
    "input_table_params": 0,
    "layers": 48,
+   "hidden": 3840,
    "recurrent": false,
    "window": 1024,
    "kv_bytes_per_token": {

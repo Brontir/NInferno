@@ -66,6 +66,7 @@ ch::ModelFacts model_of(const json& m) {
     out.full_attention_width    = m.value("full_attention_width", 0.0);
     out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
     out.layers                  = m.value("layers", 0U);
+    out.hidden                  = m.value("hidden", 0.0);
     if (m.contains("ring_bytes_per_token")) {
         const json ring         = m.at("ring_bytes_per_token");
         out.ring_bytes_per_token = [ring](KvCacheStorage s) {
@@ -345,13 +346,21 @@ void prefills_by_format(const json& fixture) {
         return ch::speed_of(model, card_of(fixture.at("cards").at(card)), q, c, rows, 4096, 2048);
     };
     const ch::Speed ada_q8 = at("RTX 4090", q8, mf, 1), ada_kq = at("RTX 4090", kq, mf, 1);
-    // Without attention the prefill is the linears alone: their rates are the tiles row (the tile's
-    // clock count, 0.308) and MMQ's int8 row (0.306), exactly.
+    // Without attention the prefill is the linears alone: their rates are the tile's clock count at
+    // the model's hidden width (Ada c0 3352, c1 12.15 clocks against 2048 s8 operations a SM-clock:
+    // 0.308 at 4096) and MMQ's int8 row (0.306), exactly; a narrower model pays c0 over fewer K steps.
     ch::ModelFacts linears_only          = mf;
     linears_only.full_attention_width    = 0;
     linears_only.sliding_attention_width = 0;
-    const double ratio = at("RTX 4090", q8, linears_only, 1).prefill / at("RTX 4090", kq, linears_only, 1).prefill;
-    check(std::abs(ratio - 0.308 / 0.306) < 1e-9, "Ada: a Q8 prefill takes the tiles row (0.308 against 0.306)");
+    const auto tiles_over_mmq            = [&](double hidden) {
+        linears_only.hidden = hidden;
+        return at("RTX 4090", q8, linears_only, 1).prefill / at("RTX 4090", kq, linears_only, 1).prefill;
+    };
+    const auto law = [](double k) { return 2.0 * 64 * 64 / ((3352 / k + 12.15) * 2048) / 0.306; };
+    check(std::abs(tiles_over_mmq(4096) - law(4096)) < 1e-9 && std::abs(law(4096) * 0.306 - 0.308) < 5e-4,
+          "Ada: a Q8 prefill takes the tile law at K 4096 (0.308 against 0.306)");
+    check(std::abs(tiles_over_mmq(2560) - law(2560)) < 1e-9 && tiles_over_mmq(2560) < tiles_over_mmq(5120),
+          "Ada: the tile law at the model's own width (2560 below 5120)");
     check(!ada_q8.transferred, "Ada: the tiles row rests on three cards");
     // One card's rows price only their own boards: marked transferred.
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
