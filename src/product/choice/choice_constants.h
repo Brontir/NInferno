@@ -193,6 +193,25 @@ inline constexpr RowsEta kRowsEta[] = {
     {"turing", WeightClass::Q8, 4, 0.898, 1},     {"turing", WeightClass::Q8, 8, 0.687, 1},
 };
 
+// An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
+// each for a row or two, many small reads apart from the dense GEMVs kRowsEta measures. Their share
+// of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
+// the step rows of speed_measured.json (the server's windows of exactly C rows, eight different
+// tasks) less every other term of the step, the mean over the generation's cards and quantizations
+// (lab/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
+struct MoeRoutedEta {
+    std::string_view generation;
+    double rows;
+    double eta;
+    int cards;
+};
+inline constexpr MoeRoutedEta kMoeRoutedEta[] = {
+    // Ada: RTX 4090 (UD-Q4_K_M, UD-Q3_K_S), 4060 Ti (UD-Q3_K_S, 7 rows its most: no 8-row point).
+    {"ada", 2, 0.959, 2}, {"ada", 4, 0.923, 2}, {"ada", 8, 0.819, 1},
+    // Blackwell: RTX 5070 Ti (UD-IQ3_XXS, UD-Q3_K_S), 5090 (UD-Q3_K_S).
+    {"gb20x", 2, 0.918, 2}, {"gb20x", 4, 0.740, 2}, {"gb20x", 8, 0.634, 2},
+};
+
 // The model's measured error on a generation's dense decode estimate: the rms of ln(predicted /
 // measured) over decode_measured.json's rows of the generation's cards under the rows above (derived,
 // not tuned: ninferno_choice_test recomputes it). Two quantizations whose worths (-ln T - lambda KLD)

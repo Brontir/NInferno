@@ -99,6 +99,31 @@ double rows_eta(std::string_view generation, WeightClass weights, double rows, b
     return scale * lo_eta;
 }
 
+// An MoE's routed banks' share of the DRAM rate at `rows` concurrent rows (kMoeRoutedEta: linear
+// in log2 rows from kDramEta at one row), scaled by the generation's own DRAM share; a generation
+// without rows takes Ada's, a row of one card marks it (transferred either way).
+double moe_routed_eta(std::string_view generation, double rows, bool& transferred) noexcept {
+    std::string_view gen = generation;
+    if (std::none_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta),
+                     [&](const MoeRoutedEta& r) { return r.generation == gen; })) {
+        gen         = kTransferGeneration;
+        transferred = transferred || rows > 1;
+    }
+    const double scale = dram_eta(generation) / kDramEta;
+    double lo_rows = 1, lo_eta = kDramEta;
+    for (const MoeRoutedEta& r : kMoeRoutedEta) {
+        if (r.generation != gen) { continue; }
+        if (r.cards < 2 && rows > 1) { transferred = true; }
+        if (rows <= r.rows) {
+            const double t = std::log2(rows / lo_rows) / std::log2(r.rows / lo_rows);
+            return scale * (lo_eta + t * (r.eta - lo_eta));
+        }
+        lo_rows = r.rows;
+        lo_eta  = r.eta;
+    }
+    return scale * lo_eta;
+}
+
 // The kernels a step of `rows` rows launches (kDecodeLaunches by the family's layers): the
 // family's row for the class; else the family's K-quant row, Qwen 3.5's row for the class, Qwen 3.5's
 // K-quant row, in that order (transferred).
@@ -499,11 +524,11 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double table = model.input_table_bytes > 0 ? model.input_table_bytes
                                                      : model.input_table_params * quant.bits_per_weight / 8;
     double weights     = std::max(0.0, quant.weight_bytes - table);
-    // An MoE's routed banks: the experts any of the rows routes to, each read once. Concurrent
-    // rows are separate requests and route independently (1 - (1 - k/E)^C of the banks; the
-    // speculation round's correlated rows keep kMoeRoutedShare, spec/round_cost.cpp), and an
-    // expert serves the C k / E-th of them it was picked for: its read at that many rows' rate.
-    double routed_read = 0, rows_per_expert = rows;
+    // An MoE's routed banks: the experts any of the rows routes to, each read once, at their own
+    // share of the DRAM rate (kMoeRoutedEta). Concurrent rows are separate requests and route
+    // independently (1 - (1 - k/E)^C of the banks; the speculation round's correlated rows keep
+    // kMoeRoutedShare, spec/round_cost.cpp).
+    double routed_read = 0;
     if (model.moe() && model.params > 0) {
         const double routed = quant.routed_expert_bytes > 0
                                   ? std::min(weights, quant.routed_expert_bytes)
@@ -511,8 +536,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         const double pick   = static_cast<double>(model.experts_per_token) / model.experts;
         const double apart  = 1 - std::pow(1 - pick, rows);
         weights -= routed;
-        routed_read     = routed * apart;
-        rows_per_expert = std::max(1.0, rows * pick / apart);
+        routed_read = routed * apart;
     }
     // A generation without a row: the one whose launches it shares (Volta: Turing's, neither has
     // PDL nor Ada's L2), else Ada's; transferred either way.
@@ -524,7 +548,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
     const double reads =
         weights / (rows_eta(gen, quant.weights, rows, transferred) * card.dram_bytes_per_s) +
-        routed_read / (rows_eta(gen, quant.weights, rows_per_expert, transferred) * card.dram_bytes_per_s) +
+        routed_read / (moe_routed_eta(gen, rows, transferred) * card.dram_bytes_per_s) +
         rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.

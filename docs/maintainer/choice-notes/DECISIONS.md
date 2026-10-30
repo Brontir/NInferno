@@ -1671,3 +1671,36 @@ closure's frontier, one between parts stays at its part's end. `ninferno_qwen3_5
 (Qwen3.5 9B MTP Q4_K_M, RTX 5070 Ti): every restore case byte-exact against its cold prefill. The prefill tail count (`prompt_tail.cpp`,
 DECISIONS 62) reads where the program places the capture, so it drops the call without a change.
 
+
+## 65. An MoE's decode from facts: concurrent rows route apart (30.10, measured)
+
+The MoE decode estimate had its own fit (`kMoeDecode`: a share of the int8 peak and two terms,
+`kMoeExactFactor` for the exact route), apart from the dense model's facts (DECISIONS 60). It is
+replaced by the same step:
+
+    t(C) = (W_rest + R (1 - (1 - k/E)^C)) / (eta * BW) + C * row_bytes / (eta_dram * BW) + launches
+
+- W_rest: the weights outside the routed banks (not the input table): the attention, the shared
+  expert, the router, the output head. R: the routed banks as the GGUF stores them
+  (`ffn_*_exps`, `routed_expert_bytes` of the plan facts).
+- Concurrent rows are separate requests and route independently: a step reads the experts any of
+  them routes to, 1 - (1 - k/E)^C of the banks, each expert at the C k / E-th of the rows it was
+  picked for (its read at that many rows' rate). `kMoeRoutedShare` (0.30, DECISIONS 53) was
+  fitted on the speculation round, whose rows are consecutive tokens of one text and route
+  together; it stays there (`spec/round_cost.cpp`).
+- Launches: the census of the family's graph (nsys, RTX 5070 Ti, one row): Qwen3.6-35B-A3B 311
+  weight-reading + 267 small kernels a step, gpt-oss-20b 97 + 199; at Ada's and Blackwell's
+  `kKernelCost`.
+
+**How a step is measured.** Two traps:
+- The fixture's short-chat rows of 2-8 streams are wave aggregates (their prompts, ramp and
+  stragglers in), not a step: the dense check never used them.
+- Concurrent requests with the same text route the same experts (at temperature 0 they write
+  the same tokens): eight copies of one story ran Qwen3.6 Q4_K_M on the RTX 4090 at 128.9 tok/s a
+  stream, eight different tasks at 108.1, and the copies' step would read the routed banks at
+  1056 GB/s, above the board's 1008.
+
+The step rows (`"step": true` in `speed_measured.json`) are the server's own 5-second throughput
+windows whose mean batch is exactly C, eight different tasks (code, math, translation, prose),
+3000 tokens each, the median (`mbatch.sh`); at 1-4 rows they agree with the difference of 320- and
+64-token waves within 2 %.

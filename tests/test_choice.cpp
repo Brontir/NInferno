@@ -108,9 +108,9 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     return out;
 }
 
-// The 2026-10-23 points: an MoE's decode within its fit's error (kMoeDecode: 5.2 % rms, worst 15.5 %);
-// a dense model's one-stream decode from facts (its several-stream rows are wave aggregates, not a
-// step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
+// The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
+// (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
+// aggregates, not a step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
 // attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
     double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
