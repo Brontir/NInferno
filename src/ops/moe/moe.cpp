@@ -541,13 +541,9 @@ unsigned blocks(std::int64_t n, std::int64_t per) { return static_cast<unsigned>
 // Whether the layer's expert banks may take the grouped W4A8 (MoePlan::w4a8), whatever T: an A8
 // expert policy and both banks in a format the int8 tile decodes (a ggml_frag_v1 bank: each format
 // with a map, moe_w4a8_frag.cu).
-// A fragment-ordered bank takes the grouped W4A8 only for Q4_0 and Q4_K: the codebook i-quants'
-// fragment loaders are already as fast as the plain layout's W4A8 there and the W4A8 lost to them
-// (RTX 5090, Qwen3.6-35B-A3B IQ2_S/IQ3_XXS experts, T = 64..8192: 1.03-1.04 of the register MMA;
-// plain layout 0.89-0.91, Q4_K/Q6_K 0.64-0.69, fragment Q4_K 0.69-0.73).
-bool w4a8_frag_admits(QType qtype) {
-    return qtype == QType::GGML_Q4_0 || qtype == QType::GGML_Q4_K;
-}
+// A fragment-ordered bank takes the grouped W4A8 only for the formats ggml_frag_w4a8 names
+// (core/ggml_frag.h: Q4_0, Q4_K).
+bool w4a8_frag_admits(QType qtype) { return ggml_frag_w4a8(qtype); }
 
 // NVFP4 banks take it under a policy that allows A8 and, where the build has the W4A4 kernels
 // (sm_120a), not A4 (generic::nvfp4_prefill_a8_policy): an A4 expert policy (either bank recorded

@@ -179,6 +179,26 @@ int gguf_qwen35() {
     const auto e = pr::plan_facts_of_gguf(moe, 999999);
     failures += same(e.model.routed_expert_bytes, 300, "routed expert banks as stored");
     failures += same(e.model.mtp_routed_expert_bytes, 70, "the MTP layer's routed bank apart");
+    // Their prefill GEMM (ops/moe w4a8_banks_admit): Q4_K banks (fragment order) on the grouped
+    // W4A8; an IQ3_XXS bank in fragment order the W4A8 does not read, so its layer on the 16-bit
+    // register MMA; MXFP4 banks their own route.
+    failures += check(e.model.expert_prefill == rt::ExpertPrefill::Int8, "Q4_K banks: int8");
+    GgufFile iq3 = file;
+    iq3.tensors.push_back(
+        tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::IQ3_XXS, 200));
+    iq3.tensors.push_back(
+        tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::IQ3_S, 100));
+    failures += check(pr::plan_facts_of_gguf(iq3, 999999).model.expert_prefill == rt::ExpertPrefill::A16,
+                      "IQ3_XXS banks: the register MMA");
+    GgufFile mx = file;
+    mx.tensors.push_back(
+        tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::MXFP4, 200));
+    mx.tensors.push_back(
+        tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::MXFP4, 100));
+    failures += check(pr::plan_facts_of_gguf(mx, 999999).model.expert_prefill == rt::ExpertPrefill::Mxfp4,
+                      "MXFP4 banks");
+    failures += check(pr::plan_facts_of_gguf(file, 999999).model.expert_prefill == rt::ExpertPrefill::Unknown,
+                      "a dense model: no route");
 
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);

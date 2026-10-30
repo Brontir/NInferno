@@ -27,6 +27,13 @@ namespace ninferno {
 // Whether a format has a ggml_frag_v1 map (and a fragment-order grouped MoE kernel).
 [[nodiscard]] bool ggml_frag_format(QType format) noexcept;
 
+// Whether the grouped W4A8 MoE kernel reads a bank of this format in ggml_frag_v1 (Q4_0, Q4_K): the
+// codebook i-quants' fragment loaders are as fast as the plain layout's W4A8 and the W4A8 lost to
+// them (RTX 5090, Qwen3.6-35B-A3B IQ2_S/IQ3_XXS experts, T = 64..8192: 1.03-1.04 of the register
+// MMA; plain layout 0.89-0.91, Q4_K/Q6_K 0.64-0.69, fragment Q4_K 0.69-0.73). Such a bank
+// prefills on the 16-bit register MMA (ops/moe w4a8_banks_admit; product/plan's expert route).
+[[nodiscard]] bool ggml_frag_w4a8(QType format) noexcept;
+
 // The layout a ggml block format is published in: GgmlBlocks (Q4_K, Q5_K) or GgmlPlanes.
 [[nodiscard]] QuantLayout ggml_published_layout(QType format) noexcept;
 

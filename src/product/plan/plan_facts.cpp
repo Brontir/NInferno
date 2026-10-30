@@ -1,12 +1,16 @@
 #include "core/device_traits.h"
 #include "product/plan/plan_facts.h"
 
+#include "artifact/formats.h"
 #include "artifact/reader.h"
 #include "artifact/routed_experts.h"
 #include "convert/dense.h"
+#include "convert/expert_layout.h"
+#include "convert/formats.h"
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "core/device_class.h"
+#include "core/ggml_frag.h"
 #include "core/machine_facts.h"
 
 #include <cuda_runtime.h>
@@ -432,6 +436,54 @@ std::string format_of_ggml(std::uint32_t type) {
     }
 }
 
+// The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_banks_admit decides it:
+// the grouped W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the
+// formats generic::w4a8_supports names) and K a multiple of 32, in fragment order only the formats
+// ggml_frag_w4a8 names; a layer whose every bank it reads prefills on int8 activations, any other on
+// the 16-bit register MMA; MXFP4 banks are their own route. The trunk takes the route of the most
+// of its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
+class ExpertRoutes {
+public:
+    void add(const std::string& layer, const std::string& format, const std::string& layout,
+             std::uint64_t k, std::uint64_t bytes) {
+        if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") { return; }
+        Layer& l = layers_[layer];
+        l.bytes += bytes;
+        try {
+            const QType q = artifact::parse_format(format);
+            const QuantLayout at =
+                layout.empty() ? convert::expert_bank_layout(q, k, convert::ExpertLayout::Auto,
+                                                             ggml_published_layout(q))
+                               : artifact::parse_layout(layout);
+            const bool frag = at == QuantLayout::GgmlFrag;
+            l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
+            l.int8  = l.int8 && k % 32 == 0 &&
+                     convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8 &&
+                     (!frag || ggml_frag_w4a8(q));
+        } catch (const std::exception&) { l.known = false; }
+    }
+    [[nodiscard]] runtime::ExpertPrefill route() const {
+        std::array<std::uint64_t, 4> by{};
+        for (const auto& [name, l] : layers_) {
+            const auto r = !l.known ? runtime::ExpertPrefill::Unknown
+                           : l.mxfp4 ? runtime::ExpertPrefill::Mxfp4
+                           : l.int8  ? runtime::ExpertPrefill::Int8
+                                     : runtime::ExpertPrefill::A16;
+            by[static_cast<std::size_t>(r)] += l.bytes;
+        }
+        const auto most = std::max_element(by.begin() + 1, by.end());
+        return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
+                             : runtime::ExpertPrefill::Unknown;
+    }
+
+private:
+    struct Layer {
+        std::uint64_t bytes = 0;
+        bool known = true, int8 = true, mxfp4 = true;
+    };
+    std::map<std::string, Layer> layers_;
+};
+
 // ---- config.json and the artifact's text config.
 
 Geometry geometry_of_config(const json& config) {
@@ -738,6 +790,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     double elements = 0;
     std::uint64_t input_table_bytes = 0;
     std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
+    ExpertRoutes expert_routes;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
@@ -750,6 +803,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         // Routed expert banks (ffn_{gate,up,down}_exps; the shared expert is *_shexp).
         if (block && t.name.find("_exps.") != std::string::npos) {
             (mtp ? mtp_routed : routed) += t.bytes;
+            if (!mtp && !t.ne.empty()) {
+                expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0], t.bytes);
+            }
         }
         has_output = has_output || t.name == "output.weight";
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
@@ -782,6 +838,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.embedding_bytes = has_output ? embedding_bytes : 0;
     out.model.token_table_bytes = embedding_bytes;
     out.model.routed_expert_bytes     = whole ? routed : 0;
+    out.model.expert_prefill          = expert_routes.route();
     out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
     out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
@@ -842,6 +899,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
     // The routed expert objects as the runtime counts them (model_instance.cpp).
     const auto routed = artifact::routed_expert_object_layers(dir);
+    ExpertRoutes expert_routes;
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
     std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
@@ -904,7 +962,12 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             layer_formats.insert(tensor->format); // the trunk's layers
         }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
-        if (routed[i]) { routed_bytes += tensor->bytes; }
+        if (routed[i]) {
+            routed_bytes += tensor->bytes;
+            if (!tensor->shape.empty()) {
+                expert_routes.add(*routed[i], tensor->format, tensor->layout, tensor->shape.back(), tensor->bytes);
+            }
+        }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;
         } else if (alone && m[Proposal]) {
@@ -921,6 +984,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
     out.model.routed_expert_bytes = routed_bytes;
+    out.model.expert_prefill      = expert_routes.route();
     out.shape.input_table_bytes = input_table_bytes;
     out.model.weight_elements   = elements;
     // The source quantization the converter recorded (a GGUF file name's label), where the
