@@ -403,6 +403,9 @@ int main(int argc, char** argv) {
             }
             if (o.w4a8_schedules) {
                 namespace generic = ops::detail::generic;
+                const generic::Problem problem{o.qtype, o.policy, o.n, o.k, generic::Epilogue::Store};
+                std::fprintf(stderr, "T=%5d dispatcher route %s\n", t,
+                             generic::route_name(generic::select_route(problem, weight.weight, t, false)).c_str());
                 for (int i = 0; i < generic::w4a8_schedule_count(); ++i) {
                     const generic::Route route{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)};
                     if (!generic::route_admits(route, weight.weight, o.policy)) continue;
