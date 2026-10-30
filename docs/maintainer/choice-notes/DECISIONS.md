@@ -1704,3 +1704,42 @@ The step rows (`"step": true` in `speed_measured.json`) are the server's own 5-s
 windows whose mean batch is exactly C, eight different tasks (code, math, translation, prose),
 3000 tokens each, the median (`mbatch.sh`); at 1-4 rows they agree with the difference of 320- and
 64-token waves within 2 %.
+
+**The routed banks' share of the DRAM rate.** The census of Ada's step (RTX 4090, no PDL: kernel
+times are the kernels' own) puts the routed kernels (`moe_gemm`, `moe_r8`) at 0.68 / 0.83 / 0.81
+of the DRAM rate at 1 / 4 / 8 rows once their launches are off: the experts the rows route to are
+many small reads, one or two rows each, not the dense GEMVs kRowsEta measures. Their share is a
+measured row of its own (`kMoeRoutedEta`), derived like kRowsEta: the step rows less every other
+term of the step, the mean over the generation's cards and quantizations
+(`lab/speed_model/fit_moe_decode.py`):
+
+| generation | 2 rows | 4 rows | 8 rows | cards |
+|---|---|---|---|---|
+| Ada | 0.959 | 0.923 | 0.819 (4090 only) | RTX 4090, 4060 Ti |
+| Blackwell | 0.918 | 0.740 | 0.634 | RTX 5070 Ti, 5090 |
+
+Ada's are its K-quant rows within 0.03; Blackwell's are lower from four rows on (0.74 against the
+K-quants' 0.80, 0.63 against 0.73).
+
+**Predicted / measured** (tok/s a stream at C rows, Qwen3.6-35B-A3B, master kit build):
+
+| card | quant | C: predicted / measured |
+|---|---|---|
+| RTX 4090 | UD-Q4_K_M | 1: 245 / 255, 2: 206 / 206, 4: 158 / 158, 8: 104 / 108 |
+| RTX 4090 | UD-Q3_K_S | 1: 260 / 267, 2: 226 / 225, 4: 183 / 180, 8: 128 / 122 |
+| RTX 5070 Ti | UD-IQ3_XXS | 1: 271 / 270, 2: 235 / 218, 4: 168 / 153, 6: 135 / 119 |
+| RTX 5070 Ti | UD-Q3_K_S | 1: 241 / 245, 2: 209 / 207, 4: 149 / 150, 7: 108 / 106, 8: 99 / 98 |
+| RTX 5090 | UD-Q3_K_S | 1: 375 / 383, 2: 334 / 348, 4: 252 / 265, 8: 176 / 177 |
+| RTX 4060 Ti | UD-Q3_K_S | 1: 96 / 96, 2: 80 / 81, 4: 62 / 63, 7: 44 / 45 |
+
+29 points with the four one-row points of 2026-10-23: rms 4.1 %, worst 13 %
+(`ninferno_choice_test`). The old fit's check ran on the wave aggregates and missed by 68 % at
+eight rows once its constants were gone.
+
+**Open.**
+- UD-IQ3_XXS on the RTX 5070 Ti, 7-13 % slow at 2-6 rows: its banks are IQ3_XXS throughout (a
+  codebook decode a weight), UD-Q3_K_S's a mix. A format's decode work against the SMs (70 on
+  the 5070 Ti) is the candidate fact; not measured apart.
+- gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation
+  (Blackwell's block-scaled MMA, `kind::mxf8f6f4`, for the prefill; the GV100 3x below the
+  prefill estimate and 2.3x below the decode one). Censuses queued; the next decision.
