@@ -23,8 +23,10 @@ namespace ninferno::ops::detail {
 // the same split boundaries from it). A CTA walks its keys one after another, one warp a scheduler
 // on the few SMs that hold work (GV100, Gemma 4 12B sliding layer at ~60 keys: 2 splits x 8 KV
 // heads = 16 CTAs, each ~45k cycles for its 32 keys: P V 24.5k, the scores 12k, the softmax 6k;
-// loading the keys in batches changed nothing). Splits of 8 keys put four times the CTAs on a short
-// context; a long one still fills every split with up to 32 keys.
+// loading the keys in batches changed nothing). Splits rounded to 8 keys put four times the CTAs
+// of 32-key splits on a short context; on a long one the plan's split count stands (the resident
+// wave; a sliding layer at most window / kGeoDecodeBc), each split taking len / splits keys
+// rounded up to 8.
 inline constexpr std::int32_t kGemma4VoltaDecodeBc = 8;
 
 // grid: (splits, Hkv * batch rows of the launch); bc: kGemma4VoltaDecodeBc.
