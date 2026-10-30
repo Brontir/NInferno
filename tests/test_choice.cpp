@@ -297,7 +297,7 @@ void prefills_pay_tail_calls(const json& fixture) {
 }
 
 // Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of
-// tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on six; Q8_0
+// tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven; Q8_0
 // re-measured after PR #249, master f8d4399d), Q8_0 on the int8 tiles, Q4_K_M on MMQ's int8 rows.
 // The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
 // measured row.
@@ -334,8 +334,8 @@ void prefills_by_format(const json& fixture) {
               << " %)\n";
     // DECISIONS 66: the tiles by linear in rounds of SMs x resident CTAs and the small kernels, no
     // fit. Its worst points are the RTX 4090's Gemma and the RTX 5090's short prompts (+15 .. +18 %).
-    check(n[1] == 60 && tiles < 0.08 && worst[1] < 0.20, "Q8_0 prefill on the int8 tiles within the model's spread");
-    check(n[0] == 78 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+    check(n[1] == 66 && tiles < 0.08 && worst[1] < 0.20, "Q8_0 prefill on the int8 tiles within the model's spread");
+    check(n[0] == 84 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
