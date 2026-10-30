@@ -1751,7 +1751,7 @@ dim3 w4a8_grid(const GemmArgs& args, W4a8Activation& act) {
     constexpr int kRowsPerBlock = E == Epilogue::SwiGlu ? S::kBlockN / 2 : S::kBlockN;
     const unsigned row_blocks   = (args.rows + kRowsPerBlock - 1) / kRowsPerBlock;
     const unsigned token_tiles  = (args.tokens + S::kBlockM - 1) / S::kBlockM;
-    if (S::kBlockM != 128 || row_blocks > kMaxGridYZ) act.token_major = 0;
+    if (row_blocks > kMaxGridYZ) act.token_major = 0;
     if (act.token_major) return dim3(token_tiles, row_blocks);
     if (token_tiles > kMaxGridYZ)
         throw std::invalid_argument("generic W4A8: token extent exceeds the grid");
