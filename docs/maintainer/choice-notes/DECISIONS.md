@@ -1878,7 +1878,12 @@ bound (at chunk 1024 the bound's 384 rows hold 21 slots a job, the 4090's 2048-t
 Done: the plan's linear shapes from the geometry it reads (`runtime::PlanLinear`: attention,
 recurrent, FFN, shared expert, experts) reach the choice, and `moe_prefill_linears_seconds` prices
 an MoE's linears by these tiles (`kTileCost`, the jobs bound; Qwen3.6 UD-Q4_K_M on the RTX 4090:
-79 against the census's 86.4 ms), not yet in the estimate. Next: a dense K-quant's prefill runs
+79 against the census's 86.4 ms), not yet in the estimate. What the rest of a prompt is (the
+RTX 4090's Qwen3.6 UD-Q4_K_M, one 1819-token prompt, the window from the 2-second pause: 103.3 ms
+of a 106 ms request): the experts 45.1 ms (the law 45.9), the int8 dense calls 29.9 (28.2), the
+routing's gather and scatter 4.3 (5.0); not yet priced: the Gated DeltaNet's recurrence,
+convolution, preparation and gating 7.6, the prompt's tail calls about 7, the router, plan and
+selection 2.8, the norms and the activations' quantization about 3, attention 2.4. Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
 kernels, Volta's dp4a route; then the estimate, checked against data/prefill/rows.json and the
