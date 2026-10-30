@@ -1594,6 +1594,25 @@ both boards' MMQ reaches 27 .. 31 % of the int8 tensor peak. The prefill estimat
 generation does not see the shape: a Qwen 9B or Gemma 12B layer is mostly small matrices for 170
 SMs. The nsys ratio above (0.805) mixed both and the profile's clocks, which were not recorded.
 
+**Volta's own prefill rows (30.10, predicted against measured).** The Quadro GV100's kits measured
+its 2048-token prefill at x1.28 (Qwen 9B) and x1.21 (Gemma 12B) of the estimate: Volta had no row
+and took Turing's (`prefill_stand_in`: the same 1536 BF16 rate a SM), but Turing's int8 row is
+ggml's MMQ on the int8 MMA, which Volta does not have. Volta's prefill linears dequantize each
+chunk's weights to FP16 (`decode_rows_kernel`, 17 % of the step) and multiply on the HMMA tiles
+(CUTLASS sm70: 0.70 of the m8n8k4 rate at the 1.28 GHz the board holds at its power limit). Its
+census (server nsys, master 59933708, prompts of 962 .. 2862 tokens twice; kernel time without the
+attention kernels and the tail calls) gives the linears 0.235 (Qwen) and 0.261 (Gemma) of
+`peak(Int8)` at the board's 1627 MHz boost, and the attention 0.139 (Qwen's sm70_d256 kernels) and
+0.097 (Gemma's m8n8k4 kernel). The rows: 0.248 and 0.100 (Gemma's: the attention is 8 % of its
+prefill against Qwen's 2 %). Predicted at 2048 tokens: Qwen 2977 tok/s against 3002 measured
+(x1.01), Gemma 1825 against 1807 (x0.99). One card: transferred.
+
+The same census shows item 3 three times larger on a PCIe 3 host: each Gemma request waits twice
+on about 670 MB of copies to the host (52 and 80 ms on the GV100, 6 % of a 2048-token prefill
+each; twice the 340 MB the RTX 4070 Ti's profile copied, the KV storage the GV100's plan took not
+yet broken down), against 19 ms on the RTX 4090 and 7 ms on the RTX 5090 (340 MB at 17 and 48
+GB/s: the intercepts' excess over the tail calls on those boards).
+
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
 **What the profiles showed.** Every chat request on the RTX 4070 Ti ran one whole-model call more

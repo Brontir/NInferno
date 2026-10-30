@@ -331,7 +331,7 @@ void prefills_by_format(const json& fixture) {
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
               at("RTX 3060", q8, mf, 1).transferred,
           "Turing / Ampere prefill rows of one card are transferred");
-    // A generation without a tiles row keeps its int8 row, transferred (Volta: Turing's).
+    // A generation without a tiles row keeps its int8 row, transferred (Volta: its own).
     ch::CardFacts volta = card_of(fixture.at("cards").at("RTX 2080 Ti"));
     volta.major = 7;
     volta.minor = 0;
@@ -384,7 +384,7 @@ ch::OwnContextFn oracle(const Bench& b, double budget, std::size_t quant = 0) {
 const ch::Scored& chosen(const ch::Choice& c) { return c.scored[*c.chosen]; }
 
 // Attention over the prompt: a full layer's grows with the prompt, a sliding one's stops at its window;
-// a generation without prefill rows takes those of one with its BF16 tensor path.
+// Volta's prefill takes its own rows.
 void prices_attention(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4090");
     ch::Candidate c;
@@ -407,11 +407,28 @@ void prices_attention(const json& fixture) {
     volta.minor = 0;
     ch::CardFacts turing = volta;
     turing.minor         = 5;
-    // Linears only: Volta's int8 route runs at its BF16 rate (no int8 MMA), 1536 against Turing's 2048.
+    // Linears only: Volta's int8 route runs at its BF16 rate (no int8 MMA), 1536 against Turing's
+    // 2048, at its own row (the GV100 census: dequantized FP16 on the HMMA tiles), one card.
     const ch::Speed v = ch::speed_of(none, volta, b.quants[0], c, 1, 4096, 4096);
     const ch::Speed t = ch::speed_of(none, turing, b.quants[0], c, 1, 4096, 4096);
-    check(v.transferred && std::abs(v.prefill / t.prefill - 1536.0 / 2048.0) < 1e-9,
-          "Volta's prefill takes Turing's rows (the same BF16 tensor rate a SM)");
+    check(v.transferred && std::abs(v.prefill / t.prefill - (0.248 * 1536.0) / (0.185 * 2048.0)) < 1e-9,
+          "Volta's prefill takes its own row, transferred (one card)");
+    // Its exact route: its own int8 row at Turing's exact-to-int8 ratio.
+    ch::Candidate exact;
+    exact.activations  = ActivationMode::Exact;
+    const ch::Speed ve = ch::speed_of(none, volta, b.quants[0], exact, 1, 4096, 4096);
+    const ch::Speed te = ch::speed_of(none, turing, b.quants[0], exact, 1, 4096, 4096);
+    check(ve.transferred && std::abs(ve.prefill / te.prefill - (0.248 * 1536.0) / (0.185 * 1536.0)) < 1e-9,
+          "Volta's exact prefill scales its own int8 row by Turing's ratio");
+    // An MoE on Volta keeps the dense model's exact-to-fast ratio.
+    ch::ModelFacts moe          = none;
+    moe.experts                 = 128;
+    moe.experts_per_token       = 8;
+    moe.routed_expert_params    = moe.params * 0.8;
+    const ch::Speed mf_fast     = ch::speed_of(moe, volta, b.quants[0], c, 1, 4096, 4096);
+    const ch::Speed mf_exact    = ch::speed_of(moe, volta, b.quants[0], exact, 1, 4096, 4096);
+    check(std::abs((mf_exact.prefill / mf_fast.prefill) / (ve.prefill / v.prefill) - 1) < 1e-9,
+          "an MoE's exact-to-fast prefill ratio on Volta is the dense model's");
 }
 
 void chooses(const json& fixture) {
