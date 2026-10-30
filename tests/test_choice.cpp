@@ -131,6 +131,11 @@ void reproduces_the_measurements(const json& fixture) {
                                          row.at("context").get<double>(), row.value("prompt", 0U));
         const double d    = s.decode_per_stream / row.at("decode").get<double>() - 1;
         if (mf.moe()) {
+            std::cout << "MoE " << row.at("card").get<std::string>() << " " << q << " x"
+                      << row.at("concurrency").get<std::uint32_t>() << " at " << row.at("context").get<double>()
+                      << ": predicted " << s.decode_per_stream << " measured " << row.at("decode").get<double>()
+                      << "
+";
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
