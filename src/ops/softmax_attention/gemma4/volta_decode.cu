@@ -306,6 +306,13 @@ using VoltaDecodeKernel = void (*)(Gemma4AttentionArgs, int);
 // resident (RTX 2080 Ti, D = 128: 32 rows took 128 registers a thread for a call of 4, 72 at 4).
 template <int D>
 VoltaDecodeKernel kernel_for_rows(std::int32_t rows) {
+    // A decode call's CTAs each fold one or two key tiles, and on Volta every launch fetches the
+    // kernel's code cold from L2, one 128-byte line after another: the code's size sets the call's
+    // time (GV100, Gemma 4 12B sliding layer, D = 256 at 4 rows: 1336 instructions, ~167 lines,
+    // 40 us a call with DRAM 0.6 % and the SM 1.5 % busy, the top stall the instruction fetch).
+    // Instances of one and two rows unroll their loops over that many rows only.
+    if (rows <= 1) return gemma4_volta_decode_kernel<D, 1>;
+    if (rows <= 2) return gemma4_volta_decode_kernel<D, 2>;
     if (rows <= 4) return gemma4_volta_decode_kernel<D, 4>;
     if (rows <= 8) return gemma4_volta_decode_kernel<D, 8>;
     if constexpr (max_rows<D>() >= 16) {
