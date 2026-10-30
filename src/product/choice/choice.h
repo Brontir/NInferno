@@ -111,6 +111,9 @@ struct ModelFacts {
     std::uint32_t sliding_layers = 0;
     double sliding_head_dim      = 0;
     double sliding_kv_heads      = 0;
+    // The layers that attend (a KV-shared layer reads an earlier layer's keys: the widths sum over
+    // these; 0: the layers above).
+    std::uint32_t full_attending_layers = 0, sliding_attending_layers = 0;
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)

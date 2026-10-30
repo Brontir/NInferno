@@ -408,6 +408,7 @@ struct GemmaAttentionCost {
     double sliding, full; // SM-clocks a key of a CTA
     int cards;
 };
+inline constexpr double kGemmaChainMinTokens = 16; // gemma4/launch.h kGemma4DecodeMaxTokens: no chain
 inline constexpr GemmaAttentionCost kGemmaAttentionCost[] = {
     {"ada", 186, 250, 1}, {"ga10x", 180, 255, 1}, {"gb20x", 157, 222, 2}};
 

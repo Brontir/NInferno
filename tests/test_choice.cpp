@@ -1114,6 +1114,22 @@ void prices_gemma_attention_tiles(const json& fixture) {
         }
     }
     check(worst < 0.12, "Gemma 4's attention by its CTAs within 12 % of the census's chunks");
+    // A KV-shared model (Gemma 4 E4B-like: 35 sliding layers attend, 20 hold their own KV, 8 heads over
+    // 2): its heads and layers from the attending ones, 35 / 20 of the same layers held alone.
+    ch::ModelFacts shared;
+    shared.family                   = "gemma4_text";
+    shared.window                   = 512;
+    shared.sliding_layers           = 20;
+    shared.sliding_attending_layers = 35;
+    shared.sliding_head_dim         = 256;
+    shared.sliding_kv_heads         = 2;
+    shared.sliding_attention_width  = 35 * 8 * 512;
+    ch::ModelFacts alone           = shared;
+    alone.sliding_attending_layers = 20;
+    alone.sliding_attention_width  = 20 * 8 * 512;
+    const double a = ch::prefill_attention_tiled_seconds(shared, series[0].card, KvCacheStorage::BFloat16, 4096, 1024);
+    const double b = ch::prefill_attention_tiled_seconds(alone, series[0].card, KvCacheStorage::BFloat16, 4096, 1024);
+    check(b > 0 && std::abs(a / b - 35.0 / 20) < 1e-9, "a KV-shared Gemma 4: its attending layers' heads and count");
 }
 
 void contradictory_pins(const json& fixture) {

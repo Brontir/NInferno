@@ -190,6 +190,10 @@ struct PlanModelFacts {
     std::uint32_t sliding_key_dim        = 0;
     std::uint32_t sliding_value_dim      = 0;
     std::uint32_t window                 = 0;
+    // The layers that attend, their own KV or an earlier layer's (a KV-shared layer reads one
+    // before it: Gemma 4 E2B / E4B); the widths above sum over these.
+    std::uint32_t full_attending_layers    = 0;
+    std::uint32_t sliding_attending_layers = 0;
     // Recurrent layers (Gated DeltaNet, Mamba2): the state matrix elements of one sequence, all
     // layers (stored in the --state-dtype), and the convolution window bytes (BF16).
     std::uint32_t recurrent_layers         = 0;

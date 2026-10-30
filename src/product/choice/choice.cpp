@@ -611,7 +611,9 @@ double gemma_attention_tiled_seconds(const ModelFacts& model, const CardFacts& c
     const double window    = model.window;
     double seconds         = 0;
     const auto layer_type = [&](bool sliding) {
-        const double layers = sliding ? model.sliding_layers : model.full_layers;
+        const double own      = sliding ? model.sliding_layers : model.full_layers;
+        const double attend   = sliding ? model.sliding_attending_layers : model.full_attending_layers;
+        const double layers   = attend > 0 ? attend : own;
         const double width  = sliding ? model.sliding_attention_width : model.full_attention_width;
         const double dim    = sliding ? model.sliding_head_dim : model.full_head_dim;
         const double kv     = sliding ? model.sliding_kv_heads : model.full_kv_heads;
@@ -620,11 +622,11 @@ double gemma_attention_tiled_seconds(const ModelFacts& model, const CardFacts& c
         const double group = kv > 0 ? heads / kv : 0;
         const bool read    = sliding ? dim == 256 && group >= 1 && group <= 32 : dim == 512 && group == 16;
         if (!read) {
-            for (double prefix = 0; prefix < prompt; prefix += chunk) {
-                const double n    = std::min<double>(chunk, prompt - prefix);
-                const double keys = sliding && window > 0 ? std::min(prefix + n / 2, window) : prefix + n / 2;
-                seconds += 2 * width * n * keys / share;
-            }
+            // attention_seconds' pairs up to x tokens: x^2 / 2, past the window x w - w^2 / 2.
+            const auto pairs = [&](double x) {
+                return sliding && window > 0 && x > window ? x * window - window * window / 2 : x * x / 2;
+            };
+            seconds += 2 * width * pairs(prompt) / share;
             if (transferred != nullptr && share_transferred) { *transferred = true; }
             return;
         }
@@ -644,8 +646,11 @@ double gemma_attention_tiled_seconds(const ModelFacts& model, const CardFacts& c
                     ctas.push_back(keys * per_key);
                 }
             }
-            const double waves = std::ceil(static_cast<double>(ctas.size()) / slots);
-            if (!sliding && chains && static_cast<double>(ctas.size()) < 0.9 * waves * slots) {
+            // The launch's grid counts the spare block (launch.cu chain_pays), and a call of a decode's
+            // width never chains (chain_plan).
+            const double grid  = blocks * kv;
+            const double waves = std::ceil(grid / slots);
+            if (!sliding && chains && n > kGemmaChainMinTokens && grid < 0.9 * waves * slots) {
                 double work = 0;
                 for (const double t : ctas) { work += t; }
                 seconds += layers * work / card.sms; // persistent: the work spread over the SMs
