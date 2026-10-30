@@ -1575,15 +1575,18 @@ It does not hold, for three measured reasons:
   boost (their `sm_clock_mhz`: the kit's clocks, user-measurement-kit.md).
 - Against MMQ the tiles lose on the big boards: every board on the tiles (`exp/mmq-prefill-off-all`,
   A/B/A at 312 .. 22K tokens, Qwen 9B and Gemma 12B Q4_K_M) is 3 .. 8 % slower on the 5090,
-  8 .. 13 % on the 4090, 9 .. 11 % on the RTX 4070 Ti, 6 .. 8 % on the RTX 4060 Ti and 4 .. 5 % on
-  the RTX 3060 (Qwen; its Gemma and the RTX 2080 Ti were still running). The gate stays as it is.
+  8 .. 13 % on the 4090, 9 .. 11 % on the RTX 4070 Ti, 6 .. 8 % on the RTX 4060 Ti, 2 .. 5 % on
+  the RTX 3060 and 7 .. 15 % on the RTX 2080 Ti. The gate stays as it is.
 
-MMQ's main kernels scale with the SM count; what does not is its side kernels: the stream-K fixup,
-the epilogue that turns the FP32 plane into BF16, and the activation's Q8_1 quantization are ~17 % of
-the 5090's prefill and 5 .. 6 % (the epilogue) of Ada's. They are the known part of the gap; the rest
-is still open. Next: the choice prices MMQ's side kernels per launch from the model's linear shapes,
-and the epilogue folds into the main kernel where the call's output allows it (not SwiGLU's gate and
-up, which are two calls).
+MMQ's side kernels are not the gap either. Under PDL (sm_90 on) a dependent kernel starts early and
+waits, so nsys's kernel durations overstate it: their sum puts the stream-K fixup, the epilogue
+(FP32 plane to BF16) and the Q8_1 quantization at 17 % of the 5090's Qwen 9B prefill, but the time
+they add to the union of the kernels' intervals is 9.7 % (fixup 4.4, quantize 2.9, epilogue 2.4),
+against 7.9 % on the 4090 (no PDL: the durations are exact). The main kernel is: the 5090 takes
+0.805 of the 4090's time where the SMs times the clock predict 0.723 (the same int8 rate a SM and
+clock), and 468 of its 480 Q4_K calls run stream-K with a fixup, against 140 on the 4090 (ggml's
+rule: whole waves only at 90 % wave efficiency). Next: an A/B of whole waves against stream-K
+(`exp/mmq-no-streamk`) on the 5090, the 4090, the 4070 Ti, the 4060 Ti and the 3060.
 
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
