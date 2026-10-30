@@ -855,6 +855,40 @@ void prices_dense_prefill_tiles() {
     check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "K-quant dense linears (ggml's MMQ): unknown");
 }
 
+// The small kernels beside a prefill's linears (DECISIONS 66): Qwen3.5 9B Q8_0's 1819-token prompt,
+// the census outside the linears, attention and the tail calls, seven cards (the scan's SM-clocks
+// and the rest's bytes are read from these points, a generation's mean: within a quarter of each).
+void prices_prefill_small_kernels() {
+    ch::ModelFacts m;
+    m.family                   = "qwen3_5_text";
+    m.layers                   = 32;
+    m.hidden                   = 4096;
+    m.recurrent_state_elements = 24.0 * 32 * 128 * 128;
+    struct Census {
+        ch::CardFacts card;
+        double ms;
+    };
+    const Census rows[] = {
+        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 63.8},
+        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9}, 35.3},
+        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9}, 21.6},
+        {{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9}, 11.5},
+        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9}, 14.1},
+        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9}, 7.9},
+        {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9}, 76.9},
+    };
+    double worst = 0;
+    for (const Census& r : rows) {
+        const double t = ch::prefill_small_seconds(m, r.card, 1819);
+        worst          = std::max(worst, std::abs(t * 1e3 / r.ms - 1));
+        std::cout << "prefill small kernels, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "
+";
+    }
+    check(worst < 0.25, "a prefill's small kernels by the scan's clocks and the rest's bytes within a quarter");
+    const ch::CardFacts v100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.53e9, .dram_bytes_per_s = 900e9};
+    check(ch::prefill_small_seconds(m, v100, 1819) == 0, "no small-kernel census on Volta: unknown");
+}
+
 void contradictory_pins(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Pins pins;
@@ -1007,6 +1041,7 @@ int main() {
     moe_family(fixture);
     prices_moe_prefill_tiles();
     prices_dense_prefill_tiles();
+    prices_prefill_small_kernels();
     weighs_the_drafters(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

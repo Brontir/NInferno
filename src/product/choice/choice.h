@@ -105,6 +105,10 @@ struct ModelFacts {
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)
+    double hidden = 0;                // the hidden width (0: unknown)
+    // The recurrent layers' state of one sequence, elements over every layer (0: none); a prefill's
+    // chunked scan runs over it once a token.
+    double recurrent_state_elements = 0;
     // The drafters it carries, beside plain decode (Candidate::drafter 0); and the one the server
     // takes where the worth does not decide (its resolved profile's: an index into the candidates'
     // drafters, 0 for plain).
@@ -249,6 +253,11 @@ struct Reference {
 // weights; an MoE: its banks' route and Q8_0 beside them).
 [[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
                                              const QuantOption& quant, double tokens) noexcept;
+// The rest of a prefill's chunk of `tokens` beside its linears and attention (DECISIONS 66): the
+// recurrent layers' chunked scan in SM-clocks, the norms, activations' quantization, convolution
+// and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
+[[nodiscard]] double prefill_small_seconds(const ModelFacts& model, const CardFacts& card,
+                                           double tokens) noexcept;
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its

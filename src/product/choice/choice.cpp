@@ -539,6 +539,18 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     return seconds;
 }
 
+double prefill_small_seconds(const ModelFacts& model, const CardFacts& card, double tokens) noexcept {
+    if (tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 || card.dram_bytes_per_s <= 0) { return 0; }
+    const std::string_view gen = generation_of(card);
+    for (const SmallKernelCost& row : kSmallKernelCost) {
+        if (row.generation != gen) { continue; }
+        const double scan  = tokens * model.recurrent_state_elements * row.scan_clocks / (card.sms * card.clock_hz);
+        const double bytes = tokens * model.layers * model.hidden * row.pass_bytes;
+        return scan + bytes / card.dram_bytes_per_s;
+    }
+    return 0;
+}
+
 namespace {
 
 // The calls a prefill runs after the prompt's chunks (ModelFacts::prompt_tail_calls): each a few

@@ -318,6 +318,25 @@ inline constexpr TileCost kTileCost[] = {
     {"gb20x", TileKernel::A16, 785, 14.96},   {"gb20x", TileKernel::Mx, 1226, 8.34},
 };
 
+// A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside
+// its linears, attention and tail calls, seven cards). The Gated DeltaNet's chunked scan is a count
+// of SM-clocks a token and state element (12.6 M elements over its 24 layers): RTX 4060 Ti 0.049,
+// 4070 Ti 0.064, 4090 0.062; RTX 5070 Ti 0.040, 5090 0.057; RTX 3060 0.051; Turing's scan has no
+// tensor path, the RTX 2080 Ti 0.196. The rest (the norms, the activations' quantization, the
+// convolution, the gates) is bytes a token, layer and element of the hidden width over the DRAM
+// rate: some 15 passes over a 16-bit row, 30 bytes (RTX 4060 Ti 27, 4070 Ti 26, 4090 30, 5070 Ti 33,
+// 5090 35), where a chunk's row of activations (1024 x 8 KB) stays in the L2 of 24-96 MB; Ampere's
+// 3-6 MB L2 writes it out and reads it back, twice the bytes (the RTX 3060's 61); Turing's kernels
+// besides (the RTX 2080 Ti's 88). One card a generation: transferred.
+struct SmallKernelCost {
+    std::string_view generation;
+    double scan_clocks;  // SM-clocks a token and recurrent state element
+    double pass_bytes;   // bytes a token, layer and element of the hidden width
+    int cards;
+};
+inline constexpr SmallKernelCost kSmallKernelCost[] = {
+    {"ada", 0.058, 30, 3}, {"gb20x", 0.048, 30, 2}, {"ga10x", 0.051, 60, 1}, {"turing", 0.196, 88, 1}};
+
 // An MoE's expert grid: the host launches the bound on the jobs (ops/moe max_jobs: a job is an
 // expert's run of up to kExpertJobSlots of the chunk's slots, token x pick; at most one partial job
 // an expert), ceil(slots / 64) + min(slots, experts) rows of tiles, before the routing is known.
