@@ -625,7 +625,7 @@ def target_identity(artifact):
 
 def lab_configs(model):
     """The configurations the registry's lab pairs of this repository and quantization measured
-    (by name: the weights are checked by their SHA-256 when judged), in the registry's order; empty
+    (by name: the weights are checked by their SHA-256 when judged), the newest pairs' first; empty
     when the lab measured none (spec-tune then runs its default menu). A user's tune of the same
     menu is what the pairs' acceptance and the plan's round costs can be held to; the lab pairs
     measured on master from 30.10 draft through the proposal head (`+head`) as the default menu
@@ -635,7 +635,12 @@ def lab_configs(model):
     except (OSError, json.JSONDecodeError):
         return []
     out = []
-    for p in registry.get("pairs", []):
+    # The newest pairs' configurations first (what the current engine serves, `+head` on master
+    # from 30.10): a finite --budget-seconds stops starting configurations when it runs out, so the
+    # older pairs' come last.
+    pairs = sorted(registry.get("pairs", []), key=lambda p: str((p.get("tune") or {}).get("created", "")),
+                   reverse=True)
+    for p in pairs:
         repo, _, quant = str(p.get("target_repo", "")).partition(" ")
         if repo.split("@")[0] == model["repo"] and quant == model["quant"] and not p.get("user_kit"):
             for m in (p.get("tune") or {}).get("measurements", []):

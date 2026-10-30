@@ -512,6 +512,10 @@ class Kit(unittest.TestCase):
         labels = measure.lab_configs({"repo": "unsloth/Qwen3.5-9B-MTP-GGUF", "quant": "Q4_K_M"})
         self.assertTrue({m["config"] for m in pair["tune"]["measurements"]} - {"plain"} <= set(labels))
         self.assertEqual(len(labels), len(set(labels)))
+        newest = max((p for p in registry["pairs"] if p["target_repo"] == pair["target_repo"]),
+                     key=lambda p: p["tune"]["created"])
+        first = [m["config"] for m in newest["tune"]["measurements"] if m["config"] != "plain"]
+        self.assertEqual(labels[:len(set(first))], list(dict.fromkeys(first)))
         self.assertEqual(measure.lab_configs({"repo": "nobody/none", "quant": "Q4_K_M"}), [])
 
     def test_target_identity_hashes_the_snapshot_file(self):
