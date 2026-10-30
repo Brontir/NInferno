@@ -1748,6 +1748,10 @@ eight rows once its constants were gone.
     (`W4a8Mxfp4`) and stays on its row (4090 x1.03, 4060 Ti x1.14).
   - The GV100's prefill runs the same int8 kernel (83 % of it) with no int8 MMA, on dp4a: 512
     operations a SM-clock against the table's 1536, a third, and it measured 0.34 of the estimate.
+  - Its decode under this model (the server's windows, as above): one row within 1-5 % on the
+    RTX 4090, 4060 Ti, 5070 Ti and 5090; at 4-8 rows 3-26 % slow, the estimate the slower. Its
+    experts are ten times Qwen3.6's reads (about 13 MB a layer against 1.3 MB): the routed share
+    measured on Qwen's small reads is low for them. The read's size is the candidate fact.
   - The GV100's decode reads its dense Q8 linears at 0.44 of the DRAM rate and the routed MXFP4
     banks at 0.28: about 3-4 weights a SM-clock unpacked on the CUDA cores, not bytes (79.7 tok/s,
     the estimate 185).
