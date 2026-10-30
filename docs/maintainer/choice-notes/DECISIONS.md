@@ -1889,7 +1889,20 @@ RTX 4090's Qwen3.6 UD-Q4_K_M, one 1819-token prompt, the window from the 2-secon
 of a 106 ms request): the experts 45.1 ms (the law 45.9), the int8 dense calls 29.9 (28.2), the
 routing's gather and scatter 4.3 (5.0); not yet priced: the Gated DeltaNet's recurrence,
 convolution, preparation and gating 7.6, the prompt's tail calls about 7, the router, plan and
-selection 2.8, the norms and the activations' quantization about 3, attention 2.4. Next: a dense K-quant's prefill runs
+selection 2.8, the norms and the activations' quantization about 3, attention 2.4.
+
+A dense model's Q8 linears by the same law (Qwen3.5 9B Q8_0, one 1819-token prompt in chunks of
+1024 and 795, token-major grid since PR #249; its linears qkv 10240 x 4096 and o 4096 x 4096 in 8
+layers, the Gated DeltaNet's 12288 x 4096 and 4096 x 4096 in 24, the FFN's 24576 x 4096 and
+4096 x 12288 in 32; the int8 row in SM-clocks): predicted / measured kernel time RTX 3060 808 /
+767 ms, 4060 Ti 467 / 440, 4070 Ti 257 / 246, 4090 125 / 127, 5070 Ti 217 / 212 (-2 .. +6 %,
+three generations, from the SMs and the clock alone). The rest of that prompt: the two tail
+calls (DECISIONS 62, `r8_kernel` at a decode step's reads: 16.7 ms on the 4090, two weights over
+the DRAM rate 18.6), attention 2.6 ms, and the small kernels (the recurrence 3.5, the activations'
+quantization 3.3, the convolution 1.4, the norms 1.7, the preparation 0.9: about 10 % of the
+prompt on the 4090, 8 % on the RTX 3060). The small kernels read activations a few times a layer:
+on the 4090 from its 72 MB L2 (the quantization 4.7 us a call against 12.5 at the DRAM rate),
+on the RTX 3060 from DRAM (26 against 35); their bytes against the L2 is the next term. Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
 kernels, Volta's dp4a route; then the estimate, checked against data/prefill/rows.json and the
