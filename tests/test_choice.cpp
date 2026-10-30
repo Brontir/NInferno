@@ -1047,6 +1047,13 @@ void prices_attention_tiles() {
     check(worst < 0.12, "a prompt's attention by its CTAs within 12 % of the census's calls");
     check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::BFloat16, 4096, 1024) == 0,
           "BF16 keys: another kernel, unknown");
+    // A call of 256 tokens or fewer takes the grouped kernels: a 256-token prompt keeps the share, and
+    // a 100-token tail after 32K costs its flops at the share, not 16 CTAs over the whole prefix.
+    check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 256, 1024) == 0,
+          "a short prompt: the grouped kernels' share");
+    const double whole = ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 32768, 1024);
+    const double tail  = ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 32868, 1024);
+    check(tail > whole && tail - whole < 4e-3, "a short tail chunk at the share (its flops, 2.8 ms), not 16 CTAs over the prefix (17 ms)");
 }
 
 void contradictory_pins(const json& fixture) {

@@ -2056,6 +2056,12 @@ pair of constants holds on both Ada cards. On a 170-SM card the grid of 128 CTAs
 blocks at a 1024-token chunk) is one round with 42 SMs idle: the RTX 5090's attention is the
 longest CTA's time, not the work over the SMs.
 
+A call of 256 tokens or fewer (a short prompt, a short last chunk, a chunk pinned that narrow) takes
+the grouped kernels (int8/plan.cpp, the keys split over the SMs), not this one: it keeps the share.
+Not modelled: the kernel's narrow layouts (four-warp CTAs, or half-height leading slots where they
+shorten the last wave: up to 1/0.72 of a full CTA's cost; at 1024-token chunks only the RTX 5070 Ti's
+first chunk shows it, -10 %), and the invariant route profile (every width on ParallelGrouped).
+
 In the estimate (Qwen3.5 9B's points): Q8_0 rms 7.6 -> 7.1 %, Q4_K_M 6.0 -> 6.4 % (MMQ's shares were
 read with the old attention term beside them). Not yet: Gemma 4's kernel (sliding layers: 2 CTAs a SM,
 a round of 352-520 CTAs about 160-177 K SM-clocks on Ada and Blackwell; full layers a persistent grid

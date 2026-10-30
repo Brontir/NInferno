@@ -386,6 +386,9 @@ inline constexpr AttentionTileCost kAttentionTileCost[] = {
     {"ada", 304, 194, 2}, {"ga10x", 374, 188, 1}, {"gb20x", 210, 154, 2}};
 inline constexpr double kAttentionQueryRows = 128; // a CTA's query rows (8 warps x 16)
 inline constexpr double kAttentionTileHeadDim = 256;
+// A call of at most this many tokens takes the grouped kernels instead (int8/plan.cpp
+// kGroupedPrefillMaxWidth: the keys split over the SMs), priced by the share.
+inline constexpr double kAttentionTiledMinWidth = 256;
 
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak

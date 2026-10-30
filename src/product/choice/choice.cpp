@@ -595,11 +595,22 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
     if (cost == nullptr) { return 0; }
     const double heads = std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim));
     if (heads < 1) { return 0; }
+    // A call of at most kAttentionTiledMinWidth tokens takes the grouped kernels (int8/plan.cpp: the
+    // keys split over the SMs), not this one: its share of the BF16 peak, as attention_seconds.
+    if (prompt <= kAttentionTiledMinWidth) { return 0; }
     if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
-    double clocks = 0;
+    bool share_transferred = false;
+    const double share     = attention_eta(gen, share_transferred) * peak(card, Route::Bf16);
+    double clocks = 0, seconds = 0;
     std::vector<double> free(static_cast<std::size_t>(card.sms));
     for (double prefix = 0; prefix < prompt; prefix += chunk) {
         const double width  = std::min<double>(chunk, prompt - prefix);
+        if (width <= kAttentionTiledMinWidth) {
+            seconds += model.full_layers * 2 * (model.full_attention_width / model.full_layers) *
+                       (width * prefix + width * width / 2) / share;
+            if (transferred != nullptr && share_transferred) { *transferred = true; }
+            continue;
+        }
         const double blocks = std::ceil(width / kAttentionQueryRows);
         // The kernel's issue order, longest first (the last row block of every head, then the one
         // before), each CTA to the SM that frees first.
@@ -615,7 +626,7 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
         }
         clocks += *std::max_element(free.begin(), free.end());
     }
-    return model.full_layers * clocks / card.clock_hz;
+    return model.full_layers * clocks / card.clock_hz + seconds;
 }
 
 namespace {
