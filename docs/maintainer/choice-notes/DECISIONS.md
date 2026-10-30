@@ -1943,6 +1943,18 @@ RTX 3060 52.4 / 53.5, 2080 Ti 45.0 / 35.8: -27 .. +26 %. Ada's shortfall is MMQ'
 quantization's bytes follow the route's codec and the linears' input widths, the next refinement.
 At 5-10 % of a prompt the term's error is 1-3 % of it.
 
+**In the estimate** (`linear_prefill` through `tiled_chunk_seconds`): a chunk on the int8 route
+whose linears have a tile row (a dense model's Q8_0, an MoE's banks with Q8_0 beside them) costs its
+linears by the tiles plus the small kernels; attention and the tail calls as before; every other
+route keeps its generation's share. On the choice test's Q8_0 points (Qwen3.5 9B on seven cards,
+Gemma 4 12B on three, the fixture's models now carrying their linears): rms 8.7 %, as the clock-count
+share of DECISIONS 67 gave (8.9 %). Their spread is not the linears': the RTX 5090 stays +13 .. +24 %
+(its clock under a sustained int8 load sits below the reference, the power limit; the waves are
+priced now), the RTX 4090's Gemma +10 .. +18 %. The MoE campaign's 16-GB quants (UD-IQ3_XXS on the
+RTX 4060 Ti and 5070 Ti, master f8d4399d) keep the shares: their linears beside the experts are
+Q6_K (`w4a8_ws_kernel` on Blackwell, 55-66 ms of a 230 ms prompt; the Q6_K tile and MMQ on Ada),
+a tile without a clock count yet.
+
 Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
