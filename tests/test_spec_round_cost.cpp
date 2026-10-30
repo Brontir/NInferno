@@ -349,9 +349,17 @@ int main() {
                                     "ad104:60sm");
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
         const auto est       = sp::round_cost_estimate(gemma, rtx4060ti);
-        expect(est.known && est.note.find("conservative") != std::string::npos &&
-                   est.cost.contains("mtp:3"),
-               "Gemma 4's verify costs more than its bytes on the lab card: raised, said: " + est.note);
+        expect(est.known && est.cost.contains("mtp:3"), "Gemma 4's rounds priced for another card");
+        // A lab card that measured its rounds dearer than their bytes raises the estimate and says
+        // so (the fresh 4070 Ti pair measures them at their bytes: a copy made 50 % dearer).
+        auto dearer = gemma;
+        for (auto& m : dearer.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 1.5; }
+        }
+        const auto raised = sp::round_cost_estimate(dearer, rtx4060ti);
+        expect(raised.known && raised.note.find("conservative") != std::string::npos &&
+                   raised.cost.at("mtp:3") > est.cost.at("mtp:3"),
+               "rounds dearer than their bytes on the lab card: raised, said: " + raised.note);
         const auto q9         = pair_of(kQ9, "ad104:60sm");
         const auto deep       = sp::round_cost_estimate(q9, rtx4060ti);
         expect(deep.known && !deep.cost.contains("dflash:11") && deep.cost.contains("dflash:7"),
