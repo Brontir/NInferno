@@ -79,6 +79,29 @@ sp::GpuKey card(const char* id, const char* chip, const char* arch, int cc, int 
     return g;
 }
 
+// A configuration's measured speedup over a profile's sections, weighted by the mix as `select`
+// weighs them (section_weight); 0 when a section is not measured.
+double mix_gain(const sp::Profile& profile, const sp::SpecConfig& config) {
+    double plain = 0, at = 0;
+    for (const char* family : {"math", "code", "prose", "thinking"}) {
+        double ps = 0, pt = 0, cs = 0, ct = 0;
+        for (const auto& m : profile.measurements) {
+            if (m.family != family) { continue; }
+            if (!m.config.enabled()) {
+                ps += m.seconds;
+                pt += double(m.tokens);
+            } else if (m.config == config) {
+                cs += m.seconds;
+                ct += double(m.tokens);
+            }
+        }
+        if (pt == 0 || ct == 0) { return 0; }
+        plain += sp::section_weight(family) * ps / pt;
+        at += sp::section_weight(family) * cs / ct;
+    }
+    return at > 0 ? plain / at : 0;
+}
+
 constexpr const char* kQ9 = "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae Q4_K_M";
 
 } // namespace
@@ -430,7 +453,8 @@ int main() {
         std::vector<const sp::MeasuredPair*> q9;
         std::map<std::string, std::vector<double>> each;
         for (const auto& p : sp::Registry::builtin().pairs()) {
-            if (std::string_view(p.target_repo) != kQ9) { continue; }
+            // The other generations' pairs (the RTX 2080 Ti's own left out).
+            if (std::string_view(p.target_repo) != kQ9 || p.generation == "sm75") { continue; }
             q9.push_back(&p);
             for (const auto& [label, r] : sp::profile_round_costs(p.tune)) { each[label].push_back(r); }
         }
@@ -465,10 +489,10 @@ int main() {
     // card that measured nothing is priced by the facts, no deeper than kPortableDepth (Codex P2
     // on #161); a lab board keeps the measurement.
     {
-        const auto& ada   = pair_of(kQ9, "ad104:60sm");
+        const auto& ada   = pair_of(kQ9, "ad102:128sm"); // its thinking pick drafts 11 deep
         auto twin         = ada; // the same measurement on a second Ada card: they agree
-        twin.tune.key.gpu = "ad102:128sm";
-        twin.lab_board    = 0x2684;
+        twin.tune.key.gpu = "ad104:60sm";
+        twin.lab_board    = 0x2782;
         const std::vector<const sp::MeasuredPair*> both = {&ada, &twin};
         const auto agreed    = sp::profile_for_target(both, "sm89");
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
@@ -678,10 +702,16 @@ int main() {
             // The RTX 5070 Ti's 9B rounds verifying 6-8 rows are cheaper than their facts
             // (-7..-12 %, DECISIONS 56): its plan's speedup stays low by up to 15 %, the pick right.
             const double within = h.key.compute_capability == 120 && h.key.sms == 70 ? 0.15 : 0.10;
+            // Where two configurations are within a few percent on the mix (dflash:7+head and
+            // mtp:4+head on the fresh tunes) the prediction may take either: what it costs is the
+            // measured speedup its pick gives up against the card's own best.
+            const double kept = mix_gain(measured->profile, predicted->profile.overall.config);
+            std::printf("  its pick measured x%.3f (%+.1f %% of the best)\n", kept,
+                        100 * (kept / m - 1));
             if (facts) {
-                expect(near(p, m, within) && predicted->profile.overall.config ==
-                                                 measured->profile.overall.config,
-                       std::string("speedup without its pair within the bound, the same pick: ") +
+                expect(near(p, m, within) && kept >= 0.95 * m,
+                       std::string("speedup without its pair within the bound, its pick within 5 % "
+                                   "of the measured best: ") +
                            h.gpu);
             }
         }
