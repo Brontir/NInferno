@@ -926,7 +926,7 @@ void prices_prefill_small_kernels() {
 // An MoE's whole prefill through the tiles (DECISIONS 66): the model's facts (speed_measured.json)
 // with its linears and recurrent state, against the prefill rows of master f8d4399d (fit_prefill.py's
 // method: 2K / 7K / 22K-token prompts, the median of three; the server's chunk). Printed, and the
-// estimate within a quarter of each (the router, the plan and the selection not yet priced).
+// estimate within 15 % of each (the router, the plan and the selection not yet priced).
 void prefills_moe_by_tiles(const json& fixture) {
     struct Point {
         const char* model;
@@ -954,6 +954,7 @@ void prefills_moe_by_tiles(const json& fixture) {
                           {1024, 2048, 320, true}, {2048, 512, 320, true}};
         } else {
             mf.layers = 30, mf.hidden = 2816;
+            mf.prompt_tail_calls = 2; // the census (RTX 4090): two decode steps' kernels after the chunk, 13 ms
             mf.linears = {{8192, 2816, 25, false}, {2816, 4096, 25, false}, {9216, 2816, 5, false},
                           {2816, 8192, 5, false},  {4224, 2816, 30, false}, {2816, 2112, 30, false},
                           {1408, 2816, 240, true}, {2816, 704, 240, true}};
@@ -970,7 +971,7 @@ void prefills_moe_by_tiles(const json& fixture) {
         std::cout << "MoE prefill by tiles, " << p.model << " UD-Q4_K_M " << p.card << " " << p.prompt << ": " << est
                   << " against " << p.measured << " (" << (est / p.measured - 1) * 100 << " %)\n";
     }
-    check(worst < 0.25, "an MoE's prefill through the tiles within a quarter of the rows");
+    check(worst < 0.15, "an MoE's prefill through the tiles within 15 % of the rows");
 }
 
 void contradictory_pins(const json& fixture) {
