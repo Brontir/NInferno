@@ -304,13 +304,18 @@ TransferWork state_image_transfer_work(const StateImageHostLayout& layout) {
     std::uint64_t operations =
         2ULL * layout.spec.linear.layers + 1ULL +
         (layout.spec.dflash_local ? 2ULL * layout.spec.dflash_local->layers : 0ULL);
+    // A checkpoint moves its rings' live window (copy_to_host with its frontier): window of the
+    // capacity rows, in up to two copies a plane where the window wraps.
     for (std::size_t group = 0; group < layout.rings.size(); ++group) {
         const KvRingHostLayout& ring = layout.rings[group];
+        const KvRingSpec& spec       = layout.spec.rings[group];
+        const bool windowed          = spec.window != 0 && spec.window < spec.capacity;
         for (const std::size_t bytes : {ring.k.bytes, ring.v.bytes, ring.k_scale.bytes,
                                         ring.v_scale.bytes}) {
-            payload = checked_add(payload, bytes, "StateImage transfer payload overflow");
+            payload = checked_add(payload, windowed ? bytes / spec.capacity * spec.window : bytes,
+                                  "StateImage transfer payload overflow");
         }
-        operations += (layout.spec.rings[group].fp8 ? 4ULL : 2ULL) * layout.spec.rings[group].layers;
+        operations += (spec.fp8 ? 4ULL : 2ULL) * spec.layers * (windowed ? 2ULL : 1ULL);
     }
     if (operations > std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("StateImage transfer operation count exceeds uint32");
