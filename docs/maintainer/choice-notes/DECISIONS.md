@@ -1740,6 +1740,14 @@ eight rows once its constants were gone.
 - UD-IQ3_XXS on the RTX 5070 Ti, 7-13 % slow at 2-6 rows: its banks are IQ3_XXS throughout (a
   codebook decode a weight), UD-Q3_K_S's a mix. A format's decode work against the SMs (70 on
   the 5070 Ti) is the candidate fact; not measured apart.
-- gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation
-  (Blackwell's block-scaled MMA, `kind::mxf8f6f4`, for the prefill; the GV100 3x below the
-  prefill estimate and 2.3x below the decode one). Censuses queued; the next decision.
+- gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation;
+  the next decision. What the censuses show (nsys, master kit build):
+  - Blackwell's prefill runs the experts on the block-scaled MMA (`moe_w4a8_kernel<W4a8Mxfp4Mx>`,
+    `kind::mxf8f6f4`, 71 % of the RTX 5070 Ti's prefill), the weights entering as stored: 1.29 x
+    (5090) and 1.57 x (5070 Ti) the MoE row's estimate. Ada converts them to int8
+    (`W4a8Mxfp4`) and stays on its row (4090 x1.03, 4060 Ti x1.14).
+  - The GV100's prefill runs the same int8 kernel (83 % of it) with no int8 MMA, on dp4a: 512
+    operations a SM-clock against the table's 1536, a third, and it measured 0.34 of the estimate.
+  - The GV100's decode reads its dense Q8 linears at 0.44 of the DRAM rate and the routed MXFP4
+    banks at 0.28: about 3-4 weights a SM-clock unpacked on the CUDA cores, not bytes (79.7 tok/s,
+    the estimate 185).
