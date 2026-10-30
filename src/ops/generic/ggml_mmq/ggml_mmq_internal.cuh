@@ -96,6 +96,7 @@ Launch select_launch(int rows, int columns, int k) {
     Launch best;
     int best_tiles = INT_MAX;
     for (const int J : kColumnTiles) {
+        if (J > 64) continue; // exp: 64-column tiles (A/B: occupancy)
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
