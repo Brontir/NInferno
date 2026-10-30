@@ -1,0 +1,838 @@
+#include "serve/plan_offline.h"
+
+#include "convert/acquire.h"
+#include "convert/cache.h"
+#include "convert/drafters.h"
+#include "convert/fetch.h"
+#include "convert/gguf.h"
+#include "convert/support.h"
+#include "core/quant_label.h"
+#include "product/plan/plan_cached.h"
+#include "product/plan/plan_choice.h"
+#include "product/plan/plan_facts.h"
+#include "product/plan/plan_quants.h"
+#include "serve/generation_service.h"
+#include "spec/fingerprint.h"
+#include "spec/pairs.h"
+#include "spec/gpu_identity.h"
+
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
+#include <future>
+#include <map>
+#include <memory>
+#include <regex>
+#include <set>
+#include <stdexcept>
+#include <tuple>
+
+namespace ninferno::serve {
+
+namespace {
+
+namespace fs = std::filesystem;
+using Json   = nlohmann::json;
+
+// What a model is before its weights: its facts at one quantization (the shape every one shares)
+// and, for a hub repository, every quantization's listing.
+struct ModelRead {
+    product::PlanSourceFacts facts;
+    std::vector<product::QuantListing> listing; // empty for a single file or artifact
+    std::string source, kind;                   // kind: hub | gguf | checkpoint | artifact
+    std::string repo;                           // a hub id
+    std::string revision;                       // its revision asked for ("": main)
+    bool gguf = false;
+    fs::path artifact; // a .ninferno file
+    std::string quant; // the quantization the facts were read at ("" for a single model)
+    // The weights the facts were read at (spec::weights_identity of their files' digests): the key
+    // of the lab's speculation pairs. "" when the listing gives no digest for one of them.
+    std::string weights;
+    std::string commit; // the commit the hub listing was read at ("" unknown)
+};
+
+std::string weights_of(const convert::RepoQuant& q) { return spec::weights_identity(q.digests()); }
+
+std::string ascii_lower(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return text;
+}
+
+// The local GGUF and cache reads shared with ninferno-ui (product/plan/plan_cached.h).
+using product::local_gguf_bytes;
+using product::local_tensor_table;
+using product::read_local_head;
+using product::tables_of_cached;
+
+// The GGUF quantizations of a hub repository already in this process's hub cache (the root the
+// fetch and a start take: convert::default_hub_cache, HF_HUB_CACHE).
+std::map<std::string, fs::path> cached_quants(const std::string& repo,
+                                              const std::string& revision) {
+    return product::cached_quants(convert::default_hub_cache(), convert::FetchOptions{}.hub, repo,
+                                  revision);
+}
+
+std::uint64_t safetensors_bytes(const fs::path& dir) {
+    std::uint64_t total = 0;
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (ascii_lower(entry.path().extension().string()) == ".safetensors" &&
+            entry.path().filename().string().find('/') == std::string::npos) {
+            total += entry.file_size();
+        }
+    }
+    return total;
+}
+
+convert::FetchOptions fetch_options() {
+    convert::FetchOptions fetch;
+    return fetch;
+}
+
+// The bytes of the vision projector the start fetches beside a GGUF model under --vision (the same
+// choice: convert::best_projector, every part of a split one); 0 when there is none.
+std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quants) {
+    std::vector<std::string> names;
+    for (const auto& q : quants) {
+        for (const auto& file : q.files) { names.push_back(file.path); }
+    }
+    const auto parts = convert::best_projector(names);
+    std::uint64_t bytes = 0;
+    for (const auto& q : quants) {
+        // A projector file is a listing entry of its own (a sidecar), its bytes its own.
+        if (q.files.size() == 1 &&
+            std::find(parts.begin(), parts.end(), q.files.front().path) != parts.end()) {
+            bytes += q.bytes;
+        }
+    }
+    return bytes;
+}
+
+// A hub GGUF quantization's own tensor table: its header read as read_hub reads one (nullopt: not
+// read, a split part). What a row of the table prices (product::plan_quants_read).
+std::optional<product::GgufTensorTable> hub_tensor_table(const std::string& spec,
+                                                         const std::string& quant) {
+    convert::FetchOptions fetch = fetch_options();
+    fetch.quant                 = quant;
+    for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
+        try {
+            const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
+            const auto file =
+                convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                         head.bytes.size(), head.size, head.path);
+            // A split part's head: read, no whole table (an empty one: the rows above are read).
+            return product::gguf_tensor_table(product::plan_facts_of_gguf(file, head.size))
+                .value_or(product::GgufTensorTable{});
+        } catch (const convert::GgufTruncated&) {
+            continue;
+        } catch (const std::exception&) { return std::nullopt; }
+    }
+    return std::nullopt;
+}
+
+// The hub spec at the commit the listing was read at (a moving branch may advance between the
+// listing and a header read: the tables are the listing's revision's).
+std::string pinned_spec(const ModelRead& model) {
+    return model.commit.empty() ? model.source : model.repo + "@" + model.commit;
+}
+
+// A hub repository: its listing and the facts at `quant` (the smallest GGUF when none is named).
+// With `vision`, a GGUF model's facts count the projector the start fetches beside it.
+ModelRead read_hub(const std::string& spec, const std::string& quant, bool vision,
+                   bool template_given = false) {
+    ModelRead out;
+    out.kind                          = "hub";
+    out.source                        = spec;
+    convert::FetchOptions fetch       = fetch_options();
+    // A model the engine does not run is not planned: the converter's own rules, from what the
+    // hub shows before a download (convert/support.h). A hub not asked or not answering leaves
+    // the listing below to fail or plan. The card read for it names the base models too.
+    std::vector<std::string> base_models;
+    {
+        auto ask  = fetch;
+        ask.quant = quant;
+        std::optional<convert::SupportFacts> facts;
+        try {
+            facts = convert::hub_support_facts(spec, ask);
+        } catch (const std::exception&) {}
+        if (facts) {
+            base_models = facts->base_models;
+            if (template_given) { facts->chat_template = true; } // --chat-template
+            if (const auto refusal = convert::serve_refusal(convert::model_support(*facts));
+                !refusal.empty()) {
+                throw std::runtime_error(spec + " cannot be run: " + refusal);
+            }
+        }
+    }
+    const auto listing                = convert::list_quants(spec, fetch);
+    const auto& quants                = listing.quants;
+    std::tie(out.repo, out.revision)  = convert::split_spec(spec, fetch);
+    out.commit                        = listing.commit;
+    std::optional<convert::RepoQuant> named; // the one --quant names (listed_quant_for)
+    const convert::RepoQuant* header  = nullptr;
+    const convert::RepoQuant* weights = nullptr;
+    const convert::RepoQuant* native  = nullptr;
+    for (const auto& q : quants) {
+        out.listing.push_back({.quant   = q.quant,
+                               .format  = q.format,
+                               .bytes   = q.bytes,
+                               .bits    = q.bits,
+                               .drafter = q.drafter,
+                               .weights = weights_of(q)});
+        if (q.drafter) { continue; }
+        if (q.format == "gguf") {
+            if (quant.empty() && (header == nullptr || q.bytes < header->bytes)) { header = &q; }
+        } else if (q.format == "safetensors") {
+            weights = &q;
+        } else if (q.format == "ninferno") {
+            native = &q;
+        }
+    }
+    // --quant: the GGUF model the fetch takes for it (convert::listed_quant_for: "Q4_K_M" takes
+    // UD-Q4_K_M where that is the one, "4bit" the largest 4-bit model), throwing as the fetch does.
+    if (!quant.empty() &&
+        std::any_of(quants.begin(), quants.end(),
+                    [](const auto& q) { return !q.drafter && q.format == "gguf"; })) {
+        named  = convert::listed_quant_for(quants, quant, out.repo);
+        header = &*named;
+    }
+    // No --quant: a revision with top-level safetensors weights is fetched as them, whatever GGUF
+    // files it also holds (convert/fetch.cpp choose_files), so the plan is theirs.
+    if (quant.empty() && weights != nullptr) {
+        header = nullptr;
+        native = nullptr; // and not as a published .ninferno beside them
+    }
+    if (header != nullptr) {
+        out.gguf    = true;
+        out.quant   = header->quant;
+        out.weights = weights_of(*header);
+        fetch.quant = header->quant;
+        for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20, 128ULL << 20}) {
+            try {
+                const auto head = convert::fetch_gguf_head(spec, fetch, bytes);
+                const auto file =
+                    convert::parse_gguf_head(reinterpret_cast<const std::byte*>(head.bytes.data()),
+                                             head.bytes.size(), head.size, head.path);
+                out.facts = product::plan_facts_of_gguf(file, header->bytes);
+                // A split model's head from the part that holds it (table and --quant alike).
+                product::complete_split_gguf_head(out.facts, spec, fetch, header->quant);
+                if (vision) { out.facts.model.vision_bytes = listed_projector_bytes(quants); }
+                // The quantization read prices its own tensors in the table.
+                for (auto& l : out.listing) {
+                    if (!l.drafter && l.format == "gguf" && l.quant == header->quant) {
+                        l.table = product::gguf_tensor_table(out.facts);
+                    }
+                }
+                return out;
+            } catch (const convert::GgufTruncated&) { continue; }
+        }
+        throw std::runtime_error(spec + ": the GGUF metadata of " + header->quant +
+                                 " runs past 128 MiB");
+    }
+    if (!quant.empty()) {
+        throw std::runtime_error(spec + ": no GGUF quantization " + quant + " in the listing");
+    }
+    if (native != nullptr) {
+        // The engine's own artifact: its manifest names the base model's config.
+        const Json manifest    = convert::fetch_repo_json(spec, fetch, "artifact-manifest.json");
+        const std::string base = manifest.value("source", Json::object())
+                                     .value("base", Json::object())
+                                     .value("repo_id", out.repo);
+        out.facts = product::plan_facts_of_config(convert::fetch_config(base, fetch), native->bytes,
+                                                  runtime::WeightBasis::FileSize);
+        out.quant   = native->quant;
+        out.weights = weights_of(*native);
+        out.listing.clear();
+        return out;
+    }
+    if (weights != nullptr) {
+        const Json config = convert::fetch_config(spec, fetch);
+        out.facts         = product::plan_facts_of_config(config, weights->bytes,
+                                                          runtime::WeightBasis::FileSize);
+        out.facts.model.mtp_bytes = weights->mtp_bytes;
+        out.facts.shape.base_models = base_models;
+        out.weights               = weights_of(*weights);
+        // MTP layers are what the weights hold, declared or not: a part of their own
+        // (model_mtp.safetensors), else what the weight index lists, as the converter finds them
+        // (convert::sharded_checkpoint_mtp) whatever the number of weight files; no index to
+        // read: the declaration.
+        if (weights->mtp_bytes > 0) {
+            out.facts.shape.builtin_mtp = true;
+        } else {
+            Json index;
+            try {
+                index = convert::fetch_repo_json(spec, fetch, "model.safetensors.index.json");
+            } catch (const std::exception&) {}
+            if (index.is_object()) {
+                out.facts.shape.builtin_mtp = convert::sharded_checkpoint_mtp(config, index);
+            }
+        }
+        out.listing.clear();
+        return out;
+    }
+    throw std::runtime_error(spec + " holds neither GGUF models nor safetensors weights");
+}
+
+ModelRead read_model(const ServeOptions& options) {
+    const std::string& name = options.model_source;
+    std::error_code error;
+    ModelRead out;
+    out.source = name;
+    if (fs::exists(name, error)) {
+        const fs::path path(name);
+        // A checkpoint or GGUF file the engine does not run is not planned (convert/support.h).
+        if (convert::is_convertible(name)) {
+            auto facts = convert::local_support_facts(path);
+            if (!options.chat_template_path.empty()) { facts.chat_template = true; } // --chat-template
+            if (const auto refusal = convert::serve_refusal(convert::model_support(facts));
+                !refusal.empty()) {
+                throw std::runtime_error(name + " cannot be run: " + refusal);
+            }
+        }
+        if (fs::is_directory(path)) {
+            if (!fs::exists(path / "config.json")) {
+                throw std::runtime_error(name + " has no config.json to plan from");
+            }
+            std::ifstream in(path / "config.json");
+            const Json config = Json::parse(in);
+            out.kind          = "checkpoint";
+            out.facts         = product::plan_facts_of_config(config, safetensors_bytes(path),
+                                                              runtime::WeightBasis::FileSize);
+            // What the converter finds (convert::checkpoint_mtp): the weights' own MTP part, the
+            // index, or the one weight file's header; else the declaration.
+            out.facts.shape.builtin_mtp = convert::checkpoint_mtp(path, config);
+            out.facts.shape.base_models = convert::readme_base_models(path / "README.md");
+            return out;
+        }
+        if (ascii_lower(path.extension().string()) == ".gguf") {
+            out.kind  = "gguf";
+            out.gguf  = true;
+            out.facts = product::plan_facts_of_gguf(read_local_head(path), local_gguf_bytes(path));
+            return out;
+        }
+        out.kind     = "artifact";
+        out.artifact = path;
+        out.facts    = product::plan_facts_of_artifact(path);
+        return out;
+    }
+    if (!convert::is_repository_spec(name)) {
+        throw std::runtime_error("'" + name + "' is neither a file or directory nor a hub id");
+    }
+    return read_hub(name, options.quant, options.enable_vision,
+                    !options.chat_template_path.empty());
+}
+
+// The quantization label a plan reads a bit class from (spec::label_bits): a hub listing's, or a
+// local GGUF's file name ("Qwen3.5-9B-UD-IQ2_M.gguf"), which names it the same way.
+std::string quant_label_of(const ModelRead& model) {
+    if (!model.quant.empty() || model.kind != "gguf") { return model.quant; }
+    return fs::path(model.source).stem().string();
+}
+
+// The axes the user pinned with flags (the configuration choice picks the others).
+product::ChoicePins pins_of(const ServeOptions& options) {
+    return {.kv          = options.kv_cache.has_value(),
+            .activations = options.activations_given,
+            .state       = options.recurrent_state.has_value(),
+            .ring        = options.sliding_kv_given,
+            .chunk       = options.prefill_chunk_explicit};
+}
+
+struct Planning {
+    product::DryRunInputs inputs;
+    std::optional<product::SpeculationSubject> subject;
+    // A hub model's quantizations' subjects (inputs.subject_of), each made when first asked.
+    std::shared_ptr<product::PlannedSubjects> subjects;
+    // A Qwen GGUF table's other quantizations' output heads (convert::gguf_quants_head_bytes),
+    // read beside the MTP reads; invalid when not asked.
+    std::shared_future<std::map<std::string, std::uint64_t>> heads;
+};
+
+// The inputs a server's options give for a model read without its weights.
+Planning planning_of(const ServeOptions& options, const ModelRead& model,
+                     const runtime::PlanDeviceFacts& device, const spec::GpuKey& gpu) {
+    Planning out;
+    out.inputs.device  = device;
+    out.inputs.gpu     = gpu;
+    out.inputs.options = engine_options_of(options);
+    out.inputs.pins    = pins_of(options);
+    out.inputs.ask     = product::SpeculationAsk{.automatic   = options.speculation_from_profile,
+                                                 .given       = options.speculative,
+                                                 .thinking    = options.enable_thinking.value_or(true),
+                                                 .per_request = options.per_request_speculation,
+                                                 .per_request_from_profile =
+                                                     options.speculation_from_profile &&
+                                                     !options.per_request_given,
+                                                 .depth_from_profile = options.draft_tokens_from_model};
+    if (!model.artifact.empty()) {
+        out.subject = product::speculation_subject(model.artifact, gpu, options.spec_profile);
+        // A drafter file given (--drafter) is uploaded beside the artifact.
+        if (!options.speculative.drafter.empty()) {
+            const product::AttachedDrafterMemory drafter = product::supplied_drafter_memory(
+                options.speculative.drafter, model.facts.model.hidden);
+            out.inputs.drafter_bytes = drafter.bytes;
+            out.inputs.drafter_state = drafter.state;
+        }
+        return out;
+    }
+    // A quantization converted here with its drafters is started from that conversion, the
+    // --with-drafters flag or not (convert::cached_conversion_with_drafters).
+    product::PlannedSubjects::ConversionOf conversion_of;
+    if (model.gguf) {
+        conversion_of = [repo = model.repo, revision = model.revision, recipe = options.recipe,
+                         vision = options.enable_vision](const std::string& quant) {
+            return convert::cached_conversion_with_drafters(convert::default_hub_cache(), repo,
+                                                            revision, quant, recipe, vision);
+        };
+    }
+    // Each GGUF quantization's own MTP layers: the facts are the one file's read (model.quant).
+    // Only for the table (no --quant): a named quantization plans its own file alone.
+    product::PlannedSubjects::MtpOf mtp_of;
+    if (model.gguf && !model.repo.empty() && options.quant.empty()) {
+        // Every other GGUF quantization's, read together (a table plans them all).
+        std::vector<std::string> others;
+        for (const auto& q : model.listing) {
+            if (!q.drafter && q.format == "gguf" && q.quant != model.quant) { others.push_back(q.quant); }
+        }
+        // A Qwen target's default proposal head is priced by each quantization's own head: their
+        // 1 MiB header windows, read at the same time (and kept per commit), only where the
+        // converter would add one.
+        // Only where one is planned (Codex on #170: not for every Qwen table).
+        if (product::default_proposal_possible(
+                product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
+                                       .commit = model.commit},
+                out.inputs.ask)) {
+            // The parsed one's too where its header did not hold the head (a split model's part
+            // 0 lists only its own tensors).
+            std::vector<std::string> heads_of = others;
+            if (model.facts.model.head_bytes == 0) { heads_of.push_back(model.quant); }
+            out.heads = std::async(std::launch::async, [spec = model.commit.empty()
+                                                                   ? model.repo
+                                                                   : model.repo + "@" + model.commit,
+                                                        others = std::move(heads_of),
+                                                        facts = model.facts.model,
+                                                        tied = model.facts.shape.tied_embeddings] {
+                            return convert::gguf_quants_head_bytes(spec, fetch_options(), others,
+                                                                   facts.gguf_data_offset,
+                                                                   facts.hidden, facts.vocab, tied);
+                        }).share();
+        }
+        auto read = std::make_shared<const std::map<std::string, std::optional<bool>>>(
+            convert::gguf_quants_carry_mtp(
+                model.commit.empty() ? model.repo : model.repo + "@" + model.commit, fetch_options(),
+                others));
+        mtp_of = [read](const std::string& quant) -> std::optional<bool> {
+            const auto it = read->find(quant);
+            return it == read->end() ? std::nullopt : it->second;
+        };
+    }
+    out.subjects = std::make_shared<product::PlannedSubjects>(
+        product::PlannedTarget{.repo = model.repo, .facts = model.facts, .gguf = model.gguf,
+                               .commit = model.commit},
+        gpu, std::move(conversion_of), options.spec_profile, std::move(mtp_of));
+    out.subject = out.subjects->of(quant_label_of(model), model.weights);
+    // The separate drafters' weights and a DFlash drafter's state, uploaded beside the target
+    // where the speculation served drafts with one: a drafter file given (--drafter), which
+    // drafts in place of the model's own, else the model's.
+    const convert::FetchOptions fetch = fetch_options();
+    const product::AttachedDrafterMemory drafter =
+        options.speculative.drafter.empty()
+            ? product::attached_drafter_memory(*out.subject, model.listing,
+                                               model.facts.model.model_type,
+                                               model.facts.model.hidden, &fetch)
+            : product::supplied_drafter_memory(options.speculative.drafter,
+                                               model.facts.model.hidden);
+    out.inputs.drafter_bytes = drafter.bytes;
+    out.inputs.drafter_state = drafter.state;
+    out.inputs.proposal_planned       = drafter.proposal_planned;
+    out.inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
+    // A repository's quantizations each have their weights, and the lab's pairs are of weights:
+    // every row of the table resolves its own (the subject above is the one read).
+    if (model.listing.size() > 1) { out.inputs.subject_of = out.subjects->lookup(); }
+    return out;
+}
+
+} // namespace
+
+OfflinePlan plan_without_load(const ServeOptions& options) {
+    runtime::PlanDeviceFacts device;
+    spec::GpuKey gpu;
+    if (!options.plan_device.empty()) {
+        std::string error;
+        const auto board = product::plan_device_of_board(options.plan_device, &error);
+        if (!board) { throw std::runtime_error("--plan-device: " + error); }
+        device = *board;
+        gpu    = product::gpu_key_of(device);
+    } else {
+        try {
+            device = product::plan_device_of_cuda(
+                options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
+        } catch (const std::exception& e) {
+            throw std::runtime_error(std::string("no GPU to plan for (") + e.what() +
+                                     "): name a board with --plan-device");
+        }
+        gpu = spec::gpu_identity(options.device).key;
+    }
+    const ModelRead model = read_model(options);
+    // A quantization is chosen on an idle card of this GPU (as the fetch without --quant does:
+    // the same card type, the same flags, the same file); the free memory now is reported beside.
+    const bool table = model.kind == "hub" && model.gguf && options.quant.empty();
+    const std::optional<std::uint64_t> free_now = device.free_bytes;
+    if (table) { device.free_bytes.reset(); }
+    Planning planning       = planning_of(options, model, device, gpu);
+    planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+    OfflinePlan out;
+    std::optional<product::QuantPlan> quants;
+    product::PlannedSpeculation planned;
+    product::PlanSourceFacts facts = model.facts;
+    bool planned_at_row = false; // a table row's plan: at the row's choice already
+    // A GGUF repository without --quant: every quantization and the largest that fits.
+    if (model.kind == "hub" && model.gguf && options.quant.empty()) {
+        // Each quantization's own output head where a default proposal head is planned: read
+        // from its header (the parsed one's is the header row's).
+        std::vector<product::QuantListing> listing = model.listing;
+        if (planning.inputs.proposal_planned) {
+            for (auto& q : listing) {
+                if (q.quant == model.quant) { q.head_bytes = model.facts.model.head_bytes; }
+            }
+            // Every other GGUF row's head, read beside the MTP reads (planning_of).
+            const std::map<std::string, std::uint64_t> heads =
+                planning.heads.valid() ? planning.heads.get()
+                                       : std::map<std::string, std::uint64_t>{};
+            for (auto& q : listing) {
+                if (const auto it = heads.find(q.quant); it != heads.end() && it->second != 0) {
+                    q.head_bytes = it->second;
+                }
+            }
+        }
+        // As the start prices them (largest_fitting_hub_quant): the quantizations here by their files.
+        tables_of_cached(listing, cached_quants(model.repo, model.revision));
+        quants = product::plan_quants_read(model.facts, listing, planning.inputs,
+                                           [&](const std::string& q) {
+                                               return hub_tensor_table(pinned_spec(model), q);
+                                           });
+        const product::QuantRow* chosen = quants->chosen ? &quants->rows[*quants->chosen] : nullptr;
+        if (chosen == nullptr) {
+            // Nothing fits: the smallest supported one's plan says why.
+            for (const auto& row : quants->rows) {
+                if (row.candidate.supported &&
+                    (chosen == nullptr || row.candidate.bytes < chosen->candidate.bytes)) {
+                    chosen = &row;
+                }
+            }
+        }
+        if (chosen != nullptr) {
+            planned        = chosen->planned;
+            planned_at_row = true;
+            facts   = product::row_facts(model.facts, *chosen);
+        } else {
+            planned = product::plan_model(model.facts, planning.inputs);
+        }
+    } else {
+        planned = product::plan_model(model.facts, planning.inputs);
+    }
+    // A pinned --activations mode the model's family does not run: the start refuses it, so the
+    // plan does (product::activation_refusal), whatever the memory would hold.
+    product::refuse_unrun_pins(facts, planning.inputs, planned);
+    // The configuration choice at the chosen weights: what the start would pick for the axes left
+    // automatic, and what every other value would change.
+    std::string label = model.quant;
+    if (quants && quants->chosen) { label = quants->rows[*quants->chosen].listing.quant; }
+    const product::DryRunInputs at_chosen =
+        quants && quants->chosen
+            ? product::inputs_for(planning.inputs, quants->rows[*quants->chosen].listing)
+            : planning.inputs;
+    const auto served = product::choose_at_weights(facts, at_chosen, pins_of(options), label);
+    // A start serves the choice's drafter (product::StartAxes::drafter) and storages: the plan
+    // shown is of them (a table's row is planned there already: product::plan_quants).
+    if (served && !planned_at_row) {
+        planned = product::plan_at_choice(facts, at_chosen, *served, pins_of(options), planned);
+    }
+    const std::string source =
+        model.source + (model.quant.empty() || quants ? std::string() : " " + model.quant);
+    out.json = product::dry_plan_document(facts, source, model.kind, planning.inputs, planned,
+                                          quants ? &*quants : nullptr);
+    out.text = product::render_dry_plan_text(facts, source, planning.inputs, planned,
+                                             quants ? &*quants : nullptr);
+    out.fits = planned.plan.fits;
+    if (!out.fits) { out.reason = planned.plan.reason; }
+    if (served) {
+        out.json["choice"] = product::choice_json(*served);
+        out.text += product::choice_line(*served) + "\n";
+    }
+    // The free memory now (another process may hold some): would the pick start right now?
+    if (table && free_now && quants && quants->pick) {
+        const product::QuantRow& row             = quants->rows[quants->pick->index];
+        // Under the row's ceiling when a start passes one (several streams, automatic context).
+        const product::DryRunInputs listed       = product::inputs_for(planning.inputs, row.listing);
+        const product::DryRunInputs at_row =
+            row.launch_context != 0 && listed.options.max_context_automatic
+                ? product::under_context_cap(listed, row.launch_context)
+                : listed;
+        const product::PlanSourceFacts at_weights =
+            product::row_facts(model.facts, row);
+        // The choice is made at the chosen row: there, its storages and the drafter it serves.
+        const bool at_choice = served && quants->chosen && *quants->chosen == quants->pick->index;
+        const product::PlannedSpeculation at_now = product::plan_now(
+            at_weights, at_row, at_choice ? &*served : nullptr, pins_of(options), *free_now);
+        out.json["device"]["free_now_bytes"] = *free_now;
+        out.json["device"]["fits_now"]       = at_now.plan.fits;
+        out.json["now"]                      = product::plan_now_json(at_now, *free_now);
+        if (!at_now.plan.fits) {
+            out.text += "now    | free now " +
+                        std::to_string(*free_now / (std::uint64_t{1} << 20)) +
+                        " MiB: " + row.listing.quant + " would not start right now (" +
+                        at_now.plan.reason + ")\n";
+        }
+    }
+    return out;
+}
+
+namespace {
+
+// Whether a start at these weights serves a speculation drafting with a separate drafter of the
+// subject: the choice's drafter at these weights (product::choose_at_weights, the drafter
+// StartAxes serves), else the planned one.
+bool attaches_at(const product::PlanSourceFacts& facts, const product::DryRunInputs& at,
+                 const ServeOptions& options, const std::string& label,
+                 const product::PlannedSpeculation& planned) {
+    // A drafter file given (--drafter) drafts in place of the model's own.
+    if (at.subject == nullptr || !options.speculative.drafter.empty()) { return false; }
+    const auto served = product::choose_at_weights(facts, at, pins_of(options), label);
+    const product::PlannedSpeculation chosen =
+        served ? product::plan_at_choice(facts, at, *served, pins_of(options), planned) : planned;
+    return product::uses_attached_drafter(*at.subject, chosen.speculation);
+}
+
+// What the fetch is told and the launch pins (HubQuantChoice), with the rule's log lines.
+HubQuantChoice choice_of(const product::QuantRow& row, const product::QuantPlan& plan,
+                         const ServeOptions& options, const Planning& planning,
+                         const product::PlanSourceFacts& facts,
+                         const std::function<void(const std::string&)>& log) {
+    HubQuantChoice out{.quant = row.listing.quant};
+    const product::DryRunInputs at = product::inputs_for(planning.inputs, row.listing);
+    out.drafters = attaches_at(product::row_facts(facts, row), at,
+                               options, row.listing.quant, row.planned);
+    // An automatic context with several streams: the launch keeps the own context it was chosen
+    // for (as ninferno-ui's does), never a pool the streams silently share.
+    if (options.max_context == 0 && options.max_concurrency > 1 && row.launch_context != 0) {
+        out.launch_context = row.launch_context;
+        if (log) {
+            log("quant | --max-context-cap " + std::to_string(row.launch_context) +
+                ": each of the " + std::to_string(options.max_concurrency) + " streams keeps " +
+                std::to_string(row.launch_context) +
+                " tokens of its own (an automatic context would let them share one pool; a busy "
+                "card still steps down)");
+        }
+    }
+    if (log && plan.pick && plan.pick->tier == runtime::QuantPickTier::Desktop &&
+        &row == &plan.rows[plan.pick->index]) {
+        log("quant | WARNING: " + row.listing.quant +
+            " fits only by giving up the memory kept for the desktop: the screen may stutter");
+    }
+    return out;
+}
+
+} // namespace
+
+std::optional<HubQuantChoice>
+largest_fitting_hub_quant(const ServeOptions& options,
+                          const std::function<void(const std::string&)>& log) {
+    if (!options.quant.empty() || !convert::is_repository_spec(options.model_source)) {
+        return std::nullopt;
+    }
+    const std::string repo = convert::split_spec(options.model_source, fetch_options()).first;
+    const std::map<std::string, fs::path> cached =
+        cached_quants(repo, convert::split_spec(options.model_source, fetch_options()).second);
+    runtime::PlanDeviceFacts device;
+    std::optional<spec::GpuKey> gpu;
+    std::string no_gpu;
+    try {
+        // An idle card of this GPU's class: the same card type gets the same quantization.
+        device = product::plan_device_of_cuda(options.device, false);
+        gpu    = spec::gpu_identity(options.device).key;
+    } catch (const std::exception& e) { no_gpu = e.what(); }
+
+    ModelRead model;
+    try {
+        model = read_hub(options.model_source, "", options.enable_vision,
+                         !options.chat_template_path.empty());
+    } catch (const std::exception& e) {
+        // The hub cannot be reached: a quantization already here that fits is served (each
+        // cached file planned from its own header); otherwise the choice is the user's, never a
+        // default that ignores the card.
+        if (!cached.empty() && gpu) {
+            ModelRead local;
+            local.kind     = "hub";
+            local.repo     = repo;
+            local.revision = convert::split_spec(options.model_source, fetch_options()).second;
+            local.gguf  = true;
+            bool shaped = false;
+            for (const auto& [label, path] : cached) {
+                std::error_code error;
+                std::uint64_t bytes = 0;
+                try {
+                    if (ascii_lower(path.extension().string()) == ".gguf") {
+                        bytes = local_gguf_bytes(path);
+                        if (!shaped) {
+                            local.facts = product::plan_facts_of_gguf(read_local_head(path), bytes);
+                            shaped      = local.facts.model.known();
+                        }
+                    } else {
+                        bytes = fs::file_size(path, error);
+                        if (!shaped) {
+                            local.facts = product::plan_facts_of_artifact(path);
+                            shaped      = local.facts.model.known();
+                        }
+                    }
+                } catch (const std::exception&) { continue; }
+                local.listing.push_back({.quant  = label,
+                                         .format = "gguf",
+                                         .bytes  = bytes,
+                                         .bits   = quant_label_bits(label).value_or(0)});
+            }
+            if (shaped) {
+                tables_of_cached(local.listing, cached);
+                Planning planning       = planning_of(options, local, device, *gpu);
+                planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+                const product::QuantPlan plan =
+                    product::plan_quants(local.facts, local.listing, planning.inputs);
+                if (plan.pick) {
+                    const product::QuantRow& row = plan.rows[plan.pick->index];
+                    if (log) {
+                        log("quant | can't reach the hub to choose a quant (" +
+                            std::string(e.what()) + "); the cached " + row.listing.quant +
+                            " fits: " + plan.rule + " (--quant LABEL takes another)");
+                    }
+                    return choice_of(row, plan, options, planning, local.facts, log);
+                }
+                throw std::runtime_error(repo + ": can't reach the hub to choose a quant (" +
+                                         e.what() + "), and no cached one fits: " + plan.rule +
+                                         "; pass --quant LABEL");
+            }
+        }
+        if (log) { log(std::string("quant | the largest that fits is not planned: ") + e.what()); }
+        return std::nullopt;
+    }
+    if (!model.gguf) { return std::nullopt; }
+    // Safetensors weights beside the GGUF files: the fetch takes those (convert/fetch.cpp).
+    for (const auto& q : model.listing) {
+        if (q.format == "safetensors") { return std::nullopt; }
+    }
+    if (!gpu) {
+        if (log) { log("quant | no GPU to plan for: " + no_gpu); }
+        return std::nullopt;
+    }
+    // The shape could not be read: no plan before the download (the fetch's default).
+    if (!model.facts.model.known()) {
+        if (log) {
+            log("quant | can't plan before download: the model's shape is not in its header "
+                "(the fetch's default; --quant LABEL takes another)");
+        }
+        return std::nullopt;
+    }
+    Planning planning       = planning_of(options, model, device, *gpu);
+    planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+    std::vector<product::QuantListing> listing = model.listing;
+    tables_of_cached(listing, cached);
+    const product::QuantPlan plan              = product::plan_quants_read(
+        model.facts, listing, planning.inputs,
+        [&](const std::string& q) { return hub_tensor_table(pinned_spec(model), q); });
+    if (!plan.pick) {
+        throw std::runtime_error(model.repo + ": " + plan.rule +
+                                 " (nothing was downloaded; --quant LABEL takes one anyway, "
+                                 "ninferno-serve " +
+                                 model.repo + " --plan --no-load lists every quantization)");
+    }
+    const product::QuantRow& row = plan.rows[plan.pick->index];
+    // A quantization already here that runs at the ask is kept: other flags never download
+    // another file silently.
+    const product::QuantRow* kept = nullptr;
+    for (const product::QuantRow& r : plan.rows) {
+        if (!cached.contains(r.listing.quant) || !r.candidate.supported) { continue; }
+        if (r.fit.state != runtime::QuantFitState::Own &&
+            r.fit.state != runtime::QuantFitState::Shared) {
+            continue;
+        }
+        if (kept == nullptr || runtime::quant_ranks_above(r.candidate, kept->candidate)) {
+            kept = &r;
+        }
+    }
+    if (kept != nullptr && kept != &row) {
+        if (log) {
+            if (runtime::quant_ranks_above(kept->candidate, row.candidate)) {
+                // Larger than the pick (the pick is in an earlier tier: each stream its own
+                // context, where the cached one only fits as a shared pool, or the reverse).
+                log("quant | using the cached " + kept->listing.quant + " (" +
+                    std::string(runtime::quant_fit_state_name(kept->fit.state)) +
+                    " here); the rule's pick at this ask is " + row.listing.quant + " (--quant " +
+                    row.listing.quant + " downloads it)");
+            } else {
+                log("quant | using the cached " + kept->listing.quant + "; " + row.listing.quant +
+                    " would be larger (--quant " + row.listing.quant + " downloads it)");
+            }
+        }
+        return choice_of(*kept, plan, options, planning, model.facts, log);
+    }
+    if (log) { log("quant | " + plan.rule + " (an estimate; --quant LABEL takes another)"); }
+    return choice_of(row, plan, options, planning, model.facts, log);
+}
+
+bool hub_start_attaches_drafters(const ServeOptions& options,
+                                 const std::function<void(const std::string&)>& log) {
+    if (options.with_drafters) { return true; }
+    if (options.quant.empty() || !convert::is_repository_spec(options.model_source)) {
+        return false;
+    }
+    try {
+        const runtime::PlanDeviceFacts device = product::plan_device_of_cuda(options.device, false);
+        const spec::GpuKey gpu                = spec::gpu_identity(options.device).key;
+        const ModelRead model                 = read_model(options);
+        if (!model.gguf || !model.facts.model.known()) { return false; }
+        Planning planning       = planning_of(options, model, device, gpu);
+        planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+        const product::PlannedSpeculation planned = product::plan_model(model.facts, planning.inputs);
+        return attaches_at(model.facts, planning.inputs, options, model.quant, planned);
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("drafters | not planned before the download: ") + e.what()); }
+        return false;
+    }
+}
+
+std::optional<product::StartAxes>
+choose_served_axes(const ServeOptions& options, const std::function<void(const std::string&)>& log) {
+    const product::ChoicePins pins = pins_of(options);
+    // Every axis pinned and the drafter given (--spec): nothing left to choose.
+    if (pins.kv && pins.activations && pins.state && pins.ring && pins.chunk &&
+        !options.speculation_from_profile) {
+        return std::nullopt;
+    }
+    runtime::PlanDeviceFacts device;
+    spec::GpuKey gpu;
+    try {
+        device = product::plan_device_of_cuda(
+            options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
+        gpu = spec::gpu_identity(options.device).key;
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("not planned (no GPU facts: ") + e.what() + ")"); }
+        return std::nullopt;
+    }
+    ServeOptions at_artifact = options;
+    at_artifact.model_source = options.artifact_path;
+    std::optional<product::ServedChoice> served;
+    try {
+        const ModelRead model   = read_model(at_artifact);
+        Planning planning       = planning_of(at_artifact, model, device, gpu);
+        planning.inputs.subject = planning.subject ? &*planning.subject : nullptr;
+        served                  = product::choose_at_weights(model.facts, planning.inputs, pins);
+    } catch (const std::exception& e) {
+        if (log) { log(std::string("not planned: ") + e.what()); }
+        return std::nullopt;
+    }
+    if (!served) { return std::nullopt; }
+    if (log) { log(product::choice_line(*served).substr(9)); }
+    if (!served->choice.chosen) { return std::nullopt; }
+    return product::start_axes(*served, pins);
+}
+
+} // namespace ninferno::serve

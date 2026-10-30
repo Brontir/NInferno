@@ -1,11 +1,8 @@
 target_sources(ninferno_model_runtime PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/measurement.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/storage/draft_context.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/state/decoder_state.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/state/state_image.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/pressure_planner.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/startup.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/program/planning/graph_profiles.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/program_impl.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/numeric_status.cpp"
@@ -23,7 +20,6 @@ target_sources(ninferno_model_runtime PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/program/planning/request_plan.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/speculative/mtp.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/speculative/target_verification.cpp"
-  "${CMAKE_CURRENT_LIST_DIR}/program/round_buffers.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/prefix_identity.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/program/vision_control.cpp"
 )

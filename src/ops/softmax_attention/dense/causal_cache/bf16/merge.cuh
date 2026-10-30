@@ -36,7 +36,7 @@ bf16_kv_merge_statistics(const float* partial_m, const float* partial_l, int q_h
     return total;
 }
 
-template <typename Geometry, class Schedule, bool MultiBatch, bool Masked>
+template <typename Geometry, class Schedule, bool MultiBatch, bool Masked, bool Aligned = false>
 __launch_bounds__(Schedule::kThreads) __global__
     void bf16_kv_merge_kernel(const float* partial_acc, const float* partial_m,
                               const float* partial_l, const std::int32_t* positions,
@@ -88,8 +88,11 @@ __launch_bounds__(Schedule::kThreads) __global__
         partial_l += partial_stat_row;
     }
 
-    const int window             = positions[live_columns - 1] + 1;
-    const int active_split_count = partition.live(window).splits;
+    // Aligned: each column merges the splits its own position runs (Bf16KvPartition::aligned_row),
+    // as a decode of that column alone does. Otherwise the call's window sets the partition.
+    const int window = Aligned ? positions[token] + 1 : positions[live_columns - 1] + 1;
+    const int active_split_count =
+        Aligned ? Bf16KvPartition::aligned_live(window).splits : partition.live(window).splits;
 
     __shared__ float weights[Schedule::kThreads], warp_sums[Schedule::kWarps], scalars[2];
     const float head_l = bf16_kv_merge_statistics<Geometry, Schedule>(

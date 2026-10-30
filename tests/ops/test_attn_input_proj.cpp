@@ -17,6 +17,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 using namespace ninferno;
@@ -627,8 +628,28 @@ int run_q8_dflash2() {
     return failures;
 }
 
-int run_weight_inputs() {
+// The fused drafter Q/K/V geometry is the two compiled widths only: a 4096-wide drafter
+// (Qwen3.5-9B's DFlash) is the generic bank's, not a refusal.
+int run_fused_qkv_geometry() {
     int failures = 0;
+    for (const auto& [hidden, fused] :
+         {std::pair{2048, true}, std::pair{5120, true}, std::pair{4096, false}}) {
+        DevicePackedWeight parent(
+            quantized_weight::make_patterned_weight(QType::Q8_G32_FP16, 6144, hidden, 317U));
+        const auto physical = physical_parent(parent.view());
+        const ops::WeightInput q{rows(physical, 0, 4096)}, k{rows(physical, 4096, 1024)},
+            v{rows(physical, 5120, 1024)};
+        if (ops::fused_attn_input_proj_geometry(q, k, v) != fused) {
+            std::cerr << "fused Q/K/V geometry of hidden " << hidden << ": expected " << fused
+                      << '\n';
+            ++failures;
+        }
+    }
+    return failures;
+}
+
+int run_weight_inputs() {
+    int failures = run_fused_qkv_geometry();
     {
         DevicePackedWeight qk(
             quantized_weight::make_patterned_weight(QType::Q4_G64_FP16, 7168, 5120, 103U));

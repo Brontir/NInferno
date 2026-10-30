@@ -29,9 +29,9 @@ namespace detail {
 
 DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDrafter* drafter,
                                DeviceContext& device, std::int32_t public_tokens,
-                               ActivationMode activations)
+                               ActivationMode activations, EnginePurpose purpose)
     : model_(model), c_(model.config()), pass_(model, device), drafter_(drafter),
-      invariant_(activations == ActivationMode::Exact),
+      invariant_(activations == ActivationMode::Exact), purpose_(purpose),
       traits_{.hidden             = c_.hidden_size,
               .output_rows        = c_.vocab_size,
               .public_tokens      = public_tokens,
@@ -42,7 +42,8 @@ DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDraf
                   drafter && drafter->config().max_positions != 0
                       ? std::min<std::uint64_t>(c_.max_positions, drafter->config().max_positions)
                       : static_cast<std::uint64_t>(c_.max_positions),
-              .dflash_block_width = drafter != nullptr} {
+              .dflash_block_width = drafter != nullptr,
+              .copy_rounds = qwen3_5::detail::family_copy_rounds(StateFamily::DenseDecoder)} {
     if (public_tokens <= 0 || public_tokens > c_.vocab_size) {
         throw std::invalid_argument(
             "dense decoder public token domain exceeds the embedding rows");
@@ -77,16 +78,12 @@ DenseExecution::DenseExecution(const Model& model, const speculation::DFlashDraf
 }
 
 models::LoadOptions DenseExecution::load_options() const {
-    return {.speculative = drafter_ ? SpeculativeBackend::DFlash : SpeculativeBackend::None,
+    return {.purpose     = purpose_,
+            .speculative = drafter_ ? SpeculativeBackend::DFlash : SpeculativeBackend::None,
             .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
 }
 
 void DenseExecution::validate_options(DeviceContext& device, const EngineOptions& options) const {
-    if (options.purpose != EnginePurpose::Generation) {
-        throw std::invalid_argument("the dense decoder serves generation only; ninferno-perplexity "
-                                    "scores Qwen models (a source build "
-                                    "scores this family with ninferno-dense score)");
-    }
     if (options.enable_vision) {
         throw std::invalid_argument("dense decoder artifacts carry no Vision encoder");
     }
@@ -124,13 +121,8 @@ void DenseExecution::validate_options(DeviceContext& device, const EngineOptions
                 "the dense decoder's DFlash drafter scores with the target's own head");
         }
     }
-    qwen3_5::detail::validate_ring_decoder_storage(options, "the dense decoder");
-    // FP8 rings on a model with no ring would only be logged: refused, as Qwen 3.5 and
-    // Nemotron-H refuse it.
-    if (sliding_layers_ == 0 && options.sliding_kv_cache != KvCacheStorage::BFloat16) {
-        throw std::invalid_argument("this dense decoder has no sliding-window layers "
-                                    "(--sliding-kv-dtype is for their rings)");
-    }
+    qwen3_5::detail::validate_state_storage(
+        dense::state_shape(c_, nullptr, 0, 0, traits_.public_tokens), options);
     qwen3_5::detail::validate_program_options(options, traits_.max_positions, 0);
     try {
         require_device_support(device.device_class(), {.mma_bf16 = true},
@@ -139,55 +131,11 @@ void DenseExecution::validate_options(DeviceContext& device, const EngineOptions
 }
 
 PersistentLayout DenseExecution::persistent_layout(const SequencePlanImpl& plan) const {
-    if (!plan.context_cache.device_state_slots) {
-        throw std::logic_error("dense decoder context cache options are not normalized");
-    }
-    const std::uint64_t slots = static_cast<std::uint64_t>(plan.max_concurrency) +
-                                *plan.context_cache.device_state_slots;
-    if (slots > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-        throw std::overflow_error("dense decoder state image slot count exceeds int32");
-    }
-    // --kv-dtype fp8: the full layers' pool holds E4M3 codes and an FP32 scale per row (the
-    // Gemma4KvLayer FP8 storage the attention reads); the rings follow --sliding-kv-dtype.
-    const bool fp8 = plan.kv_storage == KvCacheStorage::Fp8E4M3Row256;
-    const PagedKVVectorLayout vector =
-        fp8 ? PagedKVVectorLayout{DType::FP8_E4M3FN, c_.head_dim, DType::FP32, 1}
-            : PagedKVVectorLayout{DType::BF16, c_.head_dim, DType::U8, 0};
-    const KvCacheStorage storage = fp8 ? KvCacheStorage::Fp8E4M3Row256 : KvCacheStorage::BFloat16;
-
-    LayoutBuilder builder;
-    PersistentLayout out;
-    out.decoder = qwen3_5::plan_decoder_state(
-        builder, qwen3_5::DecoderStateSpec{
-                     .full_attention_layers     = full_layers_,
-                     .capacity                  = plan.capacity,
-                     .kv_heads                  = c_.kv_heads,
-                     .attention_head_dim        = c_.head_dim,
-                     .kv_storage                = storage,
-                     .kv_table_rows             = static_cast<std::int32_t>(plan.max_concurrency),
-                     .text_physical_page_groups = plan.main_page_groups,
-                     // The attention reads keys and values from a head-major pool.
-                     .layer_storage = PagedKVStorageLayout{storage, c_.head_dim, vector, vector},
-                     .plane_order   = PagedKVPlaneOrder::HeadMajor,
-                 });
-    qwen3_5::StateImageSpec images{
-        .linear = {.layers = 0, .slot_count = static_cast<std::int32_t>(slots)},
-        .hidden = c_.hidden_size,
-    };
-    if (sliding_layers_ != 0) {
-        images.rings.push_back({.layers   = sliding_layers_,
-                                .capacity = ring_capacity(plan),
-                                .kv_heads = c_.kv_heads,
-                                .head_dim = c_.head_dim,
-                                .fp8      = plan.ring_storage == KvCacheStorage::Fp8E4M3Row256});
-    }
-    if (plan.features.masked_draft()) { images.dflash_local = dflash_local_spec(); }
-    out.state_images = qwen3_5::plan_state_image_device_pool(builder, images);
-    if (plan.features.masked_draft()) { out.dflash = dflash_layout(builder, plan); }
-    qwen3_5::detail::plan_program_buffers(builder, plan, traits_, out);
-    out.kv_payload_bytes =
-        out.decoder.kv_payload_bytes() + (out.dflash ? out.dflash->kv_payload_bytes() : 0);
-    return out;
+    return qwen3_5::detail::plan_persistent_layout(
+        dense::state_shape(c_, drafter_ != nullptr ? &drafter_->config() : nullptr,
+                           traits_.draft_feature_rows,
+                           drafter_ != nullptr ? prefill_feature_rows() : 0, traits_.public_tokens),
+        plan);
 }
 
 WorkspacePlan DenseExecution::workspace_plan(const SequencePlanImpl& plan) const {
@@ -210,8 +158,13 @@ WorkspacePlan DenseExecution::workspace_plan(const SequencePlanImpl& plan) const
     out.ordinary_round = DensePass::workspace_bytes(model_, context, batch, batch) +
                          ops::sampling_workspace_capacity_bytes(traits_.public_tokens, 1, batch);
     if (plan.features.masked_draft()) { dflash_workspace(plan, out); }
-    out.general_capacity =
-        std::max({out.text_prefill, out.ordinary_round, out.dflash_context, out.dflash_round});
+    // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+    if (plan.causal_scoring) {
+        out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+            traits_.output_rows, model_.weights().output_head);
+    }
+    out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.dflash_context,
+                                     out.dflash_round, out.causal_score});
     out.capacity = out.general_capacity;
     return out;
 }
@@ -262,13 +215,8 @@ std::uint32_t DenseExecution::uncommitted_row_limit(const SequencePlanImpl& plan
     return sliding_layers_ == 0 ? plan.capacity : widest_call(plan);
 }
 
-std::uint32_t DenseExecution::ring_capacity(const SequencePlanImpl& plan) const {
-    return static_cast<std::uint32_t>(c_.max_window()) + widest_call(plan) - 1U;
-}
-
 std::uint32_t DenseExecution::widest_call(const SequencePlanImpl& plan) {
-    // A prefill chunk, or a speculative verify of the draft window.
-    return std::max(std::min(plan.prefill_chunk, plan.capacity), plan.draft_window + 1U);
+    return qwen3_5::detail::ring_decoder_widest_call(plan);
 }
 
 std::vector<ops::Gemma4KvLayer>
@@ -390,12 +338,46 @@ program::PrefillChunkResult DenseExecution::prefill_text_chunk(
 
 } // namespace detail
 
+StateShape state_shape(const Config& config, const speculation::DFlashConfig* drafter,
+                       std::int32_t feature_rows, std::int32_t prefill_feature_rows,
+                       std::int32_t public_tokens) {
+    // A full layer's keys and values in the paged pool, a sliding layer's in its ring (the
+    // family keeps one geometry for both).
+    StateShape out{
+        .family           = StateFamily::DenseDecoder,
+        .kv_heads         = config.kv_heads,
+        .head_dim         = config.head_dim,
+        .sliding_kv_heads = config.kv_heads,
+        .sliding_head_dim = config.head_dim,
+        .window           = static_cast<std::uint32_t>(config.max_window()),
+        .hidden           = config.hidden_size,
+        .output_rows      = config.vocab_size,
+        .public_tokens    = public_tokens,
+    };
+    for (const LayerSpec& spec : config.layer_specs) {
+        ++(spec.window == 0 ? out.full_layers : out.sliding_layers);
+    }
+    if (out.sliding_layers == 0) { out.sliding_kv_heads = out.sliding_head_dim = 0; }
+    if (drafter != nullptr) {
+        DrafterStateShape draft{.window       = static_cast<std::uint32_t>(drafter->sliding_window),
+                                .kv_heads     = drafter->kv_heads,
+                                .head_dim     = drafter->head_dim,
+                                .feature_rows = feature_rows,
+                                .prefill_feature_rows = prefill_feature_rows};
+        for (const std::int32_t window : drafter->windows) {
+            ++(window == 0 ? draft.full_layers : draft.local_layers);
+        }
+        out.drafter = draft;
+    }
+    return out;
+}
+
 std::unique_ptr<const qwen3_5::detail::ModelExecution>
 make_program_execution(const Model& model, const speculation::DFlashDrafter* drafter,
                        DeviceContext& device, std::int32_t public_tokens,
-                       ActivationMode activations) {
+                       ActivationMode activations, EnginePurpose purpose) {
     return std::make_unique<const detail::DenseExecution>(model, drafter, device, public_tokens,
-                                                          activations);
+                                                          activations, purpose);
 }
 
 } // namespace ninferno::models::dense

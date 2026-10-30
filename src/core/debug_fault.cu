@@ -40,4 +40,11 @@ void debug_transient_cuda_error_point() {
                     "CUDA call failed: cudaErrorMemoryAllocation (NINFERNO_DEBUG_CUDA_ERROR_FILE)");
 }
 
+bool debug_token_domain_point() {
+    static const std::string path = sys::env("NINFERNO_DEBUG_TOKEN_DOMAIN_FILE");
+    if (path.empty()) { return false; }
+    std::error_code error;
+    return std::filesystem::remove(path, error);
+}
+
 } // namespace ninferno

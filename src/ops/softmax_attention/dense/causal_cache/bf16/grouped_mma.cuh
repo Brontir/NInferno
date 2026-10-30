@@ -42,7 +42,7 @@ bf16_kv_load_grouped_tile(__nv_bfloat16* key_tile, __half* value_tile, const __n
 
 // Packed-query tiles and KV partitions are independent grid axes. Each KV row
 // has one append owner; all query CTAs read new rows from the immutable inputs.
-template <class G, class S, bool MultiBatch, bool Masked, class Input>
+template <class G, class S, bool MultiBatch, bool Masked, class Input, bool Aligned = false>
 __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     void bf16_kv_grouped_mma_kernel(const __nv_bfloat16* q, Input input, const int* positions,
                                     typename Bf16KvCacheView<Input::writes_cache>::Key* cache_k,
@@ -54,6 +54,9 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     constexpr int D = G::kHeadDim, M = S::kQueryRows, N = S::kKeyRows;
     constexpr int NK = N / S::kWarpsKV, QKNt = NK / 8, QKKs = D / 16;
     constexpr int PVNt = D / 8, PVKs = NK / 16;
+    // Aligned: one KV warp, and a row's split closes on a key tile boundary.
+    static_assert(!Aligned || S::kWarpsKV == 1);
+    static_assert((1 << CausalKvPartition::kAlignedMinKeyShift) % N == 0);
     using Storage = Bf16KvGroupedStorage<G, S>;
     static_assert(sizeof(Storage) <= kMaxSharedBytesPerBlock);
     Storage* storage;
@@ -99,7 +102,7 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     };
     if (row_begin >= live * G::GroupSize) return;
     const int first = positions[0], window = positions[live - 1] + 1;
-    const auto work = partition.live(window);
+    const auto work = Aligned ? Bf16KvPartition::aligned_live(window) : partition.live(window);
     if (split >= work.splits) return;
     const int start     = split * work.keys_per_split;
     const int stop      = min(window, start + work.keys_per_split);
@@ -123,7 +126,9 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     const int last_token = min(live, div_up(row_begin + M, G::GroupSize)) - 1;
     const int end        = min(stop, positions[last_token] + 1);
     if (start >= end) {
-        neutral();
+        // Aligned: no row of the tile reaches this split's keys, so none of its own splits lies
+        // here (a row merges only the splits its own position runs, CausalAlignedRow).
+        if constexpr (!Aligned) neutral();
         return;
     }
     for (int i = tid; i < M * (D / 8); i += S::kThreads) {
@@ -155,8 +160,48 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     const int tokens[2] = {rows[0] / G::GroupSize, rows[1] / G::GroupSize};
     const int qabs[2]   = {tokens[0] < live ? positions[tokens[0]] : -1,
                          tokens[1] < live ? positions[tokens[1]] : -1};
+    // Aligned (the invariant route profile): a row runs its own splits, those of a decode of the
+    // row alone (CausalKvPartition::aligned_row). This CTA's split spans 2^tile_shift keys; a row
+    // whose own splits are finer stores one at each of their boundaries inside it and starts the
+    // next from a fresh state, exactly as the CTA of that split alone would. The other instances
+    // compile none of this.
+    [[maybe_unused]] const int tile_shift =
+        Aligned ? CausalKvPartition::aligned_key_shift(window) : 0;
+    [[maybe_unused]] const CausalAlignedRow own[2] = {
+        Aligned ? CausalKvPartition::aligned_row(qabs[0]) : CausalAlignedRow{},
+        Aligned ? CausalKvPartition::aligned_row(qabs[1]) : CausalAlignedRow{}};
     int page_window = -Storage::kPageWindow;
     for (int k0 = start; k0 < end; k0 += N) {
+        if constexpr (Aligned) {
+            // Every lane joins the sum reduction; a closing row is uniform over its four lanes.
+            if (k0 > start && (k0 & ((1 << CausalKvPartition::kAlignedMinKeyShift) - 1)) == 0) {
+                const float closed_sum[2] = {warp_sum<4>(state[0].sum, 0xffffffffu),
+                                             warp_sum<4>(state[1].sum, 0xffffffffu)};
+                // Per row at a compile-time index, so acc stays in registers.
+                const auto close_row = [&]<int J>() {
+                    if (!own[J].closes(k0, tile_shift)) return;
+                    const int closed = own[J].split_of(k0) - 1;
+                    if (own[J].stores(closed)) {
+                        const int h = head * G::GroupSize + rows[J] % G::GroupSize;
+#pragma unroll
+                        for (int n = 0; n < PVNt; ++n)
+                            bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[J],
+                                                        n * 8 + 2 * lid, width, closed,
+                                                        acc[n][2 * J], acc[n][2 * J + 1],
+                                                        state[J].maximum * scale_log2,
+                                                        closed_sum[J]);
+                    }
+                    state[J] = Bf16KvSoftmaxRow();
+#pragma unroll
+                    for (int n = 0; n < PVNt; ++n) {
+                        acc[n][2 * J]     = 0.0f;
+                        acc[n][2 * J + 1] = 0.0f;
+                    }
+                };
+                close_row.template operator()<0>();
+                close_row.template operator()<1>();
+            }
+        }
         const int logical_page = k0 >> kPagedKVPageShift;
         if (logical_page >= page_window + Storage::kPageWindow) {
             page_window = logical_page;
@@ -310,14 +355,32 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
             }
         }
     }
-#pragma unroll
-    for (int j = 0; j < 2; ++j) {
-        if (tokens[j] < width) {
-            const int h = head * G::GroupSize + rows[j] % G::GroupSize;
+    if constexpr (Aligned) {
+        // A row's split holding the last key tile: the CTA's split for a row as coarse as it.
+        const int last_k0  = start + (end - start - 1) / N * N;
+        const auto store_row = [&]<int J>() {
+            const int row_split = own[J].split_of(last_k0);
+            if (!own[J].stores(row_split)) return;
+            const int h = head * G::GroupSize + rows[J] % G::GroupSize;
 #pragma unroll
             for (int n = 0; n < PVNt; ++n)
-                bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[j], n * 8 + 2 * lid, width,
-                                            split, acc[n][2 * j], acc[n][2 * j + 1], m[j], sums[j]);
+                bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[J], n * 8 + 2 * lid, width,
+                                            row_split, acc[n][2 * J], acc[n][2 * J + 1], m[J],
+                                            sums[J]);
+        };
+        store_row.template operator()<0>();
+        store_row.template operator()<1>();
+    } else {
+#pragma unroll
+        for (int j = 0; j < 2; ++j) {
+            if (tokens[j] < width) {
+                const int h = head * G::GroupSize + rows[j] % G::GroupSize;
+#pragma unroll
+                for (int n = 0; n < PVNt; ++n)
+                    bf16_kv_store_pair<G, true>(partial, nullptr, h, tokens[j], n * 8 + 2 * lid,
+                                                width, split, acc[n][2 * j], acc[n][2 * j + 1],
+                                                m[j], sums[j]);
+            }
         }
     }
 }

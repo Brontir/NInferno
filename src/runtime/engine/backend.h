@@ -14,6 +14,7 @@
 #include <chrono>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -51,6 +52,7 @@ public:
     [[nodiscard]] virtual PreparedBox prepare_tokens(std::vector<TokenId> token_ids,
                                                      bool allow_prefix_identity) const = 0;
     [[nodiscard]] virtual std::vector<TokenId> tokenize_text(std::string_view text) const = 0;
+    [[nodiscard]] virtual std::optional<TokenId> document_start_token() const = 0;
     [[nodiscard]] virtual std::uint32_t count_tokens(PromptInput input,
                                                      const PreparationControl& control) const = 0;
     [[nodiscard]] virtual ModelSamplingDefaults sampling_defaults() const = 0;

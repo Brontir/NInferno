@@ -11,24 +11,30 @@
 //   build    the release, its commit, the architecture it compiled for, PTX, NVFP4, the CUDA
 //            runtime it was built against;
 //   options  the options as the caller asked for them (before normalize_engine_options), the
-//            decode pacing and the maintainer options among them, the artifact's id and its
-//            prefill signature;
+//            decode pacing and the maintainer options among them, the artifact's source identity
+//            (artifact/source_identity.h: what it was converted from and how, the same for every
+//            conversion of the same sources) and its prefill signature;
 //   sources  the data files decisions were read from, by content (route table and its lenders,
 //            dense- and MoE-tune files, context-cost presets, speculation profile, drafter
-//            registry), and a memory-driven --spec auto fallback ("spec_fit_fallback");
+//            registry), the compiled context-cost machine the device's class resolved to
+//            ("context_cost.machine": own, carried from a measured board, or generic) and the
+//            source of its transfer and prefill ("context_cost.transfer", ".prefill"), and a
+//            memory-driven --spec auto fallback ("spec_fit_fallback");
 //   plan     what startup resolved: KV and state storage, speculative graph windows, route
 //            breakpoints and table, the decode steps per round, and the plan ladder's rung the
 //            plan runs at (its index and the ladder's length) with the rung's sizes (context,
 //            chunk, KV tokens, cached states);
 //   taint    the pillar violations present (a maintainer option, the user's tune cache, floor
-//            calibration, no roofline, borrowed or foreign route data, a local spec-tune, a
-//            --spec auto fallback the free memory forced).
+//            calibration, no roofline, borrowed or foreign route data, a context-cost machine
+//            carried from another board that prices a component, a local spec-tune, a --spec
+//            auto fallback the free memory forced).
 // and one section that is not part of the fingerprint:
 //   observed what startup measured beside the plan: the rung the selection picked before the
 //            kernel warm-up and the tier it admitted it at (rung_selected, rung_reserve), what it
-//            sized from the Host memory (the Host tier), and the driver's clocks where they fed
-//            no fact (MachineFacts::driver_read), so no decision reads them; they enter the
-//            manifest only.
+//            sized from the Host memory (the Host tier), the driver's clocks where they fed
+//            no fact (MachineFacts::driver_read), so no decision reads them, and the artifact ids
+//            (drawn at random per conversion: they name the file, which a cache may key by, not
+//            what it computes); they enter the manifest only.
 //
 // The canonical text is "schema\tninferno-fingerprint/1\n" followed by one
 // "<section>.<key>\t<value>\n" line per entry in byte order (tab, newline, carriage return and
@@ -98,23 +104,26 @@ struct HostFacts {
 // Of the clocks, "machine.*" are the facts the decisions read (DeviceClass::facts: source,
 // reference and memory clock, bus width, share, mma_slow); "driver.*" (the driver's clocks and
 // bus width) enter only when they fed a fact (MachineFacts::driver_read: an unknown id, a laptop
-// row without the bottom of its range).
+// row without the bottom of its range, a whole board on another memory than its id's row).
 [[nodiscard]] DecisionSection facts_of(const DeviceClass& device, const DeviceFeatures& build,
                                        int driver_version, const HostFacts& host);
 
 // This binary's build, from its compile definitions.
 [[nodiscard]] DecisionSection build_of();
 
-// The options as asked (a copy taken before normalize_engine_options), with the artifact's id
-// (hex), its prefill signature (LoadSummary::prefill_signature) and a separate drafter's artifact
-// id (empty: none). Paths, the device ordinal, queue limits, media budgets, observers and
-// SpeculativeOptions::decision_sources do not enter (the drafter enters by its id, the sources
-// in their own section): a maintainer option naming a file or directory (--route-table,
-// --route-dir, --tune-cache) enters as "set" or "unset", what it holds by content in sources.
+// The options as asked (a copy taken before normalize_engine_options), with the artifact's source
+// identity (LoadSummary::source_identity: 64 hex digits, "none:<artifact id>" for an artifact
+// without one, so two such artifacts do not collide), its prefill signature
+// (LoadSummary::prefill_signature) and a separate drafter's source identity (empty: none). Paths,
+// the device ordinal, queue limits, media budgets, observers and
+// SpeculativeOptions::decision_sources do not enter (the drafter enters by its identity, the
+// sources in their own section): a maintainer option naming a file or directory
+// (--route-table, --route-dir, --tune-cache) enters as "set" or "unset", what it holds by content
+// in sources.
 [[nodiscard]] DecisionSection options_of(const EngineOptions& requested,
-                                         std::string_view artifact_id,
+                                         std::string_view source_identity,
                                          std::string_view prefill_signature,
-                                         std::string_view drafter_id);
+                                         std::string_view drafter_source_identity);
 
 // What startup resolved without the free memory: `resolved` is Engine::options() (after the plan),
 // `memory` the MemorySummary (with the plan ladder's rung, MemorySummary::plan),
@@ -137,6 +146,19 @@ struct HostFacts {
 // them).
 [[nodiscard]] DecisionSection observed_of(const DeviceClass& device);
 
+// The context-cost machine the device's class resolved to, as the sources section names it:
+// "context_cost.machine" ("own <key>", "carried from <key>", "generic"; "unset" when none was
+// resolved; ContextCostSummary::machine without a carried machine's board distance, which the
+// facts already decide), and where each component came from after the external layer:
+// "context_cost.transfer" and "context_cost.prefill" (context_cost_preset_source_name). The
+// compiled table itself is the build's.
+[[nodiscard]] DecisionSection context_cost_sources_of(const ContextCostSummary& context_cost);
+
+// The artifact ids (observed): "artifact_id" and, with a separate drafter, "drafter_artifact_id".
+// They name the files (a cache may key by them); decisions key by the source identity.
+[[nodiscard]] DecisionSection artifact_ids_of(std::string_view artifact_id,
+                                              std::string_view drafter_artifact_id);
+
 // The environment variables the products read. None steers a decision (an option does:
 // docs/maintainer/deterministic-decisions.md); the inventory test fails on a variable read in
 // src/ or apps/ that is not on this list.
@@ -148,8 +170,11 @@ struct HostFacts {
 // read in place of the compiled-in one), "user_tune_cache" (which tuners: "dense", "moe"),
 // "clocks" (no roofline: a machine clock or bus width of 0), "borrowed_routes" (route entries lent
 // by another chip's table), "foreign_route_table" (a table keyed by a class not in the device's
-// own chain), "local_spec_tune", "spec_fit_fallback" (the --spec auto fallback a capacity refusal
-// forced, sources.spec_fit_fallback).
+// own chain), "carried_context_cost" (the key of a context-cost machine measured on another
+// board, sources.context_cost.machine "carried from <key>", while it still prices the transfer or
+// the prefill: sources.context_cost.transfer or .prefill "carried-machine"), "local_spec_tune",
+// "spec_fit_fallback" (the --spec auto fallback a capacity refusal forced,
+// sources.spec_fit_fallback).
 [[nodiscard]] DecisionSection taint_of(const DecisionInputs& inputs);
 
 } // namespace ninferno::runtime

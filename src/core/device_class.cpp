@@ -371,6 +371,10 @@ std::vector<std::string> device_fact_notes(const DeviceClass& d) {
         } else if (f.share < 1.0) {
             why = f.sku + ", a slice of " + std::to_string(d.sms) +
                   " SMs (MIG): its share of the board's bandwidth";
+        } else if (const GpuFactsRow* row = find_gpu_facts(d.pci_device_id);
+                   row != nullptr && row->sms == d.sms) {
+            why = f.sku + " on another memory than its row's: the driver's bus width and memory "
+                          "clock price it";
         } else {
             why = f.sku + " reporting " + std::to_string(d.sms) + " SMs, not the row's";
         }
@@ -588,15 +592,70 @@ bool device_has_kernel_image(int device) {
 }
 
 namespace {
-thread_local const DeviceClass* t_substitute = nullptr;
+thread_local const DeviceClass* t_substitute       = nullptr;
+thread_local const std::string* t_substitute_key   = nullptr;
 } // namespace
 
 ScopedDeviceClass::ScopedDeviceClass(DeviceClass substitute)
-    : substitute_(std::move(substitute)), previous_(t_substitute) {
-    t_substitute = &substitute_;
+    : substitute_(std::move(substitute)), key_(device_class_key(substitute_)),
+      previous_(t_substitute), previous_key_(t_substitute_key) {
+    t_substitute     = &substitute_;
+    t_substitute_key = &key_;
 }
 
-ScopedDeviceClass::~ScopedDeviceClass() { t_substitute = previous_; }
+ScopedDeviceClass::~ScopedDeviceClass() {
+    t_substitute     = previous_;
+    t_substitute_key = previous_key_;
+}
+
+const DeviceClass* substituted_device_class() noexcept { return t_substitute; }
+
+const std::string* substituted_device_class_key() noexcept { return t_substitute_key; }
+
+bool substituted_foreign_class() noexcept {
+    if (t_substitute_key == nullptr) return false;
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess) {
+        (void)cudaGetLastError();
+        return true;
+    }
+    try {
+        return device_class_key(device_class(device)) != *t_substitute_key;
+    } catch (const std::exception&) {
+        return true;
+    }
+}
+
+std::string device_class_key(const DeviceClass& d) {
+    const auto& f = d.features;
+    const auto& m = d.facts;
+    std::string key;
+    const auto add = [&](const auto& v) {
+        key += std::to_string(v);
+        key += ',';
+    };
+    key += d.chip + ',' + m.sku + ',';
+    for (const auto v : {d.major, d.minor, d.sms, d.max_threads_per_sm, d.max_blocks_per_sm,
+                         d.registers_per_sm, d.memory_bus_bits, d.memory_clock_khz, d.sm_clock_khz,
+                         m.reference_clock_khz, m.memory_bus_bits, m.memory_clock_khz, m.tdp_w,
+                         m.pcie_gen, static_cast<int>(m.source), static_cast<int>(m.segment),
+                         static_cast<int>(m.form)}) {
+        add(v);
+    }
+    for (const auto v : {d.l2_bytes, d.smem_per_block_optin, d.smem_per_sm, d.global_bytes,
+                         d.persisting_l2_max_bytes}) {
+        add(v);
+    }
+    add(d.pci_device_id);
+    add(m.vram_gib);
+    add(m.share);
+    for (const bool b : {d.chip_from_pci, f.mma_bf16, f.mma_bf16_native, f.mma_tensor, f.mma_fp8,
+                         f.mma_f8f6f4, f.mma_mxf4nvf4, f.tma, f.pdl, f.clusters, f.mma_slow,
+                         m.mma_slow, m.driver_read}) {
+        key += b ? '1' : '0';
+    }
+    return key;
+}
 
 DeviceClass synthetic_device_class(std::uint32_t pci_device_id, int major, int minor, int sms,
                                    std::size_t l2_bytes, std::size_t global_bytes) {

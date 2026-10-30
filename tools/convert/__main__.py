@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import hashlib
 import importlib.util
+import os
 from pathlib import Path
+import re
 import sys
 from collections.abc import Mapping
 
@@ -74,6 +77,48 @@ class SourceInputs(Mapping):
             name: {"path": str(source.path)} for name, source in self._sources.items()
         }
 
+    def opened(self):
+        return dict(self._sources)
+
+
+def _content_sha256(file: Path) -> str:
+    """A Hugging Face LFS snapshot file's blob name (its sha256, verified at download), else the
+    sha256 of its bytes."""
+    if file.is_symlink():
+        target = file.resolve()
+        if target.parent.name == "blobs" and re.fullmatch(r"[0-9a-f]{64}", target.name):
+            return target.name
+    digest = hashlib.sha256()
+    with open(file, "rb") as stream:
+        for block in iter(lambda: stream.read(16 << 20), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _split_function(value: str) -> tuple[str, str | None]:
+    """FILE[:FUNCTION]: the colon only after the last path separator, so a Windows path
+    (C:\\r.py) keeps its drive."""
+    colon = value.rfind(":")
+    if colon > max(value.rfind("/"), value.rfind("\\")) and colon > 1:
+        return value[:colon], value[colon + 1:]
+    return value, None
+
+
+def _code_of(value: str) -> tuple[str, str]:
+    """A FILE[:FUNCTION] recipe or override (_function) by its file's sha256 and the function."""
+    filename, function = _split_function(value)
+    return _content_sha256(Path(filename).resolve()), function or "configure"
+
+
+def source_inputs(sources) -> list[dict]:
+    """The provenance's "inputs" (src/convert/convert.cpp source_inputs): every opened checkpoint
+    by the weight files it read, each by its content alone, sorted."""
+    out = []
+    for role, source in sources.opened().items():  # base first, then in opening order
+        digests = sorted(_content_sha256(Path(f)) for f in set(source.weight_map.values()))
+        out.append({"role": role, "files": [{"sha256": d} for d in digests]})
+    return out
+
 
 def _pairs(values, label):
     result = {}
@@ -88,9 +133,8 @@ def _pairs(values, label):
 def _function(value: str):
     if value in RECIPES:
         return RECIPES[value]
-    filename, separator, function = value.rpartition(":")
-    if not separator:
-        filename, function = value, "configure"
+    filename, function = _split_function(value)
+    function = function or "configure"
     path = Path(filename).resolve()
     spec = importlib.util.spec_from_file_location("ninferno_user_recipe", path)
     if spec is None or spec.loader is None:
@@ -203,11 +247,18 @@ def main(argv=None):
             "converter": "ninferno-v3",
             "recipe": args.recipe,
             "sources": sources.provenance(),
+            "inputs": source_inputs(sources),
         }
         if args.override:
             provenance["override"] = args.override
+            # By content and function name, as the source identity takes it (never the path).
+            provenance["override_sha256"], provenance["override_function"] = _code_of(args.override)
+        if args.recipe not in RECIPES:
+            provenance["recipe_sha256"], provenance["recipe_function"] = _code_of(args.recipe)
         if args.proposal:
             provenance["ranking"] = str(args.ranking)
+            # By content for the source identity, never the path.
+            provenance["ranking_sha256"] = _content_sha256(Path(args.ranking))
         published = published_activation_summary(model, recipe)
         if published is not None:
             provenance["published_activations"] = published

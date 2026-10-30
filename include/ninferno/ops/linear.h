@@ -38,13 +38,35 @@ enum class LinearPolicy : std::uint8_t {
 }
 
 /**
- * The policy of a projection a verify pass runs with BF16 activations (the dense and Gemma
- * targets' Activations::A16Only): A16Only, so a W4A4 route at verify widths never accepts drafts
- * against a coarser model than plain decode runs. A build without tensor mma.sync (Volta) runs
- * every A16 route at those widths on FP32-FMA tiles, an order of magnitude slower than its integer
- * routes; there the recorded policy, capped at A8, is what plain decode of the same weights runs.
+ * The policy of a projection in a verify pass (the dense and Gemma targets' Activations::Verify):
+ * the recorded one, the policy plain decode of the same weights runs, capped at A8, so a W4A4
+ * route at verify widths never accepts drafts against a coarser model than plain decode runs. It
+ * was A16Only where the build has tensor mma.sync: GGUF weights then decoded on int8 activations
+ * (R8) and verified on BF16 ones (the register MMA), another model, and their verify cost 1.2-1.5
+ * times a decode step's linears where Qwen3.5's, which keeps the recorded policy, cost 1.0-1.1
+ * (Gemma 4 12B Q4_K_M, RTX 5070 Ti, nsys: gate/up 110 us against 83, down 60 against 41).
  */
 [[nodiscard]] LinearPolicy verify_linear_policy(LinearPolicy recorded) noexcept;
+
+/**
+ * The policy of a speculative drafter's projection: AllowA8 for a weight recorded A16Only whose
+ * format verifies a whole eight-token block on R8 (int8 activations per 32 values, plain decode's
+ * arithmetic: Q8, GGUF Q8_0, on every chip), else the recorded one. A DFlash block (dflash:7 is
+ * eight tokens) of an A16Only Q8 drafter ran the BF16 register MMA, whose 16-row CTAs walk all of
+ * K: at K = 12288 and 32768 (Qwen3.5-9B's drafter down and feature projections) it read 180-200
+ * GB/s against R8's 440-465 on the RTX 4070 Ti (ninferno_r8_schedule_bench, T = 5 and 8), 8 % and
+ * 4 % of a dflash:7 round. Q8 runs A8 under every target that records it (formats.cpp,
+ * kept_block_policy); a drafter converted without a recorded policy now runs it too. The other
+ * formats' R8 stops at four tokens and keeps the recorded policy. So does a Q8 shape the tuned
+ * table of the op that runs it owns (`op`: plain linear, fused add or fused SwiGLU; Gemma 4 31B
+ * DFlash's 5376 x 10752 through linear, a Qwen DFlash down projection 2048 x 6144 through
+ * linear_add): that dispatcher runs the table's A16 kernels at 2..8 tokens and sends only a
+ * one-token call to R8, so the lift would change nothing. The segmented projection (Generic)
+ * reads no table.
+ */
+enum class DrafterOp { Linear, LinearAdd, LinearSwiGlu, Generic };
+[[nodiscard]] LinearPolicy drafter_linear_policy(const Weight& weight, LinearPolicy recorded,
+                                                 DrafterOp op);
 
 /**
  * Returns the caller-owned transient capacity required by Linear for every T in the inclusive

@@ -13,6 +13,7 @@
 // MiB, so neither the process nor the page cache holds the artifact.
 
 #include "artifact/framing.h"
+#include "convert/pyjson.h"
 
 #include <array>
 #include <atomic>
@@ -21,6 +22,7 @@
 #include <exception>
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -72,6 +74,17 @@ struct WriterOptions {
     std::vector<PayloadRange> written;
 };
 
+class ArtifactWriter;
+
+// The content digests of the directory's objects (artifact/source_identity.h): the SHA-256 of each
+// object's payload bytes, read back from `writer`, as {object id: 64 lowercase hex} in the order
+// of `objects` (the directory's "objects": id, offset, bytes), hashed on `threads` threads (0:
+// the hardware's, at most 16, as ConvertOptions::threads). The placeholders are the same map of 64
+// zeros, so a directory laid out with them keeps its length when the digests replace them.
+[[nodiscard]] OJson content_digests(const ArtifactWriter& writer, const OJson& objects,
+                                    unsigned threads);
+[[nodiscard]] OJson content_digest_placeholders(const OJson& objects);
+
 class ArtifactWriter {
 public:
     ArtifactWriter(std::filesystem::path path, ArtifactLayout layout, WriterOptions options = {});
@@ -84,6 +97,12 @@ public:
     // Make everything written so far durable (fdatasync of every output file).
     void sync();
     void finish();
+    // finish() with `seal`: once every byte is written and before the files are published,
+    // `seal` returns the directory text (of the same length) that replaces the one written at
+    // creation; it may read the payload back with read().
+    void finish(const std::function<std::string()>& seal);
+    // Payload bytes already written, read back from the output files (from `seal`).
+    void read(std::uint64_t payload_offset, void* out, std::size_t bytes) const;
     void abort() noexcept;
 
     // Leave the partial files in place on destruction (a resumable conversion that failed).

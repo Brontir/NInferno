@@ -100,7 +100,8 @@ int main() {
     load.context_cost         = {
                 .transfer_source   = ninferno::ContextCostPresetSource::External,
                 .prefill_source    = ninferno::ContextCostPresetSource::CompiledDefault,
-                .hardware_class    = "nvidia-geforce-rtx-5090-sm120",
+                .gpu_class         = "gb202:170sm",
+                .machine           = "own gb202:170sm",
                 .prefill_signature = "example-prefill-signature",
                 .preset_path       = "local-costs.json",
     };
@@ -189,7 +190,7 @@ int main() {
             "serve-test", 1000, options, engine_options, sampling_defaults, "deployment-alias",
             load, laddered, environment, std::uint64_t{123456}));
         const Json& plan                      = planned.at("plan");
-        failures += check(kRequestLogSchemaVersion == 30 && plan.at("rung") == 3 &&
+        failures += check(kRequestLogSchemaVersion >= 30 && plan.at("rung") == 3 &&
                               plan.at("rungs") == 40 && plan.at("selected_rung") == 2 &&
                               plan.at("reserve") == "kept" &&
                               plan.at("chosen").at("max_context") == 196608 &&
@@ -219,6 +220,8 @@ int main() {
                       "request log path missing");
     failures += check(server.at("server").at("default_thinking_budget") == 512,
                       "server thinking budget missing");
+    failures += check(server.at("server").at("answer_room").is_boolean(),
+                      "schema 32: server answer_room missing");
     failures += check(server.at("engine").at("kv_cache") == "fp8-e4m3-row256", "KV type missing");
     options.kv_cache        = ninferno::KvCacheStorage::Nvfp4Group16;
     engine_options.kv_cache = *options.kv_cache;
@@ -244,8 +247,8 @@ int main() {
     failures += check(
         server.at("engine").at("context_cost").at("transfer_source") == "external" &&
             server.at("engine").at("context_cost").at("prefill_source") == "compiled-default" &&
-            server.at("engine").at("context_cost").at("hardware_class") ==
-                "nvidia-geforce-rtx-5090-sm120" &&
+            server.at("engine").at("context_cost").at("gpu_class") == "gb202:170sm" &&
+            server.at("engine").at("context_cost").at("machine") == "own gb202:170sm" &&
             server.at("engine").at("context_cost").at("preset_path") == "local-costs.json",
         "resolved context-cost layers missing");
     failures += check(server.at("engine").at("prefix_reuse") == true, "prefix-reuse state missing");
@@ -507,6 +510,10 @@ int main() {
                                                    .injected_tokens       = 19,
                                                    .applied               = true};
 
+    // One DFlash round its step's declared mask time ran without drafts. Only DFlash rounds count
+    // it; the record serializes it whatever this fixture's backend (MTP).
+    outcome.metrics.speculative_constraint_fallback_steps = 1;
+
     const Json done = Json::parse(format_request_done_json("serve-test", 3000, context, outcome));
     failures += check(done.at("materialization").at("initial_predicted_total_ns") == 500000 &&
                           done.at("materialization").at("first_improvement_ns") == 2000 &&
@@ -537,6 +544,11 @@ int main() {
                           done.at("result").at("thinking_control_tokens") == 19 &&
                           done.at("result").at("thinking_control_applied") == true,
                       "thinking-control result accounting missing");
+    // Schema 32: whether the thinking budget was the answer room (thinking closes at 3/4 of the
+    // request's output limit) rather than the request's or the server's own budget.
+    failures += check(kRequestLogSchemaVersion == 32 &&
+                          done.at("result").at("thinking_budget_answer_room").is_boolean(),
+                      "schema 32: thinking_budget_answer_room missing");
     failures +=
         check(done.at("result").at("tool_call_parse").at("marker_seen") == false &&
                   done.at("result").at("tool_call_parse").at("structured_call_count") == 0 &&
@@ -564,6 +576,11 @@ int main() {
         check(done.at("speculative").at("draft_window") == 3, "speculative draft window missing");
     failures += check(done.at("speculative").at("fallback_steps") == 2,
                       "speculative fallback count missing");
+    // Schema 31: the rounds a constrained request verified without drafts because its step's
+    // declared mask time filled the masks before the launch.
+    failures += check(kRequestLogSchemaVersion >= 31 &&
+                          done.at("speculative").at("constraint_fallback_steps") == 1,
+                      "schema 31: constraint_fallback_steps missing");
     failures +=
         check(done.at("speculative").at("accepted_per_position") == Json::array({290, 240, 190}),
               "speculative position counts missing");

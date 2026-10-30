@@ -70,7 +70,7 @@ ops::SegmentedProjectionWeights split_swiglu(const Projection& gate, ops::Linear
 }
 
 ops::LinearPolicy policy_of(const Projection& p, Activations activations) {
-    return activations == Activations::A16Only ? ops::verify_linear_policy(p.policy) : p.policy;
+    return activations == Activations::Verify ? ops::verify_linear_policy(p.policy) : p.policy;
 }
 
 } // namespace
@@ -340,13 +340,13 @@ speculation::TargetShape Target::shape() const noexcept {
 }
 
 Tensor Target::draft_forward(const Tensor& ids, const Tensor& pos,
-                             ops::Gemma4AttentionEnvelope envelope, bool a16,
+                             ops::Gemma4AttentionEnvelope envelope, bool verify,
                              const FeatureTap* tap) {
-    return forward(ids, pos, envelope, a16 ? Activations::A16Only : Activations::Recorded, tap);
+    return forward(ids, pos, envelope, verify ? Activations::Verify : Activations::Recorded, tap);
 }
 
-void Target::greedy_logits(const Tensor& normed, Tensor& out, bool a16) {
-    pass_.uncapped_head(work_, normed, out, a16 ? Activations::A16Only : Activations::Recorded);
+void Target::greedy_logits(const Tensor& normed, Tensor& out, bool verify) {
+    pass_.uncapped_head(work_, normed, out, verify ? Activations::Verify : Activations::Recorded);
 }
 
 void Target::draft_embedding(const Tensor& ids, Tensor& out) {

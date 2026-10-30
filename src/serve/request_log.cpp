@@ -126,6 +126,7 @@ Json maintainer_record(const ninferno::MaintainerOptions& m,
                 {"prefill_route", ninferno::prefill_route_name(m.prefill_route)},
                 {"decode_route", ninferno::decode_route_name(m.decode_route)},
                 {"moe_path", ninferno::moe_path_name(m.moe_path)},
+                {"artifact_io", ninferno::artifact_io_name(m.artifact_io)},
                 {"drafter_registry", ninferno::utf8_path(drafter_registry)}};
 }
 
@@ -294,6 +295,7 @@ Json speculative_json(const GenerationMetrics& metrics) {
              {"drafted_tokens", metrics.speculative_draft_tokens},
              {"accepted_tokens", metrics.speculative_accepted_tokens},
              {"fallback_steps", metrics.speculative_fallback_steps},
+             {"constraint_fallback_steps", metrics.speculative_constraint_fallback_steps},
              {"plain_steps", metrics.speculative_plain_steps},
              {"wide_rounds", metrics.speculative_wide_rounds},
              {"ungraphed_rounds", metrics.speculative_ungraphed},
@@ -462,6 +464,7 @@ std::string format_server_start_json(
              {"default_thinking",
               options.enable_thinking ? Json(*options.enable_thinking) : Json(nullptr)},
              {"default_thinking_budget", std::move(default_thinking_budget)},
+             {"answer_room", options.answer_room},
              {"repetition_stop", options.repetition_stop},
              {"default_preserve_thinking",
               options.preserve_thinking ? Json(*options.preserve_thinking) : Json(nullptr)}};
@@ -532,10 +535,10 @@ std::string format_server_start_json(
                                                            context_cost.transfer_source)},
                                    {"prefill_source", ninferno::context_cost_preset_source_name(
                                                           context_cost.prefill_source)},
-                                   {"hardware_class", context_cost.hardware_class},
+                                   {"gpu_class", context_cost.gpu_class},
+                                   {"machine", context_cost.machine},
                                    {"prefill_signature", context_cost.prefill_signature},
-                                   {"preset_path", context_cost.preset_path.string()},
-                                   {"similar_to", context_cost.similar_to}}},
+                                   {"preset_path", context_cost.preset_path.string()}}},
              {"context_cache",
               Json{{"enabled", cache.enabled},
                    {"device_state_slots", cache.device_state_slots.value()},
@@ -639,6 +642,7 @@ std::string format_request_done_json(const std::string& server_instance_id, std:
              {"thinking_budget", outcome.thinking.configured_budget
                                      ? Json(*outcome.thinking.configured_budget)
                                      : Json(nullptr)},
+             {"thinking_budget_answer_room", outcome.thinking.answer_room},
              {"model_thinking_tokens", outcome.thinking.model_thinking_tokens},
              {"thinking_control_tokens", outcome.thinking.injected_tokens},
              {"thinking_control_applied", outcome.thinking.applied},

@@ -60,14 +60,16 @@ static_assert(kMaximumConcurrency <= ops::kMamba2FoldMaxRows,
 class NemotronExecution final : public ModelExecution {
 public:
     NemotronExecution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
-                      std::int32_t public_tokens, ActivationMode activations)
+                      std::int32_t public_tokens, ActivationMode activations,
+                      EnginePurpose purpose)
         : model_(model), c_(model.config()), pass_(model, device), mtp_(mtp),
-          invariant_(activations == ActivationMode::Exact),
+          invariant_(activations == ActivationMode::Exact), purpose_(purpose),
           traits_{.hidden        = c_.hidden_size,
                   .output_rows   = c_.vocab_size,
                   .public_tokens = public_tokens,
                   .weight_bytes  = model.device_bytes(),
-                  .max_positions = static_cast<std::uint64_t>(c_.max_positions)} {
+                  .max_positions = static_cast<std::uint64_t>(c_.max_positions),
+                  .copy_rounds   = qwen3_5::detail::family_copy_rounds(StateFamily::NemotronH)} {
         if (public_tokens <= 0 || public_tokens > c_.vocab_size) {
             throw std::invalid_argument("nemotron_h public token domain exceeds the embedding rows");
         }
@@ -87,15 +89,12 @@ public:
     }
 
     [[nodiscard]] models::LoadOptions load_options() const override {
-        return {.speculative = mtp_ ? SpeculativeBackend::Mtp : SpeculativeBackend::None,
+        return {.purpose     = purpose_,
+                .speculative = mtp_ ? SpeculativeBackend::Mtp : SpeculativeBackend::None,
                 .activations = invariant_ ? ActivationMode::Exact : ActivationMode::Fast};
     }
 
     void validate_options(DeviceContext& device, const EngineOptions& options) const override {
-        if (options.purpose != EnginePurpose::Generation) {
-            throw std::invalid_argument(
-                "Nemotron-H serves generation only; ninferno-perplexity scores Qwen models");
-        }
         if (options.enable_vision) {
             throw std::invalid_argument("Nemotron-H artifacts carry no Vision encoder");
         }
@@ -112,17 +111,8 @@ public:
             throw std::invalid_argument("Nemotron-H's MTP head scores with the full head "
                                         "(--lm-head-draft is for Qwen models)");
         }
-        // Its attention layers read a head-major pool through gemma4_attention, which takes BF16
-        // or E4M3 codes with an FP32 scale per row; it has no sliding-window layers.
-        if (options.kv_cache != KvCacheStorage::BFloat16 &&
-            options.kv_cache != KvCacheStorage::Fp8E4M3Row256) {
-            throw std::invalid_argument(
-                "Nemotron-H keeps keys and values in BF16 or FP8 (--kv-dtype bf16|fp8)");
-        }
-        if (options.sliding_kv_cache != KvCacheStorage::BFloat16) {
-            throw std::invalid_argument(
-                "Nemotron-H has no sliding-window layers (--sliding-kv-dtype is for their rings)");
-        }
+        qwen3_5::detail::validate_state_storage(nemotron_h::state_shape(c_, traits_.public_tokens),
+                                                options);
         qwen3_5::detail::validate_program_options(options, traits_.max_positions,
                                                   mtp_ ? kMaximumMtpDraftTokens : 0);
         try {
@@ -131,69 +121,8 @@ public:
     }
 
     [[nodiscard]] PersistentLayout persistent_layout(const SequencePlanImpl& plan) const override {
-        if (!plan.context_cache.device_state_slots) {
-            throw std::logic_error("nemotron_h context cache options are not normalized");
-        }
-        const std::uint64_t slots = static_cast<std::uint64_t>(plan.max_concurrency) +
-                                    *plan.context_cache.device_state_slots;
-        if (slots > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-            throw std::overflow_error("nemotron_h state image slot count exceeds int32");
-        }
-        // --kv-dtype fp8: the pools (the MTP head's too) hold E4M3 codes and an FP32 scale per row.
-        const bool fp8 = plan.kv_storage == KvCacheStorage::Fp8E4M3Row256;
-        const PagedKVVectorLayout vector =
-            fp8 ? PagedKVVectorLayout{DType::FP8_E4M3FN, c_.head_dim, DType::FP32, 1}
-                : PagedKVVectorLayout{DType::BF16, c_.head_dim, DType::U8, 0};
-        const KvCacheStorage storage = fp8 ? KvCacheStorage::Fp8E4M3Row256 : KvCacheStorage::BFloat16;
-        // The MTP pool: every main page group, and per row the pages the draft chain writes past
-        // its frontier.
-        const std::uint64_t mtp_extra_pages =
-            plan.features.mtp() ? static_cast<std::uint64_t>(plan.max_concurrency) *
-                                      paged_kv_pages(plan.draft_window - 1U)
-                                : 0ULL;
-        const std::uint64_t mtp_pages = plan.main_page_groups + mtp_extra_pages;
-        if (mtp_pages > static_cast<std::uint64_t>(std::numeric_limits<std::int32_t>::max())) {
-            throw std::overflow_error("nemotron_h MTP Paged KV physical pages exceed int32");
-        }
-        LayoutBuilder builder;
-        PersistentLayout out;
-        out.decoder = qwen3_5::plan_decoder_state(
-            builder, qwen3_5::DecoderStateSpec{
-                         .full_attention_layers = c_.count(Block::Attention),
-                         .mtp_layers            = 1,
-                         .capacity              = plan.capacity,
-                         .kv_heads              = c_.kv_heads,
-                         .attention_head_dim    = c_.head_dim,
-                         .kv_storage            = storage,
-                         .enable_mtp            = plan.features.mtp(),
-                         .kv_table_rows         = static_cast<std::int32_t>(plan.max_concurrency),
-                         .text_physical_page_groups = plan.main_page_groups,
-                         .mtp_physical_page_groups  = static_cast<std::uint32_t>(mtp_pages),
-                         .layer_storage = PagedKVStorageLayout{storage, c_.head_dim, vector,
-                                                               vector},
-                         .plane_order   = PagedKVPlaneOrder::HeadMajor,
-                     });
-        const auto& g = c_.mamba.geometry;
-        const qwen3_5::StateImageSpec images{
-            .linear = {.layers         = c_.count(Block::Mamba),
-                       .conv_channels  = c_.mamba.conv_channels(),
-                       .conv_width     = 3,
-                       .value_heads    = g.heads,
-                       .value_head_dim = g.head_dim,
-                       .key_head_dim   = g.state,
-                       .slot_count     = static_cast<std::int32_t>(slots),
-                       .conv_dtype     = DType::BF16},
-            .hidden = c_.hidden_size,
-        };
-        out.state_images = qwen3_5::plan_state_image_device_pool(builder, images);
-        if (plan.speculative_backend != SpeculativeBackend::None) {
-            out.replay_records = plan_gdn_replay_records(
-                builder, mamba2_records_spec(c_, static_cast<std::int32_t>(plan.max_concurrency),
-                                             static_cast<std::int32_t>(plan.draft_window + 1U)));
-        }
-        qwen3_5::detail::plan_program_buffers(builder, plan, traits_, out);
-        out.kv_payload_bytes = out.decoder.kv_payload_bytes();
-        return out;
+        return qwen3_5::detail::plan_persistent_layout(
+            nemotron_h::state_shape(c_, traits_.public_tokens), plan);
     }
 
     // Every Mamba2 layer's fold (mamba2_verify_fold) over the window's records.
@@ -270,8 +199,13 @@ public:
                     traits_.public_tokens, 1, width - 1, 1, rows) +
                 MtpPass::workspace_bytes(model_, *mtp_, context, columns) + 4096;
         }
-        out.general_capacity = std::max(
-            {out.text_prefill, out.ordinary_round, out.mtp_prefill, out.mtp_round});
+        // Causal scoring (ninferno-perplexity): the Program's scoring tiles over the output head.
+        if (plan.causal_scoring) {
+            out.causal_score = qwen3_5::detail::causal_score_workspace_bytes(
+                traits_.output_rows, model_.weights().output_head);
+        }
+        out.general_capacity = std::max({out.text_prefill, out.ordinary_round, out.mtp_prefill,
+                                         out.mtp_round, out.causal_score});
         out.capacity         = out.general_capacity;
         return out;
     }
@@ -566,6 +500,7 @@ private:
     const MtpWeights* mtp_ = nullptr;
     std::optional<MtpPass> mtp_pass_;
     bool invariant_;
+    EnginePurpose purpose_;
     ModelTraits traits_;
 };
 
@@ -677,11 +612,30 @@ void NemotronExecution::mtp_bridge_and_propose(program::PrefillContext& state,
 
 } // namespace
 
+StateShape state_shape(const Config& config, std::int32_t public_tokens) {
+    const auto& g = config.mamba.geometry;
+    return StateShape{
+        .family           = StateFamily::NemotronH,
+        .full_layers      = config.count(Block::Attention),
+        .kv_heads         = config.kv_heads,
+        .head_dim         = config.head_dim,
+        .recurrent_layers = config.count(Block::Mamba),
+        .value_heads      = g.heads,
+        .value_dim        = g.head_dim,
+        .key_heads        = g.groups,
+        .key_dim          = g.state,
+        .hidden           = config.hidden_size,
+        .output_rows      = config.vocab_size,
+        .public_tokens    = public_tokens,
+    };
+}
+
 std::unique_ptr<const ModelExecution>
 make_program_execution(const Model& model, const MtpWeights* mtp, DeviceContext& device,
-                       std::int32_t public_tokens, ActivationMode activations) {
+                       std::int32_t public_tokens, ActivationMode activations,
+                       EnginePurpose purpose) {
     return std::make_unique<const NemotronExecution>(model, mtp, device, public_tokens,
-                                                     activations);
+                                                     activations, purpose);
 }
 
 } // namespace ninferno::models::nemotron_h

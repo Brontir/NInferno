@@ -5,6 +5,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/common/mbarrier.cuh"
 #include "ops/common/math.h"
+#include "ops/common/sm_wave_rules.h"
 #include "ops/common/token_slices.h"
 #include "ops/linear/common/epilogue.cuh"
 #include "ops/linear/fp8/fp8_a8_mma_common.cuh"
@@ -39,12 +40,15 @@ struct Fp8TmaSplitKPlan {
     }
 };
 
-// The resident grid a final wave is measured against: one CTA per SM of this device, at most the
-// schedule's WaveCtas (what the caller's partials hold).
+// The resident grid a final wave is measured against: one CTA per SM of this device (every split
+// schedule is compiled for one: MinBlocksPerSm 1).
+inline int fp8_tma_split_wave_ctas() { return std::max(0, device_class().sms); }
+
+// The partials a split schedule's caller provides: one wave of split CTAs on this device.
 template <class Schedule>
-inline int fp8_tma_split_wave_ctas() {
-    const int sms = device_class().sms;
-    return sms > 0 ? std::min(sms, Schedule::kSplitWaveCtas) : Schedule::kSplitWaveCtas;
+inline std::size_t fp8_tma_split_partial_bytes() {
+    static_assert(Schedule::kSplitsFinalWave);
+    return static_cast<std::size_t>(fp8_tma_split_wave_ctas()) * Schedule::kPartialBytesPerCta;
 }
 
 // Under the prefill route profile (ninferno/ops/prefill_routes.h) no final wave splits. A split
@@ -56,13 +60,10 @@ template <class Schedule>
 inline Fp8TmaSplitKPlan fp8_tma_split_k_plan(int tiles, int k) {
     Fp8TmaSplitKPlan plan{tiles, 0, 0};
     if (prefill_routes_active()) return plan;
-    if constexpr (Schedule::kSplitWaveCtas > 0) {
-        const int wave = fp8_tma_split_wave_ctas<Schedule>();
-        const int tail = tiles % wave;
-        if (tail && tail <= wave / 2) {
-            const int max_parts = std::min(Schedule::kMaxParts, k / Schedule::kBlockK);
-            if (max_parts >= 2) plan = {tiles - tail, tail, std::min(wave, tail * max_parts)};
-        }
+    if constexpr (Schedule::kSplitsFinalWave) {
+        const auto split = sm_rules::fp8_split_tail(tiles, k, fp8_tma_split_wave_ctas(),
+                                                    Schedule::kBlockK, Schedule::kMaxParts);
+        plan             = {split.full_tiles, split.tail_tiles, split.split_ctas};
     }
     return plan;
 }
@@ -202,7 +203,9 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocksPerSm) void fp8_a8_tma
         cta_mbarrier_wait(full + stage, (kt / S) & 1U);
         fp8_mma_compute_stage<Schedule>(activation + stage * BT * BK, weight + stage * BR * BK,
                                         accumulators, warp, lane);
-        // Release only after every lane in this consumer warp has finished its shared reads.
+        // Release only after every lane in this consumer warp has finished its shared reads,
+        // ordered before the stage's TMA refill.
+        cta_fence_reads_before_async_refill();
         __syncwarp();
         if (lane == 0) cta_mbarrier_arrive(empty + stage);
     }
@@ -337,7 +340,7 @@ void launch_fp8_a8_tma_mma_native(const Fp8A8Operands& p, Output output, Epilogu
                 CUDA_CHECK(cudaGetLastError());
             }
         };
-        if constexpr (Schedule::kSplitWaveCtas > 0) {
+        if constexpr (Schedule::kSplitsFinalWave) {
             static_assert(
                 (!RowPolicy::kPaired && requires { epilogue.apply(0, 0, 0.0f); }) ||
                     (RowPolicy::kPaired && requires { epilogue.apply_pair(0, 0, 0.0f, 0.0f); }),

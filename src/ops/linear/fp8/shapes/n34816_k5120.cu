@@ -9,7 +9,7 @@ using C4         = Fp8A16SimtSchedule<4, 2, 16, 4, 1, Fp8SimtActivationAccess::T
 using Tma64x128  = Fp8A8TmaMmaSchedule<64, 128, 128, 2, 4, 2, 1>;
 using Tma64x256  = Fp8A8TmaMmaSchedule<64, 256, 128, 2, 4, 2, 1>;
 using Tma128x256 = Fp8A8TmaMmaSchedule<128, 256, 128, 2, 4, 2, 1>;
-using Bulk       = Fp8A8TmaSplitKSchedule<Tma128x256, 170, 4, 8>;
+using Bulk       = Fp8A8TmaSplitKSchedule<Tma128x256, 4, 8>;
 
 void launch_a16(const Tensor& x, const Weight& weight, Tensor& out, cudaStream_t stream) {
     const int tokens = x.ne[1];
@@ -44,16 +44,17 @@ void launch_a8(const Tensor& x, const Weight& weight, Tensor& out, Fp8A8Workspac
         return launch_fp8_a8_tma<Geometry, Tma64x128>(x, weight, out, scratch, stream);
     if (x.ne[1] <= 192)
         return launch_fp8_a8_tma<Geometry, Tma64x256>(x, weight, out, scratch, stream);
-    // At T <= 256 the last wave of 170 SMs is already well filled; a card with fewer SMs splits it.
+    // The bulk tile's final wave splits K where it fills at most half the SMs
+    // (fp8_tma_split_k_plan).
     launch_fp8_a8_tma<Geometry, Bulk>(x, weight, out, scratch, stream);
 }
 
 bool uses_a8(std::int32_t, std::int32_t max_tokens) { return max_tokens >= 5; }
 
 std::size_t partial_capacity_bytes(std::int32_t max_tokens) {
-    // One wave of partials wherever the dispatch runs a split schedule: whether its last wave
-    // splits depends on the device's SM count (fp8_tma_split_k_plan), not the tuned 170.
-    return max_tokens > 192 ? Bulk::kPartialBytes : 0;
+    // One wave of partials wherever the dispatch runs a split schedule: whether and how its last
+    // wave splits follows the device's SM count (fp8_tma_split_k_plan), and so do the partials.
+    return max_tokens > 192 ? fp8_tma_split_partial_bytes<Bulk>() : 0;
 }
 } // namespace
 

@@ -29,7 +29,7 @@ base class and no shared model graph.
 | `target.h`, `target.cu` | The target forward: KV pools, every layer over T columns, soft-capped and uncapped heads, workspace sizing |
 | `mtp_round.h`, `mtp_round.cu` | The draft phase of a round with the MTP drafter |
 | `dflash_round.h`, `dflash_round.cu` | The draft phase of a round with the DFlash drafter, its context cache and prefill hook |
-| `speculation.h`, `speculation.cu` | Greedy speculative decoding: draft, verify, accept, one CUDA graph per draft depth, adaptive depth |
+| `speculation.h`, `speculation.cu` | Greedy speculative decoding: draft, verify, accept, one CUDA graph for its draft depth |
 | `session.h`, `session.cu` | `Session`: chunked prefill, teacher-forced scoring, graph-captured decode, the public speculation entry |
 | `gemma4.h` | The applications' single include |
 
@@ -140,32 +140,35 @@ carries the choice to `ops::gemma4_moe`. Under all three profiles a token's pref
 depend on the chunk it shares for calls of 17 tokens or more. The Op and linear token-invariance
 tests check both expert tiers and the A16 dense shapes.
 
-**A speculative verify pass runs every projection and the head at A16, whatever the profile.** It
-must compute what k+1 single-token decode steps would. Plain decode never takes a W4A4 route, but
-from eight columns the 26B's packed Q/K/V projection would, and the round would accept drafts
-against a coarser model than the one decode runs. The draft depth is bounded so that the verify
-width stays on routes plain decode also runs, the expert bank's small-T route included: at most 15
-MTP drafts, and at most `min(block_size, 16) - 1` DFlash drafts. The profile still reaches
-speculation through the prompt's prefill, which writes the context that verify attends over and
-that DFlash reads.
+**A speculative verify pass runs every projection and the head under the policy plain decode
+runs, capped at A8 (`ops::verify_linear_policy`).** It must compute what k+1 single-token decode
+steps would. Plain decode never takes a W4A4 route, but from eight columns the 26B's packed Q/K/V
+projection would, and the round would accept drafts against a coarser model than the one decode
+runs. The draft depth is bounded so that the verify width stays on routes plain decode also runs,
+the expert bank's small-T route included: at most 15 MTP drafts, and at most
+`min(block_size, 16) - 1` DFlash drafts. The profile still reaches speculation through the prompt's
+prefill, which writes the context that verify attends over and that DFlash reads.
 
 The measured best draft configuration per model and GPU is the model's profile in the
 [drafter registry](../../src/spec/data/drafter_registry.json), which `--spec auto` runs. The executable defaults
 (`--draft 4` for MTP, `block_size - 1` for DFlash) are not those recommendations.
 
 Speculation is greedy: a round accepts the longest drafted prefix the target's argmax agrees with.
-The verify pass runs every projection with BF16 activations (`Activations::A16Only`). Whether its
+The verify pass runs the projections under the verify policy (`Activations::Verify`). Whether its
 stream equals plain greedy decode depends on the profile:
 
 - **exact (`--a16-full`)** is invariant: decode and verify run the same A16 routes, and speculation
   reproduces plain decode byte for byte (Gemma 4 31B UD-IQ3_XXS + MTP Q8_0, K = 4/6, four chat
   prompts, 256/256 tokens each).
 - **fast (the artifact's recorded policies)** guarantees quality and run-to-run determinism, not
-  spec = plain. Plain decode takes the int8 R8 route at T = 1 for the formats that record AllowA8
-  (q8_g32 and the IQ2/IQ3 codebooks), while verify stays A16, so the greedy stream may leave plain
-  decode at a near-tie in the tail (31B IQ3: after 61-215 tokens). Giving verify the R8 route made
-  the two agree more often but cost 27-63 % of speculative throughput (R8's dp4a work grows with T),
-  so fast keeps the A16 verify.
+  spec = plain. Plain decode takes the int8 R8 route at T = 1; verify takes R8 where it is not
+  slower (`r8_verify_widest`: Q8 to eight tokens, the formats `r8_verify_takes` names to four),
+  ggml's dp4a vector kernel at two to four tokens for the K-quants, and the register MMA above, so
+  the greedy stream may leave plain decode at a near-tie in the tail. Until 27.10 verify ran
+  everything at A16: on Gemma 4 12B Q4_K_M + MTP (RTX 5070 Ti, hard50) a round of one draft cost
+  1.16 decode steps, now 1.10 (mtp:2 1.29 -> 1.23; deeper drafts, verifying on the register MMA
+  either way, unchanged). An earlier trial that forced R8 at every verify width cost 27-63 % of
+  speculative throughput (R8's dp4a work grows with T); the width rule keeps R8 where it is not.
 
 ## MTP drafter
 

@@ -70,10 +70,11 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--max-context N` | `2048` | Per-sequence logical context ceiling. |
 | `--kv-capacity N\|auto` | `--max-context` (`2048`) | Shared Main Text KV pool size. `auto` takes the plan ladder's pool rung the free GPU memory fits. Must be at least `--max-context`. |
 | `--prefill-chunk N` | `1024` | Text-prefill chunk. Positive multiple of 128. |
-| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV storage. `auto` follows the model family (see [KV storage](#kv-storage-and-context)). |
-| `--sliding-kv-dtype bf16\|fp8` | `bf16` | Storage of sliding-window KV. |
-| `--state-dtype f32\|bf16\|f16` | `f16` for Qwen 3.5 with fast activations, else `f32` | Recurrent-state storage. |
-| `--activations exact\|fast\|int8` | `fast` | Activation precision on quantized linears ([details](#activation-precision)). |
+| `--plan --no-load` | off | Print the plan these options give without loading the weights (the plan ladder, the step that fits, the speculation it would run), then exit; no `--prompt` needed. `--json` prints it as JSON (`ninferno-dry-plan/1`), `--plan-device NAME` plans for a named board. An estimate: the start decides ([reference](reference/serving.md#the-plan-without-the-weights)). |
+| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | `auto` | KV storage. `auto`: the [configuration choice](maintainer/configuration-choice.md) for the model on this GPU, logged on a `choice \|` line (see [KV storage](#kv-storage-and-context)). |
+| `--sliding-kv-dtype bf16\|fp8` | follows the KV cache | Storage of sliding-window KV: `fp8` under a narrower KV codec where the family's rings take it, else `bf16`. |
+| `--state-dtype f32\|bf16\|f16` | one step finer than the KV cache | Recurrent-state storage: `f32` under a `bf16` KV cache and under `--activations exact`, else `f16` (Qwen 3.5). |
+| `--activations exact\|fast\|int8` | chosen (`fast`) | Activation precision on quantized linears ([details](#activation-precision)); omitted, the configuration choice picks it. |
 | `--rope-yarn-factor F` | `1` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. |
 | `--vision` | off | Enable image input (Qwen, Gemma 4) and video input (Qwen), and load the Vision GPU allocations. A GGUF needs its `mmproj` file beside it. |
 | `--no-cuda-graph` | graphs on | Disable CUDA Graph decode. |
@@ -81,12 +82,13 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--decode-wait auto\|spin\|block` | `auto` | How the host waits for a round's end ([decode round pacing](#decode-round-pacing)). |
 | `--cuda-sync spin\|blocking\|yield\|auto` | `spin` | CUDA device synchronization schedule ([CUDA synchronization](#cuda-synchronization)). |
 
-Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--dense-tune off|on|retune`,
-`--moe-tune off|on|retune`, `--tune-cache DIR`, `--drafter-registry FILE`,
+Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--drafter-registry FILE`,
 `--debug-prefill-cuts P1,P2,...`, `--debug-poison BYTE`, `--debug-poison-skip SITE,...` and the
-route pins below ([maintainer options](maintainer/environment.md)). No environment variable stands
-in for any of them. They and `--cuda-sync` are process-wide: an Engine built while another of the
-process is alive must ask for the same values, or it is refused.
+route pins below ([maintainer options](maintainer/environment.md)). No environment variable stands in for any of
+them. The lab tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time kernels on the machine,
+so `ninferno` refuses them; they run in `ninferno-perplexity` (and the dense tuner in
+`ninferno-dense` and `ninferno-gemma4`). They and `--cuda-sync` are process-wide: an Engine built while another of the process is
+alive must ask for the same values, or it is refused.
 
 #### Route pins (maintainers)
 
@@ -314,7 +316,8 @@ Outputs at most 512 tokens, context 4,096. Fastest settings:
   workload, output budget and KV type.
 - The artifact describes its model configuration and weight representations. `--kv-dtype` chooses
   runtime KV storage independently.
-- `--kv-dtype auto` takes the model family's choice:
+- `--kv-dtype auto` takes the [configuration choice](maintainer/configuration-choice.md) on a GPU
+  generation with lab constants (Ada today), and the model family's choice elsewhere:
   - `int8` for Qwen 3.5/3.6/3.8;
   - `fp8` for the dense decoders (gpt-oss, Llama, Mistral, Granite, Muse Glimmer, ...) on GPUs that
     convert FP8 in hardware (`sm_89` and up: Ada, Hopper, Blackwell); `bf16` below that;

@@ -37,7 +37,7 @@ The model argument is one of:
 | Argument | What happens |
 |---|---|
 | a `.ninferno` file | served as is |
-| a Hugging Face checkpoint directory or a GGUF file | converted once into `<dir>/.ninferno-cache/` |
+| a Hugging Face checkpoint directory or a GGUF file | converted once into `<dir>/.ninferno-cache/`, again when its files change |
 | a hub id (`org/name[@revision]`) | fetched, converted, cached (below) |
 
 A hub id is fetched into the Hugging Face cache (`$HF_HUB_CACHE`, else `$HF_HOME/hub`, else
@@ -51,8 +51,11 @@ searched.
 - `HF_HUB_OFFLINE=1` uses the cache only.
 - The served model id is the hub id.
 - `--prepare-only` fetches and converts, then exits (no GPU).
-- `--with-drafters` attaches the drafters of a GGUF hub model too (a separate download). A checkpoint's
-  drafters are attached without it.
+- A GGUF hub model's separate drafters (a separate download: Gemma 4's assistant, a Qwen DFlash
+  drafter) are an axis of the configuration choice: a start attaches them when the choice on this
+  GPU drafts with one (the plan before the download), and not otherwise. `--with-drafters` always
+  attaches them. A checkpoint's drafters are attached either way. A quantization once converted
+  with them keeps them: a later start reuses that conversion and serves them.
 
 Refusals come before any weight is downloaded. Each says what to do instead:
 
@@ -220,12 +223,25 @@ For `C=--max-concurrency` and `H=--device-state-slots`, total Device StateImage 
 
 ### Context-cost presets
 
-Context-cost coefficients resolve once at startup from generic defaults, matching compiled values,
-and optional transfer or prefill entries from `--context-cost-presets FILE`. Prefill entries match
-the hardware and a signature derived from the actual Text/Vision configuration, bindings and Uses.
-A new representation without a matching measurement uses generic prefill coefficients. A malformed
-file aborts startup. The operational context-cost record and JSONL `server_start` identify the
-selected source.
+Context-cost coefficients resolve once at startup from generic defaults, the compiled machine of
+the device's GPU class, and optional transfer or prefill entries from `--context-cost-presets FILE`.
+A machine is keyed by a GPU class key (`gb202:170sm`, `gb202`, `sm120` or `*`) and found along the
+device's class chain, never by the name the driver gives the card. The compiled machines are keyed
+by the boards they were measured on (RTX 5090 `gb202:170sm`, RTX 4090 `ad102:128sm`, RTX 3090
+`ga102:82sm`, RTX 2080 Ti `tu102:68sm`); a board whose chain names none takes the machine of the
+nearest measured board within the carry distance of measured data, as measured (an RTX 4090 D the
+RTX 4090's), and a farther board, or one of another instruction set, the generic defaults. Prefill
+entries match the machine and a signature derived from the actual Text/Vision configuration,
+bindings and Uses; a new representation without a matching measurement uses the machine's class
+prefill, else the generic one. A malformed file, or one of an older schema (`schema_version` 4
+keys a machine by `gpu_class`), aborts startup. The operational context-cost record and JSONL
+`server_start` (`engine.context_cost`: `transfer_source`, `prefill_source`, `gpu_class`, `machine`,
+`prefill_signature`, `preset_path`) identify the selected source (a carried machine's `machine`
+adds the board distance: `carried from ad102:128sm at 0.17`). The decision fingerprint records the
+machine as `sources.context_cost.machine` (`own <key>`, `carried from <key>` or `generic`) and the
+two sources as `sources.context_cost.transfer` and `sources.context_cost.prefill`; a carried
+machine that still prices the transfer or the prefill is the taint `carried_context_cost` (one an
+external entry replaced entirely is not).
 
 ## 3. Speculative decoding
 
@@ -242,9 +258,14 @@ selected source.
 - The server loads the drafter of the profile's default for its thinking default, with that
   choice's proposal head. It captures CUDA graphs for every depth the profile's choices use with
   that drafter.
-- `--spec-select fixed` (the default) runs that configuration for every request.
-  `--spec-select thinking` runs per request the profile's thinking or non-thinking default, by the
-  request's own thinking flag.
+- `--spec-select fixed` runs that configuration for every request. `--spec-select thinking` runs
+  per request the profile's thinking or non-thinking default, by the request's own thinking flag.
+- Without `--spec-select` the profile's measurements decide (`product::per_request_pays`): per
+  request where the requests of the other thinking flag would gain at least 3 % at their own
+  configuration (above the 1.8–2.3 % the measurements spread), else fixed. On the lab's pairs only
+  Ada's 9B DFlash differs (15 drafts with thinking, 7 without): with thinking on by default the
+  requests without it lose 2 % at 15 (fixed serves), with it off those with it lose 16 % at 7 (per
+  request serves).
 - Requests of different depths share batches. A step verifies at the deepest request's depth, each
   request drafting at that launch's width.
 - A choice that needs another drafter runs the default configuration, and the startup log says so.
@@ -351,8 +372,12 @@ fit either, the refusal is plain decode's and says `--spec auto` was refused fir
 
 The configuration each request ran is in its request-log record (`speculative.config`, `family`,
 `selection`, `reason`, `note`, `floor`, `fallback`, `context_plain`, `plain_steps`, `wide_rounds`,
-`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`)
-and in the OpenAI Chat `timings.speculation` object. Anthropic messages and OpenAI Responses carry
+`capped_rounds`, `ungraphed_rounds`, `load_plain`, `watchdog_tripped`, `shared_trip_deferrals`,
+`constraint_fallback_steps`)
+and in the OpenAI Chat `timings.speculation` object, which also counts the request's `rounds` (each
+verified a draft) and `fallback_steps` (target-only steps beside drafting rows after its watchdog
+tripped): a request that ran to its limit generated 1 + `rounds` + `draft_n_accepted` +
+`fallback_steps` + `plain_steps` tokens. Anthropic messages and OpenAI Responses carry
 `config`, `selection`, `reason`, `fallback` and `note` as `usage.ninferno.speculation`, an
 extension key strict clients ignore. Every request carries them, also under an explicit `--spec`
 and on a server plain since startup:
@@ -402,6 +427,21 @@ Notes:
   concurrency measured. Its second and third columns therefore run the same configuration and
   differ by run-to-run noise (up to 2.4 %), as do the RTX 5090 row's at C=1 and C=2, below its
   table's first bound (3 lanes).
+
+### Constrained output
+
+A constrained request (a JSON Schema or `json_object` response, a forced or strict tool call, a
+choice, a regex, a structural tag) speculates like any other: the server computes its token masks
+while the round runs, and a DFlash row's masks follow its drafts. A client's EBNF grammar
+(`grammar`, `guided_grammar`, `structured_outputs.grammar`, or a `{"type": "grammar"}` format
+anywhere in `structured_outputs.structural_tag`) may be nested and ambiguous without bound, so its
+mask time is declared at the samplers' whole wait bound: a decode step that holds one computes its
+masks before the round, and its constrained DFlash rows verify without drafts
+(`constraint_fallback_steps` in the request log; MTP rows still draft). Inside a reasoning section
+the grammar is not consulted yet, so such a request keeps its drafts until its reasoning ends. The
+tool-call markup the server renders counts as shaped, Gemma 4's argument grammar included. The
+choice follows from the step's constraints, the tokens they committed and the draft depth; nothing
+is timed ([deterministic decisions](../maintainer/deterministic-decisions.md)).
 
 ### Stop and usage with speculation
 
@@ -600,7 +640,8 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then.
-- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema, and
+- `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
+  call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
 - A JSON `response_format` (`json_schema` or `json_object`) beside enabled tools, as Agent SDKs
   send. The answer is the calls or a text answer in that format, nothing else. When a call is
@@ -736,7 +777,8 @@ This applies across Chat Completions, Responses, and Anthropic Messages.
 ### Chat template and message order
 
 - `--chat-template FILE` selects a local Jinja template. By default the server uses the template
-  stored in the artifact. See the [CLI guide](../cli.md#input-and-output) for an example.
+  stored in the artifact. A hub or local checkpoint that ships none (a base model) is converted
+  with it, so it can be served. See the [CLI guide](../cli.md#input-and-output) for an example.
 - Messages enter the selected template in their input order. The maintained Qwen templates keep
   system/developer messages at their original positions.
 - A stock template that refuses a system or developer message after the first ("System message must
@@ -767,6 +809,67 @@ the same ordered tool call. NInferno does not canonicalize semantically equivale
 reorders members, inserts defaults, or otherwise rewrites a tool object, the changed rendered input
 does not match the model-held endpoint and can reuse only an earlier exact checkpoint.
 
+### Key order under an output constraint
+
+A grammar that holds an object's optional properties to their schema order, each skippable, loses
+fields: once the model writes a later optional key, no earlier one can follow, and the output is
+still valid JSON. NInferno's grammars let the model write keys in its own order:
+
+- An object's optional properties may come in any order, each at most once. Its required
+  properties keep their schema order among themselves (the optional ones may sit before, between or
+  after them), and the object cannot end before all of them are written.
+- An object whose properties are all required keeps them in schema order. OpenAI strict mode
+  requires every property to be required and documents that keys come in schema order; such
+  schemas behave the same here.
+- Additional properties, where the schema admits them, may sit anywhere among the declared ones.
+- The same rule holds for nested objects, array items and `$ref` targets.
+- Each at most once is tracked for up to 256 states per object (required properties written,
+  times the set of optional ones written): eight optional properties with no required one, six
+  with three required. Optional properties past those (in schema order), and every optional
+  property of an object with `patternProperties` or `propertyNames`, may still come in any order
+  but may repeat (the tool-call parsers of every syntax, like most JSON parsers, keep the last
+  value).
+- An object with `minProperties` or `maxProperties` takes the same rule with an exact count when
+  every optional property is tracked (above) and it admits no other key: a key is admitted only
+  while the object stays within `maxProperties` with room for its remaining required properties,
+  and the object ends at `minProperties` or more. Any other counted object (a key that may repeat
+  would count twice for one property) keeps its optional properties in schema order, so list them
+  in the order the prompt asks for them.
+
+Where each constraint applies, and what it holds:
+
+| Output | Constrained when | Arguments or answer held to |
+|---|---|---|
+| `response_format` `json_schema` | always | the schema, keys as above |
+| `response_format` `json_object` | always | any JSON object |
+| Tool call, JSON syntaxes (Hermes, Mistral, Llama 3, gpt-oss harmony, Granite) | `tool_choice` `required` or named, a `strict` tool, or `parallel_tool_calls: false` | `strict` tool: its schema, keys as above; other tools: any JSON object |
+| Tool call, Qwen XML | the same | `strict` tool: its schema, keys as above; other tools: declared and other parameter names in any order, each value any text up to `</parameter>` |
+| Tool call, Gemma 4 | the same | `strict` tool: its schema, keys as above, in Gemma's value format (keys bare when they are made of letters, digits and `_-.$@`, otherwise `<\|"\|>`-quoted; strings `<\|"\|>`-quoted; numbers, booleans and null bare; the root must be `{"type": "object"}`; refused, `unsupported_schema`: a key or const/enum string holding `<\|"\|>`, a string pattern or format that may write `<`); other tools: any object in that format (a bare word as a value, which the parser reads as a string, is not written) |
+| Tool call, Pythonic (OLMo 3) | the same | `strict` tool: its schema, keys as above, as `name=value` keywords with JSON values (refused, `unsupported_schema`: a top-level name that is not a Python identifier, keys by pattern at the top level, a reference back to the root); other tools: any text |
+| Tool call, ATEM | the same | `strict` tool: its schema, keys as above, as `<atem:parameter name="K">` blocks, a string as the raw text between the tags and other values as JSON (refused, `unsupported_schema`: a name with a quote mark, keys by pattern at the top level, a reference back to the root, a const/enum string holding `</atem:parameter>`, a top-level string pattern or format that may write `<`); other tools: any text |
+| A JSON `response_format` beside enabled tools | `tool_choice` `auto` | the calls as above, or an answer in the format |
+
+In Qwen XML and ATEM a parameter's text is untyped: a value whose schema admits a string is read
+back as a string ([parameter conversion](#tool-call-parameter-conversion-qwen)). A strict schema
+that unions a string with another type (`anyOf` of a patterned string and an integer, say) can
+have the other type written and read back as its text.
+
+The constraint starts after the reasoning: under it, the first reasoning close ends the reasoning
+and the grammar opens there ([reasoning output](#reasoning-output)). Whitespace between JSON tokens
+(and inside Gemma 4 arguments) is bounded to runs of 64 characters, so a model cannot write
+whitespace until `max_tokens`; a pretty-printed object with four-space indents fits it to depth 15,
+and deeper indents are written shorter. Nesting depth is not bounded.
+
+Twenty strict tools compile in about 1.2 s to 35-56 MB on the 248k (Qwen3.5) and 262k (Gemma 4)
+vocabularies, and a token mask along a call costs under 1 ms, in every syntax
+(`ninferno_tool_grammar_budget_test` with `NINFERNO_GRAMMAR_TOKENIZER` naming a tokenizer.json). A
+free Gemma 4 argument key may be any name, so the mask at its start checks the key-like tokens at
+run time: up to 30 ms.
+
+`tools/smoke/serve_key_order.py` measures this against a running server: five optional fields
+asked for out of schema order, constrained and unconstrained, reporting the fields lost per run,
+the share of responses in schema order and near-empty objects that stopped early.
+
 ### Thinking controls
 
 - `--default-thinking-budget N` sets a positive default thinking-token cap for requests that think,
@@ -779,6 +882,13 @@ does not match the model-held endpoint and can reuse only an earlier exact check
   Where the prompt starts the thinking (Qwen), the cap counts from the first output token; where the
   model opens it itself (Gemma 4 writes `<|channel>thought`), it counts from the token after that
   opener, and an answer that begins without one is not capped.
+- **Room for the answer.** A thinking request without a budget (none in the request, no
+  `--default-thinking-budget`) gets one: three quarters of its output limit (the request's
+  `max_tokens`, or less where the context leaves less), so the thinking closes in time for an
+  answer of at least a quarter of the limit. Without it a long thinking could spend the whole limit
+  and return no answer. Only where the template can end thinking early (not gpt-oss), and not
+  where the limit is too small for the closing tokens and an answer. `--no-answer-room` turns it
+  off; a request's own budget, or the server's default, always wins.
 - **At the cap.** The Engine first honors a natural `</think>`, stop condition, cancellation, or
   total output/context limit. If thinking remains open, it commits the template's early-close
   control (Qwen's canonical guidance and close marker; Gemma 4's channel close) to the same model sequence without sampling, streams the guidance as a
@@ -1526,7 +1636,9 @@ contract.
 | `--prepare-only` | fetch and convert, then exit | off |
 | `--plan` | print the plan ladder, the rung the free memory picks now and the advice, then exit without serving ([automatic context selection](#automatic-context-selection)) | off |
 | `--json` | with `--plan`: print it as JSON | off |
-| `--with-drafters` | also attach the drafters of a GGUF hub model (a separate download) | off |
+| `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
+| `--plan-device NAME` | with `--plan --no-load`: plan for a named board of the PCI-ID table (`"RTX 4090"`, `0x2684`, then `,headless`/`,display`, `,linux`/`,wddm`) instead of the CUDA device | the CUDA device |
+| `--with-drafters` | always attach the drafters of a GGUF hub model (a separate download) | attached when the choice drafts with one |
 | `--model-id ID` | override the public OpenAI model alias | the artifact's `metadata.name`, else its file name; a Hugging Face id when serving one |
 | `--chat-template FILE` | local Jinja chat template | the artifact's |
 | `--device N` | CUDA device index | `0` |
@@ -1555,13 +1667,13 @@ contract.
 | `--max-concurrency N` | maximum admitted requests; valid range `1..8` | `1` |
 | `--max-pending-requests N` | additional requests allowed to wait for admission | `16` |
 | `--pending-timeout-ms N` | maximum preparation-plus-admission wait | `600000` |
-| `--prefill-chunk N` | text-prefill chunk | `1024` (halved down to 128 when needed; an explicit value is kept) |
-| `--kv-lease-window N` | KV a request reserves past its prompt at admission, in output tokens (at least one speculative round); it extends the reservation as it decodes, releasing idle cached context when the pool is short. When a reservation still cannot grow, the request admitted last leaves its lane (recompute preemption, as in vLLM: the older requests keep running), its conversation cached like a cancelled one's, and queues again at the head to resume from its text once another request has finished, recomputing only what the cache lost; its stream does not break. Requests that cannot resume from their text (a media prompt, presence or frequency penalties, a thinking budget, an output constraint) wait instead, their KV kept and no request admitted meanwhile, while the others run and free pages; only when every running request waits does the one furthest into its answer end with its output limit. An agent client asking `max_tokens` 32000 no longer holds a whole context while it answers in a few hundred tokens. Where the pool does not bind it costs nothing measurable (RTX 4090, RTX 5090, A100: decode at 24K and C1/C4 within noise); `0` reserves the whole output budget | `4096` |
+| `--prefill-chunk N` | text-prefill chunk; omitted, an MoE on a GPU generation with lab constants (Ada) takes the configuration choice's widest chunk (2048 or 4096 where the prompt fills it: an MoE's prefill grows with the tokens each expert takes) | `1024` (halved down to 128 when needed; an explicit value is kept) |
+| `--kv-lease-window N` | KV a request reserves past its prompt at admission, in output tokens (at least one speculative round); it extends the reservation as it decodes, releasing idle cached context when the pool is short. When a reservation still cannot grow, the request admitted last leaves its lane (recompute preemption, as in vLLM: the older requests keep running), its conversation cached like a cancelled one's, and queues again at the head to resume from its text once another request has finished, recomputing only what the cache lost; its stream does not break. Requests that cannot resume from their text (a media prompt, presence or frequency penalties, an output constraint; a thinking budget resumes where it was, never while its closing tokens are pending) wait instead, their KV kept and no request admitted meanwhile, while the others run and free pages; only when every running request waits does the one furthest into its answer end with its output limit. An agent client asking `max_tokens` 32000 no longer holds a whole context while it answers in a few hundred tokens. Where the pool does not bind it costs nothing measurable (RTX 4090, RTX 5090, A100: decode at 24K and C1/C4 within noise); `0` reserves the whole output budget | `4096` |
 | `--concurrent-prefill` | admit waiting requests while others prefill: the prefilling requests take chunks in turn (a later request's first token comes sooner, an earlier long prompt's later); output unchanged | off |
-| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage; see below | `auto` |
-| `--sliding-kv-dtype bf16\|fp8` | the sliding-window layers' rings (Gemma 4, the dense decoders that have them): `fp8` keeps E4M3 codes with an FP32 scale per row, about half the StateImage bytes ([FP8 keys and values](#fp8-keys-and-values)); a model without sliding-window layers refuses `fp8` | `bf16` |
-| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds only what it stores. Omitted, these families take `f16` under `--activations fast` (the startup's capacity line says "state f16") and `f32` under `--activations exact`. The rounding carries from call to call, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
-| `--activations exact\|fast\|int8` | numeric mode; see below | `fast` |
+| `--kv-dtype auto\|bf16\|int8\|fp8\|nvfp4\|k8v4` | KV-cache storage; see below. `auto`: the [configuration choice](#the-plan-without-the-weights) for the model on this GPU (the family's codec where the GPU generation has no lab constants) | `auto` |
+| `--sliding-kv-dtype bf16\|fp8` | the sliding-window layers' rings (Gemma 4, the dense decoders that have them): `fp8` keeps E4M3 codes with an FP32 scale per row, about half the StateImage bytes ([FP8 keys and values](#fp8-keys-and-values)); a model without sliding-window layers refuses `fp8`. Omitted, the rings follow the KV cache: `fp8` under a narrower KV codec where the family's rings take it, else `bf16` | follows the KV cache |
+| `--state-dtype f32\|bf16\|f16` | the recurrent state of the Qwen 3.5/3.6/3.8 Gated DeltaNet layers: `bf16` and `f16` halve every state slot and cached state image (`f16` rounds eight times finer, within FP16's range); the recurrence still runs in FP32 and rounds the state to the storage when it stores it and at every 16-token chunk end of a prefill call, so a prefill cut on the chunk grid (a prefill chunk size, a cache capture or restore) leaves the bytes as they are. Omitted, the state is one step finer than the KV cache: `f32` under a `bf16` KV cache and under `--activations exact`, else `f16` (the startup's capacity line says which). One wide call and the same tokens one call each still round differently, so `--activations exact` refuses an explicit `bf16` or `f16`, as do the other families (Nemotron-H keeps its Mamba2 state in FP32). Measured on Qwen3.8 27B: a 16K stepwise decode with `f16` stays closest to FP32 prefill logits (KLD 0.0018, top-1 98.1 %; `bf16` 0.0052 / 97.0 %), and batched decode (C4, C8) is up to 5 % faster on consumer GPUs, flat on the A100 | `f16` (Qwen 3.5 fast), else `f32` |
+| `--activations exact\|fast\|int8` | numeric mode; see below. Omitted, the configuration choice picks it (`fast` unless `exact` costs under about 11 % of a typical request's time, and on a GPU generation without lab constants) | chosen (`fast`) |
 | `--rope-yarn-factor F` | Qwen 3.5/3.6: rotate with YaRN over the checkpoint's own context and admit `F` (`1..64`) times it. Other families refuse any other value. | `1` |
 | `--no-cuda-graph` | disable CUDA Graph decode | graphs on |
 | `--decode-steps auto\|N` | ordinary decode steps per round, `1..32` ([decode round pacing](../cli.md#decode-round-pacing)) | `auto` |
@@ -1589,8 +1701,10 @@ not take at startup.
   `--max-context`), so the guarantee holds within one server: another `--max-context` can change
   the last bits. A model with no BF16-activation route for a layer refuses `exact` at startup.
 - `fast`: on wide calls NVFP4 activations in four bits and, for integer weights recorded `AllowA8`
-  (GGUF Q4_0/Q4_1/Q5_0/Q5_1/IQ4_NL/IQ4_XS/Q4_K/Q5_K/Q6_K, u4; not the output head), int8
-  activations. The answer can depend on the load.
+  (the GGUF block formats Q4_0/Q4_1/Q5_0/Q5_1, Q8_0, the K-quants Q2_K..Q6_K, IQ4_NL/IQ4_XS and
+  the codebook i-quants IQ3_XXS/IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ1_S/IQ1_M; MXFP4; u4; not the output
+  head; `kept_block_policy`), int8 activations. The ternary and two-bit TQ1_0, TQ2_0, Q1_0 and
+  Q2_0 keep BF16 activations. The answer can depend on the load.
 - `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
   int8 activations where its route has them and none takes four, whatever the artifact recorded:
   the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
@@ -1621,7 +1735,7 @@ not take at startup.
 | Option | Meaning | Default |
 |---|---|---:|
 | `--spec mtp\|dflash\|dflash2\|auto\|none` | speculative backend, or `auto`: the model's tuned profile (`off` is `none`) | `auto` |
-| `--spec-select fixed\|thinking` | under `--spec auto`: one configuration for every request, or the profile's thinking/non-thinking default per request | `fixed` |
+| `--spec-select fixed\|thinking` | under `--spec auto`: one configuration for every request, or the profile's thinking/non-thinking default per request | by the profile's measurements |
 | `--spec-load LANES:DEPTH[:block\|drafts],...\|none` | bounds on speculation under decode load instead of the profile's `load` table, each optionally with the DFlash draft width of its launches | the profile's |
 | `--draft-width block\|drafts` | the DFlash draft width of every launch (`block`: every column the drafter was trained on; `drafts`: the anchor and the round's drafts); `--spec auto` drops a width its speculation does not run | `block` at one row, `drafts` from two |
 | `--spec-shared-floor F` | a request below its break-even floor keeps drafting while another request of its step drafts and it emits at least `F` tokens per round (`1` or less: it stops at its floor) | `1.4` |
@@ -1637,6 +1751,7 @@ not take at startup.
 |---|---|---:|
 | `--default-max-tokens N` | output limit when omitted by a request | `8192` |
 | `--default-thinking-budget N` | positive thinking cap inherited by thinking-enabled requests | unset |
+| `--no-answer-room` | a thinking request without a budget may think up to its whole output limit, instead of three quarters of it (the rest kept for the answer) | room kept |
 | `--repetition-stop N` | end an output whose last N tokens (16..65536) repeat one period of at most 64 tokens four or more times: finish_reason `length` (Anthropic `max_tokens`, Responses `incomplete`), `repetition` in the request log | `0` (off) |
 | `--repetition-thinking stop\|conclude` | `conclude`: a loop `--repetition-stop` finds while the thinking is still open closes the thinking (the control suffix a thinking budget injects, once) and the answer follows; `thinking_loop_concluded` in the request log. A loop in the answer, with no room left for the suffix, or on a template without a thinking-budget control (gpt-oss), still ends the output | `stop` |
 | `--vision` | enable media input and load Vision GPU allocations | off |
@@ -1694,7 +1809,7 @@ Serve writes human-readable operational records to stderr as
 - The server opens `FILE` in append mode and flushes every event, so successive model or MTP blocks
   may share one campaign file. The parent directory must already exist. Failure to open the file
   aborts startup. The path is also rejected if it resolves to the model artifact.
-- Every line is one `ninferno_serve_request_log` schema-v30 JSON object. All events carry
+- Every line is one `ninferno_serve_request_log` schema-v31 JSON object. All events carry
   `timestamp_unix_ms` and a process-unique `server_instance_id`. Request IDs are monotonic only
   within that server instance.
 - Successful request-start records include request-scoped acquisition, media-preprocessing
@@ -1707,7 +1822,7 @@ Serve writes human-readable operational records to stderr as
 rung's `max_context`, `kv_tokens`, `cached_device_states`, `prefill_chunk`, `step`, `survival`,
 `bytes` and `needed_bytes`, the device, weight and free bytes, the margins `base_margin_bytes`,
 `reserve_bytes` and `allowance_bytes`, `top_shortfall_bytes`, `next_shortfall_bytes`,
-`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
+`reserve_limited_context`, `reserve_limited_kv_tokens` and `advice`); resolved Engine and context-cache capacities, the decode pacing (`engine.decode_pacing`: `steps` as `auto` or an integer, `wait`, `cuda_sync`) and the maintainer options (`engine.maintainer`: `route_table`, `route_dir`, `dense_tune`, `moe_tune`, `tune_cache`, `debug_prefill_cuts`, `debug_poison`, `debug_poison_skip`, `artifact_io`, `drafter_registry`; [maintainer options](../maintainer/environment.md)), thinking/non-thinking sampler defaults plus process overrides, thinking-history and thinking-budget defaults, Device arenas, the optional non-additive Vision layout inside the unified workspace, Host State/KV capacity and occupancy, KV sizing ledger, CUDA Graph allowance, CUDA/GPU environment, and redacted argv |
 | `request_start` | protocol, resolved sampler and seed, the plan ladder's rung (`plan_level`), requested reasoning effort, actual initial thinking mode and optional budget, Responses semantic-change flag, output budget, stream/message/tool shape, and `notes`: what the server accepted but did not use as sent (a reasoning Item without text left out, say) |
 | `request_rejected` | parsed request shape, requested reasoning effort, media-item count, `phase: "prepare"`, and the exact HTTP status/type/code/parameter/message for a synchronous preparation rejection |
 | `request_done` | finish reason, prompt/completion/cache/computed-prefill tokens, prefix reuse path, tool-call parse diagnostics, request-owned materialization cost/search diagnostics, thinking-budget application counters, unrounded request-stage seconds, per-request Engine Host exposure, and complete speculative-decoding counters |
@@ -1772,7 +1887,9 @@ Details:
   recorded only under a thinking budget and was 0 otherwise.
 - `request_done.timings_seconds` contains `prepare`, `ttft`, `vision`, `prefill`, `decode`, and
   `total` as full-precision JSON numbers. Its `speculative` object contains `backend`,
-  `draft_window`, `rounds`, `drafted_tokens`, `accepted_tokens`, `fallback_steps`, and
+  `draft_window`, `rounds`, `drafted_tokens`, `accepted_tokens`, `fallback_steps` (of them
+  `constraint_fallback_steps`: DFlash rounds a constrained request verified without drafts because
+  its step computed its masks before the round, [constrained output](#constrained-output)), and
   `accepted_per_position`. Rates can be derived downstream from raw token counts and seconds instead
   of rounded stderr strings.
 - For `server_start.memory`, `workspace.capacity_bytes` is the only physical workspace allocation.
@@ -1981,6 +2098,241 @@ fit against the ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
 | same, C=4 | 126,720, 4 cached states | 131,072 (rung 57), none (the Host tier keeps them) |
 | Qwen3.6-35B-A3B UD-IQ3_XXS, C=1 (3.15 GiB) | 262,144 | 262,144 (rung 1) |
 | same, C=4 | 262,144, a pool of 270,336 | 262,144, a pool of 262,144 (rung 37), 4 cached states |
+
+### The plan without the weights
+
+`ninferno-serve <model> --plan --no-load [--json] [--plan-device NAME]` plans a start without loading
+or downloading the weights and without a GPU. It builds the same plan ladder a start builds, from
+the same options, with the same functions (`runtime/engine/plan_dry_run.h`: `plan_axes`,
+`plan_ladder_inputs`, `plan_margins`, the ladder and its selection). The facts come from what the
+model says about itself:
+
+- **A hub id**: the repository listing (every file's size) and the header of one GGUF file (an HTTP
+  range of a few MiB), or `config.json` for safetensors weights. Nothing else is downloaded.
+- **A local GGUF file, checkpoint or `.ninferno` artifact**: its header, `config.json` or text
+  config.
+
+The device is the CUDA device (`--device`), or, with `--plan-device`, a named board of the PCI-ID
+table (`core/data/gpu_facts.json`). A named board is a what-if:
+
+- `--plan-device "RTX 4090"`, `--plan-device 0x2684` (the PCI product id);
+- optional facts after commas: `headless` or `display`, `linux` or `wddm`;
+- by default the board has this host's driver model, and a display under WDDM.
+
+Its memory is 97.5 % of the marketed VRAM. The free memory is the device's now, less the weights,
+when the device is real, read as a start reads it: with the CUDA stack limit at 0 when the plan
+has an automatic axis (`plan_automatic_fit`: the driver's default per-thread stack reservation,
+0.09-0.19 GiB on the lab's cards, returned first). On a named board, and in ninferno-ui, the dry run takes an idle card: the
+memory less 512 MiB for the CUDA context, and less a desktop's share when the card drives one
+(Linux 256 MiB, Windows and WSL 2 1.5 GiB). These shares are declared, not measured.
+
+**What is the start's, and what is estimated.** A rung's persistent bytes are the family planner's
+own: the start and the dry run call the same function (`plan_persistent_layout` over a
+`StateShape`, models/qwen3_5/program/planning/sequence_bytes.h, one per family: Qwen 3.5/3.6, the
+dense and MoE decoders with gpt-oss, Gemma 4, NemotronH), with the shape the start builds from its
+bound config and the dry run from the header or config:
+
+- the paged KV, the MTP layer's pool, a DFlash drafter's paged KV, ring and features;
+- the recurrent states with their replay records, the sliding rings;
+- the Program's buffers and the CUDA Graph allowance;
+- the host tier's pinned StateImages, and the advice when nothing fits (`plan_fits_instead`).
+
+A CPU test (`ninferno_plan_bytes_test`) checks the two to the byte over 7,056 rungs of nine models.
+`plan.estimate_basis` is `family_planner` then, or `approximate` with `estimate_reason` where the
+facts do not name the state (a DFlash plan without its drafter's shape). What stays an estimate on
+both bases is the workspace: a start sizes its Op scratch from the bound weights' kernel routes,
+the dry run from the prefill chunk's activations and the decode logits. It is the remaining
+difference (about one rung in the lab's stand checks).
+
+The weights are the GGUF tensor table's bytes when one file holds the whole model
+(`weights_basis` `gguf_tensors`), else the listed file sizes (`file_size`: "estimated from file
+size"), and an artifact's tensors (`artifact`). A GGUF's NextN (MTP) block and an artifact's own
+drafter are counted only when the plan serves MTP or DFlash (a start uploads them only then), the
+Vision encoder only under `--vision`, and a separate drafter's weights beside. The start stays the
+authority.
+
+The documented exception is what the start measures and the dry run cannot:
+
+- the load-time route tuner runs before the start reads the free memory, and whatever it leaves
+  resident;
+- the kernel warm-up, which may move the plan a rung down.
+
+The CPU tests check that the dry run and a start build the same ladder inputs and margins from
+the same options (`tests/test_plan_dry_run.cpp`).
+
+**Speculation.** `--spec auto` is resolved as a start resolves it, with the same functions
+(`product/speculation/speculation.h`, `SpeculationSubject`). For an artifact, the resolution is the
+artifact's own. A model not yet converted gets the drafter manifest the converter would write. A
+GGUF hub model gets it with its separate drafters planned as attached (a start attaches them
+when the speculation it serves drafts with one), or, for a quantization converted here with its
+drafters, from that conversion (`convert::cached_conversion_with_drafters`: the start reuses it);
+their memory counts only for the speculation that drafts with them (`product::PlannedSubjects`, the
+same for ninferno-ui's plan). The start's fallback order is then judged by the dry run
+instead of an Engine build:
+
+1. the profile's choice;
+2. its fit fallback;
+3. the deepest shallower depth that fits;
+4. the model's own MTP head;
+5. plain decode.
+
+With an automatic pool at an explicit context, the pool rule follows. When the drafter leaves fewer
+whole contexts than `--max-concurrency` and plain decode holds more, the MTP head runs if it keeps
+four fifths of plain decode's contexts; otherwise plain decode runs.
+
+**The largest quantization that fits** (`runtime/engine/quant_rule.h`). A hub GGUF repository
+without `--quant` plans every listed quantization at the asked context and `--max-concurrency` on an
+idle card of the device, and the rule picks one. What "fits" means:
+
+- **Own**: every stream holds the target context of its own. The target is an asked
+  `--max-context`, or under an automatic context min(the model's own, 32,768), and never more than
+  `--max-context-cap` (the rule's line then says "auto context (at most N)"): "own" is the longest
+  context each stream gets, probed at pinned contexts 8K .. the model's own.
+- **Shared**: it fits only as one pool the streams share (a rung with fewer whole contexts than
+  streams). This is said in plain words, never shown as "× streams".
+- **Desktop**: it fits only on a survival rung, which gives up the class reserve kept for the
+  desktop. The server starts it with a warning; the screen may stutter.
+- **No**, **unknown** (the shape could not be read: nothing is refused for it), **unsupported**.
+
+The pick goes through these tiers in order, and within a tier takes the most bits per weight (the
+bytes over the parameter count, the label's bits when the count is unknown), then the more bytes,
+then the label (a strict order; no published quality data is wired in, so there is no quality
+tie-break):
+
+1. own at the target, at or above 3.5 bits per weight;
+2. under an automatic context, own at 16K, then 8K (the context steps down before the quality);
+3. shared, at or above 3.5 bits;
+4. own below 3.5 bits (at the same targets), then shared below 3.5 bits;
+5. desktop.
+
+A pick under 3 bits per weight is marked low quality. Above 8 bits per weight, drafters and
+sidecars are not served, nor NVFP4 weights on a card below compute capability 10.0. A safetensors
+checkpoint is planned at the size the start's recipe converts it to
+(`product::checkpoint_converted_bytes`: a recipe that keeps the published encodings keeps its
+bytes; a Qwen3.5/3.6 MoE BF16 checkpoint takes `qwen3_6_35b_a3b`'s Q4/Q5 experts and Q8 rest), and
+is "unknown" when that size is not known before the start.
+
+Under an automatic context with several streams, an own pick whose served plan would share one
+pool carries `launch_context`, the own context. Both launch what was planned: ninferno-ui passes it
+as `--max-context-cap`, and `ninferno-serve` without `--max-context` sets it before the start
+(`quant | --max-context-cap 49152: each of the 4 streams keeps 49152 tokens of its own`): the
+context stays automatic under that ceiling, so a busy card steps down a rung as without it.
+
+A start without `--quant` does the same before the download:
+
+- it logs the rule's line (`quant | UD-Q4_K_XL: the largest that fits on this NVIDIA GeForce RTX
+  4090 (24 GB) at auto context x 1 stream, 49,152`);
+- a quantization of the repository already in the hub cache that fits the ask is kept (`quant |
+  using the cached Q4_K_M; Q5_K_M would be larger`, or, for a cached one larger than the pick,
+  `the rule's pick at this ask is ...`): other flags never download another file silently;
+- when nothing fits, it refuses before anything is downloaded and names what fits instead;
+- when the hub cannot be reached, the cached quantizations are planned from their own headers and
+  the rule picks among those that fit; when none fits it refuses (`can't reach the hub ...; pass
+  --quant`); with none it can plan, the fetch's own default applies, as before;
+- a separate drafter counts its weights (its listing's size) where the speculation drafts with it;
+- when the shape cannot be read it does not refuse: the fetch's default order applies (`can't plan
+  before download`).
+
+The default order itself (convert/fetch.cpp `gguf_rank`) now puts BF16 and F16 last: NVFP4, MXFP4,
+Q8_0, Q6_K, Q5, Q4, IQ4, Q3, Q2, then the full-precision files the engine does not serve.
+
+The rule judges an idle card of the device (`device.free_basis` `idle_card`), so the same card type
+and the same flags get the same file. `--plan --no-load` on a live GPU builds its quant table on the
+idle card too, and reports the free memory now beside it (`device.free_now_bytes`, `fits_now`, and a
+`now |` line when the pick would not start right now).
+
+**The configuration choice.** The axes a start leaves automatic (`--kv-dtype auto`, no
+`--activations`, no `--state-dtype`) are chosen for the model on this GPU by one rule
+([Configuration choice](../maintainer/configuration-choice.md)): among the KV codecs and activation
+modes that keep the asked context per stream, the one with the best worth `-ln(T) - 25 KLD`, T a
+typical request's seconds (2048 prompt tokens, 512 answer tokens) priced on the GPU generation's
+reference card, KLD the measured deviation from the exact reference. Where the generation has no
+reference card on two lab cards (today: every one but Ada), the family's defaults stand. A start
+logs it before the plan:
+
+```text
+choice | KV int8, activations fast, state f16 | 150.2 tok/s decode, 11845 prefill (2 tail calls), KLD 0.0044 (estimates) | Q4_K_M: every stream holds 32768 tokens; KV int8, activations fast: the best worth on the ada reference card (...)
+```
+
+The prefill rate prices the whole request: the prompt's tokens, attention, and its tail calls,
+each a whole-model call of a few tokens priced as one decode step: the chat template's generation
+prompt's (Qwen 3.5 two, Gemma 4 three). Pinned flags stay as
+given; the line then says what the choice kept. The plan printed beside it
+(its memory, context and KV codec) is of the storages the start takes from the choice for the axes
+left automatic (KV codec, state, rings, activations, widest chunk), not of the family's automatic
+codec: `--activations exact` may take a BF16 KV cache that holds less. `--plan --no-load` prints the
+same line and adds `choice` to its JSON; ninferno-ui shows it with what each other value would
+change.
+
+**JSON** (`--plan --no-load --json`, ninferno-ui `/api/plan`), schema `ninferno-dry-plan/1`:
+
+| Field | Content |
+|---|---|
+| `estimate` | always `true` |
+| `model` | `source`, `kind` (`hub`, `gguf`, `checkpoint`, `artifact`), `architecture`, `family` (the artifact's model_type, `""` when no family serves it), `native_context`, `params`, `shape_known`, `weights_bytes`, `weights_basis`, `kv_bytes_per_token` (`bf16`, `int8`, `fp8`, `nvfp4`, `k8v4`), `window`, `builtin_mtp` |
+| `device` | `name`, `source` (`GPU n`, `named board ...`, `GPU (NVML)` where CUDA does not know the GPU), `total_bytes` (CUDA's totalGlobalMem, the server's own), `class_bytes`, `card_gb` (the memory as sold: the total rounded up to whole GiB), `compute_capability`, `pci_device_id`, `wddm`, `display` (the kernel-run watchdog), `integrated`, `free_basis` (`measured` or `idle_card`), `free_bytes` (before the weights), `class_reserve_bytes` (the class reserve the selection keeps beside the free memory, for the growth of what Windows holds), `desktop_bytes` (the desktop's declared share an idle card's free memory lacks); `free_now_bytes` and `fits_now` beside a quant table built on the idle card of a live GPU |
+| `ask` | `context` (`"auto"` or tokens), `concurrency`, `kv_dtype` (`"auto"` or the codec), `spec` (`auto`, `none`, `mtp:3`, ...) |
+| `plan` | the plan of the chosen quantization (or of the model): PLAN with `ladder` |
+| `quants` | one row per listed quantization: `quant`, `format`, `bits`, `bits_per_weight` (`weights_bytes` × 8 over the model's weights: a whole GGUF tensor table's elements, else the parameter count its geometry gives), `weights_bytes` (what the plan counts: the converted size for a checkpoint), `weights_basis` (`gguf_tensors`, `file_size`, `artifact`, `converted`), `supported`, `unsupported_code` (`""`, `drafter_file`, `converted_size_unknown`, `above_8_bits`, `nvfp4_card`, `activations_not_run`: the `--activations` mode pinned is one the model's family does not run, `kv_not_run`: the `--kv-dtype` pinned is one the model does not take), `why_unsupported`, `state` (`own`, `shared`, `desktop`, `no`, `unknown`, `unsupported`), `own_context`, `launch_context` (what a launch passes as `--max-context`; 0 automatic), `below_floor` (< 3.5 bits per weight), `low_quality` (< 3), `drafter_bytes` (a separate drafter's weights counted), `fits` (`state == own`), `fits_shared` (`state == shared`), `largest` (the rule's pick), `plan` (PLAN without `ladder`, `null` when not planned), `estimate` (`null` when not planned, else the choice model's speeds at the plan's storages: `decode_tok_s` one stream of the asked ones at `depth` tokens in its window, a quarter of the asked context or of Auto's first step and the same for every row, `prefill_tok_s`, `request_seconds` of a `prompt` + `answer` token request, `transferred` a constant taken from another GPU generation); a single quantization's row when one was named; empty for a single model |
+| `chosen` | the rule's quantization, `null` when none fits or there is no listing |
+| `pick` | `null`, or `quant`, `tier` (`own`, `own_stepped`, `shared`, `own_below_floor`, `shared_below_floor`, `desktop`), `target_context` (own per stream; 0 shared), `context` (what the launch gets), `concurrency`, `card_gb`, `below_floor`, `low_quality` |
+| `rule` | the rule's line (English, for a terminal) |
+| `choice` | CHOICE: the configuration choice at the chosen quantization's weights |
+| `now` | what a start right now would get (`product::plan_now`): the same plan at the GPU's free memory now (another process's share counted), the choice's storages and drafter kept (they are the idle card's): `free_now_bytes`, `fits_now`, `context_now` (each stream's; 0 when it does not fit), `rung_now` of `rungs`, `private_contexts_now`, `survival_now`, `reason_now`, `reason_code_now`, `reason_params_now` (as `reason_params`). ninferno-ui computes it at each request from NVML's free bytes (≈ under WDDM); `--plan --no-load` for a hub table's pick. Absent when the free memory is not known |
+| `rule_code`, `rule_params` | the same as data for a page to word: `largest_fits` (`quant`, `tier`, `planned_context`, `below_floor`, `low_quality`), `best_worth` (the same and `largest`: on a GPU generation that decides, the configuration choice weighed the quantizations of the rule's tier by worth and took `quant` over the largest; and the trade, each at its own choice on the generation's reference card: `time_ratio` the largest's seconds per request over the pick's (above 1: the largest is slower), `kld_delta` the largest's KLD less the pick's (below 0: the largest is more accurate), `accuracy_weight` the lambda that priced them), `none_fits` (`smallest`, `reason_code`, `reason_params`, `fits_instead`), `none_served`; always `concurrency`, `card_gb`, `automatic`, `context` |
+
+PLAN:
+
+| Field | Content |
+|---|---|
+| `planned` | the facts were enough to plan (else `reason`) |
+| `fits` | a rung was selected |
+| `rung`, `rungs` | the selected rung (1 is the top; 0 when none) and the ladder's length |
+| `reserve`, `reserve_kept` | how the rung was admitted (`kept`, `soft`, `warm_up`) |
+| `context`, `pool_contexts`, `private_contexts` | the rung's context, the whole contexts its pool holds, and whether every stream has one of its own (`false`: the streams share one pool) |
+| `chosen` | the rung: `context`, `kv_tokens`, `cached_states`, `prefill_chunk`, `step`, `survival`, `bytes` (`kv`, `states`, `rings`, `workspace`, `graphs`, `fixed`, `total`), `needed_bytes` |
+| `description` | the rung in words |
+| `kv_dtype`, `state_dtype` | the codecs the plan resolved (`auto` resolved for the family and the card) |
+| `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |
+| `estimate_basis`, `estimate_reason` | `family_planner` (the rung bytes are the start planner's but the workspace) or `approximate` and why |
+| `reason`, `fits_instead` | when nothing fits: why, and `[{concurrency, context}]`, the longest automatic context each concurrency fits |
+| `reason_code`, `reason_params` | the reason as data: `""` (fits), `shape_unknown`, `weights_too_big` (`weights_bytes`, `free_bytes`), `smallest_plan_short` (`weights_bytes`, `needed_bytes`, `free_after_weights_bytes`, `short_bytes`, `context`, `concurrency`), `survival_only` (`context`, `reserve_bytes`), `activations_not_run` (the `--activations` mode pinned is one the model's family does not run: `fits` is false whatever the memory holds, and a start refuses it before any weight loads with the same words), `kv_not_run` (the same for a `--kv-dtype` the model does not take) |
+| `ladder` | every rung, top first, as `chosen` |
+| `speculation` | SPEC: the speculation the plan was made with |
+
+CHOICE:
+
+| Field | Content |
+|---|---|
+| `task` | `context` (the own context per stream the choice settled on), `contexts` (the steps tried), `concurrency`, `prompt`, `answer`, `accuracy_weight` |
+| `why` | the decision in one line (English) |
+| `by_worth` | `true` when the worth decided; `false` when the quant rule and the family's defaults stood (no reference card for this generation, or a constant set still on one lab card: the `why` says which) |
+| `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
+| `kv_options` | every `--kv-dtype` codec as a start of this model takes it: `codec`, `allowed`, `why_code` (`""`, `family_codec`: the family keeps BF16 or FP8 only, `head_width`: the Qwen paged pool's layout takes another head width, `shape_unknown`), `why` (English), `slow_on_card` (FP8 codes widened in software: no E4M3 instructions below sm_89; the codec runs, slower). The engine's own rules; ninferno-ui's KV buttons are drawn from it |
+| `activations_allowed` | the `--activations` modes the model's family runs (`fast`, `exact`, and `int8` for Qwen), whatever is pinned: what ninferno-ui's selector offers |
+| `chosen` | `null` when nothing fits (or a pinned `--activations` mode the family does not run: `why` says so); else `quant` (the quantization it was made at), `chunk` (the widest prefill chunk), `kv`, `ring`, `state`, `activations`, `depth` and `decode_tok_s_at_depth` (its decode at the quant table's depth), and ESTIMATES |
+| `alternatives` | every other value of each axis with the others kept: `axis` (`kv`, `activations`, `drafter`, `chunk`, `state`, `ring`: the choice is made at one quantization, the quantization table's row), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the listing order), `default` (a gate is closed: the family's default, the default chunk or the speculation profile's drafter stands), `unmeasured` (a drafter's gain is not measured on this card: the profile's drafter stands), `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
+
+ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
+measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+measured, transferred, source}]`: `measured` false for a stand-in, `transferred` for a term measured
+on another family), `worth`.
+
+SPEC:
+
+| Field | Content |
+|---|---|
+| `ask` | `auto`, `none` or the explicit label |
+| `served`, `backend`, `depth` | what the start would serve (`plain`, `mtp:3`, `dflash2:7`, ...) |
+| `drafter`, `drafter_kind` | the drafter (`mtp`, `dflash`, `dflash2`, `gemma4_assistant`, `nemotron_h_mtp`) |
+| `basis`, `source` | where the choice came from: `own` (this GPU's profile), `similar` (another GPU's standing in), `generic` (the `*` profile), `builtin` (the built-in drafter's untuned default), `measured` (the lab's measurement of this target's weights with its drafters: a registry pair, spec/pairs.h), `preliminary` (no pair measured these weights: another quantization of the same repository at the same commit, the one nearest in bits per weight within its bit class (`source` "registry sibling ..."; another commit may hold other weights), else the choice of its group, pairs of the same family, drafter kind and bit class on two or more lab cards), `measured_plain` (a profile whose choice is plain decode: measured faster without speculation here), `explicit`, `none` (no profile) |
+| `depths`, `floor` | the depths the engine captures and the watchdog floor |
+| `load`, `load_label`, `load_basis` | the profile's load table (`[{lanes, depth}]`, after the stand-in cap; `measured` or `none`) |
+| `depth_at_concurrency` | the depth a step of `--max-concurrency` lanes runs at |
+| `fallbacks` | the start's order as tried: `[{step, label, fits, served, note}]`, `step` one of `profile`, `explicit`, `fit_fallback`, `shallower`, `head`, `plain`, `pool_head`, `pool_plain`; `served` marks the one the start ends on |
+| `notes` | the resolution's notes |
+| `round_cost` | under `--spec auto`, what a round of each measured configuration costs in the resolved profile, in plain decode steps (`{"dflash:7": 1.9, ...}`): per corpus section a round's seconds over plain decode's seconds a token, the mean over the sections. Where `source` says the rounds were priced from the weights' bytes it is the facts' R(k) for this card, otherwise the measuring card's; `{}` with no profile |
+| `by_thinking` | the profile's choice for requests with thinking and without, where the plan serves the profile's own choice: `{thinking: {config, speedup}, non_thinking: {config, speedup}, per_request}`, each the entry for that flag of the menu the start serves (`plain` when it decodes plainly), `speedup` the decode the profile measured for that configuration against plain (1 for a plain decode it chose; 0: not measured), `per_request` whether each request runs its own (`--spec-select thinking` by the measurements); `null` elsewhere |
 
 ### KV capacity
 

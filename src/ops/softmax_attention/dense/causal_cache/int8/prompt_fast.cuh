@@ -54,6 +54,15 @@ struct Int8PromptFastShape {
 // A 64-key FP16 partial is bounded by 64 * 127 * max_scale (every probability is at most one);
 // a scale at or below 8 keeps it, with rounding slack, under 65504.
 inline constexpr float kInt8PromptFastF16PartialScaleLimit = 8.0f;
+// The rescale that brings the largest finite FP16 scale (65504) under the limit. An infinite V
+// scale (a V value past 127 * 65504, or an infinite one) takes it too and leaves the tile's
+// partials non-finite, as exact attention's are, instead of rescaling forever (the kernel never
+// retired and the device stayed busy; iamwavecut/ninfer-all#137).
+inline constexpr int kInt8PromptFastF16PartialMaxShift = 13;
+static_assert(65504.0f / (1 << kInt8PromptFastF16PartialMaxShift) <=
+                  kInt8PromptFastF16PartialScaleLimit &&
+              65504.0f / (1 << (kInt8PromptFastF16PartialMaxShift - 1)) >
+                  kInt8PromptFastF16PartialScaleLimit);
 
 static_assert(kInt8PromptFastBc == kPagedKVPageSize);
 static_assert(kInt8PromptFastGroups == 4);
@@ -377,7 +386,10 @@ __global__ __launch_bounds__(Int8PromptFastShape<Warps>::kThreads, 1) void int8_
         const float vmax = warp_max(fmaxf(__low2float(vmax2), __high2float(vmax2)), FullMask);
         tile_shift       = 0;
         if (vmax > kInt8PromptFastF16PartialScaleLimit) {
-            while (ldexpf(vmax, -tile_shift) > kInt8PromptFastF16PartialScaleLimit) { ++tile_shift; }
+            while (tile_shift < kInt8PromptFastF16PartialMaxShift &&
+                   ldexpf(vmax, -tile_shift) > kInt8PromptFastF16PartialScaleLimit) {
+                ++tile_shift;
+            }
         }
         tile_live = true;
     };

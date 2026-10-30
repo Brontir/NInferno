@@ -297,30 +297,51 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // The multiple of K an R8 weight needs: a lane loads w4a8_span * w4a8_stride 32-value blocks
 // together (generic_w4a8.cuh: two for Q4_K and Q5_K, four for Q6_K and Q3_K, one otherwise).
 [[nodiscard]] std::int32_t r8_k_values(QType qtype);
-// Speculative verify (2 <= T <= kR8VerifyTokens) takes R8 too for the formats where it is not
+// Speculative verify (2 <= T <= r8_verify_widest) takes R8 too for the formats where it is not
 // slower than the register MMA there, with the activation quantized once per call into the
 // workspace (the W4A8 quantizer: the same codes, scales and sums the CTA makes at T = 1) and read
 // from L2 by every CTA, so a token's bytes are those of plain decode and greedy speculation
 // reproduces it. RTX 5080, 27B/31B/35B dense shapes, quantize + R8 against the register MMA:
 // T = 4 IQ2_S/IQ3_S/IQ3_XXS 0.73-0.91 on the large shapes (IQ2_XXS/IQ2_XS follow their
-// family); IQ4_XS and Q8 0.96-1.0 in the micro-benchmark but slower in the product (Qwen3.8-27B
+// family); IQ4_XS 0.96-1.0 in the micro-benchmark but slower in the product (Qwen3.8-27B
 // UD-IQ4_XS, MTP draft 2/3: -1.6 %/-2.4 % tok/s), Q4_K/Q5_K 1.0-1.3 and Q6_K 1.15-1.77:
 // those keep R8 at T = 1 only; at T = 8 the median is 1.35, so no format takes it. Q4_0 takes it
 // (one scale per block, no min: the cheapest codec): serve --spec none at C = 4, the same binary
 // with and without it, Gemma 4 31B QAT (all Q4_0) on the RTX 4090 135 -> 161 tok/s, Gemma 4
 // 26B-A4B Q4_0 on the RTX 5090 710 -> 728 (its attention projections; MTP C = 1 unchanged); Muse
 // 30B Q4_K_M (Q4_K/Q5_K/Q6_K) on the RTX 4090 lost 3 % with the K-quants taking it.
-inline constexpr std::int32_t kR8VerifyTokens = 4;
+// The verify form is compiled for up to eight tokens (kR8VerifyTokens); r8_verify_widest is the
+// widest call a format takes it for by rule.
+inline constexpr std::int32_t kR8VerifyTokens = 8;
+// The narrowest call on the ggml matrix kernel's route (generic_gemm.cpp, kMmqMaxTokens): five
+// tokens, past the four R8 verifies for every format but Q8.
+inline constexpr std::int32_t kMmqMinTokens = 5;
 [[nodiscard]] bool r8_verify_supports(QType qtype);
+// Eight tokens for Q8 (GGUF Q8_0), four for the other formats: Q8 at T = 2..8 on the RTX 5090
+// (Qwen3.5-9B shapes, ninferno_r8_schedule_bench --tokens) took 0.96-1.15 of its T = 1 time on
+// R8 against 0.99-1.24 on the register MMA (SwiGLU 1.03-1.06 against 1.09-1.10, the down
+// projection 0.96-1.03 against 1.21-1.24), each token summed as at decode; past four tokens the
+// other formats' R8 lost (Q4_K 1.48-1.89, IQ3_XXS 1.49-1.80, IQ4_XS 1.19-1.53 against
+// 1.07-1.62). The rule is the format's on every chip, from the chip's own rates: Q8's codes are
+// whole bytes (no unpacking), so R8 does dp4a work only, and dp4a runs four int8 products per FP32
+// lane per clock on every generation from Volta; the width at which that work takes as long as
+// reading the 1.0625 bytes per weight is 21 tokens on the A100 and H100, 37 on the RTX 3060, 40 on
+// the GV100 and 86 on the RTX 4090, well past eight. Measured: RTX 5090 and 5070 Ti (the bench),
+// RTX 4090 (Qwen3.5-9B Q8_0 spec-tune, dflash:7 229 -> 273 tok/s).
+[[nodiscard]] std::int32_t r8_verify_widest(QType qtype);
 // The formats whose R8 codec has the verify-width form compiled: every R8 format but Q3_K.
 [[nodiscard]] bool r8_verify_compiled(QType qtype);
-// Whether a call of 2..kR8VerifyTokens tokens takes R8 on this device: the formats measured faster
+// Whether a call of 2..r8_verify_widest tokens takes R8 on this device: the formats measured faster
 // there (r8_verify_supports) where the MMA takes BF16 operands itself; every compiled format where
 // it does not (Turing: each operand rounded to f16 and two k8 MMAs per k16 make the A16 register
 // MMA the costlier path; RTX 2080 Ti).
 [[nodiscard]] bool r8_verify_takes(QType qtype);
 // r8_verify_takes for one matrix (Q4_0 takes R8 at the verify widths only on a large one).
 [[nodiscard]] bool r8_verify_takes_shape(QType qtype, std::int64_t n, std::int64_t k);
+// Whether R8 takes a call of kR8VerifyTokens tokens of this weight under A8: its format verifies a
+// whole eight-token block on R8 (Q8, r8_verify_widest) and the generic path reads the weight.
+// A speculative drafter's A16Only projections take A8 there (ops::drafter_linear_policy).
+[[nodiscard]] bool r8_takes_block(const Weight& weight);
 // Whether a weight format has a TiledMma codec (then its prefill routes are the tiled ones).
 [[nodiscard]] bool tiled_supports(WeightCodec codec);
 // The schedule's shared tiles for the codec fit one block of this build (generic_tiled.cu).
@@ -337,6 +358,9 @@ inline constexpr std::int32_t kR8VerifyTokens = 4;
 // "staged.<rows>x<tokens>.w<WM>x<WN>.s<stages>",
 // "nvfp4t.c<classes>.<BM>x<BN>", "scalar".
 [[nodiscard]] std::string route_name(Route route);
+// The W4A8 schedule run_route executes for a W4A8 route of this weight (its producer-warp or
+// classic twin where the weight takes the other one); any other route unchanged.
+[[nodiscard]] Route w4a8_executed_route(Route route, const Weight& weight);
 [[nodiscard]] std::optional<Route> parse_route(std::string_view name);
 
 [[nodiscard]] WeightCodec codec_of(const Weight& weight);
@@ -363,7 +387,8 @@ inline constexpr std::int32_t kR8VerifyTokens = 4;
 
 // A call of 17 tokens or more (T >= kQ8PrefillA8Tokens) inside a prefill (prefill_routes_active)
 // of an NVFP4 weight that the generic W4A8 takes: its policy allows A8 and, where the build has
-// the W4A4 kernels, not A4 (nvfp4_prefill_a8_policy). The native NVFP4 plans of sm_120a compute A16
+// the W4A4 kernels, not A4 (nvfp4_prefill_a8_policy); without tensor mma.sync the tiled route owns
+// the call (volta_tiled_route). The native NVFP4 plans of sm_120a compute A16
 // and A4 only, so the wrappers hand such a call of a registered shape to the generic path, as
 // q8_prefill_a8 hands a Q8 one: a W4A16 checkpoint under --activations int8 prefills on int8
 // activations on every card. Outside a prefill (decode, speculative verify of any width, the
@@ -455,6 +480,10 @@ struct Problem {
 // format with a tiled codec; nothing elsewhere (generic_gemm.cpp).
 [[nodiscard]] std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy,
                                                      std::int32_t tokens);
+// The route Volta's own rules give a call before any tuned or tabled one (select_route):
+// volta_tiled_route, else the tensor-core route of the verify widths; none on GPUs with tensor mma.sync.
+[[nodiscard]] std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
+                                                     std::int32_t tokens);
 
 // The bytes a Volta prefill call of up to max_tokens tokens decodes its weight into for CUTLASS's
 // sm_70 GEMM (0 on a GPU with tensor mma.sync, below the CUTLASS threshold, or for a format
@@ -522,6 +551,15 @@ struct Problem {
 // Whether the dense tuner may time R8 at T tokens: r8_verify_tunable, or a width where the format
 // has R8 but ggml's vector kernel takes it by rule.
 [[nodiscard]] bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
+// A verify call's time (seconds) on ggml's vector kernel or on the one-tile register MMA (T = 2..8,
+// the ggml K-quant / i-quant / legacy formats), from the device class's bandwidth, SMs and clock and
+// counted instructions (sm_8x takes sm_86's counts, sm_80/87 included uncounted); nullopt without
+// counts (Turing, Volta, sm_9x/10x) or a roofline. The
+// register MMA's price is its best one-tile schedule's, not the schedule heuristic_rmma runs, so the
+// selector does not use it (generic_gemm.cpp).
+[[nodiscard]] std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
+                                                         Epilogue epilogue, double payload_bytes,
+                                                         std::int32_t tokens);
 // Whether a call of `rows` rows and T tokens may take ggml's matrix kernel (the dense tuner's
 // candidate at verify widths 5..16).
 [[nodiscard]] bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows,
@@ -592,6 +630,11 @@ bool ggml_mmq_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
 // Calls routed to ggml's matrix or vector kernel that ran A16 instead (a workspace short of the
 // route, an unaligned x or rows off its multiple), since the process started.
 [[nodiscard]] std::uint64_t ggml_mmq_fallback_count() noexcept;
+// Calls whose route ran another one with other bytes (any family: a workspace short of it, an
+// unaligned x, a shape it cannot hold), since the process started; each pair of routes is also
+// said once on stderr. A demotion that keeps the bytes (staged or NVFP4 tiled to the register MMA
+// of the same order) is not one.
+[[nodiscard]] std::uint64_t route_demotion_count() noexcept;
 
 // Capacity for every T in [min_tokens, max_tokens] under the active profile.
 [[nodiscard]] std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weight,

@@ -43,11 +43,20 @@ ninferno_add_test(ninferno_convert_checkpoint_index_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_checkpoint_index.cpp"
   LIBRARIES ninferno_convert)
 
+# The content digests convert() seals into the directory (src/convert/writer.h) and the source
+# identity they key (artifact/source_identity.h); the Python writer seals the same. CPU, no torch.
+ninferno_add_test(ninferno_convert_content_digests_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_content_digests.cpp"
+  LIBRARIES ninferno_convert)
+add_test(NAME ninferno_convert_content_digests_interop_test
+  COMMAND ${Python3_EXECUTABLE} -B "${CMAKE_CURRENT_LIST_DIR}/content_digests_interop.py"
+    $<TARGET_FILE:ninferno_convert_content_digests_test>)
+
 ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)
 
-# Which cached artifacts conversion revisions 4 and 5 convert again (convert/cache.h cache_current).
+# Which cached artifacts conversion revisions 4 to 7 convert again (convert/cache.h cache_current).
 ninferno_add_test(ninferno_convert_cache_revision_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_cache_revision.cpp"
   LIBRARIES ninferno_convert)
@@ -146,6 +155,13 @@ add_executable(ninferno_convert_drafter_plan_test "${CMAKE_CURRENT_LIST_DIR}/tes
 ninferno_test_includes(ninferno_convert_drafter_plan_test)
 target_link_libraries(ninferno_convert_drafter_plan_test PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_drafter_plan_test COMMAND ninferno_convert_drafter_plan_test)
+
+# Whether the engine runs a model, from what a repository shows before a download: each rule.
+add_executable(ninferno_convert_model_support_test "${CMAKE_CURRENT_LIST_DIR}/test_model_support.cpp")
+ninferno_test_includes(ninferno_convert_model_support_test)
+target_link_libraries(ninferno_convert_model_support_test PRIVATE ninferno_convert)
+add_test(NAME ninferno_convert_model_support_test
+  COMMAND ninferno_convert_model_support_test "${PROJECT_SOURCE_DIR}")
 
 # The dense decoder adapter: rotary tables bit-exact with transformers, resolved conventions.
 add_executable(ninferno_convert_dense_config_test "${CMAKE_CURRENT_LIST_DIR}/test_dense_config.cpp")

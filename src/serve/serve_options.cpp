@@ -32,9 +32,12 @@ using product::parse_u64;
 std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
-           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json]] [--with-drafters] "
+           "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
+           "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch "
+           "[--keep-replaced]] [--round-tiny-scales] "
            "[--host H] [--port N] [--api-key KEY | --api-key-file PATH] "
-           "[--model-id ID] [--max-context N] [--kv-capacity N|auto] [--kv-auto-headroom-mib N] "
+           "[--model-id ID] [--max-context N] [--max-context-cap N] [--kv-capacity N|auto] "
+           "[--kv-auto-headroom-mib N] "
            "[--max-concurrency N] "
            "[--max-pending-requests N] [--pending-timeout-ms N] "
            "[--prefill-chunk N] [--kv-lease-window N] [--log-stats-interval-ms N] "
@@ -58,7 +61,8 @@ std::string serve_usage_text(const char* argv0) {
            "[--spec auto [--spec-select fixed|thinking]] [--spec-load LANES:DEPTH,...|none] "
            "[--spec-profile TUNE.json] "
            "[--spec-shared-floor F] "
-           "[--default-max-tokens N] [--default-thinking-budget N] [--repetition-stop N] "
+           "[--default-max-tokens N] [--default-thinking-budget N] [--no-answer-room] "
+           "[--repetition-stop N] "
            "[--repetition-thinking stop|conclude] "
            "[--vision] [--no-cuda-graph] [--no-prefix-reuse] [--concurrent-prefill] "
            "[--chat-template FILE] [--lm-head-draft] [--no-thinking] [--preserve-thinking] "
@@ -84,9 +88,23 @@ std::string serve_usage_text(const char* argv0) {
            "       --plan prints the memory plan ladder these options give (every rung's bytes),\n"
            "       the rung the free GPU memory picks now and what would get more, then exits\n"
            "       without serving (the weights are loaded to size the rungs, then released);\n"
-           "       --json prints it as JSON.\n"
-           "       --with-drafters attaches a GGUF hub model's drafters too (a separate\n"
-           "       download); a checkpoint's are attached without it.\n"
+           "       --json prints it as JSON. --no-load plans without loading or downloading\n"
+           "       the weights and without a GPU, from the model's header or config (an\n"
+           "       estimate: the start is the authority); for a GGUF hub repository without\n"
+           "       --quant it lists every quantization and the largest that fits.\n"
+           "       --plan-device NAME plans for a named board instead (\"RTX 4090\", 0x2684,\n"
+           "       then ,headless or ,display and ,linux or ,wddm).\n"
+           "       Without --quant a GGUF hub repository is fetched at the largest\n"
+           "       quantization that fits --max-context x --max-concurrency on this GPU (an\n"
+           "       idle card of its class), and refused before the download when none does.\n"
+           "       A GGUF hub model's separate drafters (a separate download) are attached\n"
+           "       when the choice drafts with one on this GPU; --with-drafters always\n"
+           "       attaches them. A checkpoint's are attached without it.\n"
+           "       A hub model whose branch moved after it was converted and its download\n"
+           "       removed is served from its converted weights, after a notice (and a 10 s\n"
+           "       count-down on a terminal): --accept-converted keeps them without the notice\n"
+           "       from now on, --refetch downloads the new commit, converts it and removes\n"
+           "       the old conversion.\n"
            "       --default-max-tokens defaults to " +
            std::to_string(kDefaultMaxTokens) +
            " when omitted\n"
@@ -110,6 +128,10 @@ std::string serve_usage_text(const char* argv0) {
            "       --health-stall-ms (default 60000; 0 off): /health is 503 while the engine has "
            "work and makes no progress that long\n"
            "       --vision enables media and loads the fixed Vision GPU allocations\n"
+           "       --max-context-cap N keeps the context automatic (the free memory picks the "
+           "rung, a busy card steps down) but at most N tokens; not with --max-context. A GGUF "
+           "repository fetched without --quant for several slots sets it to the context each "
+           "slot was planned to keep of its own\n"
            "       --max-context defaults to automatic: the free GPU memory picks the first rung "
            "that fits of a declared plan ladder (the same for the same model, options and card "
            "type): the model's own context (max_position_embeddings) for every slot, then the "
@@ -126,8 +148,8 @@ std::string serve_usage_text(const char* argv0) {
            "(at least one speculative round) instead of its whole max_tokens, and extends it as "
            "it decodes, releasing idle cached context when the pool is short; when one still "
            "cannot grow, the request admitted last leaves its lane and resumes from its text "
-           "once another has finished (a request that cannot: media, penalties, a thinking "
-           "budget, a constraint, waits while others run, and ends with its output limit only "
+           "once another has finished (a request that cannot: media, penalties, a constraint, "
+           "waits while others run, and ends with its output limit only "
            "when every running request waits) (default 4096; 0 reserves the whole output)\n"
            "       --kv-capacity defaults to auto with an automatic context, to --max-context "
            "with one slot, and with several to auto within --max-concurrency x --max-context "
@@ -157,6 +179,8 @@ std::string serve_usage_text(const char* argv0) {
            "--host-kv-mib uses MiB\n"
            "       --default-thinking-budget caps model-origin thinking for enabled requests; "
            "control tokens count toward the request output limit\n"
+           "       without a budget, thinking closes early enough to leave a quarter of the output "
+           "limit for the answer; --no-answer-room lets it take the whole limit\n"
            "       --repetition-stop N ends an output whose last N tokens repeat one period of at "
            "most " +
            std::to_string(kRepetitionMaximumPeriod) + " tokens " +
@@ -176,9 +200,10 @@ std::string serve_usage_text(const char* argv0) {
            "       --spec auto (the default without --spec, --draft-tokens, --drafter or\n"
            "       --lm-head-draft; --spec none decodes plain) runs the speculation the model\n"
            "       came with for this GPU (its tuned profile): one drafter at the profile's\n"
-           "       default, tuned on the whole mixed corpus, for every request\n"
-           "       (--spec-select fixed, the default); --spec-select thinking runs each\n"
-           "       request at the profile's default for its own thinking flag.\n"
+           "       default for the thinking default, for every request (--spec-select fixed),\n"
+           "       or each request at the profile's default for its own thinking flag\n"
+           "       (--spec-select thinking). Without --spec-select the profile's measurements\n"
+           "       decide: per request where the requests of the other flag gain 3 % or more.\n"
            "       --spec-load bounds speculation under decode load instead of the profile's\n"
            "       table: 2:7,3:3,5:0 caps a step of 2+ rows at 7 drafts per row, of 3+ rows\n"
            "       at 3, and turns speculation off from 5 rows (none: no bound); 2:7:drafts\n"
@@ -298,6 +323,11 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             if (options.max_context == 0) {
                 throw std::invalid_argument("--max-context must be positive");
             }
+        } else if (arg == "--max-context-cap") {
+            options.max_context_cap = count("--max-context-cap");
+            if (options.max_context_cap == 0) {
+                throw std::invalid_argument("--max-context-cap must be positive");
+            }
         } else if (arg.starts_with("--moe-offload")) {
             // MoE expert offload (--moe-offload, --moe-offload-compute, --moe-offload-threads)
             // was removed; its options are refused by name rather than as unknown.
@@ -398,6 +428,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--sliding-kv-dtype must be bf16 or fp8");
             }
             options.sliding_kv_cache = parse_kv_dtype(value.c_str());
+            options.sliding_kv_given = true;
         } else if (arg == "--state-dtype") {
             const std::string value = require_value("--state-dtype");
             const auto storage      = parse_recurrent_state_storage(value);
@@ -405,6 +436,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.recurrent_state = *storage;
         } else if (arg == "--activations") {
             options.activations = product::parse_activation_mode(require_value("--activations"));
+            options.activations_given = true;
         } else if (arg == "--rope-yarn-factor") {
             options.rope_yarn_factor =
                 parse_float_in(require_value("--rope-yarn-factor"), "rope-yarn-factor", 1.0F, 64.0F);
@@ -422,6 +454,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--spec-select must be fixed or thinking");
             }
             options.per_request_speculation = value == "thinking";
+            options.per_request_given       = true;
         } else if (arg == "--spec-load") {
             options.speculation_load = spec::parse_load(require_value("--spec-load"));
         } else if (arg == "--spec-profile") {
@@ -454,6 +487,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
                 throw std::invalid_argument("--default-thinking-budget is out of range");
             }
             options.default_thinking_budget = static_cast<std::uint32_t>(budget);
+        } else if (arg == "--no-answer-room") {
+            options.answer_room = false;
         } else if (arg == "--repetition-stop") {
             const std::uint64_t window =
                 parse_u64(require_value("--repetition-stop"), "repetition-stop");
@@ -499,7 +534,7 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.greedy = true;
         } else if (product::parse_engine_flag(
                        arg, [&] { return require_value(arg.c_str()); }, options.pacing,
-                       options.maintainer)) {
+                       options.maintainer, product::TunerFlags::Refused)) {
         } else if (arg == "--drafter-registry") {
             options.drafter_registry = require_value("--drafter-registry");
         } else if (arg == "--recipe") {
@@ -512,8 +547,20 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.plan_only = true;
         } else if (arg == "--json") {
             options.plan_json = true;
+        } else if (arg == "--no-load") {
+            options.plan_no_load = true;
+        } else if (arg == "--plan-device") {
+            options.plan_device = require_value("--plan-device");
         } else if (arg == "--with-drafters") {
             options.with_drafters = true;
+        } else if (arg == "--accept-converted") {
+            options.accept_converted = true;
+        } else if (arg == "--refetch") {
+            options.refetch = true;
+        } else if (arg == "--keep-replaced") {
+            options.keep_replaced = true;
+        } else if (arg == "--round-tiny-scales") {
+            options.round_tiny_scales = true;
         } else if (arg == "--log-level") {
             options.log_level = product::parse_log_level(require_value("--log-level"));
         } else {
@@ -525,6 +572,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     // more slots take an automatic capacity, which the Engine bounds by the context's pages below
     // and every slot's full context above (--max-concurrency x --max-context when that fits, else
     // the most that does), so a server does not run fewer requests than it admits.
+    if (options.max_context != 0 && options.max_context_cap != 0) {
+        throw std::invalid_argument("--max-context-cap caps an automatic context: pass it or "
+                                    "--max-context, not both");
+    }
     if (!kv_capacity_explicit) {
         options.kv_capacity = options.max_context == 0 || options.max_concurrency > 1
                                   ? KvCapacityPolicy::automatic()
@@ -541,6 +592,21 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (options.plan_json && !options.plan_only) {
         throw std::invalid_argument("--json prints the --plan dry run: it needs --plan");
+    }
+    if (options.keep_replaced && !options.refetch) {
+        throw std::invalid_argument("--keep-replaced keeps what --refetch replaces: it needs "
+                                    "--refetch");
+    }
+    if (options.accept_converted && options.refetch) {
+        throw std::invalid_argument("--accept-converted keeps the converted weights, --refetch "
+                                    "replaces them: name one");
+    }
+    if (options.plan_no_load && !options.plan_only) {
+        throw std::invalid_argument("--no-load plans without the weights: it needs --plan");
+    }
+    if (!options.plan_device.empty() && !options.plan_no_load) {
+        throw std::invalid_argument("--plan-device names a board to plan for: it needs --plan "
+                                    "--no-load");
     }
     if (options.plan_only && options.prepare_only) {
         throw std::invalid_argument("--plan and --prepare-only exclude each other");

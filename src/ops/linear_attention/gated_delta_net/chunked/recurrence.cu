@@ -2,6 +2,8 @@
 #include "ops/common/math.cuh"
 #include "ops/common/mma.cuh"
 
+#include <type_traits>
+
 namespace ninferno::ops::detail::gated_delta_net::chunked {
 namespace {
 
@@ -70,6 +72,15 @@ __device__ __forceinline__ float fp16_saturate(float v) {
 
 __device__ __forceinline__ void put_state(__half* state, std::int64_t index, float value) {
     state[index] = __float2half_rn(fp16_saturate(value));
+}
+
+// The value a put_state of `value` reads back as.
+__device__ __forceinline__ float stored_value(const __nv_bfloat16*, float value) {
+    return __bfloat162float(__float2bfloat16_rn(value));
+}
+
+__device__ __forceinline__ float stored_value(const __half*, float value) {
+    return __half2float(__float2half_rn(fp16_saturate(value)));
 }
 
 template <int DV>
@@ -332,7 +343,7 @@ __global__ __launch_bounds__(kThreads<DV>, (DV >= 32 ? 2 : 4)) void chunk_recurr
             store_output(args, history[0], chunk, head, value_start, n, lane);
         }
 
-        // S^T = gamma S^T + K^T diag(suffix) Delta. The master state stays FP32.
+        // S^T = gamma S^T + K^T diag(suffix) Delta. The master state stays FP32 within the chunk.
         // Convert Delta only for this MMA and reuse its fragment across all key tiles.
         // The output branch above consumes the original FP32 Delta through TF32 MMA.
         unsigned delta_b[NPW][2];
@@ -363,6 +374,21 @@ __global__ __launch_bounds__(kThreads<DV>, (DV >= 32 ? 2 : 4)) void chunk_recurr
             for (int ni = 0; ni < NPW; ++ni) {
                 mma_bf16(state[ni][mi][0], state[ni][mi][1], state[ni][mi][2], state[ni][mi][3],
                          af[0], af[1], af[2], af[3], delta_b[ni][0], delta_b[ni][1]);
+            }
+        }
+        // A BF16 or FP16 state is rounded to its storage at every chunk end, not only at the
+        // call's end: a call that ends on the chunk grid then hands on exactly the state a longer
+        // call carries past that point, so where a prefill cuts its calls cannot move the bytes.
+        if constexpr (!std::is_same_v<StateT, float>) {
+#pragma unroll
+            for (int ni = 0; ni < NPW; ++ni) {
+#pragma unroll
+                for (int mi = 0; mi < MPW; ++mi) {
+#pragma unroll
+                    for (int e = 0; e < 4; ++e) {
+                        state[ni][mi][e] = stored_value(state_out, state[ni][mi][e]);
+                    }
+                }
             }
         }
         __syncthreads();

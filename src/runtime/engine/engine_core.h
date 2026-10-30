@@ -221,19 +221,36 @@ public:
 
         std::shared_ptr<Request> request;
         try {
-            // An output constraint's grammar opens at the first reasoning close, so the output
-            // splits there too; without one a quoted close stays reasoning text.
-            auto output = instance_.frontend.make_output_session(
-                prompt, options.stop, options.output, options.execution.thinking,
-                !options.constraint.compiled);
             const std::uint32_t capacity_output =
                 max_context_ - prompt_summary.prompt_tokens + static_cast<std::uint32_t>(1);
+            const std::uint32_t output_limit =
+                std::min(options.execution.requested_output_tokens, capacity_output);
+            // answer_room: a budget that leaves a quarter of the output limit to the answer.
+            ThinkingControlOptions& thinking = options.execution.thinking;
+            const bool room = thinking.answer_room && !thinking.budget &&
+                              prompt_summary.thinking_budget_control && prompt_summary.thinking() &&
+                              output_limit / kAnswerRoomShare > 0;
+            thinking.answer_room = room; // true only where the budget is the answer room
+            if (room) { thinking.budget = output_limit - output_limit / kAnswerRoomShare; }
+            // An output constraint's grammar opens at the first reasoning close, so the output
+            // splits there too; without one a quoted close stays reasoning text.
+            const auto make_output = [&] {
+                return instance_.frontend.make_output_session(prompt, options.stop, options.output,
+                                                              thinking,
+                                                              !options.constraint.compiled);
+            };
+            auto output = make_output();
             try {
-                output.validate_generation_capacity(
-                    std::min(options.execution.requested_output_tokens, capacity_output));
+                output.validate_generation_capacity(output_limit);
             } catch (const std::invalid_argument& error) {
-                throw RequestError(RequestErrorKind::ThinkingBudgetCapacityInsufficient,
-                                   error.what());
+                if (!room) {
+                    throw RequestError(RequestErrorKind::ThinkingBudgetCapacityInsufficient,
+                                       error.what());
+                }
+                // A limit too small for the control suffix and an answer: no room is kept.
+                thinking.budget.reset();
+                thinking.answer_room = false;
+                output = make_output();
             }
             request = std::make_shared<Request>(request_id, publication_order, std::move(prompt),
                                                 std::move(output), prompt_summary, prepare_seconds,
@@ -956,19 +973,21 @@ private:
         std::array<std::shared_ptr<Request>, kMaximumConcurrency> requests{};
         std::array<std::uint32_t, kMaximumConcurrency> lanes{};
         std::array<FinishReason, kMaximumConcurrency> reasons{};
+        std::array<std::uint8_t, kMaximumConcurrency> faults{}; // a faulted row's kRowFault*
         std::size_t count = 0;
 
         void add(const std::shared_ptr<Request>& request, std::uint32_t lane,
-                 FinishReason reason = FinishReason::None) noexcept {
+                 FinishReason reason = FinishReason::None, std::uint8_t fault = 0) noexcept {
             requests[count] = request;
             lanes[count]    = lane;
             reasons[count]  = reason;
+            faults[count]   = fault;
             ++count;
         }
     };
 
-    // Completes the released rows of a commit: the terminal ones with their reason, the ones whose
-    // round computed a NaN or an infinity with a numerical failure.
+    // Completes the released rows of a commit: the terminal ones with their reason, the faulted
+    // ones (a NaN or an infinity, or a token outside the vocabulary) with a numerical failure.
     void complete_released(const ReleasedRows& terminal, const ReleasedRows& faulted) {
         for (std::size_t index = 0; index < terminal.count; ++index) {
             complete_success(terminal.requests[index], terminal.reasons[index]);
@@ -976,14 +995,16 @@ private:
         }
         for (std::size_t index = 0; index < faulted.count; ++index) {
             const std::size_t generated = faulted.requests[index]->generated.size();
-            complete_error(
-                faulted.requests[index],
-                std::make_exception_ptr(RequestError(
-                    RequestErrorKind::NumericalFailure,
-                    "the model computed a NaN or an infinity in its final hidden state " +
-                        (generated == 0
-                             ? std::string("at the end of the prompt")
-                             : "after " + std::to_string(generated) + " generated tokens"))));
+            const std::string where =
+                generated == 0 ? std::string("at the end of the prompt")
+                               : "after " + std::to_string(generated) + " generated tokens";
+            complete_error(faulted.requests[index],
+                           std::make_exception_ptr(RequestError(
+                               RequestErrorKind::NumericalFailure,
+                               faulted.faults[index] == kRowFaultTokenDomain
+                                   ? "the model selected a token outside its vocabulary " + where
+                                   : "the model computed a NaN or an infinity in its final "
+                                     "hidden state " + where)));
             remove_completed_slot(faulted.lanes[index]);
         }
     }
@@ -1147,6 +1168,8 @@ private:
         // Cancelled, a faulted one (its round computed a NaN or an infinity) fails.
         enum class RowRelease : std::uint8_t { None, Cancelled, Faulted };
         std::array<RowRelease, kMaximumConcurrency> releases{};
+        // A faulted row's kRowFault*, read before the commit consumes the pending batch.
+        std::array<std::uint8_t, kMaximumConcurrency> row_fault{};
         const auto released = [&](std::size_t row) noexcept {
             return releases[row] != RowRelease::None;
         };
@@ -1183,7 +1206,8 @@ private:
                 if (cancelled_at_unit_start[lane]) {
                     releases[row] = RowRelease::Cancelled;
                 } else if (!pending.row_faults().empty() && pending.row_faults()[row] != 0U) {
-                    releases[row] = RowRelease::Faulted;
+                    releases[row]  = RowRelease::Faulted;
+                    row_fault[row] = pending.row_faults()[row];
                 }
                 const std::int32_t raw_count =
                     pending.row_counts().empty() ? 1 : pending.row_counts()[row];
@@ -1315,7 +1339,7 @@ private:
                 const std::uint32_t lane     = lane_indices[row];
                 const auto& request          = slots_[lane];
                 if (releases[row] == RowRelease::Faulted) {
-                    faulted_rows.add(request, lane);
+                    faulted_rows.add(request, lane, FinishReason::None, row_fault[row]);
                     continue;
                 }
                 const std::uint32_t accepted = decisions[row].accepted_tokens;
@@ -1984,9 +2008,9 @@ private:
             }
         }
 
-        [[nodiscard]] std::uint64_t row_cost_ns(std::size_t row) const noexcept override {
+        [[nodiscard]] MaskRowClass row_class(std::size_t row) const noexcept override {
             const structured::RequestConstraint* state = constraint(row);
-            return state != nullptr ? state->slowest_row_ns() : 0U;
+            return mask_row_class(state != nullptr && state->free_grammar_rows());
         }
 
         void fault(std::size_t row) noexcept override {
@@ -2113,13 +2137,15 @@ private:
     }
 
     // A request resumable from text: its prompt has no media and nothing it generated shapes its
-    // sampling past what the text says (penalties count generated tokens, a thinking budget its
-    // reasoning, a constraint its grammar state).
+    // sampling past what the text says (penalties count generated tokens, a constraint its grammar
+    // state). A thinking budget counts in the request's own OutputSession, which the resumed
+    // request keeps (preempt_lease_victim), so it resumes where it was; preemptible() never takes
+    // a request whose control suffix is pending.
     [[nodiscard]] bool resumable(const Request& request) const {
         const ResolvedExecutionOptions& execution = request.options.execution;
         return instance_.frontend.resumable(request.prompt) &&
                execution.sampling.presence_penalty == 0.0F &&
-               execution.sampling.frequency_penalty == 0.0F && !execution.thinking.budget &&
+               execution.sampling.frequency_penalty == 0.0F &&
                !request.options.constraint.compiled;
     }
 
@@ -2127,7 +2153,7 @@ private:
     // control reserve, and another request holds a lane, which finishes and frees pages.
     [[nodiscard]] bool preemptible(std::uint32_t lane, std::uint32_t reserve) const {
         const auto& request = slots_[lane];
-        if (!request->preempt_source || request->capture_pending ||
+        if (!request->preempt_source || request->capture_pending || request->is_control_ready() ||
             request->budget->remaining() <= reserve) {
             return false;
         }

@@ -3,6 +3,7 @@
 #include "structured/schema_support.h"
 
 #include <log_hook.h>
+#include <tool_syntax_grammars.h>
 #include <nlohmann/json.hpp>
 #include <xgrammar/xgrammar.h>
 
@@ -35,13 +36,15 @@ struct SharedVocabulary {
 class CompiledConstraint {
 public:
     CompiledConstraint(xgrammar::CompiledGrammar compiled,
-                       std::shared_ptr<const SharedVocabulary> shared, bool visible)
+                       std::shared_ptr<const SharedVocabulary> shared, bool visible, bool free_rows)
         : grammar(std::move(compiled)), vocabulary(std::move(shared)),
-          special_tokens_visible(visible), memory_bytes(grammar.MemorySizeBytes()) {}
+          special_tokens_visible(visible), free_grammar(free_rows),
+          memory_bytes(grammar.MemorySizeBytes()) {}
 
     xgrammar::CompiledGrammar grammar;
     std::shared_ptr<const SharedVocabulary> vocabulary;
     bool special_tokens_visible = false;
+    bool free_grammar           = false; // declares_free_grammar() of its spec
     std::size_t memory_bytes    = 0;
 };
 
@@ -166,6 +169,7 @@ std::string cache_key(const OutputConstraintSpec& spec) {
     key.push_back(spec.compact_json ? 'c' : 'w');
     key.push_back(spec.follows_reasoning ? 'r' : 'n');
     key.push_back(spec.special_tokens_visible ? 'v' : 'h');
+    key.push_back(spec.engine_rendered ? 'e' : 'u');
     key.push_back('\0');
     key += spec.definition;
     if (!spec.answer_schema.empty()) {
@@ -182,10 +186,40 @@ std::string cache_key(const OutputConstraintSpec& spec) {
     return key;
 }
 
+// A json_schema format in one of the argument styles of tool_syntax_grammars.h: the grammar of a
+// strict tool's arguments in a call syntax XGrammar has no style for.
+std::optional<std::string> argument_style_grammar(const nlohmann::ordered_json& node, int run) {
+    const auto style = node.find("style");
+    if (style == node.end() || !style->is_string()) { return std::nullopt; }
+    using Make             = std::string (*)(const std::string&, int);
+    const std::string name = style->get<std::string>();
+    const Make make        = name == kGemma4ArgumentStyle     ? &ninferno_xgrammar::gemma4_arguments_ebnf
+                             : name == kPythonicArgumentStyle ? &ninferno_xgrammar::pythonic_arguments_ebnf
+                             : name == kAtemArgumentStyle     ? &ninferno_xgrammar::atem_arguments_ebnf
+                                                              : nullptr;
+    if (make == nullptr) { return std::nullopt; }
+    const auto schema = node.find("json_schema");
+    if (schema == node.end() || !schema->is_object()) {
+        throw OutputConstraintError("invalid_structural_tag",
+                                    "a " + name + " format needs a json_schema object");
+    }
+    const std::string normalized = normalize_supported_json_schema(*schema).dump();
+    try {
+        return make(normalized, run);
+    } catch (const OutputConstraintError&) {
+        throw;
+    } catch (const std::invalid_argument& error) {
+        throw OutputConstraintError("unsupported_schema",
+                                    "the " + name + " call syntax cannot hold this schema: " +
+                                        error.what());
+    }
+}
+
 // JSON inside a structural tag (tool-call arguments, a client's tag) keeps the whitespace bound of
 // a JSON response format: every json_schema node without its own max_whitespace_cnt gets `run`.
 // xgrammar leaves those runs unbounded by default, so a model could write whitespace inside the
-// arguments until max_tokens. A definition that is not JSON is left for xgrammar to reject.
+// arguments until max_tokens. A json_schema node in an argument style (argument_style_grammar)
+// becomes the grammar of that style. A definition that is not JSON is left for xgrammar to reject.
 std::string bound_structural_tag_whitespace(const std::string& definition, int run) {
     nlohmann::ordered_json tag = nlohmann::ordered_json::parse(definition, nullptr, false);
     if (tag.is_discarded()) { return definition; }
@@ -197,6 +231,12 @@ std::string bound_structural_tag_whitespace(const std::string& definition, int r
         if (!node.is_object()) { return; }
         const auto type          = node.find("type");
         const bool schema_format = type != node.end() && *type == "json_schema";
+        if (schema_format) {
+            if (std::optional<std::string> grammar = argument_style_grammar(node, run)) {
+                node = nlohmann::ordered_json{{"type", "grammar"}, {"grammar", std::move(*grammar)}};
+                return;
+            }
+        }
         if (schema_format && !node.contains("max_whitespace_cnt")) {
             node["max_whitespace_cnt"] = run;
         }
@@ -207,6 +247,34 @@ std::string bound_structural_tag_whitespace(const std::string& definition, int r
     };
     bound(bound, tag);
     return tag.dump();
+}
+
+// Whether a structural tag holds a format of type "grammar" (an EBNF definition) anywhere in its
+// format tree. The client's JSON Schemas (the "json_schema" of a json_schema or qwen_xml_parameter
+// format, the "schema" of a legacy structure) are not format nodes. A definition that is not JSON
+// holds none; xgrammar rejects it.
+bool structural_tag_holds_grammar(const std::string& definition) {
+    const nlohmann::ordered_json tag = nlohmann::ordered_json::parse(definition, nullptr, false);
+    if (tag.is_discarded()) { return false; }
+    const auto holds = [](const auto& self, const nlohmann::ordered_json& node) -> bool {
+        if (node.is_array()) {
+            return std::any_of(node.begin(), node.end(), [&](const nlohmann::ordered_json& value) {
+                return self(self, value);
+            });
+        }
+        if (!node.is_object()) { return false; }
+        if (const auto type = node.find("type"); type != node.end() && *type == "grammar") {
+            return true;
+        }
+        for (const auto& entry : node.items()) {
+            if (entry.key() != "json_schema" && entry.key() != "schema" &&
+                self(self, entry.value())) {
+                return true;
+            }
+        }
+        return false;
+    };
+    return holds(holds, tag);
 }
 
 struct Variant {
@@ -224,6 +292,20 @@ std::string_view ConstraintVocabularyView::presented(TokenId token) const noexce
     const auto index = static_cast<std::size_t>(token);
     if (vocabulary->special[index] && !special_tokens_visible) { return {}; }
     return vocabulary->token_bytes[index];
+}
+
+bool declares_free_grammar(const OutputConstraintSpec& spec) {
+    if (spec.kind == OutputConstraintKind::Grammar) { return true; }
+    return spec.kind == OutputConstraintKind::StructuralTag && !spec.engine_rendered &&
+           structural_tag_holds_grammar(spec.definition);
+}
+
+bool declares_free_grammar(const CompiledConstraint& compiled) noexcept {
+    return compiled.free_grammar;
+}
+
+std::size_t memory_bytes(const CompiledConstraint& compiled) noexcept {
+    return compiled.memory_bytes;
 }
 
 ConstraintVocabularyView vocabulary_view(const CompiledConstraint& compiled) noexcept {
@@ -420,8 +502,8 @@ struct ConstraintCompiler::Impl : std::enable_shared_from_this<ConstraintCompile
         // Regex-to-FSM lowering reports its own degradations (for example an ignored lookahead)
         // during compilation.
         reject_warnings();
-        return std::make_shared<const CompiledConstraint>(std::move(*compiled), shared,
-                                                          spec.special_tokens_visible);
+        return std::make_shared<const CompiledConstraint>(
+            std::move(*compiled), shared, spec.special_tokens_visible, declares_free_grammar(spec));
     }
 };
 

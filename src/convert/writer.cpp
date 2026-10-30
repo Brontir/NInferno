@@ -13,6 +13,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <stdexcept>
+#include <thread>
+
+#include <openssl/evp.h>
 
 namespace ninferno::convert {
 namespace {
@@ -37,6 +40,27 @@ std::string files_json(const std::vector<OutputFile>& files) {
         list.push_back(std::move(item));
     }
     return py_dumps_compact(list);
+}
+
+// Whether a partial entry's prefix (`actual`) is `expected` but for sealed content digests: a run
+// that stopped after finish() sealed the directory and before it published the files left the
+// digests where `expected` has the placeholders (64 zeros each, in provenance "content_sha256"),
+// which the resumed run seals again.
+bool same_but_digests(const std::vector<std::byte>& actual, const std::vector<std::byte>& expected,
+                      std::size_t directory_offset) {
+    if (actual.size() != expected.size()) { return false; }
+    const std::string_view text(reinterpret_cast<const char*>(expected.data()), expected.size());
+    const auto key   = std::string_view("\"content_sha256\":{");
+    const auto begin = text.find(key, directory_offset);
+    const auto end   = begin == std::string_view::npos ? begin : text.find('}', begin + key.size());
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+        if (actual[i] == expected[i]) { continue; }
+        const auto c      = static_cast<char>(actual[i]);
+        const bool digest = end != std::string_view::npos && i >= begin + key.size() && i < end &&
+                            text[i] == '0' && ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'));
+        if (!digest) { return false; }
+    }
+    return true;
 }
 
 void put_u64(std::byte* out, std::uint64_t value) {
@@ -425,7 +449,7 @@ void ArtifactWriter::reopen(std::size_t index) {
         std::memcpy(expected.data() + kHeaderBytes, layout_.directory.data(),
                     layout_.directory.size());
     }
-    if (actual != expected) {
+    if (actual != expected && !(index == 0 && same_but_digests(actual, expected, kHeaderBytes))) {
         throw std::runtime_error("cannot resume: " + name.string() +
                                  " was written for a different plan or artifact id");
     }
@@ -511,11 +535,114 @@ void ArtifactWriter::sync() {
     }
 }
 
-void ArtifactWriter::finish() {
+void ArtifactWriter::finish() { finish({}); }
+
+void ArtifactWriter::read(std::uint64_t payload_offset, void* out, std::size_t bytes) const {
+    if (payload_offset + bytes > layout_.payload_bytes) {
+        throw std::runtime_error("read range exceeds the payload");
+    }
+    auto* cursor = static_cast<char*>(out);
+    while (bytes) {
+        const auto index = static_cast<std::size_t>(
+            std::upper_bound(prefixes_.begin(), prefixes_.end(), payload_offset) -
+            prefixes_.begin() - 1);
+        const auto count = std::min<std::uint64_t>(bytes, prefixes_[index + 1] - payload_offset);
+        const auto start = index == 0 ? layout_.payload_offset : kAlignment;
+        auto offset      = start + payload_offset - prefixes_[index];
+        auto left        = static_cast<std::size_t>(count);
+        while (left) {
+            const auto got =
+                sys::pread(fds_[index], cursor, left, static_cast<std::int64_t>(offset));
+            if (got < 0 && errno == EINTR) { continue; }
+            if (got <= 0) {
+                throw std::runtime_error("cannot read back " + temporary_[index].string() + ": " +
+                                         sys::error_text(errno));
+            }
+            cursor += got;
+            offset += static_cast<std::uint64_t>(got);
+            left -= static_cast<std::size_t>(got);
+        }
+        payload_offset += count;
+        bytes -= static_cast<std::size_t>(count);
+    }
+}
+
+OJson content_digest_placeholders(const OJson& objects) {
+    OJson out = OJson::object();
+    for (const auto& object : objects) {
+        out[object.at("id").get<std::string>()] = std::string(64, '0');
+    }
+    return out;
+}
+
+OJson content_digests(const ArtifactWriter& writer, const OJson& objects, unsigned threads) {
+    const std::size_t count = objects.size();
+    std::vector<std::string> digests(count);
+    std::atomic<std::size_t> next{0};
+    std::exception_ptr error;
+    std::mutex error_mutex;
+    const auto work = [&] {
+        std::vector<char> buffer(16 << 20);
+        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> ctx(EVP_MD_CTX_new(),
+                                                                    EVP_MD_CTX_free);
+        try {
+            for (std::size_t i = next++; i < count; i = next++) {
+                auto offset = objects[i].at("offset").get<std::uint64_t>();
+                auto left   = objects[i].at("bytes").get<std::uint64_t>();
+                EVP_DigestInit_ex(ctx.get(), EVP_sha256(), nullptr);
+                while (left) {
+                    const auto n =
+                        static_cast<std::size_t>(std::min<std::uint64_t>(left, buffer.size()));
+                    writer.read(offset, buffer.data(), n);
+                    EVP_DigestUpdate(ctx.get(), buffer.data(), n);
+                    offset += n;
+                    left -= n;
+                }
+                unsigned char digest[EVP_MAX_MD_SIZE];
+                unsigned size = 0;
+                EVP_DigestFinal_ex(ctx.get(), digest, &size);
+                static const char* hex = "0123456789abcdef";
+                std::string text(2 * size, '0');
+                for (unsigned b = 0; b < size; ++b) {
+                    text[2 * b]     = hex[digest[b] >> 4];
+                    text[2 * b + 1] = hex[digest[b] & 15];
+                }
+                digests[i] = std::move(text);
+            }
+        } catch (...) {
+            const std::lock_guard lock(error_mutex);
+            if (!error) { error = std::current_exception(); }
+            next = count;
+        }
+    };
+    if (threads == 0) { threads = std::clamp(std::thread::hardware_concurrency(), 1U, 16U); }
+    threads =
+        static_cast<unsigned>(std::min<std::size_t>(threads, std::max<std::size_t>(count, 1)));
+    std::vector<std::thread> pool;
+    for (unsigned t = 1; t < threads; ++t) { pool.emplace_back(work); }
+    work();
+    for (auto& thread : pool) { thread.join(); }
+    if (error) { std::rethrow_exception(error); }
+    OJson out = OJson::object();
+    for (std::size_t i = 0; i < count; ++i) {
+        out[objects[i].at("id").get<std::string>()] = digests[i];
+    }
+    return out;
+}
+
+void ArtifactWriter::finish(const std::function<std::string()>& seal) {
     if (finished_) { return; }
     try {
         unmap();
         if (options_.direct) { finish_direct(); }
+        if (seal) {
+            const auto text = seal();
+            if (text.size() != layout_.directory.size()) {
+                throw std::logic_error("the sealed directory changed its length");
+            }
+            write_file(0, kHeaderBytes, text.data(), text.size());
+            layout_.directory = text;
+        }
         for (const int fd : fds_) {
             if (sys::fdatasync(fd) != 0) { throw std::runtime_error("fdatasync failed"); }
             sys::advise_file(fd, 0, 0, sys::Advice::DontNeed);

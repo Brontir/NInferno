@@ -14,6 +14,7 @@
 
 #include "artifact/reader.h"
 #include "core/clock.h"
+#include "core/decode_graph.h"
 #include "core/sha256.h"
 #include "core/paged_kv_cache.h"
 #include "ninferno/engine.h"
@@ -279,7 +280,7 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
         }
     }
     auto served = product::served_speculation(artifact, device, true, false, tuned);
-    if (!served || served->menu.mode == spec::Mode::None) {
+    if (!served || !served->drafts()) {
         throw std::runtime_error("spec-tune --load: the model has no speculation that runs on this "
                                  "GPU (serve --spec auto would decode plainly)");
     }
@@ -797,12 +798,14 @@ int run_spec_tune(int argc, char** argv) {
     }
     // The default menu drafts through the optimized proposal head where the artifact has one (a
     // GGUF conversion has none): without it, the same depths with the full head.
-    const bool head = flags.contains("configs") || product::has_proposal_head(artifact);
+    // A "+head" configuration only for a drafter the head serves (the converter's default head
+    // serves MTP and DFlash, never DFlash2).
+    const auto head_drafters = product::proposal_head_drafters(artifact);
     std::vector<spec::SpecConfig> configs{spec::SpecConfig{}};
     for (const auto& label : labels) {
         auto c = spec::SpecConfig::parse(label);
-        c.proposal_head = c.proposal_head && head;
         const std::string mode = spec::mode_name(c.mode);
+        c.proposal_head = c.proposal_head && (flags.contains("configs") || head_drafters.contains(mode));
         if (c.enabled() && (components.contains(mode) || separate.contains(mode))) {
             configs.push_back(c);
         }
@@ -816,6 +819,8 @@ int run_spec_tune(int argc, char** argv) {
     profile.artifact        = artifact;
     profile.created         = ninferno::utc_now();
     profile.key.artifact_id = spec::artifact_id_hex(artifact);
+    // The draft head rows its rounds pay (round cost prices the lab's rounds at them).
+    profile.proposal_rows = spec::artifact_proposal_rows(artifact::Reader(artifact).directory());
     profile.key.gpu         = gpu.id;
     std::vector<std::string> ids; // a built-in drafter has no artifact of its own
     for (const char* name : {"mtp", "dflash", "dflash2"}) {
@@ -900,7 +905,22 @@ int run_spec_tune(int argc, char** argv) {
             for (const auto& p : corpus.prompts) {
                 if (p.family != family) { continue; }
                 for (int r = 0; r < repeat; ++r) {
-                    const auto result = run(p);
+                    const std::uint64_t kernels = graph_kernels_launched();
+                    const auto result           = run(p);
+                    // The kernels its graphs launched, a round's (its rounds and the fallback
+                    // steps replaying the round's graph) or a plain step's; a request that tripped
+                    // its watchdog, decoded plain steps or ran rounds ungraphed is left out.
+                    const auto& s = result.speculative;
+                    if (!s.watchdog_tripped && s.plain_steps == 0 && s.ungraphed_rounds == 0) {
+                        m.graph_kernels +=
+                            static_cast<std::int64_t>(graph_kernels_launched() - kernels);
+                        m.graph_rounds += config.enabled()
+                                              ? static_cast<std::int64_t>(s.rounds + s.fallback_steps)
+                                              : static_cast<std::int64_t>(
+                                                    result.generated_token_ids.empty()
+                                                        ? 0
+                                                        : result.generated_token_ids.size() - 1);
+                    }
                     const auto& ids   = result.generated_token_ids;
                     // The first token comes from the prefill; decode time covers the rest.
                     m.prompts += 1;

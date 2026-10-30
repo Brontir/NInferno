@@ -5,7 +5,7 @@ namespace ninferno::ops::detail::generic {
 
 void launch_rmma_ggml_q4k(int schedule, Epilogue epilogue, const GemmArgs& args,
                           cudaStream_t stream) {
-    launch_rmma<GgmlQ4KDecoder>(schedule, epilogue, args, stream);
+    launch_rmma<GgmlQ4KQuadDecoder>(schedule, epilogue, args, stream);
 }
 
 } // namespace ninferno::ops::detail::generic

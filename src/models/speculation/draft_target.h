@@ -43,15 +43,16 @@ public:
 
     // Embeds the T ids already on the device and runs every layer over them at the absolute
     // positions `pos`, appending their keys and values; returns final_norm(x), carved from the
-    // session's workspace. `a16`: every projection with BF16 activations (a verify pass must
-    // compute what k+1 single-token steps would). `tap`: copy the tapped layers' outputs.
+    // session's workspace. `verify`: every projection at the activations plain decode runs, never
+    // W4A4 (ops::verify_linear_policy: a verify pass must compute what k+1 single-token steps
+    // would). `tap`: copy the tapped layers' outputs.
     virtual Tensor draft_forward(const Tensor& ids, const Tensor& pos,
-                                 ops::Gemma4AttentionEnvelope envelope, bool a16,
+                                 ops::Gemma4AttentionEnvelope envelope, bool verify,
                                  const FeatureTap* tap) = 0;
 
     // Logits over the columns of `normed` whose argmax is the target's greedy token: a monotonic
     // soft cap or a positive logit multiplier may be left out.
-    virtual void greedy_logits(const Tensor& normed, Tensor& out, bool a16) = 0;
+    virtual void greedy_logits(const Tensor& normed, Tensor& out, bool verify) = 0;
 
     // The rows of the target's input embedding for `ids` as a drafter's block reads them: the
     // table's own values, before any embedding norm the target applies after it.
@@ -92,12 +93,5 @@ struct SpeculationRoundTrace {
     // acceptance with the drafter's commit. Zero unless the trace was profiled.
     float draft_ms = 0, forward_ms = 0, head_ms = 0, commit_ms = 0;
 };
-
-// The adaptive schedule's depth after a round of depth k accepted `accepted` of its drafts: deeper
-// by two after a fully accepted round, one shallower otherwise, within [lo, hi].
-[[nodiscard]] constexpr std::int32_t next_draft_depth(std::int32_t k, std::int32_t accepted,
-                                                      std::int32_t lo, std::int32_t hi) {
-    return accepted == k ? std::min(k + 2, hi) : std::max(k - 1, lo);
-}
 
 } // namespace ninferno::models::speculation

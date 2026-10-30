@@ -1,7 +1,7 @@
 // Qwen 3.x prefill ops: a token's output must not depend on how many other tokens share the call,
 // nor on where in the call it sits. A prefill chunk's size and start are decided by where a request
-// was cut (the chunk size, a cache frontier, a restore base), not by the model, so every column of a
-// call over tokens [o, o+t) has to equal, byte for byte, the same column of one wide call.
+// was cut (the chunk size, a cache frontier, a restore base), not by the model, so every column of
+// a call over tokens [o, o+t) has to equal, byte for byte, the same column of one wide call.
 //
 // Every prefill op and registered shape of the two v3 artifacts is run once over the widest call
 // and again over windows that cross each route and tile frontier (T from 17 up), at the start of
@@ -11,7 +11,7 @@
 // call's start). A cut off that grid is reported, not failed: the scan folds the chunk the cut
 // divides into the state as two blocks, which rounds differently from one, so such a cut is a known
 // exception of the prefill profile; the Qwen planner keeps every call boundary it chooses on a
-// 64-token grid (models/qwen3_5/execution/prefill_calls.h).
+// 64-token grid counted from the segment's start (models/qwen3_5/execution/prefill_calls.h).
 //
 // The NVFP4 A16Only rows are the exact activation contract (--activations exact): there every width
 // counts, decode and speculative verify included, so their windows start at T = 1. Under it the
@@ -36,6 +36,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/op_tester.h"
 
+#include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
 #include <algorithm>
@@ -46,6 +47,7 @@
 #include <iostream>
 #include <memory>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -668,24 +670,46 @@ int check_conv_split(std::int32_t c0, std::int32_t c1, std::int32_t c2, const ch
     return failures;
 }
 
+// An initial recurrent state in the storage the scan reads and writes (RecurrentStateStorage).
+DeviceBuffer upload_state(const std::vector<float>& values, DType dtype) {
+    if (dtype == DType::FP32) { return upload(values); }
+    std::vector<std::uint16_t> bits(values.size());
+    for (std::size_t i = 0; i < values.size(); ++i) {
+        if (dtype == DType::BF16) {
+            bits[i] = f32_to_bf16(values[i]);
+        } else {
+            const __half h = __float2half_rn(values[i]);
+            std::memcpy(&bits[i], &h, sizeof(bits[i]));
+        }
+    }
+    return upload(bits);
+}
+
 // Gated DeltaNet prefill scan. One call over kT tokens is the reference; each cut runs the same
-// tokens as [0, cut) and [cut, kT), carrying the FP32 state. Under the prefill profile a cut on the
-// 16-token chunk grid must be invariant and a cut off it is reported with the first differing
-// column (known exception, see the header). Under the invariant profile (`exact`) every cut must be
-// invariant, and so must the same tokens fed one call per token, as decode feeds them.
-int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* name, bool exact) {
+// tokens as [0, cut) and [cut, kT), carrying the state in `state_dtype`. Under the prefill profile
+// a cut on the 16-token chunk grid must be invariant whatever the state's storage (the scan rounds
+// a BF16 or FP16 state at every chunk end, so a call that ends on the grid hands on the state the
+// one call carries past it), and a cut off the grid is reported with the first differing column
+// (known exception, see the header). Under the invariant profile (`exact`, which keeps the state in
+// FP32) every cut must be invariant, and so must the same tokens fed one call per token, as decode
+// feeds them.
+int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* name, bool exact,
+                    DType state_dtype = DType::FP32) {
     constexpr std::int32_t kD = 128;
     // Not a whole number of chunks: the reference call ends in a 4-token partial chunk, which a
     // cut at 4176 hands to a call of its own.
     constexpr std::int32_t kT = 4180;
+    if (exact && state_dtype != DType::FP32) {
+        throw std::invalid_argument("check_gdn_split: the invariant profile keeps an FP32 state");
+    }
     const ops::ScopedInvariantRoutes invariant(exact);
     const auto q    = upload(random_bf16(static_cast<std::size_t>(kD) * qk_heads * kT, 101U, 1.0F));
     const auto k    = upload(random_bf16(static_cast<std::size_t>(kD) * qk_heads * kT, 102U, 1.0F));
     const auto v    = upload(random_bf16(static_cast<std::size_t>(kD) * v_heads * kT, 103U, 1.0F));
     const auto g    = upload(random_f32(static_cast<std::size_t>(v_heads) * kT, 104U, -0.3F, -0.01F));
     const auto beta = upload(random_f32(static_cast<std::size_t>(v_heads) * kT, 105U, 0.1F, 0.9F));
-    const auto s0   = upload(random_f32(static_cast<std::size_t>(kD) * kD * v_heads, 106U, -0.05F,
-                                        0.05F));
+    const auto s0   = upload_state(
+        random_f32(static_cast<std::size_t>(kD) * kD * v_heads, 106U, -0.05F, 0.05F), state_dtype);
     DeviceBuffer s_a(s0.bytes), s_b(s0.bytes), s_c(s0.bytes);
     DeviceBuffer out(static_cast<std::size_t>(kD) * v_heads * kT * 2);
     const std::size_t capacity =
@@ -705,8 +729,8 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
                   DType::FP32, {v_heads, t});
         Tensor tb(static_cast<std::uint8_t*>(beta.p) + static_cast<std::size_t>(v_heads) * 4 * begin,
                   DType::FP32, {v_heads, t});
-        Tensor si(in_state.p, DType::FP32, {kD, kD, v_heads});
-        Tensor so(out_state.p, DType::FP32, {kD, kD, v_heads});
+        Tensor si(in_state.p, state_dtype, {kD, kD, v_heads});
+        Tensor so(out_state.p, state_dtype, {kD, kD, v_heads});
         ops::gated_delta_net(tq, tk, tv, tg, tb, scale, true, workspace, si, so, to, execution());
     };
     call(s0, s_a, 0, kT);
@@ -723,7 +747,10 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
         }
         return std::int32_t{-1};
     };
-    const char* mode = exact ? " exact" : "";
+    const char* mode = exact                        ? " exact"
+                       : state_dtype == DType::FP16 ? " f16 state"
+                       : state_dtype == DType::BF16 ? " bf16 state"
+                                                    : "";
     int failures     = 0;
     for (const std::int32_t cut : {16, 48, 64, 128, 1024, 1088, 2048, 4096, 4160, 4176, 1, 7, 15,
                                    17, 33, 100, 1000, 4001, 4179}) {
@@ -771,7 +798,9 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
         // The decode kernel itself: the same tokens through gated_delta_net_batch_update (B = 1),
         // one in-place pool slot.
         DeviceBuffer pool(s0.bytes), decoded(static_cast<std::size_t>(kD) * v_heads * kSteps * 2);
-        cuda_check(cudaMemcpy(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice), "pool");
+        // On the stream the kernels below run on, so the copy is ordered before them.
+        cuda_check(cudaMemcpyAsync(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice, stream()),
+                   "pool");
         const auto slot = upload(std::vector<std::int32_t>{0});
         Tensor pool_tensor(pool.p, DType::FP32, {kD, kD, v_heads, 1});
         const Tensor slot_tensor(slot.p, DType::I32, {1});
@@ -806,7 +835,9 @@ int check_gdn_split(std::int32_t qk_heads, std::int32_t v_heads, const char* nam
         // The verify kernel: one 16-column window through gated_delta_net_replay_record (B = 1)
         // from the initial state, which it leaves unchanged.
         constexpr std::int32_t kWindow = 16;
-        cuda_check(cudaMemcpy(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice), "pool");
+        // On the stream the kernels below run on, so the copy is ordered before them.
+        cuda_check(cudaMemcpyAsync(pool.p, s0.p, s0.bytes, cudaMemcpyDeviceToDevice, stream()),
+                   "pool");
         DeviceBuffer key_record(static_cast<std::size_t>(kD) * qk_heads * kWindow * 2);
         DeviceBuffer value_record(static_cast<std::size_t>(kD) * v_heads * kWindow * 2);
         DeviceBuffer gate_record(static_cast<std::size_t>(2) * v_heads * kWindow * 4);
@@ -867,6 +898,8 @@ int main() {
         failures += check_gated_rmsnorm(inputs, 48, "27B gated_rmsnorm 48x128");
         failures += check_conv_split(2048, 2048, 6144, "27B causal_conv1d_silu_split");
         failures += check_gdn_split(16, 48, "27B gated_delta_net", false);
+        failures += check_gdn_split(16, 48, "27B gated_delta_net", false, DType::FP16);
+        failures += check_gdn_split(16, 48, "27B gated_delta_net", false, DType::BF16);
         failures += check_gdn_split(16, 48, "27B gated_delta_net", true);
         // qwen3_6_27b_nvfp4 under --activations exact (A16Only): every width.
         failures += check_gdn_input(inputs, make_nvfp4_weight, 16384, 5120, 10240,
@@ -935,6 +968,8 @@ int main() {
         failures += check_gated_rmsnorm(inputs, 32, "35B gated_rmsnorm 32x128");
         failures += check_conv_split(2048, 2048, 4096, "35B causal_conv1d_silu_split");
         failures += check_gdn_split(16, 32, "35B gated_delta_net", false);
+        failures += check_gdn_split(16, 32, "35B gated_delta_net", false, DType::FP16);
+        failures += check_gdn_split(16, 32, "35B gated_delta_net", false, DType::BF16);
         failures += check_gdn_split(16, 32, "35B gated_delta_net", true);
     } catch (const std::exception& error) {
         std::cerr << "Qwen prefill token invariance: " << error.what() << '\n';

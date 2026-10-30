@@ -382,7 +382,7 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     if (!allows_r8(w, policy)) return false;
     if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= kR8VerifyTokens && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return tokens <= r8_verify_widest(w.qtype) && r8_verify_takes_shape(w.qtype, w.n, w.k);
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -443,13 +443,12 @@ MmqPlaneBytes mmq_plane_bytes(QType q) {
     return {static_cast<int>(p.code), static_cast<int>(p.high), static_cast<int>(p.scale)};
 }
 
-// The token band of the ggml matrix kernel's route: the verify widths between R8's
-// (kR8VerifyTokens) and the W4A8 tiles' (17 tokens and up), which ran the A16 register MMA.
+// The token band of the ggml matrix kernel's route: the verify widths from kMmqMinTokens
+// (generic_gemm.h) to the W4A8 tiles' (17 tokens and up), which ran the A16 register MMA.
 // The dense tuner times it there against the register MMA on the card and the model's own weight
 // (generic_tune.cpp): no fixed rule holds across chips and formats. Against the heuristic's tile,
 // serve C4: RTX 5090 ISTA IQ3_S +10 % at 16 tokens; Muse Q4_K_M -7..14 %, RTX 4080 SUPER ISTA
 // -12 % at 8; RTX 5080 IQ3_S even. Below the band it loses to R8 (5090 C1 -11 %).
-constexpr std::int32_t kMmqMinTokens = kR8VerifyTokens + 1;
 constexpr std::int32_t kMmqMaxTokens = 16;
 // A prefill call on ggml's matrix kernel (mmq_prefill_wins) runs this many tokens at a time: its
 // FP32 plane (a 27B SwiGLU's gate and up rows: 2 x 17408 x 512 x 4 bytes = 71 MB) instead of the
@@ -490,8 +489,9 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // IQ2_XS / IQ2_XXS / Q2_K) gave 949 on the 4060 Ti. The small sm_120 keeps the tiles (RTX 5060 Ti,
 // 36 SMs: 1047 -> 1015), and so does sm_80: A100 40 GB 1340 -> 1142. Every other board takes the
 // nearest measured board's answer of its instruction set at any distance, as the "64 SMs" line
-// between the 5060 Ti and the 5090 did (an RTX 5080 or 5070 Ti the 5090's, an RTX 5070 or 5060 the
-// 5060 Ti's); Volta and the architectures nobody measured keep the tiles.
+// between the 5060 Ti and the 5090 did (an RTX 5080 the 5090's, an RTX 5070 Ti, 5070 or 5060 the
+// 5060 Ti's: the 5070 Ti's route profile prefills on the tiles, DECISIONS 62); Volta and the
+// architectures nobody measured keep the tiles.
 constexpr measured::Gate kMmqPrefillPays[] = {
     {measured::kRtx5090, true},    {measured::kRtx5060Ti, false}, {measured::kRtx4090, true},
     {measured::kL4, true},         {measured::kRtx4060Ti, true},  {measured::kA10, true},
@@ -519,7 +519,8 @@ bool vec_admits(const Weight& w, LinearPolicy policy) {
 // Without tensor mma.sync (Volta) ggml's matrix kernel is out (device_supported: sm_75 on) and the
 // register-MMA tiles run on FP32 FMAs, so a call of 9..16 tokens (a deep speculative verify) runs
 // the vector kernel eight columns at a time (V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the
-// emulated tiles 1.0..2.6 ms a call, 67 % of the run).
+// emulated tiles 1.0..2.6 ms a call, 67 % of the run); Q4_K / Q5_K / Q6_K / Q8 take Volta's HMMA
+// route from five tokens instead (volta_hmma_route).
 std::int32_t vec_max_tokens() {
     try {
         const auto& f = device_class().features;
@@ -541,9 +542,10 @@ bool vec_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
 // T = 8 on all of them, the most where a card has the least compute per byte of bandwidth
 // (A100: x1.5..1.6, RTX 3090 x1.4..1.5, RTX 5090 x1.1, RTX 4090 x1.03).
 // Without tensor mma.sync (Volta) the register MMA runs on FP32 FMAs, so the vector kernel takes
-// every width it reads (vec_max_tokens): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at T = 5..16
-// about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3 tok/s against
-// C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
+// every width it reads (vec_max_tokens) but where Volta's HMMA route takes the call (Q4_K / Q5_K /
+// Q6_K / Q8 from five tokens, volta_hmma_route): V100, Qwen3.8 27B UD-Q4_K_XL, the register MMA at
+// T = 5..16 about 0.5 ms a call against 0.08 for the vector kernel at T = 4; C8 aggregate 37.3
+// tok/s against C4 86.3, DFlash2 (verify 6) C1 15.7 against plain 30.1.
 constexpr std::int32_t kVecRuleMaxTokens = 4;
 
 std::int32_t vec_rule_max_tokens() {
@@ -555,6 +557,119 @@ std::int32_t vec_rule_max_tokens() {
 bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
+
+// Warp instructions a KB of weight payload: the vector kernel's a + b T at T columns (its dp4a and
+// activation loads grow with T, its decode does not) and the one-tile register MMA's (flat: its
+// MMAs take eight columns at any T), store / AddResidual and SwiGLU. Counted, not fitted: ncu
+// smsp__inst_executed.sum over the payload bytes, 4096x4096 store and 12288x4096 SwiGLU at T = 2,
+// 4 and 8 (a and b from T = 2 and 8; T = 4 lies on the line within 3 %), the register MMA the mean
+// of its w1x4 and w1x8 kernels. sm_8x: RTX 3060 (sm_86; the RTX 4090's sm_89 kernels count the
+// same to 1 %); sm_12x: RTX 5070 Ti (sm_120, the RTX 5090's alike). Turing has none: its BF16 MMA is
+// emulated, and from five tokens ggml's matrix kernel, not the register MMA, is the vector kernel's
+// rival there (mmq_verify_rule), so it keeps the band rule.
+struct VerifyCount {
+    double vec_a, vec_b, rmma;
+};
+struct VerifyCounts {
+    QType qtype;
+    VerifyCount store, swiglu;
+};
+constexpr VerifyCounts kVerifyCountsSm8x[] = {
+    {QType::GGML_Q4_K, {111, 59.0, 293}, {89, 51.5, 278}},
+    {QType::GGML_Q5_K, {122, 48.5, 278}, {121, 42.4, 267}},
+    {QType::GGML_Q6_K, {198, 37.4, 212}, {184, 34.2, 206}},
+    {QType::GGML_Q2_K, {183, 113.4, 666}, {169, 101.9, 597}},
+    {QType::GGML_Q3_K, {326, 68.3, 469}, {282, 60.6, 446}},
+    {QType::GGML_IQ4_XS, {216, 54.8, 419}, {202, 49.4, 399}},
+    {QType::GGML_IQ3_XXS, {319, 78.4, 711}, {331, 66.2, 676}},
+    {QType::GGML_IQ3_S, {308, 66.2, 587}, {298, 56.8, 549}},
+    {QType::GGML_IQ2_XXS, {440, 109.1, 1053}, {413, 97.2, 988}},
+    {QType::GGML_IQ2_XS, {379, 109.8, 1004}, {405, 90.7, 930}},
+    {QType::GGML_IQ2_S, {348, 98.7, 925}, {339, 81.7, 862}},
+    {QType::GGML_IQ1_S, {360, 155.1, 1107}, {353, 131.6, 998}},
+    {QType::GGML_IQ1_M, {423, 215.5, 1217}, {416, 190.0, 1115}},
+    {QType::GGML_Q4_0, {208, 52.1, 219}, {213, 43.7, 192}},
+    {QType::GGML_Q4_1, {54, 50.5, 252}, {56, 42.5, 208}},
+    {QType::GGML_Q5_0, {191, 43.3, 239}, {188, 36.4, 213}},
+    {QType::GGML_Q5_1, {89, 42.8, 264}, {90, 36.8, 233}},
+    {QType::GGML_IQ4_NL, {159, 53.3, 350}, {161, 44.9, 321}},
+};
+constexpr VerifyCounts kVerifyCountsSm12x[] = {
+    {QType::GGML_Q4_K, {104, 51.7, 279}, {91, 49.7, 262}},
+    {QType::GGML_Q5_K, {127, 41.9, 258}, {104, 42.8, 249}},
+    {QType::GGML_Q6_K, {176, 34.9, 210}, {167, 33.9, 187}},
+    {QType::GGML_Q2_K, {161, 109.4, 638}, {148, 101.1, 577}},
+    {QType::GGML_Q3_K, {262, 70.3, 455}, {224, 61.4, 428}},
+    {QType::GGML_IQ4_XS, {210, 52.1, 430}, {194, 50.3, 403}},
+    {QType::GGML_IQ3_XXS, {327, 69.4, 739}, {305, 65.2, 693}},
+    {QType::GGML_IQ3_S, {330, 61.6, 596}, {300, 56.7, 557}},
+    {QType::GGML_IQ2_XXS, {434, 103.1, 1076}, {400, 94.7, 1022}},
+    {QType::GGML_IQ2_XS, {413, 98.5, 1012}, {368, 91.5, 943}},
+    {QType::GGML_IQ2_S, {408, 86.7, 939}, {336, 82.4, 871}},
+    {QType::GGML_IQ1_S, {422, 139.9, 1125}, {326, 132.6, 1012}},
+    {QType::GGML_IQ1_M, {460, 194.2, 1170}, {386, 185.9, 1075}},
+    {QType::GGML_Q4_0, {181, 47.6, 215}, {174, 43.3, 181}},
+    {QType::GGML_Q4_1, {48, 47.2, 232}, {41, 43.2, 193}},
+    {QType::GGML_Q5_0, {178, 39.2, 233}, {171, 34.9, 212}},
+    {QType::GGML_Q5_1, {91, 39.6, 244}, {80, 35.6, 223}},
+    {QType::GGML_IQ4_NL, {171, 47.3, 367}, {163, 43.2, 331}},
+};
+std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilogue epilogue) {
+    std::span<const VerifyCounts> table;
+    if (d.major == 8) {
+        table = kVerifyCountsSm8x;
+    } else if (d.major == 12) {
+        table = kVerifyCountsSm12x;
+    }
+    for (const auto& row : table) {
+        if (row.qtype == qtype) return epilogue == Epilogue::SwiGlu ? row.swiglu : row.store;
+    }
+    return std::nullopt;
+}
+
+constexpr double kVerifyDramFraction  = 0.93; // see verify_route_seconds
+constexpr double kVerifyIssueFraction = 0.6;
+constexpr double kVerifyLaunchSeconds = 1.5e-6;
+
+} // namespace
+
+// NOT USED BY THE SELECTOR. The register MMA is priced here as the best one-tile schedule
+// (w1x4 / w1x8 / w1x16 at the bytes and the counted instructions), which is wrong for the
+// schedule heuristic_rmma actually runs: on long-K shapes that schedule streams DRAM at 57..77 %
+// (RTX 4070 Ti, Q6_K 3840x15360 T = 5: w1x4 171 us, w1x8 149, w1x16 121 against 108 priced) for
+// a reason not yet known (its bytes in flight are 13x Little's law). Verify picks stay the band
+// rule until the schedule's own efficiency is a fact.
+//
+// A verify call's time on the vector kernel or on the one-tile register MMA (T = 2..8, the ggml
+// formats both read): the payload's DRAM time tb and its warp instructions' issue time ti (four
+// schedulers a SM issuing one instruction each a clock: every SM from Volta on), combined as
+// sqrt(tb^2 + (ti / u)^2), plus a launch each (the vector kernel two: its activation quantizer).
+// Fitted constants, each on six cards of three generations (RTX 3060; 4060 Ti, 4070 Ti, 4090;
+// 5070 Ti, 5090), 3204 timed calls (vector and one-tile register MMA, T = 2..8, 19 formats):
+// - kVerifyDramFraction (FITTED): the p90 DRAM share of those calls, 0.89..0.94 on every card.
+// - kVerifyIssueFraction, u (FITTED): the best u under this combination per generation is 0.65 on
+//   sm_89 (three cards), 0.60 on sm_120 (two), 0.65 on sm_86 (one card); one 0.6 serves all.
+// - the combination (FITTED form): rms of log(measured / predicted) 0.118 for sqrt(tb^2 + ui^2)
+//   against 0.144 for max (full overlap, under-predicts 5.5 %) and 0.190 for the sum (no overlap,
+//   over-predicts 13 %). The choice's loss over the better kernel is 1.025..1.031 for all three.
+// - kVerifyLaunchSeconds: a launch on a back-to-back stream (RTX 4090 decode graph, no PDL).
+// nullopt where the device has no roofline or its instruction set no counts.
+
+std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
+                                           Epilogue epilogue, double payload_bytes,
+                                           std::int32_t tokens) {
+    if (d.sms <= 0 || !d.facts.has_roofline() || payload_bytes <= 0) return std::nullopt;
+    const auto c = verify_count(d, qtype, epilogue);
+    if (!c) return std::nullopt;
+    const double per_kb = vector ? c->vec_a + c->vec_b * tokens : c->rmma;
+    const double tb     = payload_bytes / (kVerifyDramFraction * d.facts.dram_bytes_per_s());
+    const double ti =
+        per_kb * payload_bytes / 1024.0 / (4.0 * d.sms * d.facts.reference_clock_hz());
+    const double ui = ti / kVerifyIssueFraction;
+    return std::sqrt(tb * tb + ui * ui) + (vector ? 2.0 : 1.0) * kVerifyLaunchSeconds;
+}
+
+namespace {
 
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
 // capacity bound counts it too, or a workspace sized to the bound ran the call A16 (a vector call
@@ -591,7 +706,7 @@ bool mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows, std::int3
 // L4 79.4 -> 89.2 tok/s (+12.3 %), RTX 5070 Ti 242.7 -> 270.9 (+11.6 %); ninfer-all runs
 // mul_mat_q<16> there (92.9 / 280.1). The route_tune grid, one call with L2 flushed, does not show
 // it (L4 rule 1.06 of its best). Where the BF16 MMA is emulated (Turing) every mmq format takes
-// it, as before.
+// it from 9 tokens, and the codebook formats below that too (mmq_verify_rule).
 bool bf16_mma_native();
 // The codebook formats only: their register-MMA dequant looks every value up in a grid table per
 // token tile, which the matrix kernel's one decode a call saves. The K-quants' affine dequant is
@@ -613,9 +728,15 @@ bool mmq_verify_rule(const Weight& w, LinearPolicy policy, std::int32_t rows, st
     // register MMA at every width (ops::round_lanes): a C1 MTP round of 5..8 tokens and a C1 copy
     // round of 16 lost on mmq (RTX 5070 Ti C1 117.0 -> 115.2 tok/s, all of it in the copy rounds:
     // with them off, 116.5 both ways), while the C4 verify gains (233.5 -> 249.3).
-    return mmq_call(w, policy, rows, tokens) &&
-           (!bf16_mma_native() || (tokens >= kMmqVerifyMinTokens && ops::round_lanes() != 1 &&
-                                   mmq_verify_format(w.qtype)));
+    // Where the BF16 MMA is emulated (Turing) a verify of 5..8 tokens keeps mmq for the codebook
+    // formats only: the affine ones (the K-quants, Q4_0) dequant cheaply on the register MMA (RTX
+    // 2080 Ti, one call each, T 5..8: Q3_K-Q6_K 10-58 % faster off mmq; Gemma 4 12B Q4_K_M MTP5
+    // 116.7 -> 136.1 tok/s), while the codebook IQ4_XS lost 23-38 % there.
+    if (!bf16_mma_native())
+        return mmq_call(w, policy, rows, tokens) &&
+               (tokens >= kMmqVerifyMinTokens || mmq_verify_format(w.qtype));
+    return mmq_call(w, policy, rows, tokens) && tokens >= kMmqVerifyMinTokens &&
+           ops::round_lanes() != 1 && mmq_verify_format(w.qtype);
 }
 
 std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::int32_t tokens) {
@@ -637,6 +758,34 @@ bool mmq_fits(const DeviceArena& workspace, std::size_t bytes) {
 }
 
 std::atomic<std::uint64_t> mmq_fallbacks{0};
+std::atomic<std::uint64_t> route_demotions{0};
+
+// A demotion that keeps the bytes: the staged MMA and the NVFP4 tiled route hand a call they
+// cannot read to the register MMA of the same summation order.
+bool same_bytes(Route asked, Route ran) {
+    return ran.family == Family::RegisterMma &&
+           (asked.family == Family::StagedMma || asked.family == Family::Nvfp4TiledMma);
+}
+
+// A call the asked route could not take ran another route, with other bytes and speed than a
+// route table or the heuristic chose: said once per pair of routes, with the call's facts, and
+// counted (route_demotion_count). No product run demoted in the lab (perplexity, generation and
+// serving at 1 and 4 streams on Ada, Blackwell and Turing); one names a caller that sized or
+// aligned its call short of its route.
+void note_demotion(Route asked, Route ran, int rows, int tokens, int k, bool x16, std::int64_t ldx,
+                   std::size_t workspace) {
+    route_demotions.fetch_add(1, std::memory_order_relaxed);
+    static std::mutex mutex;
+    static std::set<std::pair<std::string, std::string>> said;
+    const std::lock_guard lock(mutex);
+    if (!said.emplace(route_name(asked), route_name(ran)).second) { return; }
+    std::fprintf(stderr,
+                 "ninferno: warning: route %s cannot take a call of %d rows x %d tokens (k %d, x "
+                 "%s16-byte aligned, ldx %lld, workspace %zu bytes): it ran %s, with other bytes "
+                 "and speed\n",
+                 route_name(asked).c_str(), rows, tokens, k, x16 ? "" : "not ",
+                 static_cast<long long>(ldx), workspace, route_name(ran).c_str());
+}
 
 // The token-major grid of the 128-token W4A8 tiles (W4a8Activation::token_major) on the RTX 4090
 // (sm_89), where the row-major grid streams a large matrix from DRAM once per token tile: Muse 30B
@@ -759,6 +908,94 @@ bool tall_tile_format(QType q) { return q == QType::GGML_Q4_K; }
 
 bool bf16_mma_native();
 
+// Q6_K's one-tile call on a grid of one to two eight-warp CTAs per SM (sms < ctas <= 2 sms),
+// where the board's DRAM bytes per SM cycle are below this: the four-warp CTA, half the warps on
+// the SM issuing the plain decoder's narrow loads into a load queue they fill (rmma_wide_rule).
+// Store / add, T = 5 and 8, K 4096 and 15360, n at 1.25..2.0 CTAs per SM (w1x4 against w1x8):
+// RTX 4090 (3.1) 0.82-0.98, 4070 Ti (3.2) 0.80-0.99, 4060 Ti (3.4) 0.87-1.00; on the 5070 Ti
+// (5.2) 0.98-1.12. The boundary sits below the RTX 5080 and 5090 (4.4), not measured, which keep
+// eight warps. Q4_K lost on w1x4 on all four boards (1.04-1.53), and a grid of more than two CTAs
+// per SM keeps eight warps (light_ggml_step).
+inline constexpr double kRmmaQ6kFourWarpBytes = 4.0;
+
+// K-quant SwiGLU at T <= 8 on a board without cp.async (sm_75) whose bytes per SM cycle take the
+// latency variant: four K warps, the CTA whose register cap holds the activation ring of both row
+// sets (kRmmaAheadForm, generic_gemm.cuh; 214-217 registers on sm_75: the eight-warp CTA, whose
+// two CTAs a SM cap it at 128, has no ring form, and its latency kernel without one lost 7-8 %).
+// RTX 2080 Ti (5.9), Qwen3.5-9B gate/up 12288x4096 Q4_K: w1x8 142.4 us (plain, the old pick)
+// against 122.3 us w1x4 with the ring at T = 8, 141.2 -> 118.7 at T = 5, 136.5 -> 111.8 at T = 1.
+bool ring_swiglu_four_warps(QType q) {
+    // Q4_K and Q5_K: the formats measured (Q3_K and Q6_K SwiGLU keep eight warps until they are).
+    if (q != QType::GGML_Q4_K && q != QType::GGML_Q5_K) return false;
+    try {
+        const auto& d = device_class();
+        const int cc  = d.major * 10 + d.minor;
+        return cc >= 75 && cc < 80 && dram_bytes_per_sm_cycle() >= kRmmaLatencySwiGluBytes;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+// The K values one register-MMA step of the format covers: four runs of its decoder (rmma_kernel's
+// KStep = 4 x Decoder::kRun): 32 for BF16, Q8 and U4 G32 (eight-value runs), 64 for FP8, NVFP4
+// and the 16-value groupwise runs, 128 for the 32-value decoders (K-quants, IQ, MXFP4, the
+// quad-run U4 G32 / G64 at K % 128 == 0) and for the ggml 32-blocks stepped four at a time
+// (run_values 128).
+std::int64_t rmma_k_step(QType qtype, std::int32_t k) {
+    Weight weight;
+    weight.qtype = qtype;
+    WeightCodec codec{};
+    try {
+        codec = codec_of(weight);
+    } catch (const std::invalid_argument&) {
+        return 128;
+    }
+    const bool quad_u4 = (codec == WeightCodec::U4ZpG32 || codec == WeightCodec::U4ZpG64) &&
+                         k > 0 && (k % 128) == 0;
+    const int run = quad_u4 ? 32 : run_values(codec);
+    return run >= 128 ? run : 4 * run;
+}
+
+// The K split of a one-tile store / add call of more CTAs than SMs (T <= 8), held to one fact of
+// the addressing, never a timing: the CTA's longest warp walks more K steps of its rows than its
+// load ring holds (two steps, rmma_kernel's ring; a step is rmma_k_step values): steps / warps
+// rounded up, at least three. The CTA ends with that warp; with two steps or fewer its ring never
+// refills, every step's load latency and the cross-warp reduction exposed (Q4_K K = 4096 on
+// sixteen warps, two steps each, streamed DRAM at 57..70 % of peak on all five lab boards against
+// 71..74 % for the best split). K = 2560 on eight warps (three steps for half the warps) keeps up:
+// Q6_K 4096x2560 at T = 5 / 8 on eight warps against four, RTX 4070 Ti 19.6 against 21.1 us, RTX
+// 3060 32.4 against 32.9 (the RTX 5070 Ti and 2080 Ti ran four warps faster there: DECISIONS 61).
+// Its callers start at eight or four warps; eight that break it take four where four keep it and
+// the grid fills their CTA slots, else the pick stands. Sixteen warps hold one CTA a SM
+// (kRmmaMinBlocks caps the split's one-tile store / add kernels at 128 registers a thread, so `w` K
+// warps hold 16 / w CTAs a SM): fewer warps a CTA keep the warps a SM holds only on a grid of at
+// least that many CTAs a SM. Below it the split trades resident warps (the loads in flight) for
+// ring refills: K = 1024 (2048 rows, 128 CTAs) on four warps against eight, RTX 5070 Ti (1.8 CTAs
+// a SM) 20-37 % slower, RTX 5090 (0.75) 18-38 %, RTX 4070 Ti (2.1) within 3 %; the RTX 4060 Ti
+// (3.8, just under its four slots) ran four warps 2-16 % faster, which this leaves on eight.
+// Open (DECISIONS): how much a grid's last, partly filled round of resident CTAs costs. Pricing
+// it by its empty slots was wrong on two of four boards (RTX 4090 Q6_K 3840x15360 add: four warps
+// in one half-filled round 65 us, eight warps in one full round 79; RTX 3060 Q4_K 4096x2560:
+// eight warps 8-10 % slower although they fill more) and right on two (RTX 4070 Ti / 5070 Ti
+// light K-quants 6-12 % faster on eight): a round under the warps that saturate DRAM is what
+// costs, and that count is not a fact we hold yet.
+int rmma_k_split_fit(int index, const Problem& problem, std::int64_t ctas, std::int64_t sms) {
+    if (problem.epilogue == Epilogue::SwiGlu || sms <= 0 || ctas <= sms) return index;
+    const RmmaScheduleInfo info = rmma_schedule_info(index);
+    if (info.warps_m != 1 || info.m_tiles != 1 || info.n_tiles != 1 || info.cluster != 1) {
+        return index;
+    }
+    const std::int64_t step  = rmma_k_step(problem.qtype, problem.k);
+    const std::int64_t steps = (static_cast<std::int64_t>(problem.k) + step - 1) / step;
+    const auto refills = [&](int warps_k) { return (steps + warps_k - 1) / warps_k > 2; };
+    // The warps a SM holds at 128 registers a thread (kRmmaMinBlocks).
+    constexpr std::int64_t kSlotWarps = 65536 / (32 * 128);
+    if (info.warps_k <= 4 || refills(info.warps_k) || !refills(4) || ctas * 4 < kSlotWarps * sms) {
+        return index;
+    }
+    return rmma_index(1, 4, 1, 1);
+}
+
 int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band) {
     const std::int32_t k = problem.k;
     const int split      = k >= 1024 ? 8 : k >= 512 ? 4 : 1;
@@ -770,8 +1007,24 @@ int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_ban
                 if (ctas <= sms) return one_wave_split(ctas, sms);
                 if (ctas > 2 * sms && light_ggml_step(problem.qtype) &&
                     problem.epilogue != Epilogue::SwiGlu) {
+                    return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
+                }
+                if (ctas > 2 * sms && problem.epilogue == Epilogue::SwiGlu &&
+                    ring_swiglu_four_warps(problem.qtype)) {
                     return rmma_index(1, 4, 1, 1);
                 }
+                if (ctas <= 2 * sms && problem.qtype == QType::GGML_Q6_K &&
+                    problem.epilogue != Epilogue::SwiGlu) {
+                    double bytes = 0.0; // a device whose class cannot be read: eight warps
+                    try {
+                        bytes = dram_bytes_per_sm_cycle();
+                    } catch (const std::exception&) {
+                    }
+                    if (bytes > 0.0 && bytes < kRmmaQ6kFourWarpBytes) {
+                        return rmma_k_split_fit(rmma_index(1, 4, 1, 1), problem, ctas, sms);
+                    }
+                }
+                return rmma_k_split_fit(rmma_index(1, 8, 1, 1), problem, ctas, sms);
             } else if (tokens <= 16) {
                 // 9..16 tokens (verify of an 8- or 16-token draft): one 8-token tile per CTA would
                 // put two or three CTA columns on the token axis, each streaming and decoding the
@@ -1129,6 +1382,16 @@ int r8_index(int warps, int rows) {
 // the rule now keys on the architecture, with IQ2_XXS/XS joining IQ2_S. Q3_K at K >= 8192 stays at
 // four single-row warps: Qwen3.8's 5120x17408 add is 7-10 % faster so on the 5060 Ti, the
 // RTX 4080 SUPER and the RTX 4070 Ti SUPER (113.2 -> 103.0, 64.8 -> 60.3, 73.0 -> 66.3 us).
+// Whether this tree's R8 kernel is the one-slot form (generic_r8.cuh NINFERNO_R8_ONE_SLOT: an
+// sm_70 build; a tree compiles one architecture).
+constexpr bool r8_one_slot_build() {
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
+    return true;
+#else
+    return false;
+#endif
+}
+
 int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them.
@@ -1146,6 +1409,15 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
         const bool decode_heavy = iq2 || p.qtype == QType::GGML_IQ3_S ||
                                   p.qtype == QType::GGML_IQ3_XXS || p.qtype == QType::GGML_Q3_K;
         if (decode_heavy && p.k >= 5120) return r8_index(8, 2);
+        // Volta (an sm_70 build, whose R8 kernel is the one-slot form: generic_r8.cuh
+        // NINFERNO_R8_ONE_SLOT; a GPU without mma.sync) keeps one row per warp for Q6_K at every N
+        // and K, where the two-slot form took two. With one slot a second row per warp raises the
+        // registers from 137 to 213 (3 CTAs per SM to 2) and the code a cold SM fetches first from
+        // 960 to 1480 instructions. GV100 with ten other kernels between launches, as in a model
+        // step: 4096x12288 add w4r1 88.8 against w4r2 94.7 us, 8192x4096 store 57.9 against 63.3.
+        if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu && r8_one_slot_build() &&
+            !device_class().features.mma_tensor)
+            return r8_index(4, 1);
         if (p.qtype == QType::GGML_Q6_K && p.epilogue != Epilogue::SwiGlu &&
             (p.n >= 8192 || p.k >= 4096))
             return r8_index(4, 2);
@@ -1154,9 +1426,10 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.k >= 8192 || (iq2 && p.n >= 12288)) return r8_index(8, 2);
     if (p.epilogue != Epilogue::SwiGlu && p.k >= 5120 && device_class().major == 12) {
         if (iq2 && p.n >= 5120) return r8_index(8, 2);
-        // On 170 SMs (the 5090) IQ3 keeps four single-row warps: 10240x5120 IQ3_S w4r1
-        // 18.4 us against w8r2 20.3, IQ3_XXS 16.0 against w4r2 18.0; IQ2 still gains (IQ2_S
-        // 10240x5120 w4r2 29.9 -> w8r2 20.1 us).
+        // An SM-count rule, its edge between the measured boards: at 96 SMs or fewer (the
+        // 5080's 84) IQ3 takes the wider warps; at 170 (the 5090) it keeps four single-row
+        // warps: 10240x5120 IQ3_S w4r1 18.4 us against w8r2 20.3, IQ3_XXS 16.0 against w4r2
+        // 18.0; IQ2 still gains (IQ2_S 10240x5120 w4r2 29.9 -> w8r2 20.1 us).
         if (device_class().sms <= 96) {
             if (p.qtype == QType::GGML_IQ3_S && p.n >= 5120) return r8_index(8, 2);
             if (p.qtype == QType::GGML_IQ3_XXS && p.n >= 5120) return r8_index(4, 2);
@@ -1230,6 +1503,49 @@ void record_problem(const Problem& p) {
 }
 
 } // namespace
+
+// The W4A8 schedule run_route executes for `route`: a producer-warp tile the weight is not admitted
+// to runs the classic tile of its shape, and a w4a8_ws_extra format's classic tile its
+// producer-warp twin (the same bytes either way).
+Route w4a8_executed_route(Route route, const Weight& w) {
+    if (route.family != Family::W4a8Mma) return route;
+    const bool producers = w4a8_schedule_info(route.schedule).producers > 0;
+    if (producers && !w4a8_ws_admits(w)) return w4a8_classic_twin(route);
+    if (!producers && w4a8_ws_extra(w.qtype) && w4a8_ws_admits(w)) return w4a8_ws_twin(route);
+    return route;
+}
+
+// The DRAM bytes the board's bandwidth asks of each SM per cycle: the facts' bandwidth over the
+// SMs times the reference clock (rmma_latency_pays reads it); 0 when a fact is unknown.
+double dram_bytes_per_sm_cycle() {
+    static PerDevice<double> bytes;
+    // A device whose class cannot be read throws, and PerDevice retries on the next call (the
+    // launch takes the plain kernel meanwhile): caching 0 would turn the variant off for good.
+    return bytes.get([](int) {
+        const auto& d = device_class();
+        const auto& f = d.facts;
+        if (!f.has_roofline() || d.sms <= 0) return 0.0;
+        return f.dram_bytes_per_s() / (d.sms * f.reference_clock_hz());
+    });
+}
+
+bool rmma_variant_occupancy_rule(std::int64_t grid_ctas, int sms, int variant_ctas,
+                                 int plain_ctas) {
+    if (variant_ctas <= 0 || plain_ctas <= 0 || sms <= 0) return false;
+    if (variant_ctas >= plain_ctas) return true;
+    const auto waves = [&](int resident) {
+        const std::int64_t wave = static_cast<std::int64_t>(resident) * sms;
+        return (grid_ctas + wave - 1) / wave;
+    };
+    return waves(variant_ctas) <= waves(plain_ctas);
+}
+
+bool rmma_wide_rule(double bytes_per_sm_cycle, int compute_capability, bool occupancy,
+                    std::size_t wide_local_bytes, std::size_t plain_local_bytes) {
+    return bytes_per_sm_cycle > 0.0 && bytes_per_sm_cycle < kRmmaWideBytes &&
+           compute_capability >= 75 && occupancy &&
+           wide_local_bytes <= plain_local_bytes + kRmmaWideSpillSlack;
+}
 
 bool operator==(Route a, Route b) { return a.family == b.family && a.schedule == b.schedule; }
 
@@ -1378,6 +1694,7 @@ bool r8_fits(QType qtype, std::int32_t k, std::int32_t tokens) {
 }
 bool r8_verify_supports(QType qtype) {
     switch (qtype) {
+    case QType::Q8_G32_FP16:
     case QType::GGML_Q4_0:
     case QType::GGML_IQ3_XXS:
     case QType::GGML_IQ3_S:
@@ -1388,6 +1705,10 @@ bool r8_verify_supports(QType qtype) {
     default:
         return false;
     }
+}
+
+std::int32_t r8_verify_widest(QType qtype) {
+    return qtype == QType::Q8_G32_FP16 ? kR8VerifyTokens : 4;
 }
 
 bool r8_verify_compiled(QType qtype) {
@@ -1714,6 +2035,10 @@ bool owned_tables_a16(QType qtype) {
 }
 } // namespace
 
+bool r8_takes_block(const Weight& weight) {
+    return supports(weight) && r8_call(weight, LinearPolicy::AllowA8, kR8VerifyTokens);
+}
+
 bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
     const bool r8 =
         tokens <= kR8DecodeTokens && supports(weight) && r8_call(weight, policy, tokens);
@@ -1733,9 +2058,10 @@ bool owned_decode_r8(const Weight& weight, LinearPolicy policy, std::int32_t tok
 }
 
 bool owned_prefill_w4a8(const Weight& weight, LinearPolicy policy, std::int32_t tokens) {
+    // Without tensor mma.sync the tiled route owns such a call, as in select_route.
     const bool w4a8 = tokens >= kQ8PrefillA8Tokens && prefill_routes_active() &&
                       weight.qtype == QType::NVFP4 && supports(weight) &&
-                      allows_w4a8(weight, policy);
+                      allows_w4a8(weight, policy) && !volta_tiled_route(weight, policy, tokens);
     // --prefill-route a16: the shape's own plan keeps the call on its A16 route.
     if (w4a8 && route_pins().prefill == PrefillRoute::A16) {
         note_prefill_pin(true, family_bit(PrefillRoute::A16) | family_bit(PrefillRoute::W4a8));
@@ -2668,7 +2994,44 @@ namespace {
 Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill);
 std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                                   bool prefill);
+
+// Without tensor mma.sync (Volta) a speculative-verify width of Q4_K / Q5_K / Q6_K or Q8 G32 takes
+// the HMMA kernel (generic_volta_hmma.cu): it runs as a register-MMA route (run_route launches it
+// in place of the emulated tiles, volta_hmma_takes), f16 activations as the tiled route's from 17
+// tokens. Its alternatives grow with T on Volta's CUDA cores: the register MMA's emulated
+// fragments (FP32 FMAs and shuffles), ggml's vector kernel (dp4a, the activation re-read for every
+// column) and R8 (dp4a); the tensor cores multiply eight or sixteen columns for the price of one,
+// so the call costs reading its weight once, whatever its width up to eight (sixteen: two column
+// groups). An A16 call takes it from two tokens. A call with an int8 route keeps that route
+// through the widths it holds where tensor mma.sync exists (kVecRuleMaxTokens): there an HMMA
+// leaves at least half of its eight columns empty while the int8 kernels' per-column work is still
+// small, and from five tokens the HMMA kernel takes over, where those cards move to their MMA.
+// One card (GV100) checked the band, Qwen3.5-9B shapes: at T = 5..8 the HMMA kernel took 0.52..0.91
+// of the vector kernel's time, except Q4_K gate/up at T = 5 (140 against 128 us); at T = 2..4 the
+// vector kernel was up to 1.4x faster.
+std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
+                                      std::int32_t tokens) {
+    if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
+        current_features().mma_tensor || !supports(weight) || (weight.k % 256) != 0 ||
+        !volta_hmma_codec(codec_of(weight))) {
+        return std::nullopt;
+    }
+    if (tokens <= kVecRuleMaxTokens &&
+        (vec_call(weight, problem.policy, tokens) || r8_call(weight, problem.policy, tokens))) {
+        return std::nullopt;
+    }
+    const Route r{Family::RegisterMma,
+                  static_cast<std::uint8_t>(heuristic_rmma(problem, tokens, false))};
+    if (route_admits(r, weight, problem.policy)) return r;
+    return std::nullopt;
+}
 } // namespace
+
+std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
+                                       std::int32_t tokens) {
+    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return r;
+    return volta_hmma_route(problem, weight, tokens);
+}
 
 Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    bool prefill) {
@@ -2706,7 +3069,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         if (route_admits(r, weight, problem.policy)) return r;
         return Route{Family::Scalar, 0};
     }
-    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
+    if (const auto r = volta_fixed_route(problem, weight, tokens)) return *r;
     // A maintainer's route pin (--prefill-route, --decode-route; ops/route_pins.h): the pinned
     // family where it can compute the call, else the automatic route below. No pin: nothing here.
     if (const auto pinned = pinned_route(problem, weight, tokens, prefill)) return *pinned;
@@ -2715,7 +3078,7 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
 
 namespace {
 
-// The automatic selection after the profiles, the probe and Volta's tiled route (select_route).
+// The automatic selection after the profiles, the probe and Volta's fixed routes (select_route).
 Route auto_route(const Problem& problem, const Weight& weight, std::int32_t tokens, bool prefill) {
     // NVFP4 keeps the width invariance its own kernels give where a device has them (the shape
     // tables of sm_100+; ops/linear/nvfp4): on sm_89/86 the same projections are the generic
@@ -3195,6 +3558,10 @@ std::uint64_t ggml_mmq_fallback_count() noexcept {
     return mmq_fallbacks.load(std::memory_order_relaxed);
 }
 
+std::uint64_t route_demotion_count() noexcept {
+    return route_demotions.load(std::memory_order_relaxed);
+}
+
 std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
     if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
     if (route.family == Family::I8Mma) {
@@ -3229,10 +3596,27 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
     return layout.peak_bytes(1);
 }
 
-// Volta prefill (generic_volta_cutlass.cu): a tiled-route call of kVoltaCutlassMinTokens or more
-// decodes its weight once and multiplies on CUTLASS's sm_70 GEMM; below it one or two token blocks
-// re-decode the weight less than the decoded copy costs to write.
-constexpr std::int32_t kVoltaCutlassMinTokens = 256;
+// Volta prefill (generic_volta_cutlass.cu): a tiled-route call of the prefill band (17 tokens on,
+// kPrefillMinTokens) decodes its weight once and multiplies on CUTLASS's sm_70 GEMM. The tiled
+// kernel (HMMA m8n8k4 on sm_70, generic_tiled.cuh) decodes a 128-row slice of the weight in each
+// CTA, once per 128-token block: ceil(N / 128) CTAs a block, in waves of the SMs, each wave as long
+// as one CTA's decode of 128 x K weights (0.37 .. 0.47 ms at K = 4096 on the V100). The decoded copy
+// spreads the same decode over every SM, then reads two FP16 bytes a weight into the GEMM, so it
+// costs in proportion to N and wins wherever the tile's grid leaves SMs idle or takes a second
+// wave. V100 (ninferno_linear_bench, T = 32..240, the tile's time against the copy's): Q4_K 24576 x
+// 4096 (192 CTAs: 2.4 waves) 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 (32 CTAs) 1.07..1.31
+// against 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37
+// against 0.90..0.94. The one shape whose grid is a whole wave, 10240 x 4096 (80 CTAs on 80 SMs),
+// keeps the tile ahead below 129 tokens (0.37..0.47 ms against 0.50) and loses from 129, two waves
+// (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
+// 35 % at T = 192.
+// The copy's narrowest margin above is 1.13 (24576 x 4096 below 129 tokens) at the V100's 870
+// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80 on
+// every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
+// keeps the tile below kVoltaTileMaxTokens, where two token blocks already decode the weight twice.
+constexpr std::int32_t kVoltaCutlassMinTokens = 17;
+constexpr std::int32_t kVoltaTileMaxTokens    = 256;
+constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
     static PerDevice<bool> enabled;
@@ -3244,12 +3628,21 @@ bool volta_cutlass_takes(std::int32_t tokens) {
     });
 }
 
-// Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace):
-// from kVoltaCutlassMinTokens, and a CUTLASS-only format (`only`: it has no tile of its own) from
-// the prefill band's 17 tokens, which the band's route covers.
+// Whether a tiled format's call of `tokens` takes the copy rather than its tile on this board.
+bool volta_copy_pays(std::int32_t tokens) {
+    static PerDevice<bool> fast_dram;
+    return tokens >= kVoltaTileMaxTokens || fast_dram.get([](int) {
+        try {
+            return device_class().dram_gbps() >= kVoltaCopyMinDramGbps;
+        } catch (const std::exception&) { return false; }
+    });
+}
+
+// Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): a
+// CUTLASS-only format's (`only`: it has no tile of its own) from the prefill band's 17 tokens, a
+// tiled format's where the copy pays.
 bool volta_cutlass_runs(bool only, std::int32_t tokens) {
-    return volta_cutlass_takes(tokens) ||
-           (only && tokens >= 17 && volta_cutlass_takes(kVoltaCutlassMinTokens));
+    return volta_cutlass_takes(tokens) && (only || volta_copy_pays(tokens));
 }
 
 std::size_t volta_prefill_workspace_bytes(QType qtype, std::int32_t rows, std::int32_t k,
@@ -3406,13 +3799,11 @@ const DeviceGates& device_gates() {
     int device = 0;
     if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kOrdinals) return none;
     const auto slot = static_cast<std::size_t>(device);
+    // A device whose class cannot be read throws (call_once then stays open): caching "none"
+    // would turn PDL and the spread off for the process on one transient failure.
     std::call_once(once[slot], [&] {
-        try {
-            const DeviceClass& d = device_class(device);
-            gates[slot]          = {spread_by_board(d), d.features.pdl};
-        } catch (const std::exception&) {
-            gates[slot] = none;
-        }
+        const DeviceClass& d = device_class(device);
+        gates[slot]          = {spread_by_board(d), d.features.pdl};
     });
     return gates[slot];
 }
@@ -3470,7 +3861,8 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
                         stream);
         call.x = &gathered;
     }
-    GemmArgs args = make_args(call);
+    GemmArgs args     = make_args(call);
+    const Route asked = route;
     if (!aligned_to(args.x, 16) && route.family == Family::RegisterMma) {
         route = Route{Family::Scalar, 0};
     }
@@ -3494,14 +3886,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     }
     // A producer-warp W4A8 tile the weight is not admitted to (another format, an IQ3_XXS sign
     // plane off 8 bytes) runs the classic tile of its shape: the same bytes.
-    if (route.family == Family::W4a8Mma && w4a8_schedule_info(route.schedule).producers > 0 &&
-        !w4a8_ws_admits(w)) {
-        route = w4a8_classic_twin(route);
-    }
-    if (route.family == Family::W4a8Mma && w4a8_schedule_info(route.schedule).producers == 0 &&
-        w4a8_ws_extra(w.qtype) && w4a8_ws_admits(w)) {
-        route = w4a8_ws_twin(route);
-    }
+    route = w4a8_executed_route(route, w);
     if (route.family == Family::StagedMma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0)) {
         // The register MMA with WarpsK == 1 gives the same bytes; the scalar kernel where even it
         // cannot read x, as for the register MMA.
@@ -3537,26 +3922,19 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
          (workspace == nullptr || args.segments > ggml_mmq::kVecMaxSegments ||
           !mmq_fits(*workspace,
                     vec_workspace_bytes(w.k, std::min(args.tokens, ggml_mmq::kVecMaxColumns)))))) {
-        // A caller that sized its workspace short of the route: say so once (the call still runs)
-        // and count it (ggml_mmq_fallback_count).
+        // A caller that sized its workspace short of the route (said below, with every other
+        // demotion) is counted here too (ggml_mmq_fallback_count).
         mmq_fallbacks.fetch_add(1, std::memory_order_relaxed);
-        static std::once_flag warned;
-        std::call_once(warned, [&] {
-            std::fprintf(
-                stderr, "%s: call of %d rows x %d tokens runs A16 (workspace %zu of %zu)\n",
-                route_name(route).c_str(), call.rows, args.tokens,
-                workspace != nullptr ? workspace->capacity() : 0,
-                route.family == Family::GgmlVec
-                    ? vec_workspace_bytes(w.k, std::min(args.tokens, ggml_mmq::kVecMaxColumns))
-                    : mmq_workspace_bytes(w.k, plane_rows,
-                                          std::min(args.tokens, kMmqPrefillSlice)));
-        });
         const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
         route = Route{Family::RegisterMma,
                       static_cast<std::uint8_t>(heuristic_rmma(a16, args.tokens, false))};
         if (!aligned_to(args.x, 16) || (w.k % k_multiple(codec_of(w))) != 0) {
             route = Route{Family::Scalar, 0};
         }
+    }
+    if (route.family != asked.family && !same_bytes(asked, route)) {
+        note_demotion(asked, route, call.rows, args.tokens, w.k, aligned_to(args.x, 16), args.ldx,
+                      workspace != nullptr ? workspace->capacity() : 0);
     }
     // Only a register-MMA or R8 launch joins the call before it; every other route runs in stream
     // order.
@@ -3689,10 +4067,18 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         return;
     case Family::RegisterMma:
         if ((w.k % k_multiple(codec)) != 0) {
+            // K off the register kernel's step runs scalar: a demotion (other bytes and speed).
+            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
+                          aligned_to(args.x, 16), args.ldx,
+                          workspace != nullptr ? workspace->capacity() : 0);
             launch_scalar(codec, call.epilogue, args, stream);
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
+        if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
+            launch_volta_hmma(codec, call.epilogue, args, stream);
+            return;
+        }
         if (!current_features().mma_tensor && volta_gemv_takes(codec, args) &&
             (args.ldx % 8) == 0 && (reinterpret_cast<std::uintptr_t>(args.x) % 16) == 0) {
             launch_volta_gemv(codec, call.epilogue, args, stream);
@@ -3816,15 +4202,18 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         if ((w.k % 64) != 0) {
             throw std::invalid_argument("generic tiled: K must be whole 64-value tiles");
         }
-        // A CUTLASS-only format has no tile of its own, so it takes CUTLASS below
-        // kVoltaCutlassMinTokens too: the prefill band's route covers the chunk's narrower calls
-        // (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a call, 360 -> 140 tok/s).
+        // The prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format has no tile of
+        // its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a call, 360 -> 140
+        // tok/s), and a tiled one's grid seldom fills the SMs' waves (volta_copy_pays).
         if (workspace != nullptr && volta_cutlass_runs(volta_cutlass_only(codec), args.tokens) &&
             launch_volta_cutlass(codec, call.epilogue, args, *workspace, stream)) {
             return;
         }
-        // A call the decoded copy does not fit runs scalar.
+        // A call the decoded copy does not fit runs scalar: a demotion (other bytes and speed).
         if (volta_cutlass_only(codec)) {
+            note_demotion(route, Route{Family::Scalar, 0}, call.rows, args.tokens, w.k,
+                          aligned_to(args.x, 16), args.ldx,
+                          workspace != nullptr ? workspace->capacity() : 0);
             launch_scalar(codec, call.epilogue, args, stream);
             return;
         }

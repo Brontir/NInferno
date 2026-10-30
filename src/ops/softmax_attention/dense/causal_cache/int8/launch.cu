@@ -108,7 +108,7 @@ void parallel_grouped(const CausalAttentionOperands& p, Int8KvReadView cache,
         launch_int8_kv_grouped_mma<G, typename Instance::Schedule, MultiBatch, Masked, false,
                                    CausalCachedInput, true>(p, cache, {}, partition, partial,
                                                             stream);
-        launch_causal_natural_merge<G, typename Instance::Merge, MultiBatch, Masked, false>(
+        launch_causal_natural_merge<G, typename Instance::Merge, MultiBatch, Masked, false, true>(
             p, cache.valid_columns, partition, partial, stream);
     };
     if (p.batch == 1) {
@@ -263,7 +263,7 @@ bool int8_kv_append_attention(const Tensor& q, const Tensor& k, const Tensor& v,
     const cudaStream_t stream = execution.stream;
     const auto* gate_data = gate ? static_cast<const __nv_bfloat16*>(gate->data) : nullptr;
     const auto plan       = make_int8_kv_causal_plan(q.ne[1], cache.num_kv_heads, q.ne[2], q.ne[3],
-                                                     envelope, paged_kv_row_keys(cache.block_tables), execution.multiprocessor_count);
+                                                     envelope, execution.multiprocessor_count);
     if (plan.family != Int8KvFamily::Grouped || key_major_takes()) {
         kv_cache_append_batch_launch(k, v, positions, valid, rows, cache, stream);
         auto p = make_causal_operands(q, positions, out, scale, envelope.max_visible_keys,
@@ -302,7 +302,7 @@ void int8_kv_cached_attention(const Tensor& q, const Tensor& positions, float sc
                               Tensor& out, DeviceExecutionView execution) {
     const cudaStream_t stream = execution.stream;
     const auto plan = make_int8_kv_causal_plan(q.ne[1], cache.num_kv_heads, q.ne[2], 1, envelope,
-                                               paged_kv_row_keys(cache.block_table), execution.multiprocessor_count);
+                                               execution.multiprocessor_count);
     const auto view = single_row_paged_kv_batch_view(cache);
     if (plan.family == Int8KvFamily::Tiled)
         tiled(make_causal_operands(q, positions, out, scale, envelope.max_visible_keys,

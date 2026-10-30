@@ -31,23 +31,52 @@ namespace ninferno::convert {
 //    BF16 ones); only artifacts with such a drafter are converted again (cache_current).
 // 5: every recipe does (qwen3_5_bf16, the dense Qwen3.5 GGUF default, left the companion BF16);
 //    again only artifacts with such a drafter are converted again.
-inline constexpr int kCacheRevision = 5;
+// 6: a Qwen target with a DFlash companion takes a proposal head by default (its draft head over
+//    the ranked rows default_proposal chooses); only Qwen artifacts with such a companion and no
+//    proposal head are converted again, where the default ranking is found.
+// 7: the default head serves MTP too (its rows the most any of MTP and DFlash asks for): Qwen
+//    artifacts with MTP layers and no head, or with revision 6's DFlash-only head, are converted
+//    again.
+// 8: a head serving MTP and DFlash leads with MTP's own rows (proposal.drafter_rows), which MTP
+//    reads alone: Qwen artifacts whose head serves both without them are converted again.
+inline constexpr int kCacheRevision = 8;
 
 // Whether an artifact carries the defect revisions 4 and 5 fixed: its report binds a DFlash /
 // DFlash2 companion drafter's attention query unquantized (bf16, fp16, fp32).
 [[nodiscard]] bool unquantized_drafter_attention(const std::filesystem::path& artifact);
+// Whether an artifact at `revision` lacks the default proposal head revisions 6 to 8 give: its
+// report is a Qwen target's (qwen3_5_text, qwen3_5_moe_text) with MTP layers or a DFlash
+// companion and no proposal head, or (revision 6) MTP layers and the head revision 6 made for
+// DFlash alone, or (revisions 6 and 7) a head serving MTP and DFlash without MTP's own rows
+// (proposal.drafter_rows); and the default ranking is found (without it the conversion adds none).
+[[nodiscard]] bool default_head_outdated(const std::filesystem::path& artifact, int revision);
 
 // Whether a cached artifact is served as it is: revision kCacheRevision, or revision 3 or 4
-// without the defect revisions 4 and 5 fixed (a text-only artifact, a drafter already in Q8): a
+// without the defect revisions 4 and 5 fixed nor revisions 6 to 8's default head (a text-only artifact, a drafter already in Q8): a
 // conversion of many minutes is not repeated for a change that did not touch it. Such an older
 // artifact is stamped kCacheRevision (stamp_revision), so its report is read once.
 [[nodiscard]] bool cache_current(const std::filesystem::path& artifact);
+// cache_current's answer, read only: it never stamps (a plan's, which only reads the cache).
+[[nodiscard]] bool cache_serves(const std::filesystem::path& artifact);
 
 // The revision recorded beside `artifact` (<artifact>.revision); 1 where none is: converted before
 // revisions were kept.
 [[nodiscard]] int cached_revision(const std::filesystem::path& artifact);
 // Records kCacheRevision beside a conversion just made.
 void stamp_revision(const std::filesystem::path& artifact);
+// What a conversion read from its source, cheaply: each file's name (from `root`, the model's
+// directory; a file outside it by its full path), size and modification time, one line each in
+// name order (a file that is not there has none). A checkpoint replaced at the same path (a newer
+// revision copied over it, a re-download) changes it; another spelling of the path does not.
+[[nodiscard]] std::string source_stamp(const std::filesystem::path& root,
+                                       std::vector<std::filesystem::path> files);
+// Records `stamp` beside a conversion just made (<artifact>.source).
+void stamp_source(const std::filesystem::path& artifact, const std::string& stamp);
+// Whether `stamp` names a file the one recorded beside `artifact` does not, or one of another size
+// or time, or lacks a recorded file other than weights (weights that are gone are no change:
+// --consume-source removed them). An artifact converted before stamps were kept has none: it is
+// stamped `stamp` now (a read-only cache stays unstamped) and is not changed.
+[[nodiscard]] bool source_changed(const std::filesystem::path& artifact, const std::string& stamp);
 // Removes an artifact and its sidecars (<artifact>.conversion.json, .speculation.json, ...).
 void remove_artifact(const std::filesystem::path& artifact);
 
@@ -67,11 +96,14 @@ struct CachedArtifact {
 // wins. `consume_source` converts with --consume-source (destroying the checkpoint's weights); only
 // a caller the user explicitly asked for that may pass it. `vision` keeps a Qwen3.5 / 3.6 / 3.8
 // model's Vision encoder (a checkpoint's own, or the mmproj-*.gguf beside a GGUF file) in its own
-// artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it.
+// artifact (<...>.vision.<recipe>.ninferno); a model without one converts as without it. A cached
+// artifact whose source files changed since it was converted (source_stamp) is converted again
+// while the source is there; one whose source is gone is served as it is. `round_tiny_scales`
+// converts with --round-tiny-scales (ConvertOptions::round_tiny_scales).
 [[nodiscard]] CachedArtifact
 cached_artifact(const std::filesystem::path& path,
                 const std::vector<std::pair<std::string, std::filesystem::path>>& resources = {},
                 const std::function<void(const std::string&)>& log                          = {},
-                bool consume_source = false, bool vision = false);
+                bool consume_source = false, bool vision = false, bool round_tiny_scales = false);
 
 } // namespace ninferno::convert

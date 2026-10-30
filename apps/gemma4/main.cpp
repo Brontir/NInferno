@@ -6,10 +6,10 @@
 //   ninferno-gemma4 <artifact> logits   --tokens F --out O
 //   ninferno-gemma4 <artifact> batch    --tokens F --decode M [sampling and --stop options]
 //   ninferno-gemma4 <artifact> spec-bench --tokens F --prompt N --decode M
-//                 (--drafter A | --dflash A) [--draft K] [--draft-min K0] [--dump-tokens O]
+//                 (--drafter A | --dflash A) [--draft K] [--dump-tokens O]
 //                 [--stop IDS]  (both streams end at the plain stream's first stop id)
 //   ninferno-gemma4 <artifact> spec-audit --list L --out O [--drafter A] [--dflash B]
-//                 [--configs mtp:K[:K0],dflash:K,...] [--decode M] [--repeat R] [--tag T]
+//                 [--configs mtp:K,dflash:K,...] [--decode M] [--repeat R] [--tag T]
 //   ninferno-gemma4 <artifact> spec-tune [--drafter A] [--dflash B | --drafter-variant V]
 //                 [--configs LIST]
 //                 [--budget-seconds S] [--repeat R] [--out PROFILE] [--corpus FILE]
@@ -20,9 +20,9 @@
 // profile the model's <artifact>.speculation.json publishes for this GPU (its chip variant, chip,
 // architecture, then "*"; spec-tune publishes for the chip unless --gpu-class says), else prompt
 // lookup when that manifest says no drafter came with the model; an artifact without either decodes
-// plainly, as before. --spec off|auto|<config> (e.g. dflash:7, mtp:8:2, ngram:4) overrides.
+// plainly, as before. --spec off|auto|<config> (e.g. dflash:7, mtp:8, ngram:4) overrides.
 // With --drafter / --dflash they speculate with that drafter: --spec names the configuration,
-// else --draft (and --draft-min) set it; --spec off decodes plainly.
+// else --draft sets it; --spec off decodes plainly.
 // The profile's choice is its default for the prompt's thinking marker. batch picks per prompt:
 // its prompts are grouped by the configuration their thinking flags choose, each group runs in its
 // own session (one at a time), and the results are printed in the prompts' order, each with the
@@ -59,8 +59,8 @@
 // is one JSON object on stdout.
 // Maintainer options (docs/maintainer/environment.md): --cuda-sync, --route-table FILE,
 // --route-dir DIR, --dense-tune off|on|retune, --tune-cache DIR, --debug-poison BYTE,
-// --debug-poison-skip SITES and --drafter-registry FILE, applied to the process as an Engine
-// applies them; --moe-tune is refused (no MoE schedule tuner runs here).
+// --debug-poison-skip SITES, --artifact-io MODE and --drafter-registry FILE, applied to the process
+// as an Engine applies them; --moe-tune is refused (no MoE schedule tuner runs here).
 //
 // <artifact>, --drafter and --dflash also accept a Hugging Face checkpoint directory. It is
 // converted once, in-process, with the official recipe for its architecture, into
@@ -137,12 +137,12 @@ Arguments parse(int argc, char** argv) {
         // --activations exact once ran the default profile unnoticed).
         static const std::set<std::string> known = {
             "a16",         "a16-full",    "acceptance-floor",
-            "applies-to",  "block",       "budget-seconds",
+            "applies-to",  "artifact-io", "block",       "budget-seconds",
             "chunk",       "configs",     "consume-source",
             "context",     "corpus",      "cuda-sync",   "cuts",
             "debug-poison", "debug-poison-skip", "dense-tune",
             "decode",      "dflash",      "draft",
-            "draft-min",   "drafter",     "drafter-variant",
+            "drafter",     "drafter-variant",
             "dump",        "dump-tokens", "gpu-class",
             "drafter-registry",
             "kv-dtype",    "list",        "measured-on", "moe-tune",
@@ -264,13 +264,13 @@ int spec_audit(const Arguments& args, const Model& model, DeviceContext& device,
     struct Config {
         std::string label;
         bool dflash;
-        std::int32_t k, k_min;
+        std::int32_t k;
     };
     std::vector<Config> configs;
     for (const auto& item : option_list(args.text("configs", "mtp:4"), ',')) {
         const auto parts = option_list(item, ':');
-        Config c{item, parts.at(0) == "dflash", std::stoi(parts.at(1)),
-                 parts.size() > 2 ? std::stoi(parts[2]) : 0};
+        if (parts.size() != 2) { throw std::invalid_argument("spec-audit: config " + item); }
+        Config c{item, parts.at(0) == "dflash", std::stoi(parts.at(1))};
         if ((c.dflash && dflash == nullptr) || (!c.dflash && drafter == nullptr)) {
             throw std::invalid_argument("spec-audit: " + item + " needs its drafter");
         }
@@ -334,7 +334,6 @@ int spec_audit(const Arguments& args, const Model& model, DeviceContext& device,
         o.drafter            = c.dflash ? nullptr : drafter;
         o.dflash             = c.dflash ? dflash : nullptr;
         o.draft_tokens       = c.k;
-        o.min_draft_tokens   = c.k_min;
         Session spec(model, device, o);
         const auto continue_to = [&](std::int32_t length, std::vector<SpeculationRoundTrace>* t) {
             std::vector<std::int32_t> tokens;
@@ -433,7 +432,7 @@ int spec_audit(const Arguments& args, const Model& model, DeviceContext& device,
             std::snprintf(
                 head, sizeof(head),
                 "{\"tag\":\"%s\",\"prompt\":\"%s\",\"prompt_tokens\":%zu,\"config\":\"%s\","
-                "\"k\":%d,\"k_min\":%d,\"plain_tokens\":%d,\"plain_stopped\":%s,"
+                "\"k\":%d,\"plain_tokens\":%d,\"plain_stopped\":%s,"
                 "\"plain_tok_s\":%.2f,\"spec_tok_s\":%.2f,\"speedup\":%.4f,\"spec_tokens\":%zu,"
                 "\"rounds\":%.0f,\"drafted\":%.0f,\"accepted\":%.0f,\"tokens_per_round\":%.4f,"
                 "\"acceptance\":%.4f,\"repeat_equal\":%s,\"traced_equal\":%s,"
@@ -441,7 +440,7 @@ int spec_audit(const Arguments& args, const Model& model, DeviceContext& device,
                 "\"replay_checked\":%zu,\"replay_mismatches\":%zu,\"worst_deficit\":%.4f,"
                 "\"phase_ms\":[%.4f,%.4f,%.4f,%.4f],",
                 tag.c_str(), prompts[p].name.c_str(), prompts[p].tokens.size(), c.label.c_str(),
-                c.k, c.k_min, run.length, run.length < want ? "true" : "false", run.rate,
+                c.k, run.length, run.length < want ? "true" : "false", run.rate,
                 median(rates), median(rates) / run.rate, timed.size(), rounds, drafted, accepted,
                 (accepted + rounds) / rounds, accepted / std::max(drafted, 1.0),
                 repeat_equal ? "true" : "false", traced == timed ? "true" : "false", same, n,
@@ -490,15 +489,13 @@ SessionOptions configured(const spec::SpecConfig& c, SessionOptions o, const Dra
     o.drafter          = nullptr;
     o.dflash           = nullptr;
     o.ngram            = false;
-    o.min_draft_tokens = 0;
     switch (c.mode) {
     case spec::Mode::None:
         break;
     case spec::Mode::Mtp:
         if (!d.mtp) { throw std::invalid_argument(c.label() + " needs the MTP assistant"); }
-        o.drafter          = d.mtp.get();
-        o.draft_tokens     = c.k;
-        o.min_draft_tokens = c.k_min;
+        o.drafter      = d.mtp.get();
+        o.draft_tokens = c.k;
         break;
     case spec::Mode::DFlash:
         if (!d.dflash) { throw std::invalid_argument(c.label() + " needs the DFlash drafter"); }
@@ -561,8 +558,8 @@ int spec_tune(const Arguments& args, const Model& model, DeviceContext& device, 
         // Fixed MTP windows across what the serving Engine runs (1..15, spec/engine_support.h)
         // are measured too, so the served choices come from the same tune.
         for (const char* l : {"dflash:7", "dflash:11", "dflash:15", "mtp:1", "mtp:2", "mtp:3",
-                              "mtp:4", "mtp:5", "mtp:6", "mtp:8", "mtp:10", "mtp:15", "mtp:8:2",
-                              "mtp:15:2", "ngram:4", "ngram:8"}) {
+                              "mtp:4", "mtp:5", "mtp:6", "mtp:8", "mtp:10", "mtp:15",
+                              "ngram:4", "ngram:8"}) {
             labels.emplace_back(l);
         }
     }
@@ -692,8 +689,8 @@ int spec_tune(const Arguments& args, const Model& model, DeviceContext& device, 
             profile.measurements.push_back(m);
         }
     }
-    // The Session runs more than the serving Engine does for Gemma 4 (DFlash, adaptive depths, MTP
-    // windows past 5): the profile also carries the best choices the Engine runs.
+    // The Session runs more than the serving Engine does for Gemma 4 (DFlash): the profile also
+    // carries the best choices the Engine runs.
     spec::select(profile, {.served = spec::engine_support("gemma4_text")});
     profile.tune_seconds = ninferno::seconds_since(started);
     const auto out_path  = args.flag("out") ? std::filesystem::path(args.text("out"))
@@ -806,9 +803,8 @@ StartPlan start_plan(const Arguments& args, const std::string& artifact,
 
 // generate and batch with --drafter / --dflash: --spec names the configuration (of a loaded
 // drafter's kind, or ngram:K), --spec off decodes plainly, and without --spec the loaded drafter
-// runs at --draft (--draft-min: adaptive MTP depth). The watchdog floor follows start_plan.
-StartPlan drafter_plan(const Arguments& args, bool mtp, bool dflash, std::int32_t k,
-                       std::int32_t k_min) {
+// runs at --draft. The watchdog floor follows start_plan.
+StartPlan drafter_plan(const Arguments& args, bool mtp, bool dflash, std::int32_t k) {
     StartPlan plan;
     const auto flag = args.text("spec", "auto");
     if (flag == "off" || flag == "plain") { return plan; }
@@ -822,7 +818,6 @@ StartPlan drafter_plan(const Arguments& args, bool mtp, bool dflash, std::int32_
         }
         plan.config.mode  = mtp ? spec::Mode::Mtp : spec::Mode::DFlash;
         plan.config.k     = k;
-        plan.config.k_min = mtp ? k_min : 0;
         plan.source       = mtp ? "--drafter" : "--dflash";
     }
     if ((plan.config.mode == spec::Mode::Mtp && !mtp) ||
@@ -910,7 +905,6 @@ int main(int argc, char** argv) {
             options.draft_tokens = static_cast<std::int32_t>(
                 args.number("draft", drafters.dflash->config().block_size - 1));
         }
-        options.min_draft_tokens = static_cast<std::int32_t>(args.number("draft-min", 0));
         // Only score keeps the full scoring head slab; the rest need the widest verify.
         if (args.command != "score") { options.score_columns = kMaxVerifyColumns; }
         // Without --context and --chunk the session is sized to the memory free now
@@ -977,9 +971,8 @@ int main(int argc, char** argv) {
                 probe.dflash       = drafters.dflash.get();
                 probe.draft_tokens = drafters.dflash->config().block_size - 1;
             } else if (drafters.mtp) {
-                probe.drafter          = drafters.mtp.get();
-                probe.draft_tokens     = kMaxVerifyColumns - 1;
-                probe.min_draft_tokens = 1;
+                probe.drafter      = drafters.mtp.get();
+                probe.draft_tokens = kMaxVerifyColumns - 1;
             }
             options = sized(options, probe);
         }
@@ -1086,7 +1079,7 @@ int main(int argc, char** argv) {
             // A drafter named on the command line is the one these commands speculate with
             // (before, they loaded it and decoded plainly without a word).
             plan = drafter_plan(args, drafters.mtp != nullptr, drafters.dflash != nullptr,
-                                options.draft_tokens, options.min_draft_tokens);
+                                options.draft_tokens);
         }
         // The session options a plan runs with.
         const auto planned = [&](const StartPlan& p) {
@@ -1123,8 +1116,7 @@ int main(int argc, char** argv) {
             CUDA_CHECK(cudaMemGetInfo(&free_after, &total));
             warm_mib = (double(free_before) - double(free_after)) / 1048576.0;
         }
-        // The CUDA synchronization schedule (--cuda-sync) belongs to the measurement: the
-        // adaptive draft depth waits on the device once per round.
+        // The CUDA synchronization schedule (--cuda-sync) belongs to the measurement.
         std::printf("{\"load_seconds\":%.2f,\"weights_gib\":%.3f,\"session_gib\":%.3f,"
                     "\"kv_gib\":%.3f,\"kv_dtype\":\"%s\",\"free_gib\":%.3f,"
                     "\"profile\":\"%s\",\"chunk\":%d,\"context\":%d,\"cuda_sync\":\"%s\",",

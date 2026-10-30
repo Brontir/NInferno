@@ -46,8 +46,9 @@ Q8Launch select_q8_n5376_k16384(std::int32_t tokens) {
     if (tokens <= 384) return launch_q8_a16_mma_r64_t96;
     // 42 row tiles by T/256 token tiles fill 170 SMs in whole waves only when T is a multiple of
     // 1024; there the 256-token tile wins by 2.6-5.7%, elsewhere (768, 1536) it loses 20-30%.
-    // NINFERNO-SPECIAL(chip:gb202:170sm): the multiple-of-1024 rule is wave arithmetic for 170 SMs;
-    // another class needs its own band (a per-GPU-class route table).
+    // NINFERNO-SPECIAL(chip:gb202:170sm): tuned on 170 SMs, and no device fact explains it: at the
+    // multiples of 1024 the 256-token tile also wins on 60 and 108 SMs (RTX 4070 Ti, A100) and
+    // loses on 70 and 128 (RTX 5070 Ti, RTX 4090); docs/maintainer/deterministic-decisions.md.
     if (tokens % 1024 == 0) return launch_q8_a16_mma_r128x64_t256;
     return launch_q8_a16_mma_r64x32_t128;
 }

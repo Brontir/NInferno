@@ -1,5 +1,7 @@
 #include "runtime/engine/context_cache/context_cost.h"
 
+#include "core/measured_boards.h"
+
 #include <array>
 #include <vector>
 
@@ -100,11 +102,13 @@ const ContextPrefillCost& generic_context_prefill_cost() {
 }
 
 // Accepted project defaults live only in this table and are compiled into the binary. Runtime JSON
-// presets are independent local-machine overrides and never become a build dependency.
+// presets are independent local-machine overrides and never become a build dependency. Each
+// machine is keyed by the class id of the board it was measured on and records that board: a
+// device of another class id takes the nearest one within measured::kCarryDistance, as measured.
 const std::vector<ContextCostMachinePreset>& compiled_context_cost_defaults() {
     static const std::vector<ContextCostMachinePreset> defaults{
         ContextCostMachinePreset{
-            .hardware_class = "nvidia-geforce-rtx-5090-sm120",
+            .gpu_class = "gb202:170sm",
             // Unified from the measured transfer corpus. A fresh machine-only transfer
             // calibration can replace this whole array without loading a model.
             .transfer =
@@ -134,18 +138,18 @@ const std::vector<ContextCostMachinePreset>& compiled_context_cost_defaults() {
                 },
             // A model of no listed signature: the slower (groupwise 27B) measurement of this card.
             .class_prefill = kGb202Groupwise27bPrefill,
-            .sms           = 170,
+            .board         = measured::kRtx5090,
         },
         ContextCostMachinePreset{
-            .hardware_class = "nvidia-geforce-rtx-4090-sm89",
+            .gpu_class = "ad102:128sm",
             // Its transfer fit refused the D2D copies; until they fit, the generic transfer.
             .prefill       = {{"77c1f30a6b521bada3dc202ab41cc0b63d058fd91203886955b4ff2c889667aa",
                                kAd102Groupwise27bPrefill}},
             .class_prefill = kAd102Groupwise27bPrefill,
-            .sms           = 128,
+            .board         = measured::kRtx4090,
         },
         ContextCostMachinePreset{
-            .hardware_class = "nvidia-geforce-rtx-3090-sm86",
+            .gpu_class = "ga102:82sm",
             // Measured (CUDA 12.8 runtime / 13.0 driver, PCIe 4.0 host): the
             // host links run at about half the generic 40 GB/s, so Host KV retention is priced
             // twice as dear as the generic model says.
@@ -161,10 +165,10 @@ const std::vector<ContextCostMachinePreset>& compiled_context_cost_defaults() {
             .prefill       = {{"77c1f30a6b521bada3dc202ab41cc0b63d058fd91203886955b4ff2c889667aa",
                                kGa102Groupwise27bPrefill}},
             .class_prefill = kGa102Groupwise27bPrefill,
-            .sms           = 82,
+            .board         = measured::kRtx3090,
         },
         ContextCostMachinePreset{
-            .hardware_class = "nvidia-geforce-rtx-2080-ti-sm75",
+            .gpu_class = "tu102:68sm",
             // Measured (CUDA 12.8, PCIe 3.0 host): the host links at 12 GB/s.
             .transfer =
                 std::array{
@@ -183,7 +187,7 @@ const std::vector<ContextCostMachinePreset>& compiled_context_cost_defaults() {
                      kTu102Q4km9bPrefill},
                 },
             .class_prefill = kTu102Iq2xxs27bPrefill,
-            .sms           = 68,
+            .board         = measured::kRtx2080Ti,
         },
     };
     return defaults;

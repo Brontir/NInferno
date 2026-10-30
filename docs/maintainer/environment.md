@@ -8,9 +8,9 @@ none of them changes what the engine computes.
 
 ## Options
 
-`ninferno` and `ninferno-serve` take all of these. `ninferno-perplexity` takes all but
-`--decode-steps`, `--decode-wait` and `--decode-route`, which it refuses: it scores and runs no
-decode rounds.
+`ninferno` and `ninferno-serve` take all of these but the lab tuners (`--dense-tune`, `--moe-tune`,
+`--tune-cache`), which they refuse. `ninferno-perplexity` takes all but `--decode-steps`,
+`--decode-wait` and `--decode-route`, which it refuses: it scores and runs no decode rounds.
 `ninferno spec-tune` takes `--decode-wait`, `--cuda-sync`, `--route-table`, `--route-dir` and
 `--drafter-registry`, and records them in the profile's settings (and an `--out`'s, which
 `--resume` compares) by content, never by a local path: a route table or a drafter registry as
@@ -19,12 +19,15 @@ the SHA-256 of its bytes, a route directory as the SHA-256 over the files the en
 path, each as the line `<relative path>\0<hex SHA-256 of its bytes>\n`, so `--resume` refuses cells
 measured with other tables. The family tools
 `ninferno-gemma4` and `ninferno-dense` take `--cuda-sync`, `--route-table`, `--route-dir`,
-`--dense-tune`, `--tune-cache`, `--debug-poison` and `--debug-poison-skip` (`ninferno-gemma4` also
+`--dense-tune`, `--tune-cache`, `--debug-poison`, `--debug-poison-skip` and `--artifact-io` (`ninferno-gemma4` also
 `--drafter-registry`), check them before anything is converted or loaded, and apply them to the
 process as an Engine does: the dense tuner is on for the loaded model whatever `--dense-tune` says,
 so `off` reads the release's `routes/tuner/dense_tune.json` as `ninferno` and `ninferno-serve` do.
 They refuse `--moe-tune`: the MoE schedule tuner runs in an Engine's model load (every family's),
-which neither tool goes through. `ninferno-gemma4 spec-tune` names in its profile's settings the
+which neither tool goes through. The tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time
+kernels on the machine, so `ninferno` and `ninferno-serve` refuse them: the tuner hosts are
+`ninferno-perplexity` (an Engine: both tuners, the MoE one at its model load, the dense one at the
+warm-up and the scored prefills) and the family tools above (the dense tuner). `ninferno-gemma4 spec-tune` names in its profile's settings the
 `--cuda-sync`, `--dense-tune`, `--route-table` and `--route-dir` it ran with, when not the
 release's. `EngineOptions::pacing` and `EngineOptions::maintainer` (`include/ninferno/types.h`)
 carry them for the Engine API.
@@ -59,6 +62,12 @@ how the host waits, never which tokens.
 | `--decode-wait` | `auto`, `spin`, `block` | `auto` (`spin` under `ninferno spec-tune`, which takes `--decode-wait` too) |
 | `--cuda-sync` | `spin`, `blocking`, `yield`, `auto` | `spin` |
 
+### Loading
+
+| Option | Values | Effect |
+|---|---|---|
+| `--artifact-io` | `auto` (default), `direct`, `buffered` | How the weights are read at load. `auto` reads local disks with `O_DIRECT` (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file systems through the page cache; `direct` forces `O_DIRECT` (a file system without it is then an error), `buffered` the page cache. The bytes read are the same: an I/O mode, not a decision. `ninferno`, `ninferno-serve`, `ninferno-perplexity`, `ninferno-dense` and `ninferno-gemma4` take it; it is process-wide like the options below (a second Engine of the process must ask for the same mode). `ninferno-gemma4-inspect` and a tool's in-process conversion read with `auto`. |
+
 ### Route tables and lab tuners
 
 These are lab tools. A user's engine times nothing and reads no state an earlier run left: routes
@@ -68,7 +77,7 @@ heuristic.
 | Option | Values | Effect |
 |---|---|---|
 | `--route-table FILE` | file path | This route table alone, instead of the GPU class's own. A table that cannot be read or a malformed one is refused before the device is touched; one for another GPU class fails startup when it loads. |
-| `--route-dir DIR` | directory | The directory of per-GPU-class route tables (`DIR/*.json`) and of the release's dense-tuner measurements (`DIR/tuner/dense_tune.json`). A directory that cannot be listed, or one of those files that cannot be resolved (with the file system's reason), is a dangling symlink or cannot be read, is refused before the device is touched. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
+| `--route-dir DIR` | directory | The directory of per-GPU-class route tables (`DIR/*.json`) and of the release's dense-tuner measurements (`DIR/tuner/dense_tune.json`). A directory that cannot be listed, or one of those files that cannot be resolved (with the file system's reason), is a dangling symlink or cannot be read, is refused before the device is touched. The GPU class's own table in it that does not parse stops startup (a broken install); another class's table is checked against this GPU's facts, so one refused here lends it nothing; a directory with no table for the class runs the heuristic routes. Default: `routes/` beside the binary, then `share/ninferno/routes/` above it, then the source tree the binary was built from (only a build with `NINFERNO_SOURCE_TREE_PATHS=ON`, the default; a release has none). |
 | `--dense-tune` | `off` (default), `on`, `retune` | The dense GEMM tuner. `on` times the candidate routes of a problem the table does not cover the first time the engine computes it outside graph capture (the warm-up's eager prefill) and stores the choice per GPU class and problem; `on` and `retune` also read the cache file (`retune` ignores its choices, then merges its new ones into it). Route tables are built offline ([route tuning helpers](../../bench/README.md#route-tuning-helpers)). |
 | `--moe-tune` | `off` (default), `on`, `retune` | The MoE schedule tuner an Engine runs at model load (the family tools, which load no model through an Engine, refuse it), with the same meaning per MoE layer shape; `tools/moe_tune_to_table.py` turns its cache into a route table's MoE bands. |
 | `--tune-cache DIR` | directory | Where the tuners keep `dense_tune.json` and `moe_tune.json`, read only while a tuner is on. Default: NInferno's cache directory, `$XDG_CACHE_HOME/ninferno`, else `~/.cache/ninferno` (`%LOCALAPPDATA%\NInferno` on Windows). |
@@ -173,7 +182,7 @@ that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise
 | `NINFERNO_DECODE_WAIT` | `--decode-wait` |
 | `NINFERNO_ROUTE_TABLE` | `--route-table` |
 | `NINFERNO_ROUTE_DIR` | `--route-dir` |
-| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` |
+| `NINFERNO_DENSE_TUNE`, `NINFERNO_MOE_TUNE` | `--dense-tune`, `--moe-tune` (maintainer tools only) |
 | `NINFERNO_DENSE_TUNE_CACHE`, `NINFERNO_MOE_TUNE_CACHE` | `--tune-cache` (one directory for both tuners) |
 | `NINFERNO_QWEN_PREFILL_CUTS` | `--debug-prefill-cuts` |
 | `NINFERNO_DEBUG_POISON`, `NINFERNO_DEBUG_POISON_SKIP` | `--debug-poison`, `--debug-poison-skip` |
@@ -181,6 +190,7 @@ that may quote these names; `ninferno_decision_fingerprint_test` fails otherwise
 | `NINFERNO_SPEC_CORPUS` | `--corpus` (`ninferno spec-tune`, `ninferno-gemma4`); elsewhere the compiled-in corpus |
 | `NINFERNO_RANKING_DIR` | none: rankings are found in `tools/spec/rankings`, then beside the binary, then in the source tree; `ninferno-convert --ranking FILE` names one |
 | `NINFERNO_MMQ_VERIFY` | none (an A/B knob of the IQ formats' verify rule) |
+| `NINFERNO_ARTIFACT_DIRECT_IO` | `--artifact-io direct\|buffered` |
 
 ### Outside the engine
 
@@ -203,12 +213,6 @@ The user-facing ones are documented where they belong: `NINFERNO_API_KEY` in
 `NINFERNO_UPDATE_URL` and `NINFERNO_UPDATE_CHECK` with the desktop UI and the release tools, and
 `NINFERNO_PDFIUM` (where the PDF library is) with document input. Test programs read
 `NINFERNO_TEST_*`, `NINFERNO_DET_*` and `NINFERNO_PROBE_*` and map them to the options above.
-
-### Loading
-
-| Variable | Values | Effect |
-|---|---|---|
-| `NINFERNO_ARTIFACT_DIRECT_IO` | `1`/`true`/`yes`/`on`, `0`/`false`/`no`/`off` | Forces `O_DIRECT` or buffered reads of artifact payloads. Unset or any other value: chosen automatically. The bytes read are the same either way. |
 
 ### Numerics investigation and route recording
 
@@ -238,4 +242,5 @@ fault.
 | `NINFERNO_DEBUG_FREEZE_FILE` | file path | While the file exists, the executor blocks as on a hung device wait. |
 | `NINFERNO_DEBUG_TRAP_FILE` | file path | Once the file appears, the next check launches a kernel that traps, which poisons the CUDA context as a failed device-side assert does. Fires once. |
 | `NINFERNO_DEBUG_CUDA_ERROR_FILE` | file path | When the file exists, the next check removes it and raises a recoverable CUDA error (`cudaErrorMemoryAllocation`). Each new file is one error. |
+| `NINFERNO_DEBUG_TOKEN_DOMAIN_FILE` | file path | When the file exists, the next sampled or licensed decode token is replaced with one outside the public vocabulary and the file is removed: that request ends with a numerical failure, the others go on. Each new file is one token. |
 | `NINFERNO_DEBUG_NAN_FILE` | file path | See the [serving reference](../reference/serving.md). |

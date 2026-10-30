@@ -16,10 +16,11 @@ struct Int8KvCausalPlan {
     int launch_columns; // the columns of one kernel launch (causal_launch_columns)
 };
 
-// row_keys: the keys of the call's KV row (paged_kv_row_keys); the invariant route profile aligns
-// its splits to it. 0 (a workspace query) plans the splits of any row.
+// The invariant route profile aligns the splits to each token's own position
+// (CausalKvPartition::aligned_to_positions), never to the call's KV row.
 Int8KvCausalPlan make_int8_kv_causal_plan(int heads, int kv_heads, int width, int batch,
-                                          CausalAttentionExecutionEnvelope envelope, int row_keys, int multiprocessor_count);
+                                          CausalAttentionExecutionEnvelope envelope,
+                                          int multiprocessor_count);
 std::size_t int8_kv_workspace_bytes(int heads, int kv_heads, int batch, int min_width,
                                     int max_width, CausalAttentionExecutionEnvelope envelope, int multiprocessor_count);
 

@@ -11,7 +11,7 @@
 // A model bundle can declare the same thing itself: ninferno_speculation.json in the checkpoint
 // (a "model" object of this schema without "match"). A bundle declaration wins over the registry.
 
-#include "spec/context_class.h"
+#include "spec/pairs.h"
 
 #include <nlohmann/json.hpp>
 
@@ -85,11 +85,22 @@ struct ModelEntry {
     std::string evidence;
 };
 
+// A drafter kind's rule, for every drafter of that kind that does not name its own: the converter
+// recipe, NInferno's quantization of its plain projections (a drafter only proposes and the target
+// verifies every token, so it changes the speed, never the output; a published encoding is kept),
+// and the shortlist its head is restricted to (a Gemma 4 assistant's own head).
 struct KindInfo {
     std::string name;
-    std::vector<std::string> engines, architectures;
+    std::vector<std::string> architectures;
     std::string recipe;
+    std::string quant;               // q8 | q4 | nvfp4; "" as the recipe leaves it
+    std::uint64_t proposal_rows = 0; // 0: the full head
+    std::string ranking;             // the shortlist ranking proposal_rows reads
 };
+
+// A separately packaged drafter (no component) takes its kind's rule where it names none: the
+// registry's own entries when it is read, a bundle's declared ones when they are planned.
+void apply_kind_rule(DrafterDecl& d, const std::vector<KindInfo>& kinds);
 
 class Registry {
 public:
@@ -110,12 +121,6 @@ public:
     // newer registry can be told from an older one; each profile carries its "measured_at" date
     // and "revision" (a hash of its content).
     [[nodiscard]] std::uint64_t version() const noexcept { return version_; }
-
-    // The top-level "context_classes" (spec/context_class.h); not present when it is absent,
-    // so every factor reads unknown.
-    [[nodiscard]] const ContextFactors& context_classes() const noexcept {
-        return context_classes_;
-    }
 
     // SHA-256 (lowercase hex) of the text builtin() parsed (the compiled-in registry or the file
     // use_file() named); empty for a registry parse() built.
@@ -139,17 +144,23 @@ public:
     [[nodiscard]] const ModelEntry* nearest(std::string_view engine, const Geometry& geometry,
                                             std::string_view fingerprint, bool with_mtp) const;
 
+    // The pairs the lab measured (spec/pairs.h: a target's weights and its drafters, one card each).
+    [[nodiscard]] const std::vector<MeasuredPair>& pairs() const noexcept { return pairs_; }
+    // The measurements of the target whose weights are `target` (MeasuredPair::target), every card.
+    [[nodiscard]] std::vector<const MeasuredPair*> measured(std::string_view target) const;
+
     // The drafter kind a checkpoint architecture belongs to (nullopt: not a known drafter).
     [[nodiscard]] std::optional<std::string> kind_for_architecture(std::string_view arch) const;
-    // Whether an engine family (gemma4, qwen3_5) runs drafters of this kind.
+    // Whether an engine family (gemma4, qwen3_5, dense, nemotron_h) serves drafters of this kind:
+    // the serving Engine's answer (spec/engine_support.h engine_runs_kind), for a kind listed here.
     [[nodiscard]] bool supported(std::string_view kind, std::string_view engine) const;
 
 private:
     std::vector<ModelEntry> models_;
     std::vector<KindInfo> kinds_;
+    std::vector<MeasuredPair> pairs_;
     std::string published_;
     std::uint64_t version_ = 0;
-    ContextFactors context_classes_;
     std::string source_sha256_;
 };
 

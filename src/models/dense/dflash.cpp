@@ -50,7 +50,8 @@ std::size_t carved(std::int64_t elements, std::size_t bytes = 2) {
     return static_cast<std::size_t>(elements) * bytes + kAlign;
 }
 
-// One drafter projection under the policy its loader prepared (every activation BF16).
+// One drafter projection under the policy its loader prepared (BF16 activations, A8 where the
+// format verifies a draft block on R8: ops::drafter_linear_policy).
 void project(WorkspaceArena& work, const Tensor& x, const Projection& p, Tensor& out,
              cudaStream_t stream) {
     auto scope = work.scope();
@@ -158,73 +159,6 @@ void DenseExecution::check_drafter() const {
             std::to_string(dc.kv_heads) + " key/value heads, window " +
             std::to_string(dc.sliding_window));
     }
-}
-
-std::optional<qwen3_5::DFlashLocalStateSpec> DenseExecution::dflash_local_spec() const {
-    const DFlashConfig& dc = drafter_->config();
-    if (drafter_local_layers_ == 0) { return std::nullopt; }
-    return qwen3_5::DFlashLocalStateSpec{.layers   = drafter_local_layers_,
-                                         .capacity = static_cast<std::uint32_t>(dc.sliding_window),
-                                         .kv_heads = dc.kv_heads,
-                                         .head_dim = dc.head_dim};
-}
-
-qwen3_5::detail::DFlashPersistentLayout
-DenseExecution::dflash_layout(LayoutBuilder& builder, const SequencePlanImpl& plan) const {
-    const DFlashConfig& dc = drafter_->config();
-    const auto chunk       = static_cast<std::int32_t>(std::min(plan.prefill_chunk, plan.capacity));
-    const std::int32_t features = traits_.draft_feature_rows;
-    qwen3_5::detail::DFlashPersistentLayout out;
-    if (drafter_full_layers_ != 0) {
-        // The drafter's full layers keep their keys and values in a paged pool of their own, at
-        // the target's page geometry with head-major BF16 planes (the Program's DFlash layout).
-        const PagedKVStorageLayout storage =
-            paged_kv_storage_layout(KvCacheStorage::BFloat16, dc.head_dim);
-        const KVPlaneGeometry key{storage.key.data_dtype, storage.key.data_leading_extent,
-                                  dc.kv_heads, 256};
-        const KVPlaneGeometry value{storage.value.data_dtype, storage.value.data_leading_extent,
-                                    dc.kv_heads, 256};
-        KVPageGeometry geometry{.page_tokens        = kPagedKVPageSize,
-                                .device_plane_order = PagedKVPlaneOrder::HeadMajor,
-                                .planes             = {}};
-        for (std::uint32_t layer = 0; layer < drafter_full_layers_; ++layer) {
-            // A layer's planes in PagedKVCache::layer_view order: K, V, then the scales.
-            geometry.planes.push_back(key);
-            geometry.planes.push_back(value);
-            if (storage.key.has_scale()) {
-                geometry.planes.push_back(
-                    {storage.key.scale_dtype, storage.key.scale_leading_extent, dc.kv_heads, 256});
-            }
-            if (storage.value.has_scale()) {
-                geometry.planes.push_back({storage.value.scale_dtype,
-                                           storage.value.scale_leading_extent, dc.kv_heads, 256});
-            }
-        }
-        out.full = qwen3_5::PagedKVCacheLayout{
-            .pages = plan_device_kv_page_pool(
-                builder, DeviceKVPagePoolSpec{.page_group_count = plan.main_page_groups,
-                                              .geometry         = std::move(geometry)}),
-            .execution_tables = plan_kv_execution_tables(
-                builder,
-                KVExecutionTableSpec{
-                    .logical_page_capacity = paged_kv_capacity_pages(plan.capacity),
-                    .table_rows            = static_cast<std::int32_t>(plan.max_concurrency)}),
-            .layers        = drafter_full_layers_,
-            .max_context   = plan.capacity,
-            .kv_heads      = dc.kv_heads,
-            .layer_storage = storage,
-        };
-    }
-    out.prefill_features = builder.add_tensor(DType::BF16, {prefill_feature_rows(), chunk}, kAlign,
-                                              "DFlash prefill target features");
-    out.prefill_positions =
-        builder.add_tensor(DType::I32, {chunk}, kAlign, "DFlash prefill target positions");
-    out.pending_features = builder.add_tensor(
-        DType::BF16,
-        {features, static_cast<std::int32_t>(plan.draft_window + 1U),
-         static_cast<std::int32_t>(plan.max_concurrency)},
-        kAlign, "DFlash pending target features");
-    return out;
 }
 
 void DenseExecution::dflash_workspace(const SequencePlanImpl& plan, WorkspacePlan& out) const {

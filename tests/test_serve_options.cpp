@@ -101,23 +101,22 @@ int main() {
                                         "--cuda-sync",          "yield",
                                         "--route-table",        "t.json",
                                         "--route-dir",          "r",
-                                        "--dense-tune",         "retune",
-                                        "--moe-tune",           "on",
-                                        "--tune-cache",         "c",
                                         "--debug-prefill-cuts", "700,64",
                                         "--debug-poison",       "nan",
                                         "--debug-poison-skip",  "kv,state",
+                                        "--artifact-io",        "direct",
                                         "--drafter-registry",   "reg.json"});
         failures += check(lab.pacing.steps == 8 && lab.pacing.wait == ninferno::DecodeWait::Block &&
                               lab.pacing.cuda_sync == ninferno::CudaSyncSchedule::Yield,
                           "the pacing flags are not read");
         const ninferno::MaintainerOptions& m = lab.maintainer;
         failures += check(m.route_table == "t.json" && m.route_dir == "r" &&
-                              m.dense_tune == ninferno::TuneMode::Retune &&
-                              m.moe_tune == ninferno::TuneMode::On && m.tune_cache == "c" &&
+                              m.dense_tune == ninferno::TuneMode::Off &&
+                              m.moe_tune == ninferno::TuneMode::Off && m.tune_cache.empty() &&
                               m.debug_prefill_cuts == std::vector<std::uint64_t>{700, 64} &&
                               m.debug_poison == std::uint8_t{0xFF} &&
                               m.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
+                              m.artifact_io == ninferno::ArtifactIo::Direct &&
                               lab.drafter_registry == "reg.json",
                           "the maintainer flags are not read");
         for (const char* bad :
@@ -127,6 +126,17 @@ int main() {
                 (void)parse({"ninferno-serve", "model.ninferno", bad, "x"});
             } catch (const std::invalid_argument&) { refused = true; }
             failures += check(refused, "an invalid pacing or maintainer value is accepted");
+        }
+        // The lab tuners time kernels on the machine: the server refuses them.
+        for (const char* flag : {"--dense-tune", "--moe-tune", "--tune-cache"}) {
+            bool refused = false;
+            try {
+                (void)parse({"ninferno-serve", "model.ninferno", flag, "on"});
+            } catch (const std::invalid_argument& error) {
+                refused =
+                    std::string(error.what()).find("is a lab tuner's option") != std::string::npos;
+            }
+            failures += check(refused, (std::string("the server accepted ") + flag).c_str());
         }
     }
     failures += check(defaults.response_store_max_records == kDefaultResponseStoreRecords &&
@@ -599,6 +609,13 @@ int main() {
               "serve help omits --no-prefix-reuse");
     failures += check(serve_usage_text("ninferno-serve").find("--host-kv-mib") != std::string::npos,
                       "serve help omits context-cache capacities");
+    // The converter's --round-tiny-scales, for a model whose refusal names it (off by default).
+    failures += check(!parse({"ninferno-serve", "org/model"}).round_tiny_scales &&
+                          parse({"ninferno-serve", "org/model", "--round-tiny-scales"})
+                              .round_tiny_scales &&
+                          serve_usage_text("ninferno-serve").find("--round-tiny-scales") !=
+                              std::string::npos,
+                      "serve takes the converter's --round-tiny-scales");
     failures += check(serve_usage_text("ninferno-serve").find("device-state=2x max-concurrency") !=
                           std::string::npos,
                       "serve help omits context-cache defaults");
@@ -655,6 +672,24 @@ int main() {
                       "serve help omits external context-cost presets");
     failures += check(serve_usage_text("ninferno-serve").find("metadata.name") != std::string::npos,
                       "serve help omits the artifact-derived model id default");
+
+    // --max-context-cap: an automatic context with a ceiling (the free memory still picks the
+    // rung, so a busy card steps down), not with --max-context.
+    {
+        const ServeOptions capped = parse({"ninferno-serve", "model.ninferno", "--max-context-cap",
+                                           "49152", "--max-concurrency", "4"});
+        const ninferno::EngineOptions engine = ninferno::serve::engine_options_of(capped);
+        failures += check(capped.max_context == 0 && capped.max_context_cap == 49152 &&
+                              engine.max_context_automatic && engine.max_context == 49152 &&
+                              capped.kv_capacity.mode == ninferno::KvCapacityMode::Automatic,
+                          "--max-context-cap is not an automatic context's ceiling");
+        bool both = false;
+        try {
+            (void)parse({"ninferno-serve", "model.ninferno", "--max-context", "4096",
+                         "--max-context-cap", "8192"});
+        } catch (const std::invalid_argument&) { both = true; }
+        failures += check(both, "--max-context with --max-context-cap is accepted");
+    }
 
     const ServeOptions inherited =
         parse({"ninferno-serve", "model.ninferno", "--max-context", "16384"});

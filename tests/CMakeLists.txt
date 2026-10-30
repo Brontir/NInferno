@@ -16,6 +16,12 @@ if(NINFERNO_BUILD_APPS)
   include(convert_native/tests.cmake)
   include(oracle/tests.cmake)
   include(cmake/AppRefusalTests.cmake)
+  # ninferno-ui's update of a moved hub model against a stand-in hub and ninferno-serve: one
+  # restart when idle, one revert when the new conversion does not start. No GPU.
+  add_test(NAME ninferno_ui_moved_update_test
+    COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/ui_moved_update_test.py
+            $<TARGET_FILE:ninferno-ui> ${CMAKE_CURRENT_LIST_DIR}/convert_native)
+  set_tests_properties(ninferno_ui_moved_update_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
 # Speculation support (registry, corpus, fingerprints, profiles, watchdog, manifests): no GPU.
@@ -23,9 +29,28 @@ ninferno_add_test(ninferno_spec_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec.cpp"
   LIBRARIES ninferno_spec)
 
+# Speculation per measured pair (spec/pairs.h) on the lab's spec-tune measurements: no GPU.
+ninferno_add_test(ninferno_spec_pairs_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_pairs.cpp"
+  LIBRARIES ninferno_spec)
+
+# A speculation round's cost from facts (spec/round_cost.h) on the registry's pairs: no GPU.
+ninferno_add_test(ninferno_spec_round_cost_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_round_cost.cpp"
+  LIBRARIES ninferno_spec)
+
+# The rows a restricted draft head keeps (spec/draft_head.h) on the Qwen ranking: no GPU.
+ninferno_add_test(ninferno_spec_draft_head_test NEEDS_SOURCE_DIR
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec_draft_head.cpp"
+  LIBRARIES ninferno_spec)
+
 # tools/spec/registry_add.py: the "*" fallback and the load table warnings, no GPU.
 add_test(NAME ninferno_registry_add_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_registry_add.py)
+
+# tools/kit/validate.py: the user measurement kit's rejection rules and verdicts, no GPU.
+add_test(NAME ninferno_kit_validate_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_kit_validate.py)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test

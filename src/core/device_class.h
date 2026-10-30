@@ -264,8 +264,11 @@ template <class Measured, std::size_t Extent>
                                                  std::size_t global_bytes);
 
 // While alive, device_class() (the current device's form) answers `substitute` on this thread;
-// device_class(int) still queries the ordinal. For tests: a consumer that cached what it read of
-// the real class keeps it, so a test runs one substitute per process.
+// device_class(int) still queries the ordinal. A PerDevice cache (core/per_device.h) and the route
+// table (ops/route_table.cpp) keep what they read of a substitute apart from the ordinal's, by the
+// substitute's content (device_class_key): one process may answer several boards, one after the
+// other (ops/generic/route_query.h, the selector golden test). A consumer with its own cache of
+// the class (a function-local static) keeps what it read first.
 class ScopedDeviceClass {
 public:
     explicit ScopedDeviceClass(DeviceClass substitute);
@@ -275,8 +278,23 @@ public:
 
 private:
     DeviceClass substitute_;
+    std::string key_;
     const DeviceClass* previous_;
+    const std::string* previous_key_;
 };
+
+// The substitute this thread's device_class() answers (ScopedDeviceClass), or null; and its
+// device_class_key, computed once when the substitution began (null without one).
+[[nodiscard]] const DeviceClass* substituted_device_class() noexcept;
+[[nodiscard]] const std::string* substituted_device_class_key() noexcept;
+// Whether this thread's device_class() answers a substitute other than the current CUDA device's
+// own class (by content): state measured or loaded on that device (a tuned route, an explicit
+// route table) is not the substitute's.
+[[nodiscard]] bool substituted_foreign_class() noexcept;
+
+// Every field of a class that a decision may read, as one string: two classes with the same key
+// answer every query alike. A cache keyed by it holds one entry per distinct substitute.
+[[nodiscard]] std::string device_class_key(const DeviceClass& d);
 
 // Whether this binary carries a kernel image device `device` can load (SASS or PTX for its
 // architecture), probed once per ordinal with an empty kernel compiled with the build. Kept out of

@@ -149,6 +149,15 @@ def make_handler(hub: Hub):
                     return self.reply(404, b'{"error":"Repository not found"}', head=head)
                 if repo["gated"] and not self.authorized():
                     return self.reply(401, b'{"error":"Access to model is restricted"}', head=head)
+                window = repo.get("rate_limit_window")
+                if window:  # a rate limit hit at the first listing, its window `window` seconds
+                    with hub.lock:
+                        reset = repo.setdefault("rate_limit_reset", time.monotonic() + window)
+                    left = reset - time.monotonic()
+                    if left > 0:
+                        return self.reply(429, b'{"error":"rate limited"}', {
+                            "RateLimit": f'"api";r=0;t={int(left) + 1}',
+                            "RateLimit-Policy": f'"fixed window";"api";q=500;w={window}'}, head)
                 siblings = []
                 for name, data in repo["files"].items():
                     item = {"rfilename": name, "size": len(data), "blobId": git_sha1(data)}
@@ -158,8 +167,14 @@ def make_handler(hub: Hub):
                         item.pop("size")
                         item.get("lfs", {}).pop("size", None)
                     siblings.append(item)
-                body = json.dumps({"id": f"{parts[2]}/{parts[3]}", "sha": repo["commit"],
-                                   "siblings": siblings}).encode()
+                # A commit the repository had before (its "history", as a moved branch leaves it)
+                # still lists as itself; any other revision lists as the current commit.
+                revision = "/".join(parts[5:])
+                sha = revision if revision in repo.get("history", ()) else repo["commit"]
+                answer = {"id": f"{parts[2]}/{parts[3]}", "sha": sha, "siblings": siblings}
+                # The model card fields the hub adds when asked (pipeline_tag, library_name, ...).
+                answer.update(repo.get("card", {}))
+                body = json.dumps(answer).encode()
                 return self.reply(200, body, {"Content-Type": "application/json"}, head)
             # Hugging Face: /<org>/<name>/resolve/<commit>/<path>
             if len(parts) >= 5 and parts[2] == "resolve":

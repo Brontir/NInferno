@@ -1,6 +1,8 @@
 #include "spec/manifest.h"
 
+#include "artifact/formats.h"
 #include "artifact/reader.h"
+#include "core/hub_revision.h"
 #include "core/sha256.h"
 #include "spec/fingerprint.h"
 #include "spec/json_fields.h"
@@ -40,12 +42,35 @@ std::vector<std::string> referenced(const Profile& p) {
     return out;
 }
 
+// The drafters a profile's measurements drafted with that its choices do not name: a measured
+// pair's other modes, which the configuration choice weighs too (product::subject_of_mode: a 9B
+// MTP GGUF measured with DFlash and MTP drafts with MTP where DFlash does not fit the context).
+// Attached where present, never noted where absent (no choice asks for them).
+std::vector<std::string> measured_only(const Profile& p) {
+    const std::vector<std::string> named = referenced(p);
+    std::vector<std::string> out;
+    for (const auto& d : p.drafters) {
+        const bool measured =
+            std::any_of(p.measurements.begin(), p.measurements.end(), [&](const Measurement& m) {
+                return m.config.enabled() && mode_name(m.config.mode) == d.mode;
+            });
+        if (measured && !d.name.empty() && std::find(named.begin(), named.end(), d.name) == named.end() &&
+            std::find(out.begin(), out.end(), d.name) == out.end()) {
+            out.push_back(d.name);
+        }
+    }
+    return out;
+}
+
 // `published` (one of `profiles`) as this GPU runs it, into `p`: the watchdog floors of a profile
 // measured on another GPU raised to the registry's (raise_foreign_floors), another profile's load
 // bounds where it measured none, and a stand-in's bounds capped to this GPU. false, with a note, when it does not parse.
 bool take_published(const Json& profiles, const Json& published, const GpuKey& gpu,
                     ResolvedSpeculation& out, Profile& p) {
     out.foreign_floors = measured_elsewhere(gpu, published);
+    out.basis          = published.value("gpu_class", std::string()) == "*" ? "generic"
+                         : out.foreign_floors                               ? "similar"
+                                                                            : "own";
     if (auto note = similarity_note(gpu, published); !note.empty()) {
         out.notes.push_back(std::move(note));
     }
@@ -155,6 +180,11 @@ const ManifestDrafter* SpeculationManifest::drafter(std::string_view name) const
     return nullptr;
 }
 
+bool ManifestDrafter::present() const {
+    std::error_code ec;
+    return usable() && (artifact.empty() ? !component.empty() : std::filesystem::exists(artifact, ec));
+}
+
 std::filesystem::path manifest_path(const std::filesystem::path& artifact) {
     return std::filesystem::path(artifact.string() + ".speculation.json");
 }
@@ -205,7 +235,7 @@ std::optional<SpeculationManifest> read_manifest(const std::filesystem::path& pa
 namespace {
 
 // Every choice object under `j` (a "config" label beside a "floor_tokens_per_round") of exactly
-// `config`: mode, depth, adaptive floor depth and proposal head (mtp:8:2 is not mtp:8).
+// `config`: mode, depth and proposal head.
 void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>& floors) {
     if (j.is_object()) {
         const auto label = j.find("config");
@@ -213,8 +243,7 @@ void collect_floors(const Json& j, const SpecConfig& config, std::vector<double>
         if (label != j.end() && label->is_string() && floor != j.end() && floor->is_number()) {
             try {
                 const auto c = SpecConfig::parse(label->get<std::string>());
-                const auto k_min = [](const SpecConfig& s) { return s.adaptive() ? s.k_min : 0; };
-                if (c.mode == config.mode && c.k == config.k && k_min(c) == k_min(config) &&
+                if (c.mode == config.mode && c.k == config.k &&
                     c.proposal_head == config.proposal_head && floor->get<double>() > 1.0) {
                     floors.push_back(floor->get<double>());
                 }
@@ -355,6 +384,309 @@ void require_named_tune(const ResolvedSpeculation& resolved) {
                              " (name none to run the model's published profile)");
 }
 
+namespace {
+
+// 2. The published profile for this GPU from a manifest (manifest_profiles: the registry's, or
+//    the manifest's own copy for a bundle declaration or a registry entry this binary no longer
+//    knows), over its usable drafters.
+// The manifest's drafters a profile's choices name, into out.drafters (an artifact path, or
+// "component:<name>" inside the target); one not attached, or changed since, is noted.
+void attach_drafters(const SpeculationManifest& manifest, const Profile& p,
+                     ResolvedSpeculation& out) {
+    // `said`: a choice names it, so its absence is noted.
+    const auto attach = [&](const std::string& name, bool said) {
+        const auto* d = manifest.drafter(name);
+        if (d == nullptr || !d->usable()) {
+            if (said) {
+                out.notes.push_back("profile drafter '" + name + "' is not attached" +
+                                    (d ? " (" + d->status + ")" : std::string()));
+            }
+            return;
+        }
+        if (!d->artifact.empty()) {
+            try {
+                if (artifact_id_hex(d->artifact) != d->artifact_id) {
+                    out.notes.push_back("drafter " + d->artifact + " changed since attach");
+                    return;
+                }
+            } catch (const std::exception& e) {
+                out.notes.push_back("drafter " + d->artifact + ": " + e.what());
+                return;
+            }
+            out.drafters[name] = d->artifact;
+        } else {
+            out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
+        }
+    };
+    for (const auto& name : referenced(p)) { attach(name, true); }
+    for (const auto& name : measured_only(p)) { attach(name, false); }
+}
+
+// The hub repository and commit (org/name@commit) of an artifact converted into the hub cache
+// (<cache>/models--org--name/ninferno/<commit>/<file>), "" elsewhere: the repository revision
+// whose sibling quantizations the lab measured (pair_choice).
+std::string hub_repo_of_artifact(const std::filesystem::path& artifact) {
+    const auto commit_dir = artifact.parent_path();
+    if (commit_dir.parent_path().filename() != "ninferno") { return {}; }
+    const std::string repo =
+        hub_repo_of_directory(commit_dir.parent_path().parent_path().filename().string());
+    if (repo.find('/') == std::string::npos) { return {}; }
+    return HubRevision{repo, commit_dir.filename().string()}.id();
+}
+
+// The drafters a manifest attaches from a repository of their own, by kind: repo@revision.
+std::map<std::string, std::string> attached_identities(const SpeculationManifest& manifest) {
+    std::map<std::string, std::string> out;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable() && !d.repo.empty()) { out[d.kind] = HubRevision{d.repo, d.revision}.id(); }
+    }
+    return out;
+}
+
+// 3. The published profile for this GPU (below).
+void resolve_manifest_profile(const SpeculationManifest& manifest,
+                              const std::filesystem::path& artifact, const GpuKey& gpu,
+                              ResolvedSpeculation& out);
+
+// The kinds `manifest` carries that `out.profile` does not draft with, each resolved alone into
+// out.other_kinds (ResolvedSpeculation::other_kinds): its lab measurement (pair_choice over that
+// kind: its pair, a sibling's, its group's), else the published profile for this GPU where that
+// drafts with it. `label`, `weights`, `quant` and `repo` as for the profile itself.
+// The selection options of a target at `artifact`: its rounds priced with the draft head rows it
+// reads (artifact_proposal_rows); where it does not read (a target not converted yet, a hub
+// label), the lab artifact's (the pair's own, SelectOptions::proposal_rows absent).
+SelectOptions rows_of(const std::filesystem::path& artifact) {
+    SelectOptions out;
+    std::error_code ec;
+    if (artifact.empty() || !std::filesystem::is_regular_file(artifact, ec)) { return out; }
+    try {
+        out.proposal_rows = artifact_proposal_rows(artifact::Reader(artifact).directory());
+    } catch (const std::exception&) {
+    }
+    return out;
+}
+
+void resolve_other_kinds(const SpeculationManifest& manifest, const std::filesystem::path& label,
+                         const GpuKey& gpu, std::string_view weights, std::string_view quant,
+                         std::string_view repo, ResolvedSpeculation& out) {
+    const auto& registry = Registry::builtin();
+    const auto covered   = [&](Mode mode) {
+        if (drafting_modes(out.profile).contains(mode)) { return true; }
+        return std::any_of(out.other_kinds.begin(), out.other_kinds.end(), [&](const auto& other) {
+            return drafting_modes(other.profile).contains(mode);
+        });
+    };
+    std::optional<ResolvedSpeculation> published; // read once, where a kind needs it
+    for (const auto& d : manifest.drafters) {
+        const auto mode = drafter_kind_mode(d.kind);
+        if (!d.usable() || !mode || covered(*mode)) { continue; }
+        ResolvedSpeculation alone;
+        alone.fallback = out.fallback;
+        if (!registry.pairs().empty() && manifest.source != "bundle") {
+            if (auto choice = pair_choice(registry.pairs(), weights, manifest.engine, {d.kind},
+                                          label_bits(quant), gpu_generation(gpu), rows_of(label),
+                                          attached_identities(manifest), repo, &gpu)) {
+                attach_drafters(manifest, choice->profile, alone);
+                std::string origin;
+                alone.floor_sources = manifest_profiles(manifest, label, origin);
+                alone.source        = std::move(choice->source);
+                alone.basis         = std::move(choice->basis);
+                alone.sha256        = registry.source_sha256();
+                alone.profile       = std::move(choice->profile);
+                out.other_kinds.push_back(std::move(alone));
+                continue;
+            }
+        }
+        if (!published) {
+            published.emplace();
+            published->fallback = out.fallback;
+            resolve_manifest_profile(manifest, label, gpu, *published);
+        }
+        if (published->found() && drafting_modes(published->profile).contains(*mode)) {
+            out.other_kinds.push_back(*published);
+        }
+    }
+}
+
+// 2. The lab's measurement of this target with the drafters it carries (spec/pairs.h, by the
+//    weights it was converted from), else its group's preliminary choice. False when the registry
+//    has neither for it, or the checkpoint declares its own (a bundle: it overrides the registry):
+//    the published profiles answer.
+bool resolve_pair_profile(const SpeculationManifest& manifest,
+                          const std::filesystem::path& artifact, const GpuKey& gpu,
+                          ResolvedSpeculation& out) {
+    const auto& registry = Registry::builtin();
+    if (registry.pairs().empty() || manifest.source == "bundle") { return false; }
+    std::optional<std::string> weights;
+    std::string quant;
+    try {
+        weights = artifact_weights(artifact);
+        quant   = artifact_quant(artifact);
+    } catch (const std::exception& e) {
+        out.notes.push_back(std::string("the artifact's source inputs do not read: ") + e.what());
+        return false;
+    }
+    if (!weights) {
+        out.notes.push_back("the artifact records no source inputs: no lab pair names its weights");
+    }
+    std::vector<std::string> kinds;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable()) { kinds.push_back(d.kind); }
+    }
+    auto choice = pair_choice(registry.pairs(), weights.value_or(""), manifest.engine, kinds,
+                              label_bits(quant), gpu_generation(gpu), rows_of(artifact),
+                              attached_identities(manifest), hub_repo_of_artifact(artifact), &gpu);
+    if (!choice) { return false; }
+    attach_drafters(manifest, choice->profile, out);
+    // The model's own floors bound a fallback the pair does not cover (the head fallback).
+    std::string origin;
+    out.floor_sources = manifest_profiles(manifest, artifact, origin);
+    out.source  = std::move(choice->source);
+    out.basis   = std::move(choice->basis);
+    out.sha256  = registry.source_sha256();
+    out.profile = std::move(choice->profile);
+    resolve_other_kinds(manifest, artifact, gpu, weights.value_or(""), quant,
+                        hub_repo_of_artifact(artifact), out);
+    return true;
+}
+
+// 2, without a manifest: the lab's measurement of this target's weights over the drafters it
+//    carries as components (its built-in MTP layers, a DFlash drafter built in), else its group's,
+//    as a planned target resolves (resolve_planned_speculation). False when the registry has
+//    neither.
+bool resolve_entry_pair(const ModelEntry& entry, const std::set<std::string>& components,
+                        const std::filesystem::path& artifact, const GpuKey& gpu,
+                        ResolvedSpeculation& out) {
+    const auto& registry = Registry::builtin();
+    if (registry.pairs().empty()) { return false; }
+    std::optional<std::string> weights;
+    std::string quant;
+    try {
+        weights = artifact_weights(artifact);
+        quant   = artifact_quant(artifact);
+    } catch (const std::exception&) {
+        return false;
+    }
+    std::vector<std::string> kinds;
+    for (const char* kind : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(kind)) { kinds.emplace_back(kind); }
+    }
+    auto choice = pair_choice(registry.pairs(), weights.value_or(""), entry.engine, kinds,
+                              label_bits(quant), gpu_generation(gpu), rows_of(artifact), {},
+                              hub_repo_of_artifact(artifact), &gpu);
+    if (!choice) { return false; }
+    for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
+        for (const auto& name : names) {
+            if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+        }
+    }
+    out.floor_sources = entry.profiles;
+    out.source        = std::move(choice->source);
+    out.basis         = std::move(choice->basis);
+    out.sha256        = registry.source_sha256();
+    out.profile       = std::move(choice->profile);
+    return true;
+}
+
+void resolve_manifest_profile(const SpeculationManifest& manifest,
+                              const std::filesystem::path& artifact, const GpuKey& gpu,
+                              ResolvedSpeculation& out) {
+    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
+    std::vector<std::string> available;
+    for (const auto& d : manifest.drafters) {
+        if (d.usable()) { available.push_back(d.name); }
+    }
+    std::string origin;
+    std::string digest;
+    const Json* profiles  = &manifest_profiles(manifest, artifact, origin, &digest);
+    out.floor_sources     = *profiles; // also for a built-in default the caller falls to
+    const auto* published = select_published(*profiles, gpu, manifest.repo, &available);
+    if (published == nullptr) {
+        out.notes.push_back(origin + " has no profile for " + gpu_class +
+                            " along its similarity chain");
+        return;
+    }
+    Profile p;
+    if (!take_published(*profiles, *published, gpu, out, p)) { return; }
+    attach_drafters(manifest, p, out);
+    out.source  = published_source(origin, *published);
+    out.sha256  = std::move(digest);
+    out.profile = std::move(p);
+}
+
+// 3. No manifest: the registry entry of the model the artifact is (by its shape), over the
+//    drafters it carries as components.
+void resolve_entry_profile(const ModelEntry& entry, const std::set<std::string>& components,
+                           const GpuKey& gpu, ResolvedSpeculation& out) {
+    const std::string gpu_class = gpu.chain.empty() ? std::string("*") : gpu.chain.front();
+    // A GGUF converted with its MTP layers or DFlash drafter built in, never attached: the
+    // entry's profile rather than the built-in drafter's untuned default.
+    std::vector<std::string> available;
+    for (const char* name : {"mtp", "dflash", "dflash2"}) {
+        if (components.contains(name)) { available.emplace_back(name); }
+    }
+    out.floor_sources     = entry.profiles;
+    const auto* published = select_published(entry.profiles, gpu, {}, &available);
+    if (published == nullptr) {
+        out.notes.push_back("registry " + entry.id + " (by the artifact's shape) has no " +
+                            "profile for " + gpu_class +
+                            " along its similarity chain over the built-in drafters");
+        return;
+    }
+    Profile p;
+    if (!take_published(entry.profiles, *published, gpu, out, p)) { return; }
+    // Only the drafters the artifact carries: a profile whose drafter ships as an artifact of
+    // its own (gpt-oss-20b's DFlash) decodes plainly here rather than failing to load it.
+    for (const auto& name : referenced(p)) {
+        if (components.contains(name)) {
+            out.drafters[name] = "component:" + name;
+        } else {
+            out.notes.push_back("profile drafter '" + name +
+                                "' is neither attached nor built into the artifact");
+        }
+    }
+    out.source  = published_source("registry " + entry.id + " by the artifact's shape", *published);
+    out.sha256  = Registry::builtin().source_sha256();
+    out.profile = std::move(p);
+}
+
+} // namespace
+
+ProposalRows artifact_proposal_rows(const artifact::Directory& dir) {
+    ProposalRows out;
+    const auto text = dir.components.find("text");
+    if (text == dir.components.end() || !text->second.proposal) { return out; }
+    const auto& proposal = *text->second.proposal;
+    // A drafter's own prefix is read only where the head's layout has row views (core/weight_view
+    // weight_row_prefix: none for row- or block-scaled FP8 and NVFP4's swizzled scales); elsewhere
+    // it reads all the rows.
+    bool prefixes = true;
+    if (const auto b = dir.bindings.find("proposal/head"); b != dir.bindings.end()) {
+        for (const auto& part : b->second.parts) {
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.object(part.object));
+            if (tensor == nullptr) { continue; }
+            const auto layout = artifact::parse_layout(tensor->layout);
+            if (layout == QuantLayout::RowScale || layout == QuantLayout::BlockScaleK16M128x4 ||
+                layout == QuantLayout::BlockScale128F32) {
+                prefixes = false;
+            }
+        }
+    }
+    // The drafters the head takes the final hidden states of (product proposal_head_drafters);
+    // DFlash2 keeps the whole domain (its selector reads it).
+    for (const char* component : {"mtp", "dflash"}) {
+        if (!dir.components.contains(component) ||
+            !dir.uses.contains({"proposal/head", std::string(component) + "/final_hidden"})) {
+            continue;
+        }
+        const auto own = proposal.drafter_rows.find(component);
+        const std::uint64_t rows =
+            prefixes && own != proposal.drafter_rows.end() ? own->second : proposal.rows;
+        if (rows > 0) { out.rows[component] = rows; }
+    }
+    return out;
+}
+
 ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
                                         const std::string& artifact_id,
                                         const GpuKey& gpu,
@@ -406,6 +738,7 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
         for (const auto& reason : refusals) { refuse(reason); }
         if (refusals.empty()) {
             out.source  = "local tune " + tuned_path.string();
+            out.basis   = "own";
             out.sha256  = file_sha256_hex(tuned_path).value_or("");
             out.profile = std::move(*tuned);
             for (const auto& d : out.profile.drafters) {
@@ -444,83 +777,77 @@ ResolvedSpeculation resolve_speculation(const std::filesystem::path& artifact,
     }
     if (!unread.empty()) { out.notes.push_back(unread); }
 
-    // 2. The published profile for this GPU (manifest_profiles: the registry's, or the manifest's
+    // 2. The lab's measurement of this pair, else its group's (resolve_pair_profile); then the
+    //    published profile for this GPU (manifest_profiles: the registry's, or the manifest's
     //    own copy for a bundle declaration or a registry entry this binary no longer knows).
+    if (manifest && resolve_pair_profile(*manifest, artifact, gpu, out)) { return out; }
     if (manifest) {
-        std::vector<std::string> available;
-        for (const auto& d : manifest->drafters) {
-            if (d.usable()) { available.push_back(d.name); }
-        }
-        std::string origin;
-        std::string digest;
-        const Json* profiles  = &manifest_profiles(*manifest, artifact, origin, &digest);
-        out.floor_sources     = *profiles; // also for a built-in default the caller falls to
-        const auto* published = select_published(*profiles, gpu, manifest->repo, &available);
-        if (published == nullptr) {
-            out.notes.push_back(origin + " has no profile for " + gpu_class +
-                                " along its similarity chain");
-            return out;
-        }
-        Profile p;
-        if (!take_published(*profiles, *published, gpu, out, p)) { return out; }
-        for (const auto& name : referenced(p)) {
-            const auto* d = manifest->drafter(name);
-            if (d == nullptr || !d->usable()) {
-                out.notes.push_back("profile drafter '" + name + "' is not attached" +
-                                    (d ? " (" + d->status + ")" : std::string()));
-                continue;
-            }
-            if (!d->artifact.empty()) {
-                try {
-                    if (artifact_id_hex(d->artifact) != d->artifact_id) {
-                        out.notes.push_back("drafter " + d->artifact + " changed since attach");
-                        continue;
-                    }
-                } catch (const std::exception& e) {
-                    out.notes.push_back("drafter " + d->artifact + ": " + e.what());
-                    continue;
-                }
-                out.drafters[name] = d->artifact;
-            } else {
-                out.drafters[name] = "component:" + (d->component.empty() ? name : d->component);
-            }
-        }
-        out.source  = published_source(origin, *published);
-        out.sha256  = std::move(digest);
-        out.profile = std::move(p);
+        resolve_manifest_profile(*manifest, artifact, gpu, out);
     } else if (std::set<std::string> components;
                const auto* entry = entry_by_shape(artifact, components)) {
-        // 3. No manifest: the registry entry of the model the artifact is, over the drafters it
-        //    carries as components (a GGUF converted with its MTP layers or DFlash drafter built
-        //    in, never attached), rather than the built-in drafter's untuned default.
-        std::vector<std::string> available;
-        for (const char* name : {"mtp", "dflash", "dflash2"}) {
-            if (components.contains(name)) { available.emplace_back(name); }
-        }
-        out.floor_sources     = entry->profiles;
-        const auto* published = select_published(entry->profiles, gpu, {}, &available);
-        if (published == nullptr) {
-            out.notes.push_back("registry " + entry->id + " (by the artifact's shape) has no " +
-                                "profile for " + gpu_class +
-                                " along its similarity chain over the built-in drafters");
-            return out;
-        }
-        Profile p;
-        if (!take_published(entry->profiles, *published, gpu, out, p)) { return out; }
-        // Only the drafters the artifact carries: a profile whose drafter ships as an artifact of
-        // its own (gpt-oss-20b's DFlash) decodes plainly here rather than failing to load it.
-        for (const auto& name : referenced(p)) {
-            if (components.contains(name)) {
-                out.drafters[name] = "component:" + name;
-            } else {
-                out.notes.push_back("profile drafter '" + name +
-                                    "' is neither attached nor built into the artifact");
+        if (resolve_entry_pair(*entry, components, artifact, gpu, out)) { return out; }
+        resolve_entry_profile(*entry, components, gpu, out);
+    }
+    return out;
+}
+
+ResolvedSpeculation resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,
+                                                const ModelEntry* entry,
+                                                const std::set<std::string>& components,
+                                                const GpuKey& gpu,
+                                                const std::filesystem::path& label,
+                                                std::string_view weights, std::string_view quant,
+                                                std::string_view engine, std::string_view repo) {
+    ResolvedSpeculation out;
+    const auto& registry = Registry::builtin();
+    // A checkpoint's own declaration (a bundle) overrides the registry, its pairs too.
+    if (!registry.pairs().empty() && !(manifest && manifest->source == "bundle")) {
+        std::vector<std::string> kinds;
+        if (manifest) {
+            for (const auto& d : manifest->drafters) {
+                if (d.usable()) { kinds.push_back(d.kind); }
+            }
+        } else {
+            for (const char* kind : {"mtp", "dflash", "dflash2"}) {
+                if (components.contains(kind)) { kinds.emplace_back(kind); }
             }
         }
-        out.source =
-            published_source("registry " + entry->id + " by the artifact's shape", *published);
-        out.sha256  = Registry::builtin().source_sha256();
-        out.profile = std::move(p);
+        const std::string family = manifest ? manifest->engine : std::string(engine);
+        const auto attached = manifest ? attached_identities(*manifest)
+                                       : std::map<std::string, std::string>{};
+        if (auto choice = pair_choice(registry.pairs(), weights, family, kinds, label_bits(quant),
+                                      gpu_generation(gpu), {}, attached, repo, &gpu)) {
+            // The model's own floors bound a fallback the pair does not cover (the head
+            // fallback), as for a published profile.
+            if (manifest) {
+                out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
+                attach_drafters(*manifest, choice->profile, out);
+                std::string origin;
+                out.floor_sources = manifest_profiles(*manifest, label, origin);
+            } else {
+                for (const auto& names : {referenced(choice->profile), measured_only(choice->profile)}) {
+                    for (const auto& name : names) {
+                        if (components.contains(name)) { out.drafters[name] = "component:" + name; }
+                    }
+                }
+                if (entry != nullptr) { out.floor_sources = entry->profiles; }
+            }
+            out.source  = std::move(choice->source);
+            out.basis   = std::move(choice->basis);
+            out.sha256  = registry.source_sha256();
+            out.profile = std::move(choice->profile);
+            if (manifest) { resolve_other_kinds(*manifest, label, gpu, weights, quant, repo, out); }
+            return out;
+        }
+    }
+    if (manifest) {
+        out.fallback = manifest->fallback.empty() ? "none" : manifest->fallback;
+        resolve_manifest_profile(*manifest, label, gpu, out);
+    } else if (entry != nullptr) {
+        resolve_entry_profile(*entry, components, gpu, out);
+    } else {
+        out.notes.push_back("no drafter manifest would be written and no registry entry has this "
+                            "model's shape");
     }
     return out;
 }

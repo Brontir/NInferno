@@ -31,6 +31,10 @@ struct Options {
     // --state-dtype (omitted: EngineOptions::recurrent_state_automatic).
     std::optional<RecurrentStateStorage> recurrent_state;
     ActivationMode activations = kDefaultActivationMode; // --activations exact|fast
+    // Whether --activations and --sliding-kv-dtype were given: the configuration choice
+    // (product/plan/plan_choice.h) picks what the user left automatic.
+    bool activations_given = false;
+    bool sliding_kv_given  = false;
     float rope_yarn_factor     = 1.0F;                   // --rope-yarn-factor
     SpeculativeOptions speculative;
     // --spec given explicitly (mtp|dflash|dflash2|none); otherwise the artifact's speculation
@@ -61,6 +65,12 @@ struct Options {
     // --drafter-registry FILE (spec::Registry::use_file, before the model's profile is read).
     std::filesystem::path drafter_registry;
     product::LogLevel log_level = product::LogLevel::Info;
+    // --plan --no-load [--json] [--plan-device NAME]: the plan without the weights of the artifact
+    // at these options (ninferno-serve --plan --no-load's; no --prompt needed), then exit.
+    bool plan_only    = false;
+    bool plan_no_load = false;
+    bool plan_json    = false;
+    std::string plan_device;
 };
 
 [[nodiscard]] Options parse_options(int argc, char** argv);

@@ -39,6 +39,11 @@ enum class DecodeRoute : std::uint8_t { Auto, A16, R8, Vec, Mmq };
 // the generic MoE Op (ops::moe) that reads every expert format.
 enum class MoePath : std::uint8_t { Auto, Fused, Generic };
 
+// How artifact payloads (the weights) are read at load (--artifact-io): Auto reads local disks with
+// O_DIRECT (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file
+// systems through the page cache; Direct and Buffered force one. The bytes read are the same.
+enum class ArtifactIo : std::uint8_t { Auto, Direct, Buffered };
+
 // The most ordinary decode steps one round runs back to back (--decode-steps).
 inline constexpr std::uint32_t kMaximumDecodeSteps = 32;
 
@@ -191,6 +196,27 @@ inline constexpr std::uint32_t kMaximumDecodeSteps = 32;
         if (text == cuda_sync_schedule_name(schedule)) { return schedule; }
     }
     throw std::invalid_argument("--cuda-sync must be spin, blocking, yield or auto, not '" +
+                                std::string(text) + "'");
+}
+
+[[nodiscard]] constexpr const char* artifact_io_name(ArtifactIo io) noexcept {
+    switch (io) {
+    case ArtifactIo::Auto:
+        return "auto";
+    case ArtifactIo::Direct:
+        return "direct";
+    case ArtifactIo::Buffered:
+        return "buffered";
+    }
+    return "auto";
+}
+
+// --artifact-io auto|direct|buffered.
+[[nodiscard]] inline ArtifactIo parse_artifact_io(std::string_view text) {
+    for (const ArtifactIo io : {ArtifactIo::Auto, ArtifactIo::Direct, ArtifactIo::Buffered}) {
+        if (text == artifact_io_name(io)) { return io; }
+    }
+    throw std::invalid_argument("--artifact-io must be auto, direct or buffered, not '" +
                                 std::string(text) + "'");
 }
 

@@ -1,0 +1,205 @@
+# The configuration choice
+
+One rule picks how a model is served when the user leaves an axis to the engine, and the same code
+says what any other value would change. It is used everywhere such a pick is made: `ninferno-serve`
+without the flags, `ninferno-serve --plan --no-load`, and ninferno-ui's `/api/plan`. Code:
+`src/product/choice/` (`choice.h`, the constants in `choice_constants.h`), test `tests/test_choice.cpp`.
+
+## Inputs
+
+| Kind | What | Where from |
+|---|---|---|
+| Model facts | layers by kind, KV heads and widths, window, recurrent state, experts, active parameters, weight bytes per quantization | config.json / GGUF header / artifact (`product/plan/plan_facts.h`) |
+| Card facts | compute capability, SMs, reference clock, DRAM rate, FP4 tensor cores, free memory | PCI-ID facts (`core/data/gpu_facts.json`), `core/generation.h`; the clock and the DRAM rate feed only the estimates shown, never a decision (below) |
+| Task | context each stream holds of its own, streams, a typical request (prompt, answer tokens) | the user (defaults 32K, 1, 2048 + 512) |
+| Pins | `--quant`, `--kv-dtype`, `--activations`, `--state-dtype`, `--sliding-kv-dtype`, `--prefill-chunk` | the user's flags |
+| Constants | decode and prefill efficiencies per generation and kind, KV read and exact-route factors, KLD terms, the accuracy weight | measured once on the lab's stands (`choice_constants.h` names each source) |
+
+Nothing is measured on the user's machine.
+
+## Where it runs
+
+One function decides the automatic axes everywhere: `product::choose_at_weights` (#89's
+`product/plan/plan_choice`) over `choice::choose`. `ninferno-serve`'s start (`choose_served_axes`), the
+`ninferno` CLI's start and `--plan`, `--plan --no-load`, the quantization rule's worth ranking
+(`plan_quants`) and ninferno-ui's `/api/plan` all call it; none keeps a rule of its own for the KV
+codec, the activations, the state, the ring or the chunk. The quantization is most often the user's
+(`--quant`, the UI's row); the other axes are almost never pinned, so their default is the one that
+serves. Where the choice cannot run (a model whose shape the plan cannot read), the engine takes the
+family's defaults through `runtime::plan_family_storage`, the same function the choice takes its
+defaults from. The measuring tools (`ninferno-perplexity`, the spec tuner, the maintainer apps) take
+their options as given.
+
+## The three estimates
+
+- **Memory.** The plan without the weights (`runtime/engine/plan_dry_run.h`): the family planner's own
+  bytes for the asked options, the start's ladder. A candidate fits when each stream holds the asked
+  context of its own.
+- **Speed.** A decode step of C rows at context n:
+  `t0 + (W(C) + C n b_kv k_kv + 2 C s + C min(n, window) b_ring) / (eta_dram BW) + C 2 P / (eta_compute peak_s8) f_route`,
+  peak_s8 the int8 MMA's rate; on a generation without one (Volta) the int8 route's is dp4a's (512
+  operations a SM-clock) and the exact route's its BF16 tensor path's. A prompt of n tokens takes `n 2 P / (eta_prefill share peak_route) + F_att(n) /
+  (eta_attention peak_bf16)`: the linears at their route's rate (share: an MoE chunk's share of the
+  saturated rate, below; 1 for a dense model), and attention over the prompt, F_att(n) its flops
+  (full layers over every earlier token, sliding ones over their window). A request of P prompt and G
+  answer tokens takes the prompt so (its linears as whole chunks and a final partial one, each at
+  its own rate) plus `G / decode(P + G/2)`. Decode: fitted on 49 points over four cards and three
+  models, 5.2 % rms (`tests/fixtures/choice/speed_measured.json`; the test holds the code to it).
+  Prefill: fitted on 82 points, six models at ~2K / 7K / 21K-token prompts on seven cards
+  (`choice-notes/lab/scripts/fit_prefill.py`, `choice-notes/data/prefill/rows.json`): from 7K tokens
+  on, dense 6.4 % rms (worst 18.7 %), MoE 8.3 % (18.9 %); a request's fixed time (10-190 ms) is not
+  modeled. A generation without its own prefill rows takes those of one with its BF16 tensor rate
+  per SM (Volta: Turing's), else Ada's.
+- **Accuracy.** KLD against the exact reference (`--activations exact`, BF16 KV, FP32 state) per
+  switch, measured with `ninferno-perplexity`; the switches' terms combine as the root of the sum
+  of squares (the product default: measured 0.0040, root sum square 0.0044, plain sum 0.0067), and
+  the quantization's own term adds on top: how it combines with them is not measured, and under a
+  root sum square a coarse quantization (0.2) made a KV codec's error look free. A value with no
+  measurement takes its axis's worst measured term, never zero (an FP8 ring takes the FP8 KV
+  codec's term as a stand-in).
+
+## The rule
+
+Among the candidates that fit, the largest worth `-ln(T) - lambda * KLD` wins (`lambda` 25: 0.001
+KLD is worth 2.5 % of a request's time). Where two candidates cost about the same, the more accurate
+one wins; where one is much faster, it wins. Ties: the longer own context, then the listing's order.
+
+`choose` decides at one quantization: a listing row's weights. Which row a listing serves is the
+quant rule's (`runtime/engine/quant_rule.h`), weighed by worth where the quantization curve decides
+(`product/plan/plan_quants.cpp`, below): one place, the product's, for every caller.
+
+**What λ means in answers.** A first calibration of KLD against lost answers (Qwen3.5-9B GGUF,
+2026-10-25): full MMLU-Pro (12,032 questions) and GSM8K (1,319) runs at temperature 0, two runs a
+quantization (Q8_0 on the RTX 5070 Ti and 4090, Q4_K_M on the 4090 and 5070 Ti, UD-IQ2_M twice on
+the 4090), `ninferno_eval` through `ninferno-serve`. The mean reproduces within 0.2 points (MMLU-Pro
+Q8_0 60.88 / 60.67, Q4_K_M 60.13 / 59.97, UD-IQ2_M 56.32 / 56.28), single answers do not (two runs of
+one configuration differ on 10-11 % of MMLU-Pro questions: the batch order of 8 concurrent requests
+moves the bytes under fast). Against Q8_0, with the quantization terms above: Q4_K_M loses 0.73
+points for 0.0172 KLD (0.042 a 0.001), UD-IQ2_M 4.48 points for 0.114 (0.039): about **0.04
+MMLU-Pro points per 0.001 KLD**. At `lambda` 25, 0.001 KLD is worth 2.5 % of a request's time, so
+one MMLU-Pro point (about 0.025 KLD) is worth about x1.87 of it. One family and one model so far:
+the KLD of another family is not on the same scale (Gemma 4's terms are two orders larger for the
+same switches), and its calibration is measured before its terms decide.
+
+**Gates.** A constant decides only once it rests on two lab cards (principle 4); until then the
+choice falls back and says why. `choice_constants.h` holds the gates:
+
+| Gate | Holds | Closed: what stands |
+|---|---|---|
+| `kReferenceCards` row's `kv_two_cards`, `exact_two_cards` | the generation's KV read and exact-route factors | the family's defaults |
+| each `kKldTerms` row's `cards`, `kQuantKldCards` (`accuracy_decides`) | the KV codecs' and the int8 activations' terms (model constants, or a generation's own row), the quantization curve | the quant rule's largest and the family's defaults (automatic KV codec, `--activations fast`) |
+| `KldTerm::family`, `kQuantKldFamily` | the families the switches' terms (Qwen 3.5 dense and MoE; dense decoders: FP8 KV and fast, Qwen3-8B on two Ada cards and a Blackwell one) and the quantization curve (Qwen 3.5 dense) were measured on | another family (Gemma 4, gpt-oss, Nemotron-H) keeps its defaults; a family with switch terms but no curve (Qwen 3.5 MoE, dense decoders) keeps the quant rule's largest |
+| `kMoeChunkTwoCards` | the MoE chunk shares | the default chunk (1024) |
+
+The switches' terms are per family: Qwen 3.5 MoE (Qwen3.6-35B-A3B) loses 3.4 times dense's KLD
+to INT8 KV (0.0033 against 0.00095) and more to fast (0.0049 against 0.0039), so one family's terms
+never decide for another (they are shown, marked as borrowed). The MoE terms rest on the RTX 4090
+and 5070 Ti (within 6 %); it has no quantization curve, so its quantization stays the quant rule's.
+
+The KV codecs' terms, the int8 activations' term and the quantization curve agree across the two
+generations measured (RTX 5070 Ti and RTX 4070 Ti / 4090: KV within 13 %, the curve within 2 %,
+activations 0.0039 / 0.0040) and are model constants on two cards. The activations' term became
+one only with ggml's MMQ prefill summing its q8_1 blocks from the codes: before, the boards that
+prefill on it (RTX 4090, 4070 Ti, 2080 Ti) lost 0.030 KLD (top-1 95.8 %) on the min-term formats of
+Qwen3.5-9B Q4_K_M, 7.6 times the W4A8 tiles' 0.0039. A generation's own row (`KldTerm::generation`)
+overrides the constant where a generation's routes differ. The state's and the ring's terms only
+price the candidates they follow (they are not decided), so they do not gate.
+
+Today Ada decides (its reference card's factors and every term above rest on two cards); Blackwell
+and Turing keep the family's defaults (their factors rest on one card). On Qwen3.5-9B Q4_K_M fast's
+0.004 KLD is worth less than exact's time (+34 % on the RTX 4090's mixed workload; `lambda` 25 sets
+the break-even at 0.012): fast. The chunk shares rest on two Ada cards, so an MoE's chunk is decided
+on Ada too.
+
+**What a decision reads.** The KV codec and the activation precision change the output bytes (tier
+B1 of [Deterministic decisions](deterministic-decisions.md)): they may not read a board's clock or
+bandwidth. So T is priced on the generation's *reference card* (`kReferenceCards`: the mean of the
+generation's lab cards), never on the board itself: every board of a generation decides the same,
+and a board's own facts feed only the estimates a caller shows. The reference card decides only
+where the KV read factors and the exact-route factor were measured on two lab cards of the
+generation (principle 4); elsewhere the family's defaults stand (the automatic KV codec,
+`--activations fast`), and the choice says so. Ada has them (RTX 4070 Ti and 4090: KV factors within
+6 %, exact within 20 %); Blackwell and Turing have one lab card each.
+
+**Auto's steps.** Each own-context step (`quant_own_targets`: min(native, 32K), 16K, 8K) is tried
+above the quality floor before any quantization below it. Where the worth decides, a narrower KV
+codec is a memory lever of its own: at a step where the largest quantization fits only with it,
+that pair is taken before the next step; under the family's defaults only the automatic codec
+counts.
+
+The quantization's own term is the measured curve `kQuantKld` (Qwen3.5-9B GGUF against Q8_0:
+Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
+0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations and
+models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
+any model's Q8_0 is its own reference (0). Where the worth decides, the plan weighs the quantizations
+of the quant rule's tier (`runtime/engine/quant_rule.h`: the own context per stream it reached, the
+same side of the 3.5-bit floor, `below_quality_floor`) by the worth of each one's own choice, a tie
+to the rule's order (more bits, then more bytes, then the smaller label), and the rule line says
+which was the largest (`rule_code` `best_worth`). Only where every supported row's bits are known:
+a row of unknown bits has no place on the curve and would look exact. With the gate open, on the RTX 4090 and 4070 Ti
+Qwen3.5-9B takes UD-Q5_K_XL where the largest that fits is UD-Q8_K_XL or Q8_0: Q8_0 costs about
+26 % more time per request than Q6_K for 0.003 KLD, and Q4_K_M saves 20 % for 0.012 more. Elsewhere
+the rule's largest stands.
+
+The ring and the recurrent state follow the KV codec and the activations (`coupled_storages`, the
+owner's rule): the sliding rings in the KV cache's kind (FP8 under any narrower KV codec where the
+family's rings take FP8: Gemma 4 and the dense decoders; else BF16), the recurrent state one step
+finer than the KV cache (FP32 under BF16 KV, FP16 under a narrower one, FP32 under exact). A flag
+(`--sliding-kv-dtype`, `--state-dtype`) pins either. Their other values are scored beside the
+chosen candidate (never chosen) so that `explain` can show them.
+
+**The prefill chunk.** An MoE's prefill grows with the tokens each expert takes from a chunk
+(chunk x experts per token / experts), along one curve across models and cards: Gemma 4 26B-A4B on
+the RTX 4070 Ti and 4090 and Qwen3.6-35B-A3B on the 4090 lie within 6 % of `kMoeChunkShare`
+(0.635, 0.813, 0.952, 1.0 at 16, 32, 64, 128 tokens per expert); decode does not move. A dense
+model's prefill moves under 5 % from 512 tokens on. So an MoE's candidates take the chunks 1024,
+2048 and 4096 (the widest: the ladder may still narrow it); a prompt fills only its own tokens of
+a chunk, so with the default 2048-token request the 2048 chunk is the widest that pays, and a
+wider one only costs workspace. A chunk has no accuracy term (under `--activations fast` where a
+prompt is cut may move the answer's bytes, not its error), so it is decided by speed on the
+reference card alone, behind its own gate, not the accuracy one.
+
+**The drafter.** Speculative decoding is one more axis: plain decode, or each drafter the model
+carries and the serving Engine runs (an MTP head, a DFlash drafter), each at the configuration its
+speculation profile chose (the lab's measured pair for these weights on this card's generation, the
+pair group's, or a published profile: `src/spec/`). Its memory, the drafter's weights and a DFlash
+drafter's state, enters the plan (`product::attached_drafter_memory`), and its measured gain
+multiplies the decode speed while its load table lets the asked streams speculate
+(`DrafterOption::plain_from_streams`). It changes no output (greedy verification), so it has no
+accuracy term: between plain decode and a drafter the worth weighs the drafter's speed against the
+context its memory takes. The drafter is weighed (`Choice::drafter_by_worth`) only where the worth
+decides and every drafter's gain is measured (`DrafterOption::measured`); a profile published
+without its speeds (the `*` profile) would weigh a gain of 1 and lose to plain decode on memory
+alone, so there its choice stands (`why_code` `unmeasured`).
+A faster drafter the asked context leaves out is listed with its gain. `--spec` pins the axis.
+
+Where the chosen configuration does not fit at the start (a DFlash drafter's workspace, a deeper
+round's graphs), the server, the CLI and the plan without the weights take one order
+(`product::fit_fallbacks`): the profile's fit fallback, then the deepest shallower draft, then the
+model's own MTP head, else plain decode; with an automatic KV pool, `product::pool_rule` keeps a
+drafter only while it leaves as many whole contexts as the streams asked, else the MTP head where
+it holds four fifths of plain decode's contexts, else plain decode. The plan is drawn again at the
+choice's drafter (`product::plan_at_choice`), so the plan, the CLI and the server start the same
+configuration. The server thinks by default; each request runs its own thinking flag's
+configuration (`--spec-select thinking`) only where the profile's measurements say the other
+flag's requests gain at least 3 % from it (`product::per_request_pays`; a pair's tokens per round
+agree within 1.8 % across cards and 2.3 % across quantizations of 4 bits or more), else every
+request runs the default's.
+
+## Explaining
+
+`explain` lists, for each axis, every other value with the chosen candidate's other axes kept: its
+own context, decode and prefill speed, KLD, worth, and why it lost:
+
+| `why_code` | Meaning |
+|---|---|
+| `no_fit` | it does not hold the asked context per stream |
+| `lower_worth` | it fits and its worth is lower |
+| `tie_context` | the same worth; the chosen keeps more context per stream |
+| `tie_order` | the same in every respect; the listing's order |
+| `default` | a gate is closed: the family's default (or the default chunk, the profile's drafter) stands |
+| `unmeasured` | a drafter's gain is not measured on this card: the speculation profile's choice stands |
+| `coupled` | a ring or state value: it follows the KV codec and the activations |
+
+A caller re-runs `choose` with another task (context, streams, request shape) to show what an input
+changes.

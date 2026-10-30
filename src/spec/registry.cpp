@@ -5,6 +5,7 @@
 #include "core/sha256.h"
 
 #include "spec/embedded_data.h"
+#include "spec/engine_support.h"
 #include "spec/json_fields.h"
 
 #include <algorithm>
@@ -58,6 +59,19 @@ DrafterDecl parse_drafter(const Json& d) {
     return out;
 }
 
+void apply_kind_rule(DrafterDecl& d, const std::vector<KindInfo>& kinds) {
+    if (!d.component.empty()) { return; }
+    for (const auto& k : kinds) {
+        if (k.name != d.kind) { continue; }
+        if (d.recipe.empty()) { d.recipe = k.recipe; }
+        if (d.quant.empty()) { d.quant = k.quant; }
+        if (d.proposal_rows == 0 && d.ranking.empty()) {
+            d.proposal_rows = k.proposal_rows;
+            d.ranking       = k.ranking;
+        }
+    }
+}
+
 std::pair<std::string, std::string> split_variant(std::string_view name) {
     const auto dot = name.find('.');
     if (dot == std::string_view::npos) { return {std::string(name), std::string()}; }
@@ -101,6 +115,14 @@ ModelEntry parse_model_entry(const Json& item) {
     return entry;
 }
 
+std::vector<const MeasuredPair*> Registry::measured(std::string_view target) const {
+    std::vector<const MeasuredPair*> out;
+    for (const auto& pair : pairs_) {
+        if (pair.target == target) { out.push_back(&pair); }
+    }
+    return out;
+}
+
 Registry Registry::parse(const std::string& text) {
     const auto doc = Json::parse(text);
     if (doc.value("schema", 0) != 1) { throw std::runtime_error("drafter registry: unknown schema"); }
@@ -112,28 +134,19 @@ Registry Registry::parse(const std::string& text) {
     for (const auto& [name, info] : kinds.items()) {
         KindInfo kind;
         kind.name          = name;
-        kind.engines       = strings(info, "engines");
         kind.architectures = strings(info, "architectures");
         kind.recipe        = json_text(info, "recipe");
+        kind.quant         = json_text(info, "quant");
+        kind.proposal_rows = info.value("proposal_rows", std::uint64_t{0});
+        kind.ranking       = json_text(info, "ranking");
         out.kinds_.push_back(std::move(kind));
     }
     for (const auto& item : doc.at("models")) { out.models_.push_back(parse_model_entry(item)); }
-    if (const auto it = doc.find("context_classes"); it != doc.end()) {
-        out.context_classes_ = parse_context_factors(*it);
-        for (const auto& entry : out.context_classes_.entries) {
-            const auto* model = out.by_id(entry.key.model);
-            if (model == nullptr) {
-                throw std::invalid_argument("context_classes: unregistered model " +
-                                            entry.key.model);
-            }
-            const bool declared =
-                std::any_of(model->drafters.begin(), model->drafters.end(),
-                            [&](const DrafterDecl& d) { return d.kind == entry.key.drafter; });
-            if (!declared) {
-                throw std::invalid_argument("context_classes: " + entry.key.model +
-                                            " declares no drafter of kind " + entry.key.drafter);
-            }
-        }
+    for (auto& entry : out.models_) {
+        for (auto& d : entry.drafters) { apply_kind_rule(d, out.kinds_); }
+    }
+    for (const auto& item : doc.value("pairs", Json::array())) {
+        out.pairs_.push_back(parse_pair(item));
     }
     return out;
 }
@@ -266,12 +279,10 @@ std::optional<std::string> Registry::kind_for_architecture(std::string_view arch
 }
 
 bool Registry::supported(std::string_view kind, std::string_view engine) const {
-    for (const auto& info : kinds_) {
-        if (info.name == kind) {
-            return std::find(info.engines.begin(), info.engines.end(), engine) != info.engines.end();
-        }
-    }
-    return false;
+    // What the serving Engine runs (spec/engine_support.h), for a kind the registry knows.
+    return std::any_of(kinds_.begin(), kinds_.end(),
+                       [&](const KindInfo& info) { return info.name == kind; }) &&
+           engine_runs_kind(engine, kind);
 }
 
 } // namespace ninferno::spec

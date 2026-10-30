@@ -75,6 +75,11 @@ before changing it, starting with
   changes output bytes, the fewer facts it reads. Lab measurements enter only as facts or as
   constants fitted on two or more cards of a generation. A flag exists to turn a default off, not to
   ask the user to tune.
+- Speculation drafts at fixed depths: one per configuration, chosen from lab measurements (per
+  thinking flag where the profile measures each). An adaptive draft depth (one that moves round by
+  round with the drafts accepted, the removed `mtp:K:K0`) was built, measured on the lab's cards and
+  removed: it gained only on synthetic text, never on real requests. Do not bring it back, in the
+  Engine, the Sessions, the tuners or the registry.
 - Project-owned APIs, CLIs, tools, fixtures and formats keep no backward compatibility: when
   replacing a behavior, remove the old aliases, fallbacks and their tests. The advertised OpenAI and
   Anthropic behavior is an external contract: change schema tests and

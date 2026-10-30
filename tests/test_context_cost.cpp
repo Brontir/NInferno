@@ -1,15 +1,20 @@
 #include "runtime/engine/context_cache/context_cost.h"
 
+#include "core/device_class.h"
 #include "core/host_kv_arena.h"
+#include "core/measured_boards.h"
 
 #include <nlohmann/json.hpp>
 
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <iostream>
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include "support/posix.h"
 #include "support/files.h"
@@ -75,15 +80,34 @@ Json prefill_json(const ninferno::runtime::ContextPrefillCost& value) {
 }
 
 Json document(Json machines) {
-    return Json{{"schema_version", 3},
+    return Json{{"schema_version", 4},
                 {"artifact_type", "ninferno_context_cost_presets"},
                 {"machines", std::move(machines)}};
 }
 
-Json machine(std::string hardware, Json transfer_value, Json prefill_values) {
-    return Json{{"hardware_class", std::move(hardware)},
+Json machine(std::string gpu_class, Json transfer_value, Json prefill_values) {
+    return Json{{"gpu_class", std::move(gpu_class)},
                 {"transfer", std::move(transfer_value)},
                 {"prefill", std::move(prefill_values)}};
+}
+
+// A device of class keys `chain` (closest first) on `board` (none: never carried to) running
+// `signature`.
+ninferno::runtime::ContextCostIdentity identity(std::vector<std::string> chain,
+                                                std::string signature, ninferno::Board board = {}) {
+    return {
+        .class_chain = std::move(chain), .board = board, .prefill_signature = std::move(signature)};
+}
+
+// A board as the device query would build it, with the PCI-ID table's facts (board_of reads its
+// bandwidth from them).
+ninferno::DeviceClass board_class(std::uint32_t pci_device_id, int major, int minor, int sms,
+                                  double l2_mib) {
+    ninferno::DeviceClass d =
+        ninferno::synthetic_device_class(pci_device_id, major, minor, sms,
+                                         static_cast<std::size_t>(l2_mib * (1 << 20)), 24ULL << 30);
+    d.facts = ninferno::machine_facts_of(d);
+    return d;
 }
 
 Json prefill_entry(std::string signature, const ninferno::runtime::ContextPrefillCost& value) {
@@ -91,13 +115,6 @@ Json prefill_entry(std::string signature, const ninferno::runtime::ContextPrefil
 }
 
 void test_exact_evaluation() {
-    expect(ninferno::runtime::context_cost_hardware_class("NVIDIA GeForce RTX 5090", 12, 0) ==
-               "nvidia-geforce-rtx-5090-sm120",
-           "hardware class duplicated or lost the NVIDIA vendor");
-    expect(ninferno::runtime::context_cost_hardware_class("Example Accelerator", 9, 0) ==
-               "nvidia-example-accelerator-sm90",
-           "hardware class did not canonicalize a vendorless CUDA device name");
-
     ninferno::runtime::ContextMachineCostModel model{.transfer = transfer(), .prefill = prefill()};
     expect(model.transfer_ns(ninferno::runtime::ContextTransferDirection::DeviceToHost,
                              {.payload_bytes = 4, .copy_operations = 2}) == 16,
@@ -268,143 +285,197 @@ void test_schema_validation() {
         "empty machine cost entry was accepted");
 }
 
-// A machine no preset names takes the measured machine of its architecture nearest by SM count:
-// its transfer as measured, its prefill for the binding (else its class prefill) scaled by the SM
-// ratio. Another architecture, an unknown SM count, or a named machine never do.
-void test_similar_machine() {
+// Each board the compiled machines were measured on finds its own by its class id, whatever the
+// driver calls it: its transfer where one was measured (the RTX 4090's D2D copies did not fit:
+// the generic transfer) and its class prefill for a binding it did not measure.
+void test_measured_boards() {
     using ninferno::ContextCostPresetSource;
-    const std::vector<ninferno::runtime::ContextCostMachinePreset> compiled{
-        {
-            .hardware_class = "nvidia-big-sm120",
-            .transfer       = transfer(5),
-            .prefill        = {{"measured-binding", prefill(1'700)}},
-            .class_prefill  = prefill(3'400),
-            .sms            = 170,
-        },
-        {
-            .hardware_class = "nvidia-small-sm120",
-            .class_prefill  = prefill(8'400),
-            .sms            = 84,
-        },
-        {.hardware_class = "nvidia-ada-sm89", .class_prefill = prefill(1'280), .sms = 128},
-    };
-    const auto resolve = [&](std::string hardware_class, std::uint32_t sms) {
-        return ninferno::runtime::resolve_context_machine_cost(
-            compiled, {.hardware_class    = std::move(hardware_class),
-                       .prefill_signature = "measured-binding",
-                       .sms               = sms});
+    namespace measured = ninferno::measured;
+
+    struct MeasuredMachine {
+        const char* what;
+        std::uint32_t pci_device_id;
+        ninferno::Board board;
+        const char* gpu_class;
+        std::uint64_t class_token_ns_q32;
+        std::uint64_t d2h_batch_ns; // the generic transfer's 100 000 without its own
     };
 
-    // 160 SMs: the 170-SM card, its measured binding scaled by 170/160; its transfer as is.
-    const auto near_big = resolve("nvidia-unmeasured-sm120", 160);
-    expect(near_big.summary.prefill_source == ContextCostPresetSource::SimilarMachine &&
-               near_big.summary.transfer_source == ContextCostPresetSource::SimilarMachine &&
-               near_big.summary.similar_to == "nvidia-big-sm120" &&
-               near_big.model.prefill.chunk_ns == 1'806 &&
-               near_big.model.prefill.vision_item_ns == 5 &&
-               near_big.model.transfer[0].batch_ns == 5,
-           "a machine near the measured card took its binding's prefill, scaled, and its transfer");
-
-    // 85 SMs: the 84-SM card, which has no entry for the binding: its class prefill, scaled.
-    const auto near_small = resolve("nvidia-unmeasured-sm120", 85);
-    expect(near_small.summary.prefill_source == ContextCostPresetSource::SimilarMachine &&
-               near_small.summary.transfer_source == ContextCostPresetSource::GenericDefault &&
-               near_small.summary.similar_to == "nvidia-small-sm120" &&
-               near_small.model.prefill.chunk_ns == 8'301,
-           "a machine near a card of a class prefill only took it, scaled");
-
-    // Halfway on a log scale (120 SMs between 84 and 170 is nearer 170; 119.5 is the midpoint):
-    // ties go to the larger card, and the nearest wins otherwise.
-    expect(resolve("nvidia-unmeasured-sm120", 120).summary.similar_to == "nvidia-big-sm120" &&
-               resolve("nvidia-unmeasured-sm120", 100).summary.similar_to == "nvidia-small-sm120",
-           "the nearest card by SM count on a log scale stands in");
-
-    const std::vector<std::tuple<std::string, std::uint32_t, std::string>> unplaced{
-        {"nvidia-ampere-sm86", 82, "another architecture"},
-        {"nvidia-unmeasured-sm120", 0, "an unknown SM count"},
+    const std::array machines{
+        MeasuredMachine{"RTX 5090", 0x2B85, measured::kRtx5090, "gb202:170sm", 944'785'862'335'153,
+                        48'655},
+        MeasuredMachine{"RTX 4090", 0x2684, measured::kRtx4090, "ad102:128sm",
+                        1'219'524'115'385'335, 100'000},
+        MeasuredMachine{"RTX 3090", 0x2204, measured::kRtx3090, "ga102:82sm", 2'964'978'981'039'522,
+                        27'120},
+        MeasuredMachine{"RTX 2080 Ti", 0x1E07, measured::kRtx2080Ti, "tu102:68sm",
+                        20'155'682'553'363'628, 3'177},
     };
-    for (const auto& [hardware_class, sms, what] : unplaced) {
-        const auto none = resolve(hardware_class, sms);
-        expect(none.summary.prefill_source == ContextCostPresetSource::GenericDefault &&
-                   none.summary.transfer_source == ContextCostPresetSource::GenericDefault &&
-                   none.summary.similar_to.empty(),
-               (what + " took a similar machine").c_str());
+    for (const MeasuredMachine& m : machines) {
+        ninferno::DeviceClass device =
+            board_class(m.pci_device_id, m.board.major, m.board.minor, m.board.sms, m.board.l2_mib);
+        const auto own = ninferno::runtime::resolve_context_machine_cost(
+            ninferno::runtime::context_cost_identity(device, "unmeasured-binding"));
+        const ContextCostPresetSource transfer_source =
+            m.d2h_batch_ns != 100'000 ? ContextCostPresetSource::CompiledDefault
+                                      : ContextCostPresetSource::GenericDefault;
+        expect(device.id() == m.gpu_class && own.summary.gpu_class == m.gpu_class &&
+                   own.summary.machine == "own " + std::string(m.gpu_class) &&
+                   own.summary.prefill_source == ContextCostPresetSource::CompiledDefault &&
+                   own.summary.transfer_source == transfer_source &&
+                   own.model.prefill.token_ns_q32 == m.class_token_ns_q32 &&
+                   own.model.transfer[0].batch_ns == m.d2h_batch_ns,
+               (std::string(m.what) + " did not find its own machine by its class id").c_str());
+
+        // The driver's name is never a key: another board's name changes nothing.
+        ninferno::DeviceClass renamed = device;
+        renamed.name                  = "NVIDIA GeForce RTX 5090";
+        const auto same               = ninferno::runtime::resolve_context_machine_cost(
+            ninferno::runtime::context_cost_identity(renamed, "unmeasured-binding"));
+        expect(same.summary.machine == own.summary.machine && same.model == own.model,
+               (std::string(m.what) + " under another driver name took another machine").c_str());
+
+        // The board each machine records is the one its key names: a device of no listed class on
+        // that very board carries it at distance 0.
+        const auto twin = ninferno::runtime::resolve_context_machine_cost(
+            identity({"*"}, "unmeasured-binding", m.board));
+        expect(twin.summary.machine == "carried from " + std::string(m.gpu_class) + " at 0.00" &&
+                   twin.model == own.model,
+               (std::string(m.what) + "'s machine does not record its board").c_str());
     }
-    const auto named = resolve("nvidia-small-sm120", 170);
-    expect(named.summary.prefill_source == ContextCostPresetSource::CompiledDefault &&
-               named.summary.similar_to.empty() && named.model.prefill.chunk_ns == 8'400,
-           "a machine a preset names took another's costs");
+    // A binding the RTX 2080 Ti measured takes its own entry over the class prefill.
+    const auto turing_9b =
+        ninferno::runtime::resolve_context_machine_cost(ninferno::runtime::context_cost_identity(
+            board_class(0x1E07, 7, 5, 68, 5.5),
+            "ed7fbdac7d2c4155ff33b80b97adfd30519180f94695a70aeedd589b9ad1abfe"));
+    expect(turing_9b.summary.prefill_source == ContextCostPresetSource::CompiledDefault &&
+               turing_9b.model.prefill.token_ns_q32 == 2'027'672'431'877'711,
+           "the RTX 2080 Ti's measured 9B binding did not take its own prefill");
 }
 
-// An architecture without a preset of its own takes a sibling architecture's (the same major and
-// feature row: sm_80 and sm_86), its prefill scaled by SM count and the generic transfer; an
-// architecture whose features differ takes none.
-void test_sibling_machine() {
+// A board no compiled machine names takes the one measured on the nearest board within the carry
+// distance (core/measured_boards.h), as measured: no SM-count ratio rescales it. Farther, or of
+// another instruction set or FP32-accumulate rate, it takes the declared generic defaults.
+void test_carried_and_generic() {
     using ninferno::ContextCostPresetSource;
-    const std::vector<ninferno::runtime::ContextCostMachinePreset> compiled{
-        {
-            .hardware_class = "nvidia-geforce-rtx-3090-sm86",
-            .transfer       = transfer(7),
-            .class_prefill  = prefill(2'000),
-            .sms            = 82,
-        },
-        {.hardware_class = "nvidia-ada-sm89", .class_prefill = prefill(1'280), .sms = 128},
-    };
-    const auto resolve = [&](std::string hardware_class, std::uint32_t sms) {
+    const auto resolve = [](const ninferno::DeviceClass& device) {
         return ninferno::runtime::resolve_context_machine_cost(
-            compiled,
-            {.hardware_class = std::move(hardware_class), .prefill_signature = "any", .sms = sms});
+            ninferno::runtime::context_cost_identity(device, "unmeasured-binding"));
     };
-    const auto a100 = resolve("nvidia-a100-sxm4-80gb-sm80", 108);
+    const auto rtx4090 = resolve(board_class(0x2684, 8, 9, 128, 72));
+    const auto rtx5090 = resolve(board_class(0x2B85, 12, 0, 170, 96));
+
+    // RTX 4090 D (114 SMs): the RTX 4090's machine, its prefill unscaled; no transfer to carry.
+    const auto d = resolve(board_class(0x2685, 8, 9, 114, 72));
+    expect(d.summary.gpu_class == "ad102:114sm" &&
+               d.summary.machine == "carried from ad102:128sm at 0.17" &&
+               d.summary.prefill_source == ContextCostPresetSource::CarriedMachine &&
+               d.summary.transfer_source == ContextCostPresetSource::GenericDefault &&
+               d.model == rtx4090.model,
+           ("the RTX 4090 D did not carry the RTX 4090's machine as measured: " + d.summary.machine)
+               .c_str());
+    // RTX PRO 6000 (188 SMs, 128 MiB L2): the RTX 5090's, transfer and prefill.
+    const auto pro = resolve(board_class(0x2BB1, 12, 0, 188, 128));
     expect(
-        a100.summary.prefill_source == ContextCostPresetSource::SimilarMachine &&
-            a100.summary.transfer_source == ContextCostPresetSource::GenericDefault &&
-            a100.summary.similar_to == "nvidia-geforce-rtx-3090-sm86" &&
-            a100.model.prefill.chunk_ns == 1'519,
-        "sm_80 did not take the sm_86 card's prefill, scaled by 82/108, with the generic transfer");
-    const auto v100 = resolve("tesla-v100-sxm2-32gb-sm70", 80);
-    expect(v100.summary.prefill_source == ContextCostPresetSource::GenericDefault &&
-               v100.summary.similar_to.empty(),
-           "sm_70 took a preset of an architecture with other features");
+        pro.summary.machine == "carried from gb202:170sm at 0.35" &&
+            pro.summary.transfer_source == ContextCostPresetSource::CarriedMachine &&
+            pro.summary.prefill_source == ContextCostPresetSource::CarriedMachine &&
+            pro.model == rtx5090.model,
+        ("the RTX PRO 6000 did not carry the RTX 5090's machine: " + pro.summary.machine).c_str());
+    // RTX 3090 Ti: the RTX 3090's.
+    const auto ti = resolve(board_class(0x2203, 8, 6, 84, 6));
+    expect(ti.summary.machine == "carried from ga102:82sm at 0.14",
+           ("the RTX 3090 Ti did not carry the RTX 3090's machine: " + ti.summary.machine).c_str());
+
+    const auto generic = ninferno::runtime::generic_context_machine_cost_model();
+
+    struct Far {
+        const char* what;
+        ninferno::DeviceClass device;
+        const char* gpu_class;
+    };
+
+    const std::array far{
+        // 2.2 from the RTX 5090: once its prefill scaled by 170/84, now the declared default.
+        Far{"RTX 5080", board_class(0x2C02, 12, 0, 84, 64), "gb203:84sm"},
+        // The RTX 3090's instruction set, another FP32-accumulate rate: once its prefill scaled.
+        Far{"A100", board_class(0x20B0, 8, 0, 108, 40), "ga100:108sm"},
+        // An architecture of no measured board and an id no table lists.
+        Far{"an unknown sm_100 board", board_class(0, 10, 0, 148, 126), "sm100:148sm"},
+    };
+    for (const Far& f : far) {
+        const auto none = resolve(f.device);
+        expect(none.summary.gpu_class == f.gpu_class && none.summary.machine == "generic" &&
+                   none.summary.transfer_source == ContextCostPresetSource::GenericDefault &&
+                   none.summary.prefill_source == ContextCostPresetSource::GenericDefault &&
+                   none.model == generic,
+               (std::string(f.what) +
+                " did not take the generic defaults, labelled: " + none.summary.machine)
+                   .c_str());
+    }
+    // A class no table knows on a board of no facts.
+    const auto unknown = ninferno::runtime::resolve_context_machine_cost(
+        identity({"unmeasured-machine", "*"}, "unmeasured-binding"));
+    expect(unknown.summary.machine == "generic" && unknown.model == generic,
+           "an unknown class did not take the generic defaults");
+
+    // The class chain, closest key first: a key of a measured board's own chain is its own, and
+    // a nearer key that names nothing does not stop the search.
+    const std::vector<ninferno::runtime::ContextCostMachinePreset> compiled{
+        {.gpu_class     = "gb202",
+         .class_prefill = prefill(170),
+         .board         = ninferno::measured::kRtx5090},
+        {.gpu_class     = "gb202:188sm",
+         .class_prefill = prefill(188),
+         .board         = {12, 0, 188, 128, 1792}},
+    };
+    const auto chip = ninferno::runtime::resolve_context_machine_cost(
+        compiled, identity({"gb202:170sm", "gb202", "sm120", "*"}, "any"));
+    expect(chip.summary.machine == "own gb202" && chip.model.prefill.chunk_ns == 170,
+           "a chip key of the class chain did not stand for the board");
+    const auto variant = ninferno::runtime::resolve_context_machine_cost(
+        compiled, identity({"gb202:188sm", "gb202", "sm120", "*"}, "any"));
+    expect(variant.summary.machine == "own gb202:188sm" && variant.model.prefill.chunk_ns == 188,
+           "the variant key did not come before the chip's");
 }
 
 void test_class_prefill_fallback() {
     const std::vector<ninferno::runtime::ContextCostMachinePreset> compiled{
         {
-            .hardware_class = "measured-machine",
-            .prefill        = {{"measured-binding", prefill(11)}},
-            .class_prefill  = prefill(22),
+            .gpu_class     = "measured-machine",
+            .prefill       = {{"measured-binding", prefill(11)}},
+            .class_prefill = prefill(22),
         },
         {
-            .hardware_class = "binding-only-machine",
-            .prefill        = {{"measured-binding", prefill(33)}},
+            .gpu_class = "binding-only-machine",
+            .prefill   = {{"measured-binding", prefill(33)}},
         },
     };
     const auto exact = ninferno::runtime::resolve_context_machine_cost(
-        compiled, {.hardware_class = "measured-machine", .prefill_signature = "measured-binding"});
+        compiled, identity({"measured-machine"}, "measured-binding"));
     expect(exact.model.prefill.chunk_ns == 11 &&
                exact.summary.prefill_source == ninferno::ContextCostPresetSource::CompiledDefault,
            "a measured binding did not take its own prefill over the class prefill");
 
     const auto miss = ninferno::runtime::resolve_context_machine_cost(
-        compiled, {.hardware_class = "measured-machine", .prefill_signature = "other-binding"});
+        compiled, identity({"measured-machine"}, "other-binding"));
     expect(miss.model.prefill.chunk_ns == 22 &&
                miss.summary.prefill_source == ninferno::ContextCostPresetSource::CompiledDefault &&
                miss.summary.transfer_source == ninferno::ContextCostPresetSource::GenericDefault,
            "an unmeasured binding did not take its machine's class prefill");
 
     const auto no_class = ninferno::runtime::resolve_context_machine_cost(
-        compiled, {.hardware_class = "binding-only-machine", .prefill_signature = "other-binding"});
+        compiled, identity({"binding-only-machine"}, "other-binding"));
     expect(no_class.summary.prefill_source == ninferno::ContextCostPresetSource::GenericDefault &&
                no_class.model.prefill.chunk_ns ==
                    ninferno::runtime::generic_context_machine_cost_model().prefill.chunk_ns,
            "a machine without a class prefill did not fall back to the generic prefill");
 
     const std::vector<ninferno::runtime::ContextCostMachinePreset> class_only{
-        {.hardware_class = "class-only-machine", .class_prefill = prefill(44)},
+        {.gpu_class = "class-only-machine", .class_prefill = prefill(44)},
     };
     const auto only = ninferno::runtime::resolve_context_machine_cost(
-        class_only, {.hardware_class = "class-only-machine", .prefill_signature = "any"});
+        class_only, identity({"class-only-machine"}, "any"));
     expect(only.model.prefill.chunk_ns == 44,
            "a class prefill alone was not accepted as machine cost data");
 
@@ -414,7 +485,7 @@ void test_class_prefill_fallback() {
     expect_throw(
         [&] {
             (void)ninferno::runtime::resolve_context_machine_cost(
-                invalid, {.hardware_class = "class-only-machine", .prefill_signature = "any"});
+                invalid, identity({"class-only-machine"}, "any"));
         },
         "an invalid class prefill was accepted");
 }
@@ -429,11 +500,11 @@ void test_resolution_and_atomic_upserts() {
         // The RTX 3090: its own transfer, and for a binding it did not measure its class prefill
         // (the ga102 27B prefill). Transfer and prefill resolving independently of each other is
         // test_class_prefill_fallback's (every compiled machine now carries a class prefill).
+        const std::vector<std::string> rtx3090{"ga102:82sm", "ga102", "sm86", "*"};
         const auto compiled = ninferno::runtime::resolve_context_machine_cost(
-            {.hardware_class    = "nvidia-geforce-rtx-3090-sm86",
-             .prefill_signature = "unmeasured-config-and-formats"});
-        const auto ga102 = ninferno::runtime::resolve_context_machine_cost(
-            {.hardware_class = "nvidia-geforce-rtx-3090-sm86", .prefill_signature = "other"});
+            identity(rtx3090, "unmeasured-config-and-formats"));
+        const auto ga102 =
+            ninferno::runtime::resolve_context_machine_cost(identity(rtx3090, "other"));
         expect(compiled.summary.transfer_source ==
                        ninferno::ContextCostPresetSource::CompiledDefault &&
                    compiled.summary.prefill_source ==
@@ -443,29 +514,24 @@ void test_resolution_and_atomic_upserts() {
                        ninferno::runtime::generic_context_machine_cost_model().prefill.token_ns_q32,
                "the RTX 3090 did not take its own transfer and its class prefill");
 
-        const ninferno::runtime::ContextCostIdentity compiled_identity{
-            .hardware_class    = "nvidia-geforce-rtx-5090-sm120",
-            .prefill_signature = "unmeasured-config-and-formats",
-        };
+        const ninferno::runtime::ContextCostIdentity compiled_identity =
+            identity({"gb202:170sm", "gb202", "sm120", "*"}, "unmeasured-config-and-formats");
         const auto class_only = ninferno::runtime::resolve_context_machine_cost(compiled_identity);
         expect(class_only.summary.prefill_source ==
                        ninferno::ContextCostPresetSource::CompiledDefault &&
                    class_only.model.prefill.token_ns_q32 == 944'785'862'335'153,
                "an unmeasured binding on the RTX 5090 did not take its class prefill");
 
-        const auto measured = ninferno::runtime::resolve_context_machine_cost({
-            .hardware_class    = compiled_identity.hardware_class,
-            .prefill_signature = "e6eae48276e11c15c932cb90d258b51b81e144dc13fb461e7ffa202d2caa440a",
-        });
+        const auto measured = ninferno::runtime::resolve_context_machine_cost(
+            identity(compiled_identity.class_chain,
+                     "e6eae48276e11c15c932cb90d258b51b81e144dc13fb461e7ffa202d2caa440a"));
         expect(measured.summary.prefill_source ==
                        ninferno::ContextCostPresetSource::CompiledDefault &&
                    measured.model.prefill.token_ns_q32 == 375'800'765'711'778,
                "measured bindings did not select their compiled prefill cost");
 
-        const ninferno::runtime::ContextCostIdentity unknown{
-            .hardware_class    = "unmeasured-machine",
-            .prefill_signature = "unmeasured-config-and-formats",
-        };
+        const ninferno::runtime::ContextCostIdentity unknown =
+            identity({"unmeasured-machine"}, "unmeasured-config-and-formats");
         const auto generic = ninferno::runtime::resolve_context_machine_cost(unknown);
         expect(
             generic.summary.transfer_source == ninferno::ContextCostPresetSource::GenericDefault &&
@@ -476,8 +542,8 @@ void test_resolution_and_atomic_upserts() {
                 generic.model.prefill_ns({.tokens = 1}) > 0,
             "unknown identity did not retain a numerical cost model");
 
-        ninferno::runtime::upsert_context_transfer_cost_atomic(path, unknown.hardware_class,
-                                                             transfer(77), R"({"run":1})");
+        ninferno::runtime::upsert_context_transfer_cost_atomic(path, unknown.class_chain.front(),
+                                                               transfer(77), R"({"run":1})");
         auto resolved = ninferno::runtime::resolve_context_machine_cost(unknown, path);
         expect(resolved.model.transfer[0].batch_ns == 77 &&
                    resolved.summary.transfer_source ==
@@ -486,8 +552,9 @@ void test_resolution_and_atomic_upserts() {
                        ninferno::ContextCostPresetSource::GenericDefault,
                "external transfer did not layer over generic prefill");
 
-        ninferno::runtime::upsert_context_prefill_cost_atomic(path, unknown, prefill(91),
-                                                            R"({"run":2})");
+        ninferno::runtime::upsert_context_prefill_cost_atomic(path, unknown.class_chain.front(),
+                                                              unknown.prefill_signature,
+                                                              prefill(91), R"({"run":2})");
         resolved = ninferno::runtime::resolve_context_machine_cost(unknown, path);
         expect(resolved.model.transfer[0].batch_ns == 77 && resolved.model.prefill.chunk_ns == 91 &&
                    resolved.summary.transfer_source ==
@@ -495,10 +562,8 @@ void test_resolution_and_atomic_upserts() {
                    resolved.summary.prefill_source == ninferno::ContextCostPresetSource::External,
                "independent external transfer/prefill entries did not compose");
 
-        const ninferno::runtime::ContextCostIdentity other_model{
-            .hardware_class    = unknown.hardware_class,
-            .prefill_signature = "other-config-and-formats",
-        };
+        const ninferno::runtime::ContextCostIdentity other_model =
+            identity(unknown.class_chain, "other-config-and-formats");
         const auto layered_miss =
             ninferno::runtime::resolve_context_machine_cost(other_model, path);
         expect(layered_miss.summary.transfer_source ==
@@ -507,8 +572,8 @@ void test_resolution_and_atomic_upserts() {
                        ninferno::ContextCostPresetSource::GenericDefault,
                "external model miss incorrectly discarded the matching machine transfer");
 
-        ninferno::runtime::upsert_context_transfer_cost_atomic(path, unknown.hardware_class,
-                                                             transfer(123), R"({"run":3})");
+        ninferno::runtime::upsert_context_transfer_cost_atomic(path, unknown.class_chain.front(),
+                                                               transfer(123), R"({"run":3})");
         const auto parsed = ninferno::runtime::parse_context_cost_presets(read_file(path), "file");
         expect(parsed.size() == 1 && parsed[0].transfer->at(0).batch_ns == 123 &&
                    parsed[0].prefill.size() == 1 && parsed[0].prefill[0].cost.chunk_ns == 91,
@@ -517,11 +582,33 @@ void test_resolution_and_atomic_upserts() {
         const std::string before = read_file(path);
         expect_throw(
             [&] {
-                ninferno::runtime::upsert_context_prefill_cost_atomic(path, unknown, prefill(),
-                                                                    "not-json");
+                ninferno::runtime::upsert_context_prefill_cost_atomic(
+                    path, unknown.class_chain.front(), unknown.prefill_signature, prefill(),
+                    "not-json");
             },
             "invalid provenance was accepted");
         expect(read_file(path) == before, "failed upsert modified the preset file");
+
+        // An external entry is found along the class chain too: one keyed by the chip serves a
+        // board the compiled table carries to, over the carried component it measured.
+        const std::filesystem::path chip_path = directory / "chip.json";
+        ninferno::runtime::upsert_context_transfer_cost_atomic(chip_path, "ad102", transfer(55),
+                                                               R"({"run":4})");
+        const auto chip = ninferno::runtime::resolve_context_machine_cost(
+            identity({"ad102:114sm", "ad102", "sm89", "*"}, "unmeasured-config-and-formats",
+                     {8, 9, 114, 72, 1008}),
+            chip_path);
+        expect(chip.model.transfer[0].batch_ns == 55 &&
+                   chip.summary.transfer_source == ninferno::ContextCostPresetSource::External &&
+                   chip.summary.prefill_source ==
+                       ninferno::ContextCostPresetSource::CarriedMachine &&
+                   chip.summary.machine == "carried from ad102:128sm at 0.17",
+               "an external entry keyed by the chip did not layer over the carried machine");
+        Json stale              = Json::parse(read_file(chip_path));
+        stale["schema_version"] = 3;
+        expect_throw(
+            [&] { (void)ninferno::runtime::parse_context_cost_presets(stale.dump(), "schema-3"); },
+            "a preset file of the name-keyed schema 3 was accepted");
     } catch (...) {
         std::filesystem::remove_all(directory);
         throw;
@@ -536,8 +623,8 @@ int main() {
     test_kv_physical_work();
     test_schema_validation();
     test_class_prefill_fallback();
-    test_similar_machine();
-    test_sibling_machine();
+    test_measured_boards();
+    test_carried_and_generic();
     test_resolution_and_atomic_upserts();
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;

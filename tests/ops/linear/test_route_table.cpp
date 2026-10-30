@@ -8,10 +8,10 @@
 #include "core/sha256.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/shape_routes.h"
+#include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/op_tester.h"
-#include "spec/context_class.h"
 #include "support/temp_dir.h"
 
 #include <cstdio>
@@ -19,6 +19,8 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <regex>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unistd.h>
@@ -67,9 +69,10 @@ bool refused(const std::string& gpu, const std::string& name, const std::string&
 
 } // namespace
 
-// A malformed default table (the device's own class file in the --route-dir directory) is not
-// applied, and the status says which directory and why instead of reporting that nothing was
-// loaded. Run in its own process: the default lookup happens once.
+// A malformed default table (the device's own class file in the --route-dir directory) stops the
+// lookup with an error naming the directory and why, instead of answering as untuned (another
+// route, speed and, for the A8 and A4 routes, other bytes). Run in its own process: the default
+// lookup happens once.
 int malformed_default() {
     std::string file = ninferno::ops::route_gpu_class();
     for (char& c : file) {
@@ -80,13 +83,17 @@ int malformed_default() {
     std::filesystem::create_directories(dir);
     std::ofstream(path) << "{\"schema\": \"ninferno-route-table/1\", \"gpu\": ";
     ninferno::ops::set_route_table_dir(dir);
-    const auto s = ninferno::ops::route_table_status();
-    std::cout << "malformed default table: loaded=" << s.loaded << " message: " << s.message
-              << '\n';
-    int failures = check(!s.loaded, "a malformed default table is not applied");
-    failures += check(s.path == utf8_path(dir) && s.message.find("refused") != std::string::npos &&
-                          s.message.find(utf8_path(dir)) != std::string::npos,
-                      "the status names the refused directory and the reason: " + s.message);
+    std::string message;
+    try {
+        (void)ninferno::ops::route_table_status();
+    } catch (const std::exception& error) {
+        message = error.what();
+    }
+    std::cout << "malformed default table: " << message << '\n';
+    const int failures =
+        check(message.find("refused") != std::string::npos &&
+                  message.find(utf8_path(dir)) != std::string::npos,
+              "a malformed default table stops the lookup, naming the directory and why: " + message);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " route_table malformed default\n";
     return failures == 0 ? 0 : 1;
 }
@@ -154,84 +161,7 @@ int similar_default() {
     return failures == 0 ? 0 : 1;
 }
 
-namespace {
-
-// Every route name, every schedule of every family (as parse_route enumerates them), is one
-// spec/context_class.h's known_route takes, and route_family groups two names exactly when their
-// Family is the same: the speculation library keeps its own list (it does not link the GEMM).
-// No device needed.
-int route_schedules(generic::Family family) {
-    switch (family) { // no default: a new family warns here
-    case generic::Family::Scalar:
-    case generic::Family::GgmlMmq:
-    case generic::Family::GgmlVec:
-        return 1;
-    case generic::Family::RegisterMma:
-        return generic::rmma_schedule_count();
-    case generic::Family::W4a4Mma:
-        return generic::w4a4_schedule_names(); // compiled or not, as parse_route
-    case generic::Family::TiledMma:
-        return generic::tiled_schedule_count();
-    case generic::Family::W4a8Mma:
-        return generic::w4a8_schedule_count();
-    case generic::Family::StagedMma:
-        return generic::staged_schedule_count();
-    case generic::Family::Nvfp4TiledMma:
-        return generic::nvfp4_tiled_schedule_count();
-    case generic::Family::R8Mma:
-        return generic::r8_schedule_count();
-    case generic::Family::I8Mma:
-        return generic::i8_schedule_count();
-    }
-    return -1; // a family this switch lacks: the caller fails
-}
-
-int route_names_known() {
-    constexpr int kFamilies = static_cast<int>(generic::Family::I8Mma) + 1;
-    // The sentinel: past I8Mma route_name knows no family. A family added after it must join
-    // route_schedules here and known_route / route_family in spec/context_class.cpp.
-    if (generic::route_name(generic::Route{static_cast<generic::Family>(kFamilies), 0}) !=
-        "unknown") {
-        std::cerr << "FAILED: a route family after I8Mma: add it here and to known_route\n";
-        return 1;
-    }
-    int failures = 0;
-    std::vector<std::pair<int, std::string>> names;
-    for (int f = 0; f < kFamilies; ++f) {
-        const auto family = static_cast<generic::Family>(f);
-        // Every family names at least one route: a count of 0 or less is a family this test
-        // does not enumerate (a new one inserted before I8Mma), or one with nothing to check.
-        if (route_schedules(family) <= 0) {
-            std::cerr << "FAILED: route family " << f << " has no schedules to check\n";
-            ++failures;
-        }
-        for (int i = 0; i < route_schedules(family); ++i) {
-            const auto name =
-                generic::route_name(generic::Route{family, static_cast<std::uint8_t>(i)});
-            if (!ninferno::spec::known_route(name)) {
-                std::cerr << "FAILED: known_route refuses " << name << '\n';
-                ++failures;
-            }
-            names.emplace_back(f, name);
-        }
-    }
-    for (const auto& [fa, a] : names) {
-        for (const auto& [fb, b] : names) {
-            if ((fa == fb) !=
-                (ninferno::spec::route_family(a) == ninferno::spec::route_family(b))) {
-                std::cerr << "FAILED: route_family of " << a << " and " << b
-                          << (fa == fb ? " differ in one Family\n" : " agree across Families\n");
-                ++failures;
-            }
-        }
-    }
-    return failures;
-}
-
-} // namespace
-
 int main(int argc, char** argv) {
-    if (route_names_known() != 0) { return 1; }
     if (ninferno::test::cuda_unavailable()) {
         std::cout << "SKIP: no usable CUDA device\n";
         return 77;
@@ -574,6 +504,40 @@ int main(int argc, char** argv) {
         }
     }
     std::cout << files << " shipped route tables in " << shipped << '\n';
+
+    // Every shipped dense-tune entry names this build's schedule sets. The tuner looks an entry up
+    // by its whole key (generic_tune.cpp, problem_key), so an entry keyed by another set matches
+    // nothing and its measurements are lost without a word, as when the staged set grew from 9
+    // to 13: a change of a set re-keys the entries it leaves valid or retunes them.
+    if (!shipped.empty()) {
+        const std::string signature = "|s" + std::to_string(generic::rmma_schedule_count()) + "." +
+                                      std::to_string(generic::staged_schedule_count()) + "." +
+                                      std::to_string(generic::nvfp4_tiled_schedule_count()) + "." +
+                                      std::to_string(generic::r8_schedule_count()) + "." +
+                                      std::to_string(generic::w4a8_schedule_count());
+        std::ifstream in(ninferno::path_from_utf8(shipped) / "tuner" / "dense_tune.json");
+        std::stringstream text;
+        text << in.rdbuf();
+        const std::string content = text.str();
+        const std::regex key_pattern(R"re("([a-z0-9]+:[0-9]+sm\|[^"]+)")re");
+        int keys = 0, foreign = 0;
+        for (auto it = std::sregex_iterator(content.begin(), content.end(), key_pattern);
+             it != std::sregex_iterator(); ++it) {
+            const std::string key = (*it)[1].str();
+            ++keys;
+            const std::size_t at  = key.find(signature);
+            const std::size_t end = at + signature.size();
+            if (at == std::string::npos || (end != key.size() && key[end] != '|')) {
+                if (foreign++ < 3) {
+                    std::cerr << "dense tune key of other schedule sets: " << key << '\n';
+                }
+            }
+        }
+        failures += check(keys > 0 && foreign == 0,
+                          "every shipped dense-tune key names this build's schedule sets (" +
+                              signature.substr(1) + "): " + std::to_string(foreign) + " of " +
+                              std::to_string(keys) + " do not");
+    }
 
     // fp8_e4m3fn_row_f32 runs fp8's register MMA: without an entry of its own it takes the fp8
     // (row BF16) A16 entry of its shape; an entry of its own wins.
