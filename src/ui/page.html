@@ -1785,7 +1785,12 @@ function planStateOf(row) {
 // stands for its one quantization.
 // The configuration choice's estimate of a planned row (/api/plan rows' "estimate",
 // src/product/choice): {decode_tok_s, prefill_tok_s, depth, request_seconds, ...}; null without one.
-function rowEstimate(row) { return row && row.estimate && row.estimate.decode_tok_s > 0 ? row.estimate : null; }
+// No speed where the weights alone exceed the card's free memory: the row cannot start at any
+// context, and a number there read as what it would run at (an RTX 3060 showed Q8_0 at 25 tok/s).
+function rowEstimate(row) {
+  if (row && row.plan && row.plan.reason_code === "weights_too_big") return null;
+  return row && row.estimate && row.estimate.decode_tok_s > 0 ? row.estimate : null;
+}
 // What every other value of an axis would change against the configuration choice (/api/plan's
 // "choice"): one row each, with the own context per stream, decode, prefill and a typical request's
 // time as ratios against the chosen (null where either side has none) and the KLD difference.
