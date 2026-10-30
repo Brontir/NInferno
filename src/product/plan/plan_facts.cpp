@@ -16,9 +16,13 @@
 #include <cstdlib>
 #include <filesystem>
 #include <limits>
+#include <map>
+#include <mutex>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <system_error>
 #include <vector>
 
@@ -790,6 +794,36 @@ PlanSourceFacts plan_facts_of_config(const json& config, std::uint64_t weight_by
     return finish(geometry_of_config(config), weight_bytes, basis);
 }
 
+namespace {
+PromptTailCallsSource& prompt_tail_calls_source() {
+    static PromptTailCallsSource source;
+    return source;
+}
+
+// The count renders the artifact's chat template twice; a start reads the facts several times, so
+// it is kept per artifact path and write time.
+std::optional<std::uint32_t> prompt_tail_calls_of(const std::filesystem::path& artifact) {
+    static std::mutex mutex;
+    static std::map<std::filesystem::path,
+                    std::pair<std::filesystem::file_time_type, std::optional<std::uint32_t>>>
+        counted;
+    std::error_code error;
+    const auto written = std::filesystem::last_write_time(artifact, error);
+    std::lock_guard lock(mutex);
+    if (const auto it = counted.find(artifact);
+        !error && it != counted.end() && it->second.first == written) {
+        return it->second.second;
+    }
+    const std::optional<std::uint32_t> calls = prompt_tail_calls_source()(artifact);
+    if (!error) { counted[artifact] = {written, calls}; }
+    return calls;
+}
+} // namespace
+
+void set_prompt_tail_calls_source(PromptTailCallsSource source) {
+    prompt_tail_calls_source() = std::move(source);
+}
+
 PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
     const auto& dir = reader.directory();
@@ -907,6 +941,11 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     }
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
+    if (prompt_tail_calls_source()) {
+        if (const auto calls = prompt_tail_calls_of(artifact)) {
+            out.shape.prompt_tail_calls = *calls;
+        }
+    }
     return out;
 }
 

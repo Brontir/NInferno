@@ -3,12 +3,14 @@
 from data/prefill/rows.json: per card, model and prompt length n, the measured prefill (perf_matrix.py
 --no-prefix-reuse server, --chars 8000 / 32000 / 95940: ~2K / 7K / 21K tokens).
 
-Per generation, t(n) = c0[card] + n 2P / (eta_lin[kind] peak_s8) + F_att(n) / (eta_att peak_bf16):
+Per generation, t(n) = tail + n 2P / (eta_lin[kind] peak_s8) + F_att(n) / (eta_att peak_bf16):
 P the active parameters, F_att(n) the attention flops of a prompt of n tokens (full layers over every
-earlier token, sliding ones over the window), c0 a request's fixed time (HTTP, one decode step; not in
-the product's model). An MoE's linears run at its chunk's share of the saturated rate (kMoeChunkShare,
-by the tokens each expert takes from the chunk the server ran): eta_lin is the saturated one. Linear in
-1/eta_lin, 1/eta_att and c0; relative least squares.
+earlier token, sliding ones over the window). An MoE's linears run at its chunk's share of the saturated
+rate (kMoeChunkShare, by the tokens each expert takes from the chunk the server ran): eta_lin is the
+saturated one. tail is a fact, not fitted (DECISIONS 62): the chat template's generation prompt splits
+the prefill, each piece after the last message a whole-model call that reads a decode step's weights,
+tail_calls x the active share of weight_bytes / DRAM bandwidth (the product prices it from its decode
+rate). Linear in 1/eta_lin and 1/eta_att; relative least squares over t(n) - tail.
 
     python fit_prefill.py data/prefill/rows.json
 """
@@ -48,26 +50,23 @@ def main():
             continue
         on = sorted({r["card"] for r in rs})
         kinds = sorted({models[r["model"]]["moe"] for r in rs})
-        A, y = [], []
+        A, y, tails = [], [], []
         for r in rs:
             m, c = models[r["model"]], cards[r["card"]]
             clock = c["sms"] * c["boost_mhz"] * 1e6
-            x = [0.0] * (len(kinds) + 1 + len(on))
+            x = [0.0] * (len(kinds) + 1)
             x[kinds.index(m["moe"])] = r["n"] * 2 * m["active_params"] / (clock * c["s8"] * chunk_share(m, r["chunk"]))
             x[len(kinds)] = att_flops(r["n"], m["full_width"], m["sliding_width"], m["window"]) / (clock * c["bf16"])
-            x[len(kinds) + 1 + on.index(r["card"])] = 1.0
+            tails.append(m["tail_calls"] * m["weight_bytes"] * m["active_params"] / m["params"] / (c["dram_gbs"] * 1e9))
             A.append(x)
             y.append(r["n"] / r["prefill"])
-        A, y = np.array(A), np.array(y)
-        coef, *_ = np.linalg.lstsq(A / y[:, None], np.ones(len(y)), rcond=None)
+        A, y, tails = np.array(A), np.array(y), np.array(tails)
+        coef, *_ = np.linalg.lstsq(A / y[:, None], 1 - tails / y, rcond=None)
         etas = "  ".join(f"eta_lin[{'moe' if k else 'dense'}] {1 / coef[i]:.3f}" for i, k in enumerate(kinds))
-        print(f"{gen} ({', '.join(on)}): {etas}  eta_att {1 / coef[len(kinds)]:.3f}  c0 "
-              + " ".join(f"{1e3 * v:.0f} ms" for v in coef[len(kinds) + 1:]))
-        product = A.copy()
-        product[:, len(kinds) + 1:] = 0
-        for r, a, b in zip(rs, A @ coef, product @ coef):
+        print(f"{gen} ({', '.join(on)}): {etas}  eta_att {1 / coef[len(kinds)]:.3f}")
+        for r, t, tail in zip(rs, A @ coef + tails, tails):
             print(f"   {r['card']:7s} {r['model']:36s} n {r['n']:6d}  measured {r['prefill']:7.0f}"
-                  f"  fit {100 * (r['n'] / a / r['prefill'] - 1):+5.1f} %  product {100 * (r['n'] / b / r['prefill'] - 1):+5.1f} %")
+                  f"  model {100 * (r['n'] / t / r['prefill'] - 1):+5.1f} %  (tail {1e3 * tail:4.1f} ms)")
 
 
 if __name__ == "__main__":

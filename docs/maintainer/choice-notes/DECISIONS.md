@@ -1507,6 +1507,58 @@ ahead of the best W4A8 tile on the RTX 5090 and the RTX 4090 for every 9B shape 
    filled rows for a prompt shorter than the window would take it off the request; which
    checkpoint to evict is the cache policy's call.
 
+**Item 1 done (30.10).** `ModelFacts::prompt_tail_calls` is read at start from the artifact's own
+frontend (`runtime::prompt_tail_calls`: the execution boundaries a one-message prompt's tail
+carries, the same at two prompt lengths); the choice prices each as one decode step of the
+candidate without its drafter, in the prefill rate and in a task's time, and its line says
+`prefill (3 tail calls)`. The calls of the RTX 4070 Ti profiles (the embedding's grid gives each
+call's tokens; 962 / 1912 / 2862-token requests):
+- Qwen 9B: 896 | 59 | 3 | 4, 1024 + 832 | 49 | 3 | 4, 1024 + 1024 + 768 | 39 | 3 | 4.
+- Gemma 12B (2863 tokens): 1024 + 1024 + 768 | 40 | 3 | 3 | 1.
+
+The last two (Qwen) or three (Gemma) are the generation prompt's: Qwen 3.5 counts 2 with thinking
+on or off (`<|im_start|>assistant\n` and the reasoning block; the boundary after `<think>\n` falls
+at the end or inside a token), Gemma 4 counts 3 (its template renders an empty thought channel when
+thinking is off, its default: `<|turn>model\n`, `<|channel>thought\n`, `<channel|>`). The call
+before them is the cache's: the automatic shared prefix at the last message's end (the frontend's
+EngineObserved candidate, OpenAI's default automatic boundary) is captured at the 64-token grid
+point below it (`neutral_frontier.h`: a capture off the grid would change the bytes after it), so
+the prompt's last chunk stops there and the 17 .. 80 tokens to the message's end are a call of
+their own, a weight read like the tail's (24 ms for Qwen 9B, 26 ms for Gemma 12B with its ring
+checkpoint's pause before it, item 3). The count adds it where a probe's opportunity is off the
+grid: Qwen 3.5 3, Gemma 4 4. The UI does not link the engine, so it prices none: its estimate of a
+request is short of the server's by those calls (10 .. 60 ms), and a near tie between candidates can
+fall the other way there (a later step: the count written into the artifact at conversion, where
+the UI reads its facts). Clean server sweeps (`prompt_ms` at 962 .. 7612 tokens, three repeats, the
+kit's flags) against two weight reads over the DRAM rate:
+
+| card | model | slope tok/s | intercept ms | 2 x weights / DRAM ms |
+|---|---|---|---|---|
+| RTX 2080 Ti | Qwen 9B Q4_K_M | 2583 | 24 | 18 |
+| RTX 3060 | Qwen 9B Q4_K_M | 2110 | 46 | 32 |
+| RTX 4070 Ti | Qwen 9B Q4_K_M | 5973 | 33 | 23 |
+| RTX 4060 Ti | Qwen 27B Q4_K_XL | 1081 | 123 | 104 |
+| RTX 5070 Ti | Qwen 27B Q4_K_XL | 2195 | 59 | 34 |
+| RTX 5090 | Qwen 27B Q4_K_XL | 4906 | 35 | 17 |
+| RTX 2080 Ti | Gemma 12B Q4_K_M | 1389 | 41 | 23 |
+| RTX 3060 | Gemma 12B Q4_K_M | 1246 | 77 | 39 |
+| RTX 4090 | Qwen 35B-A3B Q4_K_M | 20906 | 27 | (MoE: active share) |
+| RTX 5090 | Qwen 35B-A3B Q4_K_M | 25362 | 16 | (MoE: active share) |
+| RTX 5090 | gpt-oss 20B MXFP4 | 29882 | 7 | |
+
+The two reads are the floor of every dense intercept; the rest (1.2 .. 2.1 x) is the small GEMMs'
+and the matrix kernels' partial waves at T = 3 and 4 (item 2 removes both). The GV100's Qwen
+intercept (113 ms against 13) is under a server profile.
+
+`fit_prefill.py` now takes the tail as that fact instead of a fitted `c0` (its rows ran with `--no-prefix-reuse`: Qwen 2 calls, Gemma 3). The attention's share
+becomes physical on Ada (0.75) and ga10x (0.71); not on gb20x (1.07), where the RTX 5090 runs 4 ..
+14 % below the fit on the dense models and the RTX 5070 Ti 3 .. 8 % above it: one card size's
+partial waves at chunk 1024 (170 SMs against 70) that one rate per generation cannot hold. On Turing
+and Volta one attention share cannot hold Gemma and Qwen together (GV100 Gemma 12B 1476 tok/s at
+1.9K tokens and 738 at 21K, Qwen 9B 2950 and 2864): Gemma's 256- and 512-wide heads on the pre-Ampere
+attention path are the missing fact. The product's constants stay as they are until those two facts
+are in; the refit is the diagnosis.
+
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
 **What the profiles showed.** Every chat request on the RTX 4070 Ti ran one whole-model call more

@@ -5,56 +5,64 @@
    "sms": 128,
    "boost_mhz": 2520,
    "bf16": 512,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 1008
   },
   "l4070": {
    "generation": "ada",
    "sms": 60,
    "boost_mhz": 2610,
    "bf16": 512,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 504
   },
   "l5070": {
    "generation": "gb20x",
    "sms": 70,
    "boost_mhz": 2452,
    "bf16": 512,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 896
   },
   "l5090": {
    "generation": "gb20x",
    "sms": 170,
    "boost_mhz": 2407,
    "bf16": 512,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 1792
   },
   "l3060": {
    "generation": "ga10x",
    "sms": 28,
    "boost_mhz": 1777,
    "bf16": 512,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 360
   },
   "l2080": {
    "generation": "turing",
    "sms": 68,
    "boost_mhz": 1545,
    "bf16": 1536,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 616
   },
   "l4060": {
    "generation": "ada",
    "sms": 34,
    "boost_mhz": 2535,
    "bf16": 512,
-   "s8": 2048
+   "s8": 2048,
+   "dram_gbs": 288
   },
   "lgv100": {
    "generation": "volta",
    "sms": 80,
    "boost_mhz": 1627,
    "bf16": 1536,
-   "s8": 1536
+   "s8": 1536,
+   "dram_gbs": 870
   }
  },
  "models": {
@@ -65,7 +73,10 @@
    "window": 1024,
    "moe": false,
    "experts_per_token": 0,
-   "experts": 0
+   "experts": 0,
+   "weight_bytes": 7121861440,
+   "params": 11922309120.0,
+   "tail_calls": 3
   },
   "Qwen3.5-9B-GGUF_Q4_K_M": {
    "active_params": 7798259712.0,
@@ -74,7 +85,10 @@
    "window": 0,
    "moe": false,
    "experts_per_token": 0,
-   "experts": 0
+   "experts": 0,
+   "weight_bytes": 5680522464,
+   "params": 7798259712.0,
+   "tail_calls": 2
   },
   "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_XL": {
    "active_params": 3825434624.0,
@@ -83,7 +97,10 @@
    "window": 1024,
    "moe": true,
    "experts_per_token": 8,
-   "experts": 128
+   "experts": 128,
+   "weight_bytes": 17010980576,
+   "params": 25200000000.0,
+   "tail_calls": 3
   },
   "Qwen3.8-27B-GGUF_UD-Q4_K_XL": {
    "active_params": 25106841600.0,
@@ -92,7 +109,10 @@
    "window": 0,
    "moe": false,
    "experts_per_token": 0,
-   "experts": 0
+   "experts": 0,
+   "weight_bytes": 17559178144,
+   "params": 25106841600.0,
+   "tail_calls": 2
   },
   "gemma-4-31B-it-GGUF_Q4_K_M": {
    "active_params": 30806114304.0,
@@ -101,7 +121,10 @@
    "window": 1024,
    "moe": false,
    "experts_per_token": 0,
-   "experts": 0
+   "experts": 0,
+   "weight_bytes": 18323733440,
+   "params": 30806114304.0,
+   "tail_calls": 3
   },
   "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS": {
    "active_params": 3825434624.0,
@@ -110,7 +133,10 @@
    "window": 1024,
    "moe": true,
    "experts_per_token": 8,
-   "experts": 128
+   "experts": 128,
+   "weight_bytes": 11416548832,
+   "params": 25200000000.0,
+   "tail_calls": 3
   },
   "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M": {
    "active_params": 2838364160.0,
@@ -119,7 +145,10 @@
    "window": 0,
    "moe": true,
    "experts_per_token": 8,
-   "experts": 256
+   "experts": 256,
+   "weight_bytes": 22134528992,
+   "params": 35000000000.0,
+   "tail_calls": 2
   },
   "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS": {
    "active_params": 2838364160.0,
@@ -128,7 +157,10 @@
    "window": 0,
    "moe": true,
    "experts_per_token": 8,
-   "experts": 256
+   "experts": 256,
+   "weight_bytes": 13211155424,
+   "params": 35000000000.0,
+   "tail_calls": 2
   },
   "Qwen3.8-27B-GGUF_UD-IQ3_XXS": {
    "active_params": 25106841600.0,
@@ -137,7 +169,10 @@
    "window": 0,
    "moe": false,
    "experts_per_token": 0,
-   "experts": 0
+   "experts": 0,
+   "weight_bytes": 10934860704,
+   "params": 25106841600.0,
+   "tail_calls": 2
   }
  },
  "rows": [
