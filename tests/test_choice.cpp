@@ -134,8 +134,7 @@ void reproduces_the_measurements(const json& fixture) {
             std::cout << "MoE " << row.at("card").get<std::string>() << " " << q << " x"
                       << row.at("concurrency").get<std::uint32_t>() << " at " << row.at("context").get<double>()
                       << ": predicted " << s.decode_per_stream << " measured " << row.at("decode").get<double>()
-                      << "
-";
+                      << '\n';
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
