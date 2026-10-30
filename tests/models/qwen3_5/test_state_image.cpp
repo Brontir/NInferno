@@ -348,7 +348,7 @@ void test_ring_live_rows(ninferno::DeviceContext& device, bool fp8) {
     const auto handle = host.allocate();
     expect(handle.has_value(), "live-row Host slot");
     const auto work = q36::state_image_transfer_work(planned.layout.host);
-    expect(work.payload_bytes == (fp8 ? 7U * 2U + 2U * 3U * (8U * 6U + 6U * 2U * 4U) +
+    expect(work.payload_bytes == (fp8 ? 7U * 2U + 2U * 3U * (8U * 6U * 2U + 6U * 2U * 4U) +
                                             2U * (16U * 2U + 2U * 4U)
                                       : 7U * 2U + 2U * 3U * (8U * 6U * 2U * 2U) +
                                             2U * (16U * 2U * 2U)),
