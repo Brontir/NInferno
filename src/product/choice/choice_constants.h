@@ -324,6 +324,12 @@ enum class TileKernel : std::uint8_t {
 // `resident` tiles' time: the RTX 5090's N 4096 calls at a 1024-token chunk (1024 CTAs) take 4 rounds
 // of 340, 8 tiles' time, not 6.02 waves of 170 (DECISIONS 66): the last round's 4 CTAs, one a SM, took
 // a whole round, a tile alone on a SM no faster than two sharing it. A row without a read keeps one.
+// A grid of no more CTAs than SMs runs one a SM, alone: it takes kLoneTile tiles' time, between the
+// one a tile's c0 + K c1 gives (read on two CTAs sharing a SM, each at half its rate) and the round's
+// two. Read on Qwen3.5 9B's Gated DeltaNet b/a projection (16 CTAs, K 4096; the census's 48 calls a
+// prompt) against its tile's time: RTX 4090 27.5 / 21.1 us, 4060 Ti 28.4 / 21.0, 4070 Ti 26.1 /
+// 20.4, RTX 3060 39.3 / 30.7, 5070 Ti 25.5 / 19.9, 5090 27.1 / 20.3: 1.28-1.35 on three generations.
+inline constexpr double kLoneTile = 1.3;
 struct TileCost {
     std::string_view generation;
     TileKernel kernel;
