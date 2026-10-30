@@ -73,7 +73,8 @@ void engine_flags() {
     DecodePacingOptions pacing;
     MaintainerOptions m;
     const auto parse = [&](std::string_view flag, std::string value) {
-        return product::parse_engine_flag(flag, [&] { return value; }, pacing, m);
+        return product::parse_engine_flag(flag, [&] { return value; }, pacing, m,
+                                          product::TunerFlags::Refused);
     };
     check(parse("--prefill-route", "mmq") && m.prefill_route == PrefillRoute::Mmq,
           "--prefill-route mmq was not parsed");
