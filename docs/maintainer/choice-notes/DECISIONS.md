@@ -1826,6 +1826,156 @@ eight rows once its constants were gone.
     banks at 0.28: about 3-4 weights a SM-clock unpacked on the CUDA cores, not bytes (79.7 tok/s,
     the estimate 185).
 
+## 66. Prefill linears from a tile's cost (30.10, open, measured)
+
+A prefill linear runs as a grid of tiles: a tile of the int8 kernels (the dense `w4a8_kernel`, the
+MoE experts' `moe_w4a8_kernel`) is 64 tokens x 64 output rows, the whole K deep. The census (nsys of
+one ~1.8K-token prompt after a warm-up, master kit build; the RTX 4090 without PDL, the RTX 5070 Ti
+on a lab build with `pdl::supported()` false, so a kernel's time is its own) gives one law for every
+such call:
+
+    t(call) = waves * (c0 + K * c1),   waves = CTAs / SMs,   CTAs = ceil(T / 64) * N / 64
+
+| kernel | generation | c0 | c1 (a K step) | calls it was read from |
+|---|---|---|---|---|
+| int8 tile (W4A8) | Ada | 1.33 us | 4.82 ns | Qwen3.6 experts K 2048 / 512, gpt-oss K 2880; dense K 2048 |
+| int8 tile (W4A8) | Blackwell | 0.5 us | 4.74 ns | dense K 2048 / 2880 / 4096 |
+| block-scaled MX (MXFP4 experts) | Blackwell | ~0.5 us | ~3.4 ns | gpt-oss experts K 2880 |
+| 16-bit register MMA (A16 experts) | Ada | 0.93 us | 7.1 ns | Qwen3.6 UD-Q3_K_S experts K 2048 (IQ3_XXS) / 512 (IQ3_S), a 64 x 64 tile's share |
+| 16-bit register MMA (A16 experts) | Blackwell | 0.32 us | 6.1 ns | the same |
+
+On the RTX 4090 the law gives the dense calls of Qwen3.6-35B-A3B within 1-6 % (the Gated DeltaNet
+in-projection 11.2 against 11.5 us a CTA, attention's qkv 370 against 375 us, the shared expert's
+gate/up 45 against 47 us) and gpt-oss's experts from Qwen's (15.2 against 15.0 / 13.6 us a CTA).
+In SM-clocks a K step of the int8 tile is one number across generations: 12.1 on the RTX 4090
+(4.82 ns at 2520 MHz), 12.8 on the 4070 Ti and 12.5 on the RTX 3060 (Ampere: 7.05 ns at 1777 MHz;
+both read from Qwen3.5 9B Q8_0's calls at K 4096 and 12288 once the grid runs token-major,
+PR #249), about 11.6 on the RTX 5070 Ti: the tile's cost is a count of clocks, the card's clock
+gives its time. Between the two K the line puts c0 slightly below zero on the Ampere and the
+4070 Ti (the down projection at K 12288 has fewer CTAs a SM): c0 stays the 4090's read until a
+third K is read. c1 is the same in nanoseconds on both generations at their different clocks: 1.7 int8 TOPS a SM,
+a third of the tensor peak, in every call. The 16-bit register MMA's K step costs only 1.5x the int8 tile's at a quarter of
+its tensor peak: both are bound by decoding the weights on the CUDA cores, not by the MMA (the
+same bound the decode census found for IQ3_XXS's routed kernels, DECISIONS 65); the int8 tile's
+step is the same for Q8_0, Q4_K and MXFP4 weights, the 16-bit one's is read on IQ3 weights only.
+
+An MoE's expert grid counts jobs, not tokens: a job is an expert's run of up to 64 of the chunk's
+slots (token x pick). The host launches the bound before the routing is known (`ops/moe`
+`max_jobs`): ceil(slots / 64) + min(slots, experts) rows of tiles, every expert's partial job
+counted; the rows past the device's job total exit at once. The census's grids are that bound
+exactly: Qwen3.6-35B-A3B 356 / 384 / 484 rows at chunks of 795 / 1024 / 1819 tokens (256 experts,
+8 picks), gpt-oss-20b 96 at 1024 (32, 4), Gemma 4 26B-A4B 342 at 1714 (128, 8). With K and the
+jobs the law gives the RTX 4090's Qwen3.6 experts at 0.61 of gpt-oss's efficiency; measured 0.62.
+Gemma 4 26B-A4B UD-Q4_K_M on the RTX 4090 (1714 tokens): its experts' gate/up (K 2816) 879 against
+955 us a layer, the down (K 704) 557 against 584; its dense int8 calls 402 / 209 / 211 against
+411 / 225 / 203 us (N 8192 / 4224 / 2816).
+
+What this replaces: the per-generation prefill efficiencies (kPrefillEta's rows, kPrefillTilesEta,
+the MoE rows and kMoeChunkShare) are one number a generation for every shape; a narrow model's
+linears (Qwen3.6's 2048 hidden) are 11 % (Ada) to 31 % (Blackwell) slower than its row says, and
+an MoE's expert route (int8, the 16-bit register MMA, MXFP4) changes the kernel, not a share.
+
+**Checked whole** (every linear of the model from its geometry, the waves per call rounded up,
+against the census's kernel time): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090, the experts 45.7
+against 50.5 ms, the dense int8 calls 28.2 against 30.0 ms; gpt-oss-20b's experts 67.9 against
+68.6 ms (RTX 4090) and 83.7 against 80.0 ms (RTX 5070 Ti, MX). Not yet priced: the activations'
+quantization, attention, the recurrence, the MoE's routing kernels (about a quarter of the
+prompt's kernel time) and the prompt's tail calls (DECISIONS 62).
+
+**The prototype against the MoE campaign** (GEMMs by the tile law with these jobs, the routing's
+gather and scatter at T k hidden 2 bytes twice a layer over the DRAM rate, attention as
+before; not yet the recurrence, the small kernels and the prompt's tail calls): gpt-oss-20b -7 ..
++10 % on the RTX 4090 and 5070 Ti at 2K .. 21K tokens; Qwen3.6-35B-A3B +0 .. +31 % on the RTX 4090
+(the missing terms, a fifth of a 2K prompt there), +24 .. +75 % on Blackwell before the jobs
+bound (at chunk 1024 the bound's 384 rows hold 21 slots a job, the 4090's 2048-token chunk 30).
+
+Done: the plan's linear shapes from the geometry it reads (`runtime::PlanLinear`: attention,
+recurrent, FFN, shared expert, experts) reach the choice, and `prefill_linears_seconds` prices
+an MoE's linears by these tiles (`kTileCost`, the jobs bound; Qwen3.6 UD-Q4_K_M on the RTX 4090:
+79 against the census's 86.4 ms), not yet in the estimate. What the rest of a prompt is (the
+RTX 4090's Qwen3.6 UD-Q4_K_M, one 1819-token prompt, the window from the 2-second pause: 103.3 ms
+of a 106 ms request): the experts 45.1 ms (the law 45.9), the int8 dense calls 29.9 (28.2), the
+routing's gather and scatter 4.3 (5.0); not yet priced: the Gated DeltaNet's recurrence,
+convolution, preparation and gating 7.6, the prompt's tail calls about 7, the router, plan and
+selection 2.8, the norms and the activations' quantization about 3, attention 2.4.
+
+A dense model's Q8 linears by the same law (Qwen3.5 9B Q8_0, one 1819-token prompt in chunks of
+1024 and 795, token-major grid since PR #249; its linears qkv 10240 x 4096 and o 4096 x 4096 in 8
+layers, the Gated DeltaNet's 12288 x 4096 and 4096 x 4096 in 24, the FFN's 24576 x 4096 and
+4096 x 12288 in 32; the int8 row in SM-clocks): predicted / measured kernel time RTX 3060 808 /
+767 ms, 4060 Ti 467 / 440, 4070 Ti 257 / 246, 4090 125 / 127, 5070 Ti 217 / 212 (-2 .. +6 %,
+three generations, from the SMs and the clock alone). The rest of that prompt: the two tail
+calls (DECISIONS 62, `r8_kernel` at a decode step's reads: 16.7 ms on the 4090, two weights over
+the DRAM rate 18.6), attention 2.6 ms, and the small kernels (the recurrence 3.5, the activations'
+quantization 3.3, the convolution 1.4, the norms 1.7, the preparation 0.9: about 10 % of the
+prompt on the 4090, 8 % on the RTX 3060). The small kernels read activations a few times a layer:
+on the 4090 from its 72 MB L2 (the quantization 4.7 us a call against 12.5 at the DRAM rate),
+on the RTX 3060 from DRAM (26 against 35); their bytes against the L2 is the next term.
+
+The small kernels split by what bounds them (Qwen3.5 9B Q8_0, the 1819-token prompt, the census
+outside the linears, the tail calls and attention; seven cards):
+
+| card | Gated DeltaNet scan ms | x SMs x GHz | the rest ms | x DRAM TB/s |
+|---|---|---|---|---|
+| RTX 3060 | 23.4 | 1165 | 40.4 | 14.6 |
+| RTX 4060 Ti | 13.0 | 1121 | 22.3 | 6.4 |
+| RTX 4070 Ti | 9.3 | 1457 | 12.3 | 6.2 |
+| RTX 4090 | 4.4 | 1419 | 7.1 | 7.2 |
+| RTX 5070 Ti | 5.3 | 909 | 8.8 | 7.9 |
+| RTX 5090 | 3.2 | 1309 | 4.7 | 8.4 |
+| RTX 2080 Ti | 42.7 | 4483 | 34.2 | 21.1 |
+
+The chunked scan is a count of SM-clocks (about 1.1-1.5 G on Ampere and Ada, 0.9-1.3 G on
+Blackwell, three times that on Turing, whose scan has no tensor path): about 30 K SM-clocks a
+token a recurrent layer. The rest (the activations' quantization, the norms, the convolution,
+the gates) is bytes: about 7 GB on Ada and Blackwell, some 15 passes over a token's 8 KB hidden
+row a layer; the RTX 3060's 3 MB L2 and Turing's kernels double it.
+
+`prefill_small_seconds` prices them so (`kSmallKernelCost`: the scan's SM-clocks a token and state
+element, 0.058 Ada / 0.048 Blackwell / 0.051 Ampere / 0.196 Turing; the rest's bytes a token, layer
+and hidden element, 30 / 30 / 60 / 88), within -16 .. +14 % of the seven points it was read from.
+**Checked on another model**, predicted before reading (Gemma 4 12B Q4_K_M, no recurrence, hidden
+3840 in 48 layers, a 1714-token prompt; the census's norms, the q/k/v preparation and the
+activations' quantization, MMQ's epilogue left with its linears): RTX 4090 9.4 against 12.9 ms,
+4070 Ti 18.8 / 23.9, 4060 Ti 33.0 / 43.7, 5070 Ti 10.6 / 12.5 (its K-quant runs the int8 tiles),
+RTX 3060 52.4 / 53.5, 2080 Ti 45.0 / 35.8: -27 .. +26 %. Ada's shortfall is MMQ's quantization
+(q8_1 of every linear's input, 5.9 of the 4090's 12.9 ms against the Q8 tiles' 3.3 on Qwen): the
+quantization's bytes follow the route's codec and the linears' input widths, the next refinement.
+At 5-10 % of a prompt the term's error is 1-3 % of it.
+
+**In the estimate** (`linear_prefill` through `tiled_chunk_seconds`): a chunk on the int8 route
+whose linears have a tile row (a dense model's Q8_0, an MoE's banks with Q8_0 beside them) costs its
+linears by the tiles plus the small kernels; attention and the tail calls as before; every other
+route keeps its generation's share. On the choice test's Q8_0 points (Qwen3.5 9B on seven cards,
+Gemma 4 12B on three, the fixture's models now carrying their linears): rms 7.6 % (worst 18 %),
+against 8.9 % (worst 25 %) for the clock-count share of DECISIONS 67. What closed most of the RTX
+5090's gap is the grid's rounds: the int8 tile holds two CTAs a SM (128 threads at 177-255
+registers, 40 KB), so a grid runs in rounds of SMs x 2, each two tiles' time; the 5090's N 4096
+calls at a 1024-token chunk (1024 CTAs) take 4 rounds of 340, 8 tiles' time, where 6.02 waves of
+170 said 7 (`TileCost::resident`; the other cards move 0-3 %). The 5090 is now +6 .. +17 %, the
+RTX 4090's Gemma +10 .. +18 %; its clock is not the cause (2546 MHz on average over the prompt
+against its reference 2407). The MoE campaign's 16-GB quants (UD-IQ3_XXS on the
+RTX 4060 Ti and 5070 Ti, master f8d4399d) keep the shares: their linears beside the experts are
+Q6_K (`w4a8_ws_kernel` on Blackwell, 55-66 ms of a 230 ms prompt; the Q6_K tile and MMQ on Ada),
+a tile without a clock count yet.
+An MoE's whole prefill through the tiles (the choice test's `prefills_moe_by_tiles`, master
+f8d4399d's rows at 2K / 7K / 22K tokens): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090 +7 / +7 / +0 %,
+the RTX 5090 +13 / +8 / -1 %; Gemma 4 26B-A4B UD-Q4_K_M on the RTX 4090 +12 / +13 / +11 % with its
+two tail calls (the census: two decode steps' kernels after the chunk, 13 ms). Not yet priced: the
+router and the selection (1.7-2.8 ms), Gemma's heavier norms (its small kernels ran 21-27 % over the
+term on Ada, DECISIONS 66 above).
+Measured clocks (nsys GPU metrics over the prefill window): the RTX 4090 runs Qwen3.5 9B Q8_0's
+prompt at 2422 MHz on average (2225-2535) against its reference 2520; the RTX 2080 Ti board at
+1860 MHz (power-capped) against 1545: the "power-limited clock" reading of the 2080 Ti's Q8 gap is
+refuted (its clock is above the reference); its int8 tile takes 30-34 SM-clocks a K step at that
+clock, 2.5-2.8x Ada's, not the 2x of half the CUDA cores a SM.
+
+Next: a dense K-quant's prefill runs
+ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
+grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
+kernels, Volta's dp4a route; then the estimate, checked against data/prefill/rows.json and the
+MoE campaign.
+
 ## 67. A dense model's Q8 prefill from the int8 tile's clock count (30.10, measured)
 
 **What changed.** Since PR #249 the 64-token W4A8 tiles (the Q8 codec of `q8_prefill_a8` among

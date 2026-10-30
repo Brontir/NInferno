@@ -71,6 +71,13 @@ struct DrafterOption {
     bool measured = true;
 };
 
+// A trunk linear by shape (runtime::PlanLinear): N outputs x K inputs, run per_token times a token
+// (a routed expert's bank: picks x layers, its grid counting jobs, not tokens).
+struct LinearShape {
+    double n = 0, k = 0, per_token = 0;
+    bool expert = false;
+};
+
 struct ModelFacts {
     std::string family;               // model_type (qwen3_5_text, gemma4_text, ...)
     double params = 0;                // every weight
@@ -98,6 +105,10 @@ struct ModelFacts {
     double full_attention_width = 0, sliding_attention_width = 0;
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
+    std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)
+    // The recurrent layers' state of one sequence, elements over every layer (0: none); a prefill's
+    // chunked scan runs over it once a token.
+    double recurrent_state_elements = 0;
     // The drafters it carries, beside plain decode (Candidate::drafter 0); and the one the server
     // takes where the worth does not decide (its resolved profile's: an index into the candidates'
     // drafters, 0 for plain).
@@ -107,6 +118,9 @@ struct ModelFacts {
 };
 
 // One quantization of the model (a listing row).
+// The GEMM an MoE's routed banks prefill on (runtime::ExpertPrefill, product/plan expert_prefill_of).
+enum class ExpertBanks : std::uint8_t { Unknown, Int8, A16, Mxfp4 };
+
 struct QuantOption {
     std::string label;          // as --quant takes it
     double bits_per_weight = 0;
@@ -122,6 +136,10 @@ struct QuantOption {
     // q8_prefill_a8); an Other's decode speed is transferred and it wins no decision on worth
     // (plan_quants).
     WeightClass weights = WeightClass::KQuant;
+    // An MoE's prefill apart (DECISIONS 66): its routed banks' GEMM, and the class of its linears
+    // outside them (attention, the shared expert); Unknown: the MoE rows price the whole.
+    ExpertBanks expert_banks = ExpertBanks::Unknown;
+    WeightClass rest_weights = WeightClass::KQuant;
 };
 
 // The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
@@ -229,6 +247,20 @@ struct Reference {
     bool chunk_decides = false;
     std::string why; // "" when the factors decide, else why the family's defaults stand
 };
+// A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's rounds
+// of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
+// seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0
+// weights; an MoE: its banks' route and Q8_0 beside them).
+// `transferred` (when given) is set where a tile row rests on one card.
+[[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
+                                             const QuantOption& quant, double tokens,
+                                             bool* transferred = nullptr) noexcept;
+// The rest of a prefill's chunk of `tokens` beside its linears and attention (DECISIONS 66): the
+// recurrent layers' chunked scan in SM-clocks, the norms, activations' quantization, convolution
+// and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
+[[nodiscard]] double prefill_small_seconds(const ModelFacts& model, const CardFacts& card,
+                                           double tokens) noexcept;
+
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its
 // generation's factors decide and its family's switch terms rest on two cards (accuracy_decides);

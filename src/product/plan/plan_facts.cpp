@@ -1,12 +1,16 @@
 #include "core/device_traits.h"
 #include "product/plan/plan_facts.h"
 
+#include "artifact/formats.h"
 #include "artifact/reader.h"
 #include "artifact/routed_experts.h"
 #include "convert/dense.h"
+#include "convert/expert_layout.h"
+#include "convert/formats.h"
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
 #include "core/device_class.h"
+#include "core/ggml_frag.h"
 #include "core/machine_facts.h"
 
 #include <cuda_runtime.h>
@@ -20,6 +24,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <functional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -110,6 +115,10 @@ struct Geometry {
     double ssm_inner = 0, ssm_state = 0, ssm_groups = 0, ssm_heads = 0, ssm_conv = 0;
     double ffn = 0, experts = 0, experts_used = 0, expert_ffn = 0, shared_ffn = 0;
     double ffn_matrices       = 3;     // gate, up, down; NemotronH's relu^2 experts have no gate
+    // Each attention layer's projections (add_attention): queries, keys and values as one call,
+    // the output as another.
+    std::vector<runtime::PlanLinear> attention_linears;
+    std::vector<double> attention_queries; // each qkv call's query width (heads x key)
     bool dense_beside_experts = false; // Gemma 4 MoE: every layer runs its MLP and its experts
     bool tied = false, mtp = false;
 };
@@ -120,6 +129,10 @@ void add_attention(Geometry& g, bool sliding, bool own_kv, double heads, double 
                    double key, double value, bool keys_are_values = false) {
     ++g.attention_layers;
     g.attention_params += g.hidden * heads * (key + value);
+    const double kv = own_kv && kv_heads > 0 ? kv_heads * (keys_are_values ? key : key + value) : 0;
+    g.attention_linears.push_back({heads * key + kv, static_cast<double>(g.hidden), 1, false});
+    g.attention_queries.push_back(heads * key);
+    g.attention_linears.push_back({static_cast<double>(g.hidden), heads * value, 1, false});
     (sliding ? g.sliding_attention_width : g.full_attention_width) += heads * (key + value);
     if (!own_kv || kv_heads <= 0) { return; } // reads an earlier layer's keys and values
     g.attention_params += g.hidden * kv_heads * (keys_are_values ? key : key + value);
@@ -281,6 +294,31 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
         const double f      = g.ffn_layers;
         const double a      = g.attention_params;
         m.params = a + r * mixer + f * (dense + shared + routed) + table * (g.tied ? 1 : 2);
+        // The linears by shape (DECISIONS 66). Qwen 3.5's attention gates its output: its query
+        // projection is twice the heads' width.
+        const bool gate = g.model_type.rfind("qwen3_5", 0) == 0;
+        for (std::size_t i = 0; i < g.attention_linears.size(); ++i) {
+            runtime::PlanLinear l = g.attention_linears[i];
+            if (gate && i % 2 == 0) { l.n += g.attention_queries[i / 2]; }
+            m.linears.push_back(l);
+        }
+        if (r > 0 && g.ssm_inner > 0) {
+            m.linears.push_back({2 * g.ssm_inner + 2 * g.ssm_groups * g.ssm_state, hidden, r, false});
+            m.linears.push_back({hidden, g.ssm_inner, r, false});
+        }
+        const double up = g.ffn_matrices - 1; // gate and up, or up alone
+        if (f > 0 && dense_width > 0) {
+            m.linears.push_back({up * dense_width, hidden, f, false});
+            m.linears.push_back({hidden, dense_width, f, false});
+        }
+        if (f > 0 && g.shared_ffn > 0) {
+            m.linears.push_back({up * g.shared_ffn, hidden, f, false});
+            m.linears.push_back({hidden, g.shared_ffn, f, false});
+        }
+        if (moe && f > 0) {
+            m.linears.push_back({up * g.expert_ffn, hidden, f * g.experts_used, true});
+            m.linears.push_back({hidden, g.expert_ffn, f * g.experts_used, true});
+        }
         s.active_params        = a + r * mixer + f * (dense + shared + taken) + table;
         s.routed_expert_params = f * routed;
     }
@@ -322,7 +360,9 @@ std::vector<bool> gguf_sliding(const json& metadata, const std::string& arch, st
     return out;
 }
 
-Geometry geometry_of_gguf(const json& md) {
+// `has_tensor` (the file's tensor table, when read): a layer without its own value projection keeps
+// its keys as its values (Gemma 4's full layers, attention_k_eq_v: gguf_model.cpp).
+Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::string&)>& has_tensor = nullptr) {
     Geometry g;
     g.architecture = md.value("general.architecture", std::string());
     if (g.architecture.empty()) { return g; }
@@ -389,8 +429,10 @@ Geometry geometry_of_gguf(const json& md) {
             continue;
         }
         if (kv[i] <= 0) { continue; } // a feed-forward-only layer (NemotronH MoE)
+        const bool keys_are_values = has_tensor && has_tensor("blk." + std::to_string(i) + ".attn_k.weight") &&
+                                     !has_tensor("blk." + std::to_string(i) + ".attn_v.weight");
         add_attention(g, sliding[i], i < first_shared, heads[i], kv[i],
-                      sliding[i] ? key_swa : key, sliding[i] ? value_swa : value);
+                      sliding[i] ? key_swa : key, sliding[i] ? value_swa : value, keys_are_values);
     }
     g.ssm_inner    = number(md, p + "ssm.inner_size");
     g.ssm_state    = number(md, p + "ssm.state_size");
@@ -431,6 +473,54 @@ std::string format_of_ggml(std::uint32_t type) {
         return "ggml_" + g::type_name(type);
     }
 }
+
+// The routed banks' prefill GEMM (runtime::ExpertPrefill), as ops/moe w4a8_banks_admit decides it:
+// the grouped W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the
+// formats generic::w4a8_supports names) and K a multiple of 32, in fragment order only the formats
+// ggml_frag_w4a8 names; a layer whose every bank it reads prefills on int8 activations, any other on
+// the 16-bit register MMA; MXFP4 banks are their own route. The trunk takes the route of the most
+// of its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
+class ExpertRoutes {
+public:
+    void add(const std::string& layer, const std::string& format, const std::string& layout,
+             std::uint64_t k, std::uint64_t bytes) {
+        if (format == "bf16" || format == "fp32" || format == "fp16" || format == "int32") { return; }
+        Layer& l = layers_[layer];
+        l.bytes += bytes;
+        try {
+            const QType q = artifact::parse_format(format);
+            const QuantLayout at =
+                layout.empty() ? convert::expert_bank_layout(q, k, convert::ExpertLayout::Auto,
+                                                             ggml_published_layout(q))
+                               : artifact::parse_layout(layout);
+            const bool frag = at == QuantLayout::GgmlFrag;
+            l.mxfp4 = l.mxfp4 && q == QType::MXFP4;
+            l.int8  = l.int8 && k % 32 == 0 &&
+                     convert::kept_block_policy(q) == artifact::ActivationPolicy::AllowA8 &&
+                     (!frag || ggml_frag_w4a8(q));
+        } catch (const std::exception&) { l.known = false; }
+    }
+    [[nodiscard]] runtime::ExpertPrefill route() const {
+        std::array<std::uint64_t, 4> by{};
+        for (const auto& [name, l] : layers_) {
+            const auto r = !l.known ? runtime::ExpertPrefill::Unknown
+                           : l.mxfp4 ? runtime::ExpertPrefill::Mxfp4
+                           : l.int8  ? runtime::ExpertPrefill::Int8
+                                     : runtime::ExpertPrefill::A16;
+            by[static_cast<std::size_t>(r)] += l.bytes;
+        }
+        const auto most = std::max_element(by.begin() + 1, by.end());
+        return *most > by[0] ? static_cast<runtime::ExpertPrefill>(most - by.begin())
+                             : runtime::ExpertPrefill::Unknown;
+    }
+
+private:
+    struct Layer {
+        std::uint64_t bytes = 0;
+        bool known = true, int8 = true, mxfp4 = true;
+    };
+    std::map<std::string, Layer> layers_;
+};
 
 // ---- config.json and the artifact's text config.
 
@@ -717,9 +807,11 @@ PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t 
 }
 
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
-    Geometry g      = geometry_of_gguf(head.metadata);
+    std::set<std::string> names;
+    for (const auto& t : head.tensors) { names.insert(t.name); }
+    Geometry g      = geometry_of_gguf(head.metadata, [&names](const std::string& n) { return names.count(n) > 0; });
     bool has_output = false;
-    std::set<std::string> formats, layer_formats;
+    std::set<std::string> formats, layer_formats, rest_formats;
     std::uint64_t tensor_bytes = 0;
     // The NextN blocks after the trunk (blk.<b>.* for b at least the trunk's layers): the MTP
     // layers the converter moves to the mtp component, uploaded under MTP only.
@@ -738,6 +830,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     double elements = 0;
     std::uint64_t input_table_bytes = 0;
     std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
+    ExpertRoutes expert_routes;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
@@ -750,6 +843,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         // Routed expert banks (ffn_{gate,up,down}_exps; the shared expert is *_shexp).
         if (block && t.name.find("_exps.") != std::string::npos) {
             (mtp ? mtp_routed : routed) += t.bytes;
+            if (!mtp && !t.ne.empty()) {
+                expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0], t.bytes);
+            }
         }
         has_output = has_output || t.name == "output.weight";
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
@@ -759,6 +855,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         // The trunk's layers: not the tables, not the NextN blocks (priced apart, off plain decode).
         if (t.name != "token_embd.weight" && t.name != "output.weight" && !mtp) {
             layer_formats.insert(format_of_ggml(t.type));
+            if (t.name.find("_exps.") == std::string::npos) { rest_formats.insert(format_of_ggml(t.type)); }
         }
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
@@ -772,6 +869,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
+    out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
         out.shape.base_models = {std::move(*base)};
     }
@@ -782,6 +880,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.model.embedding_bytes = has_output ? embedding_bytes : 0;
     out.model.token_table_bytes = embedding_bytes;
     out.model.routed_expert_bytes     = whole ? routed : 0;
+    out.model.expert_prefill          = expert_routes.route();
     out.model.mtp_routed_expert_bytes = whole ? mtp_routed : 0;
     out.model.gguf_data_offset = head.data_offset;
     // A split part's table lists its own tensors only: the elements of the whole are not known.
@@ -842,6 +941,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
     // The routed expert objects as the runtime counts them (model_instance.cpp).
     const auto routed = artifact::routed_expert_object_layers(dir);
+    ExpertRoutes expert_routes;
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
     std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
@@ -886,7 +986,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     // GGUF's tensor table counts the model it converts from (bits_per_weight's denominator on both
     // paths).
     double elements = 0;
-    std::set<std::string> formats, layer_formats;
+    std::set<std::string> formats, layer_formats, rest_formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
         if (tensor == nullptr) { continue; } // resources
@@ -902,9 +1002,15 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         formats.insert(tensor->format);
         if (table[i] == 0 && !(alone && (m[Mtp] || m[Drafter] || m[Proposal]))) {
             layer_formats.insert(tensor->format); // the trunk's layers
+            if (!routed[i]) { rest_formats.insert(tensor->format); }
         }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
-        if (routed[i]) { routed_bytes += tensor->bytes; }
+        if (routed[i]) {
+            routed_bytes += tensor->bytes;
+            if (!tensor->shape.empty()) {
+                expert_routes.add(*routed[i], tensor->format, tensor->layout, tensor->shape.back(), tensor->bytes);
+            }
+        }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;
         } else if (alone && m[Proposal]) {
@@ -921,6 +1027,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.model.mtp_bytes         = mtp_bytes;
     out.model.own_drafter_bytes = drafter_bytes;
     out.model.routed_expert_bytes = routed_bytes;
+    out.model.expert_prefill      = expert_routes.route();
     out.shape.input_table_bytes = input_table_bytes;
     out.model.weight_elements   = elements;
     // The source quantization the converter recorded (a GGUF file name's label), where the
@@ -946,6 +1053,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     }
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
+    out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
     if (prompt_tail_calls_source()) {
         if (const auto calls = prompt_tail_calls_of(artifact)) {
             out.shape.prompt_tail_calls = *calls;
@@ -986,6 +1094,8 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
     if (bytes != facts.model.weight_bytes) {
         facts.shape.weight_formats.clear();
         facts.shape.layer_formats.clear();
+        facts.shape.rest_layer_formats.clear();
+        facts.model.expert_prefill = runtime::ExpertPrefill::Unknown;
     }
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;

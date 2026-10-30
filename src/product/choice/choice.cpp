@@ -474,10 +474,22 @@ double tiles_eta(const CardFacts& card, double hidden, bool& transferred) noexce
     return prefill_eta(false, generation, Route::Int8, transferred);
 }
 
-// The linears' prefill rate (tokens a second) with chunks of `filled` tokens: an MoE's chunk fills
-// its experts only as far as its tokens reach (its share of the saturated rate).
+// A chunk of `tokens` on the int8 route by its tiles and the small kernels beside them (DECISIONS 66:
+// prefill_linears_seconds, prefill_small_seconds), seconds; 0 where either has no row (the shares
+// below stand). One card's census of the small kernels prices only its own boards.
+double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                           Route route, double tokens, bool& transferred) noexcept;
+
+// The linears' prefill rate (tokens a second) with chunks of `filled` tokens: by the tiles where
+// they have a row (`tiles`; decode's compute bound keeps the shares), else the generation's share of
+// the peak, an MoE's chunk filling its experts only as far as its tokens reach (its share of the
+// saturated rate).
 double linear_prefill(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                      Route route, std::uint32_t filled, bool& transferred) noexcept {
+                      Route route, std::uint32_t filled, bool& transferred, bool tiles = true) noexcept {
+    if (tiles && filled > 0) {
+        const double seconds = tiled_chunk_seconds(model, card, quant, route, filled, transferred);
+        if (seconds > 0) { return filled / seconds; }
+    }
     const double params = model.active_params > 0 ? model.active_params : model.params;
     if (params <= 0) { return 0; }
     const std::string_view gen = generation_of(card);
@@ -489,6 +501,96 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
         rate *= chunk_share(model, filled);
     }
     return rate;
+}
+
+} // namespace
+
+double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                                double tokens, bool* transferred) noexcept {
+    if (model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 ||
+        card.dram_bytes_per_s <= 0) {
+        return 0;
+    }
+    const bool moe = model.moe() && model.experts_per_token > 0;
+    const std::string_view gen = generation_of(card);
+    const auto cost = [gen](TileKernel kernel) -> const TileCost* {
+        for (const TileCost& row : kTileCost) {
+            if (row.generation == gen && row.kernel == kernel) { return &row; }
+        }
+        return nullptr;
+    };
+    // The banks' GEMM (product/plan expert_prefill_of): MXFP4 takes the block-scaled MMA on
+    // Blackwell, Ada converts it to int8. The linears beside them take the classic int8 tiles when
+    // their weights are Q8_0; a K-quant's take a tile by format and card (generic_gemm.cpp
+    // w4a8_ws_wins: Q6_K on Blackwell the 128 x 64 producer-warp tile), not yet priced.
+    // A dense model's linears likewise: the int8 tiles for Q8_0 weights (q8_prefill_a8).
+    TileKernel banks = TileKernel::Int8;
+    switch (moe ? quant.expert_banks : ExpertBanks::Int8) {
+    case ExpertBanks::Int8: banks = TileKernel::Int8; break;
+    case ExpertBanks::A16: banks = TileKernel::A16; break;
+    case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
+    case ExpertBanks::Unknown: return 0;
+    }
+    if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
+    const TileCost* rest = cost(TileKernel::Int8);
+    const TileCost* bank = cost(banks);
+    if (rest == nullptr || bank == nullptr) { return 0; }
+    if (transferred != nullptr && (rest->cards < 2 || (moe && bank->cards < 2))) { *transferred = true; }
+    const double picks = moe ? model.experts_per_token : 1;
+    const double slots = std::ceil(tokens) * picks;
+    const double jobs  = moe ? std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts) : 0;
+
+    const double sms = card.sms;
+    double seconds = 0, hidden = 0, moe_layers = 0;
+    for (const LinearShape& l : model.linears) {
+        const TileCost& c  = l.expert ? *bank : *rest;
+        const double tile  = (c.c0 + l.k * c.c1) / card.clock_hz;
+        const double cols  = std::ceil(l.n / 64);
+        // A grid's rounds of SMs x resident CTAs, each `resident` tiles' time.
+        const double resident = std::max(c.resident, 1);
+        const auto waves = [&](double ctas) { return std::ceil(ctas / (sms * resident)) * resident; };
+        if (l.expert && moe) {
+            // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
+            const double layers = l.per_token / picks;
+            if (hidden == 0) { hidden = l.k, moe_layers = layers; }
+            seconds += layers * waves(jobs * cols) * tile;
+        } else {
+            seconds += l.per_token * waves(std::ceil(tokens / 64) * cols) * tile;
+        }
+    }
+    // The routing gathers every pick's token row into its expert's run and scatters the result
+    // back: 16-bit rows of the hidden width, read and written, a layer.
+    seconds += moe_layers * tokens * picks * hidden * 2 * 2 / (dram_eta(gen) * card.dram_bytes_per_s);
+    return seconds;
+}
+
+double prefill_small_seconds(const ModelFacts& model, const CardFacts& card, double tokens) noexcept {
+    if (tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 || card.dram_bytes_per_s <= 0) { return 0; }
+    const std::string_view gen = generation_of(card);
+    for (const SmallKernelCost& row : kSmallKernelCost) {
+        if (row.generation != gen) { continue; }
+        const double scan  = tokens * model.recurrent_state_elements * row.scan_clocks / (card.sms * card.clock_hz);
+        const double bytes = tokens * model.layers * model.hidden * row.pass_bytes;
+        return scan + bytes / card.dram_bytes_per_s;
+    }
+    return 0;
+}
+
+namespace {
+
+double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                           Route route, double tokens, bool& transferred) noexcept {
+    if (route != Route::Int8) { return 0; }
+    bool tiles_transferred = false;
+    const double linears   = prefill_linears_seconds(model, card, quant, tokens, &tiles_transferred);
+    const double small     = linears > 0 ? prefill_small_seconds(model, card, tokens) : 0;
+    if (small <= 0) { return 0; }
+    transferred = transferred || tiles_transferred;
+    const std::string_view gen = generation_of(card);
+    for (const SmallKernelCost& row : kSmallKernelCost) {
+        if (row.generation == gen) { transferred = transferred || row.cards < 2; }
+    }
+    return linears + small;
 }
 
 } // namespace
@@ -573,7 +675,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
     decode_quant.weights     = WeightClass::KQuant;
-    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred) * 2 * params;
+    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred, false) * 2 * params;
     const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
     const double step        = std::max(reads + launches + exact, flops);
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;

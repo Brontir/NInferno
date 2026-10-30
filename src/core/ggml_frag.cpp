@@ -71,6 +71,10 @@ const std::uint8_t* map_of(QType format) noexcept {
 
 bool ggml_frag_format(QType format) noexcept { return map_of(format) != nullptr; }
 
+bool ggml_frag_w4a8(QType format) noexcept {
+    return format == QType::GGML_Q4_0 || format == QType::GGML_Q4_K;
+}
+
 QuantLayout ggml_published_layout(QType format) noexcept {
     return format == QType::GGML_Q4_K || format == QType::GGML_Q5_K ? QuantLayout::GgmlBlocks
                                                                      : QuantLayout::GgmlPlanes;

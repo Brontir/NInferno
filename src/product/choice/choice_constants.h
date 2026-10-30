@@ -304,6 +304,63 @@ inline constexpr TilesEta kPrefillTilesEta[] = {{"ada", 3352, 12.15, 0, 3},
                                                 {"ga10x", 3352, 12.5, 0, 1},
                                                 {"turing", 0, 0, 0.147, 1}};
 
+// A prefill linear's tile (DECISIONS 66): a CTA of 64 tokens (an MoE expert's: a job of up to 64 of
+// its slots) x 64 output rows, the whole K deep, takes c0 + K c1 SM-clocks (the card's reference
+// clock gives the seconds); a call runs in rounds of them (TileCost::resident). From the census of one
+// ~1.8K-token prompt (nsys, the RTX 4090 without PDL at 2520 MHz, the RTX 5070 Ti at 2452 MHz on a
+// lab build with pdl::supported() false): Qwen3.6-35B-A3B's and gpt-oss-20b's calls. The int8
+// tile's K step is about 12 SM-clocks on every generation that has the int8 MMA (Ada 12.1, the RTX
+// 4070 Ti 12.8, Ampere's RTX 3060 12.5, Blackwell 11.6: decoding the weights on the CUDA cores
+// bounds it, a third of the tensor peak), so Ampere takes Ada's int8 row.
+enum class TileKernel : std::uint8_t {
+    Int8, // the int8 tiles: w4a8_kernel, moe_w4a8_kernel (Q4_K, Q8_0, MXFP4 converted on Ada)
+    A16,  // the 16-bit register MMA of an MoE's IQ3 banks in fragment layout
+    Mx,   // the block-scaled kind::mxf8f6f4 MMA of MXFP4 banks (sm_120a)
+};
+// A SM holds `resident` of a kernel's CTAs at once (its registers and shared memory against the SM's:
+// the int8 tiles' 128 threads at 177-255 registers and 40 KB on Ampere, Ada and Blackwell, and Ada's
+// 16-bit register MMA's at 255 registers and 1-2 KB, two;
+// Turing's 64 KB of shared memory, one), so a grid runs in rounds of SMs x resident CTAs, each round
+// `resident` tiles' time: the RTX 5090's N 4096 calls at a 1024-token chunk (1024 CTAs) take 4 rounds
+// of 340, 8 tiles' time, not 6.02 waves of 170 (DECISIONS 66): the last round's 4 CTAs, one a SM, took
+// a whole round, a tile alone on a SM no faster than two sharing it. A row without a read keeps one.
+struct TileCost {
+    std::string_view generation;
+    TileKernel kernel;
+    double c0, c1; // SM-clocks a tile, and a K step
+    int cards;     // the cards whose census reads it (one: its boards' estimate only)
+    int resident;  // CTAs a SM holds at once
+};
+inline constexpr TileCost kTileCost[] = {
+    {"ada", TileKernel::Int8, 3352, 12.15, 3, 2},  {"ga10x", TileKernel::Int8, 3352, 12.5, 1, 2},
+    {"gb20x", TileKernel::Int8, 1226, 11.62, 1, 2}, {"ada", TileKernel::A16, 2344, 17.9, 1, 2},
+    {"gb20x", TileKernel::A16, 785, 14.96, 1, 1},   {"gb20x", TileKernel::Mx, 1226, 8.34, 1, 1},
+};
+
+// A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside
+// its linears, attention and tail calls, seven cards). The Gated DeltaNet's chunked scan is a count
+// of SM-clocks a token and state element (12.6 M elements over its 24 layers): RTX 4060 Ti 0.049,
+// 4070 Ti 0.064, 4090 0.062; RTX 5070 Ti 0.040, 5090 0.057; RTX 3060 0.051; Turing's scan has no
+// tensor path, the RTX 2080 Ti 0.196. The rest (the norms, the activations' quantization, the
+// convolution, the gates) is bytes a token, layer and element of the hidden width over the DRAM
+// rate: some 15 passes over a 16-bit row, 30 bytes (RTX 4060 Ti 27, 4070 Ti 26, 4090 30, 5070 Ti 33,
+// 5090 35), where a chunk's row of activations (1024 x 8 KB) stays in the L2 of 24-96 MB; Ampere's
+// 3-6 MB L2 writes it out and reads it back, twice the bytes (the RTX 3060's 61); Turing's kernels
+// besides (the RTX 2080 Ti's 88). One card a generation: transferred.
+struct SmallKernelCost {
+    std::string_view generation;
+    double scan_clocks;  // SM-clocks a token and recurrent state element
+    double pass_bytes;   // bytes a token, layer and element of the hidden width
+    int cards;
+};
+inline constexpr SmallKernelCost kSmallKernelCost[] = {
+    {"ada", 0.058, 30, 3}, {"gb20x", 0.048, 30, 2}, {"ga10x", 0.051, 60, 1}, {"turing", 0.196, 88, 1}};
+
+// An MoE's expert grid: the host launches the bound on the jobs (ops/moe max_jobs: a job is an
+// expert's run of up to kExpertJobSlots of the chunk's slots, token x pick; at most one partial job
+// an expert), ceil(slots / 64) + min(slots, experts) rows of tiles, before the routing is known.
+inline constexpr double kExpertJobSlots = 64; // ops/moe kJobColumns at prefill widths
+
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak
 // (fit_prefill.py, the same points; Turing's BF16 row is the composed aggregate, core/generation.h).

@@ -155,6 +155,8 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
         };
     }
     // The Qwen 3.5 families' Gated DeltaNet state takes --state-dtype; Nemotron-H keeps FP32.
+    for (const runtime::PlanLinear& l : m.linears) { out.linears.push_back({l.n, l.k, l.per_token, l.expert}); }
+    out.recurrent_state_elements = static_cast<double>(m.recurrent_state_elements);
     out.recurrent = m.recurrent_layers != 0 && m.model_type.rfind("qwen3_5", 0) == 0;
     // FP8 sliding rings: Gemma 4 and the dense decoders (types.h sliding_kv_cache).
     out.fp8_ring = m.model_type == "gemma4_text" || m.model_type == "dense_decoder";
@@ -201,6 +203,9 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.weight_bytes = static_cast<double>(target > facts.model.mtp_bytes ? target - facts.model.mtp_bytes
                                                                             : target);
     quant.routed_expert_bytes = static_cast<double>(facts.model.routed_expert_bytes);
+    static_assert(static_cast<int>(runtime::ExpertPrefill::Mxfp4) == static_cast<int>(choice::ExpertBanks::Mxfp4));
+    quant.expert_banks        = static_cast<choice::ExpertBanks>(facts.model.expert_prefill);
+    quant.rest_weights        = choice::weight_class_of(facts.shape.rest_layer_formats, label);
     const auto& formats = facts.shape.weight_formats;
     quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
     // The weight class: the file's own layers' formats where known (with_weights clears another

@@ -67,6 +67,12 @@ ch::ModelFacts model_of(const json& m) {
     out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
     out.layers                  = m.value("layers", 0U);
     out.hidden                  = m.value("hidden", 0.0);
+    out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
+    if (m.contains("linears")) {
+        for (const json& l : m.at("linears")) {
+            out.linears.push_back({l.at(0).get<double>(), l.at(1).get<double>(), l.at(2).get<double>(), false});
+        }
+    }
     if (m.contains("ring_bytes_per_token")) {
         const json ring         = m.at("ring_bytes_per_token");
         out.ring_bytes_per_token = [ring](KvCacheStorage s) {
@@ -326,10 +332,9 @@ void prefills_by_format(const json& fixture) {
     std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
-    // DECISIONS 67: the tile's clock count, no fit. Its worst points are the RTX 5090's (+14 .. +26 %):
-    // its N 4096 calls run 6.02 waves of 170 SMs in 7, which one share a generation cannot price
-    // (the tile law by linear, DECISIONS 66, does); the rest within -15 .. +15 %.
-    check(n[1] == 60 && tiles < 0.09 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
+    // DECISIONS 66: the tiles by linear in rounds of SMs x resident CTAs and the small kernels, no
+    // fit. Its worst points are the RTX 4090's Gemma and the RTX 5090's short prompts (+15 .. +18 %).
+    check(n[1] == 60 && tiles < 0.08 && worst[1] < 0.20, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(n[0] == 78 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
@@ -352,6 +357,7 @@ void prefills_by_format(const json& fixture) {
     ch::ModelFacts linears_only          = mf;
     linears_only.full_attention_width    = 0;
     linears_only.sliding_attention_width = 0;
+    linears_only.linears.clear(); // the shares: without the shapes the tiles by linear have nothing to price
     const auto tiles_over_mmq            = [&](double hidden) {
         linears_only.hidden = hidden;
         return at("RTX 4090", q8, linears_only, 1).prefill / at("RTX 4090", kq, linears_only, 1).prefill;
@@ -813,6 +819,160 @@ void moe_family(const json& fixture) {
 }
 
 // Contradictory pins say so instead of "nothing fits".
+// An MoE's prefill linears by their tiles (DECISIONS 66): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090,
+// one 1819-token chunk; the census (nsys, no PDL) put the experts at 50.5 ms, the int8 calls beside
+// them at 30.0 and the routing's gather and scatter at 5.9: 86.4 ms.
+void prices_moe_prefill_tiles() {
+    ch::ModelFacts m;
+    m.family               = "qwen3_5_moe_text";
+    m.experts              = 256;
+    m.experts_per_token    = 8;
+    m.routed_expert_params = 34e9;
+    for (int i = 0; i < 10; ++i) {
+        m.linears.push_back({9216, 2048, 1, false});
+        m.linears.push_back({2048, 4096, 1, false});
+    }
+    m.linears.push_back({12288, 2048, 30, false});
+    m.linears.push_back({2048, 4096, 30, false});
+    m.linears.push_back({1024, 2048, 40, false});
+    m.linears.push_back({2048, 512, 40, false});
+    m.linears.push_back({1024, 2048, 320, true});
+    m.linears.push_back({2048, 512, 320, true});
+    ch::CardFacts rtx4090{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9};
+    ch::QuantOption q;
+    q.expert_banks = ch::ExpertBanks::Int8;
+    q.rest_weights = ch::WeightClass::Q8; // UD-Q4_K_M's linears beside the experts: Q8_0
+    const double t = ch::prefill_linears_seconds(m, rtx4090, q, 1819);
+    std::cout << "MoE prefill tiles, Qwen3.6 UD-Q4_K_M RTX 4090 1819 tokens: " << t * 1e3 << " ms against 86.4\n";
+    check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
+    ch::CardFacts v100{.major = 7, .minor = 0, .sms = 84, .clock_hz = 1.62e9, .dram_bytes_per_s = 870e9};
+    check(ch::prefill_linears_seconds(m, v100, q, 1819) == 0, "no int8 tile row on Volta: unknown");
+    q.expert_banks = ch::ExpertBanks::Unknown;
+    check(ch::prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
+}
+
+// A dense model's Q8 linears by the same tiles: Qwen3.5 9B Q8_0, one 1819-token prompt in chunks
+// of 1024 and 795 (the token-major grid, PR #249); the census's int8 kernel time (nsys) on the
+// RTX 3060, 4060 Ti, 4070 Ti, 4090 and 5070 Ti.
+void prices_dense_prefill_tiles() {
+    ch::ModelFacts m;
+    m.family = "qwen3_5_text";
+    for (int i = 0; i < 8; ++i) {
+        m.linears.push_back({10240, 4096, 1, false});
+        m.linears.push_back({4096, 4096, 1, false});
+    }
+    m.linears.push_back({12288, 4096, 24, false});
+    m.linears.push_back({4096, 4096, 24, false});
+    m.linears.push_back({24576, 4096, 32, false});
+    m.linears.push_back({4096, 12288, 32, false});
+    ch::QuantOption q;
+    q.weights = ch::WeightClass::Q8;
+    struct Census {
+        ch::CardFacts card;
+        double ms;
+    };
+    const Census rows[] = {
+        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 767.4},
+        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9}, 440.4},
+        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9}, 245.9},
+        {{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9}, 127.4},
+        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9}, 212.0},
+    };
+    double worst = 0;
+    for (const Census& r : rows) {
+        const double t = ch::prefill_linears_seconds(m, r.card, q, 1024) + ch::prefill_linears_seconds(m, r.card, q, 795);
+        worst          = std::max(worst, std::abs(t * 1e3 / r.ms - 1));
+        std::cout << "dense Q8 tiles, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
+    }
+    check(worst < 0.10, "a dense model's Q8 linears by their tiles within 10 % of the census");
+    q.weights = ch::WeightClass::KQuant;
+    check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "K-quant dense linears (ggml's MMQ): unknown");
+}
+
+// The small kernels beside a prefill's linears (DECISIONS 66): Qwen3.5 9B Q8_0's 1819-token prompt,
+// the census outside the linears, attention and the tail calls, seven cards (the scan's SM-clocks
+// and the rest's bytes are read from these points, a generation's mean: within a quarter of each).
+void prices_prefill_small_kernels() {
+    ch::ModelFacts m;
+    m.family                   = "qwen3_5_text";
+    m.layers                   = 32;
+    m.hidden                   = 4096;
+    m.recurrent_state_elements = 24.0 * 32 * 128 * 128;
+    struct Census {
+        ch::CardFacts card;
+        double ms;
+    };
+    const Census rows[] = {
+        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 63.8},
+        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9}, 35.3},
+        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9}, 21.6},
+        {{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9}, 11.5},
+        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9}, 14.1},
+        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9}, 7.9},
+        {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9}, 76.9},
+    };
+    double worst = 0;
+    for (const Census& r : rows) {
+        const double t = ch::prefill_small_seconds(m, r.card, 1819);
+        worst          = std::max(worst, std::abs(t * 1e3 / r.ms - 1));
+        std::cout << "prefill small kernels, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
+    }
+    check(worst < 0.25, "a prefill's small kernels by the scan's clocks and the rest's bytes within a quarter");
+    const ch::CardFacts v100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.53e9, .dram_bytes_per_s = 900e9};
+    check(ch::prefill_small_seconds(m, v100, 1819) == 0, "no small-kernel census on Volta: unknown");
+}
+
+// An MoE's whole prefill through the tiles (DECISIONS 66): the model's facts (speed_measured.json)
+// with its linears and recurrent state, against the prefill rows of master f8d4399d (fit_prefill.py's
+// method: 2K / 7K / 22K-token prompts, the median of three; the server's chunk). Printed, and the
+// estimate within 15 % of each (the router, the plan and the selection not yet priced).
+void prefills_moe_by_tiles(const json& fixture) {
+    struct Point {
+        const char* model;
+        const char* card;
+        std::uint32_t chunk, prompt;
+        double measured;
+    };
+    const Point points[] = {
+        {"Qwen3.6-35B-A3B", "RTX 4090", 2048, 1785, 17375.5}, {"Qwen3.6-35B-A3B", "RTX 4090", 2048, 7406, 17842.8},
+        {"Qwen3.6-35B-A3B", "RTX 4090", 2048, 21928, 16292.6}, {"Qwen3.6-35B-A3B", "RTX 5090", 1024, 1785, 20170.4},
+        {"Qwen3.6-35B-A3B", "RTX 5090", 1024, 7406, 20817.6}, {"Qwen3.6-35B-A3B", "RTX 5090", 1024, 21928, 19535.4},
+        {"gemma-4-26B-A4B", "RTX 4090", 2048, 1752, 15719.1}, {"gemma-4-26B-A4B", "RTX 4090", 2048, 7347, 16157.3},
+        {"gemma-4-26B-A4B", "RTX 4090", 2048, 21721, 14127.9},
+    };
+    double worst = 0;
+    for (const Point& p : points) {
+        const json& m    = fixture.at("models").at(p.model);
+        ch::ModelFacts mf = model_at(m, "UD-Q4_K_M");
+        const bool qwen  = std::string(p.model).rfind("Qwen", 0) == 0;
+        if (qwen) {
+            mf.layers = 40, mf.hidden = 2048, mf.recurrent_state_elements = 30.0 * 32 * 128 * 128;
+            mf.prompt_tail_calls = 2;
+            mf.linears = {{9216, 2048, 10, false}, {2048, 4096, 10, false}, {12288, 2048, 30, false},
+                          {2048, 4096, 30, false}, {1024, 2048, 40, false}, {2048, 512, 40, false},
+                          {1024, 2048, 320, true}, {2048, 512, 320, true}};
+        } else {
+            mf.layers = 30, mf.hidden = 2816;
+            mf.prompt_tail_calls = 2; // the census (RTX 4090): two decode steps' kernels after the chunk, 13 ms
+            mf.linears = {{8192, 2816, 25, false}, {2816, 4096, 25, false}, {9216, 2816, 5, false},
+                          {2816, 8192, 5, false},  {4224, 2816, 30, false}, {2816, 2112, 30, false},
+                          {1408, 2816, 240, true}, {2816, 704, 240, true}};
+        }
+        ch::QuantOption q  = quant_of("UD-Q4_K_M", m.at("quants").at("UD-Q4_K_M"));
+        q.expert_banks     = ch::ExpertBanks::Int8;
+        q.rest_weights     = ch::WeightClass::Q8; // UD-Q4_K_M's linears beside the experts
+        const ch::CardFacts cf = card_of(fixture.at("cards").at(p.card));
+        ch::Candidate c;
+        c.kv    = KvCacheStorage::Int8Group64;
+        c.chunk = p.chunk;
+        const double est = ch::speed_of(mf, cf, q, c, 1, p.prompt, p.prompt).prefill;
+        worst            = std::max(worst, std::abs(est / p.measured - 1));
+        std::cout << "MoE prefill by tiles, " << p.model << " UD-Q4_K_M " << p.card << " " << p.prompt << ": " << est
+                  << " against " << p.measured << " (" << (est / p.measured - 1) * 100 << " %)\n";
+    }
+    check(worst < 0.15, "an MoE's prefill through the tiles within 15 % of the rows");
+}
+
 void contradictory_pins(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Pins pins;
@@ -952,6 +1112,7 @@ int main() {
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         counts_the_kernels(json::parse(census));
     }
+    prefills_moe_by_tiles(fixture);
     prices_attention(fixture);
     chooses(fixture);
     decides_by_generation(fixture);
@@ -963,6 +1124,9 @@ int main() {
     contradictory_pins(fixture);
     activations_by_generation(fixture);
     moe_family(fixture);
+    prices_moe_prefill_tiles();
+    prices_dense_prefill_tiles();
+    prices_prefill_small_kernels();
     weighs_the_drafters(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

@@ -179,6 +179,26 @@ int gguf_qwen35() {
     const auto e = pr::plan_facts_of_gguf(moe, 999999);
     failures += same(e.model.routed_expert_bytes, 300, "routed expert banks as stored");
     failures += same(e.model.mtp_routed_expert_bytes, 70, "the MTP layer's routed bank apart");
+    // Their prefill GEMM (ops/moe w4a8_banks_admit): Q4_K banks (fragment order) on the grouped
+    // W4A8; an IQ3_XXS bank in fragment order the W4A8 does not read, so its layer on the 16-bit
+    // register MMA; MXFP4 banks their own route.
+    failures += check(e.model.expert_prefill == rt::ExpertPrefill::Int8, "Q4_K banks: int8");
+    GgufFile iq3 = file;
+    iq3.tensors.push_back(
+        tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::IQ3_XXS, 200));
+    iq3.tensors.push_back(
+        tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::IQ3_S, 100));
+    failures += check(pr::plan_facts_of_gguf(iq3, 999999).model.expert_prefill == rt::ExpertPrefill::A16,
+                      "IQ3_XXS banks: the register MMA");
+    GgufFile mx = file;
+    mx.tensors.push_back(
+        tensor("blk.0.ffn_gate_exps.weight", {5120, 512, 64}, ninferno::convert::ggml::MXFP4, 200));
+    mx.tensors.push_back(
+        tensor("blk.0.ffn_down_exps.weight", {512, 5120, 64}, ninferno::convert::ggml::MXFP4, 100));
+    failures += check(pr::plan_facts_of_gguf(mx, 999999).model.expert_prefill == rt::ExpertPrefill::Mxfp4,
+                      "MXFP4 banks");
+    failures += check(pr::plan_facts_of_gguf(file, 999999).model.expert_prefill == rt::ExpertPrefill::Unknown,
+                      "a dense model: no route");
 
     // The metadata alone (ninferno-ui): FileSize.
     const auto meta = pr::plan_facts_of_gguf_metadata(file.metadata, 16000000000ULL);
@@ -301,6 +321,20 @@ int qwen35_moe() {
                           where + ": active " + std::to_string(f.shape.active_params));
         failures +=
             check(f.shape.routed_expert_params > 0.8 * f.model.params, where + ": routed share");
+        // The linears by shape (DECISIONS 66), as the census found the calls on the RTX 4090: the
+        // gated attention's qkv 9216 x 2048 and output 2048 x 4096 (10 layers), the Gated
+        // DeltaNet's in-projection 12288 x 2048 and output 2048 x 4096 (30), the shared expert's
+        // 1024 x 2048 and 2048 x 512 (40), the experts' the same at 8 picks a token.
+        const auto has = [&](double n, double k, double per, bool expert) {
+            return std::any_of(f.model.linears.begin(), f.model.linears.end(), [&](const rt::PlanLinear& l) {
+                return l.n == n && l.k == k && std::abs(l.per_token - per) < 1e-9 && l.expert == expert;
+            });
+        };
+        failures += check(has(9216, 2048, 1, false) && has(2048, 4096, 1, false), where + ": attention linears");
+        failures += check(has(12288, 2048, 30, false) && has(2048, 4096, 30, false), where + ": recurrent linears");
+        failures += check(has(1024, 2048, 40, false) && has(2048, 512, 40, false), where + ": shared expert linears");
+        failures += check(has(1024, 2048, 320, true) && has(2048, 512, 320, true), where + ": expert linears");
+        failures += same(f.model.linears.size(), 26, where + ": 20 attention + 6 others");
     }
     return failures;
 }
