@@ -24,7 +24,12 @@ namespace {
 
 constexpr int kVoltaThreads = 128;
 constexpr int kVoltaTile    = 32; // keys a CTA folds per step
-constexpr int kVoltaQFloats = 4096;
+// Q of the call's rows a CTA holds (FP32, shared): Gemma 4's full-attention layers (D = 512, G = 16:
+// 8192 floats) fold here too; at 4096 they took the split-K kernel's emulated MMA (GV100, Gemma 4
+// 12B: 58 us a call). At most 64 rows: the scores tile and the softmax state stay within the 48 KB
+// of static shared memory (D = 64 at 64 rows: 24 KB; D = 512 at 16: 34 KB).
+constexpr int kVoltaQFloats  = 8192;
+constexpr int kVoltaMaxRows  = 64;
 
 __device__ __forceinline__ float fp8_value(unsigned code) { return e4m3_to_float(code); }
 
@@ -308,14 +313,14 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
 
 template <int D>
 constexpr int max_rows() {
-    return kVoltaQFloats / D;
+    return kVoltaQFloats / D < kVoltaMaxRows ? kVoltaQFloats / D : kVoltaMaxRows;
 }
 
 } // namespace
 
 bool gemma4_volta_decode_takes(std::int32_t head_dim, std::int32_t rows) {
     if (head_dim != 64 && head_dim != 128 && head_dim != 256 && head_dim != 512) return false;
-    if (rows < 1 || rows * head_dim > kVoltaQFloats) return false;
+    if (rows < 1 || rows * head_dim > kVoltaQFloats || rows > kVoltaMaxRows) return false;
     try {
         // Turing's split-K kernel runs its BF16 MMA through f16 conversions: on the RTX 2080 Ti
         // this kernel decodes faster (SmolLM3 117.7 -> 167.5 tok/s, 6K context 70.5 -> 98.6;
