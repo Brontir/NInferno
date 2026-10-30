@@ -179,6 +179,7 @@ choice::CardFacts choice_card_of(const spec::GpuKey& gpu) {
     out.sms              = gpu.sms;
     out.clock_hz         = gpu.sm_clock_khz * 1e3;
     out.dram_bytes_per_s = gpu.dram_gbps * 1e9;
+    out.l2_bytes         = gpu.l2_bytes;
     out.fp4              = gpu.nvfp4;
     return out;
 }

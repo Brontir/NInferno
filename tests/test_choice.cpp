@@ -1053,8 +1053,37 @@ void prices_attention_tiles() {
         }
     }
     check(worst < 0.10, "a prompt's attention by its CTAs within 10 % of the census's calls");
-    check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Fp8E4M3Row256, 4096, 1024) == 0,
-          "FP8 keys: another kernel, unknown");
+    // FP8 keys: the FP8 prompt kernel (128 rows x a split of the keys a CTA) and its merge, a 7K
+    // prompt's chunks (the kernel and the merge summed), the cards' L2 beside. The worst is the RTX
+    // 4060 Ti's first chunk (+13 %): its merge's 40 MiB outgrow the 32 MiB L2, which still holds a
+    // part of them.
+    struct Fp8Series {
+        ch::CardFacts card;
+        double l2_mib;
+        std::vector<double> us;
+    };
+    const Fp8Series fp8_series[] = {
+        {series[0].card, 96, {80.3, 149.2, 219.8, 267.8, 321.9, 369.9, 416.5}},
+        {series[1].card, 32, {405.4, 976.7, 1376.5, 1687.2, 1955.6, 2232.3, 2532.3}},
+        {series[2].card, 2.25, {998.8, 2258.7, 3543.2, 4554.1, 5265.6, 6024.8, 6814.7}},
+        {series[3].card, 48, {140.1, 348.8, 548.3, 653.0, 758.3, 861.5, 961.4}},
+        {series[4].card, 48, {187.1, 536.4, 853.1, 1078.8, 1231.3, 1378.5, 1567.4}},
+    };
+    double fp8_worst = 0;
+    for (const Fp8Series& s : fp8_series) {
+        ch::CardFacts card = s.card;
+        card.l2_bytes      = s.l2_mib * (1 << 20);
+        double before      = 0;
+        for (std::size_t i = 0; i < s.us.size(); ++i) {
+            const double through = ch::prefill_attention_tiled_seconds(m, card, KvCacheStorage::Fp8E4M3Row256,
+                                                                       1024.0 * (i + 1), 1024);
+            fp8_worst = std::max(fp8_worst, std::abs((through - before) * 1e6 / s.us[i] - 1));
+            before    = through;
+        }
+    }
+    check(fp8_worst < 0.14, "FP8 keys: the FP8 prompt kernel and its merge within 14 % of the census's chunks");
+    check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Fp8E4M3Row256, 80, 1024) == 0,
+          "FP8 keys: a call of 80 tokens takes the grouped kernels' share");
     // BF16 keys: the BF16 prompt kernel (64 rows a CTA in plain order), the RTX 5090 read, the
     // RTX 5070 Ti checked, a 7K prompt's chunks.
     const Series bf16_series[] = {

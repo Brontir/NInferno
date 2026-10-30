@@ -284,7 +284,8 @@ spec::GpuKey gpu_key_of(const runtime::PlanDeviceFacts& device) {
                         d.sms,
                         d.compute_capability(),
                         d.facts.reference_clock_khz,
-                        d.dram_gbps()};
+                        d.dram_gbps(),
+                        d.facts.l2_mib * (1 << 20)};
 }
 
 bool per_request_of(const SpeculationAsk& ask, const SpeculationSubject* subject) {

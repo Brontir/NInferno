@@ -99,11 +99,13 @@ GpuFactsRow parse_row(const Json& j) {
     r.vram_gib      = j.at("vram_gib").get<double>();
     r.pcie_gen      = j.at("pcie").get<int>();
     r.mma_slow      = j.value("mma_slow", false);
+    r.l2_mib        = j.value("l2_mib", 0.0);
     r.target        = j.value("target", true);
     r.sources       = j.at("sources").get<std::vector<std::string>>();
     r.note          = j.value("note", std::string());
     if (cc < 70 || r.sms <= 0 || r.boost_mhz <= 0 || r.bus_bits <= 0 || r.gbps <= 0 ||
-        r.tdp_w <= 0 || r.vram_gib <= 0 || r.pcie_gen < 3 || r.name.empty() || r.chip.empty()) {
+        r.tdp_w <= 0 || r.vram_gib <= 0 || r.pcie_gen < 3 || r.name.empty() || r.chip.empty() ||
+        r.l2_mib < 0) {
         throw std::runtime_error("a quantity is missing or out of range");
     }
     if (r.boost_min_mhz < 0 || r.boost_min_mhz > r.boost_mhz ||
@@ -202,6 +204,7 @@ MachineFacts machine_facts(const DriverReport& driver, std::span<const GpuFactsR
         f.vram_gib            = row->vram_gib;
         f.pcie_gen            = row->pcie_gen;
         f.mma_slow            = row->mma_slow;
+        f.l2_mib              = row->l2_mib;
         // A laptop's clocks follow the OEM's power limit (80 to 150 W for one name): it is priced
         // at the bottom of the published boost range (principle 7, the unknown is conservative),
         // or, where the table lacks the bottom, at the lower of the row's top and the driver's

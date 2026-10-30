@@ -58,6 +58,7 @@ struct GpuFactsRow {
     double vram_gib = 0;
     int pcie_gen    = 0;     // highest generation the link supports
     bool mma_slow   = false; // mma.sync without tensor cores (TU116, TU117, GTX 16 boards)
+    double l2_mib   = 0;     // the L2 cache (0: not in the row)
     bool target     = true;  // false: listed for identification only (H100, B200)
     std::vector<std::string> sources;
     std::string note;
@@ -99,6 +100,8 @@ struct MachineFacts {
     double vram_gib      = 0;
     int pcie_gen         = 0;
     bool mma_slow        = false;
+    // The board's L2 cache, MiB (0: its row does not give it).
+    double l2_mib = 0;
     // The fraction of the board this device is: its SMs over the row's when fewer (a MIG slice);
     // the bandwidth it sees scales with it. 1 otherwise.
     double share = 1.0;
