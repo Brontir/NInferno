@@ -1589,7 +1589,20 @@ continuation of the conversation renders the turn closed the same way, so it mat
 before; a sibling prompt that differs only after the content and before the close could not have
 followed the same messages.
 
-**Checked.** `ninferno_qwen3_5_frontend_test`: the boundary after the last part lands on a static
-frontier, one between parts stays at its part's end. The prefill tail count (`prompt_tail.cpp`,
+**Measured** (`prompt_ms` of the server at 312 .. 7612 tokens, three repeats, the kit's flags; slope
+and intercept over 962 .. 7612, the best of three at about 960 tokens):
+
+| card | model | master: tok/s + ms | this: tok/s + ms | 960 tokens, ms |
+|---|---|---|---|---|
+| RTX 4090 | Qwen 9B Q4_K_M | 12282 + 29.1 | 12339 + 17.1 | 107.1 -> 92.9 |
+| RTX 4090 | Gemma 12B Q4_K_M | 7458 + 91.9 | 7383 + 60.1 | 216.8 -> 177.0 |
+| RTX 5070 Ti | Qwen 9B Q4_K_M | 7209 + 19.9 | 7182 + 10.9 | 153.2 -> 148.8 |
+| RTX 5070 Ti | Gemma 12B Q4_K_M | 4400 + 34.3 | 4364 + 12.8 | 243.7 -> 244.3 |
+
+The intercept falls by the one call on every row; the rate is the same within 1 %.
+
+**Checked.** `ninferno_qwen3_5_frontend_test`: the boundary after the last part lands on the turn
+closure's frontier, one between parts stays at its part's end. `ninferno_qwen3_5_prefix_real_test`
+(Qwen3.5 9B MTP Q4_K_M, RTX 5070 Ti): every restore case byte-exact against its cold prefill. The prefill tail count (`prompt_tail.cpp`,
 DECISIONS 62) reads where the program places the capture, so it drops the call without a change.
 
