@@ -1053,6 +1053,28 @@ void prices_attention_tiles() {
           "a short prompt: the grouped kernels' share");
     const double whole = ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 32768, 1024);
     const double tail  = ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 32868, 1024);
+    // Exact activations run every route invariant: their attention keeps the share.
+    {
+        ch::ModelFacts mm = m;
+        mm.full_layers = 8;
+        mm.full_attention_width = 8 * 16 * 2 * 256;
+        mm.params = mm.active_params = 9e9;
+        mm.kv_bytes_per_token = [](KvCacheStorage) { return std::uint64_t{32768}; };
+        ch::QuantOption q8;
+        q8.weights = ch::WeightClass::Q8;
+        q8.weight_bytes = 9.5e9;
+        ch::Candidate fast, exact;
+        fast.kv = exact.kv = KvCacheStorage::Int8Group64;
+        fast.activations  = ActivationMode::Fast;
+        exact.activations = ActivationMode::Exact;
+        ch::ModelFacts shares = mm;
+        shares.full_head_dim  = 0; // no prompt kernel: the share
+        const double e = ch::speed_of(mm, series[0].card, q8, exact, 1, 16384, 16384).prefill;
+        const double s = ch::speed_of(shares, series[0].card, q8, exact, 1, 16384, 16384).prefill;
+        const double f = ch::speed_of(mm, series[0].card, q8, fast, 1, 16384, 16384).prefill;
+        const double g = ch::speed_of(shares, series[0].card, q8, fast, 1, 16384, 16384).prefill;
+        check(e > 0 && e == s && f != g, "exact activations: attention off the prompt kernel's law");
+    }
     check(tail > whole && tail - whole < 4e-3, "a short tail chunk at the share (its flops, 2.8 ms), not 16 CTAs over the prefix (17 ms)");
 }
 

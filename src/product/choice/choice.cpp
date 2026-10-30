@@ -745,7 +745,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const std::uint32_t filled = prompt > 0 ? std::min(candidate.chunk, prompt) : candidate.chunk;
     out.prefill = linear_prefill(model, card, quant, route, filled, prefill_transferred);
     if (prompt > 0 && out.prefill > 0) {
-        const double tiled     = prefill_attention_tiled_seconds(model, card, candidate.kv, prompt, candidate.chunk,
+        // Exact activations run every route invariant (ScopedInvariantRoutes): attention on the grouped
+        // kernels at every width, never the prompt kernel.
+        const bool exact       = candidate.activations == ActivationMode::Exact;
+        const double tiled     = exact ? 0 : prefill_attention_tiled_seconds(model, card, candidate.kv, prompt, candidate.chunk,
                                                                    &prefill_transferred);
         const double attention = tiled > 0 ? tiled : attention_seconds(model, card, prompt, prefill_transferred);
         out.prefill            = prompt / (prompt / out.prefill + attention +
@@ -845,7 +848,10 @@ double request_seconds(const ModelFacts& model, const CardFacts& card, const Qua
     const std::uint32_t whole = task.prompt / chunk * chunk;
     const std::uint32_t rest  = task.prompt - whole;
     bool transferred          = false;
-    const double tiled        = prefill_attention_tiled_seconds(model, card, candidate.kv, task.prompt, chunk, &transferred);
+    const double tiled        = candidate.activations == ActivationMode::Exact
+                                    ? 0
+                                    : prefill_attention_tiled_seconds(model, card, candidate.kv, task.prompt, chunk,
+                                                                      &transferred);
     double prefill_seconds    = tiled > 0 ? tiled : attention_seconds(model, card, task.prompt, transferred);
     prefill_seconds += tail_calls_seconds(model, card, quant, candidate, task.prompt);
     if (whole > 0) { prefill_seconds += whole / linear_prefill(model, card, quant, route, chunk, transferred); }
