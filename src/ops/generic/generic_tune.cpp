@@ -384,7 +384,10 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
         const auto name  = std::to_string(t);
         const Route base = heuristic_route(problem, weight, t, false);
         entry["routes"][name] = nullptr;
-        if (replaceable(base, k, t) && !table_route(problem, t, false)) {
+        // A width Volta's own rule routes (volta_fixed_route) takes that route before any tuned
+        // one: timing it would record a choice the dispatch never reads.
+        if (replaceable(base, k, t) && !table_route(problem, t, false) &&
+            !volta_fixed_route(problem, weight, t)) {
             const double base_us = bench.median_us(base, t);
             double best_us       = base_us;
             Route best           = base;
