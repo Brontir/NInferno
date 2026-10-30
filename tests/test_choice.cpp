@@ -159,7 +159,7 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
-    // 29 points (2026-10-30): rms 4.1 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
+    // 29 points (2026-10-30): rms 4.2 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
     check(moes == 29 && moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode from facts within the model's error");
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
 }
