@@ -1970,6 +1970,17 @@ prompt at 2422 MHz on average (2225-2535) against its reference 2520; the RTX 20
 refuted (its clock is above the reference); its int8 tile takes 30-34 SM-clocks a K step at that
 clock, 2.5-2.8x Ada's, not the 2x of half the CUDA cores a SM.
 
+**Gemma 4 12B on the RTX 5090** (added after, sm_bench.py prefill at 3K-14K, master f8d4399d):
+Q8_0 +17 .. +26 %, Q4_K_M +12 .. +17 % (MMQ's share, not the tiles): the shared term is attention.
+The census at 1714 tokens: Gemma's attention kernel 14.2 ms against the term's 7.7 on the 5090,
+18.3 / 9.7 on the 4090, 29.1 / 20.0 on the 4070 Ti, 51.4 / 36.4 on the 4060 Ti, 23.4 / 18.3 on the
+5070 Ti, 87.4 / 94.1 on the RTX 3060: kPrefillAttentionEta's Ada and Blackwell rows (0.74) are Qwen's
+kernels', and Gemma's falls further below them the more SMs the card has (the RTX 3060's own row
+holds): a grid's quantization, its sliding layers' 352 CTAs (44 query blocks x 8 KV heads) two a
+SM, 2 rounds on the 4090 and on the 5090 (whose second holds 12), 6 on the 4060 Ti, about 190-214 K
+SM-clocks a round on Ada and 156 K on Blackwell. Next: attention by its own tiles. Q8_0 points: rms
+9.5 %, worst 26 %.
+
 Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small

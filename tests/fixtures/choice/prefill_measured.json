@@ -1252,6 +1252,102 @@
    "prompt": 13935,
    "prefill": 4284.7,
    "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5070)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3122,
+   "prefill": 8790.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 3162,
+   "prefill": 8843.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6593,
+   "prefill": 8968.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 6837,
+   "prefill": 9010.6,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 13935,
+   "prefill": 8543.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q8_0",
+   "prompt": 14381,
+   "prefill": 8404.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3122,
+   "prefill": 9088.2,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 3162,
+   "prefill": 9048.9,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6593,
+   "prefill": 9118.0,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 6837,
+   "prefill": 9060.0,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 13935,
+   "prefill": 8642.7,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 14381,
+   "prefill": 8543.4,
+   "source": "sm_bench.py prefill, master f8d4399d, 2026-10-30 (l5090)"
   }
  ]
 }
