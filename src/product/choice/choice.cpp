@@ -546,13 +546,16 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
         const TileCost& c  = l.expert ? *bank : *rest;
         const double tile  = (c.c0 + l.k * c.c1) / card.clock_hz;
         const double cols  = std::ceil(l.n / 64);
+        // A grid's rounds of SMs x resident CTAs, each `resident` tiles' time.
+        const double resident = std::max(c.resident, 1);
+        const auto waves = [&](double ctas) { return std::ceil(ctas / (sms * resident)) * resident; };
         if (l.expert && moe) {
             // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
             const double layers = l.per_token / picks;
             if (hidden == 0) { hidden = l.k, moe_layers = layers; }
-            seconds += layers * std::ceil(jobs * cols / sms) * tile;
+            seconds += layers * waves(jobs * cols) * tile;
         } else {
-            seconds += l.per_token * std::ceil(std::ceil(tokens / 64) * cols / sms) * tile;
+            seconds += l.per_token * waves(std::ceil(tokens / 64) * cols) * tile;
         }
     }
     // The routing gathers every pick's token row into its expert's run and scatters the result

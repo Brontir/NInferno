@@ -317,16 +317,23 @@ enum class TileKernel : std::uint8_t {
     A16,  // the 16-bit register MMA of an MoE's IQ3 banks in fragment layout
     Mx,   // the block-scaled kind::mxf8f6f4 MMA of MXFP4 banks (sm_120a)
 };
+// A SM holds `resident` of a kernel's CTAs at once (its registers and shared memory against the SM's:
+// the int8 tiles' 128 threads at 177-255 registers and 40 KB on Ampere, Ada and Blackwell, and Ada's
+// 16-bit register MMA's at 255 registers and 1-2 KB, two;
+// Turing's 64 KB of shared memory, one), so a grid runs in rounds of SMs x resident CTAs, each round
+// `resident` tiles' time: the RTX 5090's N 4096 calls at a 1024-token chunk (1024 CTAs) take 4 rounds
+// of 340, 8 tiles' time, not 6.02 waves of 170 (DECISIONS 66). A row without a read keeps one.
 struct TileCost {
     std::string_view generation;
     TileKernel kernel;
     double c0, c1; // SM-clocks a tile, and a K step
     int cards;     // the cards whose census reads it (one: its boards' estimate only)
+    int resident;  // CTAs a SM holds at once
 };
 inline constexpr TileCost kTileCost[] = {
-    {"ada", TileKernel::Int8, 3352, 12.15, 3},  {"ga10x", TileKernel::Int8, 3352, 12.5, 1},
-    {"gb20x", TileKernel::Int8, 1226, 11.62, 1}, {"ada", TileKernel::A16, 2344, 17.9, 1},
-    {"gb20x", TileKernel::A16, 785, 14.96, 1},   {"gb20x", TileKernel::Mx, 1226, 8.34, 1},
+    {"ada", TileKernel::Int8, 3352, 12.15, 3, 2},  {"ga10x", TileKernel::Int8, 3352, 12.5, 1, 2},
+    {"gb20x", TileKernel::Int8, 1226, 11.62, 1, 2}, {"ada", TileKernel::A16, 2344, 17.9, 1, 2},
+    {"gb20x", TileKernel::A16, 785, 14.96, 1, 1},   {"gb20x", TileKernel::Mx, 1226, 8.34, 1, 1},
 };
 
 // A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside
