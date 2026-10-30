@@ -1747,7 +1747,8 @@ replaced by the same step:
   fitted on the speculation round, whose rows are consecutive tokens of one text and route
   together; it stays there (`spec/round_cost.cpp`).
 - Launches: the census of the family's graph (nsys, RTX 5070 Ti, one row): Qwen3.6-35B-A3B 311
-  weight-reading + 267 small kernels a step, gpt-oss-20b 97 + 199; at Ada's and Blackwell's
+  weight-reading + 267 small kernels a step, gpt-oss-20b 97 + 199; Gemma 4 26B-A4B (RTX 4090)
+  181 + 219, its dense MLP beside the experts in each of 30 layers; at Ada's and Blackwell's
   `kKernelCost`.
 
 **How a step is measured.** Two traps:
@@ -1789,9 +1790,10 @@ K-quants' 0.80, 0.63 against 0.73).
 | RTX 5070 Ti | UD-Q3_K_S | 1: 241 / 245, 2: 209 / 207, 4: 149 / 150, 7: 108 / 106, 8: 99 / 98 |
 | RTX 5090 | UD-Q3_K_S | 1: 375 / 383, 2: 334 / 348, 4: 252 / 265, 8: 176 / 177 |
 | RTX 4060 Ti | UD-Q3_K_S | 1: 96 / 96, 2: 80 / 81, 4: 61 / 63, 7: 44 / 45 |
+| RTX 4090 | Gemma 4 26B-A4B UD-Q4_K_M (check only) | 1: 217 / 210, 2: 173 / 164, 4: 128 / 124, 8: 82 / 90 |
 
-29 points with the four one-row points of 2026-10-23: rms 4.2 %, worst 13 %
-(`ninferno_choice_test`). The old fit's check ran on the wave aggregates and missed by 68 % at
+33 points with the four one-row points of 2026-10-23: rms 4.4 %, worst 13 %
+(`ninferno_choice_test`). The Gemma rows check the table and do not make it (below). The old fit's check ran on the wave aggregates and missed by 68 % at
 eight rows once its constants were gone.
 
 **Open.**
@@ -1802,6 +1804,12 @@ eight rows once its constants were gone.
   on the 70-SM board (0.45-0.51 of its DRAM rate), where the RTX 4090's 128 SMs at that rate reach
   their DRAM rate. A format's decode rate a SM-clock against the bytes is the candidate fact for
   the routed share (Blackwell's lower row with it); the next decision.
+- Gemma 4 26B-A4B (UD-Q4_K_M, RTX 4090, KV and ring fp8 as the server chose): its routed share
+  measured as above rises with the rows, 0.81 / 0.79 / 0.84 / 0.94 at 1 / 2 / 4 / 8, where Qwen3.6's
+  falls (0.93 / 0.91 / 0.81 at 2 / 4 / 8): the estimate is 4-6 % fast at 1-4 rows and 9 % slow at
+  eight. Its experts are 4 MB each (Qwen3.6's 1.3 MB), 30 MB a layer at one row, and a dense MLP
+  runs beside them; which of these the step's census shows is the next measurement. Until then its
+  rows are kept out of the table (`CHECK_ONLY` in the fit).
 - gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation;
   the next decision. What the censuses show (nsys, master kit build):
   - Blackwell's prefill runs the experts on the block-scaled MMA (`moe_w4a8_kernel<W4a8Mxfp4Mx>`,
