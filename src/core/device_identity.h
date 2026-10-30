@@ -248,7 +248,7 @@ parse_uuid_text(std::string_view text) {
         break;
     case DeviceSelector::Kind::Uuid:
         for (const int ordinal : order) {
-            if (at(ordinal).uuid == selector.address.uuid) { return ordinal; }
+            if (uuid_known(at(ordinal)) && at(ordinal).uuid == selector.address.uuid) { return ordinal; }
         }
         break;
     }
