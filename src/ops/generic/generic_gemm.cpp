@@ -491,7 +491,7 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // between the 5060 Ti and the 5090 did (an RTX 5080 or 5070 Ti the 5090's, an RTX 5070 or 5060 the
 // 5060 Ti's); Volta and the architectures nobody measured keep the tiles.
 constexpr measured::Gate kMmqPrefillPays[] = {
-    {measured::kRtx5090, true},    {measured::kRtx5060Ti, false}, {measured::kRtx4090, true},
+    {measured::kRtx5090, true},    {measured::kRtx5060Ti, true}, {measured::kRtx4090, true},
     {measured::kL4, true},         {measured::kRtx4060Ti, true},  {measured::kA10, true},
     {measured::kA100Sxm40, false}, {measured::kRtx2080Ti, true}};
 
@@ -3527,7 +3527,7 @@ struct SpreadMeasured {
 };
 constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true},
                                               {measured::kRtx5080, true},
-                                              {measured::kRtx5060Ti, false},
+                                              {measured::kRtx5060Ti, true},
                                               {measured::kRtx4080Super, false}};
 
 bool spread_by_board(const DeviceClass& d) {
