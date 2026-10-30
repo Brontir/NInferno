@@ -627,8 +627,9 @@ def lab_configs(model):
     """The configurations the registry's lab pairs of this repository and quantization measured
     (by name: the weights are checked by their SHA-256 when judged), in the registry's order; empty
     when the lab measured none (spec-tune then runs its default menu). A user's tune of the same
-    menu is what the pairs' acceptance and the plan's round costs can be held to: the default menu
-    drafts through the proposal head where the artifact has one, which no lab pair measured."""
+    menu is what the pairs' acceptance and the plan's round costs can be held to; the lab pairs
+    measured on master from 30.10 draft through the proposal head (`+head`) as the default menu
+    does, the older ones without it, so the menu carries both where the lab has both."""
     try:
         registry = json.loads(REGISTRY.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):

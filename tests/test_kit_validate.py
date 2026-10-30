@@ -511,7 +511,7 @@ class Kit(unittest.TestCase):
                     and "Qwen3.5-9B-MTP-GGUF@" in p["target_repo"])
         labels = measure.lab_configs({"repo": "unsloth/Qwen3.5-9B-MTP-GGUF", "quant": "Q4_K_M"})
         self.assertTrue({m["config"] for m in pair["tune"]["measurements"]} - {"plain"} <= set(labels))
-        self.assertFalse(any("+head" in label for label in labels))
+        self.assertEqual(len(labels), len(set(labels)))
         self.assertEqual(measure.lab_configs({"repo": "nobody/none", "quant": "Q4_K_M"}), [])
 
     def test_target_identity_hashes_the_snapshot_file(self):
