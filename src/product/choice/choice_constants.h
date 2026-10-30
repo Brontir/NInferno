@@ -389,6 +389,34 @@ struct AttentionTileCost {
 inline constexpr AttentionTileCost kAttentionTileCost[] = {
     {"ada", 328, 188, 2}, {"ga10x", 378, 190, 1}, {"gb20x", 195, 152, 2, 20800}};
 inline constexpr double kAttentionHalfCta = 0.72; // a 64-row CTA against a 128-row one
+// The FP8-KV prompt kernel (ops/softmax_attention common/mxfp8_tiled_mma.cuh, `--kv-dtype fp8`, a
+// call wider than kFp8AttentionTiledMinWidth): a CTA of 128 query rows of one head and one split of
+// the call's keys (99 KiB, one a SM), the grid row tiles x heads x splits in launch order. The
+// splits: mxfp8_tiled_partition's target (1 .. 8, the fewest waves a split) capped at one a 512 keys
+// the call's last row sees; split s owns the 64-key tiles [s T / a, (s + 1) T / a) of those keys, a
+// CTA the ones up to its last row. A CTA takes `cta` SM-clocks (its query rows' load and rotation,
+// paid by a CTA with no keys too) and `key` a key. Read on the census of 7K and 21K prompts (1024-
+// token chunks; Blackwell on a lab build without PDL), each generation's cards together: RTX 4060
+// Ti and 4070 Ti 182 / 35000 (-3 .. +3 %), RTX 5090 and 5070 Ti 138 / 30000 (-6 .. +6 %: the 5090
+// slower, the 5070 Ti faster than one pair gives), RTX 3060 284 / 75000 (-2 .. +3 %).
+struct Fp8AttentionTileCost {
+    std::string_view generation;
+    double key, cta; // SM-clocks
+    int cards;
+};
+inline constexpr Fp8AttentionTileCost kFp8AttentionTileCost[] = {
+    {"ada", 182, 35000, 2}, {"ga10x", 284, 75000, 1}, {"gb20x", 138, 30000, 2}};
+inline constexpr double kFp8AttentionTiledMinWidth = 80; // fp8/plan.cpp kGroupedPrefillMaxWidth
+inline constexpr int kFp8AttentionMaxSplits        = 8;  // kMxfp8TiledMaxSplits
+inline constexpr double kFp8AttentionSplitKeys     = 512; // the keys a split at the least
+inline constexpr double kFp8AttentionKeyTile       = 64;
+// A split call's merge reads every CTA's FP32 partials (128 rows x 256 x 4 bytes) and writes the
+// BF16 output: at 0.84 .. 1.03 of the DRAM rate on every card where they outgrow the L2 (the 21K
+// census: RTX 4060 Ti 0.86, 4070 Ti 0.84, 3060 0.91, 5070 Ti 1.02), at 2.3 .. 3.7 of it where the
+// L2 holds them with the output (RTX 5090 2.3 .. 2.9, the 4070 Ti's and 5070 Ti's first chunk 3.7 /
+// 2.5; the 4060 Ti's first chunk, exactly its 32 MiB, 1.0).
+inline constexpr double kAttentionMergeDramShare = 0.9;
+inline constexpr double kAttentionMergeL2Share   = 2.5;
 // The BF16-KV prompt kernel (ops/softmax_attention bf16/tiled_mma.cuh: `--kv-dtype bf16`): a CTA of 64
 // query rows of one head (98 KiB, one a SM), issued in plain launch order (a head's row blocks
 // first to last, then the next head). Read on the census of a 7K-token prompt (1024-token chunks):

@@ -705,6 +705,48 @@ Int8PromptLayout int8_prompt_layout(int width, int heads, int sms) {
     return best;
 }
 
+// The FP8-KV prompt kernel's chunk of `width` tokens after `prefix` over one layer of `heads`
+// heads, and its merge (kFp8AttentionTileCost); seconds.
+double fp8_attention_chunk_seconds(const Fp8AttentionTileCost& cost, const CardFacts& card, double heads,
+                                   double prefix, double width) {
+    const auto up      = [](double a, double b) { return std::ceil(a / b); };
+    const double tiles = up(width, 128);
+    // mxfp8_tiled_partition: the split count with the fewest waves a split, fewer on a tie.
+    const double ctas = heads * tiles;
+    double target = 1, waves = up(ctas, card.sms);
+    for (double splits = 2; splits <= kFp8AttentionMaxSplits; ++splits) {
+        const double next = up(ctas * splits, card.sms);
+        if (next * target < waves * splits) {
+            target = splits;
+            waves  = next;
+        }
+    }
+    const double visible = prefix + width;
+    const double active  = std::min(up(visible, kFp8AttentionSplitKeys), target);
+    const double keys    = up(visible, kFp8AttentionKeyTile); // the call's key tiles
+    std::vector<double> grid;
+    double stored = 0; // the partials the CTAs store, in row tiles
+    for (double z = 0; z < active; ++z) {
+        const double first = std::floor(z * keys / active), end = std::floor((z + 1) * keys / active);
+        for (double h = 0; h < heads; ++h) {
+            for (double x = 0; x < tiles; ++x) {
+                const double last   = std::floor((prefix + std::min(x * 128 + 128, width) - 1) / kFp8AttentionKeyTile);
+                const double blocks = std::max(0.0, std::min(end, last + 1) - first);
+                grid.push_back(cost.cta + blocks * kFp8AttentionKeyTile * cost.key);
+                if (h == 0 && first <= last) { stored += heads; }
+            }
+        }
+    }
+    double seconds = deal(grid, card.sms) / card.clock_hz;
+    if (active > 1) {
+        const double partials = stored * 128 * 256 * 4, output = width * heads * 256 * 2;
+        const bool held       = card.l2_bytes > 0 && partials + output < card.l2_bytes;
+        seconds += (partials + output) /
+                   (card.dram_bytes_per_s * (held ? kAttentionMergeL2Share : kAttentionMergeDramShare));
+    }
+    return seconds;
+}
+
 } // namespace
 
 double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card, KvCacheStorage kv,
@@ -713,12 +755,39 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
         return gemma_attention_tiled_seconds(model, card, prompt, chunk, transferred);
     }
     const bool bf16 = kv == KvCacheStorage::BFloat16;
-    if (prompt <= 0 || chunk == 0 || (kv != KvCacheStorage::Int8Group64 && !bf16) || model.full_layers == 0 ||
+    const bool fp8  = kv == KvCacheStorage::Fp8E4M3Row256;
+    if (prompt <= 0 || chunk == 0 || (kv != KvCacheStorage::Int8Group64 && !bf16 && !fp8) || model.full_layers == 0 ||
         model.full_head_dim != kAttentionTileHeadDim || model.sliding_attention_width > 0 ||
         model.family.rfind("qwen3_5", 0) != 0 || card.sms <= 0 || card.clock_hz <= 0) {
         return 0;
     }
     const std::string_view gen = generation_of(card);
+    if (fp8) {
+        const Fp8AttentionTileCost* cost = nullptr;
+        for (const Fp8AttentionTileCost& row : kFp8AttentionTileCost) {
+            if (row.generation == gen) { cost = &row; }
+        }
+        const double heads =
+            std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim));
+        // A call of at most kFp8AttentionTiledMinWidth tokens takes the grouped kernels: the share.
+        if (cost == nullptr || heads < 1 || card.dram_bytes_per_s <= 0 || prompt <= kFp8AttentionTiledMinWidth) {
+            return 0;
+        }
+        if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
+        bool share_transferred = false;
+        const double share     = attention_eta(gen, share_transferred) * peak(card, Route::Bf16);
+        double seconds         = 0;
+        for (double prefix = 0; prefix < prompt; prefix += chunk) {
+            const double width = std::min<double>(chunk, prompt - prefix);
+            if (width <= kFp8AttentionTiledMinWidth) {
+                seconds += 2 * model.full_attention_width * (width * prefix + width * width / 2) / share;
+                if (transferred != nullptr && share_transferred) { *transferred = true; }
+                continue;
+            }
+            seconds += model.full_layers * fp8_attention_chunk_seconds(*cost, card, heads, prefix, width);
+        }
+        return seconds;
+    }
     const AttentionTileCost* cost = nullptr;
     for (const AttentionTileCost& row : bf16 ? std::span(kBf16AttentionTileCost) : std::span(kAttentionTileCost)) {
         if (row.generation == gen) { cost = &row; }

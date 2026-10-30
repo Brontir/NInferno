@@ -51,6 +51,7 @@ struct CardFacts {
     int sms = 0;                // multiprocessors
     double clock_hz = 0;        // reference SM clock (the PCI-ID table's)
     double dram_bytes_per_s = 0;
+    double l2_bytes = 0;        // the L2 cache (0: unknown)
     bool fp4 = false;           // FP4 tensor cores (NVFP4 weights run W4A4)
 };
 
@@ -271,8 +272,8 @@ struct Reference {
 // and gates in bytes over the DRAM rate; seconds, 0 where the generation has no census.
 [[nodiscard]] double prefill_small_seconds(const ModelFacts& model, const CardFacts& card,
                                            double tokens) noexcept;
-// A prompt's full attention by its CTAs (DECISIONS 68): the INT8-KV prompt kernel's grid per chunk
-// of `chunk` tokens, each CTA's keys at its SM-clocks a key, dealt to the SMs in launch order;
+// A prompt's full attention by its CTAs (DECISIONS 68): the INT8-KV, BF16-KV and FP8-KV prompt
+// kernels' and Gemma 4's grid per chunk of `chunk` tokens, each CTA's keys at its SM-clocks a key, dealt to the SMs in launch order;
 // seconds over every full layer, 0 where the kernel or the generation has no row.
 [[nodiscard]] double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card,
                                                      KvCacheStorage kv, double prompt,
