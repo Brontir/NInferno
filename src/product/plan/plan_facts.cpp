@@ -2,6 +2,7 @@
 #include "product/plan/plan_facts.h"
 
 #include "artifact/reader.h"
+#include "artifact/routed_experts.h"
 #include "convert/dense.h"
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
@@ -839,8 +840,8 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     enum Part : std::uint8_t { Vision, Mtp, Drafter, Proposal, Other, Parts };
 
     std::vector<std::array<bool, Parts>> marks(dir.objects.size(), std::array<bool, Parts>{});
-    // The trunk's routed expert banks (`.../experts/<e>/...`; the shared expert is not one).
-    std::vector<bool> routed(dir.objects.size(), false);
+    // The routed expert objects as the runtime counts them (model_instance.cpp).
+    const auto routed = artifact::routed_expert_object_layers(dir);
     // The input table's objects that the output head does not share (an untied table: a decode
     // step gathers one row of it).
     std::vector<std::uint8_t> table(dir.objects.size(), 0); // bit 0: input table, bit 1: head
@@ -877,10 +878,6 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
                                                                                           : Other;
         for (const auto& piece : binding.parts) {
             if (piece.object.index < marks.size()) { marks[piece.object.index][part] = true; }
-            if (part == Other && name.find("/experts/") != std::string::npos &&
-                piece.object.index < routed.size()) {
-                routed[piece.object.index] = true;
-            }
         }
     }
     std::uint64_t bytes = 0, vision_bytes = 0, mtp_bytes = 0, drafter_bytes = 0,
@@ -907,7 +904,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
             layer_formats.insert(tensor->format); // the trunk's layers
         }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
-        if (routed[i] && m[Other]) { routed_bytes += tensor->bytes; }
+        if (routed[i]) { routed_bytes += tensor->bytes; }
         if (alone && m[Drafter]) {
             drafter_bytes += tensor->bytes;
         } else if (alone && m[Proposal]) {
