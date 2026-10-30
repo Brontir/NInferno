@@ -420,6 +420,15 @@ void prices_attention(const json& fixture) {
     const ch::Speed te = ch::speed_of(none, turing, b.quants[0], exact, 1, 4096, 4096);
     check(ve.transferred && std::abs(ve.prefill / te.prefill - (0.248 * 1536.0) / (0.185 * 1536.0)) < 1e-9,
           "Volta's exact prefill scales its own int8 row by Turing's ratio");
+    // An MoE on Volta keeps the dense model's exact-to-fast ratio.
+    ch::ModelFacts moe          = none;
+    moe.experts                 = 128;
+    moe.experts_per_token       = 8;
+    moe.routed_expert_params    = moe.params * 0.8;
+    const ch::Speed mf_fast     = ch::speed_of(moe, volta, b.quants[0], c, 1, 4096, 4096);
+    const ch::Speed mf_exact    = ch::speed_of(moe, volta, b.quants[0], exact, 1, 4096, 4096);
+    check(std::abs((mf_exact.prefill / mf_fast.prefill) / (ve.prefill / v.prefill) - 1) < 1e-9,
+          "an MoE's exact-to-fast prefill ratio on Volta is the dense model's");
 }
 
 void chooses(const json& fixture) {

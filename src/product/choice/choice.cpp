@@ -195,6 +195,13 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     const double kind = moe && transfer_moe != nullptr && transfer_dense != nullptr
                             ? transfer_moe->eta / transfer_dense->eta
                             : 1.0;
+    if (moe && kind != 1.0) {
+        // The dense model's efficiency on this route, as a dense model resolves it (its own int8
+        // row at the dense ratio before a stand-in's route row), at the kind's ratio.
+        bool dense_transferred = false;
+        transferred            = true;
+        return prefill_eta(false, generation, route, dense_transferred) * kind;
+    }
     for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(false, gen, base)) {
             transferred = true;
