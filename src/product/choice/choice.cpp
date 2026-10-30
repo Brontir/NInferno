@@ -144,7 +144,7 @@ StepKernels kernels_of(const ModelFacts& model, const DecodeLaunches& row, doubl
 StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double rows, bool& transferred) noexcept {
     const auto find = [](std::string_view family, WeightClass w) -> const DecodeLaunches* {
         for (const DecodeLaunches& r : kDecodeLaunches) {
-            if (r.family == family && r.weights == w) { return &r; }
+            if (!r.moe && r.family == family && r.weights == w) { return &r; } // a dense model's rows
         }
         return nullptr;
     };
@@ -160,7 +160,7 @@ StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double ro
         row         = find(model.family, WeightClass::KQuant);
     }
     for (const DecodeLaunches& r : kDecodeLaunches) {
-        if (row == nullptr && r.family == model.family) { row = &r; }
+        if (row == nullptr && !r.moe && r.family == model.family) { row = &r; }
     }
     if (row == nullptr) { row = find(kDecodeLaunches[0].family, weights); }
     if (row == nullptr) { row = &kDecodeLaunches[0]; }
@@ -455,14 +455,20 @@ Route route_of(const QuantOption& quant, ActivationMode activations, const CardF
 
 namespace {
 
-// A dense model's int8 route on the int8 tiles (Q8 weights): the generation's tiles row, else its
-// int8 row (kPrefillTilesEta: the tiles' share of MMQ's differs by generation), transferred.
-double tiles_eta(std::string_view generation, bool& transferred) noexcept {
+// A dense model's int8 route on the int8 tiles (Q8 weights): the tile's clock count at the model's
+// hidden width (2 x 64 x 64 operations a tile over c0 + K c1 SM-clocks, against the s8 rate a
+// SM-clock), Turing's measured row, else the generation's int8 row, transferred.
+double tiles_eta(const CardFacts& card, double hidden, bool& transferred) noexcept {
+    const std::string_view generation = generation_of(card);
     for (const TilesEta& row : kPrefillTilesEta) {
-        if (row.generation == generation) {
-            transferred = transferred || row.cards < 2; // one card: its boards' estimate only
-            return row.eta;
+        if (row.generation != generation) { continue; }
+        transferred = transferred || row.cards < 2; // one card: its boards' estimate only
+        const double s8 = generation_row(card.major, card.minor).s8;
+        if (row.c1 > 0 && hidden > 0 && s8 > 0) {
+            return 2.0 * 64 * 64 / ((row.c0 / hidden + row.c1) * s8);
         }
+        if (row.eta > 0) { return row.eta; }
+        break;
     }
     transferred = true;
     return prefill_eta(false, generation, Route::Int8, transferred);
@@ -488,7 +494,7 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     if (params <= 0) { return 0; }
     const std::string_view gen = generation_of(card);
     const double eta           = route == Route::Int8 && quant.weights == WeightClass::Q8 && !model.moe()
-                                     ? tiles_eta(gen, transferred)
+                                     ? tiles_eta(card, model.hidden, transferred)
                                      : prefill_eta(model.moe(), gen, route, transferred);
     double rate = eta * peak(card, route) / (2 * params);
     if (model.moe() && model.experts_per_token > 0) {

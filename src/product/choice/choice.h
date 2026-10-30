@@ -90,6 +90,7 @@ struct ModelFacts {
     // the average bits stands in.
     double input_table_bytes = 0;
     std::uint32_t layers = 0;         // the trunk's layers (a decode step launches kernels per layer)
+    double hidden = 0;                // the hidden width (the K of a dense model's linears; 0: unknown)
     // The whole-model calls a prefill runs after the prompt's chunks (the generation prompt's
     // execution boundaries: PlanTargetShape::prompt_tail_calls), each a decode step's reads.
     std::uint32_t prompt_tail_calls = 0;
@@ -105,7 +106,6 @@ struct ModelFacts {
     bool recurrent = false;           // Gated DeltaNet layers (a --state-dtype to choose)
     bool fp8_ring  = false;           // its sliding rings take FP8 (Gemma 4, dense decoders)
     std::vector<LinearShape> linears; // the trunk's linears (empty: unknown)
-    double hidden = 0;                // the hidden width (0: unknown)
     // The recurrent layers' state of one sequence, elements over every layer (0: none); a prefill's
     // chunked scan runs over it once a token.
     double recurrent_state_elements = 0;

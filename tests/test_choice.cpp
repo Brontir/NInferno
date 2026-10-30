@@ -66,6 +66,7 @@ ch::ModelFacts model_of(const json& m) {
     out.full_attention_width    = m.value("full_attention_width", 0.0);
     out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
     out.layers                  = m.value("layers", 0U);
+    out.hidden                  = m.value("hidden", 0.0);
     if (m.contains("ring_bytes_per_token")) {
         const json ring         = m.at("ring_bytes_per_token");
         out.ring_bytes_per_token = [ring](KvCacheStorage s) {
@@ -123,6 +124,7 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv          = kv_of(row.at("kv").get<std::string>());
+        c.ring        = kv_of(row.value("ring", std::string("bf16")));
         c.state       = row.at("state").get<std::string>() == "f32" ? RecurrentStateStorage::FP32
                                                                     : RecurrentStateStorage::FP16;
         c.activations = row.at("activations").get<std::string>() == "exact" ? ActivationMode::Exact
@@ -159,8 +161,8 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
-    // 29 points (2026-10-30): rms 4.2 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
-    check(moes == 29 && moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode from facts within the model's error");
+    // 33 points (2026-10-30): rms 4.4 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
+    check(moes == 33 && moe_rms < 0.055 && moe_worst < 0.16, "an MoE's decode from facts within the model's error");
     check(prefill_rms < 0.10 && prefill_worst < 0.17, "prefill within the fit's error");
 }
 
@@ -228,7 +230,7 @@ void counts_the_kernels(const json& census) {
         const std::string family = model.rfind("gemma", 0) == 0 ? "gemma4_text" : "qwen3_5_text";
         const ch::WeightClass w  = ch::weight_class_of({}, row.at("quant").get<std::string>());
         const auto* l = std::find_if(std::begin(ch::kDecodeLaunches), std::end(ch::kDecodeLaunches),
-                                     [&](const ch::DecodeLaunches& r) { return r.family == family && r.weights == w; });
+                                     [&](const ch::DecodeLaunches& r) { return !r.moe && r.family == family && r.weights == w; });
         if (l == std::end(ch::kDecodeLaunches)) {
             check(false, "a census row has its family's launches");
             continue;
@@ -288,13 +290,14 @@ void prefills_pay_tail_calls(const json& fixture) {
               << prompt / t2 << " tok/s\n";
 }
 
-// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of the
-// 2026-10-28 campaign (tests/fixtures/choice/prefill_measured.json), Q8_0 on the int8 tiles, Q4_K_M on
-// MMQ's int8 rows; Q8_0 had taken the MMQ rows (+35-61 % at 14K before). The Q8 rows are the mean of
-// these same points (Ada, Blackwell: each card within 7 % of its generation's mean; Ampere and Turing
-// one card each, so in sample).
+// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of
+// tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on six; Q8_0
+// re-measured after PR #249, master f8d4399d), Q8_0 on the int8 tiles, Q4_K_M on MMQ's int8 rows.
+// The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
+// measured row.
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0};
+    std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
@@ -307,16 +310,27 @@ void prefills_by_format(const json& fixture) {
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
+        by_card[std::string(i == 1 ? "Q8_0 " : "Q4_K_M ") + row.at("model").get<std::string>() + " " +
+                row.at("card").get<std::string>()]
+            .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
         ++n[i];
     }
     const double mmq = std::sqrt(sq[0] / n[0]), tiles = std::sqrt(sq[1] / n[1]);
+    for (const auto& [card, ds] : by_card) {
+        std::cout << "  " << card << ":";
+        for (const double d : ds) { std::cout << " " << std::lround(d * 100) << " %"; }
+        std::cout << "\n";
+    }
     std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
-    check(n[1] == 42 && tiles < 0.08 && worst[1] < 0.15, "Q8_0 prefill on the int8 tiles within the model's spread");
-    check(n[0] == 42 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+    // DECISIONS 67: the tile's clock count, no fit. Its worst points are the RTX 5090's (+14 .. +26 %):
+    // its N 4096 calls run 6.02 waves of 170 SMs in 7, which one share a generation cannot price
+    // (the tile law by linear, DECISIONS 66, does); the rest within -15 .. +15 %.
+    check(n[1] == 60 && tiles < 0.09 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
+    check(n[0] == 78 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
@@ -332,7 +346,21 @@ void prefills_by_format(const json& fixture) {
         return ch::speed_of(model, card_of(fixture.at("cards").at(card)), q, c, rows, 4096, 2048);
     };
     const ch::Speed ada_q8 = at("RTX 4090", q8, mf, 1), ada_kq = at("RTX 4090", kq, mf, 1);
-    check(ada_q8.prefill < ada_kq.prefill * 0.8, "Ada: a Q8 prefill takes the tiles row (0.212 against 0.306)");
+    // Without attention the prefill is the linears alone: their rates are the tile's clock count at
+    // the model's hidden width (Ada c0 3352, c1 12.15 clocks against 2048 s8 operations a SM-clock:
+    // 0.308 at 4096) and MMQ's int8 row (0.306), exactly; a narrower model pays c0 over fewer K steps.
+    ch::ModelFacts linears_only          = mf;
+    linears_only.full_attention_width    = 0;
+    linears_only.sliding_attention_width = 0;
+    const auto tiles_over_mmq            = [&](double hidden) {
+        linears_only.hidden = hidden;
+        return at("RTX 4090", q8, linears_only, 1).prefill / at("RTX 4090", kq, linears_only, 1).prefill;
+    };
+    const auto law = [](double k) { return 2.0 * 64 * 64 / ((3352 / k + 12.15) * 2048) / 0.306; };
+    check(std::abs(tiles_over_mmq(4096) - law(4096)) < 1e-9 && std::abs(law(4096) * 0.306 - 0.308) < 5e-4,
+          "Ada: a Q8 prefill takes the tile law at K 4096 (0.308 against 0.306)");
+    check(std::abs(tiles_over_mmq(2560) - law(2560)) < 1e-9 && tiles_over_mmq(2560) < tiles_over_mmq(5120),
+          "Ada: the tile law at the model's own width (2560 below 5120)");
     check(!ada_q8.transferred, "Ada: the tiles row rests on three cards");
     // One card's rows price only their own boards: marked transferred.
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&

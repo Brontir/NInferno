@@ -1747,7 +1747,8 @@ replaced by the same step:
   fitted on the speculation round, whose rows are consecutive tokens of one text and route
   together; it stays there (`spec/round_cost.cpp`).
 - Launches: the census of the family's graph (nsys, RTX 5070 Ti, one row): Qwen3.6-35B-A3B 311
-  weight-reading + 267 small kernels a step, gpt-oss-20b 97 + 199; at Ada's and Blackwell's
+  weight-reading + 267 small kernels a step, gpt-oss-20b 97 + 199; Gemma 4 26B-A4B (RTX 4090)
+  181 + 219, its dense MLP beside the experts in each of 30 layers; at Ada's and Blackwell's
   `kKernelCost`.
 
 **How a step is measured.** Two traps:
@@ -1789,9 +1790,10 @@ K-quants' 0.80, 0.63 against 0.73).
 | RTX 5070 Ti | UD-Q3_K_S | 1: 241 / 245, 2: 209 / 207, 4: 149 / 150, 7: 108 / 106, 8: 99 / 98 |
 | RTX 5090 | UD-Q3_K_S | 1: 375 / 383, 2: 334 / 348, 4: 252 / 265, 8: 176 / 177 |
 | RTX 4060 Ti | UD-Q3_K_S | 1: 96 / 96, 2: 80 / 81, 4: 61 / 63, 7: 44 / 45 |
+| RTX 4090 | Gemma 4 26B-A4B UD-Q4_K_M (check only) | 1: 217 / 210, 2: 173 / 164, 4: 128 / 124, 8: 82 / 90 |
 
-29 points with the four one-row points of 2026-10-23: rms 4.2 %, worst 13 %
-(`ninferno_choice_test`). The old fit's check ran on the wave aggregates and missed by 68 % at
+33 points with the four one-row points of 2026-10-23: rms 4.4 %, worst 13 %
+(`ninferno_choice_test`). The Gemma rows check the table and do not make it (below). The old fit's check ran on the wave aggregates and missed by 68 % at
 eight rows once its constants were gone.
 
 **Open.**
@@ -1802,6 +1804,12 @@ eight rows once its constants were gone.
   on the 70-SM board (0.45-0.51 of its DRAM rate), where the RTX 4090's 128 SMs at that rate reach
   their DRAM rate. A format's decode rate a SM-clock against the bytes is the candidate fact for
   the routed share (Blackwell's lower row with it); the next decision.
+- Gemma 4 26B-A4B (UD-Q4_K_M, RTX 4090, KV and ring fp8 as the server chose): its routed share
+  measured as above rises with the rows, 0.81 / 0.79 / 0.85 / 0.95 at 1 / 2 / 4 / 8, where Qwen3.6's
+  falls (0.93 / 0.91 / 0.81 at 2 / 4 / 8): the estimate is 3-6 % fast at 1-4 rows and 9 % slow at
+  eight. Its experts are 4 MB each (Qwen3.6's 1.3 MB), 30 MB a layer at one row, and a dense MLP
+  runs beside them; which of these the step's census shows is the next measurement. Until then its
+  rows are kept out of the table (`CHECK_ONLY` in the fit).
 - gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation;
   the next decision. What the censuses show (nsys, master kit build):
   - Blackwell's prefill runs the experts on the block-scaled MMA (`moe_w4a8_kernel<W4a8Mxfp4Mx>`,
@@ -1940,3 +1948,45 @@ ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 u
 grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
 kernels, Volta's dp4a route; then the estimate, checked against data/prefill/rows.json and the
 MoE campaign.
+
+## 67. A dense model's Q8 prefill from the int8 tile's clock count (30.10, measured)
+
+**What changed.** Since PR #249 the 64-token W4A8 tiles (the Q8 codec of `q8_prefill_a8` among
+them) run token-major, so a call no longer streams a matrix larger than L2 from DRAM once per 64
+tokens. Qwen3.5 9B Q8_0's prefill (sm_bench.py prefill, 3K-14K-token prompts, the choice test's
+`prefill_measured.json` points) rose 1.65x on the RTX 4060 Ti, 1.46x on the 4070 Ti, 1.35x on the
+4090 and 1.18x on the 5070 Ti, and the fitted `kPrefillTilesEta` rows (master 03afc418 points)
+priced it 25-40 % slow.
+
+**The fact instead of a fit.** A call bound by its tiles' own work takes, per 64 x 64 tile,
+c0 + K c1 SM-clocks. The census (nsys, the token-major grid) reads c1 at 12.1 SM-clocks a K step on
+the RTX 4090, 12.8 on the 4070 Ti, 12.5 on the RTX 3060 (Ampere) and 11.6 on the 5070 Ti
+(Blackwell): the same count on every generation with an int8 MMA, a third of its tensor peak
+(decoding the weights on the CUDA cores bounds it). The share of the int8 peak a dense model's Q8
+linears reach is then 2 x 64 x 64 / ((c0 / K + c1) x s8) at a hidden width of 4096: Ada 0.308 (c0
+3352, c1 12.15), Blackwell 0.336 (1226, 11.62), Ampere 0.300 (the RTX 3060's c1 12.5 with Ada's c0:
+one card, so transferred). Turing's int8 tile is another kernel with no clock count read: its row
+stays the 03afc418 fit (its points rose 1.11x and it lands within 4 % of them).
+
+**Predicted / measured** (`ninferno_choice_test`, `prefill_measured.json`: sm_bench.py prefill on
+master f8d4399d, 3K-14K-token prompts, estimate / measured - 1):
+
+| card | Qwen3.5 9B Q8_0 | Gemma 4 12B Q8_0 |
+|---|---|---|
+| RTX 2080 Ti (Turing, its measured row) | -1 .. -4 % | |
+| RTX 3060 (Ampere, transferred) | -7 .. -15 % (it ran 1.82 GHz against the table's 1.78) | |
+| RTX 4060 Ti | -1 .. -9 % | 0 .. +5 % |
+| RTX 4070 Ti | +2 .. -7 % | |
+| RTX 4090 | +10 .. -1 % | +7 .. +15 % |
+| RTX 5070 Ti | -1 .. -9 % | -3 .. +1 % |
+| RTX 5090 | +14 .. +26 % | |
+
+60 points, rms 8.9 %; the fitted rows they replace priced the same points 25-40 % slow on Ada. The
+error falls with the prompt on most cards (attention's term, the same as Q4_K_M's).
+
+**Open: the RTX 5090.** Its census (nsys, token-major) runs the tiles at the law's time at its
+reference clock (2407 MHz: about 20 us a wave at K 4096, the law 20.3), yet a call of 1024 CTAs
+(the N 4096 projections at a 1024-token chunk) is 6.02 waves of 170 SMs and takes 7: about 14 % of
+the linears, which one share a generation cannot see. The tile law by linear with its waves
+(DECISIONS 66, `prefill_linears_seconds` on the prefill branch) prices it; it replaces these rows
+when the rest of a prompt (the small kernels) is priced too.

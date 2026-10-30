@@ -138,6 +138,7 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     // artifact holds a Q8 input table beside its Q6 head); 0 where one object serves both.
     out.input_table_bytes = static_cast<double>(s.input_table_bytes);
     out.layers            = static_cast<std::uint32_t>(s.num_hidden_layers);
+    out.hidden            = static_cast<double>(s.hidden_size);
     out.prompt_tail_calls = s.prompt_tail_calls;
     out.kv_bytes_per_token = [m](KvCacheStorage storage) {
         return runtime::plan_kv_bytes_per_token(m, storage);
@@ -155,7 +156,6 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     }
     // The Qwen 3.5 families' Gated DeltaNet state takes --state-dtype; Nemotron-H keeps FP32.
     for (const runtime::PlanLinear& l : m.linears) { out.linears.push_back({l.n, l.k, l.per_token, l.expert}); }
-    out.hidden                   = static_cast<double>(m.hidden);
     out.recurrent_state_elements = static_cast<double>(m.recurrent_state_elements);
     out.recurrent = m.recurrent_layers != 0 && m.model_type.rfind("qwen3_5", 0) == 0;
     // FP8 sliding rings: Gemma 4 and the dense decoders (types.h sliding_kv_cache).

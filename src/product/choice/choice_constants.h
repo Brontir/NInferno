@@ -117,7 +117,9 @@ enum class WeightClass : std::uint8_t {
 // Ti, 60 decode steps of one row): Qwen3.6-35B-A3B UD-Q3_K_S 311 + 267 = 578 a step (the router,
 // select, combine and the routed banks' two calls a layer; the Gated DeltaNet layers' projections
 // read weights too), gpt-oss-20b MXFP4 97 + 199 = 296; the graph's count in the lab tunes (spec-tune
-// graph_kernels) is the same, 577 and 295. At 2-8 rows the one-row count (not measured). A family or
+// graph_kernels) is the same, 577 and 295; Gemma 4 26B-A4B UD-Q4_K_M (RTX 4090, master 4c5b8165)
+// 181 + 219 = 400 (its dense MLP beside the experts in every layer). At 2-8 rows the one-row count
+// (not measured). A family or
 // class without a row takes the family's K-quant row, else the family's other row, else Qwen 3.5's
 // (transferred).
 struct DecodeLaunches {
@@ -136,6 +138,7 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
     {"qwen3_5_moe_text", WeightClass::Other, 40, 311, {267, 267, 267}, 1, 6, true},
     {"moe_decoder", WeightClass::Other, 24, 97, {199, 199, 199}, 1, 6, true},
+    {"gemma4_text", WeightClass::Other, 30, 181, {219, 219, 219}, 1, 9, true},
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 
@@ -276,23 +279,30 @@ inline constexpr PrefillEta kPrefillEta[] = {
 };
 
 // A dense model's int8 route on Q8 weights prefills on the generic int8 tiles (the W4A8 kernel's
-// Q8 codec, ops/generic q8_prefill_a8), not ggml's MMQ that kPrefillEta's int8 rows measured: its
-// linears reach this share of the int8 peak (sm_bench.py prefill, master 03afc418: Qwen3.5-9B Q8_0
-// at 7K and 14K prompts, attention apart; the same campaign's Q4_K_M within 4 % of the int8 rows on
-// Ada, Blackwell and Ampere, 12 % below Turing's). Ada: RTX 4060 Ti 0.197, 4070 Ti 0.217, 4090 0.223
-// (the nsys census of a 6.8K prompt on the 4090: the W4A8 Q8 kernel at 20.8 % of the peak, ggml's MMQ
-// on Q4_K_M at 33.7 %). Blackwell: RTX 5070 Ti 0.303, 5090 0.269. Ampere: RTX 3060 0.342, Turing:
-// RTX 2080 Ti 0.147 (one card each). The tiles' share of MMQ's differs by generation (Ada 0.69,
-// Blackwell 0.90, Ampere 0.97, Turing 0.69), so none carries: a generation without a row keeps its
-// int8 row (transferred). A row of one card (Ampere, Turing) prices only its own boards' estimate,
-// marked transferred; no decision reads it (the choice prices on a reference card's generation).
+// Q8 codec, ops/generic q8_prefill_a8), not ggml's MMQ that kPrefillEta's int8 rows measured. Since
+// the 64-token tiles run token-major (PR #249) a tile no longer streams its weights from DRAM once
+// per 64 tokens and the call is bound by the tile's own work (DECISIONS 67): a 64 x 64 tile takes
+// c0 + K c1 SM-clocks, c1 about 12 clocks a K step on every generation with an int8 MMA (decoding
+// the weights on the CUDA cores, a third of the tensor peak), c0 the tile's start. A linear of hidden
+// width K then reaches 2 x 64 x 64 / ((c0 / K + c1) x the s8 rate) of the int8 peak (choice.cpp
+// tiles_eta, at the model's own hidden width): Ada c0 3352, c1 12.15 clocks (the RTX 4090's nsys
+// census), Blackwell 1226, 11.62 (the RTX 5070 Ti's), Ampere its RTX 3060's c1 12.5 with Ada's c0
+// (one card, transferred). At K 4096 that is 0.308 / 0.336 / 0.300; measured (sm_bench.py prefill,
+// master f8d4399d, Qwen3.5-9B Q8_0 at 3K-14K prompts, attention apart): RTX 4060 Ti 0.325, 4070 Ti
+// 0.317, 4090 0.301, 5070 Ti 0.357.
+// Turing's int8 tile is another kernel without a clock count: its row keeps the share fitted on the
+// master 03afc418 points (one card, transferred; within 4 % of the RTX 2080 Ti's points after
+// PR #249, which rose 1.11x), and a generation without an int8 MMA keeps its int8 row (Volta).
 struct TilesEta {
     std::string_view generation;
-    double eta;
+    double c0, c1; // the tile's start and K step, SM-clocks (0: no clock count, `eta` stands)
+    double eta;    // the measured share where there is no clock count
     int cards;
 };
-inline constexpr TilesEta kPrefillTilesEta[] = {
-    {"ada", 0.212, 3}, {"gb20x", 0.286, 2}, {"ga10x", 0.342, 1}, {"turing", 0.147, 1}};
+inline constexpr TilesEta kPrefillTilesEta[] = {{"ada", 3352, 12.15, 0, 3},
+                                                {"gb20x", 1226, 11.62, 0, 2},
+                                                {"ga10x", 3352, 12.5, 0, 1},
+                                                {"turing", 0, 0, 0.147, 1}};
 
 // A prefill linear's tile (DECISIONS 66): a CTA of 64 tokens (an MoE expert's: a job of up to 64 of
 // its slots) x 64 output rows, the whole K deep, takes c0 + K c1 SM-clocks (the card's reference
@@ -313,7 +323,7 @@ struct TileCost {
     double c0, c1; // SM-clocks a tile, and a K step
 };
 inline constexpr TileCost kTileCost[] = {
-    {"ada", TileKernel::Int8, 3352, 12.15},  {"ga10x", TileKernel::Int8, 3352, 12.15},
+    {"ada", TileKernel::Int8, 3352, 12.15},  {"ga10x", TileKernel::Int8, 3352, 12.5},
     {"gb20x", TileKernel::Int8, 1226, 11.62}, {"ada", TileKernel::A16, 2344, 17.9},
     {"gb20x", TileKernel::A16, 785, 14.96},   {"gb20x", TileKernel::Mx, 1226, 8.34},
 };
