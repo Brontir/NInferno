@@ -1,6 +1,7 @@
 #include "product/choice/choice.h"
 
 #include "core/generation.h"
+#include "core/measured_boards.h"
 
 #include <algorithm>
 #include <cctype>
@@ -505,6 +506,69 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     return rate;
 }
 
+// A label's tokens (weight_class_of reads them too).
+std::vector<std::string> label_tokens(std::string_view label);
+
+// A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost), where the card's nearest
+// measured board takes it; 0 elsewhere (the classic tiles: not read).
+double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                           double tokens, bool* transferred) noexcept {
+    const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
+                                card.dram_bytes_per_s / 1e9};
+    if (!measured::mmq_prefill_pays(board)) { return 0; }
+    const std::string_view gen = generation_of(card);
+    const MmqTileCost* cost    = nullptr;
+    for (const MmqTileCost& row : kMmqTileCost) {
+        if (row.generation == gen) { cost = &row; }
+    }
+    if (cost == nullptr) { return 0; }
+    // The label's K-quant format (Q4_K_M: Q4_K), its bits a weight past that format's toward Q6_K.
+    struct Format {
+        std::string_view name;
+        double bits, step;
+    };
+    const Format formats[] = {{"Q4", 4.5, cost->q4}, {"Q5", 5.5, cost->q5}, {"Q6", 6.5625, cost->q6}};
+    const std::vector<std::string> tokens_of = label_tokens(quant.label);
+    const Format* format = nullptr;
+    for (std::size_t i = 0; i + 1 < tokens_of.size(); ++i) {
+        for (const Format& f : formats) {
+            if (tokens_of[i] == f.name && tokens_of[i + 1] == "K") { format = &f; }
+        }
+    }
+    if (format == nullptr) { return 0; }
+    if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
+    const double toward = format->bits < 6.5625
+                              ? std::clamp((quant.bits_per_weight - format->bits) / (6.5625 - format->bits), 0.0, 1.0)
+                              : 0;
+    const double sms = card.sms, step = format->step + (cost->q6 - format->step) * toward;
+    double clocks = 0, bytes = 0;
+    for (const LinearShape& l : model.linears) {
+        // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
+        const double grids = l.gated ? 2 : 1, n = l.n / grids;
+        for (double done = 0; done < tokens; done += kMmqSliceTokens) {
+            const double t = std::min(kMmqSliceTokens, tokens - done);
+            double columns = kMmqTile; // ggml's narrowest column tile with the fewest tiles
+            for (const double j : {16.0, 32.0, 64.0}) {
+                if (std::ceil(t / j) == std::ceil(t / kMmqTile)) {
+                    columns = j;
+                    break;
+                }
+            }
+            const double tiles = std::ceil(n / kMmqTile) * std::ceil(t / columns);
+            const double waves = std::ceil(tiles / sms);
+            const double k_step = l.k * step * (kMmqTileFixed + (1 - kMmqTileFixed) * columns / kMmqTile);
+            if (100 * tiles >= 90 * sms * waves) {
+                clocks += grids * l.per_token * waves * (cost->c0 + k_step);
+            } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split tiles
+                clocks += grids * l.per_token * (cost->c0 + tiles * k_step / sms);
+                bytes += grids * l.per_token * sms * kMmqTile * columns * 4 * 2;
+            }
+            bytes += l.per_token * t * (grids * l.k * kMmqInputBytes + l.n * kMmqOutputBytes + n * kMmqWrittenBytes);
+        }
+    }
+    return clocks / card.clock_hz + bytes / card.dram_bytes_per_s;
+}
+
 } // namespace
 
 double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
@@ -533,6 +597,7 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
     case ExpertBanks::Unknown: return 0;
     }
+    if (!moe && quant.weights == WeightClass::KQuant) { return mmq_linears_seconds(model, card, quant, tokens, transferred); }
     if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);
@@ -1098,7 +1163,8 @@ std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates)
     for (const ReferenceCard& r : kReferenceCards) {
         if (r.generation != gen) { continue; }
         Reference out;
-        out.card          = {card.major, card.minor, r.sms, r.clock_hz, r.dram_bytes_per_s, card.fp4};
+        out.card          = {.major = card.major, .minor = card.minor, .sms = r.sms, .clock_hz = r.clock_hz,
+                             .dram_bytes_per_s = r.dram_bytes_per_s, .fp4 = card.fp4};
         out.decides       = r.kv_two_cards && r.exact_two_cards;
         out.chunk_decides = gates.moe_chunk;
         if (!out.decides) { out.why = std::string(gen) + "'s KV and exact-route factors rest on one lab card"; }

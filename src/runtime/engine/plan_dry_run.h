@@ -172,6 +172,7 @@ struct PlanLinear {
     double k         = 0;
     double per_token = 0;
     bool expert      = false; // a routed expert's bank (its grid counts jobs, not tokens)
+    bool gated       = false; // a gated FFN's gate and up: two matrices of n / 2 rows, one input
 };
 
 struct PlanModelFacts {
