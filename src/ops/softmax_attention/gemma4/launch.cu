@@ -645,8 +645,9 @@ void gemma4_attention_decode_launch(const Gemma4AttentionLaunch& launch,
                                     static_cast<unsigned>(args.q_heads),
                                     static_cast<unsigned>(args.tokens) * rows);
             const Gemma4AttentionArgs row = row_args(args, b, Geo::D);
-            if (gemma4_volta_decode_takes(Geo::D, plan.rows)) {
-                gemma4_volta_decode_launch(row, Geo::D, kGeoDecodeBc<Geo>,
+            const bool volta = gemma4_volta_decode_takes(Geo::D, plan.rows);
+            if (volta) {
+                gemma4_volta_decode_launch(row, Geo::D, kGemma4VoltaDecodeBc,
                                            dim3(grid.y, grid.z), stream);
             } else {
                 with_warp_rows<Geo>(plan.warp_rows, [&]<int WR>() {
@@ -655,7 +656,9 @@ void gemma4_attention_decode_launch(const Gemma4AttentionLaunch& launch,
             }
             // The combine launches under the attention grid's tail (programmatic dependent): its
             // launch and prologue leave the chain.
-            const auto combine = gemma4_attention_combine_kernel<Geo, kGeoDecodeBc<Geo>>;
+            // The split boundaries of the route that wrote the partials.
+            const auto combine = volta ? gemma4_attention_combine_kernel<Geo, kGemma4VoltaDecodeBc>
+                                       : gemma4_attention_combine_kernel<Geo, kGeoDecodeBc<Geo>>;
             CUDA_CHECK(pdl::launch({combine_grid, dim3(kGemma4CombineWarps * 32), 0, stream},
                                    device_class().features.pdl, false, combine, row));
         }
