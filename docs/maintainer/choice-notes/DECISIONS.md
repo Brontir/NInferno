@@ -1844,4 +1844,25 @@ linears reach is then 2 x 64 x 64 / ((c0 / K + c1) x s8) at a hidden width of 40
 0.308 (c0 3352, c1 12.15), Blackwell 0.336 (1226, 11.62). Turing's int8 tile is another kernel
 with no clock count read: its row stays the measured one.
 
-**Predicted / measured** (the choice test, every Q8_0 point): see the PR.
+**Predicted / measured** (`ninferno_choice_test`, `prefill_measured.json`: sm_bench.py prefill on
+master f8d4399d, 3K-14K-token prompts, estimate / measured - 1):
+
+| card | Qwen3.5 9B Q8_0 | Gemma 4 12B Q8_0 |
+|---|---|---|
+| RTX 2080 Ti (Turing, its measured row) | -1 .. -4 % | |
+| RTX 3060 (Ampere) | -5 .. -14 % | |
+| RTX 4060 Ti | -1 .. -9 % | 0 .. +5 % |
+| RTX 4070 Ti | +2 .. -7 % | |
+| RTX 4090 | +10 .. -1 % | +7 .. +15 % |
+| RTX 5070 Ti | -1 .. -9 % | -3 .. +1 % |
+| RTX 5090 | +14 .. +26 % | |
+
+60 points, rms 8.7 %; the fitted rows they replace priced the same points 25-40 % slow on Ada. The
+error falls with the prompt on most cards (attention's term, the same as Q4_K_M's).
+
+**Open: the RTX 5090.** Its census (nsys, token-major) runs the tiles at the law's time at its
+reference clock (2407 MHz: about 20 us a wave at K 4096, the law 20.3), yet a call of 1024 CTAs
+(the N 4096 projections at a 1024-token chunk) is 6.02 waves of 170 SMs and takes 7: about 14 % of
+the linears, which one share a generation cannot see. The tile law by linear with its waves
+(DECISIONS 66, `prefill_linears_seconds` on the prefill branch) prices it; it replaces these rows
+when the rest of a prompt (the small kernels) is priced too.
