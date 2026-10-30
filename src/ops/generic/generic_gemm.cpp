@@ -3357,7 +3357,13 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
 // keeps the tile ahead below 129 tokens (0.37..0.47 ms against 0.50) and loses from 129, two waves
 // (0.82..0.93 against 0.52..0.54). A Qwen3.5 9B layer's four linears: 14 % less time at T = 64,
 // 35 % at T = 192.
+// The copy's narrowest margin above is 1.13 (24576 x 4096 below 129 tokens) at the V100's 870
+// GB/s, and its time is its bytes over the DRAM rate while the tile's is its waves on the SMs (80 on
+// every Volta part): a board under 870 / 1.13 GB/s (the Titan V's 653) or of unknown bandwidth
+// keeps the tile below kVoltaTileMaxTokens, where two token blocks already decode the weight twice.
 constexpr std::int32_t kVoltaCutlassMinTokens = 17;
+constexpr std::int32_t kVoltaTileMaxTokens    = 256;
+constexpr double kVoltaCopyMinDramGbps        = 870.0 / 1.13;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
     static PerDevice<bool> enabled;
@@ -3369,9 +3375,22 @@ bool volta_cutlass_takes(std::int32_t tokens) {
     });
 }
 
-// Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): every
-// call of the prefill band, a CUTLASS-only format's (`only`: it has no tile of its own) as well.
-bool volta_cutlass_runs(bool /*only*/, std::int32_t tokens) { return volta_cutlass_takes(tokens); }
+// Whether a tiled format's call of `tokens` takes the copy rather than its tile on this board.
+bool volta_copy_pays(std::int32_t tokens) {
+    static PerDevice<bool> fast_dram;
+    return tokens >= kVoltaTileMaxTokens || fast_dram.get([](int) {
+        try {
+            return device_class().dram_gbps() >= kVoltaCopyMinDramGbps;
+        } catch (const std::exception&) { return false; }
+    });
+}
+
+// Whether a TiledMma call of `tokens` runs on the decoded copy (and so needs its workspace): a
+// CUTLASS-only format's (`only`: it has no tile of its own) from the prefill band's 17 tokens, a
+// tiled format's where the copy pays.
+bool volta_cutlass_runs(bool only, std::int32_t tokens) {
+    return volta_cutlass_takes(tokens) && (only || volta_copy_pays(tokens));
+}
 
 std::size_t volta_prefill_workspace_bytes(QType qtype, std::int32_t rows, std::int32_t k,
                                           std::int32_t max_tokens, bool swiglu) {
@@ -3937,9 +3956,9 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         if ((w.k % 64) != 0) {
             throw std::invalid_argument("generic tiled: K must be whole 64-value tiles");
         }
-        // Every call of the prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format
-        // has no tile of its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a
-        // call, 360 -> 140 tok/s), and a tiled one's grid seldom fills the SMs' waves.
+        // The prefill band on Volta (kVoltaCutlassMinTokens): a CUTLASS-only format has no tile of
+        // its own (V100, gpt-oss BF16 attention at T = 79 ran scalar, 7.3 ms a call, 360 -> 140
+        // tok/s), and a tiled one's grid seldom fills the SMs' waves (volta_copy_pays).
         if (workspace != nullptr && volta_cutlass_runs(volta_cutlass_only(codec), args.tokens) &&
             launch_volta_cutlass(codec, call.epilogue, args, *workspace, stream)) {
             return;
