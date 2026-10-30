@@ -1613,6 +1613,17 @@ each; twice the 340 MB the RTX 4070 Ti's profile copied, the KV storage the GV10
 yet broken down), against 19 ms on the RTX 4090 and 7 ms on the RTX 5090 (340 MB at 17 and 48
 GB/s: the intercepts' excess over the tail calls on those boards).
 
+**Item 3, the bytes (30.10, predicted against measured).** The pause is the copy, and half of it
+was dead rows: a sliding ring holds window + chunk - 1 rows (Gemma 4 12B: 1024 + 1023), while a
+call from a checkpoint's frontier reads keys from frontier - window + 1 on (the Gemma kernels stage
+no key below a row's window and zero-fill what they skip). A checkpoint's Host transfers now move
+only its last `window` positions' rows (`StateImageStore` records the frontier at freeze;
+`StateImageDevicePool::copy_to_host` / `copy_from_host`), 1024 of 2047: half the bytes, so half the
+pause. Predicted on the RTX 4090 (six distinct 1721-token prompts, the default pool, from the third
+request on): 307 - 27 = 280 ms; measured 280-281 (master 306-309; with 16 cached Device states, no
+Host copy at all, 250-255). RTX 4060 Ti: 907-916 against 936-940. What remains is the other half,
+a Device fork's call: the policy's, not the bytes'.
+
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
 **What the profiles showed.** Every chat request on the RTX 4070 Ti ran one whole-model call more

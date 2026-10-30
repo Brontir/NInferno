@@ -3,6 +3,7 @@
 // Host-only support for the product throughput benchmark. The benchmark itself drives only the
 // public ninferno::Engine API; this file owns its CLI, matrix, statistics, and report schema.
 
+#include "core/device_identity.h"
 #include "ninferno/types.h"
 
 #include <cstddef>
@@ -64,6 +65,7 @@ struct BenchOptions {
     KvCacheStorage kv_cache     = KvCacheStorage::BFloat16;
     ActivationMode activations  = kDefaultActivationMode;
     SpeculativeOptions speculative;
+    DeviceSelector device_selector; // --device; main sets `device` from it (select_device)
     int device            = 0;
     bool use_cuda_graph   = true;
     bool profile_measured = false;

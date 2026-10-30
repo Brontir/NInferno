@@ -262,6 +262,15 @@ void test_launch() {
     check(spec.env.at("CUDA_VISIBLE_DEVICES") == "1" &&
               spec.env.at("CUDA_DEVICE_ORDER") == "PCI_BUS_ID",
           "GPU binding by PCI order");
+    {
+        GpuStat stat;
+        stat.index        = 1;
+        stat.uuid         = "GPU-00112233-4455-6677-8899-aabbccddeeff";
+        const auto bound  = make_launch(options, request, &stat);
+        check(bound.env.at("CUDA_VISIBLE_DEVICES") == stat.uuid &&
+                  !bound.env.contains("CUDA_DEVICE_ORDER"),
+              "GPU binding by the board's UUID when NVML gives one");
+    }
     check(spec.model == "unsloth/Qwen3.5-9B-GGUF:Q4_K_M", "display name");
 
     // No speculation named: the published profile's choice, --spec auto (ninferno-serve's default

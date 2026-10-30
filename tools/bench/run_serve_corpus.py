@@ -91,7 +91,7 @@ WARMUP_FIXTURE = "text_smoke_zh"
 RUN_ARTIFACT_TYPE = "ninferno_serve_corpus_result"
 RUN_SCHEMA_VERSION = 8
 SERVER_LOG_ARTIFACT_TYPE = "ninferno_serve_request_log"
-SERVER_LOG_SCHEMA_VERSION = 21
+SERVER_LOG_SCHEMA_VERSION = 33
 STARTUP_TIMEOUT_SECONDS = 1800.0
 REQUEST_TIMEOUT_SECONDS = 24.0 * 60.0 * 60.0
 LOG_EVENT_TIMEOUT_SECONDS = 10.0
@@ -282,7 +282,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--output", type=Path, required=True, help="campaign output directory")
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
-    parser.add_argument("--device", type=int, default=0, help="CUDA device index")
+    parser.add_argument("--device", type=int, default=0, help="the GPU, as ninferno-serve counts it: N in PCI bus order, as nvidia-smi does")
     parser.add_argument("--kv-dtype", choices=tuple(KV_CACHE_NAMES), default="int8")
     add_route_pin_arguments(parser)
     return parser.parse_args(argv)
@@ -526,7 +526,6 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
     require_server_log_identity(event, "server_start")
     engine = event.get("engine", {})
     actual = {
-        "device": engine.get("device"),
         "max_context": engine.get("max_context"),
         "kv_capacity": engine.get("kv_capacity"),
         "prefill_chunk": engine.get("prefill_chunk"),
@@ -538,7 +537,7 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
         "proposal_head": engine.get("proposal_head"),
     }
     expected = {
-        "device": device,
+        # Not "device": the server logs its CUDA ordinal, the --device given counts PCI order.
         "max_context": 262144,
         "kv_capacity": 262144,
         "prefill_chunk": 1024,

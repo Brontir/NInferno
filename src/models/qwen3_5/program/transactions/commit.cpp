@@ -758,7 +758,7 @@ FinishResult ProgramImpl::finish_terminal(SequenceHandle sequence, bool cancelle
             state.rewrite_checkpoint = {};
         }
         if (state_store->role(state.state.read) == StateImageRole::ActiveMutable) {
-            state_store->freeze(state.state.read);
+            state_store->freeze(state.state.read, state.text_kv_valid);
         } else if (state_store->role(state.state.read) != StateImageRole::CheckpointImmutable) {
             return out;
         }

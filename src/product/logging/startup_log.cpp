@@ -324,8 +324,13 @@ void StartupLogRenderer::engine_ready(const LoadSummary& load) {
     // The decision fingerprint (docs/maintainer/deterministic-decisions.md): two runs that print
     // the same one were asked the same thing on the same kind of machine.
     if (!load.decision_fingerprint.empty()) {
-        impl_->logger->info("fingerprint | {} | manifest {} | ninferno-fingerprint/1",
-                            load.decision_fingerprint, load.decision_manifest);
+        // The board beside it, never in it: two boards of one chip type share a fingerprint.
+        impl_->logger->info(
+            "fingerprint | {} | manifest {} | ninferno-fingerprint/1 | device {} {}",
+            load.decision_fingerprint, load.decision_manifest,
+            load.metadata.device_pci_bus_id.empty() ? std::string("unknown")
+                                                    : load.metadata.device_pci_bus_id,
+            load.metadata.device_uuid);
         std::string taint;
         for (const auto& item : load.decision_taint) {
             taint += (taint.empty() ? "" : ", ") + item;

@@ -626,15 +626,30 @@ Profile profile_for_target(const std::vector<const MeasuredPair*>& measured,
     // by the facts. A pair with facts is taken over another card's measurement without them even
     // of this generation: R is computed for this card either way, and a raw measurement of another
     // card is the very transfer the facts replace. This generation's records first (every one of
-    // them, a card's second record too), then the others; within each by GPU class id, so the
-    // registry's order never decides.
+    // them, a card's second record too), then the others; within each the lab board nearest this
+    // card first, then by GPU class id, so the registry's order never decides.
     // Ahead of the generation's agreeing lab cards too: their deeper depths and load table are
     // theirs, not a card that measured nothing (kPortableDepth bounds an estimate).
     if (gpu != nullptr && own_pair == nullptr) {
+        // Within each, the lab board nearest this card by its rates (DRAM bandwidth and int8 rate,
+        // |log| of each ratio summed): the measured excess over the bytes a pair carries is its
+        // board's, so a small card takes a small lab card's, not whichever class id sorts first.
+        const CardRates here = card_rates(*gpu);
+        const auto distance  = [&](const MeasuredPair* pair) {
+            const CardRates lab = card_rates_of_board(pair->lab_board);
+            if (here.dram_bytes_per_s <= 0 || here.int8_ops_per_s <= 0 || lab.dram_bytes_per_s <= 0 ||
+                lab.int8_ops_per_s <= 0) {
+                return std::numeric_limits<double>::infinity();
+            }
+            return std::abs(std::log(here.dram_bytes_per_s / lab.dram_bytes_per_s)) +
+                   std::abs(std::log(here.int8_ops_per_s / lab.int8_ops_per_s));
+        };
         std::vector<const MeasuredPair*> order = current;
         std::stable_sort(order.begin(), order.end(), [&](const MeasuredPair* a, const MeasuredPair* b) {
             const bool ha = a->generation == generation, hb = b->generation == generation;
-            return ha != hb ? ha : a->tune.key.gpu < b->tune.key.gpu;
+            if (ha != hb) { return ha; }
+            const double da = distance(a), db = distance(b);
+            return da != db ? da < db : a->tune.key.gpu < b->tune.key.gpu;
         });
         for (const auto* pair : order) {
             const ProposalRows* rows = options.proposal_rows ? &*options.proposal_rows : nullptr;

@@ -2,8 +2,9 @@
 
 // The GPUs as ninferno-ui shows them: read through NVML (libnvidia-ml.so.1, opened at run time like
 // core/device_class.cpp does), so the UI itself needs no CUDA context and holds no device memory.
-// Indices are NVML's, which follow the PCI bus; a process started on GPU i gets
-// CUDA_DEVICE_ORDER=PCI_BUS_ID and CUDA_VISIBLE_DEVICES=i, so both name the same card.
+// Indices are NVML's, which follow the PCI bus as --device N counts; a process started on GPU i
+// gets CUDA_VISIBLE_DEVICES=<its UUID> (or, without one, CUDA_DEVICE_ORDER=PCI_BUS_ID and
+// CUDA_VISIBLE_DEVICES=i), so both name the same card.
 
 #include <nlohmann/json.hpp>
 

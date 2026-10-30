@@ -278,6 +278,8 @@ Rules apply in this order:
 - An unknown PCI ID takes the driver's values rounded to a 2^(1/16) grid, and its facts are
   labelled *extrapolated*. Its speed estimate is *no estimate*.
 - PCIe is the highest generation the link supports, never the current one.
+- A board is named by its identity, the PCI address (domain:bus:device.function) and the UUID
+  (`core/device_identity.h`), never by its CUDA ordinal. See [Device identity](#device-identity).
 - Free memory must be the only observation made while running. It selects one rung of a declared
   plan ladder ([Plan levels](#plan-levels)), and the chosen rung goes into the fingerprint.
 
@@ -510,6 +512,39 @@ master's or longer (no cached Device states give it more), the KV within 6 % at
 8,192 tokens at chunk 1024 without the reserve (a warning), where master served 50,816 with none
 left for Windows.
 
+## Device identity
+
+A CUDA ordinal is a position in one process's enumeration. `CUDA_VISIBLE_DEVICES` filters and
+reorders it, and `CUDA_DEVICE_ORDER` defaults to `FASTEST_FIRST`, CUDA's own speed guess, so the
+same cards get other ordinals on another run or machine. The rules:
+
+- A choice among GPUs reads only the set of identities, sorted by PCI address and then UUID (the
+  UUID separates MIG instances, which share their parent's address). The same cards give the same
+  choice whatever the enumeration order.
+- `--device N` counts the visible GPUs in that order, from 0, as nvidia-smi numbers them when
+  `CUDA_VISIBLE_DEVICES` hides none; `--device pci:0000:01:00.0` and `--device GPU-<uuid>` name
+  one board (`DeviceSelector`). Without `--device` the engine runs on GPU 0 of that order. The
+  dispatcher finds the same GPU the same way and starts the engine build for it. The UI starts a
+  process on a GPU with `CUDA_VISIBLE_DEVICES=<its UUID>`. `EngineOptions::device` stays a CUDA
+  ordinal of the calling process (-1: GPU 0 of that order).
+- Caches inside one process may be indexed by ordinal, which stays bound to its board for the
+  process's life. Anything that outlives the process is keyed by the GPU class or, when it belongs
+  to one board, by the identity, never by the ordinal.
+- Logs name the board by PCI bus id and UUID beside the ordinal (the request log's `environment`).
+- The identity is not hashed into the fingerprint: two boards of one chip type make the same
+  decisions. It is printed beside the hash, to name the board the facts were read from: the
+  startup line ends `| device 0000:01:00.0 GPU-…`, and `/v1/models` carries
+  `meta.device_pci_bus_id` and `meta.device_uuid`.
+
+MIG instances are not selectors: CUDA reports a MIG instance's UUID in the same 16 bytes as a
+GPU's, and telling the two apart needs NVML's MIG handles, which no lab card here exercises.
+`--device` therefore takes `GPU-` UUIDs only and prints every UUID with that prefix; a MIG
+instance is chosen with `CUDA_VISIBLE_DEVICES=MIG-<uuid>`, after which it is the only visible
+device and the default.
+
+NInferno runs one GPU per process; there is no layout across GPUs. A future one must follow the
+first rule.
+
 ## Fingerprint
 
 The fingerprint is a hash of the following, plus a digest of the decision manifest:
@@ -521,7 +556,8 @@ The fingerprint is a hash of the following, plus a digest of the decision manife
 - the constants;
 - the kernel hash.
 
-The engine prints it at startup (`fingerprint | nf1-… | manifest nm1-… | ninferno-fingerprint/1`;
+The engine prints it at startup (`fingerprint | nf1-… | manifest nm1-… | ninferno-fingerprint/1 |
+device <PCI bus id> <UUID>`, the board beside the hash;
 the canonical text and the taint at debug level), exports it in `/metrics`
 (`ninferno_decision_fingerprint_info`) and `/v1/models` (`meta.decision_fingerprint`,
 `meta.decision_manifest`), writes it into the server-start record of the request log, and

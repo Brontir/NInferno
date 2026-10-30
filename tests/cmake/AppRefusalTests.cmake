@@ -32,7 +32,7 @@ ninferno_add_refusal_test(ninferno_spec_tune_unknown_flag_test ninferno
 ninferno_add_refusal_test(ninferno_spec_tune_reselect_flag_test ninferno
   "spec-tune: unknown flag --engine" spec-tune missing.ninferno --engine qwen3_5)
 ninferno_add_refusal_test(ninferno_spec_tune_device_test ninferno
-  "invalid device: abc" spec-tune missing.ninferno --device abc)
+  "--device must be N .*not \"abc\"" spec-tune missing.ninferno --device abc)
 
 ninferno_add_refusal_test(ninferno_ui_port_text_test ninferno-ui "invalid port: abc" --port abc)
 ninferno_add_refusal_test(ninferno_ui_port_range_test ninferno-ui
@@ -41,7 +41,7 @@ ninferno_add_refusal_test(ninferno_ui_catalog_url_test ninferno-ui
   "--catalog-url needs a value" --catalog-url)
 
 ninferno_add_refusal_test(ninferno_perplexity_device_test ninferno-perplexity
-  "invalid device: 2147483648" missing.ninferno --device 2147483648)
+  "--device must be N .*not \"2147483648\"" missing.ninferno --device 2147483648)
 ninferno_add_refusal_test(ninferno_perplexity_context_test ninferno-perplexity
   "invalid context: 12a" missing.ninferno --context 12a)
 

@@ -3,10 +3,13 @@
 #include "core/checked.h"
 #include "core/device.h"
 
+#include <cstddef>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace ninferno::models::qwen3_5 {
 namespace {
@@ -188,6 +191,49 @@ const std::byte* byte_offset(const std::byte* base, std::size_t offset) noexcept
     return base + offset;
 }
 
+// A run of ring rows: rows first .. first + count - 1 of every head.
+struct RowRun {
+    std::size_t first = 0;
+    std::size_t count = 0;
+};
+
+// The rows of a ring that a later call from `frontier` still reads: its last `window` positions,
+// position p in row p % capacity, as one run or two (wrapping). Every row when the ring has no
+// window or the frontier is not given.
+std::vector<RowRun> live_rows(const KvRingSpec& spec, std::optional<std::uint64_t> frontier) {
+    const std::uint64_t capacity = spec.capacity;
+    if (!frontier || spec.window == 0 || spec.window >= capacity) {
+        return {RowRun{.first = 0, .count = capacity}};
+    }
+    const std::uint64_t first = *frontier > spec.window ? *frontier - spec.window : 0;
+    const std::uint64_t count = *frontier - first;
+    if (count == 0) { return {}; }
+    const std::uint64_t start = first % capacity;
+    if (start + count <= capacity) { return {RowRun{.first = start, .count = count}}; }
+    return {RowRun{.first = start, .count = capacity - start},
+            RowRun{.first = 0, .count = start + count - capacity}};
+}
+
+// Copies the runs of one slot's ring plane [inner, capacity, kv_heads] (contiguous, as the Host
+// image holds it): one copy for the whole plane, else a 2D copy a run (its rows of every head).
+void copy_ring_rows(void* destination, const void* source, const Tensor& plane,
+                    std::uint32_t capacity, const std::vector<RowRun>& runs, cudaMemcpyKind kind,
+                    cudaStream_t stream) {
+    if (runs.size() == 1 && runs.front().first == 0 && runs.front().count == capacity) {
+        CUDA_CHECK(cudaMemcpyAsync(destination, source, plane.bytes(), kind, stream));
+        return;
+    }
+    const auto heads        = static_cast<std::size_t>(plane.ne[2]);
+    const std::size_t row   = plane.bytes() / (static_cast<std::size_t>(capacity) * heads);
+    const std::size_t pitch = row * capacity;
+    auto* const out         = static_cast<std::byte*>(destination);
+    const auto* const in    = static_cast<const std::byte*>(source);
+    for (const RowRun& run : runs) {
+        CUDA_CHECK(cudaMemcpy2DAsync(out + run.first * row, pitch, in + run.first * row, pitch,
+                                     run.count * row, heads, kind, stream));
+    }
+}
+
 void validate_slot(std::int32_t slot, std::int32_t slot_count, const char* label) {
     if (slot < 0 || slot >= slot_count) { throw std::out_of_range(label); }
 }
@@ -258,13 +304,18 @@ TransferWork state_image_transfer_work(const StateImageHostLayout& layout) {
     std::uint64_t operations =
         2ULL * layout.spec.linear.layers + 1ULL +
         (layout.spec.dflash_local ? 2ULL * layout.spec.dflash_local->layers : 0ULL);
+    // A checkpoint moves its rings' live window (copy_to_host with its frontier): window of the
+    // capacity rows, in up to two copies a plane where the window wraps.
     for (std::size_t group = 0; group < layout.rings.size(); ++group) {
         const KvRingHostLayout& ring = layout.rings[group];
+        const KvRingSpec& spec       = layout.spec.rings[group];
+        const bool windowed          = spec.window != 0 && spec.window < spec.capacity;
         for (const std::size_t bytes : {ring.k.bytes, ring.v.bytes, ring.k_scale.bytes,
                                         ring.v_scale.bytes}) {
-            payload = checked_add(payload, bytes, "StateImage transfer payload overflow");
+            payload = checked_add(payload, windowed ? bytes / spec.capacity * spec.window : bytes,
+                                  "StateImage transfer payload overflow");
         }
-        operations += (layout.spec.rings[group].fp8 ? 4ULL : 2ULL) * layout.spec.rings[group].layers;
+        operations += (spec.fp8 ? 4ULL : 2ULL) * spec.layers * (windowed ? 2ULL : 1ULL);
     }
     if (operations > std::numeric_limits<std::uint32_t>::max()) {
         throw std::overflow_error("StateImage transfer operation count exceeds uint32");
@@ -552,7 +603,8 @@ void StateImageDevicePool::validate_host_layout(const StateImageHostLayout* layo
 }
 
 void StateImageDevicePool::copy_to_host(std::int32_t source, HostStateImageView destination,
-                                        cudaStream_t stream) const {
+                                        cudaStream_t stream,
+                                        std::optional<std::uint64_t> frontier) const {
     validate_slot(source, slot_count(), "StateImage copy-to-host source is out of range");
     validate_host_layout(destination.layout, destination.data);
     const std::uint32_t linear_layers = linear_ ? linear_->layer_count() : 0;
@@ -590,30 +642,31 @@ void StateImageDevicePool::copy_to_host(std::int32_t source, HostStateImageView 
     for (std::size_t group = 0; group < rings_.size(); ++group) {
         const RingGroup& ring        = rings_[group];
         const KvRingHostLayout& host = host_layout_.rings[group];
+        const std::vector<RowRun> runs = live_rows(ring.spec, frontier);
+        const std::uint32_t capacity   = ring.spec.capacity;
         for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
             const Tensor k = ring.k[layer].slice(3, source, 1);
             const Tensor v = ring.v[layer].slice(3, source, 1);
-            CUDA_CHECK(cudaMemcpyAsync(
-                byte_offset(destination.data, host.k.offset + layer * host.layer_bytes), k.data,
-                k.bytes(), cudaMemcpyDeviceToHost, stream));
-            CUDA_CHECK(cudaMemcpyAsync(
-                byte_offset(destination.data, host.v.offset + layer * host.layer_bytes), v.data,
-                v.bytes(), cudaMemcpyDeviceToHost, stream));
+            copy_ring_rows(byte_offset(destination.data, host.k.offset + layer * host.layer_bytes),
+                           k.data, k, capacity, runs, cudaMemcpyDeviceToHost, stream);
+            copy_ring_rows(byte_offset(destination.data, host.v.offset + layer * host.layer_bytes),
+                           v.data, v, capacity, runs, cudaMemcpyDeviceToHost, stream);
             if (!ring.spec.fp8) { continue; }
             const Tensor k_scale = ring.k_scale[layer].slice(3, source, 1);
             const Tensor v_scale = ring.v_scale[layer].slice(3, source, 1);
-            CUDA_CHECK(cudaMemcpyAsync(
+            copy_ring_rows(
                 byte_offset(destination.data, host.k_scale.offset + layer * host.scale_layer_bytes),
-                k_scale.data, k_scale.bytes(), cudaMemcpyDeviceToHost, stream));
-            CUDA_CHECK(cudaMemcpyAsync(
+                k_scale.data, k_scale, capacity, runs, cudaMemcpyDeviceToHost, stream);
+            copy_ring_rows(
                 byte_offset(destination.data, host.v_scale.offset + layer * host.scale_layer_bytes),
-                v_scale.data, v_scale.bytes(), cudaMemcpyDeviceToHost, stream));
+                v_scale.data, v_scale, capacity, runs, cudaMemcpyDeviceToHost, stream);
         }
     }
 }
 
 void StateImageDevicePool::copy_from_host(HostStateImageConstView source, std::int32_t destination,
-                                          cudaStream_t stream) {
+                                          cudaStream_t stream,
+                                          std::optional<std::uint64_t> frontier) {
     validate_slot(destination, slot_count(),
                   "StateImage copy-from-host destination is out of range");
     validate_host_layout(source.layout, source.data);
@@ -656,26 +709,26 @@ void StateImageDevicePool::copy_from_host(HostStateImageConstView source, std::i
     for (std::size_t group = 0; group < rings_.size(); ++group) {
         const RingGroup& ring        = rings_[group];
         const KvRingHostLayout& host = host_layout_.rings[group];
+        const std::vector<RowRun> runs = live_rows(ring.spec, frontier);
+        const std::uint32_t capacity   = ring.spec.capacity;
         for (std::size_t layer = 0; layer < ring.k.size(); ++layer) {
             const Tensor k = ring.k[layer].slice(3, destination, 1);
             const Tensor v = ring.v[layer].slice(3, destination, 1);
-            CUDA_CHECK(cudaMemcpyAsync(
-                k.data, byte_offset(source.data, host.k.offset + layer * host.layer_bytes),
-                k.bytes(), cudaMemcpyHostToDevice, stream));
-            CUDA_CHECK(cudaMemcpyAsync(
-                v.data, byte_offset(source.data, host.v.offset + layer * host.layer_bytes),
-                v.bytes(), cudaMemcpyHostToDevice, stream));
+            copy_ring_rows(k.data, byte_offset(source.data, host.k.offset + layer * host.layer_bytes),
+                           k, capacity, runs, cudaMemcpyHostToDevice, stream);
+            copy_ring_rows(v.data, byte_offset(source.data, host.v.offset + layer * host.layer_bytes),
+                           v, capacity, runs, cudaMemcpyHostToDevice, stream);
             if (!ring.spec.fp8) { continue; }
             const Tensor k_scale = ring.k_scale[layer].slice(3, destination, 1);
             const Tensor v_scale = ring.v_scale[layer].slice(3, destination, 1);
-            CUDA_CHECK(cudaMemcpyAsync(
+            copy_ring_rows(
                 k_scale.data,
                 byte_offset(source.data, host.k_scale.offset + layer * host.scale_layer_bytes),
-                k_scale.bytes(), cudaMemcpyHostToDevice, stream));
-            CUDA_CHECK(cudaMemcpyAsync(
+                k_scale, capacity, runs, cudaMemcpyHostToDevice, stream);
+            copy_ring_rows(
                 v_scale.data,
                 byte_offset(source.data, host.v_scale.offset + layer * host.scale_layer_bytes),
-                v_scale.bytes(), cudaMemcpyHostToDevice, stream));
+                v_scale, capacity, runs, cudaMemcpyHostToDevice, stream);
         }
     }
 }

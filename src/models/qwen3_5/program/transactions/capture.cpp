@@ -707,7 +707,7 @@ void ProgramImpl::prepare_active_capture(ActiveCaptureTransaction& transaction) 
         }
     }
 
-    state_store->freeze(transaction.source_state);
+    state_store->freeze(transaction.source_state, sequence.text_kv_valid);
     if (transaction.state_placement == qwen3_5::CaptureStatePlacement::DeviceFork) {
         (void)state_store->begin_fork(transaction.source_state, transaction.destination_state);
         sequence.state = ActiveStateBinding{.read         = transaction.source_state,

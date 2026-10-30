@@ -457,7 +457,10 @@ struct EngineOptions {
     std::filesystem::path artifact_path;
     std::filesystem::path chat_template_path;
     EnginePurpose purpose              = EnginePurpose::Generation;
-    int device                         = 0;    // CUDA device ordinal
+    // CUDA device ordinal, taken as given; -1: the visible GPU first in PCI bus order, so the
+    // same cards run the same model whatever CUDA_VISIBLE_DEVICES and CUDA_DEVICE_ORDER enumerate
+    // first. Engine::options() and MemorySummary report the ordinal chosen.
+    int device                         = -1;
     std::uint32_t max_context          = 2048; // Logical ceiling of one request or score window.
     // true: the Engine chooses max_context (then a cap when nonzero): the model's own position
     // capacity when a plan with it fits the free Device memory, else the longest whole number of
@@ -1806,6 +1809,11 @@ struct ModelMetadata {
     // The plan ladder's rung the free memory picked at startup (MemorySummary::plan, without the
     // ladder), for /v1/models meta.plan_level and meta.plan.
     PlanSummary plan;
+    // The board the engine runs on, printed beside the fingerprint and never hashed into it (two
+    // boards of one chip type share a fingerprint): its PCI bus id ("0000:01:00.0") and UUID
+    // ("GPU-..."); empty when CUDA could not say.
+    std::string device_pci_bus_id;
+    std::string device_uuid;
 };
 
 struct LoadSummary {

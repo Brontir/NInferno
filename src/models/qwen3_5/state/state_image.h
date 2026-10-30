@@ -30,12 +30,15 @@ struct DFlashLocalStateSpec {
 // here carries them with the rest of a sequence's state image. BF16 planes by default; fp8: E4M3
 // code planes, each row (one position of one head) with an FP32 scale in a K and a V scale plane
 // [1, capacity, kv_heads] per slot (the row is scale * code; ops/gemma4_attention.h FP8 storage).
+// window: the positions below its first that a later call still reads, so a checkpoint's Host
+// replica carries only those rows (0: every row).
 struct KvRingSpec {
     std::uint32_t layers   = 0;
     std::uint32_t capacity = 0;
     std::int32_t kv_heads  = 0;
     std::int32_t head_dim  = 0;
     bool fp8               = false;
+    std::uint32_t window   = 0;
 
     friend bool operator==(const KvRingSpec&, const KvRingSpec&) = default;
 };
@@ -212,10 +215,13 @@ public:
                            cudaStream_t stream);
     // Copies one slot's rings, every group and layer.
     void copy_rings(std::int32_t source, std::int32_t destination, cudaStream_t stream);
-    void copy_to_host(std::int32_t source, HostStateImageView destination,
-                      cudaStream_t stream) const;
+    // `frontier`: the positions the image holds (0 .. frontier - 1). Given, a ring moves only the
+    // rows of its last `window` positions (KvRingSpec::window); no call from the frontier on reads
+    // the others, which keep what the destination held. Omitted, every row.
+    void copy_to_host(std::int32_t source, HostStateImageView destination, cudaStream_t stream,
+                      std::optional<std::uint64_t> frontier = std::nullopt) const;
     void copy_from_host(HostStateImageConstView source, std::int32_t destination,
-                        cudaStream_t stream);
+                        cudaStream_t stream, std::optional<std::uint64_t> frontier = std::nullopt);
 
 private:
     void validate_host_layout(const StateImageHostLayout* layout, const std::byte* data) const;

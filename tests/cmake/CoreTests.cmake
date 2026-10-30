@@ -34,6 +34,11 @@ ninferno_add_test(ninferno_machine_facts_test
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 
+# Which board a CUDA ordinal names (core/device_identity.h): the default GPU is the same under
+# every enumeration order of the same boards. No GPU.
+ninferno_add_test(ninferno_device_identity_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_device_identity.cpp")
+
 ninferno_add_test(ninferno_tensor_test       SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_tensor.cpp"
   LIBRARIES ninferno_core)
 

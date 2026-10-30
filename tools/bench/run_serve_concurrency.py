@@ -152,7 +152,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     corpus.add_route_pin_arguments(parser)
     parser.add_argument("--output", type=Path, required=True, help="benchmark output directory")
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
-    parser.add_argument("--device", type=int, default=0, help="CUDA device index")
+    parser.add_argument("--device", type=int, default=0, help="the GPU, as ninferno-serve counts it: N in PCI bus order, as nvidia-smi does")
     parser.add_argument(
         "--dry-run", action="store_true", help="print point commands and request counts only"
     )
@@ -352,7 +352,7 @@ def validate_server_start(
     corpus.require_server_log_identity(event, "server_start")
     engine = event.get("engine", {})
     expected = {
-        "device": args.device,
+        # Not "device": the server logs its CUDA ordinal, the --device given counts PCI order.
         "max_context": args.max_context,
         "kv_capacity_mode": "auto" if args.kv_capacity == "auto" else "explicit",
         "max_concurrency": point.concurrency,

@@ -163,6 +163,33 @@ int main() {
             startup_output.find("CUDA initialized") == std::string::npos,
         "normal startup pretty output is noisy or incomplete");
 
+    // The fingerprint line names the board beside the hash (it is not part of it).
+    std::string fingerprint_output;
+    {
+        StderrCapture capture;
+        {
+            ninferno::product::LoggingRuntime logging(
+                {.logger_name  = "ninferno-serve",
+                 .color        = ninferno::product::LogColorMode::Never,
+                 .presentation = ninferno::product::LogPresentation::Service});
+            ninferno::product::StartupLogRenderer startup(logging);
+            ninferno::LoadSummary load;
+            load.model_name                 = "m";
+            load.decision_fingerprint       = "nf1-0123456789abcdef";
+            load.decision_manifest          = "nm1-fedcba9876543210";
+            load.metadata.device_pci_bus_id = "0000:01:00.0";
+            load.metadata.device_uuid       = "GPU-00112233-4455-6677-8899-aabbccddeeff";
+            startup.engine_ready(load);
+            logging.flush();
+        }
+        fingerprint_output = capture.finish();
+    }
+    failures += check(fingerprint_output.find(
+                          "fingerprint | nf1-0123456789abcdef | manifest nm1-fedcba9876543210 | "
+                          "ninferno-fingerprint/1 | device 0000:01:00.0 "
+                          "GPU-00112233-4455-6677-8899-aabbccddeeff") != std::string::npos,
+                      "the fingerprint line must name the board");
+
     std::string tool_output;
     {
         StderrCapture capture;
