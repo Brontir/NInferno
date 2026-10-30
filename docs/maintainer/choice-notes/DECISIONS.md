@@ -1558,3 +1558,51 @@ and Volta one attention share cannot hold Gemma and Qwen together (GV100 Gemma 1
 1.9K tokens and 738 at 21K, Qwen 9B 2950 and 2864): Gemma's 256- and 512-wide heads on the pre-Ampere
 attention path are the missing fact. The product's constants stay as they are until those two facts
 are in; the refit is the diagnosis.
+
+## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
+
+**What the profiles showed.** Every chat request on the RTX 4070 Ti ran one whole-model call more
+than the prompt's chunks and the generation prompt's tail (DECISIONS 62): the embedding's grid gives
+Qwen 9B's calls as 896 | 59 | 3 | 4 for 962 tokens, 1024 + 832 | 49 | 3 | 4 for 1912, and
+1024 + 1024 + 768 | 39 | 3 | 4 for 2862; Gemma 12B the same with 40 tokens. The 39 .. 59-token call
+costs 24 ms (Qwen) and 26 ms (Gemma, its ring checkpoint's copy waiting before it), two decode
+steps' time for a weight read and a few tokens; on the GV100 the same call ran on the FMA tile
+(125 ms).
+
+**Why.** `ninferno-serve` gives an OpenAI chat request a shared-prefix candidate after the last
+message's last part (`openai_common.cpp`, its default automatic boundary). That point lies inside
+the turn, before `<|im_end|>`, off every execution frontier, so the program moves the capture down
+to the 64-token grid point below it (`neutral_frontier.h`: a capture elsewhere would change the
+bytes after it), and the last chunk stops there; the tokens up to the turn's end are a call of
+their own.
+
+**The change.** A boundary after a message's last part (a message without tool calls) resolves to
+the closed turn's end (`message_boundaries`: the layout's closed block, or a rendered prefix), as a
+message boundary does. Before the generation prompt or an assistant turn the turn's end is where
+the next turn opens, an execution frontier of the prompt (`prompt_layout.cpp`), so the capture
+needs no split; for the last message it is the turn closure checkpoint's frontier, and the shared
+candidate and the private capture become one group where the cache takes both
+(`select_shared_captures`). Where the turn's end is no execution frontier (a tool result followed
+by another tool turn, an assistant turn followed by a user one) the planner moves it down to the
+grid as before, from a point at or above the old one. A
+continuation of the conversation renders the turn closed the same way, so it matches the prefix as
+before; a sibling prompt that differs only after the content and before the close could not have
+followed the same messages.
+
+**Measured** (`prompt_ms` of the server at 312 .. 7612 tokens, three repeats, the kit's flags; slope
+and intercept over 962 .. 7612, the best of three at about 960 tokens):
+
+| card | model | master: tok/s + ms | this: tok/s + ms | 960 tokens, ms |
+|---|---|---|---|---|
+| RTX 4090 | Qwen 9B Q4_K_M | 12282 + 29.1 | 12339 + 17.1 | 107.1 -> 92.9 |
+| RTX 4090 | Gemma 12B Q4_K_M | 7458 + 91.9 | 7383 + 60.1 | 216.8 -> 177.0 |
+| RTX 5070 Ti | Qwen 9B Q4_K_M | 7209 + 19.9 | 7182 + 10.9 | 153.2 -> 148.8 |
+| RTX 5070 Ti | Gemma 12B Q4_K_M | 4400 + 34.3 | 4364 + 12.8 | 243.7 -> 244.3 |
+
+The intercept falls by the one call on every row; the rate is the same within 1 %.
+
+**Checked.** `ninferno_qwen3_5_frontend_test`: the boundary after the last part lands on the turn
+closure's frontier, one between parts stays at its part's end. `ninferno_qwen3_5_prefix_real_test`
+(Qwen3.5 9B MTP Q4_K_M, RTX 5070 Ti): every restore case byte-exact against its cold prefill. The prefill tail count (`prompt_tail.cpp`,
+DECISIONS 62) reads where the program places the capture, so it drops the call without a change.
+
