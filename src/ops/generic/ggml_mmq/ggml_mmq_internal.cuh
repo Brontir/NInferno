@@ -122,7 +122,12 @@ Launch select_launch(int rows, int columns, int k) {
         // A block beyond the call's work units (an output tile times its K_vram steps) has nothing
         // to do and lengthens the fixup's scan (llama.cpp #30553).
         const int work = tiles * std::max(1, (k + best.k_vram - 1) / best.k_vram);
-        best.blocks    = efficiency >= 90 ? tiles : std::min(device.sm_count, work);
+        // No more tiles than SMs: one partial wave of whole tiles costs one tile, while stream-k
+        // spreads that tile's K over every SM and pays its split and the fixup on top (RTX 5090,
+        // 128 tiles of a 4096-row Q4_K call at 512 tokens: 175k SM-clocks of the split kernel and
+        // 56k of the fixup against 198k for the RTX 4090's same tile, DECISIONS 62).
+        best.blocks = efficiency >= 90 || tiles <= device.sm_count ? tiles
+                                                                    : std::min(device.sm_count, work);
         best.fixup           = tiles % best.blocks != 0;
     } else {
         best.blocks = tiles;
