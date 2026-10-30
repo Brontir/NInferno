@@ -295,11 +295,13 @@ inline constexpr TilesEta kPrefillTilesEta[] = {
     {"ada", 0.212, 3}, {"gb20x", 0.286, 2}, {"ga10x", 0.342, 1}, {"turing", 0.147, 1}};
 
 // A prefill linear's tile (DECISIONS 66): a CTA of 64 tokens (an MoE expert's: a job of up to 64 of
-// its slots) x 64 output rows, the whole K deep, takes c0 + K c1 seconds; a call runs ceil(CTAs /
-// SMs) waves of them. From the census of one ~1.8K-token prompt (nsys, the RTX 4090 without PDL, the
-// RTX 5070 Ti on a lab build with pdl::supported() false): Qwen3.6-35B-A3B's and gpt-oss-20b's
-// calls. c1 is the same in nanoseconds on both generations (1.7 int8 TOPS a SM, a third of the
-// tensor peak: decoding the weights on the CUDA cores bounds it).
+// its slots) x 64 output rows, the whole K deep, takes c0 + K c1 SM-clocks (the card's reference
+// clock gives the seconds); a call runs ceil(CTAs / SMs) waves of them. From the census of one
+// ~1.8K-token prompt (nsys, the RTX 4090 without PDL at 2520 MHz, the RTX 5070 Ti at 2452 MHz on a
+// lab build with pdl::supported() false): Qwen3.6-35B-A3B's and gpt-oss-20b's calls. The int8
+// tile's K step is about 12 SM-clocks on every generation that has the int8 MMA (Ada 12.1, the RTX
+// 4070 Ti 12.8, Ampere's RTX 3060 12.5, Blackwell 11.6: decoding the weights on the CUDA cores
+// bounds it, a third of the tensor peak), so Ampere takes Ada's int8 row.
 enum class TileKernel : std::uint8_t {
     Int8, // the int8 tiles: w4a8_kernel, moe_w4a8_kernel (Q4_K, Q8_0, MXFP4 converted on Ada)
     A16,  // the 16-bit register MMA of an MoE's IQ3 banks in fragment layout
@@ -308,12 +310,12 @@ enum class TileKernel : std::uint8_t {
 struct TileCost {
     std::string_view generation;
     TileKernel kernel;
-    double c0, c1; // seconds a tile, and a K step
+    double c0, c1; // SM-clocks a tile, and a K step
 };
 inline constexpr TileCost kTileCost[] = {
-    {"ada", TileKernel::Int8, 1.33e-6, 4.82e-9},   {"gb20x", TileKernel::Int8, 0.5e-6, 4.74e-9},
-    {"ada", TileKernel::A16, 0.93e-6, 7.1e-9},     {"gb20x", TileKernel::A16, 0.32e-6, 6.1e-9},
-    {"gb20x", TileKernel::Mx, 0.5e-6, 3.4e-9},
+    {"ada", TileKernel::Int8, 3352, 12.15},  {"ga10x", TileKernel::Int8, 3352, 12.15},
+    {"gb20x", TileKernel::Int8, 1226, 11.62}, {"ada", TileKernel::A16, 2344, 17.9},
+    {"gb20x", TileKernel::A16, 785, 14.96},   {"gb20x", TileKernel::Mx, 1226, 8.34},
 };
 
 // An MoE's expert grid: the host launches the bound on the jobs (ops/moe max_jobs: a job is an

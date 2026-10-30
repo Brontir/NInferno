@@ -811,8 +811,8 @@ void prices_moe_prefill_tiles() {
     const double t = ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819);
     std::cout << "MoE prefill tiles, Qwen3.6 UD-Q4_K_M RTX 4090 1819 tokens: " << t * 1e3 << " ms against 86.4\n";
     check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
-    ch::CardFacts rtx3060{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.78e9, .dram_bytes_per_s = 360e9};
-    check(ch::moe_prefill_linears_seconds(m, rtx3060, q, 1819) == 0, "no tile row on Ampere: unknown");
+    ch::CardFacts v100{.major = 7, .minor = 0, .sms = 84, .clock_hz = 1.62e9, .dram_bytes_per_s = 870e9};
+    check(ch::moe_prefill_linears_seconds(m, v100, q, 1819) == 0, "no int8 tile row on Volta: unknown");
     q.expert_banks = ch::ExpertBanks::Unknown;
     check(ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
 }

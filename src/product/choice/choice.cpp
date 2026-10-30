@@ -489,7 +489,7 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 
 double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                                    double tokens) noexcept {
-    if (!model.moe() || model.linears.empty() || tokens <= 0 || card.sms <= 0 || model.experts_per_token <= 0) {
+    if (!model.moe() || model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 || model.experts_per_token <= 0) {
         return 0;
     }
     const std::string_view gen = generation_of(card);
@@ -522,7 +522,7 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
     double seconds = 0, hidden = 0, moe_layers = 0;
     for (const LinearShape& l : model.linears) {
         const TileCost& c  = l.expert ? *bank : *rest;
-        const double tile  = c.c0 + l.k * c.c1;
+        const double tile  = (c.c0 + l.k * c.c1) / card.clock_hz;
         const double cols  = std::ceil(l.n / 64);
         if (l.expert) {
             // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
