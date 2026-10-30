@@ -77,7 +77,7 @@ A plain run holds the following fields.
 | `id`, `repo`, `quant`, `mode` | the entry, `mode` `plain` |
 | `flags` | the plan's and the start's flags |
 | `plan` | `chosen` (the plan's `choice.chosen`); `prompt` (`choice.task.prompt`); `document` (the plan JSON's `schema, ask, device, choice, estimate, pick, rule`, `model` without `source`, and `plan`'s scalar fields) |
-| `passes[]` | `start_s`; `served` `{id, fingerprint, speculation, choice}`; `processes_before` and `processes_after` `{listed, others, informative}`; `requests[]` (each with `prompt_tokens, cache_n, prompt_n, prompt_ms, predicted_n, predicted_ms, excluded?`); `measured` `{decode, prefill: {median, min, max, n, prompt_tokens}}`; `telemetry` `{period_ms (100), t, columns, marks, reason_fields}`; `error` |
+| `passes[]` | `start_s`; `served` `{id, fingerprint, speculation, choice}`; `processes_before` and `processes_after` `{listed, others, informative}`; `requests[]` (each with `prompt_tokens, cache_n, prompt_n, prompt_ms, predicted_n, predicted_ms, excluded?`); `measured` `{decode, prefill: {median, min, max, n, prompt_tokens}}`; `telemetry` `{period_ms (100; 500 before), t, columns, marks, reason_fields}`; `error` |
 | `error` | why a run was not measured (fetch, budget) |
 
 A `hard50` run holds `hard50` (hard_set.py's summary and `wrong`, the ids answered wrong),
@@ -112,11 +112,14 @@ verdict:
 - **contradicts**: outside it;
 - **not used**: the card is capped, or R3 could not be checked.
 
-Each metric also gives the median SM clock and power draw over its windows (`sm_clock_mhz`,
-`power_w`; the sampler reads every 100 ms, so a 2K-token prefill of 0.1-0.4 s has samples of its
-own). The model prices a card at its reference clock. A short prefill ends before the power limiter
-acts: the RTX 5090 ran 2.82 GHz at 495 W of 575. A sustained int8 GEMM loop holds it at the limit and
-2.45 GHz, so a speed from a long window states the clock it was measured at.
+Each metric also gives the median SM clock and power draw over its windows (`sm_clock_mhz`;
+`power_w` from `power.draw.instant` where the driver has it, since `power.draw` averages over a
+second). The sampler reads every 100 ms (files before this change: 500 ms; the spec tune keeps
+500 ms), so a 2K-token prefill, 0.1-0.4 s on the fast cards, has samples of its own. The R3
+reasons then see brief events that a 500 ms period missed. The model prices a card at its reference
+clock. A short prefill can end before the power limiter acts: the RTX 5090 ran its kit prefill at
+2.82 GHz, while a sustained int8 GEMM loop holds it at its 575 W limit and 2.45 GHz. A speed
+measured over a long window therefore states the clock it was measured at.
 
 A verdict covers **this board** only: this quant, length and C=1. A card name's other boards (OEM,
 laptop) are not covered. When the estimate was `speed_transferred` from another card, the verdict

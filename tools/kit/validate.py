@@ -49,8 +49,10 @@ def window_load(passes, metric):
     for p in passes:
         tel = p.get("telemetry") or {}
         columns = tel.get("columns") or {}
+        instant = columns.get("power.draw.instant") or []
+        draw = "power.draw.instant" if any(isinstance(v, float) for v in instant) else "power.draw"
         for i in window_indices(tel, metric):
-            for name, out in (("clocks.sm", clock), ("power.draw", power)):
+            for name, out in (("clocks.sm", clock), (draw, power)):
                 values = columns.get(name) or []
                 if i < len(values) and isinstance(values[i], float):
                     out.append(values[i])

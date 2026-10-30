@@ -76,6 +76,12 @@ class Rules(unittest.TestCase):
         self.assertEqual((metric(r, "prefill")["sm_clock_mhz"], metric(r, "prefill")["power_w"]), (2400, 570))
         self.assertEqual((metric(r, "decode")["sm_clock_mhz"], metric(r, "decode")["power_w"]), (2800, 300))
         self.assertIn("at 2400 MHz, 570 W", validate.render(r))
+        # The instant draw, where the driver reads it, over the one-second average.
+        p = loaded()
+        p["telemetry"]["columns"]["power.draw.instant"] = [575.0 if 5 <= x < 7 else 290.0
+                                                          for x in p["telemetry"]["t"]]
+        r = validate.validate(doc(passes=[p, loaded(decode=50.5)]))
+        self.assertEqual(metric(r, "prefill")["power_w"], 572)  # median of 575 and 570 samples
         # No clock column (an old file): nothing is recorded or printed.
         self.assertNotIn("sm_clock_mhz", metric(validate.validate(doc()), "prefill"))
 

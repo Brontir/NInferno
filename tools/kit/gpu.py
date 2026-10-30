@@ -24,8 +24,10 @@ CARD_FIELDS = [
 # clocks setting (a clock lock): the suffixes are the same under both names.
 REASONS = ["active", "sw_power_cap", "hw_slowdown", "hw_thermal_slowdown", "hw_power_brake_slowdown",
            "sw_thermal_slowdown", "applications_clocks_setting", "gpu_idle", "sync_boost"]
+# power.draw is a one-second average on Ampere and later: power.draw.instant (where the driver has
+# it) is the draw inside a window shorter than that.
 SAMPLE_FIELDS = ["timestamp", "clocks.sm", "clocks.mem", "temperature.gpu", "power.draw",
-                 "utilization.gpu", "memory.used", "pstate"]
+                 "power.draw.instant", "utilization.gpu", "memory.used", "pstate"]
 
 _known = None
 
