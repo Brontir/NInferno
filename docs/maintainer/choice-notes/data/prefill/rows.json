@@ -173,6 +173,30 @@
    "weight_bytes": 10934860704,
    "params": 25106841600.0,
    "tail_calls": 2
+  },
+  "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S": {
+   "active_params": 2838364160.0,
+   "full_width": 81920.0,
+   "sliding_width": 0.0,
+   "window": 0,
+   "moe": true,
+   "experts_per_token": 8,
+   "experts": 256,
+   "weight_bytes": 15348206080,
+   "params": 35000000000.0,
+   "tail_calls": 2
+  },
+  "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M": {
+   "active_params": 3825434624.0,
+   "full_width": 81920.0,
+   "sliding_width": 204800.0,
+   "window": 1024,
+   "moe": true,
+   "experts_per_token": 8,
+   "experts": 128,
+   "weight_bytes": 16931716216,
+   "params": 25200000000.0,
+   "tail_calls": 3
   }
  },
  "rows": [
@@ -762,6 +786,246 @@
    "prefill": 13777.0,
    "chunk": 1024,
    "source": "tests/fixtures/choice/speed_measured.json (run_calib.sh 2026-10-23 long24k)"
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M",
+   "n": 1752,
+   "prefill": 15601.2,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M",
+   "n": 7347,
+   "prefill": 16133.5,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-Q4_K_M",
+   "n": 21721,
+   "prefill": 14074.8,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 1785,
+   "prefill": 15420.4,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 7406,
+   "prefill": 16307.9,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 21928,
+   "prefill": 15358.2,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 1785,
+   "prefill": 17441.0,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 7406,
+   "prefill": 18104.0,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 21928,
+   "prefill": 16841.8,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 1785,
+   "prefill": 16704.1,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 7406,
+   "prefill": 17071.9,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 21928,
+   "prefill": 16291.0,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 1785,
+   "prefill": 19935.9,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 7406,
+   "prefill": 20663.4,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5090",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q4_K_M",
+   "n": 21928,
+   "prefill": 19397.3,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 1752,
+   "prefill": 7523.1,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 7347,
+   "prefill": 7501.2,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 21721,
+   "prefill": 6621.7,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 1785,
+   "prefill": 7627.0,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 7406,
+   "prefill": 7815.1,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-IQ3_XXS",
+   "n": 21928,
+   "prefill": 7481.4,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 1785,
+   "prefill": 7945.3,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 7406,
+   "prefill": 8126.5,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l5070",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 21928,
+   "prefill": 7769.8,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 1752,
+   "prefill": 4009.9,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 7347,
+   "prefill": 3957.7,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "l4060",
+   "model": "gemma-4-26B-A4B-it-GGUF_UD-IQ3_XXS",
+   "n": 21721,
+   "prefill": 3444.4,
+   "chunk": 2048,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 1785,
+   "prefill": 754.5,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 7406,
+   "prefill": 763.6,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
+  },
+  {
+   "card": "lgv100",
+   "model": "Qwen3.6-35B-A3B-GGUF_UD-Q3_K_S",
+   "n": 21928,
+   "prefill": 762.2,
+   "chunk": 1024,
+   "source": "mpref.sh 2026-10-30: master kit build, --no-prefix-reuse, the long haystack's 8000 / 32000 / 95940 characters, three runs each, the median"
   }
  ]
 }
