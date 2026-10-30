@@ -2102,5 +2102,23 @@ bf16`): a CTA is 64 query rows of one head (98 KiB, one a SM), issued in plain l
 row blocks first to last, then the next head) — the opposite of the INT8 kernel's longest first, and
 with it the same deal holds. SM-clocks a key of a CTA, in its chunk / before it: RTX 5090 144 / 120
 (-1 .. +2 %), RTX 4060 Ti 168 / 144 (-2 .. +1 %), RTX 3060 168 / 142 (0 %); checked where not read,
-the RTX 5070 Ti's 7K prompt: 0 .. +1 %. FP8 keys run another kernel (mxfp8/fp8 tiled with the keys
-split over a third grid axis and a merge): their share stands.
+the RTX 5070 Ti's 7K prompt: 0 .. +1 %.
+
+**FP8 keys by their kernel's CTAs and its merge** (`kFp8AttentionTileCost`, common/mxfp8_tiled_mma.cuh
+at `--kv-dtype fp8`, a call wider than 80 tokens). The grid is 128-row tiles x heads x splits in
+launch order (one CTA a SM, 99 KiB). The split count is the kernel's own (mxfp8_tiled_partition: the
+fewest waves a split, 1 .. 8), capped at one split a 512 keys the call's last row sees; split s owns
+the 64-key tiles [s T / a, (s + 1) T / a), a CTA those up to its last row. A CTA takes `cta` SM-clocks
+(its query rows' load and Hadamard rotation, which a CTA left with no keys pays too: that reading fits
+every card better than a free empty CTA) and `key` a key. Read on 7K and 21K prompts, each generation's
+cards together: Ada 182 / 35000 (4060 Ti and 4070 Ti -3 .. +3 %), Blackwell 138 / 30000 (-6 .. +6 %:
+the 5090 runs slower and the 5070 Ti faster than one pair gives; open), Ampere 284 / 75000 (3060 -2 ..
++3 %, one card). The merge after a split call reads every stored partial (128 rows x 256 x 4 bytes
+a CTA that had keys) and writes the BF16 output: 0.84 .. 1.03 of the DRAM rate where they outgrow
+the L2 (`kAttentionMergeDramShare` 0.9), 2.3 .. 3.7 of it where the L2 holds them with the output
+(`kAttentionMergeL2Share` 2.5: the RTX 5090 at 7K, the 4070 Ti's and 5070 Ti's first chunk; the
+4060 Ti's first chunk, exactly its 32 MiB, ran at the DRAM rate). The card's L2 now reaches the
+choice (`CardFacts::l2_bytes`, from DeviceClass). Kernel and merge together on the 7K prompt's
+chunks: RTX 5090 -5 .. +2 %, 4060 Ti -5 .. +5 %, 3060 -2 .. 0 %, 5070 Ti +1 .. +6 %, 4070 Ti -4 ..
++7 %. Open: the 5090's 21K chunks hold the partials in its L2 only partly (1.6x the DRAM rate, not
+2.5x), the merge of a long prompt there is under-priced.
