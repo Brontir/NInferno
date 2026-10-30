@@ -1559,20 +1559,31 @@ and Volta one attention share cannot hold Gemma and Qwen together (GV100 Gemma 1
 attention path are the missing fact. The product's constants stay as they are until those two facts
 are in; the refit is the diagnosis.
 
-**The big boards' shortfall is the tiles' waves (30.10, predicted against measured).** After DECISIONS
-63 the user kits measure the 2048-token prefill at x0.97 of the estimate on the RTX 5070 Ti (Qwen 9B
-and Gemma 12B) but x0.85 / x0.81 on the RTX 5090 and x0.91 / x0.83 on the RTX 4090. The clocks are
-not it: under the prefill all three hold 7 .. 10 % above boost (5090 2660 MHz, 4090 2700, 5070 Ti
-2700). Gated DeltaNet's scan is 1.6 .. 2.3 % of the window. The linears are 78 .. 87 % of it, and on
-gb20x they run on the W4A8 producer-warp tile, one CTA a SM (384 threads x 142 .. 168 registers),
-whose grid of ceil(N / tile rows) x ceil(T / 128) tiles takes whole waves of the SMs: the 5070 Ti's
-70 SMs fill them to 0.91 .. 0.99, the 5090's 170 to 0.75 .. 0.90. Weighting each launch of the 5070
-Ti's server profile (962 / 1912 / 2862-token requests) by its time, the waves predict the 5090 at
-0.926 / 0.915 / 0.891 of the 5070 Ti's efficiency; the kits measured 0.878 (Qwen) and 0.837 (Gemma)
-at 2048: the waves are about 70 % of the gap. Ada's MMQ runs stream-K (its partial wave is spread),
-which leaves the 4090's shortfall unexplained so far. Next: the choice prices a launch's waves from
-the route's tile and the model's linear shapes (the ops' own tile count, shared with the product),
-and the gb20x row is refit at full waves.
+**The big boards' shortfall is not the tiles' waves (30.10, predicted against measured).** After
+DECISIONS 63 the user kits measure the 2048-token prefill at x0.97 of the estimate on the RTX 5070 Ti
+(Qwen 9B and Gemma 12B) but x0.85 / x0.81 on the RTX 5090 and x0.91 / x0.83 on the RTX 4090. The
+first prediction was the W4A8 producer-warp tile's partial waves (one CTA a SM, ceil(N / tile rows) x
+ceil(T / 128) tiles: the 5070 Ti's 70 SMs fill them to 0.91 .. 0.99, the 5090's 170 to 0.75 .. 0.90).
+It does not hold, for three measured reasons:
+
+- The 5090 does not run that tile. Under the route profile (`NINFERNO_BENCH_PREFILL_ROUTES=1`) its
+  Q4_K A8 linears, like Ada's, Ampere's and Turing's, take ggml's MMQ (`kMmqPrefillPays`); only the
+  5070 Ti (and the 5060 Ti) prefill on the tiles.
+- Where the tile runs it costs the same per wave: ~104k SM cycles a wave at K = 4096 on the 5070 Ti
+  and the 5090 alike (`linear_route_sweep_bench --w4a8-schedules`); a 5090 wave is slower only in the
+  bench's long loops, where the power limit holds the clock at 2.45 GHz. The kits' windows run above
+  boost (their `sm_clock_mhz`, DECISIONS 63's kit clocks).
+- Against MMQ the tiles lose on the big boards: every board on the tiles (`exp/mmq-prefill-off-all`,
+  A/B/A at 312 .. 22K tokens, Qwen 9B and Gemma 12B Q4_K_M) is 3 .. 8 % slower on the 5090,
+  8 .. 13 % on the 4090, 9 .. 11 % on the RTX 4070 Ti, 6 .. 8 % on the RTX 4060 Ti and 4 .. 5 % on
+  the RTX 3060 (Qwen; its Gemma and the RTX 2080 Ti were still running). The gate stays as it is.
+
+MMQ's main kernels scale with the SM count; what does not is its side kernels: the stream-K fixup,
+the epilogue that turns the FP32 plane into BF16, and the activation's Q8_1 quantization are ~17 % of
+the 5090's prefill and 5 .. 6 % (the epilogue) of Ada's. They are the known part of the gap; the rest
+is still open. Next: the choice prices MMQ's side kernels per launch from the model's linear shapes,
+and the epilogue folds into the main kernel where the call's output allows it (not SwiGLU's gate and
+up, which are two calls).
 
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
