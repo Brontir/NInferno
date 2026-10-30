@@ -3069,10 +3069,13 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         if (route_admits(r, weight, problem.policy)) return r;
         return Route{Family::Scalar, 0};
     }
-    if (const auto r = volta_fixed_route(problem, weight, tokens)) return *r;
+    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
     // A maintainer's route pin (--prefill-route, --decode-route; ops/route_pins.h): the pinned
     // family where it can compute the call, else the automatic route below. No pin: nothing here.
+    // It acts before Volta's HMMA verify route (volta_fixed_route's second half), the automatic
+    // choice of that band, so an A/B can pin vec or R8 against it.
     if (const auto pinned = pinned_route(problem, weight, tokens, prefill)) return *pinned;
+    if (const auto r = volta_hmma_route(problem, weight, tokens)) return *r;
     return auto_route(problem, weight, tokens, prefill);
 }
 

@@ -512,7 +512,7 @@ struct Problem {
 // automatic selection under an A16Only policy; W4A8 the W4A8 heuristic's tile (with its tuned
 // prefill band); I8 the I8 cost rule's tile; Mmq ggml's matrix kernel (prefill in 512-token
 // slices; at decode widths its 5..16-token band); W4A4 the W4A4 heuristic's tile; R8 the R8 rules'
-// schedule (1 token where the activation fits a CTA, 2..4 on the pre-quantized form); Vec ggml's
+// schedule (1 token where the activation fits a CTA, 2..8 on the pre-quantized form); Vec ggml's
 // vector kernel.
 [[nodiscard]] std::optional<Route> pinned_family_route(PrefillRoute family, const Problem& problem,
                                                        const Weight& weight, std::int32_t tokens,

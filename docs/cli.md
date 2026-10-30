@@ -99,7 +99,7 @@ the decision fingerprint, and the startup log prints a `routes | pinned` warning
 | Option | Values | Pins |
 |---|---|---|
 | `--prefill-route` | `auto`, `a16`, `w4a8`, `i8`, `mmq`, `w4a4` | The projections of calls of 17 tokens or more: BF16 activations (the register MMA, tiled or staged tiles), the int8 W4A8 tiles, the Q4/Q5/Q6 G64 int8 tiles, ggml's int8 matrix kernel, or NVFP4 activations on NVFP4 weights. |
-| `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | The projections of calls of 1..16 tokens (decode, speculative verify): BF16 activations, the int8 R8 kernel (1..4 tokens), ggml's dp4a vector kernel (1..8 tokens), or ggml's matrix kernel (5..16 tokens). |
+| `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | The projections of calls of 1..16 tokens (decode, speculative verify): BF16 activations, the int8 R8 kernel (1..8 tokens), ggml's dp4a vector kernel (1..8 tokens), or ggml's matrix kernel (5..16 tokens). |
 | `--moe-path` | `auto`, `fused`, `generic` | The routed experts: the family's fused MoE kernels (Qwen 3.5/3.6 SparseMoe, Gemma 4 NVFP4 experts) or the generic MoE Op. |
 
 `auto` is the release's selection, unchanged. A pinned family takes every call of its band it can

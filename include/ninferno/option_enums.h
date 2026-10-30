@@ -29,7 +29,7 @@ enum class TuneMode : std::uint8_t { Off, On, Retune };
 // takes that family for every call it can compute (docs/maintainer/environment.md, Route pins).
 // A16: BF16 activations (the register MMA, tiled or staged tiles); W4a8: the int8-activation
 // W4A8 tiles; I8: the Q4/Q5/Q6 G64 int8 tiles; Mmq: ggml's int8 matrix kernel; W4a4: NVFP4
-// weights on NVFP4 activations; R8: the int8 decode kernel (1..4 tokens); Vec: ggml's dp4a vector
+// weights on NVFP4 activations; R8: the int8 decode kernel (1..8 tokens); Vec: ggml's dp4a vector
 // kernel (1..8 tokens, 16 without tensor mma.sync).
 enum class PrefillRoute : std::uint8_t { Auto, A16, W4a8, I8, Mmq, W4a4 };
 enum class DecodeRoute : std::uint8_t { Auto, A16, R8, Vec, Mmq };

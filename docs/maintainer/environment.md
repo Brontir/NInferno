@@ -92,7 +92,7 @@ clearing a pin restores every route).
 | Option | Values | Band | Families |
 |---|---|---|---|
 | `--prefill-route` | `auto`, `a16`, `w4a8`, `i8`, `mmq`, `w4a4` | calls of 17 tokens or more | `a16`: what the automatic selection takes for an A16Only weight (register MMA, tiled or staged tiles, the route tables' A16 entries); `w4a8`: the W4A8 heuristic's int8 tile (with its tuned prefill band); `i8`: the Q4/Q5/Q6 G64 int8 tiles; `mmq`: ggml's int8 matrix kernel in 512-token slices; `w4a4`: NVFP4 activations on NVFP4 weights |
-| `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | calls of 1..16 tokens | `a16`: the automatic selection for an A16Only weight; `r8`: the int8 R8 kernel at 1 token (where the activation fits a CTA) and 2..4 tokens (the pre-quantized form); `vec`: ggml's dp4a vector kernel, 1..8 tokens (16 without tensor mma.sync); `mmq`: ggml's matrix kernel, 5..16 tokens |
+| `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | calls of 1..16 tokens | `a16`: the automatic selection for an A16Only weight; `r8`: the int8 R8 kernel at 1 token (where the activation fits a CTA) and 2..8 tokens (the pre-quantized form); `vec`: ggml's dp4a vector kernel, 1..8 tokens (16 without tensor mma.sync); `mmq`: ggml's matrix kernel, 5..16 tokens |
 | `--moe-path` | `auto`, `fused`, `generic` | each MoE layer at load | `fused`: Qwen 3.5/3.6 SparseMoe (top-8 experts it reads) or Gemma 4's NVFP4 MoE (calibrated NVFP4 experts, sm_120a); `generic`: the generic MoE Op, which reads every expert format |
 
 A pinned family takes every call of its band that it can compute, and a call it cannot compute
@@ -122,7 +122,8 @@ Where they do not: the fused NVFP4 plans of the registered Qwen shapes (attentio
 projections, `linear_add`, `linear_swiglu`) keep their own A4 or A16 choice; the routed experts'
 grouped GEMMs keep their schedules (`--moe-tune` and the route tables' MoE bands); a GPU without
 tensor mma.sync (Volta) keeps its tiled route for calls of 17 tokens or more of a format with a
-tiled codec; the invariant routes of `--activations exact` take no pin at all; TMA and other
+tiled codec (its HMMA verify kernel, 2..16 tokens, is the `a16` family's there: another decode pin
+takes those calls where it computes them); the invariant routes of `--activations exact` take no pin at all; TMA and other
 schedule-level choices inside a shape table stay the table's.
 
 Refusals, each naming what can run instead:
