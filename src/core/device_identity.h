@@ -238,7 +238,7 @@ parse_uuid_text(std::string_view text) {
     case DeviceSelector::Kind::Pci:
         for (const int ordinal : order) {
             const DeviceIdentity& d = at(ordinal);
-            if (d.pci_domain == selector.address.pci_domain &&
+            if (pci_known(d) && d.pci_domain == selector.address.pci_domain &&
                 d.pci_bus == selector.address.pci_bus &&
                 d.pci_device == selector.address.pci_device &&
                 d.pci_function == selector.address.pci_function) {
