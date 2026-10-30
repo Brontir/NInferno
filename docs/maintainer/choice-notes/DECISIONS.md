@@ -1839,7 +1839,13 @@ such call:
 On the RTX 4090 the law gives the dense calls of Qwen3.6-35B-A3B within 1-6 % (the Gated DeltaNet
 in-projection 11.2 against 11.5 us a CTA, attention's qkv 370 against 375 us, the shared expert's
 gate/up 45 against 47 us) and gpt-oss's experts from Qwen's (15.2 against 15.0 / 13.6 us a CTA).
-c1 is the same in nanoseconds on both generations at their different clocks: 1.7 int8 TOPS a SM,
+In SM-clocks a K step of the int8 tile is one number across generations: 12.1 on the RTX 4090
+(4.82 ns at 2520 MHz), 12.8 on the 4070 Ti and 12.5 on the RTX 3060 (Ampere: 7.05 ns at 1777 MHz;
+both read from Qwen3.5 9B Q8_0's calls at K 4096 and 12288 once the grid runs token-major,
+PR #249), about 11.6 on the RTX 5070 Ti: the tile's cost is a count of clocks, the card's clock
+gives its time. Between the two K the line puts c0 slightly below zero on the Ampere and the
+4070 Ti (the down projection at K 12288 has fewer CTAs a SM): c0 stays the 4090's read until a
+third K is read. c1 is the same in nanoseconds on both generations at their different clocks: 1.7 int8 TOPS a SM,
 a third of the tensor peak, in every call. The 16-bit register MMA's K step costs only 1.5x the int8 tile's at a quarter of
 its tensor peak: both are bound by decoding the weights on the CUDA cores, not by the MMA (the
 same bound the decode census found for IQ3_XXS's routed kernels, DECISIONS 65); the int8 tile's
