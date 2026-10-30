@@ -138,7 +138,10 @@ int check_case(const Case& c, cudaStream_t stream) {
     std::vector<std::optional<generic::Route>> tuned(generic::kDenseTuneMaxTokens + 1);
     for (std::int32_t t = 1; t <= generic::kDenseTuneMaxTokens; ++t) {
         tuned[t] = generic::tuned_dense_route(problem, t);
-        const auto heuristic = generic::heuristic_route(problem, d.weight, t, false);
+        // Volta's own rules route a call before the heuristic (select_route), and the tuner
+        // leaves those widths.
+        const auto heuristic = generic::volta_fixed_route(problem, d.weight, t)
+                                   .value_or(generic::heuristic_route(problem, d.weight, t, false));
         const auto chosen    = generic::select_route(problem, d.weight, t, false);
         if (!tuned[t]) {
             if (!(chosen == heuristic)) {
@@ -157,7 +160,7 @@ int check_case(const Case& c, cudaStream_t stream) {
         // ggml's matrix kernel may replace an A16 schedule at verify widths where A8 is allowed
         // (its workspace is the problem's capacity, workspace_capacity_bytes).
         if (tuned[t]->family == generic::Family::GgmlMmq) {
-            if (r8 || c.policy == ops::LinearPolicy::A16Only || t <= generic::kR8VerifyTokens) {
+            if (r8 || c.policy == ops::LinearPolicy::A16Only || t < generic::kMmqMinTokens) {
                 std::cerr << c.name << " T=" << t << ": ggml_mmq against the heuristic "
                           << generic::route_name(heuristic) << "\n";
                 ++failures;

@@ -36,6 +36,9 @@ struct KldReference {
     std::uint32_t top_k   = 0;
     std::uint32_t context = 0;     // the windows the reference scored: the measured run
     std::uint32_t stride  = 0;     // must condition on the same histories
+    // The token every window started from (Engine::document_start_token; -1: none): a run from
+    // another start conditions on other histories.
+    std::int32_t window_start = -1;
     std::string model;             // the reference artifact's model name
     std::string prefill_signature; // and its weight formats, for the report
     std::vector<KldStream> streams;

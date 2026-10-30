@@ -37,7 +37,8 @@ namespace program = qwen3_5::execution;
 class DenseExecution final : public ModelExecution {
 public:
     DenseExecution(const Model& model, const speculation::DFlashDrafter* drafter,
-                   DeviceContext& device, std::int32_t public_tokens, ActivationMode activations);
+                   DeviceContext& device, std::int32_t public_tokens, ActivationMode activations,
+                   EnginePurpose purpose);
 
     [[nodiscard]] const ModelTraits& traits() const noexcept override { return traits_; }
     [[nodiscard]] std::vector<std::string> tune_routes(cudaStream_t stream) const override {
@@ -98,8 +99,6 @@ private:
     // max_context): a LongRoPE model's rotation mode follows it, as under ninferno-dense.
     static std::int32_t session_context(const program::ExecutionCore& core);
 
-    // Sliding rings keep every key the widest call can see while it appends its own rows.
-    [[nodiscard]] std::uint32_t ring_capacity(const SequencePlanImpl& plan) const;
     // The most rows one call appends: a prefill chunk, or a speculative verify.
     [[nodiscard]] static std::uint32_t widest_call(const SequencePlanImpl& plan);
 
@@ -127,13 +126,6 @@ private:
     // mask), or a pairing its loader did not establish.
     void check_drafter() const;
 
-    // The drafter's local (sliding) layers as fixed rings of every state image; none without a
-    // sliding layer.
-    [[nodiscard]] std::optional<qwen3_5::DFlashLocalStateSpec> dflash_local_spec() const;
-    // The rest of the drafter's persistent state: its full layers' paged pool (when it has any),
-    // the prefill chunk's tapped features and every lane's pending features.
-    [[nodiscard]] qwen3_5::detail::DFlashPersistentLayout
-    dflash_layout(LayoutBuilder& builder, const SequencePlanImpl& plan) const;
     // dflash_context (a prefill chunk's append) and dflash_round.
     void dflash_workspace(const SequencePlanImpl& plan, WorkspacePlan& out) const;
 
@@ -199,6 +191,7 @@ private:
     DensePass pass_;
     const speculation::DFlashDrafter* drafter_;
     bool invariant_; // ActivationMode::Exact: the invariant route profile
+    EnginePurpose purpose_;
     ModelTraits traits_;
     std::vector<std::uint32_t> index_; // each target layer's place among its kind
     std::uint32_t full_layers_    = 0;

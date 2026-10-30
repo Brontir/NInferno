@@ -112,6 +112,8 @@ CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
         timings.speculation.update(
             Json{{"floor", outcome.metrics.speculative_floor},
                  {"watchdog_tripped", outcome.metrics.speculative_watchdog_tripped},
+                 {"rounds", outcome.metrics.speculative_rounds},
+                 {"fallback_steps", outcome.metrics.speculative_fallback_steps},
                  {"step_downs", outcome.metrics.speculative_step_downs},
                  {"final_draft_window", outcome.metrics.speculative_final_draft_window},
                  {"plain_steps", outcome.metrics.speculative_plain_steps},
@@ -122,7 +124,9 @@ CompletionTimings outcome_timings(const GenerationOutcome& outcome) {
                  {"copy_accepted_tokens", outcome.metrics.speculative_copy_accepted},
                  {"shared_trip_deferrals", outcome.metrics.speculative_trips_held},
                  {"load_plain", outcome.metrics.speculative_load_plain},
-                 {"context_plain", outcome.metrics.speculative_context_plain}});
+                 {"context_plain", outcome.metrics.speculative_context_plain},
+                 {"constraint_fallback_steps",
+                  outcome.metrics.speculative_constraint_fallback_steps}});
     }
     timings.constraint_mask_ms =
         finite_nonnegative(outcome.metrics.constraint_mask_host_seconds * 1000.0);

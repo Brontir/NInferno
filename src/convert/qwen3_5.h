@@ -27,6 +27,13 @@ namespace ninferno::convert {
                                         const ResourceOverrides& overrides);
 
 [[nodiscard]] bool is_qwen3_5_recipe(std::string_view name) noexcept;
+
+// The recipe an unquantized Qwen3.5 checkpoint converts with by default (choose_recipe): the MoE's
+// maintainer recipe, else the dense one that runs it as published.
+[[nodiscard]] std::string_view qwen3_5_checkpoint_recipe(bool moe) noexcept;
+// The format an official Qwen3.5 recipe stores an unquantized output head in (the recipes assign
+// it from here): BF16 where it keeps the published form.
+[[nodiscard]] QType qwen3_5_recipe_head_format(std::string_view recipe) noexcept;
 void apply_qwen3_5_recipe(std::string_view name, Model& model, Recipe& recipe,
                           SourceInputs& sources);
 

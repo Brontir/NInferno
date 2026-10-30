@@ -160,18 +160,14 @@ int main() {
                                               "t.json",
                                               "--route-dir",
                                               "routes",
-                                              "--dense-tune",
-                                              "on",
-                                              "--moe-tune",
-                                              "retune",
-                                              "--tune-cache",
-                                              "cache",
                                               "--debug-prefill-cuts",
                                               "700,900",
                                               "--debug-poison",
                                               "nan",
                                               "--debug-poison-skip",
                                               "kv,state",
+                                              "--artifact-io",
+                                              "buffered",
                                               "--drafter-registry",
                                               "registry.json"});
     failures += check(lab.pacing.steps == 4 && lab.pacing.wait == ninferno::DecodeWait::Block &&
@@ -179,12 +175,10 @@ int main() {
                       "decode pacing options were not parsed");
     failures +=
         check(lab.maintainer.route_table == "t.json" && lab.maintainer.route_dir == "routes" &&
-                  lab.maintainer.dense_tune == ninferno::TuneMode::On &&
-                  lab.maintainer.moe_tune == ninferno::TuneMode::Retune &&
-                  lab.maintainer.tune_cache == "cache" &&
                   lab.maintainer.debug_prefill_cuts == std::vector<std::uint64_t>{700, 900} &&
                   lab.maintainer.debug_poison == std::uint8_t{0xFF} &&
                   lab.maintainer.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
+                  lab.maintainer.artifact_io == ninferno::ArtifactIo::Buffered &&
                   lab.drafter_registry == "registry.json",
               "maintainer options were not parsed");
     failures += check(
@@ -202,11 +196,24 @@ int main() {
         failures += check(rejects([&] { (void)parse(arguments); }),
                           ("CLI accepted " + bad[0] + " " + bad[1]).c_str());
     }
-    for (const char* flag : {"--decode-steps", "--decode-wait", "--cuda-sync", "--route-table",
-                             "--route-dir", "--dense-tune", "--moe-tune", "--tune-cache",
-                             "--debug-prefill-cuts", "--debug-poison", "--drafter-registry"}) {
+    for (const char* flag :
+         {"--decode-steps", "--decode-wait", "--cuda-sync", "--route-table", "--route-dir",
+          "--debug-prefill-cuts", "--debug-poison", "--drafter-registry"}) {
         failures += check(help.find(flag) != std::string::npos,
                           (std::string("CLI help omits ") + flag).c_str());
+    }
+    // The lab tuners time kernels on the machine: ninferno refuses them, and its help names none.
+    for (const char* flag : {"--dense-tune", "--moe-tune", "--tune-cache"}) {
+        failures += check(help.find(flag) == std::string::npos,
+                          (std::string("CLI help names the tuner flag ") + flag).c_str());
+        bool refused = false;
+        try {
+            (void)parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", flag, "on"});
+        } catch (const std::invalid_argument& error) {
+            refused =
+                std::string(error.what()).find("is a lab tuner's option") != std::string::npos;
+        }
+        failures += check(refused, (std::string("CLI accepted the tuner flag ") + flag).c_str());
     }
     return failures == 0 ? 0 : 1;
 }

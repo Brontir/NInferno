@@ -8,13 +8,16 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import struct
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools" / "spec"))
 import registry_add  # noqa: E402
+import round_facts  # noqa: E402
 
 
 def choice(config: str, drafter: str = "assistant") -> dict:
@@ -189,6 +192,483 @@ class Stamps(unittest.TestCase):
                                  "(python tools/spec/registry_add.py --restamp)")
                 self.assertRegex(p.get("measured_at", ""), r"^\d{4}-\d{2}-\d{2}$")
 
+
+class PairTest(unittest.TestCase):
+    """--pair: a lab measurement of one target and its drafters as the registry's pair."""
+
+    tune = {"key": {"engine": "ninferno-spec-1", "gpu": "ad104:60sm"},
+            "measurements": [{"config": "plain"}, {"config": "dflash:7"}]}
+    manifest = {"target": {"engine": "qwen3_5"},
+                "drafters": [{"kind": "mtp", "repo": None, "status": "embedded"},
+                             {"kind": "dflash", "repo": "z-lab/Qwen3.5-9B-DFlash",
+                              "revision": "5fc3b3d4", "status": "embedded"}]}
+
+    def test_pair_of_a_tune(self):
+        pair = registry_add.pair_of(self.tune, self.manifest, "org/m@abc", "UD-Q4_K_XL",
+                                    ["B" * 64, "a" * 64])
+        self.assertEqual(pair["target"], "a" * 64 + "," + "b" * 64)
+        self.assertEqual(pair["generation"], "sm89")
+        self.assertEqual(pair["target_bits"], 4)
+        self.assertEqual(pair["engine"], "qwen3_5")
+        self.assertEqual(pair["drafters"], {"dflash": "z-lab/Qwen3.5-9B-DFlash@5fc3b3d4"})
+        self.assertEqual(pair["target_repo"], "org/m@abc UD-Q4_K_XL")
+
+    def test_local_paths_are_dropped(self):
+        tune = json.loads(json.dumps(self.tune))
+        tune["artifact"] = "/root/x.ninferno"
+        tune["drafters"] = [{"name": "a", "artifact": "/root/a.ninferno"}]
+        pair = registry_add.pair_of(tune, self.manifest, "org/m@abc", "Q4_K_M", ["a" * 64])
+        self.assertNotIn("artifact", pair["tune"])
+        self.assertNotIn("artifact", pair["tune"]["drafters"][0])
+
+    def test_labels_and_generations(self):
+        self.assertEqual(registry_add.label_bits("TQ1_0"), 1)
+        self.assertEqual(registry_add.label_bits("IQ2_M"), 2)
+        self.assertEqual(registry_add.label_bits(""), 16)
+        self.assertEqual(registry_add.generation_of("gb203:70sm"), "sm120")
+
+    def test_a_tune_without_a_drafter_is_refused(self):
+        bare = {"key": self.tune["key"], "measurements": [{"config": "plain"}]}
+        with self.assertRaises(SystemExit):
+            registry_add.pair_of(bare, self.manifest, "org/m@abc", "Q4_K_M", ["a" * 64])
+
+    def test_bad_weights_are_refused(self):
+        with self.assertRaises(SystemExit):
+            registry_add.pair_of(self.tune, self.manifest, "org/m@abc", "Q4_K_M", ["abc"])
+
+    def test_a_pair_replaces_its_own(self):
+        pair = registry_add.pair_of(self.tune, self.manifest, "org/m@abc", "Q4_K_M", ["a" * 64])
+        again = json.loads(json.dumps(pair))
+        again["target_repo"] = "org/m@def Q4_K_M"
+        other = json.loads(json.dumps(pair))
+        other["tune"]["key"]["gpu"] = "ad102:128sm"
+        pairs = registry_add.put_pair(registry_add.put_pair([pair], other), again)
+        self.assertEqual(len(pairs), 2)
+        self.assertIn("org/m@def Q4_K_M", [p["target_repo"] for p in pairs])
+
+
+class RoundFactsTest(unittest.TestCase):
+    """tools/spec/round_facts.py: what each pass of a round reads, from a tensor table."""
+
+    @staticmethod
+    def table(names: dict, meta: dict | None = None) -> dict:
+        return {"meta": meta or {}, "tensors": {n: b for n, (b, e) in names.items()},
+                "elems": {n: e for n, (b, e) in names.items()}}
+
+    def pair(self, configs: list[str], drafters: dict | None = None, kinds: tuple = ()) -> dict:
+        return {"target_repo": "org/t@1 Q4_K_M", "drafters": drafters or {},
+                "tune": {"key": {"gpu": "ad104:60sm"}, "drafters": [{"kind": k} for k in kinds],
+                         "measurements": [{"config": c} for c in configs + ["plain"]]}}
+
+    def test_mtp_layers_and_dflash(self):
+        meta = {"general.architecture": "qwen35", "qwen35.block_count": 3, "qwen35.nextn_predict_layers": 1}
+        target = self.table({"token_embd.weight": (100, 400), "output.weight": (100, 400),
+                             "blk.0.attn_q.weight": (50, 200), "blk.1.ffn_up.weight": (50, 200),
+                             "blk.2.nextn.eh_proj.weight": (10, 40), "v.blk.0.w": (999, 999)}, meta)
+        drafter = self.table({"model.layers.0.mlp.up_proj.weight": (30, 15)}, {"block_size": 16})
+        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
+        facts = round_facts.round_facts(self.pair(["mtp:3", "dflash:7"], {"dflash": "z/d@2"}), tables, {})
+        self.assertEqual(facts["target"], {"bytes": 200, "params": 800})
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 10, "params": 40, "rows": 1, "per_draft": True,
+                                                    "head": {"bytes": 100, "params": 400}})
+        self.assertEqual(facts["drafters"]["dflash"],
+                         {"bytes": 30, "params": 15, "rows": 16, "per_draft": False,
+                          "head": {"bytes": 100, "params": 400}})
+        drafter["meta"] = {}
+        facts = round_facts.round_facts(self.pair(["dflash:7"], {"dflash": "z/d@2"}), tables, {})
+        self.assertIsNone(facts)  # no block_size: no DFlash facts
+
+    def test_nemotron_sidecar_counts_its_nextn_layer(self):
+        meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.expert_count": 8,
+                "nemotron_h_moe.expert_used_count": 2}
+        target = self.table({"output.weight": (10, 40), "blk.0.ffn_up_exps.weight": (80, 320),
+                             "blk.0.attn_q.weight": (5, 20)}, meta)
+        side = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (3, 12),
+                           "blk.0.ffn_up_exps.weight": (16, 64)},
+                          dict(meta, **{"nemotron_h_moe.block_count": 1,
+                                        "nemotron_h_moe.nextn_predict_layers": 1}))
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "mtp-Q4_0"}]}]}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:b/g@3:mtp-Q4_0.gguf": side}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        tables, registry)
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 13, "params": 52, "expert_bytes": 16,
+                                                    "expert_params": 64, "experts": 8, "experts_used": 2,
+                                                    "rows": 1, "per_draft": True})
+
+    def test_packed_safetensors_count_logical_parameters(self):
+        header = {"a.qweight": {"dtype": "I32", "shape": [4, 2], "data_offsets": [0, 32]},
+                  "a.scales": {"dtype": "F16", "shape": [2], "data_offsets": [32, 36]},
+                  "b.weight_packed": {"dtype": "U8", "shape": [4], "data_offsets": [36, 40]},
+                  "b.weight_scale": {"dtype": "F8_E4M3", "shape": [1], "data_offsets": [40, 41]},
+                  "c.weight": {"dtype": "BF16", "shape": [3], "data_offsets": [41, 47]}}
+        tensors, elems, shapes = round_facts.parse_safetensors_header(header, 4)
+        self.assertEqual(elems, {"a.qweight": 64, "a.scales": 0, "b.weight_packed": 8, "b.weight_scale": 0,
+                                 "c.weight": 3})
+        self.assertEqual(tensors["a.scales"], 4)
+        self.assertEqual(shapes["a.qweight"], ["int4", [4, 2]])
+        self.assertEqual(shapes["b.weight_packed"], ["nvfp4", [4]])
+        self.assertEqual(shapes["b.weight_scale"], ["fp8", [1]])
+        self.assertEqual(shapes["c.weight"], ["bf16", [3]])
+        # compressed-tensors MXFP4: the same uint8 weight_packed, its block scales E8M0 (uint8).
+        mx = {"d.weight_packed": {"dtype": "U8", "shape": [512, 128], "data_offsets": [0, 65536]},
+              "d.weight_scale": {"dtype": "U8", "shape": [512, 8], "data_offsets": [65536, 69632]}}
+        _, elems, shapes = round_facts.parse_safetensors_header(mx, 4)
+        self.assertEqual(shapes["d.weight_packed"], ["mxfp4", [512, 128]])
+        self.assertEqual(round_facts.linear_shape("d.weight_packed", "mxfp4", [512, 128],
+                                                  elems["d.weight_packed"], "compressed-tensors"), (512, 256, 1))
+
+    def test_gguf_sizes_from_offsets(self):
+        def s(text):
+            raw = text.encode()
+            return struct.pack("<Q", len(raw)) + raw
+        buf = b"GGUF" + struct.pack("<IQQ", 3, 2, 0)
+        buf += s("x") + struct.pack("<I", 1) + struct.pack("<Q", 64) + struct.pack("<IQ", 99, 0)
+        buf += s("y") + struct.pack("<I", 1) + struct.pack("<Q", 32) + struct.pack("<IQ", 1, 96)
+        _, tensors, elems, shapes = round_facts.parse_gguf(buf)
+        self.assertEqual(tensors, {"x": 96, "y": 64})  # x (an unknown type) by the next offset
+        self.assertEqual(elems, {"x": 64, "y": 32})
+        self.assertEqual(shapes, {"x": ["gguf:type99", [64]], "y": ["gguf:F16", [32]]})
+
+    def test_a_table_read_on_a_later_try_is_no_longer_unread(self):
+        # Two pairs share a drafter table: the first pair's read fails, the second's succeeds.
+        pair = lambda target: {"target_repo": f"org/{target}@1 Q4_K_M", "target": "a",
+                               "drafters": {"dflash": "z/d@2"}}
+        registry = {"pairs": [pair("t1"), pair("t2")]}
+        calls = []
+
+        def read(at, files, shas):
+            calls.append(at)
+            if at == "z/d@2" and calls.count("z/d@2") == 1:
+                raise OSError("HTTP 503")
+            return {"meta": {}, "tensors": {"w": 1}, "elems": {"w": 1}, "shapes": {"w": ["bf16", [1]]}}
+
+        saved = []
+        with contextlib.redirect_stderr(io.StringIO()):
+            failed = round_facts.refresh_tables(registry, {}, read, lambda t: saved.append(len(t)))
+        self.assertEqual(failed, set())  # read on the second pair's try
+        self.assertEqual(calls.count("z/d@2"), 2)
+        self.assertEqual(saved[-1], 3)  # both targets and the drafter, saved after each read
+
+    def test_only_measured_modes_need_their_tables(self):
+        # A pair measured with DFlash advertises an untested DFlash2: only DFlash's table is consumed.
+        pair = {"target_repo": "org/t@1 NVFP4", "target": "a",
+                "drafters": {"dflash": "z/d@2", "dflash2": "z/d2@3"},
+                "tune": {"measurements": [{"config": "plain"}, {"config": "dflash:7"}], "drafters": []}}
+        keys = round_facts.consumed_tables({"pairs": [pair]}, pair)
+        self.assertEqual(keys, {"org/t@1 NVFP4", "drafter:z/d@2"})
+        # MTP from the target's own layers reads no drafter table; a separate MTP drafter's is read.
+        pair["tune"] = {"measurements": [{"config": "mtp:3"}], "drafters": [{"kind": "gemma4_assistant"}]}
+        pair["drafters"] = {"gemma4_assistant": "g/a@4"}
+        self.assertEqual(round_facts.consumed_tables({"pairs": [pair]}, pair),
+                         {"org/t@1 NVFP4", "drafter:g/a@4"})
+
+    def test_nested_untied_head_is_the_head(self):
+        # dense.cpp head_tensor accepts language_model.lm_head.weight: the head, not body; the
+        # embedding then is no tied head.
+        self.assertEqual(round_facts.tensor_class("language_model.lm_head.weight", False, 0, 0), "head")
+        self.assertEqual(round_facts.tensor_class("lm_head.weight", False, 0, 0), "head")
+        table = {"meta": {}, "tensors": {"model.embed_tokens.weight": 100, "language_model.lm_head.weight": 100},
+                 "elems": {"model.embed_tokens.weight": 50, "language_model.lm_head.weight": 50}}
+        b, _, _, _ = round_facts.classes(table)
+        self.assertEqual((b["head"], b["embed"]), (100, 100))
+        self.assertNotIn("body", b)
+
+    def test_autoround_qweight_is_read_as_its_packing(self):
+        # AutoRound names its layout in packing_format (formats.cpp): GPTQ's words by default.
+        self.assertEqual(round_facts.qweight_method({"quant_method": "auto-round"}), "gptq")
+        self.assertEqual(round_facts.qweight_method({"quant_method": "intel/auto-round",
+                                                     "packing_format": "auto_round:auto_awq"}), "awq")
+        meta, _ = round_facts._config_meta({"quantization_config": {"quant_method": "auto-round",
+                                                                    "packing_format": "auto_round:auto_awq"}})
+        self.assertEqual(meta["packing_format"], "auto_round:auto_awq")
+        # A GPTQ-packed [k/8, n] qweight of 4096x1024 from an AutoRound checkpoint is a linear.
+        shapes = {"model.layers.0.mlp.up_proj.qweight": ["int4", [512, 4096]]}
+        table = {"meta": {"quant_method": "auto-round"}, "tensors": {}, "shapes": shapes,
+                 "elems": {"model.layers.0.mlp.up_proj.qweight": 4096 * 4096}}
+        got = round_facts.linears(table, ("body",))
+        self.assertEqual([(g["n"], g["k"]) for g in got], [(4096, 4096)])
+
+    def test_nested_quantization_and_newer_ggml_types(self):
+        meta, bits = round_facts._config_meta({"text_config": {"quantization_config": {"quant_method": "gptq",
+                                                                                       "bits": 4}}})
+        self.assertEqual((meta["quant_method"], bits), ("gptq", 4))
+        self.assertEqual(round_facts.GGML_NAMES[40], "NVFP4")
+        self.assertEqual(round_facts.GGML_BLOCKS[40], (64, 36))
+
+    def test_norms_by_role_and_int8(self):
+        # Nemotron-H's grouped SSM norm is 2-D, no linear; compressed-tensors W8A16 reads int8.
+        self.assertIsNone(round_facts.linear_shape("blk.0.ssm_norm.weight", "gguf:F32", [512, 8], 4096, ""))
+        self.assertIsNone(round_facts.linear_shape("model.layers.0.mixer.norm.weight", "bf16", [8, 512], 4096, ""))
+        self.assertEqual(round_facts.safetensors_format("a.weight", "I8", 8), "int8")
+        self.assertEqual(round_facts.linear_shape("a.weight", "int8", [512, 256], 131072, "compressed-tensors"),
+                         (512, 256, 1))
+
+    @staticmethod
+    def shaped(shapes: dict, meta: dict | None = None, bytes_per: float = 1.0) -> dict:
+        """A table from {name: [format, dims, parameters]}: `bytes_per` bytes a parameter."""
+        return {"meta": meta or {}, "tensors": {n: int(e * bytes_per) for n, (f, d, e) in shapes.items()},
+                "elems": {n: e for n, (f, d, e) in shapes.items()},
+                "shapes": {n: [f, d] for n, (f, d, e) in shapes.items()}}
+
+    def test_gguf_linears_tied_head_experts_and_mtp(self):
+        meta = {"general.architecture": "qwen35moe", "qwen35moe.block_count": 2,
+                "qwen35moe.nextn_predict_layers": 1}
+        target = self.shaped({
+            "token_embd.weight": ["gguf:Q6_K", [256, 1000], 256000],
+            "blk.0.attn_q.weight": ["gguf:Q4_K", [256, 512], 131072],
+            "blk.0.attn_k.weight": ["gguf:Q4_K", [256, 64], 16384],
+            "blk.0.ssm_conv1d.weight": ["gguf:F32", [4, 512], 2048],  # a convolution: no linear
+            "blk.0.attn_norm.weight": ["gguf:F32", [256], 256],
+            "blk.0.ffn_up_exps.weight": ["gguf:Q4_K", [256, 128, 8], 262144],
+            "blk.1.nextn.eh_proj.weight": ["gguf:Q8_0", [512, 256], 131072],
+            "blk.1.ffn_up_exps.weight": ["gguf:Q4_K", [256, 128, 8], 262144]}, meta)
+        facts = round_facts.round_facts(self.pair(["mtp:3"]), {"org/t@1 Q4_K_M": target}, {})
+        head = {"format": "gguf:Q6_K", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}
+        self.assertEqual(facts["target"]["linears"], [
+            {"format": "gguf:Q4_K", "n": 64, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q4_K", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "gguf:Q8_0", "n": 256, "k": 512, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q4_K", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}])
+        self.assertEqual(facts["drafters"]["mtp"]["head"]["linears"], [head])  # per draft, apart
+
+    def test_checkpoint_linears_as_published_and_converted(self):
+        target = self.shaped({
+            "model.embed_tokens.weight": ["bf16", [1000, 256], 256000],
+            "lm_head.weight": ["nvfp4", [1000, 128], 256000],
+            "model.layers.0.self_attn.q_proj.weight": ["nvfp4", [512, 128], 131072],
+            "model.layers.0.self_attn.q_proj.weight_scale": ["fp8", [512, 16], 0],
+            "model.layers.0.mlp.experts.gate_up_blocks": ["mxfp4", [8, 128, 8, 16], 262144],
+            "model.layers.0.mlp.experts.down_proj": ["bf16", [8, 256, 128], 262144],
+            "model.layers.0.linear_attn.conv1d.weight": ["bf16", [512, 1, 4], 2048],
+            "model.layers.0.mlp.gate.weight": ["bf16", [8, 256], 2048]},
+            {"expert_count": 8, "expert_used_count": 2}, 0.5)
+        drafter = self.shaped({"layers.0.mlp.up_proj.weight": ["bf16", [512, 256], 131072],
+                               "layers.0.conv.base_kernel": ["bf16", [2, 2, 256], 1024]},
+                              {"block_size": 8}, 2)
+        registry = {"kinds": {"dflash": {"quant": "q8"}}}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}
+        facts = round_facts.round_facts(self.pair(["dflash:7"], {"dflash": "z/d@2"}), tables, registry)
+        head = {"format": "nvfp4", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}
+        self.assertEqual(facts["target"]["linears"], [
+            {"format": "bf16", "n": 8, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "nvfp4", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "bf16", "n": 256, "k": 128, "count": 8, "head": False, "expert": True},
+            {"format": "mxfp4", "n": 128, "k": 256, "count": 8, "head": False, "expert": True}, head])
+        dflash = facts["drafters"]["dflash"]
+        self.assertEqual(dflash["linears"],
+                         [{"format": "conv:q8", "n": 512, "k": 256, "count": 1, "head": False, "expert": False}])
+        self.assertEqual(dflash["head"]["linears"], [head])
+
+    def test_awq_and_gptq_qweight_orientation(self):
+        # AWQ: qweight [k, n / 8]; GPTQ: [k / 8, n]; compressed-tensors weight_packed: [n, k / 8].
+        self.assertEqual(round_facts.linear_shape("a.qweight", "int4", [256, 64], 256 * 512, "awq"), (512, 256, 1))
+        self.assertEqual(round_facts.linear_shape("a.qweight", "int4", [32, 512], 256 * 512, "gptq"), (512, 256, 1))
+        self.assertEqual(round_facts.linear_shape("a.weight_packed", "int4", [512, 32], 256 * 512,
+                                                  "compressed-tensors"), (512, 256, 1))
+        # A qweight of a method whose orientation is not known: no linear rather than a guess.
+        self.assertIsNone(round_facts.linear_shape("a.qweight", "int4", [256, 64], 256 * 512, "auto-round"))
+        # A dense MXFP4 weight's blocks [n, k / 32, 16].
+        self.assertEqual(round_facts.linear_shape("a.weight_blocks", "mxfp4", [512, 8, 16], 512 * 256, ""),
+                         (512, 256, 1))
+
+    def test_row_tables_are_in_no_pass(self):
+        # DFlash2's selector codebooks are read a few rows by id: neither its bytes nor a linear.
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        drafter = self.shaped({"layers.0.mlp.up_proj.weight": ["bf16", [512, 256], 131072],
+                               "candidate_selector.predecessor_codebook": ["bf16", [1000, 256], 256000],
+                               "candidate_selector.successor_codebook": ["bf16", [1000, 256], 256000]},
+                              {"block_size": 8}, 2)
+        facts = round_facts.round_facts(self.pair(["dflash2:7"], {"dflash2": "z/d@2"}),
+                                        {"org/t@1 Q4_K_M": target, "drafter:z/d@2": drafter}, {})
+        dflash2 = facts["drafters"]["dflash2"]
+        self.assertEqual((dflash2["bytes"], dflash2["params"]), (262144, 131072))
+        self.assertEqual(len(dflash2["linears"]), 1)
+
+    def test_a_sidecar_without_a_head_runs_the_targets(self):
+        meta = {"general.architecture": "nemotron_h_moe", "nemotron_h_moe.block_count": 1,
+                "nemotron_h_moe.nextn_predict_layers": 1}
+        target = self.shaped({"output.weight": ["gguf:Q6_K", [256, 1000], 256000],
+                              "blk.0.attn_q.weight": ["gguf:Q4_0", [256, 256], 65536]})
+        side = self.shaped({"blk.0.attn_q.weight": ["gguf:Q4_0", [256, 512], 131072]}, meta)
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "m"}]}]}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:b/g@3:m.gguf": side}, registry)
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "gguf:Q4_0", "n": 512, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "gguf:Q6_K", "n": 1000, "k": 256, "count": 1, "head": True, "expert": False}])
+
+    def test_embeddings_by_role_and_the_sidecar_first(self):
+        meta = {"expert_count": 8, "expert_used_count": 2}
+        target = self.table({"backbone.embeddings.weight": (700, 350), "lm_head.weight": (10, 40),
+                             "backbone.layers.0.mixer.q_proj.weight": (5, 20),
+                             "mtp.layers.0.q_proj.weight": (90, 90)}, meta)
+        side = self.table({"blk.0.attn_q.weight": (3, 12)})
+        registry = {"models": [{"drafters": [{"kind": "nemotron_h_mtp", "repo": "b/g", "gguf": "m"}]}]}
+        tables = {"org/t@1 Q4_K_M": target, "drafter:b/g@3:m.gguf": side}
+        facts = round_facts.round_facts(self.pair(["mtp:2"], {"nemotron_h_mtp": "b/g@3"}, ("nemotron_h_mtp",)),
+                                        tables, registry)
+        self.assertEqual(facts["target"], {"bytes": 15, "params": 60})  # no embedding table read
+        self.assertEqual(facts["drafters"]["mtp"]["bytes"], 13)  # the sidecar, not mtp.* (90)
+
+    def test_a_drafter_as_its_kind_attaches_it(self):
+        assistant = self.table({"model.layers.0.mlp.up_proj.weight": (2 * 65536, 65536),
+                                "model.layers.0.input_layernorm.weight": (64, 32),
+                                "model.embed_tokens.weight": (2 * 400 * 256, 400 * 256)}, {"vocab_size": 400})
+        registry = {"kinds": {"gemma4_assistant": {"quant": "q8", "proposal_rows": 100}},
+                    "models": [{"drafters": [{"kind": "gemma4_assistant", "repo": "g/a"}]}]}
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        facts = round_facts.round_facts(self.pair(["mtp:3"], {"gemma4_assistant": "g/a@1"}, ("gemma4_assistant",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:g/a@1": assistant}, registry)
+        # q8 projection (65536 x 34/32), the norm kept (64), the head's 100 of 400 rows in BF16.
+        self.assertEqual(facts["drafters"]["mtp"], {"bytes": 69632 + 64 + 2 * 100 * 256,
+                                                    "params": 65536 + 32 + 100 * 256, "rows": 1, "per_draft": True})
+
+    def test_assistant_linears_converted_and_its_head_over_proposal_rows(self):
+        assistant = self.shaped({"model.layers.0.mlp.up_proj.weight": ["bf16", [256, 256], 65536],
+                                 "model.layers.0.input_layernorm.weight": ["bf16", [256], 256],
+                                 "model.embed_tokens.weight": ["bf16", [400, 256], 102400]},
+                                {"vocab_size": 400}, 2)
+        registry = {"kinds": {"gemma4_assistant": {"quant": "q8", "proposal_rows": 100}},
+                    "models": [{"drafters": [{"kind": "gemma4_assistant", "repo": "g/a"}]}]}
+        target = self.table({"output.weight": (10, 40), "blk.0.attn_q.weight": (5, 20)})
+        facts = round_facts.round_facts(self.pair(["mtp:3"], {"gemma4_assistant": "g/a@1"}, ("gemma4_assistant",)),
+                                        {"org/t@1 Q4_K_M": target, "drafter:g/a@1": assistant}, registry)
+        self.assertEqual(facts["drafters"]["mtp"]["linears"], [
+            {"format": "conv:q8", "n": 256, "k": 256, "count": 1, "head": False, "expert": False},
+            {"format": "bf16", "n": 100, "k": 256, "count": 1, "head": True, "expert": False}])
+        self.assertNotIn("linears", facts["target"])  # a table without shapes lists none
+
+    def test_stale_facts_are_not_kept(self):
+        old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"drafters": {"dflash": {}}}}
+        new = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89", "target_repo": "t",
+               "tune": {"key": {"gpu": "ad104:60sm"}, "measurements": [{"config": "mtp:3"}, {"config": "plain"}]}}
+        with contextlib.redirect_stderr(io.StringIO()):
+            out = registry_add.put_pair([old], new)
+        self.assertNotIn("round_facts", out[0])
+
+    def test_a_new_tune_keeps_the_facts_and_board(self):
+        old = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}, "round_facts": {"x": 1}, "lab_board": "0x2782"}
+        new = {"target": "w", "drafters": {"dflash": "z/d@1"}, "generation": "sm89",
+               "tune": {"key": {"gpu": "ad104:60sm"}}}
+        out = registry_add.put_pair([old], new)
+        self.assertEqual(out, [dict(new, round_facts={"x": 1}, lab_board="0x2782")])
+
+def user_run(**profile_extra) -> dict:
+    """A kit file with one spec run validate.py accepts as a registry candidate."""
+    sha = "cd" * 32
+    meas = []
+    for f in ("math", "code", "prose", "thinking"):
+        meas.append({"config": "plain", "family": f, "prompts": 8, "tokens": 1000, "seconds": 20.0,
+                     "rounds": 0, "accepted": 0, "tok_s": 50.0})
+        meas.append({"config": "mtp:3", "family": f, "prompts": 8, "tokens": 1050, "seconds": 9.0,
+                     "rounds": 300, "accepted": 750})
+    profile = {"key": {"gpu": "ad106:34sm", "engine": "ninferno-spec-1"}, "settings": "greedy",
+               "drafters": [{"name": "mtp", "status": "accepted"}], "measurements": meas}
+    profile.update(profile_extra)
+    reasons = ("hw_slowdown", "hw_thermal_slowdown", "hw_power_brake_slowdown", "sw_thermal_slowdown")
+    return {"schema": "ninferno-user-run/1.1", "kit": {"version": "1"}, "created": "2026-10-29T00:00:00Z",
+            "ninferno": {"version": "NInferno 0.1.0"}, "host": {"on_battery": False},
+            "card": {"smi": {"name": "NVIDIA GeForce RTX 4060 Ti", "pci.device_id": "0x280510DE"},
+                     "plan_device": {"name": "NVIDIA GeForce RTX 4060 Ti"}},
+            "runs": [{"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "spec",
+                      "plan": {"speculation": {"round_cost": {"mtp:3": 1.5}, "source": "x"}},
+                      "manifest": {"target": {"engine": "qwen3_5"},
+                                   "drafters": [{"name": "mtp", "kind": "mtp", "status": "embedded"}]},
+                      "target": {"revision": "1" * 40, "weights": [{"sha256": sha, "bytes": 1}]},
+                      "profile": profile, "publish": {"measured_on": "NVIDIA GeForce RTX 4060 Ti user-kit"},
+                      "telemetry": {"t": [0.0], "reason_fields": "clocks_event_reasons",
+                                    "marks": [{"name": "spec-tune", "start": 0, "end": 1}],
+                                    "columns": {f"clocks_event_reasons.{r}": ["Not Active"] for r in reasons}}}]}
+
+
+class UserRun(unittest.TestCase):
+    def test_candidate_becomes_a_user_pair(self):
+        pair = registry_add.user_pair(user_run(), "")
+        self.assertEqual(pair["target"], "cd" * 32)
+        self.assertEqual(pair["target_repo"], "org/m@" + "1" * 40 + " Q4_K_M")
+        self.assertEqual(pair["generation"], "sm89")
+        self.assertEqual(pair["board"], "0x2805")
+        self.assertNotIn("lab_board", pair)  # never a lab board's rates, even of a lab class
+        self.assertEqual(pair["user_kit"]["measured_on"], "NVIDIA GeForce RTX 4060 Ti user-kit")
+
+    def test_not_a_candidate_is_refused(self):
+        with self.assertRaises(SystemExit) as e:
+            registry_add.user_pair(user_run(skipped=["mtp:5"]), "")
+        self.assertIn("not a registry candidate", str(e.exception))
+        bad = user_run()
+        bad["card"]["plan_device"]["name"] = "NVIDIA GeForce RTX 4090"
+        with self.assertRaises(SystemExit):
+            registry_add.user_pair(bad, "")
+
+    def test_user_pairs_are_recorded_apart_and_never_over_a_lab_pair(self):
+        pair = registry_add.user_pair(user_run(), "")
+        reg, user = {"pairs": []}, {}
+        registry_add.put_user_pair(reg, user, pair)
+        registry_add.put_user_pair(reg, user, json.loads(json.dumps(pair)))  # a re-run replaces
+        self.assertEqual(len(user["user_pairs"]), 1)
+        self.assertEqual(reg["pairs"], [])
+        other = json.loads(json.dumps(pair))
+        other["board"] = "0x2803"  # another board of the class is another entry
+        registry_add.put_user_pair(reg, user, other)
+        self.assertEqual(len(user["user_pairs"]), 2)
+        lab = {"target": pair["target"], "tune": {"key": {"gpu": "ad106"}}}
+        with self.assertRaises(SystemExit) as e:
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        self.assertIn("its measurement stands", str(e.exception))
+
+    def test_the_lab_pair_is_found_by_chip_not_board(self):
+        # A user's 2080 Ti Rev. A against a lab pair on the non-A board: one chip, TU102.
+        pair = registry_add.user_pair(user_run(), "")
+        pair["board"], pair["tune"]["key"]["gpu"] = "0x1E07", "tu102:68sm"
+        lab = {"target": pair["target"], "lab_board": "0x1E04", "tune": {"key": {"gpu": "tu102:68sm"}}}
+        with self.assertRaises(SystemExit):
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        # A lab pair keyed by the chip alone ("tu102"), no board.
+        lab = {"target": pair["target"], "tune": {"key": {"gpu": "tu102"}}}
+        with self.assertRaises(SystemExit):
+            registry_add.put_user_pair({"pairs": [lab]}, {}, pair)
+        # Another chip of the generation is another card.
+        lab = {"target": pair["target"], "lab_board": "0x2504", "tune": {"key": {"gpu": "ga106:28sm"}}}
+        user = {}
+        registry_add.put_user_pair({"pairs": [lab]}, user, pair)
+        self.assertEqual(len(user["user_pairs"]), 1)
+
+    def test_an_unknown_board_is_refused(self):
+        # A board the facts table does not list: its chip is unknown, not the class's.
+        pair = registry_add.user_pair(user_run(), "")
+        pair["board"] = "0xFFFF"
+        with self.assertRaises(SystemExit) as e:
+            registry_add.put_user_pair({"pairs": []}, {}, pair)
+        self.assertIn("chip is unknown", str(e.exception))
+
+    def test_lab_boards_are_their_classes_chips(self):
+        for gpu, board in registry_add.LAB_BOARDS.items():
+            self.assertEqual(registry_add.chip_of_board(board), registry_add.chip(gpu), gpu)
+        self.assertEqual(registry_add.chip_of_board("0x1E04"), "tu102")
+        self.assertEqual(registry_add.chip_of_board("0x2503"), "ga106")
+        self.assertEqual(registry_add.chip_of_board("nonsense"), "")
+
+    def test_cli_needs_accept_user(self):
+        with tempfile.TemporaryDirectory() as d:
+            run, reg, users = Path(d) / "run.json", Path(d) / "reg.json", Path(d) / "user_pairs.json"
+            run.write_text(json.dumps(user_run()), encoding="utf-8")
+            reg.write_text(json.dumps({"version": 7, "models": [], "pairs": []}), encoding="utf-8")
+            argv = ["registry_add.py", "--from-user-run", str(run), "--registry", str(reg),
+                    "--user-pairs", str(users)]
+            with self.assertRaises(SystemExit), contextlib.redirect_stderr(io.StringIO()):
+                with unittest.mock.patch.object(sys, "argv", argv):
+                    registry_add.main()
+            with unittest.mock.patch.object(sys, "argv", argv + ["--accept-user"]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(registry_add.main(), 0)
+            # The registry the engine embeds is untouched; the user pair is in its own file.
+            self.assertEqual(json.loads(reg.read_text(encoding="utf-8"))["version"], 7)
+            written = json.loads(users.read_text(encoding="utf-8"))
+            self.assertEqual((written["version"], len(written["user_pairs"])), (1, 1))
 
 if __name__ == "__main__":
     unittest.main()

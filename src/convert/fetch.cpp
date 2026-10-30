@@ -1,7 +1,10 @@
 #include "convert/fetch.h"
 
+#include "convert/cache.h"
+
 #include "core/ascii.h"
 #include "core/hex.h"
+#include "core/quant_label.h"
 #include "core/sha256.h"
 
 #include "convert/gguf.h"
@@ -193,12 +196,19 @@ bool transient(const Response& response) {
     }
 }
 
-// request_once, tried again after 1, 2 and 4 s while it fails transiently.
+// The longest a rate limit is waited out at once: the hub's window (5 minutes).
+constexpr int kRateLimitWindowSeconds = 300;
+
+// request_once, tried again while it fails transiently: after 1, 2 and 4 s, or, rate limited,
+// when the limit's window resets (a few seconds would meet the same limit again).
 Response request(const std::string& url, const std::vector<std::string>& headers, bool head,
                  bool follow) {
     auto response = request_once(url, headers, head, follow);
     for (int retry = 0; retry < 3 && transient(response); ++retry) {
-        std::this_thread::sleep_for(std::chrono::seconds(1 << retry));
+        const auto reset =
+            response.status == 429 ? rate_limit_reset_seconds(response.headers) : std::nullopt;
+        std::this_thread::sleep_for(std::chrono::seconds(
+            reset ? std::min(*reset, kRateLimitWindowSeconds) + 1 : 1 << retry));
         response = request_once(url, headers, head, follow);
     }
     return response;
@@ -639,13 +649,6 @@ private:
 // ---------------------------------------------------------------------------------------------
 // Hubs.
 
-struct RemoteFile {
-    std::string path;
-    std::uint64_t size = 0;
-    std::string sha256;   // LFS files
-    std::string git_sha1; // small files kept in git
-};
-
 struct Listing {
     std::string commit;
     std::vector<RemoteFile> files;
@@ -679,8 +682,7 @@ std::runtime_error hub_error(const std::string& what, const Response& response,
 class HuggingFace final : public Hub {
 public:
     explicit HuggingFace(std::string endpoint) : endpoint_(std::move(endpoint)) {
-        token_ = sys::env("HF_TOKEN");
-        if (token_.empty()) { token_ = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+        token_ = hub_token().value;
     }
 
     Listing list(const std::string& repo, const std::string& revision) override {
@@ -859,21 +861,18 @@ private:
 
 } // namespace
 
-std::string hub_repo_directory(std::string_view repo) {
-    std::string name = "models--" + std::string(repo);
-    if (const auto slash = name.find('/'); slash != std::string::npos) {
-        name.replace(slash, 1, "--");
+std::optional<std::string> local_commit(const std::filesystem::path& repo_dir,
+                                        const std::string& revision) {
+    const std::string rev = revision.empty() ? std::string("main") : revision;
+    if (rev.size() == 40 && rev.find_first_not_of("0123456789abcdef") == std::string::npos) {
+        return rev;
     }
-    return name;
-}
-
-std::string hub_repo_of_directory(std::string_view directory) {
-    if (!directory.starts_with("models--")) { return {}; }
-    std::string repo(directory.substr(8));
-    if (const auto separator = repo.find("--"); separator != std::string::npos) {
-        repo.replace(separator, 2, "/");
+    std::ifstream ref(repo_dir / "refs" / rev);
+    std::string commit;
+    if (!(ref >> commit) || commit.find_first_of("/\\.") != std::string::npos) {
+        return std::nullopt;
     }
-    return repo;
+    return commit;
 }
 
 fs::path default_hub_cache() {
@@ -884,6 +883,68 @@ fs::path default_hub_cache() {
     }
     const auto home = sys::home_dir();
     return (home.empty() ? fs::temp_directory_path() : home) / ".cache" / "huggingface" / "hub";
+}
+
+fs::path hub_token_path() {
+    if (const auto path = sys::env("HF_TOKEN_PATH"); !path.empty()) { return path; }
+    if (const auto home = sys::env("HF_HOME"); !home.empty()) { return fs::path(home) / "token"; }
+    if (const auto xdg = sys::env("XDG_CACHE_HOME"); !xdg.empty()) {
+        return fs::path(xdg) / "huggingface" / "token";
+    }
+    const auto home = sys::home_dir();
+    return (home.empty() ? fs::temp_directory_path() : home) / ".cache" / "huggingface" / "token";
+}
+
+HubToken hub_token() {
+    for (const char* name : {"HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"}) {
+        if (auto value = sys::env(name); !value.empty()) { return {std::move(value), name}; }
+    }
+    std::ifstream in(hub_token_path());
+    std::string value;
+    std::getline(in, value);
+    while (!value.empty() && std::isspace(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    if (value.empty()) { return {}; }
+    return {std::move(value), hub_token_path().string()};
+}
+
+void save_hub_token(const std::string& token) {
+    const auto path = hub_token_path();
+    std::error_code ec;
+    if (token.empty()) {
+        fs::remove(path, ec);
+        return;
+    }
+    if (token.find_first_of("\r\n \t") != std::string::npos) {
+        throw std::invalid_argument("a Hugging Face token is one word");
+    }
+    fs::create_directories(path.parent_path(), ec);
+    const auto temp = path.string() + ".tmp";
+    {
+        std::ofstream out(temp, std::ios::binary | std::ios::trunc);
+        if (!out) { throw std::runtime_error("cannot write " + temp); }
+        out << token;
+    }
+    // Read by its owner only, as huggingface_hub writes it.
+    fs::permissions(temp, fs::perms::owner_read | fs::perms::owner_write,
+                    fs::perm_options::replace, ec);
+    if (ec) { // a credential others could read is not kept
+        const auto why = ec.message();
+        fs::remove(temp, ec);
+        throw std::runtime_error("cannot make " + temp + " readable by its owner only: " + why);
+    }
+    fs::rename(temp, path, ec);
+    if (ec) { // rename does not replace an existing file on Windows
+        ec.clear();
+        fs::remove(path, ec);
+        if (!ec) { fs::rename(temp, path, ec); }
+    }
+    if (ec) {
+        std::error_code ignored;
+        fs::remove(temp, ignored);
+        throw std::runtime_error("cannot write " + path.string() + ": " + ec.message());
+    }
 }
 
 namespace {
@@ -953,12 +1014,15 @@ std::string gguf_group(const std::string& path) {
     return std::regex_match(path, match, split) ? match[1].str() : path;
 }
 
-// Quantization preference when the user names none: lossless into the engine first (NVFP4,
-// MXFP4), then the near-lossless and larger types.
+// Quantization preference when the user names none and no GPU picks one (ninferno-serve takes
+// the largest that fits its GPU before it fetches: serve/plan_offline.h; --prepare-only and
+// ninferno-convert come here): lossless into the engine first (NVFP4, MXFP4), then the
+// near-lossless and larger types the engine serves (8 bits or fewer); BF16 and F16, which it does
+// not, last.
 int gguf_rank(const std::string& name) {
     static const std::vector<std::string> order = {
-        "nvfp4", "mxfp4", "q8_0",  "bf16",  "f16",   "q6_k",   "q5_k_m", "q5_k_s", "q4_k_m",
-        "q4_k_s", "iq4_xs", "iq4_nl", "q4_0", "q4_1", "q3_k_m", "q3_k_l", "q3_k_s", "q2_k"};
+        "nvfp4",  "mxfp4", "q8_0", "q6_k",   "q5_k_m", "q5_k_s", "q4_k_m", "q4_k_s", "iq4_xs",
+        "iq4_nl", "q4_0",  "q4_1", "q3_k_m", "q3_k_l", "q3_k_s", "q2_k",   "bf16",   "f16"};
     const auto text = ascii_lower(name);
     for (std::size_t i = 0; i < order.size(); ++i) {
         if (text.find(order[i]) != std::string::npos) { return static_cast<int>(i); }
@@ -970,6 +1034,17 @@ constexpr const char* kFrontend[] = {"config.json",           "tokenizer.json",
                                      "tokenizer_config.json", "chat_template.jinja",
                                      "generation_config.json", "preprocessor_config.json",
                                      "video_preprocessor_config.json"};
+
+// Transformers names its weights model.safetensors or model-NNNNN-of-NNNNN.safetensors, and a
+// checkpoint may keep a part in its own model_<part>.safetensors that the index names (Qwen3.5's
+// MTP layers: model_mtp.safetensors); when they are there, other top-level files are a second copy
+// in another layout (Mistral repositories also ship consolidated.safetensors, as large as the
+// model). The fetch takes those files (choose_files) and the listing counts them (list_quants).
+bool transformers_weight_file(const std::string& path) {
+    return path == "model.safetensors" ||
+           ((path.starts_with("model-") || path.starts_with("model_")) &&
+            path.ends_with(".safetensors"));
+}
 
 std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions& options,
                                      const std::string& repo) {
@@ -1013,22 +1088,13 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
         for (const auto& file : listing.files) {
             if (file.path == "model.safetensors.index.json") { out.push_back(file); }
         }
-        // Transformers names its weights model.safetensors or model-NNNNN-of-NNNNN.safetensors,
-        // and a checkpoint may keep a part in its own model_<part>.safetensors that the index
-        // names (Qwen3.5's MTP layers: model_mtp.safetensors); when they are there, other
-        // top-level files are a second copy in another layout (Mistral repositories also ship
-        // consolidated.safetensors, as large as the model).
-        const auto transformers_named = [](const std::string& path) {
-            return path == "model.safetensors" ||
-                   ((path.starts_with("model-") || path.starts_with("model_")) &&
-                    path.ends_with(".safetensors"));
-        };
+        // Transformers-named weights, when there are any (transformers_weight_file).
         const bool named = std::any_of(safetensors.begin(), safetensors.end(), [&](const auto* f) {
-            return transformers_named(f->path);
+            return transformers_weight_file(f->path);
         });
         for (const auto* file : safetensors) {
             if (file->path.find('/') == std::string::npos &&
-                (!named || transformers_named(file->path))) {
+                (!named || transformers_weight_file(file->path))) {
                 out.push_back(*file);
             }
         }
@@ -1064,52 +1130,12 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
     std::map<std::string, std::vector<const RemoteFile*>> groups;
     for (const auto* file : ggufs) { groups[gguf_group(file->path)].push_back(file); }
     std::string chosen;
-    if (const int width = quant_width_tag(options.quant); width > 0) {
-        // A width ("4bit"): the largest GGUF model of that width, the most faithful of them.
-        std::uint64_t largest = 0;
+    if (!options.quant.empty()) {
+        std::map<std::string, std::uint64_t> sizes;
         for (const auto& [group, files] : groups) {
-            const auto name = std::filesystem::path(files.front()->path).filename().string();
-            if (quant_label_bits(gguf_quant_label(name)) != width) { continue; }
-            std::uint64_t bytes = 0;
-            for (const auto* file : files) { bytes += file->size; }
-            if (bytes > largest) {
-                largest = bytes;
-                chosen  = group;
-            }
+            for (const auto* file : files) { sizes[group] += file->size; }
         }
-        if (chosen.empty()) {
-            std::string names;
-            for (const auto& [group, files] : groups) { names += "\n  " + group; }
-            throw std::runtime_error(repo + ": --quant " + options.quant + " matches no " +
-                                     std::to_string(width) + "-bit GGUF model; available:" + names);
-        }
-    } else if (!options.quant.empty()) {
-        std::vector<std::string> matches;
-        const auto want = ascii_lower(options.quant);
-        for (const auto& [group, files] : groups) {
-            if (ascii_lower(group).find(want) != std::string::npos) { matches.push_back(group); }
-        }
-        // "Q4_K" also matches "Q4_K_M" and "UD-Q4_K_XL"; an exact label wins.
-        if (matches.size() > 1) {
-            std::vector<std::string> exact;
-            for (const auto& group : matches) {
-                const auto text = ascii_lower(group);
-                const auto at   = text.find(want);
-                const auto next = at + want.size();
-                if (next == text.size() || text.compare(next, 5, ".gguf") == 0) {
-                    exact.push_back(group);
-                }
-            }
-            if (exact.size() == 1) { matches = exact; }
-        }
-        if (matches.size() != 1) {
-            std::string names;
-            for (const auto& [group, files] : groups) { names += "\n  " + group; }
-            throw std::runtime_error(repo + ": --quant " + options.quant + " matches " +
-                                     std::to_string(matches.size()) + " GGUF models; available:" +
-                                     names);
-        }
-        chosen = matches.front();
+        chosen = gguf_group_for_quant(sizes, options.quant, repo);
     } else {
         int best = 1 << 30;
         for (const auto& [group, files] : groups) {
@@ -1123,6 +1149,111 @@ std::vector<RemoteFile> choose_files(const Listing& listing, const FetchOptions&
     for (const auto* file : groups[chosen]) { out.push_back(*file); }
     return out;
 }
+
+} // namespace
+
+std::string gguf_group_for_quant(const std::map<std::string, std::uint64_t>& groups,
+                                 const std::string& quant, const std::string& repo) {
+    const auto available = [&] {
+        std::string names;
+        for (const auto& [group, _] : groups) { names += "\n  " + group; }
+        return names;
+    };
+    if (const int width = quant_width_tag(quant); width > 0) {
+        // A width ("4bit"): the largest GGUF model of that width, the most faithful of them.
+        std::string chosen;
+        std::uint64_t largest = 0;
+        for (const auto& [group, bytes] : groups) {
+            // A split model's stem names no file; a whole one's is its file name.
+            const auto file = ascii_lower(group).ends_with(".gguf") ? group : group + ".gguf";
+            if (quant_label_bits(gguf_quant_label(file)) != width) { continue; }
+            if (bytes > largest) {
+                largest = bytes;
+                chosen  = group;
+            }
+        }
+        if (chosen.empty()) {
+            throw std::runtime_error(repo + ": --quant " + quant + " matches no " +
+                                     std::to_string(width) + "-bit GGUF model; available:" +
+                                     available());
+        }
+        return chosen;
+    }
+    std::vector<std::string> matches;
+    const auto want = ascii_lower(quant);
+    for (const auto& [group, _] : groups) {
+        if (ascii_lower(group).find(want) != std::string::npos) { matches.push_back(group); }
+    }
+    // "Q4_K" also matches "Q4_K_M" and "UD-Q4_K_XL"; an exact label wins.
+    if (matches.size() > 1) {
+        std::vector<std::string> exact;
+        for (const auto& group : matches) {
+            const auto text = ascii_lower(group);
+            const auto at   = text.find(want);
+            const auto next = at + want.size();
+            if (next == text.size() || text.compare(next, 5, ".gguf") == 0) { exact.push_back(group); }
+        }
+        if (exact.size() == 1) { matches = exact; }
+    }
+    if (matches.size() != 1) {
+        throw std::runtime_error(repo + ": --quant " + quant + " matches " +
+                                 std::to_string(matches.size()) + " GGUF models; available:" +
+                                 available());
+    }
+    return matches.front();
+}
+
+std::vector<std::string> RepoQuant::paths() const {
+    std::vector<std::string> out;
+    for (const auto& file : files) { out.push_back(file.path); }
+    return out;
+}
+
+std::vector<std::string> RepoQuant::digests() const {
+    std::vector<std::string> out;
+    for (const auto& file : files) { out.push_back(file.sha256); }
+    return out;
+}
+
+RepoQuant listed_quant_for(const std::vector<RepoQuant>& quants, const std::string& quant,
+                           const std::string& repo) {
+    // Every file in the fetch's own group (gguf_group of its path, a folder's name with it): one
+    // label's entry may hold several models (A-Q4_K_M, B-Q4_K_M), a split model without a label
+    // be listed a part at a time.
+    struct Member {
+        const RepoQuant* entry;
+        const RemoteFile* file;
+    };
+    std::map<std::string, std::uint64_t> groups;
+    std::map<std::string, std::vector<Member>> members;
+    for (const auto& q : quants) {
+        if (q.drafter || q.format != "gguf") { continue; }
+        for (const auto& file : q.files) {
+            const auto group = gguf_group(file.path);
+            groups[group] += file.size;
+            members[group].push_back({&q, &file});
+        }
+    }
+    const auto chosen   = gguf_group_for_quant(groups, quant, repo);
+    const auto& of      = members.at(chosen);
+    const RepoQuant* one = of.front().entry;
+    const bool whole     = std::all_of(of.begin(), of.end(), [&](const Member& m) {
+                           return m.entry == one;
+                       }) && of.size() == one->files.size();
+    if (whole) { return *one; }
+    // The group's files alone, named by the group, its folder with it (what the fetch matches
+    // --quant against again when it reads the header: one name in two folders stays apart).
+    RepoQuant out;
+    out.quant = chosen; // a whole file's ends .gguf
+    if (ascii_lower(out.quant).ends_with(".gguf")) { out.quant.resize(out.quant.size() - 5); }
+    out.format = "gguf";
+    out.bits   = quant_label_bits(gguf_quant_label(out.quant + ".gguf")).value_or(0);
+    out.bytes  = groups.at(chosen);
+    for (const auto& m : of) { out.files.push_back(*m.file); }
+    return out;
+}
+
+namespace {
 
 // A relative symlink from snapshots/<commit>/<path> to blobs/<digest>.
 void link_snapshot(const fs::path& repo_dir, const std::string& commit, const std::string& path,
@@ -1174,6 +1305,12 @@ fs::path download_lock_path(const fs::path& target) {
 
 } // namespace
 
+bool include_selects(const FetchOptions& options, const std::string& path) {
+    return options.include.empty() ||
+           std::any_of(options.include.begin(), options.include.end(),
+                       [&](const std::string& pattern) { return glob(pattern, path); });
+}
+
 FetchedFile download_file(const DownloadRequest& request, const FetchOptions& options) {
     // Two processes fetching one file into a shared cache (two quantizations of a repository
     // share its small files; ninferno-ui beside the CLI) take turns on a lock beside it, as
@@ -1207,6 +1344,76 @@ FetchedFile download_file(const DownloadRequest& request, const FetchOptions& op
     return transfer.run();
 }
 
+std::optional<int> rate_limit_reset_seconds(const std::map<std::string, std::string>& headers) {
+    const auto seconds = [](std::string_view text) -> std::optional<int> {
+        int value       = 0;
+        const auto end  = text.data() + text.size();
+        const auto read = std::from_chars(text.data(), end, value);
+        if (read.ec != std::errc() || read.ptr == text.data() || value < 0) { return std::nullopt; }
+        return value;
+    };
+    // A parameter of one RateLimit item ("api";r=0;t=89): its value, nullopt when absent.
+    const auto parameter = [&](std::string_view item, std::string_view name) {
+        const std::string key = ";" + std::string(name) + "=";
+        const auto at         = item.find(key);
+        return at == std::string_view::npos ? std::nullopt : seconds(item.substr(at + key.size()));
+    };
+    std::optional<int> out;
+    if (const auto it = headers.find("ratelimit"); it != headers.end()) {
+        // Only an exhausted quota (r=0) is what refused: another, with requests left, resets on
+        // its own schedule.
+        std::string_view rest = it->second;
+        while (!rest.empty()) {
+            const auto comma = rest.find(',');
+            const auto item  = rest.substr(0, comma);
+            if (parameter(item, "r") == 0) {
+                if (const auto t = parameter(item, "t")) { out = std::max(out.value_or(0), *t); }
+            }
+            rest = comma == std::string_view::npos ? std::string_view() : rest.substr(comma + 1);
+        }
+    }
+    if (const auto it = headers.find("retry-after"); !out && it != headers.end()) {
+        out = seconds(it->second);
+    }
+    return out;
+}
+
+std::optional<bool> gguf_carries_mtp(const std::string& spec, const FetchOptions& options) {
+    for (const std::uint64_t bytes : {1ULL << 20, 8ULL << 20}) {
+        try {
+            const auto head   = fetch_gguf_head(spec, options, bytes);
+            const auto prefix = parse_gguf_metadata_prefix(
+                reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(), head.path);
+            if (const auto carries = gguf_metadata_carries_mtp(prefix)) { return carries; }
+            if (head.bytes.size() >= head.size) { return std::nullopt; } // the whole file read
+        } catch (const std::exception&) { return std::nullopt; }
+    }
+    return std::nullopt;
+}
+
+std::map<std::string, std::optional<bool>>
+gguf_quants_carry_mtp(const std::string& spec, const FetchOptions& options,
+                      const std::vector<std::string>& quants) {
+    constexpr std::size_t kAtOnce = 8; // range reads of one hub at a time
+    std::map<std::string, std::optional<bool>> out;
+    std::mutex out_mutex;
+    std::atomic<std::size_t> next{0};
+    std::vector<std::thread> threads;
+    for (std::size_t t = 0; t < std::min(kAtOnce, quants.size()); ++t) {
+        threads.emplace_back([&] {
+            for (std::size_t i = next++; i < quants.size(); i = next++) {
+                FetchOptions one = options;
+                one.quant        = quants[i];
+                const auto carries = gguf_carries_mtp(spec, one); // nullopt where it fails
+                std::lock_guard lock(out_mutex);
+                out[quants[i]] = carries;
+            }
+        });
+    }
+    for (auto& thread : threads) { thread.join(); }
+    return out;
+}
+
 std::optional<std::string> gguf_base_repository(const fs::path& gguf) {
     const int fd = sys::open(gguf, O_RDONLY | O_CLOEXEC);
     if (fd < 0) { return std::nullopt; }
@@ -1216,21 +1423,8 @@ std::optional<std::string> gguf_base_repository(const fs::path& gguf) {
     if (base == nullptr) { return std::nullopt; }
     std::optional<std::string> out;
     try {
-        const auto file = parse_gguf(static_cast<const std::byte*>(base), size, gguf.string());
-        for (const char* key : {"general.base_model.0.repo_url", "general.source.url",
-                                "general.source.huggingface.repository"}) {
-            const auto* value = file.find(key);
-            if (!value || !value->is_string()) { continue; }
-            auto text = value->get<std::string>();
-            for (const char* prefix : {"https://huggingface.co/", "http://huggingface.co/"}) {
-                if (text.starts_with(prefix)) { text = text.substr(std::strlen(prefix)); }
-            }
-            if (std::count(text.begin(), text.end(), '/') == 1 &&
-                text.find(':') == std::string::npos) {
-                out = text;
-                break;
-            }
-        }
+        out = gguf_metadata_base_repository(
+            parse_gguf(static_cast<const std::byte*>(base), size, gguf.string()).metadata);
     } catch (const std::exception&) {}
     sys::unmap(base, size);
     return out;
@@ -1290,6 +1484,16 @@ std::string cached_commit(const fs::path& repo_dir, const std::string& repo,
         throw std::runtime_error(std::string(error.what()) + "; and " + repo + "@" + revision +
                                  " has no snapshot in the cache " + root.string());
     }
+    // A ref (a branch, a tag) may have moved since it was cached: its snapshot is served only when
+    // the user asked for the cache ($HF_HUB_OFFLINE), never because the hub could not be reached
+    // (the same command would serve another model by the state of the network). A commit is its
+    // own snapshot.
+    if (!hub_offline() && revision != commit) {
+        throw std::runtime_error(std::string(error.what()) + "; " + repo + "@" + revision +
+                                 " was cached at " + commit +
+                                 ", which the ref may have left: set HF_HUB_OFFLINE=1 to serve "
+                                 "that snapshot, or name the commit (" + repo + "@" + commit + ")");
+    }
     return commit;
 }
 
@@ -1343,30 +1547,48 @@ void check_pinned(const FetchOptions& options, const std::string& repo,
     }
 }
 
-// The first `bytes` of `url` by an HTTP range request. `headers` (credentials) go to `url` only,
-// never to where it redirects (a CDN); a server that ignores the range is cut off at `bytes`.
+// The first `bytes` of `url` by an HTTP range request (from `begin`). `headers` (credentials) go
+// to `url` only, never to where it redirects (a CDN); a server that ignores the range (a 200) is
+// read from its start, its first `begin` bytes dropped, and cut off at `bytes`; a 206 whose range
+// does not start at `begin` is refused.
 // `total`: the whole file's bytes as the answer gives them (Content-Range, or the Content-Length
 // of a 200), 0 when it does not; a file shorter than `bytes` is returned whole.
 std::string range_prefix(const std::string& url, const std::vector<std::string>& headers,
-                         std::uint64_t bytes, std::uint64_t& total) {
+                         std::uint64_t bytes, std::uint64_t& total, std::uint64_t begin = 0) {
     struct Sink {
         std::string data;
         std::uint64_t limit = 0;
+        CURL* handle        = nullptr;
+        bool started        = false;
+        std::uint64_t skip  = 0; // a 200's leading bytes before `begin`
+        std::uint64_t begin = 0;
     };
     const auto get = [&](const std::string& from, const std::vector<std::string>& lines,
                          bool follow, Response& response) {
         Easy easy;
-        Sink sink{.limit = bytes};
+        Sink sink{.limit = bytes, .handle = easy.handle, .begin = begin};
         for (const auto& line : lines) { easy.header(line); }
-        easy.header("Range: bytes=0-" + std::to_string(bytes - 1));
+        easy.header("Range: bytes=" + std::to_string(begin) + "-" +
+                    std::to_string(begin + bytes - 1));
         curl_easy_setopt(easy.handle, CURLOPT_URL, from.c_str());
         curl_easy_setopt(easy.handle, CURLOPT_HTTPHEADER, easy.headers);
         curl_easy_setopt(easy.handle, CURLOPT_HEADERFUNCTION, header_callback);
         curl_easy_setopt(easy.handle, CURLOPT_HEADERDATA, &response);
         const auto write = +[](char* data, std::size_t size, std::size_t count,
                                void* user) -> std::size_t {
-            auto& into       = *static_cast<Sink*>(user);
-            const auto taken = std::min<std::uint64_t>(into.limit - into.data.size(), size * count);
+            auto& into = *static_cast<Sink*>(user);
+            if (!into.started) {
+                into.started = true;
+                long status  = 0;
+                curl_easy_getinfo(into.handle, CURLINFO_RESPONSE_CODE, &status);
+                if (status == 200) { into.skip = into.begin; }
+            }
+            std::size_t offered = size * count;
+            const auto dropped  = std::min<std::uint64_t>(into.skip, offered);
+            into.skip -= dropped;
+            data += dropped;
+            offered -= dropped;
+            const auto taken = std::min<std::uint64_t>(into.limit - into.data.size(), offered);
             into.data.append(data, taken);
             return into.data.size() < into.limit ? size * count : 0; // full: stop the transfer
         };
@@ -1400,11 +1622,19 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
     };
     if (const auto range = header("content-range"); range.find('/') != std::string::npos) {
         total = number(range.substr(range.find('/') + 1));
+        // "bytes <first>-<last>/<total>": a slice from elsewhere than asked is not the window.
+        const auto first = range.find_first_of("0123456789");
+        if (response.status == 206 &&
+            (first == std::string::npos || number(range.substr(first, range.find('-', first) - first)) != begin)) {
+            throw hub_error("reading bytes from " + std::to_string(begin) + " of " + url, response,
+                            "the answer's range starts elsewhere");
+        }
     } else if (response.status == 200) {
         total = number(header("content-length"));
     }
     // Enough bytes, or the whole of a shorter file.
-    const bool full = sink.data.size() >= bytes || (total != 0 && sink.data.size() == total);
+    const bool full =
+        sink.data.size() >= bytes || (total != 0 && sink.data.size() + begin == total);
     if ((response.code != CURLE_OK && !(full && response.code == CURLE_WRITE_ERROR)) ||
         (response.status != 200 && response.status != 206) || !full) {
         throw hub_error("reading the first " + std::to_string(bytes) + " bytes of " + url,
@@ -1414,6 +1644,105 @@ std::string range_prefix(const std::string& url, const std::vector<std::string>&
 }
 
 } // namespace
+
+std::string snapshot_quant_label(const fs::path& snapshot, const FetchOptions& options,
+                                 const std::string& repo) {
+    std::error_code ec;
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    try {
+        for (const auto& file : choose_files(listing, options, repo)) {
+            if (ascii_lower(file.path).ends_with(".gguf")) {
+                return gguf_quant_label(fs::path(file.path).filename().string());
+            }
+        }
+    } catch (const std::exception&) {}
+    return {};
+}
+
+bool snapshot_holds_model(const fs::path& snapshot, const FetchOptions& options,
+                          const std::string& repo, bool projector) {
+    std::error_code ec;
+    if (!fs::is_directory(snapshot, ec)) { return false; }
+    Listing listing;
+    for (const auto& entry : fs::recursive_directory_iterator(snapshot, ec)) {
+        // A link to a blob not yet downloaded is no regular file. Its size: a width selector
+        // (--quant 4bit) picks the largest candidate of that width.
+        if (entry.is_regular_file(ec)) {
+            listing.files.push_back(
+                RemoteFile{.path = entry.path().lexically_relative(snapshot).generic_string(),
+                           .size = entry.file_size(ec)});
+        }
+    }
+    std::vector<RemoteFile> chosen;
+    try {
+        chosen = choose_files(listing, options, repo);
+    } catch (const std::exception&) {
+        return false; // no model there for options.quant
+    }
+    // Every part of a split GGUF or of safetensors shards ("x-00001-of-00003.gguf",
+    // "model-00001-of-00002.safetensors", with or without an index): a download stopped after one
+    // part leaves the others unlinked, and the listing above sees only what is there.
+    const auto all_parts = [&](const std::string& path) {
+        static const std::regex split(R"((.*)-\d{5}-of-(\d{5})\.(gguf|safetensors))",
+                                      std::regex::icase);
+        std::smatch match;
+        if (!std::regex_match(path, match, split)) { return true; }
+        const int parts = std::stoi(match[2].str());
+        for (int part = 1; part <= parts; ++part) {
+            char suffix[32];
+            std::snprintf(suffix, sizeof suffix, "-%05d-of-%05d.", part, parts);
+            if (!fs::is_regular_file(snapshot / (match[1].str() + suffix + match[3].str()), ec)) {
+                return false;
+            }
+        }
+        return true;
+    };
+    bool weights = false, gguf = false;
+    for (const auto& file : chosen) {
+        const auto name = ascii_lower(file.path);
+        if (name.ends_with(".gguf") || name.ends_with(".safetensors")) { weights = true; }
+        gguf = gguf || name.ends_with(".gguf");
+        if (!all_parts(file.path)) { return false; }
+        // Every shard a safetensors index names.
+        if (name.ends_with("model.safetensors.index.json")) {
+            try {
+                std::ifstream in(snapshot / file.path);
+                const auto index = Json::parse(in);
+                for (const auto& [tensor, shard] : index.at("weight_map").items()) {
+                    if (!fs::is_regular_file(snapshot / shard.get<std::string>(), ec)) { return false; }
+                }
+            } catch (const std::exception&) {
+                return false;
+            }
+        }
+    }
+    // A GGUF model asked with its Vision projector (--vision): the projector here too, whole.
+    if (weights && gguf && projector) {
+        const bool here = std::any_of(listing.files.begin(), listing.files.end(), [&](const auto& f) {
+            const auto file = ascii_lower(fs::path(f.path).filename().string());
+            return file.starts_with("mmproj") && file.ends_with(".gguf") && all_parts(f.path);
+        });
+        if (!here) { return false; }
+    }
+    // A checkpoint asked with its Vision encoder: one that has it (its vision_config).
+    if (weights && !gguf && projector && !checkpoint_has_vision(snapshot)) { return false; }
+    return weights;
+}
+
+
+std::optional<std::string> current_commit(const std::string& spec, const FetchOptions& options) {
+    if (hub_offline()) { return std::nullopt; }
+    auto [repo, revision] = split_spec(spec, options);
+    const auto hub        = make_hub(options, revision);
+    return hub->list(repo, revision).commit;
+}
 
 FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
     const auto root = options.cache.empty() ? default_hub_cache() : options.cache;
@@ -1540,7 +1869,7 @@ FetchResult fetch_model(const std::string& spec, const FetchOptions& options) {
 }
 
 GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
-                         std::uint64_t bytes) {
+                         std::uint64_t bytes, std::size_t part, std::uint64_t begin) {
     if (bytes == 0) { throw std::invalid_argument("fetch_gguf_head: no bytes asked for"); }
     const auto root       = options.cache.empty() ? default_hub_cache() : options.cache;
     auto [repo, revision] = split_spec(spec, options);
@@ -1550,8 +1879,10 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     out.repo              = repo;
     const auto read_local = [&](const fs::path& file) {
         out.size = fs::file_size(file);
-        out.bytes.resize(static_cast<std::size_t>(std::min(bytes, out.size)));
+        out.bytes.resize(
+            static_cast<std::size_t>(begin >= out.size ? 0 : std::min(bytes, out.size - begin)));
         std::ifstream stream(file, std::ios::binary);
+        stream.seekg(static_cast<std::streamoff>(begin));
         stream.read(out.bytes.data(), static_cast<std::streamsize>(out.bytes.size()));
         if (stream.gcount() != static_cast<std::streamsize>(out.bytes.size())) {
             throw std::runtime_error("cannot read " + file.string());
@@ -1581,8 +1912,18 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     std::erase_if(files,
                   [](const RemoteFile& f) { return !ascii_lower(f.path).ends_with(".gguf"); });
     if (files.empty()) { throw no_gguf(""); }
-    const auto first = std::min_element(
-        files.begin(), files.end(), [](const auto& a, const auto& b) { return a.path < b.path; });
+    std::sort(files.begin(), files.end(),
+              [](const auto& a, const auto& b) { return a.path < b.path; });
+    // The model conversion opens: the first file's, with the other parts of its split. Other
+    // GGUFs the --include globs matched (another quantization, a drafter) are not its parts.
+    const std::string model = gguf_group(files.front().path);
+    std::erase_if(files, [&](const RemoteFile& f) { return gguf_group(f.path) != model; });
+    out.parts = files.size();
+    if (part >= files.size()) {
+        throw std::out_of_range(repo + ": GGUF part " + std::to_string(part + 1) + " of " +
+                                std::to_string(files.size()));
+    }
+    const auto first = files.begin() + static_cast<std::ptrdiff_t>(part);
     out.commit      = listing.commit;
     out.path        = first->path;
     const auto link = repo_dir / "snapshots" / listing.commit / first->path;
@@ -1592,11 +1933,14 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     }
     const auto resolved = hub->resolve(repo, listing.commit, *first);
     out.size            = resolved.size ? resolved.size : first->size;
-    const auto want     = out.size ? std::min(bytes, out.size) : bytes;
+    if (out.size != 0 && begin >= out.size) {
+        throw std::runtime_error(repo + "/" + out.path + ": no bytes from " + std::to_string(begin));
+    }
+    const auto want     = out.size ? std::min(bytes, out.size - begin) : bytes;
     std::uint64_t total = 0;
     out.bytes = range_prefix(resolved.url,
                              resolved.authorized ? hub->credentials() : std::vector<std::string>{},
-                             want, total);
+                             want, total, begin);
     // A listing without sizes: the answer says how large the file is.
     if (out.size == 0) { out.size = total; }
     if (out.size == 0 || out.bytes.size() > out.size) {
@@ -1606,6 +1950,118 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
                           out.path + " (" + human(static_cast<double>(out.size)) + ")");
     return out;
 }
+
+std::map<std::string, std::uint64_t>
+gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
+                       const std::vector<std::string>& quants, std::uint64_t table_end,
+                       std::uint64_t hidden, std::uint64_t vocab, bool tied,
+                       std::set<std::string>* tied_found) {
+    std::map<std::string, std::uint64_t> out;
+    if (quants.empty() || table_end == 0 || hidden == 0 || vocab == 0) { return out; }
+    // Kept beside the commit's conversions: a commit's files do not change.
+    auto [repo, revision] = split_spec(spec, options);
+    const auto root       = options.cache.empty() ? default_hub_cache() : options.cache;
+    const bool commit     = revision.size() == 40 &&
+                        std::all_of(revision.begin(), revision.end(),
+                                    [](char c) { return std::isxdigit(static_cast<unsigned char>(c)); });
+    std::string hub_revision  = revision;
+    const fs::path cache_file = make_hub(options, hub_revision)->cache_dir(root, repo) /
+                                "ninferno" / revision / "gguf_heads.v4.json";
+    nlohmann::json cached = nlohmann::json::object();
+    if (commit) {
+        try {
+            std::ifstream in(cache_file);
+            if (in) { cached = nlohmann::json::parse(in); }
+        } catch (const std::exception&) { cached = nlohmann::json::object(); }
+    }
+    std::vector<std::string> wanted;
+    for (const auto& q : quants) {
+        if (cached.contains(q) && cached[q].is_number_unsigned()) {
+            out[q] = cached[q].get<std::uint64_t>();
+            if (tied_found != nullptr && cached.value(q + "#tied", false)) { tied_found->insert(q); }
+        } else {
+            wanted.push_back(q);
+        }
+    }
+    // A repository's quantizations share their metadata but for a few keys: each one's head info
+    // lies within a window around the parsed one's tensor table end.
+    constexpr std::uint64_t kWindow = 1ULL << 20;
+    const std::uint64_t begin       = table_end > kWindow / 2 ? table_end - kWindow / 2 : 0;
+    constexpr std::size_t kAtOnce   = 8;
+    std::mutex out_mutex;
+    std::set<std::string> ties; // split models found to tie their head
+    std::atomic<std::size_t> next{0};
+    std::vector<std::thread> threads;
+    for (std::size_t t = 0; t < std::min(kAtOnce, wanted.size()); ++t) {
+        threads.emplace_back([&] {
+            for (std::size_t i = next++; i < wanted.size(); i = next++) {
+                FetchOptions one = options;
+                one.quant        = wanted[i];
+                std::uint64_t bytes = 0, embedding = 0;
+                // The head's tensor: output.weight, or the embedding table a tied model reads.
+                const char* name = tied ? "token_embd.weight" : "output.weight";
+                const auto find  = [&](const GgufHead& window) {
+                    const auto* data = reinterpret_cast<const std::byte*>(window.bytes.data());
+                    if (const auto found =
+                            gguf_tensor_info_bytes(data, window.bytes.size(), name, {hidden, vocab})) {
+                        bytes = *found;
+                    }
+                    if (const auto found = gguf_tensor_info_bytes(data, window.bytes.size(),
+                                                                  "token_embd.weight", {hidden, vocab})) {
+                        embedding = *found;
+                    }
+                };
+                // Each read on its own: one that fails skips only itself (not read: 0).
+                std::size_t parts = 1, read = 0;
+                try {
+                    const auto window = fetch_gguf_head(spec, one, kWindow, 0, begin);
+                    parts             = window.parts;
+                    find(window);
+                    ++read;
+                } catch (const std::exception&) {}
+                // A split model's head may lie in a later part (Codex on #170): its header lists
+                // its own tensors after a few metadata keys.
+                // Read counts only a part whose tensor table the window holds whole: one running
+                // past it may name output.weight beyond (Opus on #202: no false tie).
+                for (std::size_t part = 1; bytes == 0 && part < parts; ++part) {
+                    try {
+                        const auto window = fetch_gguf_head(spec, one, kWindow, part, 0);
+                        find(window);
+                        (void)parse_gguf_head(reinterpret_cast<const std::byte*>(window.bytes.data()),
+                                              window.bytes.size(), window.size, window.path);
+                        ++read;
+                    } catch (const std::exception&) {}
+                }
+                // Every part read, no output.weight: a split model tying its head (Codex on #199).
+                // A model the caller knows ties its head (`tied`: its embedding read) is recorded
+                // tied as well, so a later read of the cached entry without `tied` keeps it so
+                // (Codex on #202).
+                const bool tie = tied ? bytes != 0
+                                      : bytes == 0 && parts > 1 && read == parts && embedding != 0;
+                if (tie && !tied) { bytes = embedding; }
+                std::lock_guard lock(out_mutex);
+                out[wanted[i]] = bytes;
+                if (tie) { ties.insert(wanted[i]); }
+            }
+        });
+    }
+    for (auto& thread : threads) { thread.join(); }
+    if (commit && !wanted.empty()) {
+        try {
+            for (const auto& q : wanted) {
+                if (out[q] != 0) { cached[q] = out[q]; }
+                if (ties.contains(q)) { cached[q + "#tied"] = true; }
+            }
+            fs::create_directories(cache_file.parent_path());
+            const auto temporary = cache_file.string() + ".tmp" + std::to_string(sys::pid());
+            std::ofstream(temporary) << cached.dump();
+            fs::rename(temporary, cache_file);
+        } catch (const std::exception&) {}
+    }
+    if (tied_found != nullptr) { tied_found->insert(ties.begin(), ties.end()); }
+    return out;
+}
+
 
 
 // ---- Hub listings for ninferno-ui: quantizations of a repository, search, small files.
@@ -1624,7 +2080,7 @@ std::string native_quant_label(const std::string& path) {
 
 std::string gguf_quant_label(const std::string& file_name) {
     static const std::regex label(
-        R"(.*?[-_.]((?:UD-)?(?:I?Q[0-9][A-Z0-9_]*|BF16|F16|F32|MXFP4[A-Z0-9_]*|NVFP4[A-Z0-9_]*))(?:[-_.]MTP)?)",
+        R"(.*?[-_.]((?:UD-)?(?:[IT]?Q[0-9][A-Z0-9_]*|BF16|F16|F32|MXFP4[A-Z0-9_]*|NVFP4[A-Z0-9_]*))(?:[-_.]MTP)?)",
         std::regex::icase);
     const auto stem  = gguf_group(fs::path(file_name).filename().string());
     std::string base = stem;
@@ -1677,9 +2133,7 @@ std::vector<HubModel> search_modelscope(const std::string& term, const FetchOpti
 
 } // namespace
 
-// The quantization a config.json declares when the converter has no reader for it (formats.cpp:
-// quant_config and the matrix sources it picks), "" otherwise.
-static std::string unread_quantization(const Json& config) {
+std::string unread_quantization(const Json& config) {
     auto q = config.value("quantization_config", Json::object());
     if (q.empty()) {
         q = config.value("text_config", Json::object())
@@ -1691,6 +2145,21 @@ static std::string unread_quantization(const Json& config) {
         "",         "fp8",        "fbgemm_fp8",       "awq",  "gptq", "compressed-tensors",
         "modelopt", "auto-round", "intel/auto-round", "mxfp4"};
     if (!read.contains(method)) { return method; }
+    // Model Optimizer names its formats per layer (quant_algo, MIXED_PRECISION's
+    // quantized_layers): MXFP8 (FP8 with E8M0 block scales, RadixArk/Muse-Glimmer-NVFP4's down
+    // projections) has no reader.
+    std::set<std::string> algos;
+    if (const auto algo = q.find("quant_algo"); algo != q.end() && algo->is_string()) {
+        algos.insert(ascii_upper(algo->get<std::string>()));
+    }
+    if (const auto layers = q.find("quantized_layers"); layers != q.end() && layers->is_object()) {
+        for (const auto& [layer, spec] : layers->items()) {
+            if (const auto algo = spec.find("quant_algo"); algo != spec.end() && algo->is_string()) {
+                algos.insert(ascii_upper(algo->get<std::string>()));
+            }
+        }
+    }
+    if (algos.contains("MXFP8")) { return "Model Optimizer MXFP8"; }
     if (const auto t = q.find("transform_config"); t != q.end() && t->is_object() && !t->empty()) {
         return method + " (transforms)";
     }
@@ -1729,7 +2198,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                       (term.empty() ? "&filter=gguf" : "") + "&sort=" + sort +
                       "&direction=-1&limit=" + std::to_string(std::clamp(limit, 1, 100));
     for (const char* field : {"downloads", "likes", "lastModified", "pipeline_tag", "tags",
-                              "config", "gguf", "library_name"}) {
+                              "config", "gguf", "library_name", "safetensors", "gated"}) {
         url += std::string("&expand%5B%5D=") + field;
     }
     const HuggingFace hub(endpoint);
@@ -1756,9 +2225,6 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                 model.context = n->get<std::int64_t>();
             }
         }
-        if (const auto config = item.find("config"); config != item.end() && config->is_object()) {
-            model.unread_quantization = unread_quantization(*config);
-        }
         if (const auto config = item.find("config");
             model.architecture.empty() && config != item.end() && config->is_object()) {
             const auto archs   = config->value("architectures", Json::array());
@@ -1766,6 +2232,7 @@ std::vector<HubModel> search_models(const std::string& query, const FetchOptions
                                      ? archs[0].get<std::string>()
                                      : config->value("model_type", std::string());
         }
+        model.card = item;
         if (!model.id.empty()) { out.push_back(std::move(model)); }
     }
     return out;
@@ -1780,8 +2247,7 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
     std::vector<std::string> headers;
     auto endpoint = sys::env("HF_ENDPOINT");
     if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
-    auto token = sys::env("HF_TOKEN");
-    if (token.empty()) { token = sys::env("HUGGING_FACE_HUB_TOKEN"); }
+    const auto token = hub_token().value;
     if (!token.empty() && url.starts_with(endpoint + "/")) {
         headers.push_back("Authorization: Bearer " + token);
     }
@@ -1796,6 +2262,43 @@ std::string fetch_text(const std::string& url, std::size_t max_bytes) {
         throw std::runtime_error(url + " is larger than " + std::to_string(max_bytes) + " bytes");
     }
     return response.body;
+}
+
+std::string hub_account(const std::string& token, const FetchOptions& options) {
+    auto endpoint = options.endpoint.empty() ? sys::env("HF_ENDPOINT") : options.endpoint;
+    if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
+    const auto response =
+        request(endpoint + "/api/whoami-v2", {"Authorization: Bearer " + token}, false, true);
+    if (response.code != CURLE_OK || response.status != 200) {
+        throw hub_error("checking the Hugging Face token", response,
+                        response.status == 401 ? "the hub does not accept it" : "");
+    }
+    const auto body = Json::parse(response.body, nullptr, false);
+    return body.is_object() ? body.value("name", std::string()) : std::string();
+}
+
+std::optional<Json> fetch_model_card(const std::string& spec, const FetchOptions& options) {
+    if (!is_hugging_face_hub(options.hub) || hub_offline()) { return std::nullopt; }
+    auto [repo, revision] = split_spec(spec, options);
+    if (revision.empty()) { revision = "main"; }
+    auto endpoint = options.endpoint.empty() ? sys::env("HF_ENDPOINT") : options.endpoint;
+    if (endpoint.empty()) { endpoint = "https://huggingface.co"; }
+    std::string url = endpoint + "/api/models/" + repo + "/revision/" + url_path(revision) + "?";
+    for (const char* field : {"pipeline_tag", "library_name", "gated", "config", "gguf",
+                              "safetensors", "siblings", "sha", "cardData"}) {
+        url += std::string("expand%5B%5D=") + field + "&";
+    }
+    url.pop_back();
+    const HuggingFace hub(endpoint);
+    const auto response = request(url, hub.credentials(), false, true);
+    if (response.code != CURLE_OK || response.status != 200) {
+        throw hub_error("reading " + repo + "'s model card", response, "");
+    }
+    auto parsed = Json::parse(response.body, nullptr, false);
+    if (!parsed.is_object()) {
+        throw std::runtime_error(repo + "'s model card is not a JSON object");
+    }
+    return parsed;
 }
 
 Json fetch_config(const std::string& spec, const FetchOptions& options) {
@@ -1832,19 +2335,7 @@ int quant_width_tag(const std::string& quant) {
     return bits >= 1 && bits <= 16 ? bits : 0;
 }
 
-int quant_label_bits(const std::string& label) {
-    const auto text = ascii_lower(label);
-    if (text.find("bf16") != std::string::npos || text.find("f16") != std::string::npos) {
-        return 16;
-    }
-    if (text.find("f32") != std::string::npos) { return 32; }
-    if (text.find("fp4") != std::string::npos) { return 4; }
-    static const std::regex bits(R"((?:^|[-_])i?q([0-9]))");
-    std::smatch match;
-    return std::regex_search(text, match, bits) ? std::stoi(match[1].str()) : 0;
-}
-
-std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& options) {
+RepoListing list_quants(const std::string& spec, const FetchOptions& options) {
     auto [repo, revision] = split_spec(spec, options);
     const auto hub        = make_hub(options, revision);
     const auto listing    = hub->list(repo, revision);
@@ -1852,19 +2343,24 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
     std::map<std::string, std::size_t> index; // group key -> out position
     RepoQuant weights;
     weights.format = "safetensors";
+    std::vector<const RemoteFile*> top_level; // the top-level safetensors weights
     for (const auto& file : listing.files) {
         const auto name = ascii_lower(fs::path(file.path).filename().string());
-        // An importance matrix (imatrix*.gguf) or another file too small to be a model.
-        if (name.find("imatrix") != std::string::npos) { continue; }
+        // An importance matrix (imatrix*.gguf, *-imatrix.gguf: gguf_auxiliary_file's rule, not a
+        // model named iMatrix in the middle) or another file too small to be a model.
+        if (name.ends_with(".gguf") && gguf_auxiliary_file(name) &&
+            (name.starts_with("imatrix") || name.ends_with("imatrix.gguf"))) {
+            continue;
+        }
+        // A vision projector is listed whatever its size (best_projector chooses among them).
         if (name.ends_with(".gguf") && gguf_quant_label(file.path).empty() &&
-            file.size < (256ULL << 20)) {
+            file.size < (256ULL << 20) && !name.starts_with("mmproj")) {
             continue;
         }
         if (name.ends_with(".gguf")) {
-            const bool sidecar = gguf_auxiliary_file(name) ||
-                                 name.find("dflash") != std::string::npos ||
-                                 name.find("eagle") != std::string::npos ||
-                                 name.find("assistant") != std::string::npos;
+            // Beside the model, not a model (gguf_auxiliary_file, the fetch's own rule): a model
+            // whose name holds DFlash2 or Assistant (a merge, a fine-tune) is a quantization.
+            const bool sidecar = gguf_auxiliary_file(name);
             auto label       = gguf_quant_label(file.path);
             const auto group = gguf_group(fs::path(file.path).filename().string());
             const auto key =
@@ -1877,28 +2373,64 @@ std::vector<RepoQuant> list_quants(const std::string& spec, const FetchOptions& 
                 RepoQuant quant;
                 quant.quant   = label;
                 quant.format  = "gguf";
-                quant.bits    = quant_label_bits(label);
+                quant.bits    = quant_label_bits(label).value_or(0);
                 quant.drafter = sidecar;
                 out.push_back(std::move(quant));
             }
             out[it->second].bytes += file.size;
-            out[it->second].files.push_back(file.path);
+            out[it->second].files.push_back(file);
         } else if (name.ends_with(".ninferno") && file.path.find('/') == std::string::npos) {
             RepoQuant quant;
             quant.quant  = native_quant_label(file.path);
             quant.format = "ninferno";
-            quant.bits   = quant_label_bits(quant.quant);
+            quant.bits   = quant_label_bits(quant.quant).value_or(0);
             quant.bytes  = file.size;
-            quant.files.push_back(file.path);
+            quant.files.push_back(file);
             out.push_back(std::move(quant));
-        } else if (name.ends_with(".safetensors") && name.find("mtp") == std::string::npos &&
-                   name.find("visual") == std::string::npos) {
-            weights.bytes += file.size;
-            weights.files.push_back(file.path);
+        } else if (name.ends_with(".safetensors") && name.find("visual") == std::string::npos &&
+                   file.path.find('/') == std::string::npos) {
+            // The top-level weights, as the fetch takes them (subdirectories hold originals and
+            // other formats: gpt-oss's original/model.safetensors).
+            top_level.push_back(&file);
+        }
+    }
+    // Of them, the Transformers-named ones when there are any, as choose_files takes them.
+    const bool named = std::any_of(top_level.begin(), top_level.end(), [](const auto* f) {
+        return transformers_weight_file(f->path);
+    });
+    for (const auto* file : top_level) {
+        if (!named || transformers_weight_file(file->path)) {
+            weights.bytes += file->size;
+            weights.files.push_back(*file);
+            // A part of its own for the MTP layers (model_mtp.safetensors): fetched and converted
+            // with the model, loaded only under MTP.
+            if (ascii_lower(file->path).find("mtp") != std::string::npos) {
+                weights.mtp_bytes += file->size;
+            }
         }
     }
     if (weights.bytes > 0) { out.push_back(std::move(weights)); }
+    return {listing.commit, std::move(out)};
+}
+
+std::vector<std::string> card_base_models(const Json& card) {
+    std::vector<std::string> out;
+    const Json data = card.value("cardData", Json::object());
+    const Json base = data.is_object() ? data.value("base_model", Json()) : Json();
+    if (base.is_string()) { out.push_back(base.get<std::string>()); }
+    if (base.is_array()) {
+        for (const auto& item : base) {
+            if (item.is_string()) { out.push_back(item.get<std::string>()); }
+        }
+    }
     return out;
+}
+
+std::vector<std::string> hub_base_models(const std::string& spec, const FetchOptions& options) {
+    try {
+        if (const auto card = fetch_model_card(spec, options)) { return card_base_models(*card); }
+    } catch (const std::exception&) {}
+    return {};
 }
 
 } // namespace ninferno::convert

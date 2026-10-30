@@ -2,9 +2,9 @@
 
 // What the serving Engine (ninferno::Engine: ninferno-serve, the ninferno CLI) runs of a model
 // type's speculation. A profile is tuned where the most configurations run (ninferno-gemma4's
-// Session also runs DFlash and adaptive depths for Gemma 4); a server can run only what its Engine
-// family implements, so spec-tune also records the best of those (Profile::served) and the server's
-// menu takes its choices from there. The Engine families check their own limits against this table
+// Session also runs DFlash for Gemma 4); a server can run only what its Engine family implements,
+// so spec-tune also records the best of those (Profile::served) and the server's menu takes its
+// choices from there. The Engine families check their own limits against this table
 // (static_assert beside their constants), so it cannot drift from them.
 
 #include "spec/config.h"
@@ -23,10 +23,10 @@ struct EngineSupport {
     // anchor and its K drafts only; without it, only the latter.
     bool dflash_block_width = false;
 
-    // Adaptive depths (mtp:K:K0) and prompt lookup run in no Engine family.
+    // Prompt lookup runs in no Engine family.
     [[nodiscard]] constexpr bool runs(const SpecConfig& c) const noexcept {
         if (!c.enabled()) { return true; }
-        if (c.adaptive() || c.k < 1 || (c.proposal_head && !proposal_head)) { return false; }
+        if (c.k < 1 || (c.proposal_head && !proposal_head)) { return false; }
         switch (c.mode) {
         case Mode::Mtp:
             return c.k <= mtp_depth;
@@ -59,6 +59,33 @@ inline constexpr std::int32_t kDFlashBlockColumns = 16;
         return {.dflash_depth = kDFlashBlockColumns - 1, .dflash_block_width = true};
     }
     return {};
+}
+
+// A registry engine family (spec/registry.h ModelEntry::engine) as the serving Engine runs it: its
+// model types' support (the dense family's MoE decoder runs as its dense one).
+[[nodiscard]] constexpr EngineSupport engine_family_support(std::string_view engine) noexcept {
+    if (engine == "qwen3_5") { return engine_support("qwen3_5_text"); }
+    if (engine == "gemma4") { return engine_support("gemma4_text"); }
+    if (engine == "nemotron_h") { return engine_support("nemotron_h"); }
+    if (engine == "dense") { return engine_support("dense_decoder"); }
+    return {};
+}
+
+// Whether an engine family serves a drafter of `kind` (the registry's kinds): a family's own
+// format (Qwen's MTP layers, Gemma 4's assistant, NemotronH's MTP block) on that family, a DFlash
+// drafter (it reads any target's tapped layers) on any, and either only where the family's Engine
+// runs its mode. The one answer to what a drafter serves with: the drafter plan fetches by it, the
+// registry's entries and profiles are held to it, and the Engine families check this table
+// against their own limits (static_assert beside their constants).
+[[nodiscard]] constexpr bool engine_runs_kind(std::string_view engine,
+                                              std::string_view kind) noexcept {
+    const EngineSupport s = engine_family_support(engine);
+    if (kind == "mtp") { return engine == "qwen3_5" && s.mtp_depth > 0; }
+    if (kind == "gemma4_assistant") { return engine == "gemma4" && s.mtp_depth > 0; }
+    if (kind == "nemotron_h_mtp") { return engine == "nemotron_h" && s.mtp_depth > 0; }
+    if (kind == "dflash") { return s.dflash_depth > 0; }
+    if (kind == "dflash2") { return s.dflash2 && s.dflash_depth > 0; }
+    return false;
 }
 
 } // namespace ninferno::spec

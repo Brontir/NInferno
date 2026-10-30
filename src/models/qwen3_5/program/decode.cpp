@@ -428,6 +428,17 @@ void ProgramImpl::validate_licensed_tokens(std::span<const TokenId> tokens) cons
     }
 }
 
+bool ProgramImpl::license_tokens(std::span<TokenId> tokens) const noexcept {
+    bool inside = true;
+    for (TokenId& token : tokens) {
+        if (token < 0 || token >= model.traits().public_tokens) {
+            token  = 0;
+            inside = false;
+        }
+    }
+    return inside;
+}
+
 // A decode step runs its rows in at most two launches that share one synchronization: the rows
 // that speculate verify their drafts in one speculative launch (MTP or DFlash), and the rows that
 // decode plainly (every row of an ordinary engine; in a speculative engine, a request whose
@@ -518,27 +529,44 @@ ProgramImpl::decode_raw(std::span<const std::uint32_t> lanes,
     // step (and its mask work would read as lag).
     const bool timed_round              = round_pacing.has_value() && !masks.any();
     // Masks are computed while the launched kernels run, and the samplers wait for them only up to
-    // a bound (kTokenMaskReleaseWaitNs). A unit whose masks are slow to compute (a deeply nested
-    // grammar takes hundreds of milliseconds a row, an MTP row a column per draft) computes and
-    // releases them before its launch: the round waits for the host either way, and no sampler
-    // waits on the release.
-    std::uint64_t mask_cost_ns = 0;
-    std::uint64_t drafted_cost_ns = 0; // the same with DFlash rows masked over every draft column
-    for (std::size_t i = 0; i < speculative.size; ++i) {
-        mask_cost_ns += masks.fill_cost_ns(speculative.rows[i], mtp ? draft_window + 1U : 1U);
-        drafted_cost_ns += masks.fill_cost_ns(speculative.rows[i], draft_window + 1U);
-    }
-    for (std::size_t i = 0; i < plain.size; ++i) {
-        mask_cost_ns += masks.fill_cost_ns(plain.rows[i], 1U);
-        drafted_cost_ns += masks.fill_cost_ns(plain.rows[i], 1U);
-    }
-    const bool masks_first              = mask_cost_ns > ops::kTokenMaskReleaseWaitNs / 8U;
-    // A constrained DFlash row drafts when its masks over every draft column are cheap: the
-    // drafts reach the host mid-round and the masks follow them along the grammar while the target
-    // verifies (fill_dflash_draft_masks). Otherwise it runs with a zero draft extent, its single
-    // column masked.
-    dflash_masks_follow_drafts = !mtp && speculative.size != 0 && masks.any() &&
-                                 drafted_cost_ns <= ops::kTokenMaskReleaseWaitNs / 8U;
+    // a bound (kTokenMaskReleaseWaitNs). A unit whose masks are declared slow (a client's free
+    // grammar outside its reasoning, runtime::MaskRowClass; an MTP row fills a column per draft)
+    // computes and releases them before its launch: the round waits for the host either way, and
+    // no sampler waits on the release. Nothing is timed: runtime::plan_step_masks prices each
+    // constrained row at its declared time per mask row times the rows it fills, so the choice
+    // follows from the step's constraints, their committed tokens and the draft shape.
+    static_assert(runtime::kLaunchMaskOverlapNs == ops::kTokenMaskReleaseWaitNs / 8U,
+                  "the declared overlap is an eighth of the samplers' wait bound");
+    static_assert(
+        runtime::masks_overlap_launch(std::uint64_t{kMaximumConcurrency} *
+                                      std::max(kDFlashDecodeMaximumWidth, kMtpDecodeMaximumWidth) *
+                                      runtime::kShapedMaskRowNs),
+        "a step of shaped grammars overlaps its masks at the widest launch");
+    std::array<runtime::StepMaskRow, kMaximumConcurrency> constrained_rows{};
+    std::size_t constrained_count = 0;
+    const auto add_constrained    = [&](const LaunchRows& part, bool speculative_part) {
+        for (std::size_t i = 0; i < part.size; ++i) {
+            if (masks.active(part.rows[i])) {
+                constrained_rows[constrained_count++] = runtime::StepMaskRow{
+                    .row_class = masks.row_class(part.rows[i]), .speculative = speculative_part};
+            }
+        }
+    };
+    add_constrained(speculative, true);
+    add_constrained(plain, false);
+    // A constrained DFlash row drafts when its step's masks over every draft column are declared
+    // cheap: the drafts reach the host mid-round and the masks follow them along the grammar while
+    // the target verifies (fill_dflash_draft_masks). Otherwise it runs with a zero draft extent,
+    // its single column masked (counted in its constraint_fallback_steps). Under greedy decoding
+    // and `exact` activations the target's verify decides the bytes either way (decode/verify
+    // parity). A sampled row draws on other RNG keys with drafts (accept, correction) than without
+    // (bonus), and under `fast` the verify width can move the logits, so there its bytes follow
+    // this choice, and with it the constraints of its step.
+    const runtime::StepMaskPlan mask_plan = runtime::plan_step_masks(
+        std::span<const runtime::StepMaskRow>(constrained_rows.data(), constrained_count), mtp,
+        speculative.size != 0, draft_window);
+    const bool masks_first              = mask_plan.masks_first;
+    dflash_masks_follow_drafts          = mask_plan.dflash_masks_follow_drafts;
     const std::uint32_t requested_steps = timed_round ? round_pacing->steps() : 1U;
     const bool follows_round            = !round_after_other_work;
     round_after_other_work              = !timed_round;
@@ -611,6 +639,7 @@ ProgramImpl::decode_raw(std::span<const std::uint32_t> lanes,
                                   std::chrono::duration<double>(finished - launched).count(),
                                   round_timer->elapsed_ms() / 1000.0, finished, follows_round);
         }
+        domain_faults.fill(0);
         if (speculative.size != 0) { collect_speculative(speculative, seconds); }
         if (plain.size != 0) { collect_ordinary(plain, seconds, ordinary_steps); }
         return publish_step(lanes.size(), speculative, plain, ordinary_steps, timing.finish());
@@ -708,15 +737,16 @@ runtime::BatchedGeneratedRound ProgramImpl::publish_step(std::size_t rows,
                                                          std::uint32_t ordinary_steps,
                                                          runtime::ExecutionTiming timing) {
     bool faulted = false;
+    // A non-finite hidden is the cause when both hold (its argmax is the out-of-domain token).
+    const auto fault = [&](std::uint32_t row, bool non_finite) {
+        step_faults[row] = non_finite ? runtime::kRowFaultNonFinite : domain_faults[row];
+        faulted          = faulted || step_faults[row] != 0U;
+    };
     for (std::size_t i = 0; i < speculative.size; ++i) {
-        step_faults[speculative.rows[i]] =
-            numeric_status.faulted(NumericStatus::Launch::Speculative, i) ? 1U : 0U;
-        faulted = faulted || step_faults[speculative.rows[i]] != 0U;
+        fault(speculative.rows[i], numeric_status.faulted(NumericStatus::Launch::Speculative, i));
     }
     for (std::size_t i = 0; i < plain.size; ++i) {
-        step_faults[plain.rows[i]] =
-            numeric_status.faulted(NumericStatus::Launch::Plain, i) ? 1U : 0U;
-        faulted = faulted || step_faults[plain.rows[i]] != 0U;
+        fault(plain.rows[i], numeric_status.faulted(NumericStatus::Launch::Plain, i));
     }
     const auto row_faults = faulted ? std::span<const std::uint8_t>(step_faults.data(), rows)
                                     : std::span<const std::uint8_t>{};
@@ -879,8 +909,11 @@ void ProgramImpl::collect_ordinary(const LaunchRows& part, double seconds, std::
         const std::uint32_t base_E = sequence.execution_frontier;
         const std::uint32_t base_S = sequence.ledger_frontier;
         if (steps == 1) {
-            const TokenId token = ordinary_host_egress->sampled_tokens[row];
-            validate_licensed_tokens(std::span<const TokenId>(&token, 1));
+            TokenId& token = ordinary_host_egress->sampled_tokens[row];
+            if (debug_token_domain_point()) { token = model.traits().public_tokens; }
+            if (!license_tokens(std::span<TokenId>(&token, 1))) {
+                domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
+            }
             sequence.text_kv_valid = base_E + 1;
             // A speculative engine's drafter state stays where the request stopped speculating.
             commit_sequence_kv(sequence, sequence.text_kv_valid, backend_kv_valid(sequence));
@@ -898,8 +931,11 @@ void ProgramImpl::collect_ordinary(const LaunchRows& part, double seconds, std::
                 tokens[step] = ordinary_host_egress->step_tokens[step * kMaximumConcurrency + row];
             }
             tokens[steps - 1U] = ordinary_host_egress->sampled_tokens[row];
+            if (debug_token_domain_point()) { tokens[steps - 1U] = model.traits().public_tokens; }
+            if (!license_tokens(std::span<TokenId>(tokens, steps))) {
+                domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
+            }
             const std::span<const TokenId> produced(tokens, steps);
-            validate_licensed_tokens(produced);
             sequence.ledger.insert(sequence.ledger.end(), produced.begin(), produced.end());
             sequence.prefix_identity.append_generated(steps, sequence.rope_delta);
             sequence.prefix_digests.append_generated(produced, sequence.rope_delta);
@@ -1090,17 +1126,24 @@ void ProgramImpl::launch_dflash(const LaunchRows& part, runtime::MaskedUnit& mas
     const std::uint32_t k               = window.drafts;
     const std::uint32_t width           = k + 1U;
     std::uint32_t maximum_frontier      = 0;
-    // DFlash drafts appear on the host only mid-round: a constrained row drafts when its masks
-    // follow the drafts (fill_dflash_draft_masks), else it runs with a zero draft extent, its
-    // single verify column masked exactly.
-    const auto extent_of = [&](std::size_t row, const SequenceState& sequence) {
+    // The drafts a row may verify: none once its drafting stopped, else the window's, its budget's
+    // and the capacity's least.
+    const auto drafts_of = [&](std::size_t row, const SequenceState& sequence) {
         const std::uint32_t max_by_budget = part.budgets[row].generated_tokens_remaining > 1
                                                 ? part.budgets[row].generated_tokens_remaining - 1U
                                                 : 0U;
-        return (masks.active(part.rows[row]) && !dflash_masks_follow_drafts) ||
-                       requests[part.lanes[row]].drafting_stopped
+        return requests[part.lanes[row]].drafting_stopped
                    ? 0U
                    : std::min({k, max_by_budget, capacity - sequence.execution_frontier - 1U});
+    };
+    // DFlash drafts appear on the host only mid-round: a constrained row drafts when its masks
+    // follow the drafts (fill_dflash_draft_masks), else it runs with a zero draft extent, its
+    // single verify column masked exactly.
+    const auto masks_withhold_drafts = [&](std::size_t row) {
+        return masks.active(part.rows[row]) && !dflash_masks_follow_drafts;
+    };
+    const auto extent_of = [&](std::size_t row, const SequenceState& sequence) {
+        return masks_withhold_drafts(row) ? 0U : drafts_of(row, sequence);
     };
     std::uint32_t maximum_target_tokens = 1;
     for (std::size_t row = 0; row < part.size; ++row) {
@@ -1170,6 +1213,9 @@ void ProgramImpl::launch_dflash(const LaunchRows& part, runtime::MaskedUnit& mas
         const RequestControl& request     = requests[part.lanes[row]];
         const std::uint32_t frontier      = sequence.execution_frontier;
         const std::uint32_t extent        = extent_of(row, sequence);
+        if (masks_withhold_drafts(row) && drafts_of(row, sequence) != 0U) {
+            requests[part.lanes[row]].speculative_stats.constraint_fallback_steps += 1;
+        }
         dflash_host_ingress->anchors[row] = sequence.ledger.back();
         dflash_host_ingress->execution_frontiers[row] =
             checked_i32(frontier, "DFlash batch frontier");
@@ -1244,10 +1290,13 @@ void ProgramImpl::collect_speculative(const LaunchRows& part, double seconds) {
             throw std::runtime_error(mtp ? "MTP batch returned invalid row metadata"
                                          : "DFlash batch returned invalid row metadata");
         }
-        const TokenId* tokens = mtp ? mtp_host_egress->licensed_tokens.data()
-                                    : dflash_host_egress->licensed_tokens.data();
-        validate_licensed_tokens(
-            std::span<const TokenId>(tokens + row * width, static_cast<std::size_t>(count_i)));
+        TokenId* tokens = mtp ? mtp_host_egress->licensed_tokens.data()
+                              : dflash_host_egress->licensed_tokens.data();
+        if (debug_token_domain_point()) { tokens[row * width] = model.traits().public_tokens; }
+        if (!license_tokens(
+                std::span<TokenId>(tokens + row * width, static_cast<std::size_t>(count_i)))) {
+            domain_faults[part.rows[row]] = runtime::kRowFaultTokenDomain;
+        }
         const bool copy_round = mtp && request.copy_round;
         request.copy_round    = false;
         if (extent == 0) {

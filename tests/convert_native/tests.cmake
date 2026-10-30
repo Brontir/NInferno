@@ -56,7 +56,7 @@ ninferno_add_test(ninferno_convert_consume_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_consume.cpp"
   LIBRARIES ninferno_convert)
 
-# Which cached artifacts conversion revisions 4 and 5 convert again (convert/cache.h cache_current).
+# Which cached artifacts conversion revisions 4 to 7 convert again (convert/cache.h cache_current).
 ninferno_add_test(ninferno_convert_cache_revision_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_cache_revision.cpp"
   LIBRARIES ninferno_convert)
@@ -155,6 +155,13 @@ add_executable(ninferno_convert_drafter_plan_test "${CMAKE_CURRENT_LIST_DIR}/tes
 ninferno_test_includes(ninferno_convert_drafter_plan_test)
 target_link_libraries(ninferno_convert_drafter_plan_test PRIVATE ninferno_convert)
 add_test(NAME ninferno_convert_drafter_plan_test COMMAND ninferno_convert_drafter_plan_test)
+
+# Whether the engine runs a model, from what a repository shows before a download: each rule.
+add_executable(ninferno_convert_model_support_test "${CMAKE_CURRENT_LIST_DIR}/test_model_support.cpp")
+ninferno_test_includes(ninferno_convert_model_support_test)
+target_link_libraries(ninferno_convert_model_support_test PRIVATE ninferno_convert)
+add_test(NAME ninferno_convert_model_support_test
+  COMMAND ninferno_convert_model_support_test "${PROJECT_SOURCE_DIR}")
 
 # The dense decoder adapter: rotary tables bit-exact with transformers, resolved conventions.
 add_executable(ninferno_convert_dense_config_test "${CMAKE_CURRENT_LIST_DIR}/test_dense_config.cpp")

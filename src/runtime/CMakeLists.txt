@@ -6,10 +6,13 @@ add_library(ninferno_runtime_support STATIC
   engine/decision_fingerprint.cpp
   engine/kv_capacity.cpp
   engine/plan_ladder.cpp
+  engine/plan_dry_run.cpp
+  engine/quant_rule.cpp
   engine/public_types.cpp
 )
 ninferno_internal_includes(ninferno_runtime_support)
-target_link_libraries(ninferno_runtime_support PUBLIC ninferno_core PRIVATE ninferno::json ninferno::cudart)
+target_link_libraries(ninferno_runtime_support PUBLIC ninferno_core ninferno_sequence_layout
+  PRIVATE ninferno::json ninferno::cudart)
 # The build section of the decision fingerprint. The commit is read at every build, not at
 # configure (a stand checks out a commit and rebuilds without reconfiguring): the
 # ninferno_git_commit target runs cmake/GitCommit.cmake, which rewrites the generated source only
@@ -43,6 +46,7 @@ add_library(ninferno_engine STATIC
   engine/nemotron_h_family.cpp
   engine/gemma4_family.cpp
   engine/hf_text_frontend.cpp
+  engine/prompt_tail.cpp
   engine/model_instance.cpp
   engine/warmup_widths.cpp
   contract/sampling.cpp

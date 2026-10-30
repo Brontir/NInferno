@@ -53,6 +53,20 @@ __host__ __device__ constexpr std::int64_t r8_smem_bytes(int nt, std::int64_t k,
 #    define NINFERNO_R8_STAGED_GRID 0
 #endif
 
+// NINFERNO-SPECIAL(arch:sm70): on Volta a lane's groups run one at a time through one ring slot
+// (fetch, then compute) instead of two slots in flight with the compute written out once per
+// slot. A model step runs ~400 kernels between two launches of the same projection, so each SM
+// starts a launch with a cold instruction cache and fetches the body before it can issue it; a
+// lane runs only a few groups (Q6_K up to K = 12288: 1..3), so that fetch is not amortized. One
+// compute body instead of two cuts the code 20-33 % (Q6_K w4r1 1352 -> 960 instructions) and the
+// registers (Q6_K w4r2 205 -> 137: 2 -> 3 CTAs per SM), whose extra warps keep more bytes in
+// flight than a warp's second slot did. GV100, Qwen3.5-9B Q4_K_M plain decode 83.8 -> 86.9 tok/s.
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 750
+#    define NINFERNO_R8_ONE_SLOT 1
+#else
+#    define NINFERNO_R8_ONE_SLOT 0
+#endif
+
 // The host's side of the same rule: whether this device's R8 launches stage the grid
 // (generic_gemm.cpp: no native BF16 MMA, sm_80 on has it).
 [[nodiscard]] bool r8_stage_grid();
@@ -132,7 +146,8 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         if constexpr (kPre) __syncthreads();
     }
 
-    Raw ring[2][kSets][kRows][kStride];
+    constexpr bool kOneSlot = NINFERNO_R8_ONE_SLOT != 0;
+    Raw ring[kOneSlot ? 1 : 2][kSets][kRows][kStride];
     const auto fetch = [&](auto slot_tag, int group) {
         constexpr int slot = decltype(slot_tag)::value;
 #pragma unroll
@@ -269,13 +284,22 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
         }
     };
 
+    if constexpr (kOneSlot) {
+        // The first group is in flight since before the activation.
 #pragma unroll 1
-    for (int g = lane; g < groups; g += 64) {
-        if (g + 32 < groups) fetch(Slot1{}, g + 32);
-        compute(Slot0{}, g);
-        if (g + 32 >= groups) break;
-        if (g + 64 < groups) fetch(Slot0{}, g + 64);
-        compute(Slot1{}, g + 32);
+        for (int g = lane; g < groups; g += 32) {
+            if (g != lane) fetch(Slot0{}, g);
+            compute(Slot0{}, g);
+        }
+    } else {
+#pragma unroll 1
+        for (int g = lane; g < groups; g += 64) {
+            if (g + 32 < groups) fetch(Slot1{}, g + 32);
+            compute(Slot0{}, g);
+            if (g + 32 >= groups) break;
+            if (g + 64 < groups) fetch(Slot0{}, g + 64);
+            compute(Slot1{}, g + 32);
+        }
     }
 
     // Butterfly: every lane ends with the same sum (each step adds a pair in either order).
@@ -351,6 +375,7 @@ void r8_launch_schedule(const GemmArgs& args, cudaStream_t stream, W4a8Activatio
         if constexpr (kVerify) {
             if (args.tokens <= 2) return r8_launch_tokens<C, S, 2, E, true>(args, stream, pre);
             if (args.tokens <= 4) return r8_launch_tokens<C, S, 4, E, true>(args, stream, pre);
+            if (args.tokens <= 8) return r8_launch_tokens<C, S, 8, E, true>(args, stream, pre);
         }
         throw std::invalid_argument("generic R8: no verify-width form for this call");
     }
@@ -375,7 +400,7 @@ void r8_launch_epilogue(int schedule, const GemmArgs& args, cudaStream_t stream,
     }
 }
 
-// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..4);
+// kVerify: the codec also has the verify-width form (a pre-quantized activation, T = 2..kR8VerifyTokens);
 // r8_verify_compiled lists the same formats.
 template <class C, bool kVerify = false>
 void r8_launch_codec(int schedule, Epilogue epilogue, const GemmArgs& args, cudaStream_t stream,

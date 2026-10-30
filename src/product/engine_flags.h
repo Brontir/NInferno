@@ -9,6 +9,7 @@
 #include "product/numeric_options.h"
 
 #include <cstdint>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,11 +29,31 @@ namespace ninferno::product {
     return out;
 }
 
+// The lab tuners' flags (--dense-tune, --moe-tune and their cache, --tune-cache): they time
+// kernels on the machine and store choices per machine, so only the maintainer tools take them
+// (kTunerHosts); ninferno and ninferno-serve refuse them
+// (docs/maintainer/deterministic-decisions.md: no timing at startup).
+[[nodiscard]] inline bool is_tuner_flag(std::string_view arg) noexcept {
+    return arg == "--dense-tune" || arg == "--moe-tune" || arg == "--tune-cache";
+}
+
+inline constexpr const char* kTunerHosts =
+    "ninferno-perplexity (both tuners), ninferno-dense and ninferno-gemma4 (the dense tuner)";
+
+// Whether a program takes the tuner flags.
+enum class TunerFlags : std::uint8_t { Refused, Accepted };
+
 // When `arg` is a pacing or maintainer flag, parses its value (value() reads it) into `pacing` or
-// `maintainer` and returns true.
+// `maintainer` and returns true. A tuner flag (is_tuner_flag) where `tuners` refuses it throws.
 template <class Value>
 bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions& pacing,
-                       MaintainerOptions& maintainer) {
+                       MaintainerOptions& maintainer, TunerFlags tuners) {
+    if (is_tuner_flag(arg) && tuners == TunerFlags::Refused) {
+        throw std::invalid_argument(std::string(arg) +
+                                    " is a lab tuner's option, which times kernels on this "
+                                    "machine; ninferno and ninferno-serve take none (run it in " +
+                                    kTunerHosts + ")");
+    }
     if (arg == "--decode-steps") {
         pacing.steps = parse_decode_steps(value());
     } else if (arg == "--decode-wait") {
@@ -57,6 +78,8 @@ bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions&
         }
     } else if (arg == "--debug-poison") {
         maintainer.debug_poison = parse_debug_poison(value());
+    } else if (arg == "--artifact-io") {
+        maintainer.artifact_io = parse_artifact_io(value());
     } else if (arg == "--debug-poison-skip") {
         maintainer.debug_poison_skip = comma_items(value());
     } else {
@@ -65,22 +88,24 @@ bool parse_engine_flag(std::string_view arg, Value&& value, DecodePacingOptions&
     return true;
 }
 
-// The usage lines of those flags, for a program that decodes.
+// The usage lines of those flags, for a program that decodes (no tuners: is_tuner_flag).
 inline constexpr const char* kEngineFlagsUsage =
     "       [--decode-steps auto|N] [--decode-wait auto|spin|block]\n"
     "       [--cuda-sync spin|blocking|yield|auto]\n"
     "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
-    "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
-    "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
-    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+    "       [--route-table FILE] [--route-dir DIR] [--debug-prefill-cuts P1,P2,...]\n"
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
+    "       [--artifact-io auto|direct|buffered]\n";
 
-// The same without the decode pacing, for a program that only scores (ninferno-perplexity).
+// Without the decode pacing and with the tuners, for a program that only scores
+// (ninferno-perplexity, a tuner host).
 inline constexpr const char* kScoringEngineFlagsUsage =
     "       [--cuda-sync spin|blocking|yield|auto]\n"
     "   maintainers (lab tools and debug aids; docs/maintainer/environment.md):\n"
     "       [--route-table FILE] [--route-dir DIR] [--dense-tune off|on|retune]\n"
     "       [--moe-tune off|on|retune] [--tune-cache DIR] [--debug-prefill-cuts P1,P2,...]\n"
-    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n";
+    "       [--debug-poison 0|1|nan|BYTE] [--debug-poison-skip kv,ingress,state,weights]\n"
+    "       [--artifact-io auto|direct|buffered]\n";
 
 // The decode pacing flags, which a scoring program refuses.
 [[nodiscard]] inline bool is_decode_pacing_flag(std::string_view arg) noexcept {

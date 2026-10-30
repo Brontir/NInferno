@@ -149,7 +149,8 @@ prefill  = chunks * chunk_ns + suffix_tokens * token_ns + attention_pairs * atte
 physical `cudaMemcpy*` calls implied by the page geometry. For a suffix `S` after prefix `B`,
 `attention_pairs = B*S + S*(S+1)/2`; `chunks` is the sum of `ceil(segment_tokens/prefill_chunk)` over
 the prefill schedule's capture/rewrite segments. Resource kind, KV dtype and speculative backend do
-not select coefficients. The prefill result is keyed by hardware class and the actual Text/Vision
+not select coefficients. Both results are keyed by the measuring device's GPU class id
+(`DeviceClass::id`, `gb202:170sm`), the prefill result also by the actual Text/Vision
 `prefill_signature`.
 
 A fit is accepted when training and held-out p95 relative error are at most 35% (transfer) or 15%
@@ -163,8 +164,11 @@ Defaults compiled into the binary live in
 [`context_cost_defaults.cpp`](../src/runtime/engine/context_cache/context_cost_defaults.cpp). A preset
 file is selected at run time with `EngineOptions.context_cost.preset_path` or
 `ninferno-serve --context-cost-presets FILE`, with no rebuild. Resolution starts from generic
-numerical coefficients, then applies matching compiled values, then matching external values; a
-malformed explicit file is an error and a missing entry keeps the preceding layer. The `--json`
+numerical coefficients, then applies the compiled machine of the first key of the device's class
+chain that has one (else the one of the nearest measured board within
+`measured::kCarryDistance`, as measured), then the external entry of the first key of the chain
+that has one; a malformed explicit file is an error and a missing entry keeps the preceding layer.
+A compiled machine records the board it was measured on (`core/measured_boards.h`). The `--json`
 report is provenance only, never a runtime input.
 
 ## Op benchmarks
@@ -368,7 +372,7 @@ graph, interleaved pass by pass, with one arm repeated under a second name as a 
 | Target | Purpose |
 |---|---|
 | `ninferno_route_tune` | Offline autotuner of the generic projection path. `--shapes FILE` (one `<format> <compute> <epilogue> <n> <k>` line per problem; the engine records such a file when run with `NINFERNO_ROUTE_RECORD=FILE`) `[--out routes/<key>.json] [--key chip\|variant\|arch] [--samples 15] [--prefill-chunk 1024] [--prefill-only 1] [--points T,...] [--routes-out FILE.csv]`. Writes a per-GPU-class `ninferno-route-table/1` file. |
-| `ninferno_linear_route_sweep_bench` | For each T, times the dispatcher's route and every route the table would pick at a larger width, and checks their outputs. `--qtype --n --k [--policy] [--t LIST] [--as LIST] [--quantized both] [--random-weight] [--no-class-table] [--warmup 2] [--repeat 10] [--csv-out]`; feed the CSVs to `tools/route_as_table.py` ([tools](../tools/README.md)). |
+| `ninferno_linear_route_sweep_bench` | For each T, times the dispatcher's route and every route the table would pick at a larger width, and checks their outputs. `--qtype --n --k [--policy] [--t LIST] [--as LIST] [--quantized both] [--w4a8-schedules] [--random-weight] [--no-class-table] [--warmup 2] [--repeat 10] [--csv-out]`; `--qtype` also takes the route table's format names (q4k, iq4xs, ...); `--w4a8-schedules` (with `--policy a8`) times every admitted W4A8 schedule and names the dispatcher's route; feed the CSVs to `tools/route_as_table.py` ([tools](../tools/README.md)). |
 | `ninferno_r8_schedule_bench` | Every compiled R8 decode schedule (T=1) next to the dispatcher's pick, with a byte-equality check. `[--shapes FILE] [--problem FORMAT,EPILOGUE,N,K ...] [--samples 15] [--launches 60]`; `tools/bench/r8_decode_table.py` turns repeated sweeps into a table header. |
 | `ninferno_nvfp4_a16_mma_sweep_bench` | A16 tensor-core schedule sweep on the Qwen3.5-27B NVFP4 shapes; CSV on stdout. `[--shape n34816_k5120\|...\|all] [--tokens LIST] [--warmup N] [--repeat N]`. |
 

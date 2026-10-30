@@ -10,8 +10,7 @@
 //   ninferno-dense <artifact> spec     --tokens F --decode M [--prompt N] [--repeat R] [--out O]
 //
 // Speculative decoding (greedy): --dflash D (a DFlash drafter artifact paired with this target)
-// or --ngram (prompt lookup), --draft-tokens K (drafts verified per round), --min-draft-tokens J
-// (the depth adapts within [J, K]). chat then generates by speculative rounds. spec prefills the
+// or --ngram (prompt lookup), --draft-tokens K (drafts verified per round). chat then generates by speculative rounds. spec prefills the
 // prompt (the whole token file, or its first N tokens) and decodes M tokens twice from the same
 // state, plainly and by speculative rounds, and reports both speeds, the rounds' acceptance and
 // how far the two greedy continuations agree (--out O writes the speculative one).
@@ -33,8 +32,9 @@
 // bytes). Every result is one JSON object on stdout.
 // Maintainer options (docs/maintainer/environment.md): --cuda-sync spin|blocking|yield|auto,
 // --route-table FILE, --route-dir DIR, --dense-tune off|on|retune, --tune-cache DIR,
-// --debug-poison BYTE and --debug-poison-skip SITES, applied to the process as an Engine applies
-// them; --moe-tune is refused (no MoE schedule tuner runs here). Any other option is refused.
+// --debug-poison BYTE, --debug-poison-skip SITES and --artifact-io MODE, applied to the process as
+// an Engine applies them; --moe-tune is refused (no MoE schedule tuner runs here). Any other option
+// is refused.
 //
 // <artifact> may also be a Hugging Face checkpoint directory: it is converted once, in-process,
 // with the official recipe for its architecture into <dir>/.ninferno-cache/<recipe>.ninferno, and
@@ -89,10 +89,10 @@ Arguments parse(int argc, char** argv) {
     Arguments out{argv[1], argv[2], {}};
     // Every option some command reads; anything else is refused, not ignored.
     static const std::set<std::string> known = {
-        "a16",       "activations",  "chunk",        "context",
+        "a16",       "activations",  "artifact-io",  "chunk",        "context",
         "cuda-sync", "cuts",         "debug-poison", "debug-poison-skip",
         "decode",    "dense-tune",   "dflash",       "draft-tokens",
-        "dump",      "eager-decode", "kv-dtype",     "min-draft-tokens",
+        "dump",      "eager-decode", "kv-dtype",
         "moe-tune",  "ngram",        "out",          "prompt",
         "repeat",    "route-dir",    "route-table",  "seed",
         "system",    "temperature",  "tokens",       "top-k",
@@ -166,7 +166,6 @@ int main(int argc, char** argv) {
         options.ngram            = args.flag("ngram");
         options.draft_tokens     = static_cast<std::int32_t>(
             args.number("draft-tokens", dflash ? dflash->config().block_size - 1 : 4));
-        options.min_draft_tokens = static_cast<std::int32_t>(args.number("min-draft-tokens", 0));
         const bool speculative   = options.dflash != nullptr || options.ngram;
         std::optional<Frontend> frontend;
         std::vector<std::int32_t> tokens;
@@ -198,11 +197,10 @@ int main(int argc, char** argv) {
                     exact ? "exact" : args.flag("a16") ? "a16" : "artifact", options.prefill_chunk,
                     options.max_context);
         if (speculative) {
-            std::printf("\"drafter\":\"%s\",\"drafter_gib\":%.3f,\"draft_tokens\":%d,"
-                        "\"min_draft_tokens\":%d,",
+            std::printf("\"drafter\":\"%s\",\"drafter_gib\":%.3f,\"draft_tokens\":%d,",
                         dflash ? "dflash" : "ngram",
                         dflash ? dflash->device_bytes() / 1073741824.0 : 0.0,
-                        options.draft_tokens, options.min_draft_tokens);
+                        options.draft_tokens);
         }
 
         if (args.command == "bench") {

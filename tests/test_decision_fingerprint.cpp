@@ -6,12 +6,15 @@
 // SHA-256 matches the FIPS 180-4 vectors; and every NINFERNO_* variable src/ reads is either on
 // the decision list or on the list of those known to steer no decision. The file-reading half
 // (decision_sources.h, ops::moe_tune_sources): a presets or MoE-tune file moves the fingerprint by
-// its content, and a drafter under a non-ASCII name is named without an exception.
+// its content, and a drafter under a non-ASCII name is named without an exception. The context-cost
+// machine the device's class resolved to is a source, and one carried from another board taint
+// while it still prices a component.
 #include "core/device_class.h"
 #include "core/sha256.h"
 #include "ninferno/ops/moe.h"
 #include "runtime/engine/decision_fingerprint.h"
 #include "core/removed_environment.h"
+#include "runtime/engine/context_cache/context_cost.h"
 #include "runtime/engine/decision_sources.h"
 #include "support/temp_dir.h"
 
@@ -75,7 +78,11 @@ rt::DecisionInputs sample_inputs() {
     options.maintainer.dense_tune = ninferno::TuneMode::On; // a maintainer option: taint
     in.options                    = rt::options_of(
         options, "c0b7c3038681ed2e3040456c1dd45f9858b6c2290bed172c70388a94874f3eee", "sig", "");
-    in.sources = {{"route_table", "gb202.json sha256:ab"}, {"route_table.class", "gb202"}};
+    in.sources = {{"route_table", "gb202.json sha256:ab"},
+                  {"route_table.class", "gb202"},
+                  {"context_cost.machine", "own gb202:170sm"},
+                  {"context_cost.transfer", "compiled-default"},
+                  {"context_cost.prefill", "compiled-default"}};
     const std::array<std::int32_t, 3> breakpoints{17, 64, 512};
     in.plan =
         rt::plan_of(ninferno::EngineOptions{}, ninferno::MemorySummary{}, breakpoints, "ab", 1);
@@ -404,6 +411,21 @@ int facts_reach_their_section() {
     failures += check(rt::observed_of(unknown).empty() &&
                           rt::observed_of(sample_device()).size() == driver.size(),
                       "observed: the driver's values only on the verified table");
+    // A board on another memory than its row's (an RTX 4070 with GDDR6 under the GDDR6X board's
+    // id): the driver's memory clock priced it, so the driver's values are inputs too.
+    DeviceClass variant      = sample_device();
+    variant.major            = 8;
+    variant.minor            = 9;
+    variant.sms              = 46;
+    variant.pci_device_id    = 0x2786;
+    variant.chip             = "ad104";
+    variant.memory_bus_bits  = 192;
+    variant.memory_clock_khz = 10001000;
+    variant.sm_clock_khz     = 2475000;
+    variant.facts            = ninferno::machine_facts_of(variant);
+    failures += check(variant.facts.driver_read && rt::observed_of(variant).empty() &&
+                          collect(variant).contains("driver.memory_clock_khz"),
+                      "facts: a board on another memory than its row's reads the driver's");
     failures += check(rt::facts_of(sample_device(), {}, 13020, kHost) != collect(sample_device()),
                       "facts: build features reach the section");
     failures += check(rt::facts_of(sample_device(), ninferno::device_features_for(12, 0), 12080,
@@ -527,6 +549,92 @@ int taint() {
     in.sources["route_table.class"] = "sm120";
     failures += check(!rt::taint_of(in).contains("foreign_route_table"),
                       "the architecture's own table is not foreign");
+    return failures;
+}
+
+// The context-cost machine is chosen by the device's class and board facts, never its driver name,
+// and the fingerprint names where it came from: the device's own class, a measured board it is
+// carried from (by its key: the distance follows from the facts; taint while it prices a
+// component, as a foreign route table), or the declared generic defaults; and the layer each
+// component came from.
+int context_cost_machine() {
+    int failures       = 0;
+    const auto machine = [](std::uint32_t pci_device_id, int major, int minor, int sms,
+                            std::size_t l2_mib, const char* name, const char* signature = "sig",
+                            const std::filesystem::path& presets = {}) {
+        ninferno::DeviceClass d = ninferno::synthetic_device_class(pci_device_id, major, minor, sms,
+                                                                   l2_mib << 20, 24ULL << 30);
+
+        d.name  = name;
+        d.facts = ninferno::machine_facts_of(d);
+        return rt::resolve_context_machine_cost(rt::context_cost_identity(d, signature), presets)
+            .summary;
+    };
+    const auto inputs = [](const ninferno::ContextCostSummary& cost) {
+        rt::DecisionInputs in = sample_inputs();
+        for (auto& [key, value] : rt::context_cost_sources_of(cost)) { in.sources[key] = value; }
+        in.taint = rt::taint_of(in);
+        return in;
+    };
+    const auto rtx4090  = machine(0x2684, 8, 9, 128, 72, "NVIDIA GeForce RTX 4090");
+    const auto rtx4090d = machine(0x2685, 8, 9, 114, 72, "NVIDIA GeForce RTX 4090 D");
+    const auto rtx5080  = machine(0x2C02, 12, 0, 84, 64, "NVIDIA GeForce RTX 5080");
+    // Another board under the measured board's name: its class decides, not the name.
+    const auto renamed = machine(0x2685, 8, 9, 114, 72, "NVIDIA GeForce RTX 4090");
+    // Its own class prefill; no transfer of its own (the generic one).
+    failures += check(rt::context_cost_sources_of(rtx4090) ==
+                          rt::DecisionSection{{"context_cost.machine", "own ad102:128sm"},
+                                              {"context_cost.transfer", "generic-default"},
+                                              {"context_cost.prefill", "compiled-default"}},
+                      "context cost: the RTX 4090's own machine: " + rtx4090.machine);
+    // The logs quote the distance; the fingerprint names the machine by its key.
+    failures += check(rtx4090d.machine == "carried from ad102:128sm at 0.17" &&
+                          renamed.machine == rtx4090d.machine &&
+                          rt::context_cost_sources_of(rtx4090d).at("context_cost.machine") ==
+                              "carried from ad102:128sm",
+                      "context cost: the RTX 4090 D carries the 4090's, under any name: " +
+                          rtx4090d.machine + ", " + renamed.machine);
+    failures += check(rtx5080.machine == "generic", "context cost: the RTX 5080 (2.2 from the "
+                                                    "RTX 5090) takes the generic defaults: " +
+                                                        rtx5080.machine);
+    failures += check(
+        rt::context_cost_sources_of(ninferno::ContextCostSummary{}).at("context_cost.machine") ==
+            "unset",
+        "context cost: a machine never resolved is unset");
+    const auto own     = inputs(rtx4090);
+    const auto carried = inputs(rtx4090d);
+    const auto generic = inputs(rtx5080);
+    failures +=
+        check(rt::decision_fingerprint(own).value != rt::decision_fingerprint(carried).value &&
+                  rt::decision_fingerprint(own).value != rt::decision_fingerprint(generic).value,
+              "context cost: the machine's source moves the fingerprint");
+    failures += check(carried.taint.contains("carried_context_cost") &&
+                          carried.taint.at("carried_context_cost") == "ad102:128sm" &&
+                          !own.taint.contains("carried_context_cost") &&
+                          !generic.taint.contains("carried_context_cost"),
+                      "context cost: a carried machine is taint, its own or the generic not");
+
+    // The RTX 4090 D's owner measured its prefill (ninferno_context_cost_bench --preset-out keys
+    // the entry by its class id): the class still resolves to the carried machine, but no number
+    // of it prices anything (it has no transfer), so it is no taint. A binding the file does not
+    // list takes the carried class prefill again, and is.
+    const TempDir scratch("ninferno_context_cost_fingerprint");
+    const auto presets = scratch.path() / "presets.json";
+    rt::upsert_context_prefill_cost_atomic(
+        presets, "ad102:114sm", "sig", rt::ContextPrefillCost{.chunk_ns = 1, .vision_item_ns = 1},
+        "{}");
+    const auto measured =
+        inputs(machine(0x2685, 8, 9, 114, 72, "NVIDIA GeForce RTX 4090 D", "sig", presets));
+    const auto unlisted =
+        inputs(machine(0x2685, 8, 9, 114, 72, "NVIDIA GeForce RTX 4090 D", "other", presets));
+    failures += check(measured.sources.at("context_cost.machine") == "carried from ad102:128sm" &&
+                          measured.sources.at("context_cost.transfer") == "generic-default" &&
+                          measured.sources.at("context_cost.prefill") == "external" &&
+                          !measured.taint.contains("carried_context_cost"),
+                      "context cost: a carried machine an external entry replaced is no taint");
+    failures += check(unlisted.sources.at("context_cost.prefill") == "carried-machine" &&
+                          unlisted.taint.contains("carried_context_cost"),
+                      "context cost: the carried class prefill under an external file is taint");
     return failures;
 }
 
@@ -713,7 +821,7 @@ int removed_environment() {
     failures +=
         check(warnings.size() == 3 && warnings[0].starts_with("NINFERNO_DECODE_STEPS is set") &&
                   warnings[0].ends_with("use --decode-steps instead") &&
-                  warnings[1].ends_with("use --tune-cache instead") &&
+                  warnings[1].ends_with("use --tune-cache in ninferno-perplexity instead") &&
                   warnings[2].ends_with("removed with no replacement"),
               "removed variables: the warnings do not name their replacements");
     std::set<std::string> names;
@@ -821,6 +929,22 @@ int file_sources() {
     failures += check(rt::context_cost_presets_source(dir / "missing.json") == "unreadable",
                       "presets: a missing file is unreadable");
 
+    // --chat-template FILE: the prompt's tokens follow its content, not its path.
+    const auto chat_template = dir / "template.jinja";
+    write_file(chat_template, "{{ messages[0].content }}");
+    const std::string template_a = rt::chat_template_source(chat_template);
+    write_file(chat_template, "<|im_start|>{{ messages[0].content }}");
+    const std::string template_b = rt::chat_template_source(chat_template);
+    failures += check(template_a.starts_with("template.jinja sha256:") && template_a != template_b,
+                      "chat template: named by file name and content: " + template_a);
+    failures +=
+        check(with_source("chat_template", template_a) != with_source("chat_template", template_b),
+              "chat template: a changed file moves the fingerprint");
+    failures += check(rt::chat_template_source({}) == "artifact",
+                      "chat template: none given is the artifact's");
+    failures += check(rt::chat_template_source(dir / "missing.jinja") == "unreadable",
+                      "chat template: a missing file is unreadable");
+
     // The MoE tuner's cache, read only while --moe-tune times.
     const auto cache = dir / "moe_tune.json";
     ninferno::ops::set_moe_tune(ninferno::TuneMode::Off, dir);
@@ -878,6 +1002,7 @@ int main() {
     failures += machine_facts_decide();
     failures += maintainer_options();
     failures += taint();
+    failures += context_cost_machine();
     failures += sha256_vectors();
     failures += environment_inventory();
     failures += removed_environment();

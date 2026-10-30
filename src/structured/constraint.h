@@ -25,7 +25,7 @@ struct CompilerOptions {
     int compile_threads     = 8;
     // Longest insignificant whitespace run between JSON tokens (unless compact_json), and longest
     // leading whitespace run after a reasoning section (follows_reasoning).
-    int json_whitespace_run      = 24;
+    int json_whitespace_run      = 64;
     int reasoning_whitespace_run = 4;
 };
 
@@ -96,5 +96,19 @@ struct ConstraintVocabularyView {
 };
 
 [[nodiscard]] ConstraintVocabularyView vocabulary_view(const CompiledConstraint& compiled) noexcept;
+
+// Whether a constraint holds a client's free grammar, an EBNF definition: context-free, as nested
+// and ambiguous as the client wrote it, so the engine declares no bound on the host time of its
+// mask rows (runtime::MaskRowClass::FreeGrammar). That is a grammar spec, or a client's structural
+// tag with a format of type "grammar" anywhere in it. Every other constraint is a grammar the
+// engine shapes (a JSON Schema or object, a choice list, a structural tag of other formats, the
+// tool-call markup the Engine renders, also Gemma 4's with its own argument grammar,
+// OutputConstraintSpec::engine_rendered) or a regular language (a regex). A pure function of the
+// spec, whose every input the compile cache's key holds: nothing is measured.
+[[nodiscard]] bool declares_free_grammar(const OutputConstraintSpec& spec);
+[[nodiscard]] bool declares_free_grammar(const CompiledConstraint& compiled) noexcept;
+
+// Host memory of the compiled grammar, as the compile cache counts it.
+[[nodiscard]] std::size_t memory_bytes(const CompiledConstraint& compiled) noexcept;
 
 } // namespace ninferno::structured

@@ -41,8 +41,7 @@ void expect(bool condition, const std::string& what, const std::string& detail =
 const spec::Registry& registry() {
     static const spec::Registry out = spec::Registry::parse(R"({
       "schema": 1, "published": "test",
-      "kinds": {"dflash": {"engines": ["dense", "qwen3_5"],
-                           "architectures": ["DFlashDraftModel", "MuseGlimmerAssistantModel"],
+      "kinds": {"dflash": {"architectures": ["DFlashDraftModel", "MuseGlimmerAssistantModel"],
                            "recipe": "dflash_published"}},
       "models": [{"id": "muse", "engine": "dense",
                   "match": {"repos": ["org/muse", "org/muse-GGUF"], "lineage": ["org/muse"],
@@ -406,6 +405,41 @@ void checkpoint_engine() {
     expect(engine_of("UnknownForCausalLM").empty(), "an unknown architecture has no engine");
 }
 
+// Built-in MTP layers are what the weight index lists: a fine-tune saved without them keeps the
+// declaration in its config.json and has none. Without an index, the declaration.
+void checkpoint_mtp() {
+    const TempDir scratch("ninferno_drafter_plan_mtp");
+    const auto& dir = scratch.path();
+    std::ofstream(dir / "config.json") << Json{{"architectures", Json::array({"Qwen3_5ForCausalLM"})},
+                                               {"hidden_size", 256},
+                                               {"num_hidden_layers", 4},
+                                               {"vocab_size", 1000},
+                                               {"mtp_num_hidden_layers", 1}}
+                                              .dump();
+    expect(cv::describe_checkpoint(dir, "org/model").builtin_mtp,
+           "no weight listing: the declared MTP layers");
+    const auto index = [&](const Json& names) {
+        Json map = Json::object();
+        for (const auto& name : names) { map[name.get<std::string>()] = "model-1.safetensors"; }
+        std::ofstream(dir / "model.safetensors.index.json") << Json{{"weight_map", map}}.dump();
+        return cv::describe_checkpoint(dir, "org/model").builtin_mtp;
+    };
+    expect(!index({"model.embed_tokens.weight", "lm_head.weight"}),
+           "declared MTP layers absent from the index: none");
+    expect(index({"model.embed_tokens.weight", "mtp.fc.weight"}), "MTP layers in the index");
+    // NextN layers (DeepSeek, GLM) are numbered past the decoder's: their declaration stands.
+    const Json nextn  = {{"num_nextn_predict_layers", 1}};
+    const Json listed = {{"weight_map", {{"model.layers.4.eh_proj.weight", "model-2.safetensors"}}}};
+    expect(cv::sharded_checkpoint_mtp(nextn, listed), "declared NextN layers");
+    expect(cv::sharded_checkpoint_mtp({{"text_config", nextn}}, listed),
+           "NextN layers declared in text_config");
+    expect(!cv::sharded_checkpoint_mtp({{"mtp_num_hidden_layers", 1}}, listed),
+           "declared MTP layers the index does not list");
+    expect(cv::sharded_checkpoint_mtp(Json::object(),
+                                      {{"weight_map", {{"mtp.fc.weight", "model-2.safetensors"}}}}),
+           "MTP layers the index lists, the config silent");
+}
+
 // A failed drafter is retried by the next run; a failed own quantization is not.
 void retry_failed_drafter() {
     const TempDir scratch("ninferno_drafter_plan_manifest");
@@ -415,12 +449,21 @@ void retry_failed_drafter() {
         std::ofstream(ninferno::spec::manifest_path(artifact)) << text;
         return cv::drafters_incomplete(artifact);
     };
+    const std::string registry =
+        R"("registry_sha256": ")" + ninferno::spec::Registry::builtin().source_sha256() + R"(", )";
     expect(cv::drafters_incomplete(artifact), "no manifest: attaching is to do");
-    expect(with(R"({"drafters": [{"name": "dflash", "status": "failed: SSL connect error"}]})"),
+    expect(with("{" + registry +
+                R"("drafters": [{"name": "dflash", "status": "failed: SSL connect error"}]})"),
            "a failed published drafter is retried");
-    expect(!with(R"({"drafters": [{"name": "dflash", "status": "converted"},
+    expect(!with("{" + registry + R"("drafters": [{"name": "dflash", "status": "converted"},
                                    {"name": "dflash.q8", "quant": "q8", "status": "failed: x"}]})"),
            "a failed own quantization is not retried");
+    // Planned from another registry (before an update that names a new drafter), or before the
+    // manifest recorded one: planned again.
+    expect(with(R"({"registry_sha256": "0000", "drafters": [{"name": "mtp", "status": "embedded"}]})"),
+           "a manifest of another registry: attaching is to do");
+    expect(with(R"({"drafters": [{"name": "mtp", "status": "embedded"}]})"),
+           "a manifest that names no registry: attaching is to do");
     expect(with("{"), "an unreadable manifest: attaching is to do");
 }
 
@@ -434,6 +477,7 @@ int main() {
     nemotron_mapper();
     similar();
     checkpoint_engine();
+    checkpoint_mtp();
     retry_failed_drafter();
     if (failures == 0) { std::cout << "drafter plan: ok\n"; }
     return failures == 0 ? 0 : 1;

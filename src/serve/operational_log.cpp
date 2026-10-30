@@ -301,6 +301,7 @@ OperationalRecord render_request_done(const RequestLogContext& context,
         out << " | thinking "
             << product::format_pretty_count(outcome.thinking.model_thinking_tokens) << '/'
             << product::format_pretty_count(*outcome.thinking.configured_budget);
+        if (outcome.thinking.answer_room) { out << " (answer room)"; }
         if (outcome.thinking.injected_tokens != 0) {
             out << ", control " << product::format_pretty_count(outcome.thinking.injected_tokens);
         }
@@ -744,11 +745,13 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                       "--max-context or --kv-capacity leaves room",
                       product::format_pretty_bytes(memory.available_after_startup_bytes));
     }
-    logger_->debug("context cost | transfer {} | prefill {} | hardware {} | prefill signature {}",
-                   ninferno::context_cost_preset_source_name(context_cost.transfer_source),
-                   ninferno::context_cost_preset_source_name(context_cost.prefill_source),
-                   product::format_pretty_text(context_cost.hardware_class),
-                   product::format_pretty_text(context_cost.prefill_signature));
+    logger_->debug(
+        "context cost | transfer {} | prefill {} | class {} | machine {} | prefill signature {}",
+        ninferno::context_cost_preset_source_name(context_cost.transfer_source),
+        ninferno::context_cost_preset_source_name(context_cost.prefill_source),
+        product::format_pretty_text(context_cost.gpu_class),
+        product::format_pretty_text(context_cost.machine),
+        product::format_pretty_text(context_cost.prefill_signature));
 }
 
 void OperationalLog::warmup_started() const { logger_->debug("warming up"); }

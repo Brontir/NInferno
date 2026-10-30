@@ -2,10 +2,14 @@
 #include "core/device_class.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
+#include "product/plan/plan_choice.h"
+#include "product/plan/plan_facts.h"
+#include "runtime/engine/prompt_tail.h"
 #include "product/update/update_check.h"
 #include "serve/generation_service.h"
 #include "serve/http_server.h"
 #include "serve/model_source.h"
+#include "serve/plan_offline.h"
 #include "serve/plan_report.h"
 #include "serve/serve_options.h"
 #include "spec/registry.h"
@@ -167,6 +171,13 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (options.version_requested) { return print_version(); }
+    // The prefill's tail calls come from the served frontend (DECISIONS 62).
+    ninferno::product::set_prompt_tail_calls_source(
+        [chat_template = options.chat_template_path,
+         prefix_reuse  = options.allow_prefix_reuse](const std::filesystem::path& artifact) {
+            return ninferno::runtime::prompt_tail_calls_or_warn(artifact, chat_template,
+                                                                prefix_reuse);
+        });
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno-serve");
     if (!options.drafter_registry.empty()) {
@@ -197,11 +208,25 @@ int main(int argc, char** argv) {
     bool serving = false;
 
     try {
+        // --plan --no-load: the plan from the model's header or config and the device's facts,
+        // on stdout; no weights are loaded or downloaded and no GPU is needed.
+        if (options.plan_only && options.plan_no_load) {
+            const ninferno::serve::OfflinePlan plan = ninferno::serve::plan_without_load(options);
+            std::cout << (options.plan_json ? plan.json.dump(1) + '\n' : plan.text);
+            std::cout.flush();
+            return plan.fits ? 0 : 2;
+        }
         // The model named on the command line, as an artifact: fetched and converted first when
         // it is a hub id or a checkpoint (serve/model_source.h).
         const ninferno::serve::ModelSource source = ninferno::serve::resolve_model_source(
             options, [&](const std::string& line) { logger->info("model | {}", line); });
         options.artifact_path = source.artifact_path;
+        // The quantization was chosen for each stream's own context: the start keeps it as the
+        // ceiling of its automatic context (a busy card still steps down a rung).
+        if (source.planned_context != 0 && options.max_context == 0 &&
+            options.max_context_cap == 0) {
+            options.max_context_cap = source.planned_context;
+        }
         if (source.kind == ninferno::serve::ModelSource::Kind::Hub &&
             !options.model_id_override.has_value()) {
             options.model_id_override = source.repo; // served under its hub id
@@ -209,6 +234,38 @@ int main(int argc, char** argv) {
         if (options.prepare_only) {
             logger->info("model | prepared {}", options.artifact_path);
             return 0;
+        }
+        // --activations given that the model's family does not run: refused before any weight
+        // loads, with the plan's words (product::activation_refusal), not run at another mode.
+        if (options.activations_given) {
+            ninferno::product::refuse_unrun_activations_at_start(options.artifact_path,
+                                                                 options.activations);
+        }
+        // --kv-dtype given that the model does not take (its family's codecs, its head width):
+        // refused the same way (product::kv_refusal).
+        if (options.kv_cache) {
+            ninferno::product::refuse_unrun_kv_at_start(options.artifact_path, *options.kv_cache);
+        }
+        // The axes the user left to the engine (--kv-dtype auto, no --activations, no
+        // --state-dtype): the configuration choice for this artifact on this GPU
+        // (product/choice/choice.h through serve/plan_offline.h).
+        if (const auto axes = ninferno::serve::choose_served_axes(
+                options, [&](const std::string& line) { logger->info("choice | {}", line); })) {
+            if (axes->kv) { options.kv_cache = axes->kv; }
+            if (axes->activations) { options.activations = *axes->activations; }
+            if (axes->state) { options.recurrent_state = axes->state; }
+            if (axes->ring) { options.sliding_kv_cache = *axes->ring; }
+            if (axes->chunk) { options.prefill_chunk = *axes->chunk; } // the widest; not explicit
+            // The drafter the choice weighed for --spec auto: plain decode, or the profile chosen
+            // again for its mode.
+            if (axes->drafter && options.speculation_from_profile) {
+                if (*axes->drafter == ninferno::spec::Mode::None) {
+                    options.speculation_from_profile = false;
+                    logger->info("choice | speculation: plain decode, the configuration choice's");
+                } else {
+                    options.speculation_mode = axes->drafter;
+                }
+            }
         }
         // --plan: the plan ladder and the rung the free memory picks now, on stdout; nothing is
         // bound or served.

@@ -33,6 +33,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace ninferno::convert {
@@ -100,6 +101,22 @@ struct DrafterPlan {
     [[nodiscard]] nlohmann::json to_json() const;
 };
 
+// Whether a safetensors index (model.safetensors.index.json) lists MTP layers (mtp.*): the
+// weights, not config.json's declaration, say whether a checkpoint has them (a fine-tune saved
+// without them keeps mtp_num_hidden_layers).
+[[nodiscard]] bool index_lists_mtp(const nlohmann::json& index);
+
+// Whether a sharded checkpoint has built-in MTP layers: the mtp.* tensors its index lists, or the
+// NextN layers its config.json declares (numbered past the decoder's, they keep their
+// declaration).
+[[nodiscard]] bool sharded_checkpoint_mtp(const nlohmann::json& config,
+                                          const nlohmann::json& index);
+
+// Whether the checkpoint directory `dir` (its config.json `config`) has built-in MTP layers: what
+// its weights hold where their listing is there (a model_mtp.safetensors part, the index, or the
+// one weight file's header), else the declaration; NextN layers keep their declaration.
+[[nodiscard]] bool checkpoint_mtp(const std::filesystem::path& dir, const nlohmann::json& config);
+
 // The target as the converter sees it: a checkpoint directory (its README's base_model lineage
 // and its ninferno_speculation.json are read from disk) or a .ninferno artifact.
 [[nodiscard]] DrafterTarget describe_checkpoint(const std::filesystem::path& dir, std::string repo);
@@ -147,7 +164,8 @@ fetch_companions(DrafterPlan& plan, const AttachOptions& options);
 DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& target_artifact,
                             const AttachOptions& options);
 
-// Whether attaching to `target_artifact` is still to do: no manifest, an unreadable one, or one
+// Whether attaching to `target_artifact` is still to do: no manifest, an unreadable one, one planned
+// from another drafter registry than this build's (an update may name a new drafter), or one
 // listing a published drafter as failed (its own quantizations do not count).
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
@@ -159,5 +177,24 @@ resolve_ranking(const std::string& name, const std::filesystem::path& repository
 // How a converted drafter's provenance names a registry ranking: "<name> sha256:<hex>", the same
 // wherever the file lay.
 [[nodiscard]] std::string ranking_label(const std::string& name, const std::filesystem::path& path);
+
+// The bytes a companion drafter (converted into the target's artifact, DrafterDecl::component)
+// takes there, from its published BF16 checkpoint's `published_bytes`, as the converter stores it:
+// - a declared quantization (`declared_quant`, the registry drafter's "quant": convert.cpp
+//   quantize_drafter) replaces every plain projection: q8 Q8_G32_FP16 (8.5 bits per weight), q4
+//   Q4_G64_FP16 (4.25), nvfp4 (4.5 with its FP8 scales);
+// - else a Qwen 3.5 / 3.6 target's DFlash and DFlash2 projections take Q8 in every recipe
+//   (qwen3_5.cpp companion_drafter_q8), DFlash2's dynamic-convolution kernel projections and
+//   candidate selector keeping BF16 (10.1 % of z-lab/Qwen3.8-27B-DFlash2's bytes: 0.362 of 3.584
+//   GiB, its safetensors header);
+// - any other: as published.
+[[nodiscard]] std::uint64_t companion_drafter_bytes(std::string_view target_model_type,
+                                                    std::string_view kind,
+                                                    std::string_view declared_quant,
+                                                    std::uint64_t published_bytes) noexcept;
+
+// The base_model entries of a README's YAML front matter (a string or a "- item" list): a
+// checkpoint's lineage, as describe_checkpoint reads it.
+[[nodiscard]] std::vector<std::string> readme_base_models(const std::filesystem::path& readme);
 
 } // namespace ninferno::convert

@@ -46,6 +46,9 @@ std::string structure_sha256(const Directory& directory) {
         if (component.proposal) {
             item["proposal"] =
                 Json{{"indexed", component.proposal->indexed}, {"rows", component.proposal->rows}};
+            if (!component.proposal->drafter_rows.empty()) {
+                item["proposal"]["drafter_rows"] = component.proposal->drafter_rows;
+            }
         }
         components[name] = std::move(item);
     }

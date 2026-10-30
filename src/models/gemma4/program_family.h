@@ -28,6 +28,12 @@ inline constexpr std::uint32_t kMaximumMtpDraftTokens = 15;
 // model with ActivationProfile::A16Full to go with it.
 [[nodiscard]] std::unique_ptr<const qwen3_5::detail::ModelExecution>
 make_program_execution(const Model& model, const Drafter* drafter, DeviceContext& device,
-                       std::int32_t public_tokens, ActivationMode activations);
+                       std::int32_t public_tokens, ActivationMode activations,
+                       EnginePurpose purpose);
+
+// The shape of the persistent state the Gemma 4 `config` lays out
+// (models/qwen3_5/program/planning/sequence_bytes.h, plan_persistent_layout): the full layers'
+// pool, the sliding layers' rings; `public_tokens` the ids a request may carry or sample.
+[[nodiscard]] StateShape state_shape(const Config& config, std::int32_t public_tokens);
 
 } // namespace ninferno::models::gemma4

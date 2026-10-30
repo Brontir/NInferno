@@ -3,6 +3,7 @@
 #include "artifact/reader.h"
 #include "runtime/engine/contract_backend.h"
 #include "runtime/engine/model_instance.h"
+#include "runtime/engine/plan_dry_run.h"
 
 #include <algorithm>
 #include <array>
@@ -13,19 +14,15 @@ namespace {
 
 // The families of this build, by the model_type their artifacts declare. A family is added by one
 // row here and its loader; nothing else in the Engine or the server changes.
+// Their automatic storages are one table beside the plan's (plan_dry_run.cpp kFamilyStorage): a new
+// family adds its row there too.
 constexpr std::array kFamilies{
-    FamilyEntry{"qwen3_5_text", &load_qwen3_5, KvCacheStorage::Int8Group64,
-                RecurrentStateStorage::FP16},
-    FamilyEntry{"qwen3_5_moe_text", &load_qwen3_5, KvCacheStorage::Int8Group64,
-                RecurrentStateStorage::FP16},
-    // Gemma 4 keeps its full layers' pool in FP8 rows (the sliding rings stay BF16): RTX 5090
-    // long1 26B at 218K decodes 173 -> 221 t/s, 31B at 98K 55 -> 63.
-    FamilyEntry{"gemma4_text", &load_gemma4, KvCacheStorage::Fp8E4M3Row256},
-    // The dense decoders keep FP8 rows (E4M3 and a scale per row) unless --kv-dtype says otherwise:
-    // half the K/V a long decode step reads (gpt-oss ~24.6 KB a context token in BF16).
-    FamilyEntry{"dense_decoder", &load_dense, KvCacheStorage::Fp8E4M3Row256},
-    FamilyEntry{"moe_decoder", &load_dense, KvCacheStorage::Fp8E4M3Row256},
-    FamilyEntry{"nemotron_h", &load_nemotron_h},
+    FamilyEntry{"qwen3_5_text", &load_qwen3_5},
+    FamilyEntry{"qwen3_5_moe_text", &load_qwen3_5},
+    FamilyEntry{"gemma4_text", &load_gemma4},
+    FamilyEntry{"dense_decoder", &load_dense},
+    FamilyEntry{"moe_decoder", &load_dense},
+    FamilyEntry{"nemotron_h", &load_nemotron_h}, // one row a family
 };
 
 } // namespace
@@ -80,18 +77,17 @@ const FamilyEntry& family_entry(std::string_view model_type) {
 FamilyLoader family_loader(std::string_view model_type) { return family_entry(model_type).load; }
 
 KvCacheStorage automatic_kv_cache(std::string_view model_type) {
-    return family_entry(model_type).kv_cache;
+    (void)family_entry(model_type); // throws for a model_type no family declares
+    return family_storage(model_type).value_or(PlanFamilyStorage{}).kv;
 }
 
 RecurrentStateStorage automatic_recurrent_state(std::string_view model_type) {
-    return family_entry(model_type).recurrent_state;
+    (void)family_entry(model_type);
+    return family_storage(model_type).value_or(PlanFamilyStorage{}).recurrent;
 }
 
 KvCacheStorage automatic_kv_cache(std::string_view model_type, int compute_capability) {
-    const KvCacheStorage storage = automatic_kv_cache(model_type);
-    return storage == KvCacheStorage::Fp8E4M3Row256 && compute_capability < 89
-               ? KvCacheStorage::BFloat16
-               : storage;
+    return kv_storage_on(automatic_kv_cache(model_type), compute_capability);
 }
 
 std::unique_ptr<Backend> make_backend(const EngineOptions& options, DeviceContext& device) {

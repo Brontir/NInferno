@@ -4,10 +4,14 @@
 // launch_rmma<Decoder> once (generic_gemm_<format>.cu), so the whole list is compiled per format.
 
 #include "core/device.h"
+#include "core/device_class.h"
+#include "core/per_device.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
 
+#include <array>
+#include <cstdint>
 #include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
@@ -36,8 +40,161 @@ namespace ninferno::ops::detail::generic {
     X(18, 1, 8, 1, 1, 2)                                                                           \
     X(19, 1, 16, 1, 1, 1)
 
+template <class Decoder, class Schedule, Epilogue E, bool Latency>
+void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
+
+// The schedules and decoders with a latency variant (rmma_kernel's Latency): one token tile of a
+// K-quant whose heads unpack late (UnpackOf), or SwiGLU of one that stages its activations. The
+// variant carries the activation ring where it has its form (kRmmaAhead). One row set of Q3_K /
+// Q6_K (no load_raw) gets no ring-only variant: on the RTX 2080 Ti the Q6_K output head (248320 x
+// 4096, store) at T = 1, whose plain kernel streams at 94 % of DRAM, took 1.52 -> 1.71 ms with it.
+template <class Decoder, class Schedule, Epilogue E>
+inline constexpr bool kRmmaLatencyVariant =
+    Schedule::kNTiles == 1 &&
+    (UnpackOf<Decoder>::value || (StageActsOf<Decoder>::value && E == Epilogue::SwiGlu));
+
+// The DRAM bytes per SM cycle (dram_bytes_per_sm_cycle: the board's facts) from which the plain
+// K-quant kernel of one token tile is latency-bound. It cuts a row's scales out as it loads them,
+// so a warp's prefetch issues row after row, each waiting for its own head; the latency variant
+// issues them back to back. A/B on five boards, T = 5..8, Qwen3.5-9B shapes (bytes per SM cycle:
+// RTX 4090 3.1, 4070 Ti 3.2, 5070 Ti 5.2, 2080 Ti 5.9, 3060 7.2):
+// - SwiGLU (two row sets, the activations staged): the 4090 and 4070 Ti, whose plain kernel
+//   streamed at 86-91 % of DRAM, lost 8-34 % to the variant (ncu, Q4_K 12288x4096 on the 4090:
+//   lg_throttle 0.02 -> 6.9 stalls per issue, the queued loads); the 5070 Ti and 3060, at
+//   64-74 %, gained 2-15 % and 11-25 %.
+// - One row set (store, add; nothing staged): the 3060 gained 8-21 %, the 2080 Ti 0-4 %, and
+//   the 5070 Ti between +14 % (Q3_K) and -3 % (Q4_K add 4096x12288 w1x4, 40.7 -> 41.7 us), so
+//   its threshold lies above that board.
+// Both thresholds lie between the boards measured on either side of them, not on one.
+// (kRmmaLatencySwiGluBytes, kRmmaLatencyOneSetBytes: generic_gemm_internal.h.)
+
+// The CTAs a call of this schedule launches (grid x, y and the cluster's z).
+template <class Schedule>
+std::int64_t rmma_grid_ctas(const GemmArgs& args) {
+    const std::int64_t x = (args.rows + Schedule::kRowsPerCta - 1) / Schedule::kRowsPerCta;
+    const std::int64_t y = (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta;
+    return x * y * Schedule::kCluster;
+}
+
+// A variant kernel's and the plain kernel's resident CTAs per SM on the call's dynamic shared
+// memory: the caller's slot holds them for none (every K-quant call), once per device;
+// kernel_resident_ctas_per_sm caches the rest per kernel, size and device.
+template <class Schedule>
+bool rmma_occupancy_kept(PerDevice<std::array<int, 2>>& slot, const void* variant,
+                         const void* plain, const GemmArgs& args) {
+    const auto smem     = static_cast<std::size_t>(args.spread_smem);
+    const auto resident = [&](std::size_t bytes) {
+        return std::array<int, 2>{kernel_resident_ctas_per_sm(variant, Schedule::kThreads, bytes),
+                                  kernel_resident_ctas_per_sm(plain, Schedule::kThreads, bytes)};
+    };
+    const std::array<int, 2> ctas =
+        smem == 0 ? slot.get([&](int) { return resident(0); }) : resident(smem);
+    return rmma_variant_occupancy_rule(rmma_grid_ctas<Schedule>(args), device_class().sms,
+                                       ctas[0], ctas[1]);
+}
+
+// Whether this device launches the latency variant: where the board is latency-bound for the
+// epilogue (above), where SwiGLU's activations are staged with cp.async (sm_80+) or ride the
+// activation ring (kRmmaAheadForm; on the RTX 2080 Ti the variant with neither left Q4_K SwiGLU
+// 7-8 % slower, with the ring w1x4 took 168.9 -> 122.3 us at T = 8), and only where the call's
+// grid takes no more waves at the variant's resident CTAs per SM than at the plain kernel's
+// (rmma_variant_occupancy_rule: the registers a decoder edit moves change the choice only where
+// they change the waves).
+template <class Decoder, class Schedule, Epilogue E>
+bool rmma_latency_board() {
+    static PerDevice<bool> board;
+    return board.get([](int) {
+        const bool swiglu = E == Epilogue::SwiGlu;
+        if (dram_bytes_per_sm_cycle() <
+            (swiglu ? kRmmaLatencySwiGluBytes : kRmmaLatencyOneSetBytes)) {
+            return false;
+        }
+        const auto& d = device_class();
+        // Volta's register MMA is emulated on FMA (no m16n8k16): its kernel is compute-bound,
+        // and the variant only cost there (GV100, T 5..8: 0-5 % slower, never picked).
+        if (d.major * 10 + d.minor < 75) return false;
+        // Without cp.async (sm_75) SwiGLU's variant is the activation ring's form, or none.
+        return !(swiglu && d.major < 8 && !kRmmaAheadForm<Decoder, Schedule, E>);
+    });
+}
+
+template <class Decoder, class Schedule, Epilogue E>
+bool rmma_latency_pays(const GemmArgs& args) {
+    static PerDevice<std::array<int, 2>> ctas;
+    return rmma_latency_board<Decoder, Schedule, E>() &&
+           rmma_occupancy_kept<Schedule>(
+               ctas, reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E, true>),
+               reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E, false>), args);
+}
+
+// The schedules and decoders with a wide variant (WideOf: the wide-load Q6_K), one token tile.
+template <class Decoder, class Schedule, Epilogue E>
+inline constexpr bool kRmmaWideVariant =
+    Schedule::kNTiles == 1 && !std::is_void_v<typename WideOf<Decoder>::type>;
+
+// Whether this device launches the wide variant (rmma_wide_rule, generic_gemm_internal.h): the
+// board's DRAM bytes per SM cycle and compute capability and the two kernels' local memory
+// (spills), read once per device, and the call's waves at either kernel's resident CTAs per SM.
+template <class Decoder, class Schedule, Epilogue E>
+bool rmma_wide_pays(const GemmArgs& args) {
+    using Wide        = typename WideOf<Decoder>::type;
+    const void* plain = reinterpret_cast<const void*>(&rmma_kernel<Decoder, Schedule, E>);
+    const void* wide  = reinterpret_cast<const void*>(&rmma_kernel<Wide, Schedule, E>);
+    struct Board {
+        double bytes;
+        int cc;
+        std::size_t wide_local;
+        std::size_t plain_local;
+    };
+    static PerDevice<Board> board;
+    const Board& b = board.get([&](int) {
+        const auto& d    = device_class();
+        const auto local = [](const void* kernel) {
+            cudaFuncAttributes attr{};
+            CUDA_CHECK(cudaFuncGetAttributes(&attr, kernel));
+            return attr.localSizeBytes;
+        };
+        return Board{dram_bytes_per_sm_cycle(), d.major * 10 + d.minor, local(wide), local(plain)};
+    });
+    // The board's facts first: the occupancy query only where they admit the wide kernel.
+    if (!rmma_wide_rule(b.bytes, b.cc, true, b.wide_local, b.plain_local)) return false;
+    static PerDevice<std::array<int, 2>> ctas;
+    return rmma_occupancy_kept<Schedule>(ctas, wide, plain, args);
+}
+
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
+    if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
+        // The choice reads the device's facts and occupancy; where either fails this launch
+        // takes the plain kernel (master's), and the next one asks again.
+        bool pays = false;
+        try {
+            pays = rmma_latency_pays<Decoder, Schedule, E>(args);
+        } catch (const std::exception&) {
+        }
+        if (pays) {
+            launch_rmma_kernel<Decoder, Schedule, E, true>(args, stream);
+            return;
+        }
+    }
+    if constexpr (kRmmaWideVariant<Decoder, Schedule, E>) {
+        // Where the latency variant does not run (it pays on the other side of the bandwidth per
+        // SM); a failed read takes the plain kernel, as above.
+        bool pays = false;
+        try {
+            pays = rmma_wide_pays<Decoder, Schedule, E>(args);
+        } catch (const std::exception&) {
+        }
+        if (pays) {
+            launch_rmma_kernel<typename WideOf<Decoder>::type, Schedule, E, false>(args, stream);
+            return;
+        }
+    }
+    launch_rmma_kernel<Decoder, Schedule, E, false>(args, stream);
+}
+
+template <class Decoder, class Schedule, Epilogue E, bool Latency>
+void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     const dim3 grid((args.rows + Schedule::kRowsPerCta - 1) / Schedule::kRowsPerCta,
                     (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta);
     if (grid.y > kMaxGridYZ)
@@ -45,7 +202,8 @@ void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
     const auto smem = static_cast<std::size_t>(args.spread_smem);
     if (Schedule::kCluster == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
-        rmma_kernel<Decoder, Schedule, E><<<grid, Schedule::kThreads, smem, stream>>>(args);
+        rmma_kernel<Decoder, Schedule, E, Latency>
+            <<<grid, Schedule::kThreads, smem, stream>>>(args);
     } else {
         cudaLaunchAttribute attributes[2]{};
         unsigned count = 0;
@@ -68,7 +226,7 @@ void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
         config.stream   = stream;
         config.attrs    = attributes;
         config.numAttrs = count;
-        CUDA_CHECK(cudaLaunchKernelEx(&config, rmma_kernel<Decoder, Schedule, E>, args));
+        CUDA_CHECK(cudaLaunchKernelEx(&config, rmma_kernel<Decoder, Schedule, E, Latency>, args));
     }
     CUDA_CHECK(cudaGetLastError());
 }

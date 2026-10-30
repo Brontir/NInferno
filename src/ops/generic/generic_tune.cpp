@@ -384,7 +384,10 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
         const auto name  = std::to_string(t);
         const Route base = heuristic_route(problem, weight, t, false);
         entry["routes"][name] = nullptr;
-        if (replaceable(base, k, t) && !table_route(problem, t, false)) {
+        // A width Volta's own rule routes (volta_fixed_route) takes that route before any tuned
+        // one: timing it would record a choice the dispatch never reads.
+        if (replaceable(base, k, t) && !table_route(problem, t, false) &&
+            !volta_fixed_route(problem, weight, t)) {
             const double base_us = bench.median_us(base, t);
             double best_us       = base_us;
             Route best           = base;
@@ -739,6 +742,8 @@ void tune_dense(const Problem& problem, const Call& call, cudaStream_t stream) {
 
 std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t tokens) {
     if (tokens < 1 || tokens > kDenseTuneMaxTokens) return std::nullopt;
+    // Routes timed on this device are not a substituted board's (route_query.h).
+    if (substituted_foreign_class()) return std::nullopt;
     std::lock_guard lock(g_mutex);
     if (g_tuned.empty()) return std::nullopt;
     const auto it = g_tuned.find(key_of(problem));
@@ -748,7 +753,8 @@ std::optional<Route> tuned_dense_route(const Problem& problem, std::int32_t toke
 
 std::optional<Route> tuned_prefill_route(const Problem& problem, std::int32_t tokens,
                                          Route heuristic) {
-    if (tokens <= kDenseTuneMaxTokens || !g_enabled.load(std::memory_order_relaxed)) {
+    if (tokens <= kDenseTuneMaxTokens || !g_enabled.load(std::memory_order_relaxed) ||
+        substituted_foreign_class()) {
         return std::nullopt;
     }
     std::lock_guard lock(g_mutex);

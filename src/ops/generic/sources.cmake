@@ -3,6 +3,7 @@
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_tune.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_i8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_bf16.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_fp8.cu"
@@ -46,6 +47,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a4.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_scalar.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_volta_gemv.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_volta_hmma.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_ggml32.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_w4a8_superblock.cu"

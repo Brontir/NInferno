@@ -1,6 +1,8 @@
 // Host-side structured-output contracts: JSON Schema support policy, grammar compilation, the
-// per-request mask rows used by speculative verification, the reasoning gate and violation
-// handling. CPU only; uses a synthetic byte-level vocabulary.
+// per-request mask rows used by speculative verification, the reasoning gate, violation handling,
+// and the declared mask-row class with the step rule it feeds (runtime/contract/token_mask.h).
+// CPU only; uses a synthetic byte-level vocabulary.
+#include "runtime/contract/token_mask.h"
 #include "structured/constraint.h"
 #include "structured/request_constraint.h"
 #include "structured/schema_support.h"
@@ -9,6 +11,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <initializer_list>
 #include <iostream>
 #include <string>
 #include <string_view>
@@ -390,7 +393,6 @@ void speculative_rows_contract(const ConstraintCompiler& compiler) {
     std::vector<std::uint32_t> again(rows.size());
     request.fill_round(drafts, again.data(), words);
     check(again == rows, "fill_round restores the matcher");
-    check(request.slowest_row_ns() > 0, "fill_round records its slowest row");
 
     // A draft the grammar rejects: later rows repeat the last consumable row.
     const std::vector<TokenId> bad = {kObjectOpenQuote, 'x', 'y'};
@@ -562,6 +564,165 @@ void violation_contract(const ConstraintCompiler& compiler) {
     check(faulted.violated() && !faulted.stats().violation.empty(), "device fault is reported");
 }
 
+// A step's mask time is declared, never measured. A client's EBNF grammar, as a grammar or as a
+// format of its structural tag, declares free-grammar rows (runtime::MaskRowClass::FreeGrammar)
+// outside a reasoning section; every other constraint, the Engine's own tool-call markup among
+// them, and a free grammar inside its reasoning declare shaped ones. The class follows the spec
+// and the committed tokens only: no round a request computes moves it. The step rule the Program
+// applies (runtime::plan_step_masks): a step of shaped rows overlaps its masks with its launch
+// even at the widest shape, so its constrained DFlash rows draft; one free-grammar row, also
+// beside shaped ones, fills the step's masks before its launch and stops their DFlash drafts.
+void mask_row_class_contract(const ConstraintCompiler& compiler) {
+    using runtime::MaskRowClass;
+    using runtime::StepMaskRow;
+    const auto class_of = [](const RequestConstraint& request) {
+        return runtime::mask_row_class(request.free_grammar_rows());
+    };
+
+    OutputConstraintSpec grammar;
+    grammar.kind       = OutputConstraintKind::Grammar;
+    grammar.definition = R"EBNF(root ::= "call(" arg ("," arg)* ")"
+arg ::= [0-9]+)EBNF";
+    check(declares_free_grammar(grammar) && declares_free_grammar(*compiler.compile(grammar)),
+          "an EBNF grammar declares shaped mask rows");
+
+    // A client's structural tag around an EBNF format holds a free grammar; the same tag rendered
+    // by the Engine (Gemma 4's tool-call markup holds its argument grammar) does not, and the
+    // compile cache keeps the two apart.
+    OutputConstraintSpec client_tag;
+    client_tag.kind       = OutputConstraintKind::StructuralTag;
+    client_tag.definition = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
+        "content":{"type":"grammar","grammar":"root ::= [0-9]+"},"end":"</t>"}})";
+    OutputConstraintSpec engine_tag = client_tag;
+    engine_tag.engine_rendered      = true;
+    check(declares_free_grammar(client_tag) && declares_free_grammar(*compiler.compile(client_tag)),
+          "a client's structural tag around an EBNF format declares shaped mask rows");
+    check(!declares_free_grammar(engine_tag) &&
+              !declares_free_grammar(*compiler.compile(engine_tag)) &&
+              declares_free_grammar(*compiler.compile(client_tag)),
+          "the Engine's tool-call markup declares free-grammar mask rows, or shares the client's "
+          "compiled tag");
+
+    OutputConstraintSpec object;
+    object.kind = OutputConstraintKind::JsonObject;
+    OutputConstraintSpec choice;
+    choice.kind    = OutputConstraintKind::Choice;
+    choice.choices = {"yes", "no"};
+    OutputConstraintSpec regex;
+    regex.kind       = OutputConstraintKind::Regex;
+    regex.definition = "[0-9]{3}-[a-z]+";
+    // A structural tag of other formats is shaped, also where a value in its JSON Schema reads
+    // like a grammar format.
+    OutputConstraintSpec schema_tag;
+    schema_tag.kind       = OutputConstraintKind::StructuralTag;
+    schema_tag.definition = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
+        "content":{"type":"json_schema","json_schema":{"type":"object","properties":{"k":{
+        "type":"object","default":{"type":"grammar","grammar":"root ::= [0-9]+"}}}}},
+        "end":"</t>"}})";
+    check(!declares_free_grammar(schema_tag),
+          "a JSON Schema value in a structural tag declares free-grammar mask rows");
+
+    OutputConstraintSpec schema = schema_spec(Json::parse(R"({"type":"object",
+        "properties":{"k":{"type":"boolean"}},"required":["k"],"additionalProperties":false})"));
+    for (const OutputConstraintSpec* spec : {&object, &choice, &regex, &schema}) {
+        check(!declares_free_grammar(*spec) && !declares_free_grammar(*compiler.compile(*spec)),
+              "kind " + std::to_string(static_cast<int>(spec->kind)) +
+                  " declares free-grammar mask rows");
+    }
+
+    // No round a request computes moves its class, nor does a commit outside a reasoning section.
+    RequestConstraint free_request(compiler.compile(grammar), false);
+    RequestConstraint shaped_request(compiler.compile(schema), false);
+    const std::size_t words = free_request.mask_words();
+    std::vector<std::uint32_t> rows(4 * words);
+    const std::vector<TokenId> drafts = {'c', 'a', 'l'};
+    for (int round = 0; round < 3; ++round) {
+        free_request.fill_round(drafts, rows.data(), words);
+        shaped_request.fill_round({}, rows.data(), words);
+        check(class_of(free_request) == MaskRowClass::FreeGrammar &&
+                  class_of(shaped_request) == MaskRowClass::Shaped,
+              "a request's mask row class moved after round " + std::to_string(round));
+    }
+    free_request.commit(bytes_of("call(1"));
+    check(class_of(free_request) == MaskRowClass::FreeGrammar, "a commit moved the class");
+
+    // Inside a reasoning section a free grammar's rows copy the no-stop mask: shaped, also over a
+    // round whose drafts cross the terminator, until a committed token passes it.
+    RequestConstraint reasoning(compiler.compile(grammar), true);
+    std::vector<std::uint32_t> crossing(4 * words);
+    const std::vector<TokenId> across = {'x', kThinkClose, 'c'};
+    reasoning.fill_round(across, crossing.data(), words);
+    check(class_of(reasoning) == MaskRowClass::Shaped,
+          "a free grammar inside its reasoning declares free-grammar mask rows");
+    const TokenId thought[] = {'x'};
+    reasoning.commit(thought);
+    check(class_of(reasoning) == MaskRowClass::Shaped, "a reasoning token moved the class");
+    const TokenId terminator[] = {kThinkClose};
+    reasoning.commit(terminator);
+    check(class_of(reasoning) == MaskRowClass::FreeGrammar,
+          "a free grammar past its reasoning terminator declares shaped mask rows");
+
+    // A model that opens its reasoning itself: the grammar's rows before its first token, none in
+    // the reasoning it opened, the grammar's again from the gap after its terminator.
+    GrammarVocabulary words_with_open       = vocabulary();
+    words_with_open.token_bytes[kThinkOpen] = "<think>";
+    words_with_open.reasoning_open          = "<think>";
+    const ConstraintCompiler opening(words_with_open);
+    RequestConstraint self_opened(opening.compile(grammar), false, true);
+    check(class_of(self_opened) == MaskRowClass::FreeGrammar,
+          "a free grammar before its first token declares shaped mask rows");
+    const TokenId opener[] = {kThinkOpen};
+    self_opened.commit(opener);
+    check(class_of(self_opened) == MaskRowClass::Shaped,
+          "a free grammar in the reasoning it opened declares free-grammar mask rows");
+    self_opened.commit(terminator);
+    check(!self_opened.violated() && class_of(self_opened) == MaskRowClass::FreeGrammar,
+          "a free grammar in the gap after its reasoning declares shaped mask rows");
+
+    // The step rule. The Program's widest launch verifies 15 drafts a row
+    // (kDFlashDecodeMaximumDrafts and kMtpDecodeMaximumDrafts; decode.cpp asserts the same at
+    // kMaximumConcurrency rows).
+    constexpr std::uint32_t kWidestDrafts = 15;
+    const StepMaskRow shaped_row{.row_class = class_of(shaped_request), .speculative = true};
+    std::vector<StepMaskRow> step(kMaximumConcurrency, shaped_row);
+    const runtime::StepMaskPlan dflash = runtime::plan_step_masks(step, false, true, kWidestDrafts);
+    check(dflash.mask_ns == kMaximumConcurrency * runtime::kShapedMaskRowNs &&
+              dflash.drafted_ns == kMaximumConcurrency * 16U * runtime::kShapedMaskRowNs &&
+              !dflash.masks_first && dflash.dflash_masks_follow_drafts,
+          "a DFlash step of shaped rows at the widest launch fills its masks first or does not "
+          "draft");
+    const runtime::StepMaskPlan mtp = runtime::plan_step_masks(step, true, true, kWidestDrafts);
+    check(mtp.mask_ns == kMaximumConcurrency * 16U * runtime::kShapedMaskRowNs &&
+              !mtp.masks_first && !mtp.dflash_masks_follow_drafts,
+          "an MTP step of shaped rows at the widest launch fills its masks first");
+
+    // A plain free-grammar row beside drafting shaped rows: the step's masks come first and its
+    // DFlash rows verify without drafts. Inside its reasoning the same request lets them draft.
+    step.back() = StepMaskRow{.row_class = class_of(free_request), .speculative = false};
+    const runtime::StepMaskPlan beside = runtime::plan_step_masks(step, false, true, kWidestDrafts);
+    check(beside.masks_first && !beside.dflash_masks_follow_drafts,
+          "a free-grammar row beside drafting shaped rows overlaps the step's masks");
+    RequestConstraint thinking(compiler.compile(grammar), true);
+    step.back().row_class = class_of(thinking);
+    const runtime::StepMaskPlan reasoning_step =
+        runtime::plan_step_masks(step, false, true, kWidestDrafts);
+    check(!reasoning_step.masks_first && reasoning_step.dflash_masks_follow_drafts,
+          "a free grammar inside its reasoning stops its step's DFlash drafts");
+
+    // Nothing drafts without a speculative row, and a step without a constrained row has no masks.
+    const std::vector<StepMaskRow> plain_only = {
+        StepMaskRow{.row_class = MaskRowClass::Shaped, .speculative = false}};
+    check(!runtime::plan_step_masks(plain_only, false, false, kWidestDrafts)
+               .dflash_masks_follow_drafts,
+          "a step without a speculative row drafts its constrained rows");
+    const runtime::StepMaskPlan none = runtime::plan_step_masks({}, false, true, kWidestDrafts);
+    check(none.mask_ns == 0 && !none.masks_first && !none.dflash_masks_follow_drafts,
+          "a step without a constrained row plans masks");
+    check(runtime::masks_overlap_launch(runtime::kLaunchMaskOverlapNs) &&
+              !runtime::masks_overlap_launch(runtime::kLaunchMaskOverlapNs + 1),
+          "the overlap bound is not inclusive");
+}
+
 void visible_special_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec spec;
     spec.kind                   = OutputConstraintKind::Regex;
@@ -626,19 +787,19 @@ void integer_digit_bound_contract(const ConstraintCompiler& compiler) {
 }
 
 // JSON inside a structural tag (tool-call arguments) has its whitespace runs bounded like a JSON
-// response format (CompilerOptions::json_whitespace_run, 24 by default).
+// response format (CompilerOptions::json_whitespace_run, 64 by default).
 void structural_tag_whitespace_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec spec;
     spec.kind           = OutputConstraintKind::StructuralTag;
     spec.definition     = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
         "content":{"type":"json_schema","json_schema":{"type":"object"}},"end":"</t>"}})";
     const auto compiled = compiler.compile(spec);
-    for (const int run : {23, 24}) {
+    for (const int run : {63, 64}) {
         RequestConstraint request(compiled, false);
         request.commit(bytes_of("<t>{" + std::string(static_cast<std::size_t>(run), ' ')));
         std::vector<std::uint32_t> row(request.mask_words());
         request.fill_round({}, row.data(), row.size());
-        check(allowed(row.data(), ' ') == (run < 24) && allowed(row.data(), '}'),
+        check(allowed(row.data(), ' ') == (run < 64) && allowed(row.data(), '}'),
               "structural tag JSON whitespace run of " + std::to_string(run));
     }
 }
@@ -682,6 +843,201 @@ void answer_schema_contract(const ConstraintCompiler& compiler) {
           "an answer schema outside tool-call markup was accepted");
 }
 
+// Whether the whole of `text` is admitted and completes the grammar (the stop token is admitted).
+bool admits(const std::shared_ptr<const CompiledConstraint>& compiled, std::string_view text,
+            bool reasoning = false) {
+    RequestConstraint request(compiled, reasoning);
+    request.commit(bytes_of(text));
+    if (request.violated()) { return false; }
+    std::vector<std::uint32_t> row(request.mask_words());
+    request.fill_round({}, row.data(), row.size());
+    if (!allowed(row.data(), kImEnd)) { return false; }
+    const TokenId stop[] = {kImEnd};
+    request.commit(stop);
+    return request.stats().complete && !request.stats().violated;
+}
+
+std::string object_of(std::initializer_list<const char*> keys, bool spaced = false) {
+    std::string out = "{";
+    bool first      = true;
+    for (const char* key : keys) {
+        out += first ? "" : (spaced ? ",\n  " : ",");
+        out += std::string("\"") + key + "\":" + (spaced ? " " : "") + "\"v" + key + "\"";
+        first = false;
+    }
+    return out + "}";
+}
+
+// Key order of JSON objects (the "schema-order" bug class): optional properties compiled in schema
+// order, each skippable, make every earlier optional key unwritable once a later one is written;
+// the output stays valid JSON and fields silently vanish. An object with optional properties takes
+// them in any order, each at most once; its required ones keep their schema order (an object whose
+// properties are all required, as OpenAI strict mode demands, keeps the documented schema order).
+void key_order_contract(const ConstraintCompiler& compiler) {
+    const Json five = Json::parse(R"({"type":"object","properties":{
+        "A":{"type":"string"},"B":{"type":"string"},"C":{"type":"string"},
+        "D":{"type":"string"},"E":{"type":"string"}},"additionalProperties":false})");
+    for (const bool compact : {true, false}) {
+        const auto compiled   = compiler.compile(schema_spec(five, compact));
+        const std::string tag = compact ? "compact" : "spaced";
+        check(admits(compiled, object_of({"C", "A", "E", "B", "D"}, !compact)),
+              tag + ": optional keys C,A,E,B,D");
+        check(admits(compiled, object_of({"E", "D", "C", "B", "A"}, !compact)),
+              tag + ": optional keys in reverse order");
+        check(admits(compiled, object_of({"D", "A"}, !compact)), tag + ": D then A");
+        check(admits(compiled, object_of({"A", "B", "C", "D", "E"}, !compact)),
+              tag + ": schema order");
+        check(admits(compiled, "{}"), tag + ": empty object");
+        check(!admits(compiled, object_of({"C", "A", "C"}, !compact)), tag + ": duplicate key");
+        check(!admits(compiled, object_of({"C", "F"}, !compact)), tag + ": undeclared key");
+    }
+    {
+        RequestConstraint request(compiler.compile(schema_spec(five)), false);
+        walk_text(request, object_of({"C", "A", "E", "B", "D"}), "walk C,A,E,B,D");
+    }
+    // All required: the schema order is the contract.
+    Json all        = five;
+    all["required"] = Json::array({"A", "B", "C", "D", "E"});
+    const auto ordered = compiler.compile(schema_spec(all));
+    check(admits(ordered, object_of({"A", "B", "C", "D", "E"})), "all required: schema order");
+    check(!admits(ordered, object_of({"C", "A", "E", "B", "D"})),
+          "all required: another order is refused");
+    // Mixed: required A and D in that order, optional B, C, E anywhere.
+    Json mixed        = five;
+    mixed["required"] = Json::array({"A", "D"});
+    const auto spine  = compiler.compile(schema_spec(mixed));
+    check(admits(spine, object_of({"C", "A", "E", "B", "D"})), "mixed: C,A,E,B,D");
+    check(admits(spine, object_of({"A", "D", "E", "C", "B"})), "mixed: optional keys after");
+    check(admits(spine, object_of({"A", "D"})), "mixed: required only");
+    check(!admits(spine, object_of({"D", "A"})), "mixed: required keys keep their order");
+    check(!admits(spine, object_of({"C", "A", "E"})), "mixed: a required key cannot be skipped");
+    check(!admits(spine, object_of({"A", "C", "D", "C"})), "mixed: duplicate optional key");
+    // Additional properties may sit anywhere among the declared ones.
+    Json open                    = five;
+    open["additionalProperties"] = true;
+    const auto extra             = compiler.compile(schema_spec(open));
+    check(admits(extra, object_of({"C", "Z", "A", "Y"})), "additional keys between declared ones");
+    check(!admits(extra, object_of({"C", "A", "C"})), "additional pattern excludes declared keys");
+    // An all-required object that admits other keys keeps its order; the others may sit anywhere.
+    Json strict_open        = all;
+    strict_open["additionalProperties"] = true;
+    const auto spine_open   = compiler.compile(schema_spec(strict_open));
+    check(admits(spine_open, object_of({"Z", "A", "B", "Y", "C", "D", "E"})),
+          "all required: additional keys between required ones");
+    check(!admits(spine_open, object_of({"B", "A", "C", "D", "E"})),
+          "all required with additional keys: schema order kept");
+    // Pattern properties may match declared names: any order, no set tracked.
+    Json patterned                 = five;
+    patterned["patternProperties"] = Json{{"^x[0-9]$", Json{{"type", "string"}}}};
+    const auto pattern             = compiler.compile(schema_spec(patterned));
+    check(admits(pattern, object_of({"C", "x1", "A", "E"})), "pattern properties: any order");
+    // Nested objects, arrays of objects and $ref targets hold the same rule.
+    const Json nested = Json{{"type", "object"},
+                             {"$defs", Json{{"five", five}}},
+                             {"properties", Json{{"inner", five},
+                                                 {"list", Json{{"type", "array"}, {"items", five}}},
+                                                 {"ref", Json{{"$ref", "#/$defs/five"}}}}},
+                             {"required", Json::array({"inner"})},
+                             {"additionalProperties", false}};
+    const auto deep         = compiler.compile(schema_spec(nested));
+    const std::string cae   = object_of({"C", "A", "E"});
+    check(admits(deep, "{\"list\":[" + cae + "," + object_of({"D", "B"}) + "],\"inner\":" + cae +
+                           ",\"ref\":" + object_of({"E", "A"}) + "}"),
+          "nested objects, array items and $ref take optional keys in any order");
+    check(!admits(deep, "{\"list\":[" + cae + "]}"), "nested: required inner cannot be skipped");
+    // Wide objects keep any order (past the tracked width a key may repeat; see serving.md).
+    Json wide = Json::parse(R"({"type":"object","properties":{},"additionalProperties":false})");
+    std::vector<std::string> names;
+    for (char c = 'a'; c <= 'x'; ++c) {
+        names.emplace_back(1, c);
+        wide["properties"][names.back()] = Json{{"type", "integer"}};
+    }
+    const auto start   = std::chrono::steady_clock::now();
+    const auto broad   = compiler.compile(schema_spec(wide));
+    const auto elapsed = std::chrono::steady_clock::now() - start;
+    check(elapsed < std::chrono::seconds(5), "24 optional properties compile in time");
+    std::string reverse = "{";
+    for (auto it = names.rbegin(); it != names.rend(); ++it) {
+        reverse += (it == names.rbegin() ? "\"" : ",\"") + *it + "\":1";
+    }
+    check(admits(broad, reverse + "}"), "24 optional properties in reverse order");
+    check(!admits(broad, "{\"a\":1,\"zz\":1}"), "wide: undeclared key");
+    // The constraint opens only after the reasoning ends.
+    OutputConstraintSpec gated = schema_spec(five);
+    gated.follows_reasoning    = true;
+    {
+        RequestConstraint request(compiler.compile(gated), true);
+        request.commit(bytes_of("thinking {\"A\":"));
+        const TokenId close[] = {kThinkClose, kDoubleNewline};
+        request.commit(close);
+        walk_text(request, cae, "after reasoning: C,A,E");
+    }
+    // response_format beside tools: the answer schema takes the same rule.
+    OutputConstraintSpec beside;
+    beside.kind          = OutputConstraintKind::StructuralTag;
+    beside.definition    = R"({"type":"structural_tag","format":{"type":"tag","begin":"<t>",
+        "content":{"type":"json_schema","json_schema":{"type":"object"}},"end":"</t>"}})";
+    beside.compact_json  = true;
+    beside.answer_schema = five.dump();
+    check(admits(compiler.compile(beside), object_of({"C", "A", "E", "B", "D"})),
+          "answer schema beside tools: C,A,E,B,D");
+    // A large nested object pretty-printed with four-space indents fits the whitespace bound to
+    // depth 15 (a run of a newline and 60 spaces); nothing bounds the depth itself.
+    const Json node =
+        Json::parse(R"({"type":"object","properties":{"v":{"type":"integer"},
+            "child":{"$ref":"#"}},"additionalProperties":false})");
+    Json value = Json{{"v", 0}};
+    for (int depth = 1; depth <= 14; ++depth) { value = Json{{"v", depth}, {"child", value}}; }
+    check(admits(compiler.compile(schema_spec(node, false)), value.dump(4)),
+          "a 15-level object indented by four spaces");
+    OutputConstraintSpec any;
+    any.kind = OutputConstraintKind::JsonObject;
+    check(admits(compiler.compile(any), value.dump(4)), "json_object: 15 levels indented by four");
+    // Counted objects (minProperties/maxProperties) take the same any-order rule, the count exact.
+    Json at_most_two             = five;
+    at_most_two["maxProperties"] = 2;
+    const auto two               = compiler.compile(schema_spec(at_most_two));
+    check(admits(two, object_of({"C", "A"})), "maxProperties 2: C,A");
+    check(admits(two, "{}"), "maxProperties 2: empty");
+    check(!admits(two, object_of({"C", "A", "E"})), "maxProperties 2: a third key");
+    Json at_least_two             = five;
+    at_least_two["minProperties"] = 2;
+    const auto least              = compiler.compile(schema_spec(at_least_two));
+    check(admits(least, object_of({"E", "B"})), "minProperties 2: E,B");
+    check(admits(least, object_of({"C", "A", "E", "B", "D"})), "minProperties 2: all five");
+    check(!admits(least, object_of({"C"})), "minProperties 2: one key");
+    check(!admits(least, "{}"), "minProperties 2: empty");
+    check(!admits(least, object_of({"C", "A", "C"})), "minProperties 2: duplicate key");
+    // With additional keys (which may repeat) a counted object keeps the fixed order; it counts.
+    Json open_one                    = five;
+    open_one["additionalProperties"] = true;
+    open_one["minProperties"]        = 1;
+    open_one["maxProperties"]        = 3;
+    const auto loose_count           = compiler.compile(schema_spec(open_one));
+    check(admits(loose_count, object_of({"Z"})), "min 1 max 3: one additional key");
+    check(admits(loose_count, object_of({"C", "Z", "Y"})), "min 1 max 3: three mixed keys");
+    check(!admits(loose_count, object_of({"C", "Z", "Y", "X"})), "min 1 max 3: four keys");
+    check(!admits(loose_count, "{}"), "min 1 max 3: empty");
+    // Required A and D with at most three keys: one optional key fits, and it may come first; two
+    // optional keys first would leave no room for both required ones, so the second is refused.
+    Json spine_count             = mixed;
+    spine_count["maxProperties"] = 3;
+    const auto tight             = compiler.compile(schema_spec(spine_count));
+    check(admits(tight, object_of({"C", "A", "D"})), "required A, D, max 3: C,A,D");
+    check(admits(tight, object_of({"A", "D", "E"})), "required A, D, max 3: A,D,E");
+    check(!admits(tight, object_of({"C", "E", "A", "D"})), "required A, D, max 3: C,E,A,D");
+    {
+        RequestConstraint request(tight, false);
+        request.commit(bytes_of(R"({"C":"vC",)"));
+        std::vector<std::uint32_t> row(request.mask_words());
+        request.fill_round({}, row.data(), row.size());
+        request.commit(bytes_of(R"(")"));
+        request.fill_round({}, row.data(), row.size());
+        check(allowed(row.data(), 'A') && !allowed(row.data(), 'E') && !allowed(row.data(), 'B'),
+              "required A, D, max 3: after C only a required key may follow");
+    }
+}
+
 // A strict tool's arguments are one JSON object in every tool-call syntax: the root is held to
 // one (an untyped plain root becomes an object, a combinator root is left to its branches) and
 // another declared type is refused.
@@ -719,10 +1075,12 @@ int main() {
     other_kinds_contract(compiler);
     structural_tag_whitespace_contract(compiler);
     answer_schema_contract(compiler);
+    key_order_contract(compiler);
     speculative_rows_contract(compiler);
     reasoning_gate_contract(compiler);
     self_opened_reasoning_contract();
     violation_contract(compiler);
+    mask_row_class_contract(compiler);
     visible_special_contract(compiler);
     std::cout << (failures == 0 ? "OK" : "FAIL") << " structured output (" << failures
               << " failures)\n";

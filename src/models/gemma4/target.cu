@@ -90,7 +90,7 @@ void project(const Tensor& x, const Projection& p, Tensor& out, DeviceArena& wor
              cudaStream_t stream, Activations activations) {
     auto scope = work.scope();
     ops::linear(x, p.weight, out,
-                activations == Activations::A16Only ? ops::verify_linear_policy(p.policy) : p.policy, work,
+                activations == Activations::Verify ? ops::verify_linear_policy(p.policy) : p.policy, work,
                 stream);
 }
 
@@ -101,7 +101,7 @@ static bool project_release_next(const Tensor& x, const Projection& p, Tensor& o
     auto scope = work.scope();
     return ops::linear_release_next(
         x, p.weight, out,
-        activations == Activations::A16Only ? ops::verify_linear_policy(p.policy) : p.policy, work, stream);
+        activations == Activations::Verify ? ops::verify_linear_policy(p.policy) : p.policy, work, stream);
 }
 
 namespace {
@@ -119,7 +119,7 @@ bool project_side_by_side(const Tensor& x, std::span<const Projection* const> pr
     for (std::size_t i = 0; i < projections.size(); ++i) {
         const Projection& p = *projections[i];
         requests[i]         = {&p.weight,
-                       activations == Activations::A16Only ? ops::verify_linear_policy(p.policy) : p.policy,
+                       activations == Activations::Verify ? ops::verify_linear_policy(p.policy) : p.policy,
                                outputs[i]};
     }
     return ops::project_side_by_side(x, std::span(requests, projections.size()), work, stream);
@@ -475,7 +475,7 @@ void TargetPass::layers(DeviceArena& work_, Tensor& x, Tensor& h, const Tensor& 
             if (ops::linear_geglu_supports(layer.gate_up.weight)) {
                 // GeGLU in the projection's epilogue: no BF16 gate/up plane, no second kernel.
                 auto geglu_scope  = work_.scope();
-                const auto policy = activations == Activations::A16Only ? ops::verify_linear_policy(layer.gate_up.policy)
+                const auto policy = activations == Activations::Verify ? ops::verify_linear_policy(layer.gate_up.policy)
                                                                         : layer.gate_up.policy;
                 WorkspaceArena scratch(work_.alloc_bytes(
                     std::max<std::size_t>(ops::linear_geglu_workspace_capacity_bytes(
@@ -618,13 +618,13 @@ speculation::TargetShape Target::shape() const noexcept {
 }
 
 Tensor Target::draft_forward(const Tensor& ids, const Tensor& pos,
-                             ops::Gemma4AttentionEnvelope envelope, bool a16,
+                             ops::Gemma4AttentionEnvelope envelope, bool verify,
                              const FeatureTap* tap) {
-    return forward(ids, pos, envelope, a16 ? Activations::A16Only : Activations::Recorded, tap);
+    return forward(ids, pos, envelope, verify ? Activations::Verify : Activations::Recorded, tap);
 }
 
-void Target::greedy_logits(const Tensor& normed, Tensor& out, bool a16) {
-    uncapped_head(normed, out, a16 ? Activations::A16Only : Activations::Recorded);
+void Target::greedy_logits(const Tensor& normed, Tensor& out, bool verify) {
+    uncapped_head(normed, out, verify ? Activations::Verify : Activations::Recorded);
 }
 
 void Target::draft_embedding(const Tensor& ids, Tensor& out) {

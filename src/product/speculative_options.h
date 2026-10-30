@@ -41,9 +41,13 @@ namespace ninferno::product {
 
 // Why a speculation gave way to a fallback: the Engine refused it (`why`) at this context.
 [[nodiscard]] inline std::string fit_refusal(const std::string& label, std::uint32_t max_context,
-                                             std::string_view why) {
-    return label + " does not fit max_context " + std::to_string(max_context) +
-           " on this device (" + std::string(why) + ")";
+                                             std::string_view why, bool automatic = false) {
+    // An automatic context (under --max-context-cap: max_context is its ceiling).
+    const std::string context =
+        !automatic         ? "max_context " + std::to_string(max_context)
+        : max_context != 0 ? "an automatic context (at most " + std::to_string(max_context) + ")"
+                           : std::string("an automatic context");
+    return label + " does not fit " + context + " on this device (" + std::string(why) + ")";
 }
 
 // --draft-width: the DFlash drafter's width in every round (SpeculativeOptions::draft_width).

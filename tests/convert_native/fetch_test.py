@@ -5,7 +5,7 @@
 Checks the Hugging Face flow (listing, 302 + X-Linked-Etag, cache layout and reuse, file
 choice), parallel range transfers, resume from another downloader's prefix and from this
 downloader's own progress record, stall abort and resume, a digest mismatch (nothing published),
-an expired signed URL, a server without ranges, gated repositories ($HF_TOKEN sent to the hub
+an expired signed URL, a server without ranges, a rate limit waited out, gated repositories ($HF_TOKEN sent to the hub
 only and never printed), GGUF quantization choice, ModelScope, plain URLs, a fetched GGUF
 converted without --out, its tokenizer files taken from the base model it names, an unsupported
 architecture refused from config.json before any weight moves, and $HF_HUB_OFFLINE.
@@ -14,9 +14,11 @@ architecture refused from config.json before any weight moves, and $HF_HUB_OFFLI
 from __future__ import annotations
 
 import json
+import struct
 import os
 from pathlib import Path
 import random
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -72,6 +74,9 @@ def main() -> int:
     hub.behavior[hub.sha(dropped)] = {"drop_once"}
     hub.add_repo("org/busy", {"config.json": b"{}", "model.safetensors": blob(2 * MIB, 61)})
     hub.repos["org/busy"]["busy_once"] = True
+    # A rate limit whose window outlasts the short retries (1, 2 and 4 s).
+    hub.add_repo("org/limited", {"config.json": b"{}", "model.safetensors": blob(2 * MIB, 62)})
+    hub.repos["org/limited"]["rate_limit_window"] = 9
     ggufs = {name: blob(1536 + i, 10 + i) for i, name in enumerate(
         ["m-Q4_K_M.gguf", "m-Q8_0.gguf", "m-UD-Q4_K_XL.gguf", "mmproj-F16.gguf",
          "m-Q6_K-00001-of-00002.gguf", "m-Q6_K-00002-of-00002.gguf", "m-MTP-ONLY-Q8_0.gguf",
@@ -82,6 +87,51 @@ def main() -> int:
     ggufhead = {"m-Q4_K_M.gguf": blob(3 * MIB + 5, 50), "m-Q8_0.gguf": blob(2 * MIB, 51)}
     hub.add_repo("org/ggufhead", ggufhead)
     hub.repos["org/ggufhead"]["no_sizes"] = True
+    # A split model whose output.weight lies in its second part (each part's header lists its own
+    # tensors), part 0 holding the token embedding: the head is read from part 2, never the
+    # embedding of an untied model.
+    def tensor_info(name, ne, ggml_type):
+        raw = name.encode()
+        return (struct.pack("<Q", len(raw)) + raw + struct.pack("<I", len(ne)) +
+                b"".join(struct.pack("<Q", n) for n in ne) + struct.pack("<IQ", ggml_type, 0))
+    def with_info(data, at, info):
+        return data[:at] + info + data[at + len(info):]
+    ggufsplit = {
+        "m-Q4_K_M-00001-of-00002.gguf": with_info(blob(2 * MIB, 53), 600 * 1024,
+                                                  tensor_info("token_embd.weight", [256, 1024], 8)),
+        "m-Q4_K_M-00002-of-00002.gguf": with_info(blob(2 * MIB, 54), 4096,
+                                                  tensor_info("output.weight", [256, 1024], 14)),
+    }
+    hub.add_repo("org/ggufsplit", ggufsplit)
+    # A split model tying its head: no part names output.weight, part 0 holds the token table,
+    # its later part a whole GGUF header (one F32 norm) the 1 MiB window holds.
+    def gguf_part(size):
+        header = b"GGUF" + struct.pack("<IQQ", 3, 1, 0) + tensor_info("blk.0.attn_norm.weight", [256], 0)
+        header += bytes(-len(header) % 32)
+        return header + bytes(size - len(header))
+    ggufsplittied = {
+        "m-Q4_K_M-00001-of-00002.gguf": with_info(blob(2 * MIB, 55), 600 * 1024,
+                                                  tensor_info("token_embd.weight", [256, 1024], 14)),
+        "m-Q4_K_M-00002-of-00002.gguf": gguf_part(2 * MIB),
+    }
+    hub.add_repo("org/ggufsplittied", ggufsplittied)
+    # The same whose later part's table the window does not hold whole (no GGUF header there):
+    # it may name output.weight past the window, so no tie (Opus on #202).
+    hub.add_repo("org/ggufsplitpartial", {
+        "m-Q4_K_M-00001-of-00002.gguf": ggufsplittied["m-Q4_K_M-00001-of-00002.gguf"],
+        "m-Q4_K_M-00002-of-00002.gguf": blob(2 * MIB, 56),
+    })
+    # A CDN that ignores ranges (a 200 for any Range): a window's read drops the leading bytes.
+    ggufnorange = {"m-Q4_K_M.gguf": blob(3 * MIB, 52)}
+    hub.add_repo("org/ggufnorange", ggufnorange)
+    hub.behavior[hub.sha(ggufnorange["m-Q4_K_M.gguf"])] = {"no_range"}
+    # A small vision projector without a quantization in its name, beside a model.
+    hub.add_repo("org/smallproj", {"m-Q4_0.gguf": blob(MIB, 52), "mmproj-model.gguf": blob(MIB, 53)})
+    # File roles by name: a model named iMatrix in the middle and one named DFlash2 are models; an
+    # importance matrix is skipped; a drafter beside the model is a drafter.
+    hub.add_repo("org/roles", {"M-iMatrix-NVFP4-MTP.gguf": blob(MIB, 54), "M-DFlash2-Q5_K_M.gguf": blob(MIB, 55),
+                               "imatrix.gguf": blob(MIB, 56), "dflash-M-Q4_K_M.gguf": blob(MIB, 57),
+                               "M-Q4_K_M.gguf": blob(MIB, 58)})
     hub.repos["files"] = {"files": {"plain.bin": blob(5 * MIB, 20)}, "lfs": set(), "commit": "", "gated": False}
 
     server, base = fetch_server.start(hub)
@@ -137,6 +187,12 @@ def main() -> int:
 
         # 2a. A hub that answers 503 once per file is asked again.
         case("busy hub retried", fetch("org/busy", check=False).returncode == 0)
+
+        # 2a'. A rate-limited hub (429) is asked again when the window it names resets.
+        started = time.monotonic()
+        limited = fetch("org/limited", check=False)
+        case("rate limit waited out",
+             limited.returncode == 0 and time.monotonic() - started >= 9)
 
         # 2b. Two processes fetching one repository into one cache at once take turns on the
         # file's lock: both succeed and the blob is transferred once.
@@ -284,10 +340,11 @@ def main() -> int:
         if len(sys.argv) > 3:
             probe = Path(sys.argv[3]).resolve()
 
-            def head(quant, count):
+            def head(quant, count, repo="org/ggufhead", begin=None):
                 environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
                 environment["HF_ENDPOINT"] = base
-                result = subprocess.run([str(probe), "org/ggufhead", quant, str(count), str(work / "cache-head")],
+                result = subprocess.run([str(probe), repo, quant, str(count), str(work / "cache-head")]
+                                        + ([str(begin)] if begin is not None else []),
                                         capture_output=True, text=True, env=environment)
                 return json.loads(result.stdout) if result.returncode == 0 else {"error": result.stderr}
 
@@ -298,6 +355,70 @@ def main() -> int:
                  and first.get("bytes") == MIB and ranges == [f"bytes=0-{MIB - 1}"])
             whole = head("Q8_0", 8 * MIB)
             case("gguf head of a short file", whole.get("size") == 2 * MIB and whole.get("bytes") == 2 * MIB)
+            # A window from an offset (gguf_quants_head_bytes): the slice asked for, also from a CDN
+            # that ignores the range and answers 200 with the whole file (Codex on #170).
+            data = ggufhead["m-Q4_K_M.gguf"]
+            window = head("Q4_K_M", MIB, begin=MIB + 3)
+            case("gguf window", window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
+            # A split model's head from its later part (Q6_K: 210 bytes a 256-value block), not
+            # the Q8_0 embedding in part 0; a tied model's, the embedding.
+            def heads(shape, repo="org/ggufsplit", cache=None):
+                environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
+                environment["HF_ENDPOINT"] = base
+                cache = cache or f"cache-{repo.split('/')[1].split('@')[0]}-{shape.replace(':', '-')}"
+                result = subprocess.run([str(probe), repo, "--heads=Q4_K_M", str(600 * 1024),
+                                         str(work / cache), shape],
+                                        capture_output=True, text=True, env=environment)
+                return json.loads(result.stdout) if result.returncode == 0 else {"error": result.stderr}
+            case("split gguf head from its later part", heads("256:1024") == {"Q4_K_M": 210 * 1024})
+            case("split gguf tied head: the embedding", heads("256:1024:tied")
+                 == {"Q4_K_M": 8 * 34 * 1024, "Q4_K_M#tied": True})
+            # Kept per commit: a head read as tied (a sibling of a tied model) stays tied when a
+            # later read (an explicit --quant) is not told so (Codex on #202).
+            pinned = "org/ggufsplit@c0ffee0123456789abcdef0123456789abcdef01"
+            first = heads("256:1024:tied", pinned, cache="cache-pinned")
+            again = heads("256:1024", pinned, cache="cache-pinned")
+            case("a cached tied head stays tied", first == again == {"Q4_K_M": 8 * 34 * 1024, "Q4_K_M#tied": True})
+            # Not told it ties (part 0 cannot say): every part read, no output.weight, the token
+            # table is the head (Codex on #199).
+            case("split gguf found tied", heads("256:1024", "org/ggufsplittied")
+                 == {"Q4_K_M": 210 * 1024, "Q4_K_M#tied": True})
+            case("a later part not read whole: no tie", heads("256:1024", "org/ggufsplitpartial")
+                 == {"Q4_K_M": 0})
+            data = ggufnorange["m-Q4_K_M.gguf"]
+            window = head("Q4_K_M", MIB, repo="org/ggufnorange", begin=MIB + 3)
+            case("gguf window from a server without ranges",
+                 window.get("bytes") == MIB and window.get("first") == data[MIB + 3:MIB + 11].hex())
+            # --include matching two standalone GGUFs: the model conversion opens (the first) is one
+            # part, not a split of both.
+            both = head("--include=*.gguf", MIB)
+            case("gguf head of an --include choosing two models", both.get("path") == "m-Q4_K_M.gguf"
+                 and both.get("parts") == 1)
+
+            # The listing a plan reads counts what the fetch takes: the Transformers-named weights with
+            # their MTP part, not a second copy beside them (consolidated.safetensors); a small
+            # projector is listed.
+            def listed(spec):
+                environment = {k: v for k, v in os.environ.items() if k not in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")}
+                environment["HF_ENDPOINT"] = base
+                result = subprocess.run([str(probe), spec, "--list", "0", str(work / "cache-list")],
+                                        capture_output=True, text=True, env=environment)
+                return json.loads(result.stdout) if result.returncode == 0 else []
+
+            rows = listed("org/tiny")
+            weights_row = [r for r in rows if r["format"] == "safetensors"]
+            case("listed weights are the fetched ones",
+                 len(weights_row) == 1 and "consolidated.safetensors" not in weights_row[0]["files"]
+                 and sorted(weights_row[0]["files"]) == ["model.safetensors", "model_mtp.safetensors"]
+                 and weights_row[0]["mtp_bytes"] == len(mtp))
+            case("a small projector is listed",
+                 any("mmproj-model.gguf" in r["files"] for r in listed("org/smallproj")))
+            roles = {f: r for r in listed("org/roles") for f in r["files"]}
+            case("file roles by name: iMatrix and DFlash2 models listed, the drafter marked, no imatrix",
+                 roles.get("M-iMatrix-NVFP4-MTP.gguf", {}).get("drafter") is False
+                 and roles.get("M-DFlash2-Q5_K_M.gguf", {}).get("drafter") is False
+                 and roles.get("dflash-M-Q4_K_M.gguf", {}).get("drafter") is True
+                 and "imatrix.gguf" not in roles and roles.get("M-Q4_K_M.gguf", {}).get("quant") == "Q4_K_M")
 
         # 11. A plain URL, then its cached copy.
         url = base + "/files/plain.bin"
@@ -328,6 +449,17 @@ def main() -> int:
         case("HF_HUB_OFFLINE", offline_ok and result.returncode != 0
              and "has no snapshot in the cache" in result.stderr)
 
+        # 11d. A hub that cannot be reached: a ref's cached snapshot is refused (the ref may have
+        # moved), naming both ways out; the commit it was cached at serves.
+        dead = {"HF_ENDPOINT": "http://127.0.0.1:9"}
+        result = fetch("org/tiny", env=dead, check=False)
+        commit = (work / "cache" / "models--org--tiny" / "refs" / "main").read_text().strip()
+        pinned_result = fetch(f"org/tiny@{commit}", env=dead, check=False)
+        case("unreachable hub: a ref is refused, its commit serves",
+             result.returncode != 0 and "HF_HUB_OFFLINE=1" in result.stderr
+             and f"org/tiny@{commit}" in result.stderr
+             and pinned_result.returncode == 0 and "using the cached snapshot" in pinned_result.stdout)
+
         # 12. Fetch a GGUF model and convert it without --out: the recipe is chosen, and the
         # tokenizer files come from the base model the GGUF names (none travel with it).
         try:
@@ -341,6 +473,40 @@ def main() -> int:
                                                        base_model="https://huggingface.co/org/qwen-base",
                                                        files=False)
             hub.add_repo("org/qwen-gguf", {"model-Q8_0.gguf": gguf_file.read_bytes(), "README.md": b""})
+            # 12a. Whether the engine runs a model, from what the hub shows before a download: a GGUF
+            # of another architecture (its header, by a range request), MLX weights (the card's
+            # library). Both refused, nothing in the cache.
+            other_arch = gguf_file.read_bytes().replace(b"\x06\x00\x00\x00\x00\x00\x00\x00qwen35",
+                                                        b"\x06\x00\x00\x00\x00\x00\x00\x00lfm2zz", 1)
+            hub.add_repo("org/lfm-gguf", {"model-Q8_0.gguf": other_arch})
+            hub.add_repo("org/mlx-model", {"config.json": (work / "qwen-src" / "twin" / "config.json").read_bytes()
+                                           if (work / "qwen-src" / "twin" / "config.json").exists()
+                                           else b'{"architectures": ["Qwen3ForCausalLM"]}',
+                                           "model.safetensors": blob(MIB, 71)})
+            hub.repos["org/mlx-model"]["card"] = {"library_name": "mlx", "pipeline_tag": "text-generation"}
+            # A repository of supported safetensors and a GGUF of another architecture: --include
+            # naming the GGUF is what the fetch takes, so its header decides.
+            hub.add_repo("org/mixed-include", {"config.json": b'{"architectures": ["Qwen3ForCausalLM"]}',
+                                               "model.safetensors": blob(MIB, 72),
+                                               "other-Q8_0.gguf": other_arch})
+            for spec, says, extra in (("org/lfm-gguf", "GGUF architecture 'lfm2zz'", []),
+                                      ("org/mlx-model", "MLX", []),
+                                      ("org/mixed-include", "GGUF architecture 'lfm2zz'", ["--include", "*.gguf"])):
+                refused = subprocess.run([str(native), "--fetch", spec, *extra, "--cache", str(work / "cache-support")],
+                                         cwd=repository, capture_output=True, text=True, env=environment)
+                cached = list((work / "cache-support").glob(f"models--{spec.replace('/', '--')}/snapshots/*/*"))
+                ok = (refused.returncode != 0 and "nothing was downloaded" in refused.stderr
+                      and says in refused.stderr and not cached)
+                if not ok:
+                    errors.append(refused.stderr[-600:])
+                case(f"{spec} refused before the download: {says}", ok)
+            # Without --include the fetch takes its safetensors: the hub's summary of the GGUF
+            # beside them is not what decides.
+            hub.repos["org/mixed-include"]["card"] = {"gguf": {"architecture": "lfm2zz"}}
+            mixed = subprocess.run([str(native), "--fetch", "org/mixed-include", "--cache", str(work / "cache-support")],
+                                   cwd=repository, capture_output=True, text=True, env=environment)
+            case("a mixed repository's safetensors judged by their config, not the GGUF beside them",
+                 "GGUF architecture" not in mixed.stderr)
             synthetic_gguf.resources(work / "qwen-src" / "twin")
             base_files = {name: (work / "qwen-src" / "twin" / name).read_bytes()
                           for name in ("tokenizer.json", "tokenizer_config.json", "chat_template.jinja",
@@ -357,6 +523,44 @@ def main() -> int:
                  and "resource_notes" not in report and report.get("gguf", {}).get("architecture") == "qwen35")
             if result.returncode:
                 errors.append(result.stderr[-2000:])
+
+            # 12b. Its download removed (as ninferno-ui does) and its branch moved on the hub: a
+            # rerun keeps the converted weights with a notice; --accept-converted records them
+            # (no notice after); a hub that cannot be reached leaves them; --refetch converts the
+            # new commit and removes the old conversion.
+            repo_dir = work / "cache-e2e" / "models--org--qwen-gguf"
+            for sub in ("blobs", "snapshots"):
+                shutil.rmtree(repo_dir / sub, ignore_errors=True)
+            old, new = "c0ffee0123456789abcdef0123456789abcdef01", "d" * 40
+            hub.repos["org/qwen-gguf"]["commit"] = new
+
+            def again(*extra, env=environment):
+                run = subprocess.run([str(native), "--fetch", "org/qwen-gguf", "--cache", str(work / "cache-e2e"),
+                                      *extra], cwd=repository, capture_output=True, text=True, env=env)
+                if run.returncode:
+                    errors.append(f"--fetch org/qwen-gguf {extra}:\n{run.stderr[-1500:]}")
+                return run.returncode, run.stdout + run.stderr
+
+            notice = again()
+            accepted = again("--accept-converted")
+            after = again()
+            unreachable = again(env={**environment, "HF_ENDPOINT": "http://127.0.0.1:9"})
+            case("a moved branch keeps the converted weights, with a notice",
+                 notice[0] == 0 and "org/qwen-gguf@main is now dddddddddddd" in notice[1]
+                 and "--refetch downloads the new commit" in notice[1] and "converted earlier" in notice[1])
+            case("--accept-converted keeps them without the notice",
+                 accepted[0] == 0 and (repo_dir / "ninferno" / old / "accepted.json").exists()
+                 and after[0] == 0 and "as accepted earlier" in after[1] and "warning:" not in after[1])
+            dead_refetch = subprocess.run([str(native), "--fetch", "org/qwen-gguf", "--cache", str(work / "cache-e2e"),
+                                           "--refetch"], cwd=repository, capture_output=True, text=True,
+                                          env={**environment, "HF_ENDPOINT": "http://127.0.0.1:9"})
+            case("an unreachable hub leaves the converted weights, said; --refetch then fails",
+                 unreachable[0] == 0 and "could not ask the hub whether org/qwen-gguf@main moved" in unreachable[1]
+                 and dead_refetch.returncode != 0 and "--refetch: cannot ask the hub" in dead_refetch.stderr)
+            refetched = again("--refetch")
+            case("--refetch converts the new commit and removes the old conversion",
+                 refetched[0] == 0 and (repo_dir / "ninferno" / new / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
+                 and not (repo_dir / "ninferno" / old).exists() and "removed the old conversion" in refetched[1])
             # With tokenizer metadata in the GGUF, its own chat template and end-of-sequence ids
             # are kept; the base model supplies only the Hugging Face tokenizer files.
             gguf_file, _, _ = synthetic_gguf.qwen_case(work / "qwen-src2", False, None, 32, rebuilt=True,
@@ -389,6 +593,136 @@ def main() -> int:
                  and "base model org/qwen-base: tokenizer.json, tokenizer_config.json" in result.stdout
                  and "chat_template.jinja" in notes and "generation_config.json" in notes
                  and "tokenizer.json" not in notes)
+
+            # 12c. Its download still in the cache and its branch moved on the hub: the same rule as
+            # 12b. A rerun serves the weights here, pinned to their commit (nothing is downloaded),
+            # with a notice; an unreachable hub serves them too; --refetch converts the new commit
+            # and removes the old conversion (the old download stays in the hub cache).
+            old2 = "c0ffee0123456789abcdef0123456789abcdef01"
+            hub.repos["org/qwen-gguf2"]["history"] = {old2}
+            hub.repos["org/qwen-gguf2"]["commit"] = "e" * 40
+            repo2 = work / "cache-e2e" / "models--org--qwen-gguf2"
+
+            def again2(*extra, env=environment):
+                run = subprocess.run([str(native), "--fetch", "org/qwen-gguf2", "--cache",
+                                      str(work / "cache-e2e"), *extra], cwd=repository,
+                                     capture_output=True, text=True, env=env)
+                if run.returncode:
+                    errors.append(f"--fetch org/qwen-gguf2 {extra}:\n{run.stderr[-1500:]}")
+                return run.returncode, run.stdout + run.stderr
+
+            reset()
+            kept_notice = again2()
+            downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
+            case("a moved branch with its download kept: the weights here, pinned, with a notice",
+                 kept_notice[0] == 0 and "org/qwen-gguf2@main is now eeeeeeeeeeee" in kept_notice[1]
+                 and "(downloaded)" in kept_notice[1] and not downloads
+                 and not (repo2 / "ninferno" / ("e" * 40)).exists())
+            unreachable2 = again2(env={**environment, "HF_ENDPOINT": "http://127.0.0.1:9"})
+            case("an unreachable hub serves the download kept, said",
+                 unreachable2[0] == 0 and "could not ask the hub whether org/qwen-gguf2@main moved"
+                 in unreachable2[1])
+            # The same asked by width: the kept download is of that width, so it is held too.
+            reset()
+            by_width = again2("--quant", "8bit")
+            downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
+            case("a moved branch asked by width: the download kept holds it, pinned, with a notice",
+                 by_width[0] == 0 and "org/qwen-gguf2@main is now eeeeeeeeeeee" in by_width[1]
+                 and not downloads)
+            # The old commit lists a larger model of that width too, not downloaded: the start
+            # serves the one here (its exact label), not the one the width picks of the listing.
+            wide = blob(len(gguf_file.read_bytes()) + MIB, 62)
+            hub.repos["org/qwen-gguf2"]["files"]["model-Q8_K_XL.gguf"] = wide
+            hub.repos["org/qwen-gguf2"]["lfs"].add("model-Q8_K_XL.gguf")
+            hub.blobs[hub.sha(wide)] = wide
+            reset()
+            wider = again2("--quant", "8bit")
+            downloads = [r for r in stats()["requests"] if r[0].startswith("/cdn/") or "/resolve/" in r[0]]
+            case("asked by width, a larger one of that width listed: the model here, nothing downloaded",
+                 wider[0] == 0 and "the weights here are of" in wider[1] and not downloads
+                 and not (repo2 / "snapshots" / old2 / "model-Q8_K_XL.gguf").exists())
+            del hub.repos["org/qwen-gguf2"]["files"]["model-Q8_K_XL.gguf"]
+            hub.repos["org/qwen-gguf2"]["lfs"].discard("model-Q8_K_XL.gguf")
+            # Another quantization of the moved ref than the download kept: the old snapshot does
+            # not hold it, so nothing pins to the old commit; it is fetched at the new one.
+            q4 = blob(MIB, 61)
+            hub.repos["org/qwen-gguf2"]["files"]["model-Q4_0.gguf"] = q4
+            hub.repos["org/qwen-gguf2"]["lfs"].add("model-Q4_0.gguf")
+            hub.blobs[hub.sha(q4)] = q4
+            other_quant = again2("--quant", "Q4_0", "--fetch-only")
+            case("another quantization of a moved ref: fetched at the new commit, not pinned",
+                 other_quant[0] == 0 and "the weights here are of" not in other_quant[1]
+                 and (repo2 / "snapshots" / ("e" * 40) / "model-Q4_0.gguf").exists())
+            del hub.repos["org/qwen-gguf2"]["files"]["model-Q4_0.gguf"]
+            hub.repos["org/qwen-gguf2"]["lfs"].discard("model-Q4_0.gguf")
+            # A split quantization whose download stopped after its first part: the old snapshot
+            # holds one part of two, so nothing pins to the old commit; both parts are fetched at
+            # the new one.
+            parts = {f"model-Q5_K_M-0000{i}-of-00002.gguf": blob(MIB, 70 + i) for i in (1, 2)}
+            for name, data in parts.items():
+                hub.repos["org/qwen-gguf2"]["files"][name] = data
+                hub.repos["org/qwen-gguf2"]["lfs"].add(name)
+                hub.blobs[hub.sha(data)] = data
+            first_part = repo2 / "snapshots" / old2 / "model-Q5_K_M-00001-of-00002.gguf"
+            first_part.write_bytes(parts["model-Q5_K_M-00001-of-00002.gguf"])
+            split_partial = again2("--quant", "Q5_K_M", "--fetch-only")
+            case("a split quantization with one part kept: fetched whole at the new commit, not pinned",
+                 split_partial[0] == 0 and "the weights here are of" not in split_partial[1]
+                 and all((repo2 / "snapshots" / ("e" * 40) / name).exists() for name in parts))
+            first_part.unlink()
+            for name in parts:
+                del hub.repos["org/qwen-gguf2"]["files"][name]
+                hub.repos["org/qwen-gguf2"]["lfs"].discard(name)
+            # The fetches at the new commit above moved the cache's ref to it: back to the commit
+            # the kept download is of, as before them.
+            (repo2 / "refs" / "main").write_text(old2)
+            # A --vision start: the kept download holds the model, not its projector, so it does
+            # not hold what is asked (nothing pins to it); with the projector beside it, it does.
+            probe = Path(sys.argv[3]).resolve()
+            kept_snapshot = repo2 / "snapshots" / old2
+            def holds(mode):
+                run = subprocess.run([str(probe), "org/qwen-gguf2", mode, "Q8_0", str(kept_snapshot)],
+                                     capture_output=True, text=True)
+                return run.stdout.strip()
+            without = (holds("--holds"), holds("--holds-vision"))
+            (kept_snapshot / "mmproj-model-BF16.gguf").write_bytes(b"projector")
+            with_projector = holds("--holds-vision")
+            (kept_snapshot / "mmproj-model-BF16.gguf").unlink()
+            case("a --vision start pins only to a snapshot with the projector",
+                 without == ("true", "false") and with_projector == "true")
+            # Safetensors shards without an index: one part of two is no model held.
+            shards = work / "shards-snapshot"
+            shards.mkdir(exist_ok=True)
+            (shards / "config.json").write_text('{"architectures": ["Qwen3ForCausalLM"]}')
+            (shards / "model-00001-of-00002.safetensors").write_bytes(b"x")
+            def holds_shards():
+                run = subprocess.run([str(probe), "org/shards", "--holds", "", str(shards)],
+                                     capture_output=True, text=True)
+                return run.stdout.strip()
+            one_part = holds_shards()
+            (shards / "model-00002-of-00002.safetensors").write_bytes(b"x")
+            case("unindexed safetensors shards: held only with every part",
+                 one_part == "false" and holds_shards() == "true")
+            # A --vision start: a text-only checkpoint does not hold what is asked.
+            def holds_shards_vision():
+                run = subprocess.run([str(probe), "org/shards", "--holds-vision", "", str(shards)],
+                                     capture_output=True, text=True)
+                return run.stdout.strip()
+            text_only = holds_shards_vision()
+            (shards / "config.json").write_text('{"architectures": ["Qwen3_5ForConditionalGeneration"], "vision_config": {}}')
+            case("a --vision start pins only to a checkpoint with its Vision encoder",
+                 text_only == "false" and holds_shards_vision() == "true")
+            (repo2 / "refs" / "main").write_text(old2)
+            # The old commit holds another conversion too (of a quantization not downloaded here):
+            # the one --refetch replaces is the model the old snapshot serves, the other stays.
+            other = repo2 / "ninferno" / old2 / "model-Q4_0.qwen3_5_bf16.ninferno"
+            other.write_bytes(b"x")
+            Path(str(other) + ".conversion.json").write_text("{}")
+            refetched2 = again2("--refetch")
+            case("--refetch with the download kept converts the new commit, removes the old conversion",
+                 refetched2[0] == 0 and (repo2 / "ninferno" / ("e" * 40) / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
+                 and not (repo2 / "ninferno" / old2 / "model-Q8_0.qwen3_5_bf16.ninferno").exists()
+                 and other.exists() and (repo2 / "snapshots" / old2).exists())
             if result.returncode:
                 errors.append(result.stderr[-2000:])
 

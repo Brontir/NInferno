@@ -260,6 +260,17 @@ __device__ __forceinline__ void mma_m8n8k4_f16(float (&c)[8], unsigned a0, unsig
                    "+f"(c[6]), "+f"(c[7])
                  : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
 }
+
+// The same product with B row-major: each lane holds row lane % 4 of its quad-pair's B, columns
+// 0..3 (low lanes) or 4..7 (high lanes); b0 = columns 0, 1 and b1 = 2, 3 (PTX ISA, mma.m8n8k4).
+__device__ __forceinline__ void mma_m8n8k4_f16_row_b(float (&c)[8], unsigned a0, unsigned a1,
+                                                     unsigned b0, unsigned b1) {
+    asm volatile("mma.sync.aligned.m8n8k4.row.row.f32.f16.f16.f32 "
+                 "{%0,%1,%2,%3,%4,%5,%6,%7}, {%8,%9}, {%10,%11}, {%0,%1,%2,%3,%4,%5,%6,%7};\n"
+                 : "+f"(c[0]), "+f"(c[1]), "+f"(c[2]), "+f"(c[3]), "+f"(c[4]), "+f"(c[5]),
+                   "+f"(c[6]), "+f"(c[7])
+                 : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
+}
 #endif
 
 #if NINFERNO_SM75_MMA

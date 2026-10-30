@@ -38,17 +38,28 @@ namespace {
 // catalog and updater, apps/ui). Every decision is an option. The <dump>_ROWS names are built at
 // run time from their dump's name (models/common/layer_dump.h).
 constexpr std::array<std::string_view, 22> kNonDecisionVariables{
-    "NINFERNO_DENSE_DUMP_ROWS",    "NINFERNO_GEMMA4_DUMP_ROWS",
-    "NINFERNO_QWEN_DUMP_ROWS",     "NINFERNO_API_KEY",
-    "NINFERNO_ARTIFACT_DIRECT_IO", "NINFERNO_DEBUG_CUDA_ERROR_FILE",
-    "NINFERNO_DEBUG_FREEZE_FILE",  "NINFERNO_DEBUG_NAN_FILE",
-    "NINFERNO_DEBUG_TRAP_FILE",    "NINFERNO_DENSE_DUMP",
-    "NINFERNO_GEMMA4_DUMP",        "NINFERNO_PDFIUM",
-    "NINFERNO_QWEN_DUMP",          "NINFERNO_QWEN_DUMP_KINDS",
-    "NINFERNO_ROUTE_RECORD",       "NINFERNO_SCORE_ARGMAX",
-    "NINFERNO_SCORE_LOGITS",       "NINFERNO_UPDATE_CHECK",
-    "NINFERNO_UPDATE_URL",         "NINFERNO_UI_KEY",
-    "NINFERNO_CATALOG_URL",        "NINFERNO_UPDATER",
+    "NINFERNO_DENSE_DUMP_ROWS",
+    "NINFERNO_GEMMA4_DUMP_ROWS",
+    "NINFERNO_QWEN_DUMP_ROWS",
+    "NINFERNO_API_KEY",
+    "NINFERNO_DEBUG_CUDA_ERROR_FILE",
+    "NINFERNO_DEBUG_TOKEN_DOMAIN_FILE",
+    "NINFERNO_DEBUG_FREEZE_FILE",
+    "NINFERNO_DEBUG_NAN_FILE",
+    "NINFERNO_DEBUG_TRAP_FILE",
+    "NINFERNO_DENSE_DUMP",
+    "NINFERNO_GEMMA4_DUMP",
+    "NINFERNO_PDFIUM",
+    "NINFERNO_QWEN_DUMP",
+    "NINFERNO_QWEN_DUMP_KINDS",
+    "NINFERNO_ROUTE_RECORD",
+    "NINFERNO_SCORE_ARGMAX",
+    "NINFERNO_SCORE_LOGITS",
+    "NINFERNO_UPDATE_CHECK",
+    "NINFERNO_UPDATE_URL",
+    "NINFERNO_UI_KEY",
+    "NINFERNO_CATALOG_URL",
+    "NINFERNO_UPDATER",
 };
 
 // The maintainer options' keys in the options section with their release values: one given
@@ -257,8 +268,9 @@ DecisionSection facts_of(const DeviceClass& d, const DeviceFeatures& build, int 
     out["machine.share"]               = bits(m.share);
     out["machine.mma_slow"]            = flag(m.mma_slow);
     // The driver's values are inputs only where they fed a fact (MachineFacts::driver_read: an
-    // unknown id snaps them, a laptop row without its range's bottom bounds its clock by them);
-    // a verified board, a MIG slice or a laptop priced at its range's bottom never reads them.
+    // unknown id snaps them, a laptop row without its range's bottom bounds its clock by them, a
+    // board on another memory than its row's prices its memory by them); a verified board, a MIG
+    // slice or a laptop priced at its range's bottom never reads them.
     if (m.driver_read) { driver_into(out, d); }
     out["driver_version"] = number(driver_version);
     features_into(out, "feature.", d.features);
@@ -432,6 +444,20 @@ DecisionSection observed_of(const DeviceClass& device) {
     return out;
 }
 
+DecisionSection context_cost_sources_of(const ContextCostSummary& context_cost) {
+    DecisionSection out;
+    // A carried machine without its board distance (" at <distance>", for the logs): its key alone
+    // picks it, and the distance follows from facts the fingerprint already holds.
+    std::string_view machine = context_cost.machine;
+    if (machine.starts_with("carried from ")) {
+        machine = machine.substr(0, machine.rfind(" at "));
+    }
+    out["context_cost.machine"]  = machine.empty() ? std::string("unset") : std::string(machine);
+    out["context_cost.transfer"] = context_cost_preset_source_name(context_cost.transfer_source);
+    out["context_cost.prefill"]  = context_cost_preset_source_name(context_cost.prefill_source);
+    return out;
+}
+
 DecisionSection artifact_ids_of(std::string_view artifact_id,
                                 std::string_view drafter_artifact_id) {
     DecisionSection out;
@@ -485,6 +511,18 @@ DecisionSection taint_of(const DecisionInputs& in) {
             table_class != arch && table_class != "*") {
             out["foreign_route_table"] = table_class;
         }
+    }
+    // A context-cost machine measured on another board that still prices a component
+    // (context_cost_sources_of): the nearest measured board's numbers, not a rule over facts. One
+    // whose every component an external --context-cost-presets entry replaced prices nothing.
+    constexpr std::string_view carried = "carried from ";
+    const char* const carried_source =
+        context_cost_preset_source_name(ContextCostPresetSource::CarriedMachine);
+    if (const auto machine = value(in.sources, "context_cost.machine");
+        machine.starts_with(carried) &&
+        (value(in.sources, "context_cost.transfer") == carried_source ||
+         value(in.sources, "context_cost.prefill") == carried_source)) {
+        out["carried_context_cost"] = machine.substr(carried.size());
     }
     if (value(in.sources, "speculation.profile").starts_with("local tune")) {
         out["local_spec_tune"] = "1";

@@ -4,9 +4,12 @@
 ([weight conversion](weight-conversion.md)). It uses the model's tokenizer, Text model, selected
 Main KV representation, final normalization and main output head. It is an offline evaluator, not a
 serving endpoint or a logits-export API. Only Text weights and resources are loaded; Vision and
-speculative components are not needed. It scores Qwen 3.5/3.6/3.8 models; the other families
-refuse causal scoring here. It comes with a source build ([building](building.md)), not with the
-release archive.
+speculative components are not needed. It scores every family the Engine serves: Qwen 3.5/3.6/3.8,
+Gemma 4, the dense and MoE decoders (gpt-oss, Muse Glimmer, Qwen3) and Nemotron-H. A model whose
+tokenizer starts a document with a token (Gemma 4's `<bos>`) scores every window from it, in place
+of the window's first token, as llama.cpp's perplexity does; the report names it
+(`execution.window_start_token`). It comes with a source build ([building](building.md)), not with
+the release archive.
 
 ## Quick start
 

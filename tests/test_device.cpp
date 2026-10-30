@@ -289,6 +289,16 @@ int check_feature_table() {
                        h100.find("reference table's H100 SXM5 80GB (gh100)") != std::string::npos &&
                        h100.find("extrapolated") == std::string::npos,
                    "H100: chip keyed by sm90, facts verified from its row:\n" + h100);
+        // An RTX 4070 with GDDR6 under the GDDR6X board's id: priced at its driver's memory and
+        // labelled so.
+        auto gddr6 = ninferno::synthetic_device_class(0x2786, 8, 9, 46, 36u << 20, 12ull << 30);
+        gddr6.sm_clock_khz     = 2475000;
+        gddr6.memory_clock_khz = 10001000;
+        gddr6.memory_bus_bits  = 192;
+        const auto variant     = joined(ninferno::device_fact_notes(with_facts(gddr6)));
+        failures += expect(variant.find("on another memory than its row's") != std::string::npos &&
+                               variant.find("SMs, not the row's") == std::string::npos,
+                           "a board on another memory than its row's is labelled so:\n" + variant);
         auto full = with_facts(
             ninferno::synthetic_device_class(0x2B85, 12, 0, 170, 96u << 20, 32ull << 30));
         full.sm_clock_khz = full.memory_clock_khz = full.memory_bus_bits = 1;

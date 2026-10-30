@@ -28,10 +28,20 @@
 #include <filesystem>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
+namespace ninferno::artifact {
+struct Directory;
+}
+
 namespace ninferno::spec {
+
+// The draft head rows an artifact's drafters read (spec/proposal_rows.h): its text component's
+// proposal head, for MTP and DFlash where it takes their final hidden states, each drafter's own
+// leading rows (proposal.drafter_rows) or all of them. Empty without a proposal head.
+[[nodiscard]] ProposalRows artifact_proposal_rows(const artifact::Directory& dir);
 
 struct ManifestDrafter {
     std::string name, kind, repo, revision, artifact, artifact_id, component, status;
@@ -39,6 +49,9 @@ struct ManifestDrafter {
         return status == "embedded" || status == "converted" || status == "cached" ||
                status == "attached";
     }
+    // Usable and its weights here: a component of the target's artifact, or its own artifact on
+    // disk.
+    [[nodiscard]] bool present() const;
 };
 
 struct SpeculationManifest {
@@ -65,6 +78,10 @@ struct ResolvedSpeculation {
     std::map<std::string, std::string> drafters;
     std::vector<std::string> notes; // why a source was passed over
     std::string fallback = "none";
+    // Where the profile came from, as data: "own" (this GPU's class, or a local tune), "similar"
+    // (another GPU's standing in), "generic" (the "*" profile), "builtin" (the built-in
+    // drafter's untuned default); "" when none was found.
+    std::string basis;
     // The profile was measured on another GPU (spec::measured_elsewhere), or is a built-in
     // default measured nowhere: its floors are raised (foreign_floor, raise_foreign_floors).
     bool foreign_floors = false;
@@ -76,6 +93,12 @@ struct ResolvedSpeculation {
     // serves or none was named. What resolves is then the published profile, which an entry point
     // must not run in its place (require_named_tune).
     std::string named_tune_refused;
+    // The drafters the target carries that the profile above does not draft with (a lab pair
+    // measured with another drafter): each kind resolved alone, its lab measurement (its pair,
+    // a sibling's, its group's) else the published profile where that drafts with it, for the
+    // configuration choice to weigh every drafter (product::subject_of_mode). Empty for a local
+    // tune and where the profile drafts with every kind carried.
+    std::vector<ResolvedSpeculation> other_kinds;
 
     [[nodiscard]] bool found() const noexcept { return !source.empty(); }
 };
@@ -89,11 +112,30 @@ struct ResolvedSpeculation {
                                                       const GpuKey& gpu,
                                                       const std::filesystem::path& local_profile = {});
 
+// The same resolution for a target not converted yet (a dry run: ninferno-serve --plan --no-load,
+// ninferno-ui /api/plan): `manifest` the one the converter would write (convert::plan_drafters,
+// each drafter a start would attach counted as attached), else the registry `entry` of the model's
+// shape over the drafters it will carry as `components` (no manifest: a GGUF hub model without
+// --with-drafters), else nothing. `label` names it in the sources (in place of the artifact). No
+// local tune is read; the built-in drafter's default is the caller's (as for an artifact).
+struct ModelEntry;
+// The lab's pairs answer first (spec/pairs.h): by `weights` (the planned files' identity, "":
+// unknown), the drafters the manifest attaches or the components carry, `quant`'s bit class and
+// the `engine` family, and `repo` (org/name@commit: its sibling quantizations, spec::pair_choice); then
+// the published profiles as above.
+[[nodiscard]] ResolvedSpeculation
+resolve_planned_speculation(const std::optional<SpeculationManifest>& manifest,
+                            const ModelEntry* entry, const std::set<std::string>& components,
+                            const GpuKey& gpu, const std::filesystem::path& label,
+                            std::string_view weights = {}, std::string_view quant = {},
+                            std::string_view engine = {}, std::string_view repo = {});
+
 // Why the tune at `tune` would not serve the artifact `artifact_id` on GPU class `gpu_class` (the
 // device's full class id, as resolve_speculation checks it; empty: the GPU is not checked, for a
 // caller without a device such as the UI): unreadable, tuned for another artifact, GPU or
 // drafters, or a drafter replaced since. Empty when it would serve. For a tune found rather than
-// named (the UI's, spec-tune --load's own beside the artifact): passed over with a note.
+// named (spec-tune --load's own beside the artifact): passed over with a note; for the one a UI
+// start asks for (spec_profile): that start is refused.
 [[nodiscard]] std::string tune_refusal(const std::filesystem::path& tune,
                                        const std::string& artifact_id,
                                        const std::string& gpu_class = {});
@@ -104,8 +146,8 @@ struct ResolvedSpeculation {
 void require_named_tune(const ResolvedSpeculation& resolved);
 
 // The largest break-even (floor_tokens_per_round) `profiles` (one model's published profiles,
-// every GPU class) measured for exactly this configuration (mode, depth, proposal head; adaptive
-// choices are not counted): lab constants of the same model on other GPUs. 0 when none.
+// every GPU class) measured for exactly this configuration (mode, depth, proposal head): lab
+// constants of the same model on other GPUs. 0 when none.
 [[nodiscard]] double floor_ceiling(const nlohmann::json& profiles, const SpecConfig& config);
 
 // The median break-even of this configuration over every model and GPU class of the registry: the

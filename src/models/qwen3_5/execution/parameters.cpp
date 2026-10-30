@@ -1,9 +1,11 @@
 #include "models/qwen3_5/execution/parameters.h"
 
 #include "core/weight_view.h"
+#include "ninferno/ops/linear.h"
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -34,6 +36,18 @@ public:
                             [&] { return ops::prepare_linear_weight(model_.input(id)); });
     }
 
+    // The leading `rows` rows of a projection (weight_row_prefix); none where its layout has no
+    // row views.
+    std::optional<LinearParameters> linear_rows(WeightId id, std::uint32_t rows) const {
+        return with_context(model_.weight(id).name, [&]() -> std::optional<LinearParameters> {
+            const auto input = model_.input(id);
+            const auto view  = weight_row_prefix(input.weight, rows);
+            if (!view) { return std::nullopt; }
+            return ops::prepare_linear_weight(
+                ops::WeightInput{*view, input.policy, input.activation_input_divisor});
+        });
+    }
+
     // A row table read by id (DFlash2 codebooks): the stored matrix as it is, any format.
     Weight codebook(WeightId id) const {
         const auto& bound = model_.weight(id);
@@ -57,6 +71,15 @@ public:
             }
             return weight_tensor(view, {axes[0], axes[1], axes[2], axes[3]});
         });
+    }
+
+    // A drafter's projection: A8 where the recorded policy is A16Only and the format verifies a
+    // draft block on R8 (ops::drafter_linear_policy); --activations exact keeps BF16.
+    LinearParameters drafter(LinearParameters p, ops::DrafterOp op) const {
+        if (model_.options().activations != ActivationMode::Exact) {
+            p.policy = ops::drafter_linear_policy(p.weight, p.policy, op);
+        }
+        return p;
     }
 
     DenseParameters dense(const DenseWeights& w) const {
@@ -249,7 +272,7 @@ public:
 
     DraftParameters draft(const DraftWeights& w) const {
         DraftParameters out;
-        out.feature_projection = linear(w.feature_projection);
+        out.feature_projection = drafter(linear(w.feature_projection), ops::DrafterOp::Linear);
         out.context_norm       = tensor(w.context_norm);
         out.final_norm         = tensor(w.final_norm);
         out.output_head        = linear(w.output_head_use);
@@ -267,10 +290,17 @@ public:
                     const std::array<ops::WeightInput, 3> qkv{
                         model_.input(a.query), model_.input(a.key), model_.input(a.value)};
                     result.query_key_value_bank = ops::prepare_segmented_projection_weights(qkv);
-                    // The fused Q/K/V kernel reads one RowSplit Q8 parent; a published drafter
-                    // whose Q/K/V are one parent in another format (the dflash GGUF's Q4_0
-                    // blocks) runs through the bank (draft.cpp, fused_q8).
-                    if (ops::consecutive_rows_of_one_parent(qkv)) {
+                    for (auto& slice : result.query_key_value_bank.slices) {
+                        slice.policy = drafter(LinearParameters{slice.parent, slice.policy},
+                                               ops::DrafterOp::Generic)
+                                           .policy;
+                    }
+                    // The fused Q/K/V kernel reads one RowSplit Q8 parent of its compiled
+                    // geometry; a published drafter whose Q/K/V are one parent in another format
+                    // (the dflash GGUF's Q4_0 blocks), or another width (Qwen3.5-9B's 4096), runs
+                    // through the bank (draft.cpp, fused_q8).
+                    if (ops::consecutive_rows_of_one_parent(qkv) &&
+                        ops::fused_attn_input_proj_geometry(qkv[0], qkv[1], qkv[2])) {
                         const auto joined = ops::prepare_linear_weight(
                             std::span<const ops::WeightInput>(qkv));
                         if (fused_q8_weight(joined.weight)) {
@@ -282,11 +312,13 @@ public:
                     result.context_value = linear(a.context_value);
                     result.query_norm    = tensor(a.query_norm);
                     result.key_norm      = tensor(a.key_norm);
-                    result.output        = linear(a.output);
+                    result.output        = drafter(linear(a.output), ops::DrafterOp::LinearAdd);
                     result.mlp           = dense(layer.mlp);
                     if (result.mlp.split_gate_up) {
                         throw std::invalid_argument("draft MLP: gate and up must share one parent");
                     }
+                    result.mlp.gate_up = drafter(result.mlp.gate_up, ops::DrafterOp::LinearSwiGlu);
+                    result.mlp.down    = drafter(result.mlp.down, ops::DrafterOp::LinearAdd);
                     if (layer.attention_conv) {
                         result.attention_conv = convolution(*layer.attention_conv);
                     }
@@ -330,8 +362,15 @@ Parameters::Parameters(const Model& source) : model(source) {
                              [&] { return prepare.draft(*w.draft); });
     }
     if (w.proposal) {
-        proposal =
-            ProposalParameters{prepare.linear(w.proposal->head), std::nullopt, w.proposal->rows};
+        // The loaded drafter's rows: a prefix of the head where it asks fewer (its layout keeping
+        // row views), the whole head otherwise.
+        auto prefix = w.proposal->draft_rows < w.proposal->rows
+                          ? prepare.linear_rows(w.proposal->head, w.proposal->draft_rows)
+                          : std::nullopt;
+        proposal    = prefix ? ProposalParameters{std::move(*prefix), std::nullopt,
+                                                  w.proposal->draft_rows}
+                             : ProposalParameters{prepare.linear(w.proposal->head), std::nullopt,
+                                                  w.proposal->rows};
         if (w.proposal->token_ids) { proposal->token_ids = prepare.tensor(*w.proposal->token_ids); }
     }
 }

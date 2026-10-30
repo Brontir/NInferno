@@ -633,8 +633,8 @@ AttentionPairs = B\,S+\frac{S(S+1)}{2}
 where \(B\) is the number of reused prefix tokens and \(S\) is the number of remaining suffix tokens. Vision item/patch work uses independent components of the same
 startup-resolved machine model.
 
-Transfer coefficients are chosen by hardware; prefill coefficients are chosen by the `prefill_signature` generated from the hardware and the actual Text/Vision config, binding structure, and Uses. The signature does not use checkpoint/release names and does not contain weight values. The two sets of coefficients are resolved
-independently; when there is no matching calibration, the corresponding generic coefficients are used. The cost only affects ordering among feasible plans and is not a load or execution gate.
+Transfer and prefill coefficients come from the machine of the device's GPU class: the first key of its class chain that names a compiled machine; else the machine of the nearest measured board within `measured::kCarryDistance`, as measured; else the generic defaults. An external `--context-cost-presets` entry found along the same chain layers over them. Prefill coefficients are selected also by the `prefill_signature`, derived from the actual Text/Vision config, binding structure, and Uses with no hardware input; it does not use checkpoint/release names and does not contain weight values. The two sets of coefficients are resolved
+independently; a binding the machine did not measure takes the machine's class prefill, else the generic one, and a machine without a transfer of its own takes the generic transfer ([Serving, Context-cost presets](../reference/serving.md#context-cost-presets)). The cost only affects ordering among feasible plans and is not a load or execution gate.
 
 ### 8.3 Portfolio Value and Future Loss
 

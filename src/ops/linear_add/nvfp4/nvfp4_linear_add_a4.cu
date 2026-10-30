@@ -31,12 +31,16 @@ constexpr bool uses_tma(std::int32_t tokens) { return tokens >= 1024; }
 // than half of a 170-SM RTX 5090, so a verify streams the weights from part of the device.
 // Halving the tile doubles the grid, and the long K loop then wants four stages
 // (Neroued/ninfer#365: T 8..32 46 -> 40 us; same per-row K order, so the bytes do not change).
-// Where 80 CTAs already fill half the device the narrow tile only re-reads the weights.
+// Where 80 CTAs already fill half the device the narrow tile only re-reads the weights. The rule
+// is over the device's SM count and the tile's grid: narrow where M32N64's CTAs over the rows are
+// at most half the SMs (5120 / 64 = 80 CTAs: from 160 SMs).
+template <class Geometry>
 bool narrow_tile_fills_device() {
     static PerDevice<bool> fills;
     return fills.get([](int) {
         try {
-            return device_class().sms >= 160;
+            constexpr int kWideCtas = Geometry::kOutputRows / M32N64::kBlockRows;
+            return 2 * kWideCtas <= device_class().sms;
         } catch (const std::exception&) { return false; }
     });
 }
@@ -54,7 +58,7 @@ template <class Geometry>
 void launch_problem(const Weight& weight, Tensor& residual, Nvfp4A4Workspace workspace,
                     std::int32_t tokens, cudaStream_t stream) {
     if constexpr (std::is_same_v<Geometry, Nvfp4N5120K17408>) {
-        if (tokens <= 32 && narrow_tile_fills_device()) {
+        if (tokens <= 32 && narrow_tile_fills_device<Geometry>()) {
             launch_gemm<Geometry, M32N32>(weight, residual, workspace, tokens, stream);
             return;
         }

@@ -1,5 +1,6 @@
 #include "models/qwen3_5/frontend/frontend.h"
 
+#include "core/sha256.h"
 #include "core/units.h"
 
 #include "models/qwen3_5/frontend/resources.h"
@@ -215,9 +216,12 @@ void validate_tokenizer_config(const FrontendResources& resources, TokenizerConf
     }
 }
 
+// `source_name` receives what the decision fingerprint calls the template: "artifact", or the
+// override file named by the bytes this call read and compiled.
 fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resources,
                                                const std::filesystem::path& override_path,
-                                               TokenizerConfigPolicy policy) {
+                                               TokenizerConfigPolicy policy,
+                                               std::string& source_name) {
     validate_tokenizer_config(resources, policy);
     nlohmann::ordered_json tokens = nlohmann::ordered_json::object();
     const auto config             = nlohmann::ordered_json::parse(resources.tokenizer_config_json);
@@ -253,6 +257,8 @@ fi::CompiledChatTemplate compile_chat_template(const FrontendResources& resource
             throw std::invalid_argument("cannot read chat template: " + name);
         }
     }
+    source_name =
+        override_path.empty() ? std::string("artifact") : named_bytes_sha256(override_path, source);
     return fi::CompiledChatTemplate::resolve(source, std::move(name), std::move(tokens));
 }
 
@@ -436,7 +442,7 @@ bool exact_vision_frontier(std::uint32_t frontier, std::span<const VisionItem> i
 }
 
 PreparedContextCache prepare_context_cache(
-    ContextCacheHints hints, std::size_t message_count,
+    ContextCacheHints hints, std::size_t message_count, std::span<const std::size_t> message_parts,
     std::span<const std::optional<std::uint32_t>> message_boundaries,
     std::span<const PromptCacheMarker> rendered_markers,
     std::span<const std::optional<std::uint32_t>> cache_boundaries,
@@ -543,12 +549,24 @@ PreparedContextCache prepare_context_cache(
     for (std::size_t index = 0; index < hints.markers.size(); ++index) {
         const PromptCacheMarker marker = hints.markers[index];
         std::optional<std::uint32_t> resolved;
-        if (marker.location == PromptCacheMarkerLocation::MessageBoundary) {
+        // A boundary after a message's last part (OpenAI's automatic one) is taken at the closed
+        // turn's end: the bytes between are the template's, the same in every rendering that
+        // continues the conversation, and the turn's end is an execution frontier where a next
+        // turn opens (prompt_layout.cpp), so the capture needs no prefill split of its own. At
+        // the content's end the program moves it down to the 64-token grid, and the 17 to 80
+        // tokens up to the message's end cost a whole-model call of their own (DECISIONS 63).
+        const bool last_part =
+            marker.location == PromptCacheMarkerLocation::MessagePartBoundary &&
+            marker.after_message_count != 0 && marker.after_message_count <= message_parts.size() &&
+            marker.after_message_part_count == message_parts[marker.after_message_count - 1U];
+        if (marker.location == PromptCacheMarkerLocation::MessageBoundary || last_part) {
             if (marker.after_message_count < message_boundaries.size()) {
                 resolved = message_boundaries[marker.after_message_count];
             }
-        } else {
-            if (index < cache_boundaries.size()) { resolved = cache_boundaries[index]; }
+        }
+        if (!resolved && marker.location != PromptCacheMarkerLocation::MessageBoundary &&
+            index < cache_boundaries.size()) {
+            resolved = cache_boundaries[index];
         }
         if (!resolved) { continue; }
         add_opportunity(marker.kind, marker.evidence, *resolved, static_cast<std::uint32_t>(index));
@@ -752,11 +770,52 @@ ModelSamplingDefaults checkpoint_sampling(std::string_view generation_config_jso
                                  .source       = "transformers defaults"};
 }
 
+// The one token a document starts with, as transformers' tokenizer encodes a text with its special
+// tokens: tokenizer_config.json add_bos_token when it says; absent, the class's own default
+// (LlamaTokenizer, CodeLlamaTokenizer and GemmaTokenizer, fast or not, add their bos_token:
+// Gemma 4 names GemmaTokenizer and no add_bos_token), else what the tokenizer.json
+// TemplateProcessing puts in front (none for gpt-oss: a ByteLevel post_processor and the
+// generic PreTrainedTokenizerFast). nullopt when that is nothing, or not one token of this
+// vocabulary.
+namespace {
+
+std::optional<TokenId> adds_document_start(std::string_view tokenizer_config_json,
+                                           const text::TokenCodec& tokenizer) {
+    const Json config = parse_resource_json(tokenizer_config_json, "tokenizer_config.json");
+    const auto bos_id = [&]() -> std::optional<TokenId> {
+        const auto bos = config.find("bos_token");
+        if (bos == config.end() || bos->is_null()) { return std::nullopt; }
+        const std::string content = bos->is_string() ? bos->get<std::string>()
+                                    : bos->is_object() && bos->contains("content")
+                                        ? bos->at("content").get<std::string>()
+                                        : std::string();
+        if (content.empty()) { return std::nullopt; }
+        const std::optional<int> id = tokenizer.token_id(content);
+        if (!id) { return std::nullopt; }
+        return static_cast<TokenId>(*id);
+    };
+    if (const auto add = config.find("add_bos_token"); add != config.end() && add->is_boolean()) {
+        return add->get<bool>() ? bos_id() : std::nullopt;
+    }
+    static constexpr std::string_view kAddsBos[] = {"LlamaTokenizer", "LlamaTokenizerFast",
+                                                    "CodeLlamaTokenizer", "CodeLlamaTokenizerFast",
+                                                    "GemmaTokenizer", "GemmaTokenizerFast"};
+    const std::string cls = config.value("tokenizer_class", std::string());
+    if (std::find(std::begin(kAddsBos), std::end(kAddsBos), cls) != std::end(kAddsBos)) {
+        return bos_id();
+    }
+    const std::vector<int> prefix = tokenizer.template_prefix();
+    if (prefix.size() == 1) { return static_cast<TokenId>(prefix.front()); }
+    return std::nullopt;
+}
+
+} // namespace
+
 class Frontend::Impl {
 public:
     Impl(const FrontendResources& resources, FrontendOptions options)
         : chat_template(compile_chat_template(resources, options.chat_template_path,
-                                              options.tokenizer_config)),
+                                              options.tokenizer_config, chat_template_source)),
           tokenizer(resources.tokenizer),
           processor(!options.vision_enabled                       ? fi::ProcessorOptions{}
                     : options.vision_style == VisionStyle::Gemma4 ? fi::ProcessorOptions{}
@@ -789,6 +848,7 @@ public:
                 "Frontend requires the parsed model tokenizer and public token domain");
         }
         sampling = options.sampling ? *options.sampling : default_sampling(options.architecture);
+        document_start = adds_document_start(resources.tokenizer_config_json, *tokenizer);
         for (const int token : tokenizer->default_stop_token_ids()) {
             if (!tokenizer->is_valid_token(token)) {
                 throw std::invalid_argument(
@@ -874,8 +934,11 @@ public:
         }
     }
 
+    // Declared first: compiling chat_template names its source here (compile_chat_template).
+    std::string chat_template_source;
     fi::CompiledChatTemplate chat_template;
     std::shared_ptr<const text::TokenCodec> tokenizer;
+    std::optional<TokenId> document_start; // document_start_token()
     std::shared_ptr<const OutputConventions> output;
     fi::ProcessorOptions processor;
     std::shared_ptr<fi::MediaPreprocessCache> media_cache;
@@ -958,6 +1021,10 @@ const ModelSamplingDefaults& Frontend::sampling_defaults() const noexcept {
     return impl_->sampling;
 }
 
+const std::string& Frontend::chat_template_source() const noexcept {
+    return impl_->chat_template_source;
+}
+
 Frontend make_frontend(const FrontendResources& resources, FrontendOptions options) {
     return Frontend(std::make_shared<const Frontend::Impl>(resources, options));
 }
@@ -1025,7 +1092,13 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
             .after_tool_count = static_cast<std::uint32_t>(options.tool_jsons.size()),
         });
     }
-    const std::size_t message_count       = input.messages.size();
+    const std::size_t message_count = input.messages.size();
+    std::vector<std::size_t> message_parts;
+    message_parts.reserve(message_count);
+    for (const ChatMessage& message : input.messages) {
+        // A message whose turn carries tool calls after its parts keeps its part boundaries.
+        message_parts.push_back(message.tool_calls.empty() ? message.parts.size() : 0U);
+    }
     std::vector<fi::ChatMessage> messages = convert_messages(std::move(input.messages));
     const bool has_media =
         std::any_of(messages.begin(), messages.end(),
@@ -1108,7 +1181,7 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     (void)checked_token_count(result.token_ids.size());
     result.identity.reusable = true;
     result.context_cache     = prepare_context_cache(
-        std::move(cache_hints), message_count, message_boundaries, rendered_markers,
+        std::move(cache_hints), message_count, message_parts, message_boundaries, rendered_markers,
         cache_boundaries, result.vision_items, engine_tool_marker_index, leading_boundary,
         checked_token_count(result.token_ids.size()));
     result.prepare.seconds = std::chrono::duration<double>(Clock::now() - start).count();
@@ -1218,6 +1291,11 @@ PreparedPrompt Frontend::prepare_tokens(std::vector<TokenId> token_ids,
     result.context_cache.update_session_index = false;
     result.prepare.seconds = std::chrono::duration<double>(Clock::now() - start).count();
     return PreparedPrompt(std::move(prepared));
+}
+
+std::optional<TokenId> Frontend::document_start_token() const {
+    if (impl_ == nullptr) { throw std::logic_error("frontend is empty"); }
+    return impl_->document_start;
 }
 
 std::vector<TokenId> Frontend::tokenize_text(std::string_view text) const {

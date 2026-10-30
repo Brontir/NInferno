@@ -91,45 +91,6 @@ std::string repo_name(const std::string& repo) {
     return slash == std::string::npos ? repo : repo.substr(slash + 1);
 }
 
-// base_model entries of a README's YAML front matter (a string or a "- item" list).
-std::vector<std::string> readme_base_models(const fs::path& readme) {
-    std::vector<std::string> out;
-    std::ifstream stream(readme);
-    std::string line;
-    if (!std::getline(stream, line) || line.rfind("---", 0) != 0) { return out; }
-    const auto trim = [](std::string s) {
-        while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '"' ||
-                              s.back() == '\'')) {
-            s.pop_back();
-        }
-        while (!s.empty() && (s.front() == ' ' || s.front() == '"' || s.front() == '\'')) {
-            s.erase(0, 1);
-        }
-        return s;
-    };
-    bool in_list = false;
-    while (std::getline(stream, line)) {
-        if (line.rfind("---", 0) == 0) { break; }
-        if (line.rfind("base_model:", 0) == 0) {
-            const auto value = trim(line.substr(11));
-            if (!value.empty()) {
-                out.push_back(value);
-            } else {
-                in_list = true;
-            }
-            continue;
-        }
-        if (in_list) {
-            const auto t = trim(line);
-            if (t.rfind("- ", 0) == 0) {
-                out.push_back(trim(t.substr(2)));
-            } else {
-                in_list = false;
-            }
-        }
-    }
-    return out;
-}
 
 // The config of a converted drafter artifact's text component (the converter keeps the HF keys
 // the checks read).
@@ -271,6 +232,45 @@ void check_remote(const DrafterTarget& target, PlannedDrafter& d, const AttachOp
 
 } // namespace
 
+std::vector<std::string> readme_base_models(const fs::path& readme) {
+    std::vector<std::string> out;
+    std::ifstream stream(readme);
+    std::string line;
+    if (!std::getline(stream, line) || line.rfind("---", 0) != 0) { return out; }
+    const auto trim = [](std::string s) {
+        while (!s.empty() && (s.back() == '\r' || s.back() == ' ' || s.back() == '"' ||
+                              s.back() == '\'')) {
+            s.pop_back();
+        }
+        while (!s.empty() && (s.front() == ' ' || s.front() == '"' || s.front() == '\'')) {
+            s.erase(0, 1);
+        }
+        return s;
+    };
+    bool in_list = false;
+    while (std::getline(stream, line)) {
+        if (line.rfind("---", 0) == 0) { break; }
+        if (line.rfind("base_model:", 0) == 0) {
+            const auto value = trim(line.substr(11));
+            if (!value.empty()) {
+                out.push_back(value);
+            } else {
+                in_list = true;
+            }
+            continue;
+        }
+        if (in_list) {
+            const auto t = trim(line);
+            if (t.rfind("- ", 0) == 0) {
+                out.push_back(trim(t.substr(2)));
+            } else {
+                in_list = false;
+            }
+        }
+    }
+    return out;
+}
+
 nlohmann::json DrafterPlan::to_json() const {
     Json drafters_json = Json::array();
     for (const auto& d : drafters) {
@@ -309,6 +309,56 @@ nlohmann::json DrafterPlan::to_json() const {
                 {"created", utc_now()}};
 }
 
+namespace {
+
+bool mtp_tensor(const std::string& name) {
+    return name.rfind("mtp.", 0) == 0 || name.find(".mtp.") != std::string::npos;
+}
+
+} // namespace
+
+bool index_lists_mtp(const Json& index) {
+    // Held by name: items() of a temporary outlives it in a range-for.
+    const auto weights = index.value("weight_map", Json::object());
+    for (const auto& [name, file] : weights.items()) {
+        if (mtp_tensor(name)) { return true; }
+    }
+    return false;
+}
+
+bool sharded_checkpoint_mtp(const Json& config, const Json& index) {
+    return index_lists_mtp(index) ||
+           spec::json_unsigned(text_scope(config), "num_nextn_predict_layers") > 0 ||
+           spec::json_unsigned(config, "num_nextn_predict_layers") > 0;
+}
+
+bool checkpoint_mtp(const fs::path& dir, const Json& config) {
+    const auto& text = text_scope(config);
+    // MTP layers are what the weights hold where their listing is here (the index, or the one
+    // weight file's header), not what the configuration declares: a fine-tune saved without them
+    // (XiaomiMiMo/MiMo-V2.6-Distill-Qwen-9B: mtp_num_hidden_layers 1, no mtp.* tensor) has none.
+    // Without a listing, the declaration. (NextN layers are numbered past the decoder's and keep
+    // their declaration.)
+    bool mtp = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0;
+    if (fs::exists(dir / "model.safetensors.index.json")) {
+        try {
+            mtp = index_lists_mtp(Json::parse(read_file(dir / "model.safetensors.index.json")));
+        } catch (const std::exception&) {} // unreadable: the declaration
+    } else if (fs::exists(dir / "model.safetensors")) {
+        try {
+            const Checkpoint weights(dir);
+            bool listed = false;
+            for (const auto& [name, tensor] : weights.tensors()) {
+                if (mtp_tensor(name)) { listed = true; }
+            }
+            mtp = listed;
+        } catch (const std::exception&) {} // unreadable here: the declaration
+    }
+    return mtp || spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
+           spec::json_unsigned(config, "num_nextn_predict_layers") > 0 ||
+           fs::exists(dir / "model_mtp.safetensors");
+}
+
 DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     DrafterTarget t;
     t.checkpoint      = dir;
@@ -326,19 +376,7 @@ DrafterTarget describe_checkpoint(const fs::path& dir, std::string repo) {
     t.geometry.num_hidden_layers = spec::json_unsigned(text, "num_hidden_layers");
     t.geometry.vocab_size        = spec::json_unsigned(text, "vocab_size");
     t.sliding_window             = spec::json_unsigned(text, "sliding_window");
-    t.builtin_mtp                = spec::json_unsigned(text, "mtp_num_hidden_layers") > 0 ||
-                    spec::json_unsigned(text, "num_nextn_predict_layers") > 0 ||
-                    fs::exists(dir / "model_mtp.safetensors");
-    if (!t.builtin_mtp && fs::exists(dir / "model.safetensors.index.json")) {
-        const auto index   = Json::parse(read_file(dir / "model.safetensors.index.json"));
-        const auto weights = index.value("weight_map", Json::object());
-        for (const auto& [name, file] : weights.items()) {
-            if (name.rfind("mtp.", 0) == 0 || name.find(".mtp.") != std::string::npos) {
-                t.builtin_mtp = true;
-                break;
-            }
-        }
-    }
+    t.builtin_mtp = checkpoint_mtp(dir, config);
     if (fs::exists(dir / "tokenizer.json")) {
         t.fingerprint = spec::vocab_fingerprint_file(dir / "tokenizer.json").value;
     }
@@ -408,7 +446,8 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
     }
     std::optional<spec::ModelEntry> entry;
     if (t.declaration) {
-        entry           = spec::parse_model_entry(*t.declaration);
+        entry = spec::parse_model_entry(*t.declaration);
+        for (auto& d : entry->drafters) { spec::apply_kind_rule(d, registry.kinds()); }
         plan.source     = "bundle";
         plan.matched_by = "declaration";
     } else {
@@ -501,11 +540,6 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
             PlannedDrafter d;
             d.decl      = decl;
             d.taps_only = plan.source == "bundle";
-            if (d.decl.recipe.empty() && d.decl.component.empty()) {
-                for (const auto& k : registry.kinds()) {
-                    if (k.name == decl.kind) { d.decl.recipe = k.recipe; }
-                }
-            }
             d.entry_geometry = entry->geometry;
             d.supported      = registry.supported(decl.kind, t.engine);
 
@@ -528,6 +562,7 @@ DrafterPlan plan_drafters(DrafterTarget target, const spec::Registry& registry) 
             const auto variants = std::exchange(d.decl.variants, {});
             plan.drafters.push_back(d);
             for (const auto& variant : variants) {
+                if (variant == d.decl.quant) { continue; } // the drafter itself
                 auto v       = d;
                 v.decl.name  = decl.name + "." + variant;
                 v.decl.quant = variant;
@@ -738,6 +773,22 @@ std::optional<fs::path> resolve_ranking(const std::string& name, const fs::path&
     return in_tree(fs::path(NINFERNO_SOURCE_DIR));
 }
 
+std::uint64_t companion_drafter_bytes(std::string_view target_model_type, std::string_view kind,
+                                      std::string_view declared_quant,
+                                      std::uint64_t published_bytes) noexcept {
+    const double declared = declared_quant == "q8"      ? 8.5
+                            : declared_quant == "q4"    ? 4.25
+                            : declared_quant == "nvfp4" ? 4.5
+                                                        : 0.0;
+    if (declared > 0) { return static_cast<std::uint64_t>(static_cast<double>(published_bytes) * declared / 16.0); }
+    const bool qwen = target_model_type.starts_with("qwen3_5") || target_model_type.starts_with("qwen3_6");
+    if (!qwen || (kind != "dflash" && kind != "dflash2")) { return published_bytes; }
+    constexpr double kQ8 = 8.5 / 16.0;            // q8_g32_fp16 against BF16
+    const double kept    = kind == "dflash2" ? 0.101 : 0.0; // stays BF16 (see the header)
+    const double bytes   = static_cast<double>(published_bytes);
+    return static_cast<std::uint64_t>(bytes * kept + bytes * (1.0 - kept) * kQ8);
+}
+
 std::string ranking_label(const std::string& name, const fs::path& path) {
     return name + " sha256:" + ninferno::sha256_hex(read_file(path, "ranking"));
 }
@@ -860,6 +911,12 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                 log_line(options.log, "drafter " + d.decl.name + ": " + d.artifact + " (given)");
                 continue;
             }
+            // Under --drafter-quant every variant would be that one file: only the drafter itself.
+            if (!options.conversion.drafter_quant.empty() && d.decl.name.find('.') != std::string::npos) {
+                d.status = "skipped: --drafter-quant " + options.conversion.drafter_quant +
+                           " names the drafter's one quantization";
+                continue;
+            }
             if (d.decl.repo.empty()) {
                 d.status = "failed: no repository declared";
                 continue;
@@ -925,7 +982,9 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             // A GGUF-only drafter by its file (its repository holds other models too).
             const std::string stem = d.decl.gguf.empty() ? repo_name(d.decl.repo)
                                                          : fetched.model.stem().string();
-            const std::string quant = d.decl.quant.empty() ? "" : "." + d.decl.quant;
+            // Named by what it holds: --drafter-quant replaces the declared quantization.
+            const std::string quant =
+                convert_options.drafter_quant.empty() ? "" : "." + convert_options.drafter_quant;
             convert_options.out = dir / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
             if (fs::exists(convert_options.out) &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
@@ -959,6 +1018,9 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
     auto manifest = plan.to_json();
     manifest["target"]["artifact"]    = fs::absolute(target_artifact).string();
     manifest["target"]["artifact_id"] = spec::artifact_id_hex(target_artifact);
+    // The registry the drafters were planned from: another one (an update that names a new
+    // drafter) has drafters_incomplete() plan them again.
+    manifest["registry_sha256"] = spec::Registry::builtin().source_sha256();
     const auto path = spec::manifest_path(target_artifact);
     write_file_atomic(path, manifest.dump(1) + '\n');
     log_line(options.log, "speculation manifest " + path.string());
@@ -969,10 +1031,22 @@ bool drafters_incomplete(const fs::path& target_artifact) {
     const auto path = spec::manifest_path(target_artifact);
     if (!fs::exists(path)) { return true; }
     try {
-        const auto manifest  = Json::parse(read_file(path));
+        const auto manifest = Json::parse(read_file(path));
+        if (manifest.value("registry_sha256", std::string()) !=
+            spec::Registry::builtin().source_sha256()) {
+            return true;
+        }
         const auto& drafters = manifest.at("drafters");
-        return std::any_of(drafters.begin(), drafters.end(), [](const Json& d) {
-            return !d.contains("quant") && d.value("status", "").starts_with("failed");
+        const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
+        return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
+            // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
+            // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
+            // (the target is converted again with it while its download is there; a GGUF's never
+            // holds one).
+            const auto status = d.value("status", std::string());
+            return d.value("name", std::string()).find('.') == std::string::npos &&
+                   (status.starts_with("failed") ||
+                    (!gguf && status.starts_with("not in the artifact")));
         });
     } catch (const std::exception&) { return true; }
 }
