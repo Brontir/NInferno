@@ -373,6 +373,10 @@ template <class C, class S, Epilogue E, bool kVerify>
 void r8_launch_schedule(const GemmArgs& args, cudaStream_t stream, W4a8Activation pre) {
     if (pre.codes != nullptr) {
         if constexpr (kVerify) {
+#if defined(NINFERNO_BUILD_ARCH) && NINFERNO_BUILD_ARCH < 75
+            // Volta's decode (r8_pre_min_tokens).
+            if (args.tokens <= 1) return r8_launch_tokens<C, S, 1, E, true>(args, stream, pre);
+#endif
             if (args.tokens <= 2) return r8_launch_tokens<C, S, 2, E, true>(args, stream, pre);
             if (args.tokens <= 4) return r8_launch_tokens<C, S, 4, E, true>(args, stream, pre);
             if (args.tokens <= 8) return r8_launch_tokens<C, S, 8, E, true>(args, stream, pre);

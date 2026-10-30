@@ -313,6 +313,9 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // The verify form is compiled for up to eight tokens (kR8VerifyTokens); r8_verify_widest is the
 // widest call a format takes it for by rule.
 inline constexpr std::int32_t kR8VerifyTokens = 8;
+// The narrowest R8 call that reads its activation quantized once per call (run_route's r8_pre)
+// instead of quantizing it in every CTA: two tokens, one on Volta (generic_gemm.cpp).
+[[nodiscard]] std::int32_t r8_pre_min_tokens();
 // The narrowest call on the ggml matrix kernel's route (generic_gemm.cpp, kMmqMaxTokens): five
 // tokens, past the four R8 verifies for every format but Q8.
 inline constexpr std::int32_t kMmqMinTokens = 5;

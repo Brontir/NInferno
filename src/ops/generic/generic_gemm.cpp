@@ -1390,6 +1390,24 @@ constexpr bool r8_one_slot_build() {
 #endif
 }
 
+// NINFERNO-SPECIAL(arch:sm70): Volta's decode R8 reads the activation quantized once per call
+// (launch_w4a8_quantize, the same arithmetic) instead of quantizing all of it in every CTA. A CTA's
+// quantization holds none of its weight loads in flight: clock64 phases of the one-slot kernel on
+// the GV100 (r8_schedule_bench, Gemma 4 12B Q4_K shapes) put it at 23 % of a CTA's cycles for the
+// 15360x3840 SwiGLU, 38 % for the 3840x15360 add (four passes of 128 threads) and 57 % for the
+// 3840x4096 store, whose two waves of CTAs read x while the weights stream; the kernel ran at
+// 51 .. 67 % of DRAM with the issue slots 30 .. 42 % busy, and neither the two-slot form nor
+// eight warps a CTA moved it. One extra launch a call (Volta has no programmatic dependent
+// launch to hide it) against a CTA that starts on its weights.
+std::int32_t r8_pre_min_tokens() {
+    if (r8_one_slot_build()) {
+        try {
+            if (!device_class().features.mma_tensor) return 1;
+        } catch (const std::exception&) {}
+    }
+    return 2;
+}
+
 int rules_r8(const Problem& p, std::int32_t tokens) {
     if (p.qtype == QType::Q8_G32_FP16) return r8_index(4, 1);
     // IQ1_S / IQ1_M: grid-lookup decoders of IQ2's weight, scheduled with them.
@@ -3328,7 +3346,8 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
     // R8 at verify widths reads the W4A8 planes (run_route's r8_pre: every r8_verify_compiled
     // format, whichever device routes to it).
     const bool r8_verify =
-        route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens;
+        route.family == Family::R8Mma && tokens >= r8_pre_min_tokens() &&
+        tokens <= kR8VerifyTokens;
     if (route.family == Family::W4a8Mma || r8_verify) {
         // R8 reads rows of K, W4A8 of whole tiles (w4a8_ld).
         const std::int32_t ld = route.family == Family::W4a8Mma ? w4a8_ld(k) : k;
@@ -3453,7 +3472,8 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     const bool r8_verify = r8_verify_compiled(problem.qtype) && allows_a8(problem.policy) &&
                            (problem.k % r8_k_values(problem.qtype)) == 0 &&
                            (weight == nullptr || allows_r8(*weight, problem.policy)) &&
-                           forced != 0 && max_tokens >= 2 && min_tokens <= kR8VerifyTokens;
+                           forced != 0 && max_tokens >= r8_pre_min_tokens() &&
+                           min_tokens <= kR8VerifyTokens;
     // ggml's matrix kernel: its activation, the FP32 plane (SwiGlu: gate and up rows) and the
     // stream-k fixup, at the widest call of its band in the interval.
     std::size_t mmq = 0;
@@ -3656,7 +3676,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
     // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
     // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
-    const bool r8_pre = route.family == Family::R8Mma && args.tokens >= 2 &&
+    const bool r8_pre = route.family == Family::R8Mma && args.tokens >= r8_pre_min_tokens() &&
                         args.tokens <= kR8VerifyTokens && workspace != nullptr &&
                         r8_verify_compiled(w.qtype);
     if (route.family == Family::R8Mma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0 ||
