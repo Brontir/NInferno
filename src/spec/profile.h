@@ -301,7 +301,7 @@ struct GpuKey {
     int compute_capability = 0;   // 89: Ada
     int sm_clock_khz       = 0;   // reference SM clock (DeviceClass::facts, not the driver's)
     double dram_gbps       = 0;   // nominal memory bandwidth (DeviceClass::facts)
-    double l2_bytes        = 0;   // the L2 cache
+    double l2_bytes        = 0;   // the L2 cache (MachineFacts: the board table's; 0: unknown)
 };
 
 // Whether the published profile's class is one of the device's own keys, and if not, the note

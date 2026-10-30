@@ -410,13 +410,14 @@ inline constexpr double kFp8AttentionTiledMinWidth = 80; // fp8/plan.cpp kGroupe
 inline constexpr int kFp8AttentionMaxSplits        = 8;  // kMxfp8TiledMaxSplits
 inline constexpr double kFp8AttentionSplitKeys     = 512; // the keys a split at the least
 inline constexpr double kFp8AttentionKeyTile       = 64;
-// A split call's merge reads every CTA's FP32 partials (128 rows x 256 x 4 bytes) and writes the
-// BF16 output: at 0.84 .. 1.03 of the DRAM rate on every card where they outgrow the L2 (the 21K
-// census: RTX 4060 Ti 0.86, 4070 Ti 0.84, 3060 0.91, 5070 Ti 1.02), at 2.3 .. 3.7 of it where the
-// L2 holds them with the output (RTX 5090 2.3 .. 2.9, the 4070 Ti's and 5070 Ti's first chunk 3.7 /
-// 2.5; the 4060 Ti's first chunk, exactly its 32 MiB, 1.0).
+// The merge after every call reads each row's FP32 partial of every active split (a CTA with no
+// keys stores an empty one) and writes the BF16 row: at 0.85 .. 1.04 of the DRAM rate where its
+// bytes outgrow the board's L2 (the 21K census: RTX 4060 Ti 0.86, 4070 Ti 0.85, 3060 0.92, 5070 Ti
+// 1.03), at 2.4 .. 4.7 of it where the L2 holds them (RTX 5090 2.4 .. 3.2 at 7K, its 21K prompt's
+// late chunks 1.6; the 4070 Ti's and 5070 Ti's first chunk 4.7 / 3.2). A board without its L2 in
+// the table (gpu_facts.json l2_mib) takes the DRAM rate.
 inline constexpr double kAttentionMergeDramShare = 0.9;
-inline constexpr double kAttentionMergeL2Share   = 2.5;
+inline constexpr double kAttentionMergeL2Share   = 3.0;
 // The BF16-KV prompt kernel (ops/softmax_attention bf16/tiled_mma.cuh: `--kv-dtype bf16`): a CTA of 64
 // query rows of one head (98 KiB, one a SM), issued in plain launch order (a head's row blocks
 // first to last, then the next head). Read on the census of a 7K-token prompt (1024-token chunks):

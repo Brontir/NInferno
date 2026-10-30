@@ -331,6 +331,10 @@ void device_class_wiring() {
     expect(d.facts.source == FactSource::Verified && std::abs(d.dram_gbps() - 1792) < 1e-9,
            "machine_facts_of: the 5090's row");
     expect(board_of(d).dram_gbps == d.dram_gbps(), "the board distance reads the facts");
+    expect(d.facts.l2_mib == 96, "machine_facts_of: the 5090's L2 from its row");
+    expect(machine_facts(DriverReport{0x2684, 8, 9, 128, 2520000, 10501000, 384}).l2_mib == 72 &&
+               machine_facts(DriverReport{0x2560, 8, 6, 30, 1425000, 7001000, 192}).l2_mib == 0,
+           "the L2 where the row gives it (RTX 4090), 0 where it does not (a laptop's)");
     // A GTX 1660 SUPER on TU106: no tensor cores by the table's fact though its chip has them. The
     // synthetic class takes the fact as the query does, and borrows only from chips without
     // tensor cores (TU116, TU117), never from TU102/TU104.

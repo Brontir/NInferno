@@ -725,7 +725,6 @@ double fp8_attention_chunk_seconds(const Fp8AttentionTileCost& cost, const CardF
     const double active  = std::min(up(visible, kFp8AttentionSplitKeys), target);
     const double keys    = up(visible, kFp8AttentionKeyTile); // the call's key tiles
     std::vector<double> grid;
-    double stored = 0; // the partials the CTAs store, in row tiles
     for (double z = 0; z < active; ++z) {
         const double first = std::floor(z * keys / active), end = std::floor((z + 1) * keys / active);
         for (double h = 0; h < heads; ++h) {
@@ -733,18 +732,16 @@ double fp8_attention_chunk_seconds(const Fp8AttentionTileCost& cost, const CardF
                 const double last   = std::floor((prefix + std::min(x * 128 + 128, width) - 1) / kFp8AttentionKeyTile);
                 const double blocks = std::max(0.0, std::min(end, last + 1) - first);
                 grid.push_back(cost.cta + blocks * kFp8AttentionKeyTile * cost.key);
-                if (h == 0 && first <= last) { stored += heads; }
             }
         }
     }
-    double seconds = deal(grid, card.sms) / card.clock_hz;
-    if (active > 1) {
-        const double partials = stored * 128 * 256 * 4, output = width * heads * 256 * 2;
-        const bool held       = card.l2_bytes > 0 && partials + output < card.l2_bytes;
-        seconds += (partials + output) /
-                   (card.dram_bytes_per_s * (held ? kAttentionMergeL2Share : kAttentionMergeDramShare));
-    }
-    return seconds;
+    // The merge (causal_tiled_merge.cuh, after every call): each row's partial of every active split
+    // (a CTA with no keys stores an empty one), its 256 FP32 sums and the maximum and the sum, in;
+    // the BF16 row out.
+    const double bytes = width * heads * (active * (256 * 4 + 8) + 256 * 2);
+    const bool held    = card.l2_bytes > 0 && bytes < card.l2_bytes;
+    return deal(grid, card.sms) / card.clock_hz +
+           bytes / (card.dram_bytes_per_s * (held ? kAttentionMergeL2Share : kAttentionMergeDramShare));
 }
 
 } // namespace
