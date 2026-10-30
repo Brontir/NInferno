@@ -4,8 +4,9 @@
 // warps folds its split's keys in FP32 on the SIMT path: Q of the KV head's rows in shared memory,
 // a warp per eight keys of a 32-key tile for the scores, a thread per row for the online softmax,
 // and every thread D / 128 head dims of every row for P V. The partials (FP32 unnormalized
-// accumulators, m * scale_log2, l) and the split boundaries are those of gemma4_attention_kernel,
-// so gemma4_attention_combine_kernel merges them unchanged. The sums run in another order than the
+// accumulators, m * scale_log2, l) are those of gemma4_attention_kernel; the split boundaries
+// round to kGemma4VoltaDecodeBc keys, and gemma4_attention_combine_kernel instantiated with it
+// merges them. The sums run in another order than the
 // MMA tiles: a token's bytes differ from the tensor-core route's (the invariant profile takes the
 // prefill route, not this one).
 #include "ops/softmax_attention/gemma4/volta_decode.h"
