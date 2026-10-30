@@ -172,13 +172,13 @@ double prefill_eta(bool moe, std::string_view generation, Route route, bool& tra
     const Route base            = route == Route::Fp4 ? Route::Int8 : route;
     const std::string_view away = prefill_stand_in(generation);
     transferred                 = transferred || route == Route::Fp4;
+    // A generation's own rows first, its route's or its int8 row at the dense rows' ratio (Volta's
+    // exact route: its int8 row times Turing's ratio, not Turing's exact row); then the stand-in's.
     for (const std::string_view gen : {generation, away}) {
         if (const PrefillEta* row = prefill_row(moe, gen, base)) {
             transferred = transferred || gen != generation || row->cards < 2;
             return row->eta;
         }
-    }
-    for (const std::string_view gen : {generation, away}) {
         const PrefillEta* own_int8 = prefill_row(moe, gen, Route::Int8);
         if (own_int8 == nullptr) { continue; }
         for (const std::string_view dense_gen : {gen, generation, away}) {

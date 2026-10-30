@@ -413,6 +413,13 @@ void prices_attention(const json& fixture) {
     const ch::Speed t = ch::speed_of(none, turing, b.quants[0], c, 1, 4096, 4096);
     check(v.transferred && std::abs(v.prefill / t.prefill - (0.248 * 1536.0) / (0.185 * 2048.0)) < 1e-9,
           "Volta's prefill takes its own row, transferred (one card)");
+    // Its exact route: its own int8 row at Turing's exact-to-int8 ratio.
+    ch::Candidate exact;
+    exact.activations  = ActivationMode::Exact;
+    const ch::Speed ve = ch::speed_of(none, volta, b.quants[0], exact, 1, 4096, 4096);
+    const ch::Speed te = ch::speed_of(none, turing, b.quants[0], exact, 1, 4096, 4096);
+    check(ve.transferred && std::abs(ve.prefill / te.prefill - (0.248 * 1536.0) / (0.185 * 1536.0)) < 1e-9,
+          "Volta's exact prefill scales its own int8 row by Turing's ratio");
 }
 
 void chooses(const json& fixture) {
