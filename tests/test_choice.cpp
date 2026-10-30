@@ -881,8 +881,7 @@ void prices_prefill_small_kernels() {
     for (const Census& r : rows) {
         const double t = ch::prefill_small_seconds(m, r.card, 1819);
         worst          = std::max(worst, std::abs(t * 1e3 / r.ms - 1));
-        std::cout << "prefill small kernels, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "
-";
+        std::cout << "prefill small kernels, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
     }
     check(worst < 0.25, "a prefill's small kernels by the scan's clocks and the rest's bytes within a quarter");
     const ch::CardFacts v100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.53e9, .dram_bytes_per_s = 900e9};
