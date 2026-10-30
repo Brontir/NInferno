@@ -38,10 +38,26 @@ void expect(bool ok, const std::string& what) {
 
 bool near(double a, double b, double rel) { return std::abs(a / b - 1) <= rel; }
 
+// A registry pair with its "+head" configurations as measured through the full head: the
+// fixture these checks price their labels on (mtp:3, dflash:7), whichever menu its tune ran.
 const sp::MeasuredPair& pair_of(std::string_view repo_prefix, std::string_view gpu) {
+    static std::map<std::string, sp::MeasuredPair> full_head;
+    const std::string key = std::string(repo_prefix) + "|" + std::string(gpu);
+    if (const auto it = full_head.find(key); it != full_head.end()) { return it->second; }
     for (const auto& p : sp::Registry::builtin().pairs()) {
         if (std::string_view(p.target_repo).starts_with(repo_prefix) && p.tune.key.gpu == gpu) {
-            return p;
+            sp::MeasuredPair out = p;
+            for (auto& m : out.tune.measurements) { m.config.proposal_head = false; }
+            const auto strip = [](auto& choices) {
+                choices.overall.config.proposal_head      = false;
+                choices.thinking.config.proposal_head     = false;
+                choices.non_thinking.config.proposal_head = false;
+            };
+            strip(out.tune);
+            if (out.tune.served) { strip(*out.tune.served); }
+            if (out.tune.portable) { strip(*out.tune.portable); }
+            if (out.tune.fit_fallback) { out.tune.fit_fallback->config.proposal_head = false; }
+            return full_head.emplace(key, std::move(out)).first->second;
         }
     }
     std::cerr << "no registry pair " << repo_prefix << " on " << gpu << '\n';
@@ -421,15 +437,20 @@ int main() {
         std::string turing_note;
         const auto turing = sp::profile_for_target(q9, "sm75", {}, &rtx2080ti, &turing_note);
         const auto cost   = sp::profile_round_costs(turing);
-        const auto ada_r  = sp::profile_round_costs(pair_of(kQ9, "ad104:60sm").tune);
-        bool median = q9.size() >= 2 && cost.contains("mtp:2") && cost.contains("mtp:3");
+        const sp::MeasuredPair* ada = nullptr;
+        for (const auto* p : q9) {
+            if (p->tune.key.gpu == "ad104:60sm") { ada = p; }
+        }
+        const auto ada_r = sp::profile_round_costs(ada->tune);
+        bool median = q9.size() >= 2 && cost.contains("mtp:2+head") &&
+                      cost.contains("mtp:3+head");
         for (const auto& [label, r] : cost) {
             auto v = each.at(label);
             std::sort(v.begin(), v.end());
             const double m = v.size() % 2 ? v[v.size() / 2] : (v[v.size() / 2 - 1] + v[v.size() / 2]) / 2;
             median = median && near(r, m, 1e-9);
         }
-        expect(median && !near(cost.at("mtp:2"), ada_r.at("mtp:2"), 0.01),
+        expect(median && !near(cost.at("mtp:2+head"), ada_r.at("mtp:2+head"), 0.01),
                "Turing takes the lab cards' median R, not the RTX 4070 Ti's");
         expect(turing_note == "transferred: median of " + std::to_string(q9.size()) +
                                   " lab cards of other generations (no facts for turing)",
