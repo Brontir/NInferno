@@ -478,7 +478,7 @@ struct Problem {
 [[nodiscard]] std::optional<Route> volta_tiled_route(const Weight& weight, LinearPolicy policy,
                                                      std::int32_t tokens);
 // The route Volta's own rules give a call before any tuned or tabled one (select_route):
-// volta_tiled_route, else the tensor-core route of the verify widths; none elsewhere.
+// volta_tiled_route, else the tensor-core route of the verify widths; none on GPUs with tensor mma.sync.
 [[nodiscard]] std::optional<Route> volta_fixed_route(const Problem& problem, const Weight& weight,
                                                      std::int32_t tokens);
 
