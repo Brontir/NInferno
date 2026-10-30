@@ -25,6 +25,8 @@
 #include "ninferno_bench_common.h"
 #include "ops/common/shape_routes.h"
 #include "quantized_weight.cuh"
+#include "random_weight.h"
+#include "ops/generic/route_table.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -37,6 +39,7 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -89,6 +92,11 @@ QType parse_qtype(std::string_view text) {
     if (v == "bf16") return QType::BF16;
     if (v == "nvfp4") return QType::NVFP4;
     if (v == "fp8") return QType::FP8_E4M3FN_ROW_BF16;
+    // Every other format by the route table's name (q4k, iq4xs, mxfp4, ...).
+    for (int value = 0; value <= 0xff; ++value) {
+        const auto q = static_cast<QType>(value);
+        if (v == ops::detail::generic::qtype_name(q)) return q;
+    }
     throw std::invalid_argument("unknown qtype " + std::string(text));
 }
 
@@ -101,7 +109,7 @@ const char* qtype_name(QType q) {
     case QType::BF16: return "BF16";
     case QType::NVFP4: return "NVFP4";
     case QType::FP8_E4M3FN_ROW_BF16: return "FP8";
-    default: return "?";
+    default: return ops::detail::generic::qtype_name(q);
     }
 }
 
@@ -162,6 +170,9 @@ Options parse_args(int argc, char** argv) {
 struct BenchWeight {
     DeviceBuffer storage;
     Weight weight{};
+    // A ggml or other format's random parent (random_weight.h); its Weight names the parent by
+    // address, so it lives on the heap.
+    std::unique_ptr<bench::RandomWeight> generic;
 };
 
 // Pseudo-random bytes (a multiplicative hash of the index), masked: every code of the integer
@@ -189,7 +200,7 @@ void randomize_bytes(void* base, std::uint64_t offset, std::uint64_t count, std:
 BenchWeight make_weight(QType qtype, std::int32_t n, std::int32_t k, bool random) {
     if (qtype == QType::BF16) {
         auto direct = bench::make_direct_bf16_weight(n, k); // already pseudo-random
-        return {std::move(direct.storage), direct.weight};
+        return {std::move(direct.storage), direct.weight, nullptr};
     }
     if (qtype == QType::NVFP4) {
         auto packed = bench::make_nvfp4_weight(n, k);
@@ -200,6 +211,16 @@ BenchWeight make_weight(QType qtype, std::int32_t n, std::int32_t k, bool random
         auto packed = bench::make_fp8_weight(n, k);
         if (random) randomize_bytes(packed.storage.p, 0, packed.low_bytes, 0xf8, 0xbf);
         return {std::move(packed.storage), packed.weight};
+    }
+    if (qtype != QType::Q4_G64_FP16 && qtype != QType::Q5_G64_FP16 && qtype != QType::Q6_G64_FP16 &&
+        qtype != QType::Q8_G32_FP16) {
+        BenchWeight out;
+        out.generic = std::make_unique<bench::RandomWeight>(bench::random_weight(qtype, n, k, 501U));
+        const auto& g = out.generic->parent.geometry;
+        const WeightView view{g.shape, {WeightRegion{&out.generic->parent, 0, g.elements}}};
+        out.generic->weight = native_weight(view, 4.0F);
+        out.weight          = out.generic->weight;
+        return out;
     }
     const auto padded_k = static_cast<std::int32_t>((static_cast<std::int64_t>(k) + 127) / 128 * 128);
     auto packed         = bench::make_row_split_weight(qtype, n, k, padded_k, 0x31U);
