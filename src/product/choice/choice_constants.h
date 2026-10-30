@@ -390,6 +390,28 @@ inline constexpr double kAttentionTileHeadDim = 256;
 // kGroupedPrefillMaxWidth: the keys split over the SMs), priced by the share.
 inline constexpr double kAttentionTiledMinWidth = 256;
 
+// Gemma 4's attention kernel (ops/softmax_attention/gemma4, BF16 or FP8 planes; DECISIONS 68). A CTA
+// is a row block of one KV head: 32 packed rows, 32 / group tokens (block_rows / G), the grid one
+// block more than the rows need, issued longest first within a head. The sliding layers' D=256
+// tile holds two CTAs a SM (40 KiB), over at most the window's keys; the full layers' D=512 tile
+// (group 16: the 12B; a group-8 model's full layers from 1024 tokens take the wide tile, not read)
+// one (80 KiB), over every key before its rows; where the generation chains (GenerationRow::
+// attention_chain) a full layer's grid that fills its last wave under 90 % runs persistent, its work
+// spread over the SMs. A CTA takes `sliding` / `full` SM-clocks a key, sharing its SM as it runs.
+// Read on Gemma 4 12B Q4_K_M's 7K and 21K prompts (nsys, a layer's median a 1024-token chunk; the
+// RTX 5090 on a lab build without PDL): RTX 4060 Ti 186 / 250 (sliding -3 .. +3 %, full -6 .. +8 %),
+// RTX 3060 180 / 255 (-2 .. 0 %, -8 .. +7 %), RTX 5070 Ti and 5090 157 / 222 (-8 .. +7 %, -13 .. +9
+// %). A short last chunk whose last round holds one CTA a SM runs faster than this deals it (+14 ..
+// +80 % there: the lone CTA of kLoneTile, not modelled here).
+struct GemmaAttentionCost {
+    std::string_view generation;
+    double sliding, full; // SM-clocks a key of a CTA
+    int cards;
+};
+inline constexpr double kGemmaChainMinTokens = 16; // gemma4/launch.h kGemma4DecodeMaxTokens: no chain
+inline constexpr GemmaAttentionCost kGemmaAttentionCost[] = {
+    {"ada", 186, 250, 1}, {"ga10x", 180, 255, 1}, {"gb20x", 157, 222, 2}};
+
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak
 // (fit_prefill.py, the same points; Turing's BF16 row is the composed aggregate, core/generation.h).

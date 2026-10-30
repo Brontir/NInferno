@@ -108,6 +108,8 @@ struct Geometry {
     double full_attention_width = 0, sliding_attention_width = 0;
     std::uint32_t full_layers = 0, full_kv_total = 0, full_key = 0, full_value = 0;
     std::uint32_t sliding_layers = 0, sliding_kv_total = 0, sliding_key = 0, sliding_value = 0;
+    // Every layer that attends, its own KV or an earlier layer's (num_kv_shared_layers).
+    std::uint32_t full_attending = 0, sliding_attending = 0;
     std::uint32_t window = 0;
     // Layers by kind for the parameter count: attention (a layer reading another's KV counts
     // here, with no KV of its own), recurrent mixers, feed-forward.
@@ -134,6 +136,7 @@ void add_attention(Geometry& g, bool sliding, bool own_kv, double heads, double 
     g.attention_queries.push_back(heads * key);
     g.attention_linears.push_back({static_cast<double>(g.hidden), heads * value, 1, false});
     (sliding ? g.sliding_attention_width : g.full_attention_width) += heads * (key + value);
+    ++(sliding ? g.sliding_attending : g.full_attending);
     if (!own_kv || kv_heads <= 0) { return; } // reads an earlier layer's keys and values
     g.attention_params += g.hidden * kv_heads * (keys_are_values ? key : key + value);
     if (sliding) {
@@ -244,6 +247,8 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     m.sliding_key_dim        = g.sliding_key;
     m.sliding_value_dim      = g.sliding_value;
     m.window                 = g.sliding_layers != 0 ? g.window : 0;
+    m.full_attending_layers    = g.full_attending;
+    m.sliding_attending_layers = g.sliding_attending;
     m.recurrent_layers       = g.recurrent_layers;
     m.hidden                 = g.hidden;
     m.vocab                  = g.vocab;

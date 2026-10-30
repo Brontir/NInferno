@@ -580,8 +580,97 @@ double prefill_small_seconds(const ModelFacts& model, const CardFacts& card, dou
     return 0;
 }
 
+namespace {
+
+// CTAs of `seconds` each, dealt in issue order to `slots` places, each to the one that frees first:
+// when the last frees.
+double deal(const std::vector<double>& ctas, int slots) {
+    std::vector<double> free(static_cast<std::size_t>(std::max(slots, 1)), 0.0);
+    for (const double t : ctas) {
+        std::pop_heap(free.begin(), free.end(), std::greater<>());
+        free.back() += t;
+        std::push_heap(free.begin(), free.end(), std::greater<>());
+    }
+    return *std::max_element(free.begin(), free.end());
+}
+
+// Gemma 4's attention by its CTAs (kGemmaAttentionCost); a layer type whose tile was not read keeps
+// its share, as attention_seconds prices it.
+double gemma_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card, double prompt,
+                                     std::uint32_t chunk, bool* transferred) {
+    const std::string_view gen = generation_of(card);
+    const GemmaAttentionCost* cost = nullptr;
+    for (const GemmaAttentionCost& row : kGemmaAttentionCost) {
+        if (row.generation == gen) { cost = &row; }
+    }
+    if (cost == nullptr || chunk == 0) { return 0; }
+    if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
+    bool share_transferred = false;
+    const double share     = attention_eta(gen, share_transferred) * peak(card, Route::Bf16);
+    const bool chains      = generation_row(card.major, card.minor).attention_chain;
+    const double window    = model.window;
+    double seconds         = 0;
+    const auto layer_type = [&](bool sliding) {
+        const double own      = sliding ? model.sliding_layers : model.full_layers;
+        const double attend   = sliding ? model.sliding_attending_layers : model.full_attending_layers;
+        const double layers   = attend > 0 ? attend : own;
+        const double width  = sliding ? model.sliding_attention_width : model.full_attention_width;
+        const double dim    = sliding ? model.sliding_head_dim : model.full_head_dim;
+        const double kv     = sliding ? model.sliding_kv_heads : model.full_kv_heads;
+        if (layers <= 0 || width <= 0) { return; }
+        const double heads = dim > 0 ? std::round(width / (layers * 2 * dim)) : 0;
+        const double group = kv > 0 ? heads / kv : 0;
+        const bool read    = sliding ? dim == 256 && group >= 1 && group <= 32 : dim == 512 && group == 16;
+        if (!read) {
+            // attention_seconds' pairs up to x tokens: x^2 / 2, past the window x w - w^2 / 2.
+            const auto pairs = [&](double x) {
+                return sliding && window > 0 && x > window ? x * window - window * window / 2 : x * x / 2;
+            };
+            seconds += 2 * width * pairs(prompt) / share;
+            if (transferred != nullptr && share_transferred) { *transferred = true; }
+            return;
+        }
+        const double tokens  = std::floor(32 / group); // a block's tokens (block_rows / G)
+        const double per_key = (sliding ? cost->sliding : cost->full) / card.clock_hz;
+        const double slots   = card.sms * (sliding ? 2.0 : 1.0);
+        std::vector<double> ctas;
+        for (double prefix = 0; prefix < prompt; prefix += chunk) {
+            const double n      = std::min<double>(chunk, prompt - prefix);
+            const double blocks = std::ceil(n / tokens) + 1;
+            ctas.clear();
+            for (double h = 0; h < kv; ++h) {
+                for (double b = blocks - 1; b >= 0; --b) {
+                    if (b * tokens >= n) { continue; } // the spare block past the rows: empty
+                    double keys = prefix + std::min((b + 1) * tokens, n);
+                    if (sliding && window > 0) { keys = std::min(keys, window); }
+                    ctas.push_back(keys * per_key);
+                }
+            }
+            // The launch's grid counts the spare block (launch.cu chain_pays), and a call of a decode's
+            // width never chains (chain_plan).
+            const double grid  = blocks * kv;
+            const double waves = std::ceil(grid / slots);
+            if (!sliding && chains && n > kGemmaChainMinTokens && grid < 0.9 * waves * slots) {
+                double work = 0;
+                for (const double t : ctas) { work += t; }
+                seconds += layers * work / card.sms; // persistent: the work spread over the SMs
+            } else {
+                seconds += layers * deal(ctas, static_cast<int>(slots));
+            }
+        }
+    };
+    layer_type(true);
+    layer_type(false);
+    return seconds;
+}
+
+} // namespace
+
 double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts& card, KvCacheStorage kv,
                                        double prompt, std::uint32_t chunk, bool* transferred) {
+    if (prompt > 0 && card.sms > 0 && card.clock_hz > 0 && model.family == "gemma4_text") {
+        return gemma_attention_tiled_seconds(model, card, prompt, chunk, transferred);
+    }
     if (prompt <= 0 || chunk == 0 || kv != KvCacheStorage::Int8Group64 || model.full_layers == 0 ||
         model.full_head_dim != kAttentionTileHeadDim || model.sliding_attention_width > 0 ||
         model.family.rfind("qwen3_5", 0) != 0 || card.sms <= 0 || card.clock_hz <= 0) {

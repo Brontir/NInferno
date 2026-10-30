@@ -2066,3 +2066,20 @@ In the estimate (Qwen3.5 9B's points): Q8_0 rms 7.6 -> 7.1 %, Q4_K_M 6.0 -> 6.4 
 read with the old attention term beside them). Not yet: Gemma 4's kernel (sliding layers: 2 CTAs a SM,
 a round of 352-520 CTAs about 160-177 K SM-clocks on Ada and Blackwell; full layers a persistent grid
 on the RTX 5090), the BF16 and FP8 KV kernels, Turing and Volta's kernels (no row: the shares stand).
+
+**Gemma 4's kernel by its CTAs** (`kGemmaAttentionCost`, ops/softmax_attention/gemma4): a CTA is a
+row block of one KV head (32 packed rows: 16 tokens of the sliding layers' group 2, 2 tokens of the
+12B full layers' group 16), the grid one block more than the rows need, issued longest first within
+a head. The sliding layers' D=256 tile holds two CTAs a SM, each over at most the window's keys; the
+full layers' D=512 tile one, over every key before its rows; on Blackwell (`attention_chain`) a full
+layer whose grid fills its last wave under 90 % runs persistent, its work over the SMs. SM-clocks a
+key of a CTA, sliding / full: Ada 186 / 250 (RTX 4060 Ti), Ampere 180 / 255 (RTX 3060), Blackwell
+157 / 222 (RTX 5070 Ti, 5090). Read on 7K and 21K prompts' 1024-token chunks: sliding -8 .. +7 %,
+full -13 .. +9 % a layer; a chunk's whole attention on the 4060 Ti -3 .. -1 %, the 5090 -9 .. +2 %.
+A short last chunk whose last round holds one CTA a SM runs faster than dealt (the lone CTA,
+kLoneTile's effect: +14 .. +80 % on that chunk, not modelled). A group-8 model's full layers (26B,
+31B) take the wide tile from 1024 tokens: not read, their share stands.
+
+In the estimate: Gemma 4 12B on the RTX 5090 Q8_0 +17 .. +26 % -> +12 .. +22 %, Q4_K_M +12 .. +17 %
+-> +7 .. +14 %; Q8_0 points rms 9.2 -> 8.0 %. What is left on Gemma is not attention: its small
+kernels (four norms a layer, GELU) ran 21-27 % over the term on Ada (DECISIONS 66).

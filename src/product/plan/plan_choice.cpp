@@ -133,6 +133,13 @@ choice::ModelFacts choice_model_of(const PlanSourceFacts& facts) {
     out.full_attention_width    = s.full_attention_width;
     out.full_layers             = m.full_layers;
     out.full_head_dim           = m.full_key_dim;
+    out.full_kv_heads    = m.full_layers > 0 ? static_cast<double>(m.full_kv_heads_total) / m.full_layers : 0;
+    out.sliding_layers   = m.sliding_layers;
+    out.full_attending_layers    = m.full_attending_layers;
+    out.sliding_attending_layers = m.sliding_attending_layers;
+    out.sliding_head_dim = m.sliding_key_dim;
+    out.sliding_kv_heads =
+        m.sliding_layers > 0 ? static_cast<double>(m.sliding_kv_heads_total) / m.sliding_layers : 0;
     out.sliding_attention_width = s.sliding_attention_width;
     out.input_table_params =
         s.tied_embeddings ? 0.0 : static_cast<double>(s.vocab_size) * static_cast<double>(s.hidden_size);

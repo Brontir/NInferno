@@ -69,6 +69,10 @@ ch::ModelFacts model_of(const json& m) {
     out.hidden                  = m.value("hidden", 0.0);
     out.full_layers             = m.value("full_layers", 0U);
     out.full_head_dim           = m.value("full_head_dim", 0.0);
+    out.full_kv_heads           = m.value("full_kv_heads", 0.0);
+    out.sliding_layers          = m.value("sliding_layers", 0U);
+    out.sliding_head_dim        = m.value("sliding_head_dim", 0.0);
+    out.sliding_kv_heads        = m.value("sliding_kv_heads", 0.0);
     out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
     if (m.contains("linears")) {
         for (const json& l : m.at("linears")) {
@@ -1078,6 +1082,56 @@ void prices_attention_tiles() {
     check(tail > whole && tail - whole < 4e-3, "a short tail chunk at the share (its flops, 2.8 ms), not 16 CTAs over the prefix (17 ms)");
 }
 
+// Gemma 4 12B's attention by its CTAs (DECISIONS 68): its 40 sliding layers (16 heads of 256 over
+// 8 KV heads, a 1024 window) and 8 full ones (16 heads of 512 over 1), a 7K prompt's 1024-token
+// chunks, the census's per-layer medians summed over the layers, on the RTX 4060 Ti and 5090.
+void prices_gemma_attention_tiles(const json& fixture) {
+    const ch::ModelFacts m = model_of(fixture.at("models").at("gemma-4-12b"));
+    struct Series {
+        ch::CardFacts card;
+        std::vector<double> sliding, full; // a layer's us, chunk i after i x 1024
+    };
+    const Series series[] = {
+        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9},
+         {300.3, 610.7, 620.2, 609.8, 611.2, 610.0},
+         {812.9, 2403.9, 4062.3, 5596.3, 7259.1, 8854.9}},
+        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9},
+         {83.0, 141.7, 142.6, 143.4, 143.3, 143.9},
+         {154.0, 492.4, 735.8, 1052.7, 1282.6, 1605.3}},
+    };
+    double worst = 0;
+    for (const Series& s : series) {
+        double before = 0;
+        for (std::size_t i = 0; i < s.sliding.size(); ++i) {
+            const double through = ch::prefill_attention_tiled_seconds(m, s.card, KvCacheStorage::BFloat16,
+                                                                       1024.0 * (i + 1), 1024);
+            const double call     = (through - before) * 1e6;
+            const double measured = m.sliding_layers * s.sliding[i] + m.full_layers * s.full[i];
+            before                = through;
+            worst                 = std::max(worst, std::abs(call / measured - 1));
+            std::cout << "Gemma attention tiles, " << s.card.sms << " SMs, chunk " << i << ": " << call
+                      << " us against " << measured << "\n";
+        }
+    }
+    check(worst < 0.12, "Gemma 4's attention by its CTAs within 12 % of the census's chunks");
+    // A KV-shared model (Gemma 4 E4B-like: 35 sliding layers attend, 20 hold their own KV, 8 heads over
+    // 2): its heads and layers from the attending ones, 35 / 20 of the same layers held alone.
+    ch::ModelFacts shared;
+    shared.family                   = "gemma4_text";
+    shared.window                   = 512;
+    shared.sliding_layers           = 20;
+    shared.sliding_attending_layers = 35;
+    shared.sliding_head_dim         = 256;
+    shared.sliding_kv_heads         = 2;
+    shared.sliding_attention_width  = 35 * 8 * 512;
+    ch::ModelFacts alone           = shared;
+    alone.sliding_attending_layers = 20;
+    alone.sliding_attention_width  = 20 * 8 * 512;
+    const double a = ch::prefill_attention_tiled_seconds(shared, series[0].card, KvCacheStorage::BFloat16, 4096, 1024);
+    const double b = ch::prefill_attention_tiled_seconds(alone, series[0].card, KvCacheStorage::BFloat16, 4096, 1024);
+    check(b > 0 && std::abs(a / b - 35.0 / 20) < 1e-9, "a KV-shared Gemma 4: its attending layers' heads and count");
+}
+
 void contradictory_pins(const json& fixture) {
     const Bench b = nine_b(fixture, "RTX 4070 Ti");
     ch::Pins pins;
@@ -1213,6 +1267,7 @@ int main() {
         std::ifstream prefills(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/prefill_measured.json");
         const json prefill_rows = json::parse(prefills);
         prefills_by_format(prefill_rows);
+        prices_gemma_attention_tiles(prefill_rows);
         prefills_pay_tail_calls(prefill_rows);
         std::ifstream census(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/decode_census.json");
         counts_the_kernels(json::parse(census));
