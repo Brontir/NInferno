@@ -1589,7 +1589,7 @@ rule: whole waves only at 90 % wave efficiency). Stream-K is not the loss: whole
 on the 4070 Ti (Qwen; Gemma 1.5 %) and even on the 4060 Ti and the 3060. What the 5090 loses
 depends on the shape: one Q4_K call at 2048 tokens (route sweep bench, prefill profile) takes 0.71
 .. 0.74 of the 4090's time on the large matrices (15360x3840, 3840x15360) but 0.87 .. 0.90 on the
-small ones (4096x4096, 3840x3840, 8192x3840: fewer output tiles than two of its waves), while
+small ones (4096x4096, 3840x3840, 8192x3840: 512 .. 1024 output tiles, three to six a SM), while
 both boards' MMQ reaches 27 .. 31 % of the int8 tensor peak. The prefill estimate's rate per
 generation does not see the shape: a Qwen 9B or Gemma 12B layer is mostly small matrices for 170
 SMs. The nsys ratio above (0.805) mixed both and the profile's clocks, which were not recorded.
