@@ -114,6 +114,10 @@ struct Geometry {
     double ssm_inner = 0, ssm_state = 0, ssm_groups = 0, ssm_heads = 0, ssm_conv = 0;
     double ffn = 0, experts = 0, experts_used = 0, expert_ffn = 0, shared_ffn = 0;
     double ffn_matrices       = 3;     // gate, up, down; NemotronH's relu^2 experts have no gate
+    // Each attention layer's projections (add_attention): queries, keys and values as one call,
+    // the output as another.
+    std::vector<runtime::PlanLinear> attention_linears;
+    std::vector<double> attention_queries; // each qkv call's query width (heads x key)
     bool dense_beside_experts = false; // Gemma 4 MoE: every layer runs its MLP and its experts
     bool tied = false, mtp = false;
 };
@@ -124,6 +128,10 @@ void add_attention(Geometry& g, bool sliding, bool own_kv, double heads, double 
                    double key, double value, bool keys_are_values = false) {
     ++g.attention_layers;
     g.attention_params += g.hidden * heads * (key + value);
+    const double kv = own_kv && kv_heads > 0 ? kv_heads * (keys_are_values ? key : key + value) : 0;
+    g.attention_linears.push_back({heads * key + kv, static_cast<double>(g.hidden), 1, false});
+    g.attention_queries.push_back(heads * key);
+    g.attention_linears.push_back({static_cast<double>(g.hidden), heads * value, 1, false});
     (sliding ? g.sliding_attention_width : g.full_attention_width) += heads * (key + value);
     if (!own_kv || kv_heads <= 0) { return; } // reads an earlier layer's keys and values
     g.attention_params += g.hidden * kv_heads * (keys_are_values ? key : key + value);
@@ -285,6 +293,31 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
         const double f      = g.ffn_layers;
         const double a      = g.attention_params;
         m.params = a + r * mixer + f * (dense + shared + routed) + table * (g.tied ? 1 : 2);
+        // The linears by shape (DECISIONS 66). Qwen 3.5's attention gates its output: its query
+        // projection is twice the heads' width.
+        const bool gate = g.model_type.rfind("qwen3_5", 0) == 0;
+        for (std::size_t i = 0; i < g.attention_linears.size(); ++i) {
+            runtime::PlanLinear l = g.attention_linears[i];
+            if (gate && i % 2 == 0) { l.n += g.attention_queries[i / 2]; }
+            m.linears.push_back(l);
+        }
+        if (r > 0 && g.ssm_inner > 0) {
+            m.linears.push_back({2 * g.ssm_inner + 2 * g.ssm_groups * g.ssm_state, hidden, r, false});
+            m.linears.push_back({hidden, g.ssm_inner, r, false});
+        }
+        const double up = g.ffn_matrices - 1; // gate and up, or up alone
+        if (f > 0 && dense_width > 0) {
+            m.linears.push_back({up * dense_width, hidden, f, false});
+            m.linears.push_back({hidden, dense_width, f, false});
+        }
+        if (f > 0 && g.shared_ffn > 0) {
+            m.linears.push_back({up * g.shared_ffn, hidden, f, false});
+            m.linears.push_back({hidden, g.shared_ffn, f, false});
+        }
+        if (moe && f > 0) {
+            m.linears.push_back({up * g.expert_ffn, hidden, f * g.experts_used, true});
+            m.linears.push_back({hidden, g.expert_ffn, f * g.experts_used, true});
+        }
         s.active_params        = a + r * mixer + f * (dense + shared + taken) + table;
         s.routed_expert_params = f * routed;
     }

@@ -321,6 +321,20 @@ int qwen35_moe() {
                           where + ": active " + std::to_string(f.shape.active_params));
         failures +=
             check(f.shape.routed_expert_params > 0.8 * f.model.params, where + ": routed share");
+        // The linears by shape (DECISIONS 66), as the census found the calls on the RTX 4090: the
+        // gated attention's qkv 9216 x 2048 and output 2048 x 4096 (10 layers), the Gated
+        // DeltaNet's in-projection 12288 x 2048 and output 2048 x 4096 (30), the shared expert's
+        // 1024 x 2048 and 2048 x 512 (40), the experts' the same at 8 picks a token.
+        const auto has = [&](double n, double k, double per, bool expert) {
+            return std::any_of(f.model.linears.begin(), f.model.linears.end(), [&](const rt::PlanLinear& l) {
+                return l.n == n && l.k == k && std::abs(l.per_token - per) < 1e-9 && l.expert == expert;
+            });
+        };
+        failures += check(has(9216, 2048, 1, false) && has(2048, 4096, 1, false), where + ": attention linears");
+        failures += check(has(12288, 2048, 30, false) && has(2048, 4096, 30, false), where + ": recurrent linears");
+        failures += check(has(1024, 2048, 40, false) && has(2048, 512, 40, false), where + ": shared expert linears");
+        failures += check(has(1024, 2048, 320, true) && has(2048, 512, 320, true), where + ": expert linears");
+        failures += same(f.model.linears.size(), 26, where + ": 20 attention + 6 others");
     }
     return failures;
 }

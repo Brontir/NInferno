@@ -165,6 +165,15 @@ enum class ExpertPrefill : std::uint8_t {
     Mxfp4, // MXFP4 banks: int8 as Int8, or the block-scaled MMA where the build has it (sm_120a)
 };
 
+// One linear a token runs in prefill (DECISIONS 66): N output rows, K deep, `per_token` times (its
+// layers; a routed expert's, its picks a token across the layers).
+struct PlanLinear {
+    double n         = 0;
+    double k         = 0;
+    double per_token = 0;
+    bool expert      = false; // a routed expert's bank (its grid counts jobs, not tokens)
+};
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
@@ -229,6 +238,8 @@ struct PlanModelFacts {
     // The routed experts' stored bytes (a whole GGUF table's *_exps tensors: the trunk's, and the
     // MTP layers' apart), 0 when dense or unknown: a pass reads them at its rows' routed share.
     std::uint64_t routed_expert_bytes = 0, mtp_routed_expert_bytes = 0;
+    // The trunk's linears by shape (empty: the geometry did not name them).
+    std::vector<PlanLinear> linears;
     // Their prefill GEMM (the trunk's banks; the most of their bytes where layers differ).
     ExpertPrefill expert_prefill = ExpertPrefill::Unknown;
     // Where a whole GGUF's tensor data starts (its tensor table ends just before), 0: not a GGUF.
