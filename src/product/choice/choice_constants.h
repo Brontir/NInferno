@@ -353,30 +353,37 @@ inline constexpr TileCost kTileCost[] = {
 // six bits): read on Qwen3.5 9B's Q3_K_M, Q4_K_M (the MTP file), Q5_K_M and Q6_K 7K-token prompts
 // (nsys, the calls by format and grid against the GGUF's tensor types), each generation's cards
 // together; checked on its Q4_K_S, which they were not read on:
-//   Ada (RTX 4060 Ti, the 4070 Ti)  c0 2000, Q3_K 51.5, Q4_K 42.75, Q5_K 45.25, Q6_K 50.75: -5 .. +3 %, Q4_K_S -3 .. +8 %
-//   Ampere (RTX 3060)               c0 4000, 49.25, 41.5, 43.5, 48.75: -1 .. +1 %, Q4_K_S 0 %
-//   Turing (RTX 2080 Ti)            c0 0, 91.75, 71.75, 74.5, 77.75: -8 .. +4 %, Q4_K_S -2 .. +2 %
-//   Blackwell (RTX 5090, stream-k)  c0 3000, 60.5, 45.5, 49.5, 59: -7 .. +7 %, Q4_K_S -5 .. +7 %
-// A mix's tiles take its label's format (Q4_K_M: Q4_K), its bits a weight past that format's moving
-// them toward Q6_K's (the mixes raise ffn_down, attn_v and the like to Q5_K / Q6_K).
+//   Ada (RTX 4060 Ti, the 4070 Ti)  c0 2000, Q4_K 42.75, Q5_K 45.25, Q6_K 50.75: -5 .. +3 %, Q4_K_S -3 .. +8 %
+//   Ampere (RTX 3060)               c0 4000, 41.5, 43.5, 48.75: -1 .. +1 %, Q4_K_S 0 %
+//   Turing (RTX 2080 Ti)            c0 0, 71.75, 74.5, 77.75: -8 .. +4 %, Q4_K_S -2 .. +2 %
+//   Blackwell (RTX 5090, stream-k)  c0 3000, 45.5, 49.5, 59: -7 .. +7 %, Q4_K_S -5 .. +7 %
+// (Q3_K read as Q6_K: Ada 51.5, Ampere 49.25, Turing 91.75, Blackwell 60.5; its mixes are not a
+// K-quant class here, DECISIONS 69.) A mix's tiles take its label's format (Q4_K_M: Q4_K), its bits
+// a weight past that format's moving them toward Q6_K's (the mixes raise ffn_down, attn_v and the
+// like to Q5_K / Q6_K; the bits are the whole file's, its token table and head among them). A slice
+// of t tokens takes ggml's narrowest column tile with the fewest tiles (16, 32, 64 or 128: ggml_mmq
+// kColumnTiles); a J-column tile's K step is (kMmqTileFixed + (1 - kMmqTileFixed) J / 128) of a
+// 128-column one (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716).
 struct MmqTileCost {
     std::string_view generation;
     double c0;
-    double q3, q4, q5, q6; // SM-clocks a K step of a tile, by format
+    double q4, q5, q6; // SM-clocks a K step of a 128-column tile, by format
     int cards;
 };
-inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 51.5, 42.75, 45.25, 50.75, 2},
-                                               {"ga10x", 4000, 49.25, 41.5, 43.5, 48.75, 1},
-                                               {"turing", 0, 91.75, 71.75, 74.5, 77.75, 1},
-                                               {"gb20x", 3000, 60.5, 45.5, 49.5, 59, 1}};
+inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75, 2},
+                                               {"ga10x", 4000, 41.5, 43.5, 48.75, 1},
+                                               {"turing", 0, 71.75, 74.5, 77.75, 1},
+                                               {"gb20x", 3000, 45.5, 49.5, 59, 1}};
+inline constexpr double kMmqTileFixed = 0.43;
 inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
 inline constexpr double kMmqTile        = 128;
-// Beside the tiles, a call quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes written)
-// and its epilogue turns the FP32 output into 16 bits (4 read, 2 written): bytes at the DRAM rate
-// (the census: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2 holds part of them, 0.65 .. 0.77 of
-// the bytes' time). A stream-k call's fixup reads and writes a tile's FP32 partial a SM.
-inline constexpr double kMmqInputBytes  = 3.125;
-inline constexpr double kMmqOutputBytes = 6;
+// Beside the tiles, a call's epilogue turns the FP32 output into 16 bits (4 bytes read, 2 written;
+// a gated pair's SwiGLU writes one row of the two), at the DRAM rate (with the input's quantization
+// the census's bytes: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2 holds part of them). The
+// input's quantization to q8_1 is the small kernels' (kSmallKernelCost's passes count the int8
+// route's). A stream-k call's fixup reads and writes a tile's FP32 partial a SM.
+inline constexpr double kMmqOutputBytes = 4;      // read, an output element of the tiles
+inline constexpr double kMmqWrittenBytes = 2;     // written, an element of the call's output
 
 // A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside
 // its linears, attention and tail calls, seven cards). The Gated DeltaNet's chunked scan is a count

@@ -313,15 +313,15 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
         }
         const double up = g.ffn_matrices - 1; // gate and up, or up alone
         if (f > 0 && dense_width > 0) {
-            m.linears.push_back({up * dense_width, hidden, f, false});
+            m.linears.push_back({up * dense_width, hidden, f, false, up == 2});
             m.linears.push_back({hidden, dense_width, f, false});
         }
         if (f > 0 && g.shared_ffn > 0) {
-            m.linears.push_back({up * g.shared_ffn, hidden, f, false});
+            m.linears.push_back({up * g.shared_ffn, hidden, f, false, up == 2});
             m.linears.push_back({hidden, g.shared_ffn, f, false});
         }
         if (moe && f > 0) {
-            m.linears.push_back({up * g.expert_ffn, hidden, f * g.experts_used, true});
+            m.linears.push_back({up * g.expert_ffn, hidden, f * g.experts_used, true, up == 2});
             m.linears.push_back({hidden, g.expert_ffn, f * g.experts_used, true});
         }
         s.active_params        = a + r * mixer + f * (dense + shared + taken) + table;
