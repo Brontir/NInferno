@@ -1710,8 +1710,10 @@ defaults to true), so the plan prices the served configuration on the corpus's t
 on the RTX 4090 with the #244 registry Qwen 9B serves dflash:7+head fixed and the plan says 580 tok/s
 (x3.54 of 163.7), Gemma 12B serves mtp:5 and the plan says 395 (x3.41 of 115.9); hard50 measured x2.99
 and x3.21, its requests asking with thinking off (a fixed server serves both flags the same
-configuration). Same configuration, same round cost: the difference is the text alone (the table
-above).
+configuration). Same configuration, same round cost: the difference is the text alone. The
+corpus's thinking section keeps 5.57 tokens a round for Qwen (dflash:7+head) and 4.64 for Gemma
+(mtp:5) against hard50's 4.74 and 4.35, so hard50's measured gains price the plan's text at
+x2.99 x 5.57 / 4.74 = x3.51 and x3.21 x 4.64 / 4.35 = x3.42, within 1 % of the plan's x3.54 and x3.41.
 An earlier reading of this gap as the plan pricing a configuration the server does not run was
 wrong: the plan's and the server's choice come from the same `served_speculation`, and a pricing
 of the served configuration (`config_gain`) equalled the pick's speedup on every profile checked.
