@@ -343,6 +343,34 @@ inline constexpr TileCost kTileCost[] = {
     {"gb20x", TileKernel::A16, 785, 14.96, 1, 1},   {"gb20x", TileKernel::Mx, 1226, 8.34, 1, 1},
 };
 
+// ggml's matrix kernel (MMQ, mul_mat_q) on a dense model's K-quant linears where it takes their
+// prefill (measured::mmq_prefill_pays; DECISIONS 69): a call runs kMmqSliceTokens tokens at a time;
+// a tile is 128 weight rows x 128 tokens over the whole K (one CTA a SM, 256 threads at 254
+// registers), a slice's grid ceil(N / 128) x ceil(t / 128) tiles. A grid that fills its last wave to
+// 90 % runs a tile a CTA in rounds of SMs; else stream-k: the SMs share the tiles' K steps evenly and
+// a fixup kernel adds the split tiles (ggml mmq.cuh). A tile takes c0 + K c1 SM-clocks, c1 = a + b
+// x the bits a weight (its block's decode grows with them): read on Qwen3.5 9B's Q4_K_M, Q5_K_M and
+// Q6_K 7K-token prompts (nsys, the calls by format and grid against the GGUF's tensor types), each
+// generation's cards together: Ada (RTX 4060 Ti, the 4070 Ti's Q6_K) 24 + 4.0 b, c0 3000 (-4 ..
+// +5 %), Ampere (RTX 3060) 26 + 3.5 b (-3 .. +3 %), Turing (RTX 2080 Ti) 59 + 2.75 b, c0 3000 (-5 ..
+// +3 %), Blackwell (RTX 5090, stream-k throughout) 16 + 6.5 b (-8 .. +9 %). Q4_K 4.5 bits, Q5_K 5.5,
+// Q6_K 6.56: a mix's tiles at its own bits a weight.
+struct MmqTileCost {
+    std::string_view generation;
+    double c0, a, b; // SM-clocks a tile, and a K step: a + b x the bits a weight
+    int cards;
+};
+inline constexpr MmqTileCost kMmqTileCost[] = {
+    {"ada", 3000, 24, 4.0, 2}, {"ga10x", 0, 26, 3.5, 1}, {"turing", 3000, 59, 2.75, 1}, {"gb20x", 0, 16, 6.5, 1}};
+inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
+inline constexpr double kMmqTile        = 128;
+// Beside the tiles, a call quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes written)
+// and its epilogue turns the FP32 output into 16 bits (4 read, 2 written): bytes at the DRAM rate
+// (the census: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2 holds part of them, 0.65 .. 0.77 of
+// the bytes' time). A stream-k call's fixup reads and writes a tile's FP32 partial a SM.
+inline constexpr double kMmqInputBytes  = 3.125;
+inline constexpr double kMmqOutputBytes = 6;
+
 // A prefill's small kernels (DECISIONS 66, the census of Qwen3.5 9B Q8_0's 1819-token prompt outside
 // its linears, attention and tail calls, seven cards). The Gated DeltaNet's chunked scan is a count
 // of SM-clocks a token and state element (12.6 M elements over its 24 layers): RTX 4060 Ti 0.049,

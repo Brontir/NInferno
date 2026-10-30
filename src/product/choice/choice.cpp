@@ -1,6 +1,7 @@
 #include "product/choice/choice.h"
 
 #include "core/generation.h"
+#include "core/measured_boards.h"
 
 #include <algorithm>
 #include <cctype>
@@ -505,6 +506,40 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     return rate;
 }
 
+// A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost), where the card's nearest
+// measured board takes it; 0 elsewhere (the classic tiles: not read).
+double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                           double tokens, bool* transferred) noexcept {
+    const measured::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
+                                card.dram_bytes_per_s / 1e9};
+    if (quant.bits_per_weight <= 0 || !measured::mmq_prefill_pays(board)) { return 0; }
+    const std::string_view gen = generation_of(card);
+    const MmqTileCost* cost    = nullptr;
+    for (const MmqTileCost& row : kMmqTileCost) {
+        if (row.generation == gen) { cost = &row; }
+    }
+    if (cost == nullptr) { return 0; }
+    if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
+    const double sms = card.sms, step = cost->a + cost->b * quant.bits_per_weight;
+    double clocks = 0, bytes = 0;
+    for (const LinearShape& l : model.linears) {
+        for (double done = 0; done < tokens; done += kMmqSliceTokens) {
+            const double t     = std::min(kMmqSliceTokens, tokens - done);
+            const double tiles = std::ceil(l.n / kMmqTile) * std::ceil(t / kMmqTile);
+            const double waves = std::ceil(tiles / sms);
+            const double tile  = cost->c0 + l.k * step;
+            if (100 * tiles >= 90 * sms * waves) {
+                clocks += l.per_token * waves * tile;
+            } else { // stream-k: the SMs share the tiles' K steps; the fixup adds the split tiles
+                clocks += l.per_token * (cost->c0 + tiles * l.k * step / sms);
+                bytes += l.per_token * sms * kMmqTile * kMmqTile * 4 * 2;
+            }
+            bytes += l.per_token * t * (l.k * kMmqInputBytes + l.n * kMmqOutputBytes);
+        }
+    }
+    return clocks / card.clock_hz + bytes / card.dram_bytes_per_s;
+}
+
 } // namespace
 
 double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
@@ -533,6 +568,7 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
     case ExpertBanks::Unknown: return 0;
     }
+    if (!moe && quant.weights == WeightClass::KQuant) { return mmq_linears_seconds(model, card, quant, tokens, transferred); }
     if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);

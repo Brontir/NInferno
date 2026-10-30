@@ -491,14 +491,10 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // nearest measured board's answer of its instruction set at any distance, as the "64 SMs" line
 // between the 5060 Ti and the 5090 did (an RTX 5080 the 5090's, an RTX 5070 Ti, 5070 or 5060 the
 // 5060 Ti's: the 5070 Ti's route profile prefills on the tiles, DECISIONS 62); Volta and the
-// architectures nobody measured keep the tiles.
-constexpr measured::Gate kMmqPrefillPays[] = {
-    {measured::kRtx5090, true},    {measured::kRtx5060Ti, false}, {measured::kRtx4090, true},
-    {measured::kL4, true},         {measured::kRtx4060Ti, true},  {measured::kA10, true},
-    {measured::kA100Sxm40, false}, {measured::kRtx2080Ti, true}};
-
+// architectures nobody measured keep the tiles. The gate's table: measured::kMmqPrefillPays
+// (core/measured_boards.h), which the product's estimate reads too.
 bool mmq_prefill_device() {
-    return measured::measured_gate(kMmqPrefillPays, std::numeric_limits<double>::max());
+    return measured::measured_gate(measured::kMmqPrefillPays, std::numeric_limits<double>::max());
 }
 
 bool mmq_prefill_wins(const Problem& p, const Weight& w) {
