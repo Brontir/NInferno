@@ -24,9 +24,6 @@ using product::parse_kv_dtype;
 using product::parse_u32;
 using product::parse_u64;
 
-int parse_device(const char* text) { return product::parse_nonnegative_int(text, "device"); }
-
-
 ReasoningEffort parse_reasoning_effort_option(std::string_view text) {
     if (const auto effort = ninferno::parse_reasoning_effort(text)) { return *effort; }
     throw std::invalid_argument("invalid reasoning-effort: " + std::string(text));
@@ -38,7 +35,8 @@ std::string usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
            " <model.ninferno> (--prompt <text>|--messages <messages.json>)\n"
            "       [--max-context N] [--kv-capacity N|auto] [--prefill-chunk N] [--max-new N]\n"
-           "       [--device N]\n"
+           "       [--device N|pci:BUSID|GPU-UUID]  N counts GPUs in PCI bus order, as\n"
+           "                                        nvidia-smi does\n"
            "       [--kv-dtype auto|bf16|int8|fp8|nvfp4|k8v4] [--sliding-kv-dtype bf16|fp8]\n"
            "       [--state-dtype f32|bf16|f16]\n"
            "       [--activations exact|fast|int8] [--rope-yarn-factor F]\n"
@@ -117,7 +115,7 @@ Options parse_options(int argc, char** argv) {
         } else if (arg == "--prefill-chunk") {
             options.prefill_chunk = parse_u32(value(arg), "prefill-chunk");
         } else if (arg == "--device") {
-            options.device = parse_device(value(arg));
+            options.device_selector = parse_device_option(value(arg));
         } else if (arg == "--kv-dtype") {
             const std::string_view text = value(arg);
             options.kv_cache = text == "auto" ? std::nullopt : std::optional(parse_kv_dtype(text));

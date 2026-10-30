@@ -469,6 +469,14 @@ int facts_reach_their_section() {
     renamed.device      = 0;
     failures += check(collect(renamed) == collect(sample_device()),
                       "facts: the name and the ordinal stay out");
+    // Another board of the same type (PCI address, UUID) makes the same decisions: the identity is
+    // printed beside the fingerprint, never hashed.
+    DeviceClass other_board      = sample_device();
+    other_board.identity.pci_bus = 0x41;
+    other_board.identity.uuid[0] = 0xAB;
+    failures += check(collect(other_board) == collect(sample_device()) &&
+                          rt::observed_of(other_board) == rt::observed_of(sample_device()),
+                      "facts: the board's PCI address and UUID stay out");
     return failures;
 }
 

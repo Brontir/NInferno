@@ -12,13 +12,15 @@
 // 8.7, 8.9), or it carries PTX and arch <= cc (89 with PTX: Hopper, datacenter Blackwell, any later
 // generation, the driver compiling each kernel once). The most specific, newest match wins.
 //
-// The GPU is the one the command names (--device N, default 0), numbered as the engine numbers
-// it: through the CUDA driver itself, so CUDA_VISIBLE_DEVICES and the device order agree. Every
-// argument goes to the engine unchanged. On Linux the engine replaces this process; on Windows it
-// runs as a child in this console (Ctrl+C and Ctrl+Break reach it) and its exit code is returned.
+// The GPU is the one the command names (--device N, pci:BUSID or GPU-UUID; without it the first),
+// found as the engine finds it: among the GPUs the CUDA driver enumerates, so CUDA_VISIBLE_DEVICES
+// agrees, by PCI bus order and identity, never the enumeration order (core/device_identity.h).
+// Every argument goes to the engine unchanged. On Linux the engine replaces this process; on
+// Windows it runs as a child in this console (Ctrl+C and Ctrl+Break reach it) and its exit code is
+// returned.
 
 #include "core/command_line.h"
-#include "core/parse.h"
+#include "core/device_identity.h"
 #include "core/sys.h"
 
 #include <nlohmann/json.hpp>
@@ -58,7 +60,8 @@ struct Engine {
 
 struct Gpu {
     std::string name;
-    int cc = 0; // major * 10 + minor
+    int cc = 0; // major * 10 + minor; 0 when the driver cannot report the device
+    ninferno::DeviceIdentity identity;
 };
 
 // The CUDA driver's entry points, loaded at run time (the dispatcher links no CUDA library).
@@ -68,11 +71,15 @@ struct Driver {
     using Get       = int (*)(int*, int);
     using Attribute = int (*)(int*, int, int);
     using Name      = int (*)(char*, int, int);
+    using BusId     = int (*)(char*, int, int);
+    using Uuid      = int (*)(unsigned char*, int); // CUuuid: 16 bytes
     Init init           = nullptr;
     Count count         = nullptr;
     Get get             = nullptr;
     Attribute attribute = nullptr;
     Name name           = nullptr;
+    BusId bus_id        = nullptr;
+    Uuid uuid           = nullptr;
 
     bool load() {
         void* library = ninferno::sys::load_library("libcuda.so.1", "nvcuda.dll");
@@ -82,9 +89,18 @@ struct Driver {
         get       = reinterpret_cast<Get>(ninferno::sys::symbol(library, "cuDeviceGet"));
         attribute = reinterpret_cast<Attribute>(ninferno::sys::symbol(library, "cuDeviceGetAttribute"));
         name      = reinterpret_cast<Name>(ninferno::sys::symbol(library, "cuDeviceGetName"));
+        // The board's identity is optional: a driver without these entry points leaves it
+        // unknown (sorted last), as the engine does when CUDA cannot say.
+        bus_id    = reinterpret_cast<BusId>(ninferno::sys::symbol(library, "cuDeviceGetPCIBusId"));
+        uuid      = reinterpret_cast<Uuid>(ninferno::sys::symbol(library, "cuDeviceGetUuid_v2"));
+        if (uuid == nullptr) {
+            uuid = reinterpret_cast<Uuid>(ninferno::sys::symbol(library, "cuDeviceGetUuid"));
+        }
         return init && count && get && attribute && name && init(0) == 0;
     }
 
+    // Entry i is ordinal i. A device the driver cannot report keeps its place, with cc 0 and an
+    // identity sorted last.
     std::vector<Gpu> gpus() const {
         constexpr int kMajor = 75; // CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR
         constexpr int kMinor = 76; // CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR
@@ -92,14 +108,28 @@ struct Driver {
         std::vector<Gpu> out;
         if (count(&n) != 0) { return out; }
         for (int i = 0; i < n; ++i) {
+            Gpu gpu;
+            gpu.identity.pci_domain = 0xFFFFFFFFu;
             int device = 0, major = 0, minor = 0;
             char text[256] = {};
-            if (get(&device, i) != 0 || attribute(&major, kMajor, device) != 0 ||
-                attribute(&minor, kMinor, device) != 0) {
-                continue;
+            char bus[32]   = {};
+            if (get(&device, i) == 0 && attribute(&major, kMajor, device) == 0 &&
+                attribute(&minor, kMinor, device) == 0) {
+                (void)name(text, sizeof(text), device);
+                gpu.name = text;
+                gpu.cc   = major * 10 + minor;
+                if (bus_id != nullptr && bus_id(bus, sizeof(bus), device) == 0) {
+                    if (const auto identity = ninferno::parse_pci_bus_id(bus)) {
+                        gpu.identity = *identity;
+                    }
+                }
+                // The UUID on its own, as on the engine side: a board without a reported address
+                // still selects by it. One the driver does not report stays zero.
+                if (uuid == nullptr || uuid(gpu.identity.uuid.data(), device) != 0) {
+                    gpu.identity.uuid.fill(0);
+                }
             }
-            (void)name(text, sizeof(text), device);
-            out.push_back({text, major * 10 + minor});
+            out.push_back(std::move(gpu));
         }
         return out;
     }
@@ -161,15 +191,21 @@ std::optional<Engine> choose(const std::vector<Engine>& engines, int cc) {
     return pick([&](const Engine& e) { return e.ptx && e.arch <= cc; });
 }
 
-// --device N among the arguments, the spelling every engine parses; 0 when absent or not a
-// count, which the engine then refuses itself.
-int device_argument(int argc, char** argv) {
+// The ordinal of the GPU --device names among the arguments (the spelling every engine parses),
+// as the engine selects it; -1 when it names none or does not parse, which the engine then
+// refuses itself (the newest engine runs to say so).
+int device_argument(int argc, char** argv, const std::vector<Gpu>& gpus) {
+    ninferno::DeviceSelector selector;
     for (int i = 1; i + 1 < argc; ++i) {
         if (std::string_view(argv[i]) != "--device") { continue; }
-        const auto device = ninferno::parse_exact<int>(argv[i + 1]);
-        return device && *device >= 0 ? *device : 0;
+        const auto parsed = ninferno::parse_device_selector(argv[i + 1]);
+        if (!parsed) { return -1; }
+        selector = *parsed;
+        break;
     }
-    return 0;
+    std::vector<ninferno::DeviceIdentity> identities;
+    for (const Gpu& gpu : gpus) { identities.push_back(gpu.identity); }
+    return ninferno::select_device(selector, identities).value_or(-1);
 }
 
 std::string engines_text(const std::vector<Engine>& engines) {
@@ -188,11 +224,24 @@ int print_version(const std::vector<Engine>& engines, const Driver* driver) {
     }
     const auto gpus = driver->gpus();
     int runnable    = 0;
-    for (std::size_t i = 0; i < gpus.size(); ++i) {
-        const auto engine = choose(engines, gpus[i].cc);
+    // Numbered as --device counts them: in PCI bus order.
+    std::vector<ninferno::DeviceIdentity> identities;
+    for (const Gpu& gpu : gpus) { identities.push_back(gpu.identity); }
+    const std::vector<int> order = ninferno::canonical_device_order(identities);
+    for (std::size_t n = 0; n < order.size(); ++n) {
+        const Gpu& gpu = gpus[static_cast<std::size_t>(order[n])];
+        if (gpu.cc == 0) { continue; }
+        const auto engine = choose(engines, gpu.cc);
         runnable += engine ? 1 : 0;
-        std::cout << "GPU " << i << ": " << gpus[i].name << ", sm_" << gpus[i].cc << " -> "
-                  << (engine ? "engine sm_" + engine->tag : std::string("no engine in this release"))
+        // The forms --device takes: the bus id and, where the driver reports it, the UUID.
+        std::cout << "GPU " << n << " ("
+                  << (ninferno::pci_known(gpu.identity) ? ninferno::pci_bus_id_text(gpu.identity)
+                                                        : std::string("PCI address unknown"))
+                  << (ninferno::uuid_known(gpu.identity) ? ' ' + ninferno::uuid_text(gpu.identity)
+                                                         : std::string())
+                  << "): " << gpu.name << ", sm_" << gpu.cc << " -> "
+                  << (engine ? "engine sm_" + engine->tag
+                             : std::string("no engine in this release"))
                   << '\n';
     }
     if (gpus.empty()) { std::cout << "no CUDA GPU found\n"; }
@@ -268,8 +317,9 @@ int main(int argc, char** argv) {
     std::optional<Engine> engine;
     if (have_driver) {
         const auto gpus  = driver.gpus();
-        const int device = device_argument(argc, argv);
-        if (device >= 0 && device < static_cast<int>(gpus.size())) {
+        const int device = device_argument(argc, argv, gpus);
+        if (device >= 0 && device < static_cast<int>(gpus.size()) &&
+            gpus[static_cast<std::size_t>(device)].cc != 0) {
             engine = choose(engines, gpus[static_cast<std::size_t>(device)].cc);
             if (!engine) {
                 std::cerr << program << ": GPU " << device << " (" << gpus[static_cast<std::size_t>(device)].name
@@ -285,8 +335,9 @@ int main(int argc, char** argv) {
     // room every start compiles again. The user's own setting stays.
     if (engine->ptx && have_driver) {
         const auto gpus  = driver.gpus();
-        const int device = device_argument(argc, argv);
+        const int device = device_argument(argc, argv, gpus);
         if (device >= 0 && device < static_cast<int>(gpus.size()) &&
+            gpus[static_cast<std::size_t>(device)].cc != 0 &&
             gpus[static_cast<std::size_t>(device)].cc / 10 != engine->arch / 10) {
             std::cerr << program << ": GPU " << device << " (" << gpus[static_cast<std::size_t>(device)].name
                       << ", sm_" << gpus[static_cast<std::size_t>(device)].cc

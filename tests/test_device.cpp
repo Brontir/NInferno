@@ -81,6 +81,33 @@ int check_device_class(const ninferno::DeviceContext& ctx) {
                        "class id " + t.id());
     // An NVIDIA board answers with its PCI product id (sysfs natively, NVML under WSL2).
     failures += expect(t.pci_device_id != 0, "PCI product id");
+    // The board: its PCI address as CUDA prints it and its UUID, and the default device is one of
+    // the visible boards.
+    char bus_id[32] = {};
+    CUDA_CHECK(cudaDeviceGetPCIBusId(bus_id, sizeof(bus_id), ctx.device));
+    failures += expect(ninferno::parse_pci_bus_id(bus_id) &&
+                           ninferno::pci_bus_id_text(t.identity) ==
+                               ninferno::pci_bus_id_text(*ninferno::parse_pci_bus_id(bus_id)),
+                       std::string("PCI bus id ") + bus_id);
+    failures += expect(ninferno::uuid_text(t.identity) != ninferno::uuid_text({}), "UUID");
+    failures += expect(t.identity == ninferno::query_device_identity(ctx.device) &&
+                           &ninferno::device_identity() == &t.identity,
+                       "identity accessor");
+    const auto visible = ninferno::visible_device_identities();
+    const int chosen   = ninferno::resolve_device(ninferno::kDefaultDevice);
+    failures += expect(chosen >= 0 && chosen < static_cast<int>(visible.size()) &&
+                           std::none_of(
+                               visible.begin(), visible.end(),
+                               [&](const ninferno::DeviceIdentity& v) {
+                                   return v < visible[static_cast<std::size_t>(chosen)];
+                               }),
+                       "the default device is the lowest visible PCI address");
+    // --device by PCI address and by UUID finds this context's board.
+    failures += expect(ninferno::select_device(ninferno::parse_device_option(
+                           "pci:" + ninferno::pci_bus_id_text(t.identity))) == ctx.device &&
+                           ninferno::select_device(ninferno::parse_device_option(
+                               ninferno::uuid_text(t.identity))) == ctx.device,
+                       "--device pci:... and GPU-<uuid> select this board");
     // The running test binary launched kernels above, so its image loads on this device.
     failures += expect(ninferno::device_has_kernel_image(t.device), "kernel image probe");
     const auto expected = ninferno::common_features(ninferno::device_features_for(t.major, t.minor),

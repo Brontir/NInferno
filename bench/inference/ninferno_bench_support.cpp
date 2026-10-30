@@ -306,7 +306,8 @@ std::string usage_text(std::string_view program) {
         << "  --draft-tokens <n>         MTP 1..5; DFlash/DFlash2 1..15\n"
         << "  --lm-head-draft             use the optimized proposal head; requires a speculative "
            "backend\n"
-        << "  --device <id>               CUDA device ordinal (default: 0)\n"
+        << "  --device <N|pci:BUSID|GPU-UUID>  the GPU; N counts GPUs in PCI bus order, as\n"
+        << "                              nvidia-smi does (default: 0)\n"
         << "  --no-cuda-graph             use eager decode\n"
         << "  --profile-measured          bracket one measured repetition with CUDA profiler API\n"
         << "  -o, --output <table|json|csv>  output format (default: table)\n"
@@ -365,7 +366,7 @@ BenchOptions parse_args(int argc, char** argv) {
         } else if (arg == "--lm-head-draft") {
             options.speculative.proposal_head = ProposalHead::Optimized;
         } else if (arg == "--device") {
-            options.device = parse_nonnegative(value("--device"), "device");
+            options.device_selector = parse_device_option(value("--device"));
         } else if (arg == "--no-cuda-graph") {
             options.use_cuda_graph = false;
         } else if (arg == "--profile-measured") {

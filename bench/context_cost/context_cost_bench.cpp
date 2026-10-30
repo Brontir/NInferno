@@ -3,6 +3,7 @@
 
 #include "core/device.h"
 #include "core/device_class.h"
+#include "core/device_identity.h"
 #include "runtime/engine/context_cache/context_cost.h"
 
 #include <nlohmann/json.hpp>
@@ -97,7 +98,7 @@ std::string usage(const char* executable) {
         << "  --artifact <path>          required only by all/prefill; transfer loads no model\n"
         << "  --corpus <path>            prefill token corpus (default: "
            "bench/fixtures/bench_corpus.ids)\n"
-        << "  --device <id>              CUDA device (default: 0)\n"
+        << "  --device <N|pci:BUSID|GPU-UUID>  the GPU, N in PCI bus order (default: the first)\n"
         << "  --max-context <tokens>     prefill measurement context (default: 8192)\n"
         << "  --prefill-chunk <tokens>   prefill measurement chunk (default: 1024)\n"
         << "  --transfer-warmup <n>      warmups per transfer point (default: 2)\n"
@@ -112,6 +113,7 @@ std::string usage(const char* executable) {
 Options parse_options(int argc, char** argv) {
     Options options;
     options.measurement.corpus = "bench/fixtures/bench_corpus.ids";
+    bool device_given          = false;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
         const auto value = [&](const char* name) -> std::string_view {
@@ -136,7 +138,11 @@ Options parse_options(int argc, char** argv) {
                 throw std::invalid_argument("--suite must be all, transfer, or prefill");
             }
         } else if (argument == "--device") {
-            options.measurement.device = parse_nonnegative_int(value("--device"), "--device");
+            // N counts GPUs in PCI bus order, as ninferno-serve's --device does; pci:BUSID or
+            // GPU-UUID names one board (core/device_identity.h).
+            options.measurement.device =
+                ninferno::select_device(ninferno::parse_device_option(value("--device")));
+            device_given = true;
         } else if (argument == "--max-context") {
             options.measurement.max_context = parse_u32(value("--max-context"), "--max-context");
         } else if (argument == "--prefill-chunk") {
@@ -162,6 +168,7 @@ Options parse_options(int argc, char** argv) {
         }
     }
     if (options.help_requested) { return options; }
+    if (!device_given) { options.measurement.device = ninferno::resolve_device(ninferno::kDefaultDevice); }
     const bool measures_prefill = options.suite != Suite::Transfer;
     if (measures_prefill && options.measurement.artifact.empty()) {
         throw std::invalid_argument("--artifact is required by all/prefill");

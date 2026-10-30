@@ -250,6 +250,9 @@ EngineOptions admit_engine_options(EngineOptions options) {
 }
 
 EngineOptions normalize_engine_options(EngineOptions options) {
+    // The ordinal the options name: as given, or the first GPU in PCI bus order (never CUDA's
+    // enumeration order, which CUDA_VISIBLE_DEVICES and FASTEST_FIRST change).
+    options.device = resolve_device(options.device);
     if (options.recurrent_state_automatic) {
         options.recurrent_state =
             options.activations == ActivationMode::Exact

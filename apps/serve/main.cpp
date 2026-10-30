@@ -1,4 +1,5 @@
 #include "core/removed_environment.h"
+#include "core/device_class.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
 #include "product/plan/plan_choice.h"
@@ -123,7 +124,11 @@ int print_version() {
         std::cout << "CUDA cannot start: " << cudaGetErrorString(status) << '\n';
         return 1;
     }
-    for (int device = 0; device < count; ++device) {
+    // Numbered as --device counts them: in PCI bus order.
+    const std::vector<ninferno::DeviceIdentity> identities = ninferno::visible_device_identities();
+    const std::vector<int> order = ninferno::canonical_device_order(identities);
+    for (std::size_t n = 0; n < order.size(); ++n) {
+        const int device = order[n];
         cudaDeviceProp props{};
         if (cudaGetDeviceProperties(&props, device) != cudaSuccess) { continue; }
         // SASS for sm_XY runs on the same major version from minor Y up; an architecture-specific
@@ -134,9 +139,10 @@ int print_version() {
 #else
         const bool runs = sm / 10 == NINFERNO_BUILD_ARCH / 10 && sm >= NINFERNO_BUILD_ARCH;
 #endif
-        std::cout << "GPU " << device << ": " << props.name << ", sm_" << sm << ", "
-                  << (props.totalGlobalMem >> 20) << " MiB"
-                  << (runs ? "" : " (this build cannot run on it)") << '\n';
+        std::cout << "GPU " << n << " ("
+                  << ninferno::identity_text(identities[static_cast<std::size_t>(device)])
+                  << "): " << props.name << ", sm_" << sm << ", " << (props.totalGlobalMem >> 20)
+                  << " MiB" << (runs ? "" : " (this build cannot run on it)") << '\n';
     }
     return count > 0 ? 0 : 1;
 }
@@ -177,6 +183,14 @@ int main(int argc, char** argv) {
     if (!options.drafter_registry.empty()) {
         ninferno::spec::Registry::use_file(options.drafter_registry);
     }
+    // The GPU --device names, counted in PCI bus order whatever order CUDA enumerates them in;
+    // the model's fit check, the request log and the Engine all see its ordinal.
+    try {
+        options.device = ninferno::select_device(options.device_selector);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "ninferno-serve: " << error.what() << '\n';
+        return 1;
+    }
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno-serve",
@@ -186,6 +200,11 @@ int main(int argc, char** argv) {
     const TerminateLog terminate_log(*logger);
     ninferno::product::StartupLogRenderer startup_log(logging);
     ninferno::serve::OperationalLog operational_log(logger);
+    if (const std::string note =
+            ninferno::visible_devices_note(options.device, options.device_selector);
+        !note.empty()) {
+        logger->info("device | {}", note);
+    }
     bool serving = false;
 
     try {

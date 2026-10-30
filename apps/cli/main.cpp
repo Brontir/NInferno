@@ -9,6 +9,7 @@
 #include "product/plan/plan_speculation.h"
 #include "spec/gpu_identity.h"
 #include "core/command_line.h"
+#include "core/device_class.h"
 #include "product/logging/logging.h"
 #include "product/logging/pretty_format.h"
 #include "product/logging/startup_log.h"
@@ -279,6 +280,13 @@ int main(int argc, char** argv) {
     ninferno::warn_removed_environment("ninferno");
 
     if (!cli.drafter_registry.empty()) { ninferno::spec::Registry::use_file(cli.drafter_registry); }
+    // The GPU --device names, counted in PCI bus order whatever order CUDA enumerates them in.
+    try {
+        cli.device = ninferno::select_device(cli.device_selector);
+    } catch (const std::invalid_argument& error) {
+        std::cerr << "error: " << error.what() << '\n';
+        return 1;
+    }
 
     ninferno::product::LoggingRuntime logging(
         {.logger_name  = "ninferno",
@@ -286,6 +294,10 @@ int main(int argc, char** argv) {
          .presentation = ninferno::product::LogPresentation::Tool});
     const std::shared_ptr<spdlog::logger> logger = logging.logger();
     ninferno::product::StartupLogRenderer startup_log(logging);
+    if (const std::string note = ninferno::visible_devices_note(cli.device, cli.device_selector);
+        !note.empty()) {
+        logger->info("device | {}", note);
+    }
 
     try {
 

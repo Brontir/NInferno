@@ -29,7 +29,7 @@ namespace qwen = ninferno::models::qwen3_5;
 
 struct Options {
     std::filesystem::path artifact = "out/qwen3_6_27b.ninferno";
-    int device                     = 0;
+    int device                     = ninferno::kDefaultDevice; // resolved in PCI order
     int warmup                     = 2;
     int repetitions                = 10;
     std::uint32_t draft_tokens     = 5;
@@ -39,7 +39,8 @@ struct Options {
 
 void print_usage(const char* executable) {
     std::cout << "usage: " << executable
-              << " [--artifact <model.ninferno>] [--device <id>] [--warmup <n>] [--reps <n>]"
+              << " [--artifact <model.ninferno>] [--device <N|pci:BUSID|GPU-UUID>] [--warmup <n>] "
+                 "[--reps <n>]"
                  " [--draft-tokens <1..5>] [--proposal-head full|optimized]"
                  " [--no-cuda-graph]\n";
 }
@@ -57,7 +58,9 @@ Options parse_options(int argc, char** argv) {
         if (argument == "--artifact") {
             options.artifact = value("--artifact");
         } else if (argument == "--device") {
-            options.device = std::stoi(value("--device"));
+            // As ninferno-serve takes it: N counts GPUs in PCI bus order.
+            options.device =
+                ninferno::select_device(ninferno::parse_device_option(value("--device")));
         } else if (argument == "--warmup") {
             options.warmup = std::stoi(value("--warmup"));
         } else if (argument == "--reps") {
@@ -82,7 +85,6 @@ Options parse_options(int argc, char** argv) {
             throw std::invalid_argument("unknown argument: " + std::string(argument));
         }
     }
-    if (options.device < 0) { throw std::invalid_argument("--device must be nonnegative"); }
     if (options.warmup < 0) { throw std::invalid_argument("--warmup must be nonnegative"); }
     if (options.repetitions <= 0) { throw std::invalid_argument("--reps must be positive"); }
     if (options.draft_tokens == 0 || options.draft_tokens > 5) {
@@ -125,7 +127,9 @@ int run(const Options& options) {
         static_cast<std::uint32_t>(options.warmup + options.repetitions);
     ninferno::EngineOptions engine;
     engine.artifact_path       = options.artifact;
-    engine.device              = options.device;
+    // No --device: the first GPU in PCI bus order, as --device 0 and the engine take it.
+    const int device_ordinal = ninferno::resolve_device(options.device);
+    engine.device              = device_ordinal;
     engine.max_context         = static_cast<std::uint32_t>(seed.size() + 64ULL +
                                                             static_cast<std::uint64_t>(measured_rounds) *
                                                                 (options.draft_tokens + 1ULL) +
@@ -139,7 +143,7 @@ int run(const Options& options) {
     engine.use_cuda_graph            = options.use_cuda_graph;
 
     engine = ninferno::runtime::normalize_engine_options(std::move(engine));
-    ninferno::DeviceContext device(options.device);
+    ninferno::DeviceContext device(device_ordinal);
     auto constructed = ninferno::runtime::construct_model(engine, device);
     auto& frontend   = constructed.instance->frontend;
     auto& program    = constructed.instance->program;
