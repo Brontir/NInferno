@@ -731,6 +731,34 @@ RequestSpeculation request_speculation(const spec::SpeculationMenu& menu,
     return out;
 }
 
+RequestSpeculation request_speculation_at(const spec::SpeculationMenu& menu, std::uint32_t depth,
+                                          double engine_floor) {
+    RequestSpeculation out{.draft_tokens = depth};
+    if (depth == 0) { return out; }
+    const int k = static_cast<int>(depth);
+    std::vector<std::pair<int, double>> floors;
+    double at_depth = 0.0;
+    for (const spec::MenuChoice* c : {&menu.primary, &menu.thinking, &menu.non_thinking, &menu.overall}) {
+        if (!c->config.enabled() || c->config.mode != menu.mode) { continue; }
+        floors.emplace_back(c->config.k, c->floor);
+        if (c->config.k == k) { at_depth = std::max(at_depth, c->floor); }
+    }
+    if (floors.empty()) {
+        out.acceptance_floor = engine_floor;
+        return out;
+    }
+    out.acceptance_floor = watchdog_floor(at_depth > 1.0 ? at_depth : shallower_floor(floors, k));
+    spec::MenuChoice probe;
+    probe.config      = menu.primary.config.enabled() ? menu.primary.config : menu.overall.config;
+    probe.config.mode = menu.mode;
+    probe.config.k    = k;
+    for (const auto& step : menu.step_down(probe)) {
+        out.step_down.push_back(SpeculationStep{.draft_tokens = static_cast<std::uint32_t>(step.depth),
+                                                .acceptance_floor = watchdog_floor(step.floor)});
+    }
+    return out;
+}
+
 std::uint32_t speculative_window(const SpeculativeOptions& options) noexcept {
     if (options.backend == SpeculativeBackend::None) { return 0; }
     std::uint32_t window = options.draft_tokens;

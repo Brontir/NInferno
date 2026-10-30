@@ -106,6 +106,15 @@ int test_envelope_and_field_policy() {
     body["output_config"] = Json{{"effort", "low"}, {"future_option", true}};
 
     const AnthropicMessagesRequest request = parse(body);
+    Json depth                             = base_request();
+    depth["ninferno"]                      = Json{{"draft_tokens", 4}};
+    Json too_deep                          = base_request();
+    too_deep["ninferno"]                   = Json{{"draft_tokens", 16}};
+    if (!(parse(depth).generation.draft_tokens == 4U && !request.generation.draft_tokens &&
+          api_code([&] { (void)parse(too_deep); }) == "invalid_draft_tokens")) {
+        std::cerr << "FAIL: ninferno.draft_tokens through the Messages dialect\n";
+        return 1;
+    }
     int failures =
         check(request.model == "claude-local" && request.stream && request.output_tokens_explicit &&
                   request.generation.max_tokens == 4096,

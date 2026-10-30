@@ -1067,19 +1067,32 @@ int test_reasoning_and_extensions() {
     failures += check(parse(body).generation.messages.size() == 1,
                       "null unknown template option is neutral");
 
-    // The ninferno extension object has no members: null, absent or empty; anything else is a 400.
+    // The ninferno extension object: null, absent or empty is neutral; its one member, draft_tokens,
+    // takes 0..15; anything else is a 400.
     body           = base_request();
     body["ninferno"] = Json::object();
     failures +=
         check(parse(body).generation.messages.size() == 1, "an empty ninferno object is neutral");
+    failures += check(!parse(body).generation.draft_tokens, "an empty ninferno names no depth");
     body["ninferno"] = nullptr;
     failures +=
         check(parse(body).generation.messages.size() == 1, "a null ninferno object is neutral");
+    for (const int depth : {0, 3, 15}) {
+        body["ninferno"] = Json{{"draft_tokens", depth}};
+        failures += check(parse(body).generation.draft_tokens == static_cast<std::uint32_t>(depth),
+                          "ninferno.draft_tokens " + std::to_string(depth) + " is the request's depth");
+    }
+    body["ninferno"] = Json{{"draft_tokens", nullptr}};
+    failures += check(!parse(body).generation.draft_tokens, "a null draft_tokens names no depth");
     for (const Json& bad :
-         {Json{{"spec_family", "code"}}, Json{{"family", "code"}}, Json("code")}) {
+         {Json{{"spec_family", "code"}}, Json{{"family", "code"}}, Json("code"),
+          Json{{"draft_tokens", 16}}, Json{{"draft_tokens", -1}}, Json{{"draft_tokens", "3"}},
+          Json{{"draft_tokens", 2.5}}, Json{{"draft_tokens", 3}, {"family", "code"}}}) {
         body["ninferno"] = bad;
-        failures += check(api_error([&] { (void)parse(body); }).status == 400,
-                          "a bad ninferno extension is a 400: " + bad.dump());
+        const ApiError error = api_error([&] { (void)parse(body); });
+        failures += check(error.status == 400, "a bad ninferno extension is a 400: " + bad.dump());
+        failures += check(error.param.starts_with("ninferno"),
+                          "the 400 names the ninferno member: " + bad.dump() + " -> " + error.param);
     }
 
     body                        = base_request();

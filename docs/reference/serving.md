@@ -269,7 +269,24 @@ external entry replaced entirely is not).
 - Requests of different depths share batches. A step verifies at the deepest request's depth, each
   request drafting at that launch's width.
 - A choice that needs another drafter runs the default configuration, and the startup log says so.
-- The `"ninferno"` request extension object has no members; any member is HTTP 400.
+- A request may name its own draft depth in the `"ninferno"` extension object (Chat Completions,
+  Responses and Messages alike), under `--spec auto` and an explicit `--spec` alike:
+  `"ninferno": {"draft_tokens": K}`.
+  - `0` decodes that request plainly. `1` up to the deepest depth the server captured at startup
+    drafts K tokens a round (an MTP copy round, `--ngram-draft-tokens`, still verifies its copy
+    window). A deeper K, or any K above 0 on a plain server, is HTTP 400
+    (`draft_depth_out_of_range`) before any work; K outside 0..15 or another member is HTTP 400
+    (`invalid_draft_tokens`, `unknown_parameter`).
+  - Its watchdog floor is the one measured at depth K (the highest among the profile's entries at
+    K, else interpolated between the measured depths around it); a tripped request steps down
+    through the profile's shallower depths. Without a profile it takes the engine's floor and the
+    explicit `--spec`'s step-down depths below K.
+  - A K the server did not capture drafts and verifies at the next captured depth above it, as a
+    mixed batch does. `--spec-load` bounds still cap the depth of a busy step, and a prompt past
+    the profile's `context_limit` still decodes plainly.
+  - Under greedy `exact` decoding the output is the same as without it (the target verifies every
+    token); only the speed changes. The request record and `timings.speculation` show
+    `selection: request`.
 
 ### Break-even floor
 
@@ -385,7 +402,7 @@ and on a server plain since startup:
 | Field | Meaning |
 |---|---|
 | `config` | what the request ran: `dflash:7`, `mtp K=3` (explicit `--spec`), `plain` |
-| `selection` | how: `fixed` or `thinking` (`--spec-select`), `explicit` (`--spec`), `startup` (`--spec auto` runs nothing) |
+| `selection` | how: `fixed` or `thinking` (`--spec-select`), `explicit` (`--spec`), `startup` (`--spec auto` runs nothing), `request` (the request's own `ninferno.draft_tokens`: `reason` `ninferno.draft_tokens`, `fallback` `none`) |
 | `reason` | why that choice, or why the server is plain |
 | `note` | what the profile would have run, and the fit fallback's refusal, when there is one |
 | `fallback` | the first that applies: `context_plain` (the prompt passed the profile's `context_limit`: plain from the first token), `load_plain` (a load bound of 0), `watchdog_plain` (the acceptance watchdog stopped drafting), `step_down` (the watchdog went shallower), `fit_fallback` (the profile's choice did not fit at startup; a fallback runs), `startup_plain` (nothing that drafts fit at startup), `none` |
