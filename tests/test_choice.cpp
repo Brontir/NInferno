@@ -302,7 +302,7 @@ void prefills_pay_tail_calls(const json& fixture) {
 // The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
 // measured row.
 void prefills_by_format(const json& fixture) {
-    double sq[2] = {0, 0}, worst[2] = {0, 0}, qwen_q8_worst = 0;
+    double sq[2] = {0, 0}, worst[2] = {0, 0}, q8_worst_before = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -321,8 +321,9 @@ void prefills_by_format(const json& fixture) {
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
-        if (i == 1 && row.at("model").get<std::string>() == "Qwen3.5-9B-MTP") {
-            qwen_q8_worst = std::max(qwen_q8_worst, std::abs(d));
+        if (i == 1 && !(row.at("model").get<std::string>() == "gemma-4-12b" &&
+                        row.at("card").get<std::string>() == "RTX 5090")) {
+            q8_worst_before = std::max(q8_worst_before, std::abs(d));
         }
         ++n[i];
     }
@@ -338,10 +339,10 @@ void prefills_by_format(const json& fixture) {
     // DECISIONS 66: the tiles by linear in rounds of SMs x resident CTAs and the small kernels, no
     // fit. Its worst points are Gemma 4 12B's on the RTX 5090 and 4090 (+17 .. +26 %, its Q4_K_M
     // likewise): Gemma's attention kernel runs 1.9x the attention term there (the census at 1714
-    // tokens: 14.2 against 7.7 ms on the 5090, 18.3 against 9.7 on the 4090). Qwen's points keep
-    // their own bound.
+    // tokens: 14.2 against 7.7 ms on the 5090, 18.3 against 9.7 on the 4090). The points before
+    // the RTX 5090's Gemma keep their 20 % bound.
     check(n[1] == 66 && tiles < 0.10 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
-    check(qwen_q8_worst < 0.20, "Qwen3.5 9B's Q8_0 prefill within 20 %");
+    check(q8_worst_before < 0.20, "Q8_0 prefill but the RTX 5090's Gemma within 20 %");
     check(n[0] == 84 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
