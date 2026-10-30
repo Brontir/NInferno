@@ -48,6 +48,33 @@ const sp::MeasuredPair& pair_of(std::string_view repo_prefix, std::string_view g
     std::exit(1);
 }
 
+// A synthetic fixture: a registry pair with its "+head" configurations relabelled as drafted
+// through the full head, for the checks of full-head pricing (their tune's rows unused) and the
+// facts' goldens written on those labels.
+const sp::MeasuredPair& full_head_pair(std::string_view repo_prefix, std::string_view gpu) {
+    static std::map<std::string, sp::MeasuredPair> full_head;
+    const std::string key = std::string(repo_prefix) + "|" + std::string(gpu);
+    if (const auto it = full_head.find(key); it != full_head.end()) { return it->second; }
+    for (const auto& p : sp::Registry::builtin().pairs()) {
+        if (std::string_view(p.target_repo).starts_with(repo_prefix) && p.tune.key.gpu == gpu) {
+            sp::MeasuredPair out = p;
+            for (auto& m : out.tune.measurements) { m.config.proposal_head = false; }
+            const auto strip = [](auto& choices) {
+                choices.overall.config.proposal_head      = false;
+                choices.thinking.config.proposal_head     = false;
+                choices.non_thinking.config.proposal_head = false;
+            };
+            strip(out.tune);
+            if (out.tune.served) { strip(*out.tune.served); }
+            if (out.tune.portable) { strip(*out.tune.portable); }
+            if (out.tune.fit_fallback) { out.tune.fit_fallback->config.proposal_head = false; }
+            return full_head.emplace(key, std::move(out)).first->second;
+        }
+    }
+    std::cerr << "no registry pair " << repo_prefix << " on " << gpu << '\n';
+    std::exit(1);
+}
+
 // A card as a start sees it (spec::gpu_identity): its class chain and its rates.
 sp::GpuKey card(const char* id, const char* chip, const char* arch, int cc, int sms, int clock_mhz,
                 double dram_gbps) {
@@ -61,6 +88,29 @@ sp::GpuKey card(const char* id, const char* chip, const char* arch, int cc, int 
     g.dram_gbps          = dram_gbps;
     g.nvfp4              = cc >= 120;
     return g;
+}
+
+// A configuration's measured speedup over a profile's sections, weighted by the mix as `select`
+// weighs them (section_weight); 0 when a section is not measured.
+double mix_gain(const sp::Profile& profile, const sp::SpecConfig& config) {
+    double plain = 0, at = 0;
+    for (const char* family : {"math", "code", "prose", "thinking"}) {
+        double ps = 0, pt = 0, cs = 0, ct = 0;
+        for (const auto& m : profile.measurements) {
+            if (m.family != family) { continue; }
+            if (!m.config.enabled()) {
+                ps += m.seconds;
+                pt += double(m.tokens);
+            } else if (m.config == config) {
+                cs += m.seconds;
+                ct += double(m.tokens);
+            }
+        }
+        if (pt == 0 || ct == 0) { return 0; }
+        plain += sp::section_weight(family) * ps / pt;
+        at += sp::section_weight(family) * cs / ct;
+    }
+    return at > 0 ? plain / at : 0;
 }
 
 constexpr const char* kQ9 = "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae Q4_K_M";
@@ -176,7 +226,7 @@ int main() {
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
         for (const auto& g : golden) {
-            const auto& p     = pair_of(g.repo, g.gpu);
+            const auto& p     = full_head_pair(g.repo, g.gpu);
             const auto config = sp::SpecConfig::parse(g.config);
             const auto a = sp::round_cost(*p.round_facts, config, k4070);
             const auto b = sp::round_cost(*p.round_facts, config, 0.0);
@@ -253,6 +303,7 @@ int main() {
         // a dearer round.
         {
             auto counted = pair_of(kQ9, "ad104:60sm");
+            const std::string mtp3 = "mtp:3+head";
             for (auto& m : counted.tune.measurements) {
                 m.graph_rounds  = std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
                 m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
@@ -266,7 +317,7 @@ int main() {
             const auto rtx4060 = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
             const auto with    = sp::round_cost_estimate(counted, rtx4060);
             const auto without = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060);
-            expect(with.known && without.known && with.cost.at("mtp:3") != without.cost.at("mtp:3"),
+            expect(with.known && without.known && with.cost.at(mtp3) != without.cost.at(mtp3),
                    "counted launches enter the estimate");
             // Each section counts once, as in its measured cost: a section of other kernel
             // counts that ran ten times the rounds moves nothing.
@@ -286,12 +337,12 @@ int main() {
             const auto b = sp::round_cost_estimate(longer, rtx4060);
             expect(std::any_of(mixed.tune.measurements.begin(), mixed.tune.measurements.end(),
                                [&](const auto& m) { return m.family != first; }) &&
-                       a.known && b.known && near(a.cost.at("mtp:3"), b.cost.at("mtp:3"), 1e-12),
+                       a.known && b.known && near(a.cost.at(mtp3), b.cost.at(mtp3), 1e-12),
                    "launch counts average over the sections, not their rounds");
         }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.
-        auto pair                            = pair_of(kQ9, "ad104:60sm");
+        auto pair                            = full_head_pair(kQ9, "ad104:60sm");
         pair.tune.proposal_rows              = after;
         const auto again                     = sp::parse_pair(sp::pair_json(pair));
         expect(again.tune.proposal_rows == after, "a tune's proposal rows round-trip");
@@ -305,8 +356,8 @@ int main() {
         // The lab card's own rounds at its rows, the card's at its artifact's: a lab artifact of
         // the full head and a card's of MTP's prefix price the card's MTP rounds cheaper.
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
-        const auto lab       = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti);
-        const auto mine      = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti, &after);
+        const auto lab       = sp::round_cost_estimate(full_head_pair(kQ9, "ad104:60sm"), rtx4060ti);
+        const auto mine      = sp::round_cost_estimate(full_head_pair(kQ9, "ad104:60sm"), rtx4060ti, &after);
         expect(lab.known && mine.known && mine.cost.at("mtp:3") < lab.cost.at("mtp:3") &&
                    mine.cost.at("dflash:7") == lab.cost.at("dflash:7"),
                "the card's artifact rows price its MTP rounds; DFlash's (not named) stay");
@@ -349,18 +400,35 @@ int main() {
                                     "ad104:60sm");
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
         const auto est       = sp::round_cost_estimate(gemma, rtx4060ti);
-        expect(est.known && est.note.find("conservative") != std::string::npos &&
-                   est.cost.contains("mtp:3"),
-               "Gemma 4's verify costs more than its bytes on the lab card: raised, said: " + est.note);
+        expect(est.known && est.cost.contains("mtp:3"), "Gemma 4's rounds priced for another card");
+        // A lab card that measured its rounds dearer than their bytes raises the estimate and says
+        // so (the fresh 4070 Ti pair measures them at their bytes: a copy made 50 % dearer).
+        auto dearer = gemma;
+        for (auto& m : dearer.tune.measurements) {
+            if (m.config.enabled()) { m.seconds *= 1.5; }
+        }
+        const auto raised = sp::round_cost_estimate(dearer, rtx4060ti);
+        expect(raised.known && raised.note.find("conservative") != std::string::npos &&
+                   raised.cost.at("mtp:3") > est.cost.at("mtp:3"),
+               "rounds dearer than their bytes on the lab card: raised, said: " + raised.note);
         const auto q9         = pair_of(kQ9, "ad104:60sm");
         const auto deep       = sp::round_cost_estimate(q9, rtx4060ti);
-        expect(deep.known && !deep.cost.contains("dflash:11") && deep.cost.contains("dflash:7"),
+        expect(deep.known && !deep.cost.contains("dflash:11+head") && deep.cost.contains("dflash:7+head"),
                "deeper than kPortableDepth is not estimated away from the lab card");
         auto no_facts        = q9;
         no_facts.round_facts.reset();
         expect(!sp::round_cost_estimate(no_facts, rtx4060ti).known &&
                    !sp::round_cost_estimate(q9, sp::GpuKey{{"*"}, 0, false}).known,
                "no facts, or no rates: no estimate (the measured ratios stand)");
+        // Two lab cards of its generation (RTX 4090, RTX 4070 Ti): the nearer by rates prices it,
+        // whichever class id sorts first (the 4060 Ti is the 4070 Ti's size, not the 4090's).
+        const auto& gemma_4090 = pair_of(
+            "unsloth/gemma-4-12b-it-GGUF@fc034cfff751157913579611efad8462ac1be606 Q4_K_M", "ad102:128sm");
+        std::string both_note, near_note;
+        (void)sp::profile_for_target({&gemma_4090, &gemma}, "sm89", {}, &rtx4060ti, &both_note);
+        (void)sp::profile_for_target({&gemma}, "sm89", {}, &rtx4060ti, &near_note);
+        expect(!both_note.empty() && both_note == near_note,
+               "the nearest lab board's pair prices a card of its generation: " + both_note);
     }
     // The card that measured a pair takes its own measurement, its tune keyed by class id or chip.
     {
@@ -397,22 +465,28 @@ int main() {
         std::vector<const sp::MeasuredPair*> q9;
         std::map<std::string, std::vector<double>> each;
         for (const auto& p : sp::Registry::builtin().pairs()) {
-            if (std::string_view(p.target_repo) != kQ9) { continue; }
+            // The other generations' pairs (the RTX 2080 Ti's own left out).
+            if (std::string_view(p.target_repo) != kQ9 || p.generation == "sm75") { continue; }
             q9.push_back(&p);
             for (const auto& [label, r] : sp::profile_round_costs(p.tune)) { each[label].push_back(r); }
         }
         std::string turing_note;
         const auto turing = sp::profile_for_target(q9, "sm75", {}, &rtx2080ti, &turing_note);
         const auto cost   = sp::profile_round_costs(turing);
-        const auto ada_r  = sp::profile_round_costs(pair_of(kQ9, "ad104:60sm").tune);
-        bool median = q9.size() >= 2 && cost.contains("mtp:2") && cost.contains("mtp:3");
+        const sp::MeasuredPair* ada = nullptr;
+        for (const auto* p : q9) {
+            if (p->tune.key.gpu == "ad104:60sm") { ada = p; }
+        }
+        const auto ada_r = sp::profile_round_costs(ada->tune);
+        bool median = q9.size() >= 2 && cost.contains("mtp:2+head") &&
+                      cost.contains("mtp:3+head");
         for (const auto& [label, r] : cost) {
             auto v = each.at(label);
             std::sort(v.begin(), v.end());
             const double m = v.size() % 2 ? v[v.size() / 2] : (v[v.size() / 2 - 1] + v[v.size() / 2]) / 2;
             median = median && near(r, m, 1e-9);
         }
-        expect(median && !near(cost.at("mtp:2"), ada_r.at("mtp:2"), 0.01),
+        expect(median && !near(cost.at("mtp:2+head"), ada_r.at("mtp:2+head"), 0.01),
                "Turing takes the lab cards' median R, not the RTX 4070 Ti's");
         expect(turing_note == "transferred: median of " + std::to_string(q9.size()) +
                                   " lab cards of other generations (no facts for turing)",
@@ -427,10 +501,10 @@ int main() {
     // card that measured nothing is priced by the facts, no deeper than kPortableDepth (Codex P2
     // on #161); a lab board keeps the measurement.
     {
-        const auto& ada   = pair_of(kQ9, "ad104:60sm");
+        const auto& ada   = pair_of(kQ9, "ad102:128sm"); // its thinking pick drafts 11 deep
         auto twin         = ada; // the same measurement on a second Ada card: they agree
-        twin.tune.key.gpu = "ad102:128sm";
-        twin.lab_board    = 0x2684;
+        twin.tune.key.gpu = "ad104:60sm";
+        twin.lab_board    = 0x2782;
         const std::vector<const sp::MeasuredPair*> both = {&ada, &twin};
         const auto agreed    = sp::profile_for_target(both, "sm89");
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
@@ -565,7 +639,7 @@ int main() {
         };
         expect(two && other && two->source.find("(2 lab card(s))") != std::string::npos &&
                    !r(two).empty() && !r(other).empty() &&
-                   std::abs(r(other).at("mtp:3") / r(two).at("mtp:3") - 1) < 1e-9,
+                   std::abs(r(other).at("mtp:3+head") / r(two).at("mtp:3+head") - 1) < 1e-9,
                "two boards of one class are two cards, priced by their median: " +
                    (two ? two->source : std::string()));
         // So in a group: the two boards are two cards (enough for a group's choice); a record naming
@@ -640,10 +714,16 @@ int main() {
             // The RTX 5070 Ti's 9B rounds verifying 6-8 rows are cheaper than their facts
             // (-7..-12 %, DECISIONS 56): its plan's speedup stays low by up to 15 %, the pick right.
             const double within = h.key.compute_capability == 120 && h.key.sms == 70 ? 0.15 : 0.10;
+            // Where two configurations are within a few percent on the mix (dflash:7+head and
+            // mtp:4+head on the fresh tunes) the prediction may take either: what it costs is the
+            // measured speedup its pick gives up against the card's own best.
+            const double kept = mix_gain(measured->profile, predicted->profile.overall.config);
+            std::printf("  its pick measured x%.3f (%+.1f %% of the best)\n", kept,
+                        100 * (kept / m - 1));
             if (facts) {
-                expect(near(p, m, within) && predicted->profile.overall.config ==
-                                                 measured->profile.overall.config,
-                       std::string("speedup without its pair within the bound, the same pick: ") +
+                expect(near(p, m, within) && kept >= 0.95 * m,
+                       std::string("speedup without its pair within the bound, its pick within 5 % "
+                                   "of the measured best: ") +
                            h.gpu);
             }
         }
