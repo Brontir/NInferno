@@ -1864,6 +1864,18 @@ against 50.5 ms, the dense int8 calls 28.2 against 30.0 ms; gpt-oss-20b's expert
 quantization, attention, the recurrence, the MoE's routing kernels (about a quarter of the
 prompt's kernel time) and the prompt's tail calls (DECISIONS 62).
 
+**Jobs by tokens an expert takes.** Slots a job fall as a chunk gives each expert fewer tokens
+(more of them in a partial job): Qwen3.6-35B-A3B 17.9 / 21.3 / 30.1 at 25 / 32 / 57 tokens an
+expert (the RTX 5070 Ti's chunks of 795 and 1024, the RTX 4090's 2048), gpt-oss-20b 37.7 / 42.7 at
+93 / 128. A curve of the model's routing, read once a model (the census's grids), not a card's.
+
+**The prototype against the MoE campaign** (GEMMs by the tile law with these jobs, the routing's
+gather and scatter at T k hidden 2 bytes twice a layer over the DRAM rate, attention as
+before; not yet the recurrence, the small kernels and the prompt's tail calls): gpt-oss-20b -7 ..
++10 % on the RTX 4090 and 5070 Ti at 2K .. 21K tokens; Qwen3.6-35B-A3B +0 .. +31 % on the RTX 4090
+(the missing terms, a fifth of a 2K prompt there), +24 .. +75 % on Blackwell before the jobs at
+chunk 1024 (about 1.45x the 4090's a slot).
+
 Next: the plan's linear shapes from the geometry it reads (attention, recurrent, FFN, experts,
 shared expert), the remaining kernels' constants (the 16-bit register MMA, ggml's MMQ — its tile
 cost per K step was read before, about 47-48 SM-clocks — Volta's dp4a route), the jobs as a
