@@ -117,7 +117,9 @@ enum class WeightClass : std::uint8_t {
 // Ti, 60 decode steps of one row): Qwen3.6-35B-A3B UD-Q3_K_S 311 + 267 = 578 a step (the router,
 // select, combine and the routed banks' two calls a layer; the Gated DeltaNet layers' projections
 // read weights too), gpt-oss-20b MXFP4 97 + 199 = 296; the graph's count in the lab tunes (spec-tune
-// graph_kernels) is the same, 577 and 295. At 2-8 rows the one-row count (not measured). A family or
+// graph_kernels) is the same, 577 and 295; Gemma 4 26B-A4B UD-Q4_K_M (RTX 4090, master 4c5b8165)
+// 181 + 219 = 400 (its dense MLP beside the experts in every layer). At 2-8 rows the one-row count
+// (not measured). A family or
 // class without a row takes the family's K-quant row, else the family's other row, else Qwen 3.5's
 // (transferred).
 struct DecodeLaunches {
@@ -136,6 +138,7 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
     {"gemma4_text", WeightClass::KQuant, 48, 213, {249, 557, 345}, 1, 9},
     {"qwen3_5_moe_text", WeightClass::Other, 40, 311, {267, 267, 267}, 1, 6, true},
     {"moe_decoder", WeightClass::Other, 24, 97, {199, 199, 199}, 1, 6, true},
+    {"gemma4_text", WeightClass::Other, 30, 181, {219, 219, 219}, 1, 9, true},
     {"qwen3_5_text", WeightClass::IQ4, 32, 161, {167, 295, 167}, 1, 7}, // RTX 4060 Ti's census
 };
 

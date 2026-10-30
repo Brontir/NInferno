@@ -123,6 +123,7 @@ void reproduces_the_measurements(const json& fixture) {
         const ch::QuantOption qo = quant_of(q, m.at("quants").at(q));
         ch::Candidate c;
         c.kv          = kv_of(row.at("kv").get<std::string>());
+        c.ring        = kv_of(row.value("ring", std::string("bf16")));
         c.state       = row.at("state").get<std::string>() == "f32" ? RecurrentStateStorage::FP32
                                                                     : RecurrentStateStorage::FP16;
         c.activations = row.at("activations").get<std::string>() == "exact" ? ActivationMode::Exact

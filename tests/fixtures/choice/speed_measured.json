@@ -110,6 +110,43 @@
    },
    "full_attention_width": 81920.0,
    "sliding_attention_width": 0.0
+  },
+  "gemma-4-26B-A4B": {
+   "family": "gemma4_text",
+   "params": 25250000000.0,
+   "active_params": 3840000000.0,
+   "experts": 128,
+   "experts_per_token": 8,
+   "routed_expert_params": 22840000000.0,
+   "input_table_params": 0,
+   "layers": 30,
+   "recurrent": false,
+   "window": 1024,
+   "kv_bytes_per_token": {
+    "bf16": 10240,
+    "fp8": 5140,
+    "int8": 5280,
+    "k8v4": 4010,
+    "nvfp4": 2880
+   },
+   "ring_bytes_per_token": {
+    "bf16": 204800,
+    "fp8": 103200
+   },
+   "state_bytes": {
+    "f16": 0,
+    "f32": 0
+   },
+   "quants": {
+    "UD-Q4_K_M": {
+     "bits_per_weight": 5.36,
+     "weight_bytes": 16931716216,
+     "routed_expert_bytes": 14353054720,
+     "input_table_bytes": 0
+    }
+   },
+   "full_attention_width": 81920.0,
+   "sliding_attention_width": 204800.0
   }
  },
  "cards": {
@@ -1169,6 +1206,66 @@
    "concurrency": 7,
    "context": 1536,
    "decode": 45.1,
+   "prefill": null,
+   "source": "mbatch.sh 2026-10-30 master kit build: the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-26B-A4B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "fp8",
+   "ring": "fp8",
+   "state": "f16",
+   "concurrency": 1,
+   "context": 1536,
+   "decode": 209.5,
+   "prefill": null,
+   "source": "mbatch.sh 2026-10-30 master kit build: the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-26B-A4B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "fp8",
+   "ring": "fp8",
+   "state": "f16",
+   "concurrency": 2,
+   "context": 1536,
+   "decode": 163.6,
+   "prefill": null,
+   "source": "mbatch.sh 2026-10-30 master kit build: the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-26B-A4B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "fp8",
+   "ring": "fp8",
+   "state": "f16",
+   "concurrency": 4,
+   "context": 1536,
+   "decode": 123.5,
+   "prefill": null,
+   "source": "mbatch.sh 2026-10-30 master kit build: the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
+   "step": true
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-26B-A4B",
+   "quant": "UD-Q4_K_M",
+   "activations": "fast",
+   "kv": "fp8",
+   "ring": "fp8",
+   "state": "f16",
+   "concurrency": 8,
+   "context": 1536,
+   "decode": 90.0,
    "prefill": null,
    "source": "mbatch.sh 2026-10-30 master kit build: the server's 5-second windows whose mean batch is C rows, eight different tasks, the median",
    "step": true
