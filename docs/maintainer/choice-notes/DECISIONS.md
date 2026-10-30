@@ -1875,6 +1875,11 @@ before; not yet the recurrence, the small kernels and the prompt's tail calls): 
 (the missing terms, a fifth of a 2K prompt there), +24 .. +75 % on Blackwell before the jobs
 bound (at chunk 1024 the bound's 384 rows hold 21 slots a job, the 4090's 2048-token chunk 30).
 
-Next: the plan's linear shapes from the geometry it reads (attention, recurrent, FFN, experts,
-shared expert), the remaining kernels' constants (the 16-bit register MMA, ggml's MMQ — its tile
-cost per K step was read before, about 47-48 SM-clocks — Volta's dp4a route), and the check against the prefill rows of data/prefill/rows.json and the MoE campaign.
+Done: the plan's linear shapes from the geometry it reads (`runtime::PlanLinear`: attention,
+recurrent, FFN, shared expert, experts) reach the choice, and `moe_prefill_linears_seconds` prices
+an MoE's linears by these tiles (`kTileCost`, the jobs bound; Qwen3.6 UD-Q4_K_M on the RTX 4090:
+79 against the census's 86.4 ms), not yet in the estimate. Next: a dense K-quant's prefill runs
+ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
+grids of 216-384 CTAs, the same a wave within 1 %), the Gated DeltaNet's recurrence and the small
+kernels, Volta's dp4a route; then the estimate, checked against data/prefill/rows.json and the
+MoE campaign.
