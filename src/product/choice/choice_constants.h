@@ -306,7 +306,7 @@ inline constexpr TilesEta kPrefillTilesEta[] = {{"ada", 3352, 12.15, 0, 3},
 
 // A prefill linear's tile (DECISIONS 66): a CTA of 64 tokens (an MoE expert's: a job of up to 64 of
 // its slots) x 64 output rows, the whole K deep, takes c0 + K c1 SM-clocks (the card's reference
-// clock gives the seconds); a call runs ceil(CTAs / SMs) waves of them. From the census of one
+// clock gives the seconds); a call runs in rounds of them (TileCost::resident). From the census of one
 // ~1.8K-token prompt (nsys, the RTX 4090 without PDL at 2520 MHz, the RTX 5070 Ti at 2452 MHz on a
 // lab build with pdl::supported() false): Qwen3.6-35B-A3B's and gpt-oss-20b's calls. The int8
 // tile's K step is about 12 SM-clocks on every generation that has the int8 MMA (Ada 12.1, the RTX
@@ -322,7 +322,8 @@ enum class TileKernel : std::uint8_t {
 // 16-bit register MMA's at 255 registers and 1-2 KB, two;
 // Turing's 64 KB of shared memory, one), so a grid runs in rounds of SMs x resident CTAs, each round
 // `resident` tiles' time: the RTX 5090's N 4096 calls at a 1024-token chunk (1024 CTAs) take 4 rounds
-// of 340, 8 tiles' time, not 6.02 waves of 170 (DECISIONS 66). A row without a read keeps one.
+// of 340, 8 tiles' time, not 6.02 waves of 170 (DECISIONS 66): the last round's 4 CTAs, one a SM, took
+// a whole round, a tile alone on a SM no faster than two sharing it. A row without a read keeps one.
 struct TileCost {
     std::string_view generation;
     TileKernel kernel;
