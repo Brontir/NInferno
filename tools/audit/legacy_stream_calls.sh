@@ -34,7 +34,7 @@ tests/artifact/test_materialization.cpp|9|D2H after materialize, which synchroni
 tests/models/qwen3_5/test_dflash_prefill_real.cpp|3|cache and block-table D2H, every prefill synchronizes device.stream first
 tests/models/qwen3_5/test_context_store.cpp|1|block-table D2H, every caller synchronizes device.stream first
 tests/models/qwen3_5/test_loading_real.cpp|1|D2H after materialize_model, which synchronizes its transfer stream
-tests/models/qwen3_5/test_state_image.cpp|1|expect_bytes D2H, every caller synchronizes device.stream first
+tests/models/qwen3_5/test_state_image.cpp|2|expect_bytes and expect_rows D2H, every caller synchronizes device.stream first
 tests/ops/test_fp8_e4m3.cu|1|D2H after the widening kernel on the same legacy stream; the test makes no other stream
 tests/ops/test_gemma4_attention_fp8.cu|4|zero fills on the legacy stream before the appends and launches on the same stream (stream nullptr)
 tests/ops/test_gemma4_fused.cpp|1|H2D of the input before scale_bf16 runs on the legacy stream (stream nullptr), cuda_synchronize before the read
