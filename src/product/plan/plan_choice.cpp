@@ -200,6 +200,9 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.weight_bytes = static_cast<double>(target > facts.model.mtp_bytes ? target - facts.model.mtp_bytes
                                                                             : target);
     quant.routed_expert_bytes = static_cast<double>(facts.model.routed_expert_bytes);
+    static_assert(static_cast<int>(runtime::ExpertPrefill::Mxfp4) == static_cast<int>(choice::ExpertBanks::Mxfp4));
+    quant.expert_banks        = static_cast<choice::ExpertBanks>(facts.model.expert_prefill);
+    quant.rest_weights        = choice::weight_class_of(facts.shape.rest_layer_formats, label);
     const auto& formats = facts.shape.weight_formats;
     quant.nvfp4         = std::find(formats.begin(), formats.end(), "nvfp4") != formats.end();
     // The weight class: the file's own layers' formats where known (with_weights clears another

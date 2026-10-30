@@ -771,7 +771,7 @@ PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t 
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
     Geometry g      = geometry_of_gguf(head.metadata);
     bool has_output = false;
-    std::set<std::string> formats, layer_formats;
+    std::set<std::string> formats, layer_formats, rest_formats;
     std::uint64_t tensor_bytes = 0;
     // The NextN blocks after the trunk (blk.<b>.* for b at least the trunk's layers): the MTP
     // layers the converter moves to the mtp component, uploaded under MTP only.
@@ -815,6 +815,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         // The trunk's layers: not the tables, not the NextN blocks (priced apart, off plain decode).
         if (t.name != "token_embd.weight" && t.name != "output.weight" && !mtp) {
             layer_formats.insert(format_of_ggml(t.type));
+            if (t.name.find("_exps.") == std::string::npos) { rest_formats.insert(format_of_ggml(t.type)); }
         }
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
@@ -828,6 +829,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
                       whole ? runtime::WeightBasis::GgufTensors : runtime::WeightBasis::FileSize);
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
+    out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
         out.shape.base_models = {std::move(*base)};
     }
@@ -944,7 +946,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     // GGUF's tensor table counts the model it converts from (bits_per_weight's denominator on both
     // paths).
     double elements = 0;
-    std::set<std::string> formats, layer_formats;
+    std::set<std::string> formats, layer_formats, rest_formats;
     for (std::size_t i = 0; i < dir.objects.size(); ++i) {
         const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[i]);
         if (tensor == nullptr) { continue; } // resources
@@ -960,6 +962,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         formats.insert(tensor->format);
         if (table[i] == 0 && !(alone && (m[Mtp] || m[Drafter] || m[Proposal]))) {
             layer_formats.insert(tensor->format); // the trunk's layers
+            if (!routed[i]) { rest_formats.insert(tensor->format); }
         }
         if (alone && m[Mtp]) { mtp_bytes += tensor->bytes; }
         if (routed[i]) {
@@ -1010,6 +1013,7 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     }
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
+    out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
     if (prompt_tail_calls_source()) {
         if (const auto calls = prompt_tail_calls_of(artifact)) {
             out.shape.prompt_tail_calls = *calls;
@@ -1050,6 +1054,8 @@ PlanSourceFacts with_weights(PlanSourceFacts facts, std::uint64_t bytes,
     if (bytes != facts.model.weight_bytes) {
         facts.shape.weight_formats.clear();
         facts.shape.layer_formats.clear();
+        facts.shape.rest_layer_formats.clear();
+        facts.model.expert_prefill = runtime::ExpertPrefill::Unknown;
     }
     facts.model.weight_bytes      = bytes;
     facts.model.weight_basis      = basis;

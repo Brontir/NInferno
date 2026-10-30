@@ -76,6 +76,9 @@ struct PlanTargetShape {
     // vocabulary option may store apart: --vocab q8 on BF16 layers): the routes a step's
     // projections take (choice::weight_class_of).
     std::vector<std::string> layer_formats;
+    // Of them, an MoE's linears outside its routed banks (attention, the shared expert, the
+    // router): the routes its prefill's dense part takes (product/choice linear_prefill).
+    std::vector<std::string> rest_layer_formats;
     // The lineage the registry matches by, in order: a GGUF's general.base_model.0.repo_url
     // org/name, a checkpoint's model card / README base_model entries; empty when none is named.
     std::vector<std::string> base_models;

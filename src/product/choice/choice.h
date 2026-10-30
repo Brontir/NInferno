@@ -106,6 +106,9 @@ struct ModelFacts {
 };
 
 // One quantization of the model (a listing row).
+// The GEMM an MoE's routed banks prefill on (runtime::ExpertPrefill, product/plan expert_prefill_of).
+enum class ExpertBanks : std::uint8_t { Unknown, Int8, A16, Mxfp4 };
+
 struct QuantOption {
     std::string label;          // as --quant takes it
     double bits_per_weight = 0;
@@ -121,6 +124,10 @@ struct QuantOption {
     // q8_prefill_a8); an Other's decode speed is transferred and it wins no decision on worth
     // (plan_quants).
     WeightClass weights = WeightClass::KQuant;
+    // An MoE's prefill apart (DECISIONS 66): its routed banks' GEMM, and the class of its linears
+    // outside them (attention, the shared expert); Unknown: the MoE rows price the whole.
+    ExpertBanks expert_banks = ExpertBanks::Unknown;
+    WeightClass rest_weights = WeightClass::KQuant;
 };
 
 // The card's generation as the per-generation tables name it ("ada", "gb20x", ...).
