@@ -65,6 +65,20 @@ class Rules(unittest.TestCase):
         p = metric(r, "prefill")
         self.assertTrue(p["verdict"].startswith("contradicts"))  # 3000 against 3400: 12 % off
 
+    def test_clock_and_power_of_each_metric(self):
+        def loaded(**kw):
+            p = one_pass(**kw)
+            t = p["telemetry"]["t"]
+            p["telemetry"]["columns"]["clocks.sm"] = [2400.0 if 5 <= x < 7 else 2800.0 for x in t]
+            p["telemetry"]["columns"]["power.draw"] = [570.0 if 5 <= x < 7 else 300.0 for x in t]
+            return p
+        r = validate.validate(doc(passes=[loaded(), loaded(decode=50.5)]))
+        self.assertEqual((metric(r, "prefill")["sm_clock_mhz"], metric(r, "prefill")["power_w"]), (2400, 570))
+        self.assertEqual((metric(r, "decode")["sm_clock_mhz"], metric(r, "decode")["power_w"]), (2800, 300))
+        self.assertIn("at 2400 MHz, 570 W", validate.render(r))
+        # No clock column (an old file): nothing is recorded or printed.
+        self.assertNotIn("sm_clock_mhz", metric(validate.validate(doc()), "prefill"))
+
     def test_schema(self):
         bad = doc()
         bad["schema"] = "ninferno-user-run/2.0"

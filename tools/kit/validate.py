@@ -41,6 +41,23 @@ def window_indices(tel, name_prefix):
     return sorted(set(out))
 
 
+def window_load(passes, metric):
+    """The median SM clock (MHz) and power draw (W) over the metric's windows of `passes`, each None
+    when no sample fell inside one: the clock a speed was measured at (a long prefill runs into the
+    power limit, which a short one finishes before the limiter acts)."""
+    clock, power = [], []
+    for p in passes:
+        tel = p.get("telemetry") or {}
+        columns = tel.get("columns") or {}
+        for i in window_indices(tel, metric):
+            for name, out in (("clocks.sm", clock), ("power.draw", power)):
+                values = columns.get(name) or []
+                if i < len(values) and isinstance(values[i], float):
+                    out.append(values[i])
+    return (round(statistics.median(clock)) if clock else None,
+            round(statistics.median(power)) if power else None)
+
+
 def reasons_in(tel, indices):
     """The event reasons active at any of the samples; None when unknown (no reason fields, or no
     sample inside the window): never a pass by itself."""
@@ -547,6 +564,11 @@ def validate(doc, tolerance=TOLERANCE, registry=None):
                 if found & set(RECORD_REASONS):
                     row.setdefault("notes", []).append("power cap events (recorded, stock behaviour)")
                 usable.append(p)
+            clock, power = window_load(usable, metric)
+            if clock is not None:
+                row["sm_clock_mhz"] = clock
+            if power is not None:
+                row["power_w"] = power
             medians = [metric_values(p, metric)[0] for p in usable]
             medians = [m for m in medians if isinstance(m, (int, float)) and m > 0]
             if len(medians) < 2:
@@ -630,6 +652,10 @@ def render(report):
                          if m.get("predicted") is not None else f"; measured {m['measured']}")
             if "ratio" in m:
                 text += f" (x{m['ratio']})"
+            load = [f"{m['sm_clock_mhz']} MHz" if m.get("sm_clock_mhz") else None,
+                    f"{m['power_w']} W" if m.get("power_w") else None]
+            if any(load):
+                text += " at " + ", ".join(x for x in load if x)
             lines.append(text)
             if m.get("verdict"):
                 lines.append(f"      {m['verdict']}")

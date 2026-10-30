@@ -244,9 +244,10 @@ def on_battery():
 
 class Sampler:
     """nvidia-smi samples every `period_ms` in a thread, columnar, with marks for the windows the kit
-    measures (idle, warmup, request i)."""
+    measures (idle, warmup, request i). 100 ms: a 2K-token prefill takes 0.1-0.4 s, and its window
+    needs samples of its own for the clock it ran at (validate.window_load)."""
 
-    def __init__(self, device, period_ms=500):
+    def __init__(self, device, period_ms=100):
         prefix = reason_prefix()
         self.fields = [f for f in SAMPLE_FIELDS if not known_fields() or f in known_fields()]
         if prefix:
