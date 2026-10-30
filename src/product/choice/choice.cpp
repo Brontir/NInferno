@@ -487,11 +487,10 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 
 } // namespace
 
-double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                                   double tokens) noexcept {
-    if (!model.moe() || model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0 || model.experts_per_token <= 0) {
-        return 0;
-    }
+double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                                double tokens) noexcept {
+    if (model.linears.empty() || tokens <= 0 || card.sms <= 0 || card.clock_hz <= 0) { return 0; }
+    const bool moe = model.moe() && model.experts_per_token > 0;
     const std::string_view gen = generation_of(card);
     const auto cost = [gen](TileKernel kernel) -> const TileCost* {
         for (const TileCost& row : kTileCost) {
@@ -503,20 +502,21 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
     // Blackwell, Ada converts it to int8. The linears beside them take the classic int8 tiles when
     // their weights are Q8_0; a K-quant's take a tile by format and card (generic_gemm.cpp
     // w4a8_ws_wins: Q6_K on Blackwell the 128 x 64 producer-warp tile), not yet priced.
+    // A dense model's linears likewise: the int8 tiles for Q8_0 weights (q8_prefill_a8).
     TileKernel banks = TileKernel::Int8;
-    switch (quant.expert_banks) {
+    switch (moe ? quant.expert_banks : ExpertBanks::Int8) {
     case ExpertBanks::Int8: banks = TileKernel::Int8; break;
     case ExpertBanks::A16: banks = TileKernel::A16; break;
     case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
     case ExpertBanks::Unknown: return 0;
     }
-    if (quant.rest_weights != WeightClass::Q8) { return 0; }
+    if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);
     if (rest == nullptr || bank == nullptr) { return 0; }
-    const double picks = model.experts_per_token;
+    const double picks = moe ? model.experts_per_token : 1;
     const double slots = std::ceil(tokens) * picks;
-    const double jobs  = std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts);
+    const double jobs  = moe ? std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts) : 0;
 
     const double sms = card.sms;
     double seconds = 0, hidden = 0, moe_layers = 0;
@@ -524,7 +524,7 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
         const TileCost& c  = l.expert ? *bank : *rest;
         const double tile  = (c.c0 + l.k * c.c1) / card.clock_hz;
         const double cols  = std::ceil(l.n / 64);
-        if (l.expert) {
+        if (l.expert && moe) {
             // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
             const double layers = l.per_token / picks;
             if (hidden == 0) { hidden = l.k, moe_layers = layers; }

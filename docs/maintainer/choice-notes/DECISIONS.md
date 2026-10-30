@@ -1882,7 +1882,7 @@ before; not yet the recurrence, the small kernels and the prompt's tail calls): 
 bound (at chunk 1024 the bound's 384 rows hold 21 slots a job, the 4090's 2048-token chunk 30).
 
 Done: the plan's linear shapes from the geometry it reads (`runtime::PlanLinear`: attention,
-recurrent, FFN, shared expert, experts) reach the choice, and `moe_prefill_linears_seconds` prices
+recurrent, FFN, shared expert, experts) reach the choice, and `prefill_linears_seconds` prices
 an MoE's linears by these tiles (`kTileCost`, the jobs bound; Qwen3.6 UD-Q4_K_M on the RTX 4090:
 79 against the census's 86.4 ms), not yet in the estimate. What the rest of a prompt is (the
 RTX 4090's Qwen3.6 UD-Q4_K_M, one 1819-token prompt, the window from the 2-second pause: 103.3 ms

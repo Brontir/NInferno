@@ -243,11 +243,12 @@ struct Reference {
     bool chunk_decides = false;
     std::string why; // "" when the factors decide, else why the family's defaults stand
 };
-// An MoE's prefill linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's
-// waves of tiles, the experts' by jobs, and the routing's gather and scatter of the tokens' rows;
-// seconds, 0 where the card's generation, the banks' GEMM or the model's jobs have no row.
-[[nodiscard]] double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
-                                                 const QuantOption& quant, double tokens) noexcept;
+// A prefill's linears over a chunk of `tokens` by their tiles (DECISIONS 66): every linear's waves
+// of tiles, an MoE's experts by jobs and its routing's gather and scatter of the tokens' rows;
+// seconds, 0 where the card's generation or the weights' GEMM has no row (a dense model: Q8_0
+// weights; an MoE: its banks' route and Q8_0 beside them).
+[[nodiscard]] double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card,
+                                             const QuantOption& quant, double tokens) noexcept;
 
 [[nodiscard]] std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates = {});
 // Whether the worth decides the KV codec and the activations for `model` on this card: its

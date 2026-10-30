@@ -808,13 +808,51 @@ void prices_moe_prefill_tiles() {
     ch::QuantOption q;
     q.expert_banks = ch::ExpertBanks::Int8;
     q.rest_weights = ch::WeightClass::Q8; // UD-Q4_K_M's linears beside the experts: Q8_0
-    const double t = ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819);
+    const double t = ch::prefill_linears_seconds(m, rtx4090, q, 1819);
     std::cout << "MoE prefill tiles, Qwen3.6 UD-Q4_K_M RTX 4090 1819 tokens: " << t * 1e3 << " ms against 86.4\n";
     check(std::abs(t / 0.0864 - 1) < 0.12, "an MoE's prefill linears by their tiles within 12 % of the census");
     ch::CardFacts v100{.major = 7, .minor = 0, .sms = 84, .clock_hz = 1.62e9, .dram_bytes_per_s = 870e9};
-    check(ch::moe_prefill_linears_seconds(m, v100, q, 1819) == 0, "no int8 tile row on Volta: unknown");
+    check(ch::prefill_linears_seconds(m, v100, q, 1819) == 0, "no int8 tile row on Volta: unknown");
     q.expert_banks = ch::ExpertBanks::Unknown;
-    check(ch::moe_prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
+    check(ch::prefill_linears_seconds(m, rtx4090, q, 1819) == 0, "unknown banks: unknown");
+}
+
+// A dense model's Q8 linears by the same tiles: Qwen3.5 9B Q8_0, one 1819-token prompt in chunks
+// of 1024 and 795 (the token-major grid, PR #249); the census's int8 kernel time (nsys) on the
+// RTX 3060, 4060 Ti, 4070 Ti, 4090 and 5070 Ti.
+void prices_dense_prefill_tiles() {
+    ch::ModelFacts m;
+    m.family = "qwen3_5_text";
+    for (int i = 0; i < 8; ++i) {
+        m.linears.push_back({10240, 4096, 1, false});
+        m.linears.push_back({4096, 4096, 1, false});
+    }
+    m.linears.push_back({12288, 4096, 24, false});
+    m.linears.push_back({4096, 4096, 24, false});
+    m.linears.push_back({24576, 4096, 32, false});
+    m.linears.push_back({4096, 12288, 32, false});
+    ch::QuantOption q;
+    q.weights = ch::WeightClass::Q8;
+    struct Census {
+        ch::CardFacts card;
+        double ms;
+    };
+    const Census rows[] = {
+        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 767.4},
+        {{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e9}, 440.4},
+        {{.major = 8, .minor = 9, .sms = 60, .clock_hz = 2.61e9, .dram_bytes_per_s = 504e9}, 245.9},
+        {{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9}, 127.4},
+        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9}, 212.0},
+    };
+    double worst = 0;
+    for (const Census& r : rows) {
+        const double t = ch::prefill_linears_seconds(m, r.card, q, 1024) + ch::prefill_linears_seconds(m, r.card, q, 795);
+        worst          = std::max(worst, std::abs(t * 1e3 / r.ms - 1));
+        std::cout << "dense Q8 tiles, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
+    }
+    check(worst < 0.10, "a dense model's Q8 linears by their tiles within 10 % of the census");
+    q.weights = ch::WeightClass::KQuant;
+    check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "K-quant dense linears (ggml's MMQ): unknown");
 }
 
 void contradictory_pins(const json& fixture) {
@@ -968,6 +1006,7 @@ int main() {
     activations_by_generation(fixture);
     moe_family(fixture);
     prices_moe_prefill_tiles();
+    prices_dense_prefill_tiles();
     weighs_the_drafters(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
