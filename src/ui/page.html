@@ -2501,8 +2501,10 @@ function renderKv() {
 function renderAct() {
   const el = $("actsel");
   if (!el || !selected) return;
-  // The choice of the quantization shown (the user's pick, else the plan's: choiceDocOf).
-  const doc = planStale() ? null : quantSel ? choiceDocOf(selected, quantSel) : selected.plan;
+  // The choice of the quantization shown (the user's pick, else the plan's: choiceDocOf); none for
+  // a quantization whose weights do not fit (its speeds are not shown).
+  const doc = planStale() || (quantSel && weightsTooBig(rowPlan(quantSel))) ? null
+            : quantSel ? choiceDocOf(selected, quantSel) : selected.plan;
   // Auto's deltas only for the ask shown (the same quantization, context, streams, KV and
   // speed-up under Auto).
   const autoQ = planQuery({...planAsk(selected), act: "auto"}) + "|" + (quantSel ? quantSel.quant : "");
