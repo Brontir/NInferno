@@ -5,6 +5,7 @@
 
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/route_pins.h"
 #include "ops/linear_add/bf16/bf16_linear_add_plan.h"
 #include "ops/linear/fp8/fp8_geometry.h"
 #include "ops/linear/fp8/fp8_format.h"
@@ -213,9 +214,12 @@ std::size_t linear_add_workspace_capacity_bytes(QType qtype, std::int32_t output
 namespace {
 // ninfer-all's dedicated int8 kernel for the 27B Q4/Q5 G64 LinearAdds (K 17408 down, K 6144 o_proj
 // and GDN out_proj; a8_linear_add), where the prefill int8 tier runs and the card is listed
-// (a8_add_pays).
+// (a8_add_pays). A prefill route pin of w4a8 or i8 (ops/route_pins.h) takes the pinned generic
+// tier instead (a16 leaves no int8 tier: prefill_a8 is false).
 bool dedicated_a8_add(bool prefill_a8) {
-    return prefill_a8 && !invariant_routes_active() && detail::a8_add_pays();
+    const PrefillRoute pin = ops::route_pins().prefill;
+    return prefill_a8 && !invariant_routes_active() && detail::a8_add_pays() &&
+           pin != PrefillRoute::W4a8 && pin != PrefillRoute::I8;
 }
 } // namespace
 

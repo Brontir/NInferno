@@ -149,6 +149,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--prefill-chunk", type=int, default=1024)
     parser.add_argument("--kv-dtype", choices=tuple(corpus.KV_CACHE_NAMES), default="int8")
+    corpus.add_route_pin_arguments(parser)
     parser.add_argument("--output", type=Path, required=True, help="benchmark output directory")
     parser.add_argument("--port", type=int, default=8080, help="loopback serving port")
     parser.add_argument("--device", type=int, default=0, help="CUDA device index")
@@ -310,6 +311,7 @@ def server_command(
         "--kv-dtype",
         point.kv_dtype,
         "--no-prefix-reuse",
+        *corpus.route_pin_flags(corpus.route_pins_of(args)),
     ]
     if point.speculative_backend != "none":
         command.extend(
@@ -782,6 +784,7 @@ def run_point(
     with corpus.RunningServer(command, "127.0.0.1", args.port, server_log) as server:
         server_start = server.wait_until_ready()
         server_instance_id, prefill_signature = validate_server_start(server_start, point, args)
+        corpus.require_route_pins(server_start, corpus.route_pins_of(args))
         if point.suite == "corpus-makespan" and point.concurrency == 1:
             # Persist full responses and the existing per-request metrics off the HTTP send path.
             # C=1 gives one unambiguous request_done sequence; the measured end is still the final
@@ -1101,6 +1104,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise corpus.CampaignError(f"ninferno-serve is not executable: {serve}")
         (output_dir / "server").mkdir(parents=True, exist_ok=True)
         (output_dir / "points").mkdir(parents=True, exist_ok=True)
+        corpus.bind_route_pins(output_dir, corpus.route_pins_of(args))
 
     if args.dry_run:
         for point in points:

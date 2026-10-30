@@ -83,12 +83,35 @@ Exactly one of `--prompt` and `--messages` is required. The model path is the fi
 | `--cuda-sync spin\|blocking\|yield\|auto` | `spin` | CUDA device synchronization schedule ([CUDA synchronization](#cuda-synchronization)). |
 
 Maintainers also have `--route-table FILE`, `--route-dir DIR`, `--drafter-registry FILE`,
-`--debug-prefill-cuts P1,P2,...`, `--debug-poison BYTE` and `--debug-poison-skip SITE,...`
-([maintainer options](maintainer/environment.md)). No environment variable stands in for any of
+`--debug-prefill-cuts P1,P2,...`, `--debug-poison BYTE`, `--debug-poison-skip SITE,...` and the
+route pins below ([maintainer options](maintainer/environment.md)). No environment variable stands in for any of
 them. The lab tuners (`--dense-tune`, `--moe-tune`, `--tune-cache`) time kernels on the machine,
 so `ninferno` refuses them; they run in `ninferno-perplexity` (and the dense tuner in
 `ninferno-dense` and `ninferno-gemma4`). They and `--cuda-sync` are process-wide: an Engine built while another of the process is
 alive must ask for the same values, or it is refused.
+
+#### Route pins (maintainers)
+
+Every automatic choice of a kernel family can also be made by hand, so that an A/B run can check
+that the automatic one is the faster. These are test options: a pin other than `auto` is taint in
+the decision fingerprint, and the startup log prints a `routes | pinned` warning for each.
+
+| Option | Values | Pins |
+|---|---|---|
+| `--prefill-route` | `auto`, `a16`, `w4a8`, `i8`, `mmq`, `w4a4` | The projections of calls of 17 tokens or more: BF16 activations (the register MMA, tiled or staged tiles), the int8 W4A8 tiles, the Q4/Q5/Q6 G64 int8 tiles, ggml's int8 matrix kernel, or NVFP4 activations on NVFP4 weights. |
+| `--decode-route` | `auto`, `a16`, `r8`, `vec`, `mmq` | The projections of calls of 1..16 tokens (decode, speculative verify): BF16 activations, the int8 R8 kernel (1..8 tokens), ggml's dp4a vector kernel (1..8 tokens), or ggml's matrix kernel (5..16 tokens). |
+| `--moe-path` | `auto`, `fused`, `generic` | The routed experts: the family's fused MoE kernels (Qwen 3.5/3.6 SparseMoe, Gemma 4 NVFP4 experts) or the generic MoE Op. |
+
+`auto` is the release's selection, unchanged. A pinned family takes every call of its band it can
+compute; a call it cannot (another format, a K or alignment its tiles do not take, a width past its
+kernel, a policy without its activations) keeps the automatic route. A pin is refused at startup,
+naming what can run instead, when this build and GPU hold no kernel of the family, when
+`--activations` rules it out (`exact` takes no prefill or decode pin; `int8` no `w4a4`), when no
+startup call of its band could take it, or (`--moe-path`) when no MoE layer of the model has the
+choice. `ninferno`, `ninferno-serve` and the serve bench tools (`tools/bench/run_serve_corpus.py`,
+`run_serve_concurrency.py`) take all three; `ninferno-perplexity` takes `--prefill-route` and
+`--moe-path`. Details, and what each pin does not reach:
+[route pins](maintainer/environment.md#route-pins).
 
 ### Speculative decoding
 

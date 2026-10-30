@@ -123,6 +123,9 @@ Json maintainer_record(const ninferno::MaintainerOptions& m,
                 {"debug_prefill_cuts", m.debug_prefill_cuts},
                 {"debug_poison", poison},
                 {"debug_poison_skip", m.debug_poison_skip},
+                {"prefill_route", ninferno::prefill_route_name(m.prefill_route)},
+                {"decode_route", ninferno::decode_route_name(m.decode_route)},
+                {"moe_path", ninferno::moe_path_name(m.moe_path)},
                 {"artifact_io", ninferno::artifact_io_name(m.artifact_io)},
                 {"drafter_registry", ninferno::utf8_path(drafter_registry)}};
 }

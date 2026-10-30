@@ -106,6 +106,7 @@ python3 tools/bench/run_serve_corpus.py \
 | `--output DIR` | required | Campaign directory. |
 | `--port N` | 8080 | Loopback port. |
 | `--device N` | 0 | CUDA device. |
+| `--prefill-route F`, `--decode-route F`, `--moe-path P` | `auto` | Maintainer route pins passed to `ninferno-serve` ([route pins](../../docs/maintainer/environment.md#route-pins)), for an A/B of the automatic kernel family against one family. The runner checks them in the `server_start` record and binds a campaign directory to its pins (`route_pins.json`): measure each pin into its own `--output`. |
 
 Output: `run.jsonl` (completed requests and responses), `summary.csv`, `summary.md` (fixture and
 category summaries) and per-server logs under `server/`. Results (schema 8) retain the KV dtype,
@@ -129,7 +130,7 @@ python3 tools/bench/run_serve_concurrency.py \
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--serve`, `--artifact`, `--mode`, `--sampling`, `--kv-dtype`, `--port`, `--device`, `--output` | as for the corpus runner | `--artifact` and `--output` are required. |
+| `--serve`, `--artifact`, `--mode`, `--sampling`, `--kv-dtype`, `--port`, `--device`, `--output`, `--prefill-route`, `--decode-route`, `--moe-path` | as for the corpus runner | `--artifact` and `--output` are required. |
 | `--suite S` | required | `decode-saturation` or `corpus-makespan`; repeat for both. |
 | `--concurrency N` | required | Server `--max-concurrency` and client worker count, 1..8; repeat to sweep. |
 | `--decode-tokens N` | 8192 | Per-request output budget for decode saturation. |

@@ -169,7 +169,13 @@ int main() {
                                               "--artifact-io",
                                               "buffered",
                                               "--drafter-registry",
-                                              "registry.json"});
+                                              "registry.json",
+                                              "--prefill-route",
+                                              "w4a8",
+                                              "--decode-route",
+                                              "r8",
+                                              "--moe-path",
+                                              "fused"});
     failures += check(lab.pacing.steps == 4 && lab.pacing.wait == ninferno::DecodeWait::Block &&
                           lab.pacing.cuda_sync == ninferno::CudaSyncSchedule::Blocking,
                       "decode pacing options were not parsed");
@@ -179,7 +185,10 @@ int main() {
                   lab.maintainer.debug_poison == std::uint8_t{0xFF} &&
                   lab.maintainer.debug_poison_skip == std::vector<std::string>{"kv", "state"} &&
                   lab.maintainer.artifact_io == ninferno::ArtifactIo::Buffered &&
-                  lab.drafter_registry == "registry.json",
+                  lab.drafter_registry == "registry.json" &&
+                  lab.maintainer.prefill_route == ninferno::PrefillRoute::W4a8 &&
+                  lab.maintainer.decode_route == ninferno::DecodeRoute::R8 &&
+                  lab.maintainer.moe_path == ninferno::MoePath::Fused,
               "maintainer options were not parsed");
     failures += check(
         parse({"ninferno-cli", "model.ninferno", "--prompt", "hello", "--decode-steps", "auto"})
@@ -190,7 +199,10 @@ int main() {
                                                 {"--decode-wait", "sleep"},
                                                 {"--cuda-sync", "busy"},
                                                 {"--dense-tune", "yes"},
-                                                {"--debug-poison", "300"}}) {
+                                                {"--debug-poison", "300"},
+                                                {"--prefill-route", "fp8"},
+                                                {"--decode-route", "rmma"},
+                                                {"--moe-path", "sparse"}}) {
         std::vector<std::string> arguments{"ninferno-cli", "model.ninferno", "--prompt", "hello"};
         arguments.insert(arguments.end(), bad.begin(), bad.end());
         failures += check(rejects([&] { (void)parse(arguments); }),
@@ -198,7 +210,8 @@ int main() {
     }
     for (const char* flag :
          {"--decode-steps", "--decode-wait", "--cuda-sync", "--route-table", "--route-dir",
-          "--debug-prefill-cuts", "--debug-poison", "--drafter-registry"}) {
+          "--debug-prefill-cuts", "--debug-poison", "--drafter-registry", "--prefill-route",
+          "--decode-route", "--moe-path"}) {
         failures += check(help.find(flag) != std::string::npos,
                           (std::string("CLI help omits ") + flag).c_str());
     }

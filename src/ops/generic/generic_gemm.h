@@ -501,8 +501,30 @@ struct Problem {
 // scalar route where that cannot read the weight), whatever T, the tables or the policy say; an
 // NVFP4 call of two token tiles or more that gives every SM a tile takes the tiled route in that
 // same order. A GPU without tensor mma.sync takes volta_tiled_route first.
+// A route pin (ops/route_pins.h: --prefill-route, --decode-route) applies after the invariant
+// profile, a route probe and Volta's tiled route: a call of its band takes the pinned family where
+// pinned_family_route gives one, else the automatic route; without a pin nothing changes.
 [[nodiscard]] Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                                  bool prefill);
+
+// The route a pinned family gives a call of its band (prefill: 17 tokens or more; decode:
+// 1..16), nullopt where the family cannot compute it or T is outside the band. A16 is the
+// automatic selection under an A16Only policy; W4A8 the W4A8 heuristic's tile (with its tuned
+// prefill band); I8 the I8 cost rule's tile; Mmq ggml's matrix kernel (prefill in 512-token
+// slices; at decode widths its 5..16-token band); W4A4 the W4A4 heuristic's tile; R8 the R8 rules'
+// schedule (1 token where the activation fits a CTA, 2..8 on the pre-quantized form); Vec ggml's
+// vector kernel.
+[[nodiscard]] std::optional<Route> pinned_family_route(PrefillRoute family, const Problem& problem,
+                                                       const Weight& weight, std::int32_t tokens,
+                                                       bool prefill);
+[[nodiscard]] std::optional<Route> pinned_family_route(DecodeRoute family, const Problem& problem,
+                                                       const Weight& weight, std::int32_t tokens,
+                                                       bool prefill);
+
+// Whether this build and the current device hold the kernels of a pinnable family at all (the
+// startup's first refusal, before any weight is read).
+[[nodiscard]] bool pin_family_on_device(PrefillRoute family);
+[[nodiscard]] bool pin_family_on_device(DecodeRoute family);
 
 // The W4A8 tile of the rules a device without clocks runs (the cost model's fallback), else the
 // first schedule that fits the build; nullopt where none admits the weight.

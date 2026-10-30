@@ -238,3 +238,60 @@ def test_resume_rejects_different_kv_dtype(tmp_path):
     path.write_text(json.dumps(record) + "\n", encoding="utf-8")
     with pytest.raises(corpus.CampaignError, match="KV dtype differs"):
         corpus.load_existing_records(path, {spec.key: spec})
+
+
+@pytest.mark.parametrize("concurrent", [False, True])
+def test_route_pins_reach_server_and_bind_the_campaign(tmp_path, concurrent):
+    artifact = tmp_path / "model.ninferno"
+    artifact.touch()
+    common = [
+        "--artifact",
+        f"model={artifact}",
+        "--output",
+        str(tmp_path),
+        "--mode",
+        "mtp0",
+        "--prefill-route",
+        "mmq",
+        "--decode-route",
+        "vec",
+    ]
+    if concurrent:
+        args = concurrency.parse_args(
+            common + ["--suite", "decode-saturation", "--concurrency", "1"]
+        )
+        point = build_points([("model", artifact)], args)[0]
+        command = concurrency.server_command(Path("serve"), point, tmp_path / "log", args)
+    else:
+        args = corpus.parse_args(common)
+        spec = RunSpec(
+            "model", "model", artifact, "mtp0", "none", 0, "stochastic", args.kv_dtype,
+            Fixture("fixture", [], False, 8, "test"), 7,
+        )
+        command = corpus.server_command(
+            Path("serve"), spec, tmp_path / "log", args.port, args.device,
+            corpus.route_pins_of(args),
+        )
+    pins = corpus.route_pins_of(args)
+    assert pins == {"prefill_route": "mmq", "decode_route": "vec", "moe_path": "auto"}
+    assert command[command.index("--prefill-route") + 1] == "mmq"
+    assert command[command.index("--decode-route") + 1] == "vec"
+    assert "--moe-path" not in command
+    event = {"engine": {"maintainer": {"prefill_route": "mmq", "decode_route": "vec",
+                                       "moe_path": "auto"}}}
+    corpus.require_route_pins(event, pins)
+    event["engine"]["maintainer"]["decode_route"] = "auto"
+    with pytest.raises(corpus.CampaignError, match="route pins"):
+        corpus.require_route_pins(event, pins)
+    corpus.bind_route_pins(tmp_path, pins)
+    corpus.bind_route_pins(tmp_path, pins)
+    with pytest.raises(corpus.CampaignError, match="another --output"):
+        corpus.bind_route_pins(tmp_path, {**pins, "decode_route": "auto"})
+    # A campaign from before the marker holds automatic-route results only.
+    legacy = tmp_path / "legacy"
+    legacy.mkdir()
+    (legacy / "run.jsonl").write_text("{}\n", encoding="utf-8")
+    with pytest.raises(corpus.CampaignError, match="before route pins were recorded"):
+        corpus.bind_route_pins(legacy, pins)
+    corpus.bind_route_pins(legacy, {})
+    assert json.loads((legacy / "route_pins.json").read_text(encoding="utf-8")) == {}

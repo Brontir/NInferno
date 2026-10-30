@@ -2,6 +2,7 @@
 
 #include "core/weight_view.h"
 #include "ninferno/ops/linear.h"
+#include "ops/route_pins.h"
 
 #include <algorithm>
 #include <limits>
@@ -116,7 +117,15 @@ public:
                                  std::any_of(gate_up.begin(), gate_up.end(), [](const auto& in) {
                                      return in.policy == ops::LinearPolicy::AllowA8;
                                  });
-            if (top_k == 8 && !a8_held && ops::sparse_moe_admits(generic)) {
+            // --moe-path (ops/route_pins.h): auto takes SparseMoe where it runs the layer, generic
+            // never, fused refuses a layer it cannot run.
+            const bool fused_ready = top_k == 8 && !a8_held && ops::sparse_moe_admits(generic);
+            const std::string why_not =
+                top_k != 8 ? "top-k " + std::to_string(top_k) + ", SparseMoe takes 8"
+                : a8_held  ? "the NVFP4 experts are held at eight bits (--activations int8), "
+                             "SparseMoe encodes its prefill in four"
+                           : "SparseMoe does not read these experts' format or shape";
+            if (ops::moe_takes_fused(fused_ready, why_not)) {
                 return ops::prepare_sparse_moe_weights(
                     model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                     model_.input(moe.shared.gate), model_.input(moe.shared.up),

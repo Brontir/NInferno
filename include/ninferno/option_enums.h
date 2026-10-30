@@ -23,6 +23,22 @@ enum class CudaSyncSchedule : std::uint8_t { Spin, Blocking, Yield, Auto };
 // nothing; On times what they do not cover; Retune times everything again.
 enum class TuneMode : std::uint8_t { Off, On, Retune };
 
+// A maintainer's pin of the kernel family that computes the projections of prefill width (17
+// tokens or more, --prefill-route) or of decode and verify width (1..16 tokens, --decode-route),
+// for A/B runs that check the automatic choice: Auto is the release's selection, any other value
+// takes that family for every call it can compute (docs/maintainer/environment.md, Route pins).
+// A16: BF16 activations (the register MMA, tiled or staged tiles); W4a8: the int8-activation
+// W4A8 tiles; I8: the Q4/Q5/Q6 G64 int8 tiles; Mmq: ggml's int8 matrix kernel; W4a4: NVFP4
+// weights on NVFP4 activations; R8: the int8 decode kernel (1..8 tokens); Vec: ggml's dp4a vector
+// kernel (1..8 tokens, 16 without tensor mma.sync).
+enum class PrefillRoute : std::uint8_t { Auto, A16, W4a8, I8, Mmq, W4a4 };
+enum class DecodeRoute : std::uint8_t { Auto, A16, R8, Vec, Mmq };
+
+// A maintainer's pin of the routed experts' kernels (--moe-path): Auto is the release's choice,
+// Fused the family's fused MoE kernels (Qwen 3.5/3.6 SparseMoe, Gemma 4 NVFP4 experts), Generic
+// the generic MoE Op (ops::moe) that reads every expert format.
+enum class MoePath : std::uint8_t { Auto, Fused, Generic };
+
 // How artifact payloads (the weights) are read at load (--artifact-io): Auto reads local disks with
 // O_DIRECT (a 20+ GB payload kept out of the page cache) and network, FUSE and host-shared file
 // systems through the page cache; Direct and Buffered force one. The bytes read are the same.
@@ -30,6 +46,81 @@ enum class ArtifactIo : std::uint8_t { Auto, Direct, Buffered };
 
 // The most ordinary decode steps one round runs back to back (--decode-steps).
 inline constexpr std::uint32_t kMaximumDecodeSteps = 32;
+
+[[nodiscard]] constexpr const char* prefill_route_name(PrefillRoute route) noexcept {
+    switch (route) {
+    case PrefillRoute::Auto:
+        return "auto";
+    case PrefillRoute::A16:
+        return "a16";
+    case PrefillRoute::W4a8:
+        return "w4a8";
+    case PrefillRoute::I8:
+        return "i8";
+    case PrefillRoute::Mmq:
+        return "mmq";
+    case PrefillRoute::W4a4:
+        return "w4a4";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] constexpr const char* decode_route_name(DecodeRoute route) noexcept {
+    switch (route) {
+    case DecodeRoute::Auto:
+        return "auto";
+    case DecodeRoute::A16:
+        return "a16";
+    case DecodeRoute::R8:
+        return "r8";
+    case DecodeRoute::Vec:
+        return "vec";
+    case DecodeRoute::Mmq:
+        return "mmq";
+    }
+    return "unknown";
+}
+
+[[nodiscard]] constexpr const char* moe_path_name(MoePath path) noexcept {
+    switch (path) {
+    case MoePath::Auto:
+        return "auto";
+    case MoePath::Fused:
+        return "fused";
+    case MoePath::Generic:
+        return "generic";
+    }
+    return "unknown";
+}
+
+// --prefill-route auto|a16|w4a8|i8|mmq|w4a4.
+[[nodiscard]] inline PrefillRoute parse_prefill_route(std::string_view text) {
+    for (const PrefillRoute route : {PrefillRoute::Auto, PrefillRoute::A16, PrefillRoute::W4a8,
+                                     PrefillRoute::I8, PrefillRoute::Mmq, PrefillRoute::W4a4}) {
+        if (text == prefill_route_name(route)) { return route; }
+    }
+    throw std::invalid_argument("--prefill-route must be auto, a16, w4a8, i8, mmq or w4a4, not '" +
+                                std::string(text) + "'");
+}
+
+// --decode-route auto|a16|r8|vec|mmq.
+[[nodiscard]] inline DecodeRoute parse_decode_route(std::string_view text) {
+    for (const DecodeRoute route : {DecodeRoute::Auto, DecodeRoute::A16, DecodeRoute::R8,
+                                    DecodeRoute::Vec, DecodeRoute::Mmq}) {
+        if (text == decode_route_name(route)) { return route; }
+    }
+    throw std::invalid_argument("--decode-route must be auto, a16, r8, vec or mmq, not '" +
+                                std::string(text) + "'");
+}
+
+// --moe-path auto|fused|generic.
+[[nodiscard]] inline MoePath parse_moe_path(std::string_view text) {
+    for (const MoePath path : {MoePath::Auto, MoePath::Fused, MoePath::Generic}) {
+        if (text == moe_path_name(path)) { return path; }
+    }
+    throw std::invalid_argument("--moe-path must be auto, fused or generic, not '" +
+                                std::string(text) + "'");
+}
 
 [[nodiscard]] constexpr const char* decode_wait_name(DecodeWait wait) noexcept {
     switch (wait) {
