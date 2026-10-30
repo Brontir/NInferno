@@ -348,20 +348,27 @@ inline constexpr TileCost kTileCost[] = {
 // a tile is 128 weight rows x 128 tokens over the whole K (one CTA a SM, 256 threads at 254
 // registers), a slice's grid ceil(N / 128) x ceil(t / 128) tiles. A grid that fills its last wave to
 // 90 % runs a tile a CTA in rounds of SMs; else stream-k: the SMs share the tiles' K steps evenly and
-// a fixup kernel adds the split tiles (ggml mmq.cuh). A tile takes c0 + K c1 SM-clocks, c1 = a + b
-// x the bits a weight (its block's decode grows with them): read on Qwen3.5 9B's Q4_K_M, Q5_K_M and
-// Q6_K 7K-token prompts (nsys, the calls by format and grid against the GGUF's tensor types), each
-// generation's cards together: Ada (RTX 4060 Ti, the 4070 Ti's Q6_K) 24 + 4.0 b, c0 3000 (-4 ..
-// +5 %), Ampere (RTX 3060) 26 + 3.5 b (-3 .. +3 %), Turing (RTX 2080 Ti) 59 + 2.75 b, c0 3000 (-5 ..
-// +3 %), Blackwell (RTX 5090, stream-k throughout) 16 + 6.5 b (-8 .. +9 %). Q4_K 4.5 bits, Q5_K 5.5,
-// Q6_K 6.56: a mix's tiles at its own bits a weight.
+// a fixup kernel adds the split tiles (ggml mmq.cuh). A tile takes c0 + K c1 SM-clocks, c1 by the
+// weights' format (its block's decode: Q3_K's high-bit mask and 6-bit scales cost as much as Q6_K's
+// six bits): read on Qwen3.5 9B's Q3_K_M, Q4_K_M (the MTP file), Q5_K_M and Q6_K 7K-token prompts
+// (nsys, the calls by format and grid against the GGUF's tensor types), each generation's cards
+// together; checked on its Q4_K_S, which they were not read on:
+//   Ada (RTX 4060 Ti, the 4070 Ti)  c0 2000, Q3_K 51.5, Q4_K 42.75, Q5_K 45.25, Q6_K 50.75: -5 .. +3 %, Q4_K_S -3 .. +8 %
+//   Ampere (RTX 3060)               c0 4000, 49.25, 41.5, 43.5, 48.75: -1 .. +1 %, Q4_K_S 0 %
+//   Turing (RTX 2080 Ti)            c0 0, 91.75, 71.75, 74.5, 77.75: -8 .. +4 %, Q4_K_S -2 .. +2 %
+//   Blackwell (RTX 5090, stream-k)  c0 3000, 60.5, 45.5, 49.5, 59: -7 .. +7 %, Q4_K_S -5 .. +7 %
+// A mix's tiles take its label's format (Q4_K_M: Q4_K), its bits a weight past that format's moving
+// them toward Q6_K's (the mixes raise ffn_down, attn_v and the like to Q5_K / Q6_K).
 struct MmqTileCost {
     std::string_view generation;
-    double c0, a, b; // SM-clocks a tile, and a K step: a + b x the bits a weight
+    double c0;
+    double q3, q4, q5, q6; // SM-clocks a K step of a tile, by format
     int cards;
 };
-inline constexpr MmqTileCost kMmqTileCost[] = {
-    {"ada", 3000, 24, 4.0, 2}, {"ga10x", 0, 26, 3.5, 1}, {"turing", 3000, 59, 2.75, 1}, {"gb20x", 0, 16, 6.5, 1}};
+inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 51.5, 42.75, 45.25, 50.75, 2},
+                                               {"ga10x", 4000, 49.25, 41.5, 43.5, 48.75, 1},
+                                               {"turing", 0, 91.75, 71.75, 74.5, 77.75, 1},
+                                               {"gb20x", 3000, 60.5, 45.5, 49.5, 59, 1}};
 inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
 inline constexpr double kMmqTile        = 128;
 // Beside the tiles, a call quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes written)

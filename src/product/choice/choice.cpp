@@ -512,15 +512,32 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                            double tokens, bool* transferred) noexcept {
     const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
                                 card.dram_bytes_per_s / 1e9};
-    if (quant.bits_per_weight <= 0 || !measured::mmq_prefill_pays(board)) { return 0; }
+    if (!measured::mmq_prefill_pays(board)) { return 0; }
     const std::string_view gen = generation_of(card);
     const MmqTileCost* cost    = nullptr;
     for (const MmqTileCost& row : kMmqTileCost) {
         if (row.generation == gen) { cost = &row; }
     }
     if (cost == nullptr) { return 0; }
+    // The label's K-quant format (Q4_K_M: Q4_K), its bits a weight past that format's toward Q6_K.
+    struct Format {
+        std::string_view name;
+        double bits, step;
+    };
+    const Format formats[] = {{"Q3_K", 3.4375, cost->q3}, {"Q4_K", 4.5, cost->q4}, {"Q5_K", 5.5, cost->q5},
+                              {"Q6_K", 6.5625, cost->q6}};
+    std::string label = quant.label;
+    for (char& ch : label) { ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch))); }
+    const Format* format = nullptr;
+    for (const Format& f : formats) {
+        if (label.find(f.name) != std::string::npos) { format = &f; }
+    }
+    if (format == nullptr) { return 0; }
     if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
-    const double sms = card.sms, step = cost->a + cost->b * quant.bits_per_weight;
+    const double toward = format->bits < 6.5625
+                              ? std::clamp((quant.bits_per_weight - format->bits) / (6.5625 - format->bits), 0.0, 1.0)
+                              : 0;
+    const double sms = card.sms, step = format->step + (cost->q6 - format->step) * toward;
     double clocks = 0, bytes = 0;
     for (const LinearShape& l : model.linears) {
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {

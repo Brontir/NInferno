@@ -2138,24 +2138,30 @@ read one table) `prefill_linears_seconds` prices them by MMQ's tiles:
 - a slice's grid of ceil(N / 128) x ceil(t / 128) tiles runs a tile a CTA in rounds of SMs where it
   fills its last wave to 90 %, else stream-k: the SMs share the tiles' K steps evenly, and a fixup
   kernel adds the split tiles (ggml mmq.cuh);
-- a tile takes c0 + K c1 SM-clocks, c1 = a + b x the bits a weight (a block's decode grows with its
-  bits): a mix is priced at its own bits a weight, no tensor's format needed (a hub row has none);
+- a tile takes c0 + K c1 SM-clocks, c1 by the weights' format: Q3_K's decode (its high-bit mask and
+  6-bit scales) costs as much as Q6_K's, Q4_K the least. A hub row names no tensor's format, so a mix
+  takes its label's format (Q4_K_M: Q4_K), its bits a weight past that format's moving it toward
+  Q6_K's (the mixes raise ffn_down, attn_v and the like to Q5_K / Q6_K); Q2_K and the IQ formats are
+  not read (the share);
 - beside the tiles, the input's quantization to q8_1 (3.125 bytes an input element) and the
   epilogue's FP32 -> 16-bit output (6 bytes an output element), and a stream-k call's fixup (a tile's
   FP32 partial a SM, written and read), all at the DRAM rate.
 
-**Read** on Qwen3.5 9B's Q4_K_M (the MTP file: Q4_K / Q5_K / Q6_K by tensor), Q5_K_M and Q6_K at 7K
-tokens (nsys; the calls by ggml type and grid against the GGUF's tensor types and the runtime's
+**Read** on Qwen3.5 9B's Q3_K_M, Q4_K_M (the MTP file: Q4_K / Q5_K / Q6_K by tensor), Q5_K_M and Q6_K
+at 7K tokens (nsys; the calls by ggml type and grid against the GGUF's tensor types and the runtime's
 fusions — a Gated DeltaNet layer's qkv and gate fuse when their formats match, a full layer's q, k
-and v likewise; gate and up run apart), each generation's cards together:
+and v likewise; gate and up run apart), each generation's cards together; checked on Q4_K_S, which
+they were not read on:
 
-| generation | cards | c0 | a + b x bits | calls |
-|---|---|---|---|---|
-| Ada | RTX 4060 Ti (Q4_K, Q5_K, Q6_K), 4070 Ti (Q6_K) | 3000 | 24 + 4.0 b | -4 .. +5 % |
-| Ampere | RTX 3060 | 0 | 26 + 3.5 b | -3 .. +3 % |
-| Turing | RTX 2080 Ti | 3000 | 59 + 2.75 b | -5 .. +3 % |
-| Blackwell | RTX 5090 (stream-k throughout) | 0 | 16 + 6.5 b | -8 .. +9 % |
+| generation | cards | c0 | Q3_K / Q4_K / Q5_K / Q6_K | read | Q4_K_S |
+|---|---|---|---|---|---|
+| Ada | RTX 4060 Ti, 4070 Ti | 2000 | 51.5 / 42.75 / 45.25 / 50.75 | -5 .. +3 % | -3 .. +8 % |
+| Ampere | RTX 3060 | 4000 | 49.25 / 41.5 / 43.5 / 48.75 | -1 .. +1 % | 0 % |
+| Turing | RTX 2080 Ti | 0 | 91.75 / 71.75 / 74.5 / 77.75 | -8 .. +4 % | -2 .. +2 % |
+| Blackwell | RTX 5090 (stream-k throughout) | 3000 | 60.5 / 45.5 / 49.5 / 59 | -7 .. +7 % | -5 .. +7 % |
 
+A first reading by bits a weight alone (c1 = a + b x bits, from Q4_K / Q5_K / Q6_K) missed Q3_K by
+-32 %: its decode is not its bits'.
 Checked where not read: Gemma 4 12B Q4_K_M on the RTX 2080 Ti, its calls by grid -4 .. -3 %, the
 stream-k mixture +2 %. The bytes beside the tiles: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2
 holds part of them (0.65 .. 0.77 of the bytes' time). A card whose nearest measured board keeps the
