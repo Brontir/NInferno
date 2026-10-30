@@ -302,8 +302,8 @@ void prefills_pay_tail_calls(const json& fixture) {
 // The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
 // measured row.
 void prefills_by_format(const json& fixture) {
-    double sq[2] = {0, 0}, worst[2] = {0, 0}, q8_worst_before = 0, q8_sq_before = 0;
-    int q8_before = 0;
+    double sq[2] = {0, 0}, worst[2] = {0, 0}, worst_before[2] = {0, 0}, sq_before[2] = {0, 0};
+    int before[2] = {0, 0};
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -322,11 +322,10 @@ void prefills_by_format(const json& fixture) {
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
-        if (i == 1 && !(row.at("model").get<std::string>() == "gemma-4-12b" &&
-                        row.at("card").get<std::string>() == "RTX 5090")) {
-            q8_worst_before = std::max(q8_worst_before, std::abs(d));
-            q8_sq_before += d * d;
-            ++q8_before;
+        if (!(row.at("model").get<std::string>() == "gemma-4-12b" && row.at("card").get<std::string>() == "RTX 5090")) {
+            worst_before[i] = std::max(worst_before[i], std::abs(d));
+            sq_before[i] += d * d;
+            ++before[i];
         }
         ++n[i];
     }
@@ -345,8 +344,10 @@ void prefills_by_format(const json& fixture) {
     // tokens: 14.2 against 7.7 ms on the 5090, 18.3 against 9.7 on the 4090). The points before
     // the RTX 5090's Gemma keep their bounds.
     check(n[1] == 66 && tiles < 0.10 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
-    check(q8_before == 60 && std::sqrt(q8_sq_before / q8_before) < 0.08 && q8_worst_before < 0.20,
+    check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
+    check(before[0] == 78 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+          "Q4_K_M prefill but the RTX 5090's Gemma as before");
     check(n[0] == 84 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
