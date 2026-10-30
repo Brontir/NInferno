@@ -27,6 +27,7 @@
 #include "quantized_weight.cuh"
 #include "random_weight.h"
 #include "ops/generic/route_table.h"
+#include "ops/linear/linear_registry.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -97,8 +98,9 @@ QType parse_qtype(std::string_view text) {
     if (v == "fp8") return QType::FP8_E4M3FN_ROW_BF16;
     // Every other format by the route table's name (q4k, iq4xs, mxfp4, ...).
     for (int value = 0; value <= 0xff; ++value) {
-        const auto q = static_cast<QType>(value);
-        if (v == ops::detail::generic::qtype_name(q)) return q;
+        const auto q           = static_cast<QType>(value);
+        const std::string name = ops::detail::generic::qtype_name(q);
+        if (name != "unknown" && v == name) return q;
     }
     throw std::invalid_argument("unknown qtype " + std::string(text));
 }
@@ -403,14 +405,39 @@ int main(int argc, char** argv) {
             }
             if (o.w4a8_schedules) {
                 namespace generic = ops::detail::generic;
-                const generic::Problem problem{o.qtype, o.policy, o.n, o.k, generic::Epilogue::Store};
-                std::fprintf(stderr, "T=%5d dispatcher route %s\n", t,
-                             generic::route_name(generic::select_route(problem, weight.weight, t, ops::prefill_routes_active())).c_str());
+                // The route ops::linear takes, as dispatch_linear (linear.cpp) decides it: the
+                // prefill A8 policy first, then whether the generic path claims the call.
+                const Weight& w              = weight.weight;
+                LinearPolicy policy          = o.policy;
+                const LinearPolicy a8_policy = generic::prefill_a8_policy(w.qtype, policy);
+                const bool prefill_a8        = generic::q8_prefill_a8(w, a8_policy, t);
+                if (prefill_a8) policy = a8_policy;
+                const generic::Problem problem{w.qtype, policy, w.n, w.k, generic::Epilogue::Store};
+                const bool generic_claims =
+                    ops::invariant_routes_active() ||
+                    !ops::detail::linear_shape_registered(w.qtype, w.n, w.k) ||
+                    generic::owned_decode_r8(w, policy, t) || prefill_a8 ||
+                    generic::owned_prefill_w4a8(w, policy, t) ||
+                    generic::volta_tiled_route(w, policy, t).has_value() ||
+                    generic::table_claims(problem, t, ops::prefill_routes_active());
+                const std::string chosen =
+                    generic_claims && generic::supports(w)
+                        ? generic::route_name(
+                              generic::select_route(problem, w, t, ops::prefill_routes_active()))
+                        : std::string("the shape's own table");
+                std::fprintf(stderr, "T=%5d dispatcher route %s\n", t, chosen.c_str());
+                if (o.policy == LinearPolicy::A16Only) {
+                    std::fprintf(stderr, "T=%5d w4a8 schedules need --policy a8 or a4\n", t);
+                }
                 for (int i = 0; i < generic::w4a8_schedule_count(); ++i) {
                     const generic::Route route{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)};
-                    if (!generic::route_admits(route, weight.weight, o.policy)) continue;
-                    if (generic::route_workspace_bytes(route, o.k, t) > ws_bytes) continue;
                     const auto info = generic::w4a8_schedule_info(i);
+                    if (!generic::route_admits(route, weight.weight, o.policy)) continue;
+                    if (generic::route_workspace_bytes(route, o.k, t) > ws_bytes) {
+                        std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d skipped: workspace\n", t,
+                                     info.block_m, info.block_n);
+                        continue;
+                    }
                     generic::Call c;
                     c.x               = &xt;
                     c.weight          = &weight.weight;
@@ -421,13 +448,21 @@ int main(int argc, char** argv) {
                         workspace.reset();
                         generic::run_route(route, c, &workspace, s);
                     };
-                    run(stream);
-                    CUDA_CHECK(cudaStreamSynchronize(stream));
+                    // quantized -2 marks a schedule row (tools/route_as_table.py reads -1, 0, 1).
+                    try {
+                        run(stream);
+                        CUDA_CHECK(cudaStreamSynchronize(stream));
+                    } catch (const std::exception& e) {
+                        std::string what = e.what();
+                        std::replace(what.begin(), what.end(), ',', ';');
+                        row(-(i + 1), -2, NAN, NAN, NAN, NAN, "rejected: " + what);
+                        continue;
+                    }
                     const double err =
                         rel_l2(out, ref, static_cast<std::uint64_t>(o.n) * t, sums, stream);
                     const auto timing =
                         bench::measure_cold_launch(run, flush, stream, o.warmup, o.repeat);
-                    row(-(i + 1), 1, timing.median_us, timing.min_us, timing.p95_us, err,
+                    row(-(i + 1), -2, timing.median_us, timing.min_us, timing.p95_us, err,
                         err <= kRankableRelL2 ? "ok" : "mismatch");
                     std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d%s %9.2f us\n", t, info.block_m,
                                  info.block_n, info.producers > 0 ? "ws" : "  ", timing.median_us);

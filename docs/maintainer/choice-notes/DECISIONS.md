@@ -1559,20 +1559,20 @@ and Volta one attention share cannot hold Gemma and Qwen together (GV100 Gemma 1
 attention path are the missing fact. The product's constants stay as they are until those two facts
 are in; the refit is the diagnosis.
 
-**The big boards' shortfall is not the tiles' waves (30.10, predicted against measured).** After
-DECISIONS 63 the user kits measure the 2048-token prefill at x0.97 of the estimate on the RTX 5070 Ti
+**The big boards' shortfall is not the tiles' waves (30.10, predicted against measured).** The
+partial-wave reading above does not hold for the RTX 5090. After DECISIONS 63 the user kits measure the 2048-token prefill at x0.97 of the estimate on the RTX 5070 Ti
 (Qwen 9B and Gemma 12B) but x0.85 / x0.81 on the RTX 5090 and x0.91 / x0.83 on the RTX 4090. The
 first prediction was the W4A8 producer-warp tile's partial waves (one CTA a SM, ceil(N / tile rows) x
 ceil(T / 128) tiles: the 5070 Ti's 70 SMs fill them to 0.91 .. 0.99, the 5090's 170 to 0.75 .. 0.90).
 It does not hold, for three measured reasons:
 
 - The 5090 does not run that tile. Under the route profile (`NINFERNO_BENCH_PREFILL_ROUTES=1`) its
-  Q4_K A8 linears, like Ada's, Ampere's and Turing's, take ggml's MMQ (`kMmqPrefillPays`); only the
+  Q4_K A8 linears, like Ada's, sm_86 Ampere's and Turing's (not the A100's), take ggml's MMQ (`kMmqPrefillPays`); only the
   5070 Ti (and the 5060 Ti) prefill on the tiles.
 - Where the tile runs it costs the same per wave: ~104k SM cycles a wave at K = 4096 on the 5070 Ti
   and the 5090 alike (`linear_route_sweep_bench --w4a8-schedules`); a 5090 wave is slower only in the
   bench's long loops, where the power limit holds the clock at 2.45 GHz. The kits' windows run above
-  boost (their `sm_clock_mhz`, DECISIONS 63's kit clocks).
+  boost (their `sm_clock_mhz`: the kit's clocks, user-measurement-kit.md).
 - Against MMQ the tiles lose on the big boards: every board on the tiles (`exp/mmq-prefill-off-all`,
   A/B/A at 312 .. 22K tokens, Qwen 9B and Gemma 12B Q4_K_M) is 3 .. 8 % slower on the 5090,
   8 .. 13 % on the 4090, 9 .. 11 % on the RTX 4070 Ti, 6 .. 8 % on the RTX 4060 Ti and 4 .. 5 % on

@@ -488,8 +488,9 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // IQ2_XS / IQ2_XXS / Q2_K) gave 949 on the 4060 Ti. The small sm_120 keeps the tiles (RTX 5060 Ti,
 // 36 SMs: 1047 -> 1015), and so does sm_80: A100 40 GB 1340 -> 1142. Every other board takes the
 // nearest measured board's answer of its instruction set at any distance, as the "64 SMs" line
-// between the 5060 Ti and the 5090 did (an RTX 5080 or 5070 Ti the 5090's, an RTX 5070 or 5060 the
-// 5060 Ti's); Volta and the architectures nobody measured keep the tiles.
+// between the 5060 Ti and the 5090 did (an RTX 5080 the 5090's, an RTX 5070 Ti, 5070 or 5060 the
+// 5060 Ti's: the 5070 Ti's route profile prefills on the tiles, DECISIONS 62); Volta and the
+// architectures nobody measured keep the tiles.
 constexpr measured::Gate kMmqPrefillPays[] = {
     {measured::kRtx5090, true},    {measured::kRtx5060Ti, false}, {measured::kRtx4090, true},
     {measured::kL4, true},         {measured::kRtx4060Ti, true},  {measured::kA10, true},
