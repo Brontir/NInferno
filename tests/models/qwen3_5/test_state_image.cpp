@@ -4,10 +4,12 @@
 
 #include <cuda_runtime.h>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
 #include <iostream>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -30,7 +32,7 @@ struct PlannedPool {
 };
 
 PlannedPool plan_pool(bool dflash, std::int32_t slots = 4, bool dflash2 = false, bool rings = false,
-                      bool linear = true, bool fp8_rings = false) {
+                      bool linear = true, bool fp8_rings = false, bool windows = false) {
     q36::StateImageSpec spec{
         .linear =
             {
@@ -60,6 +62,10 @@ PlannedPool plan_pool(bool dflash, std::int32_t slots = 4, bool dflash2 = false,
         spec.rings = {{.layers = 3, .capacity = 19, .kv_heads = 2, .head_dim = 8},
                       {.layers = 1, .capacity = 5, .kv_heads = 1, .head_dim = 16}};
         for (auto& ring : spec.rings) { ring.fp8 = fp8_rings; }
+        if (windows) {
+            spec.rings[0].window = 6;
+            spec.rings[1].window = 2;
+        }
     }
     ninferno::LayoutBuilder builder;
     q36::StateImageDeviceLayout layout = q36::plan_state_image_device_pool(builder, spec);
@@ -308,6 +314,86 @@ void test_fp8_rings(ninferno::DeviceContext& device) {
     }
 }
 
+// One slot's plane [inner, capacity, kv_heads]: the rows in `live` hold `inside`, every other row
+// `outside`.
+void expect_rows(const ninferno::Tensor& plane, std::uint32_t capacity,
+                 const std::vector<std::uint32_t>& live, unsigned char inside,
+                 unsigned char outside, std::string_view label) {
+    std::vector<unsigned char> host(plane.bytes());
+    CUDA_CHECK(cudaMemcpy(host.data(), plane.data, host.size(), cudaMemcpyDeviceToHost));
+    const auto heads     = static_cast<std::size_t>(plane.ne[2]);
+    const std::size_t row = host.size() / (capacity * heads);
+    for (std::size_t head = 0; head < heads; ++head) {
+        for (std::uint32_t r = 0; r < capacity; ++r) {
+            const bool in = std::find(live.begin(), live.end(), r) != live.end();
+            for (std::size_t b = 0; b < row; ++b) {
+                if (host[(head * capacity + r) * row + b] != (in ? inside : outside)) {
+                    ++failures;
+                    std::cerr << "FAIL: " << label << " row " << r << " head " << head << '\n';
+                    return;
+                }
+            }
+        }
+    }
+}
+
+// A checkpoint's Host round trip with its frontier: a ring moves the rows of its last `window`
+// positions (wrapping at the capacity; fewer at a short frontier) and leaves every other row of
+// the destination as it was; the hidden moves whole.
+void test_ring_live_rows(ninferno::DeviceContext& device, bool fp8) {
+    PlannedPool planned = plan_pool(false, 2, false, true, false, fp8, true);
+    ninferno::DeviceArena arena(planned.bytes);
+    q36::StateImageDevicePool pool({arena.base(), arena.capacity()}, planned.layout);
+    q36::HostStatePool host(planned.layout.host, 1);
+    const auto handle = host.allocate();
+    expect(handle.has_value(), "live-row Host slot");
+    // Group 0: capacity 19, window 6; group 1: capacity 5, window 2.
+    const struct {
+        std::uint64_t frontier;
+        std::vector<std::uint32_t> rows[2];
+    } cases[] = {
+        {.frontier = 23, .rows = {{17, 18, 0, 1, 2, 3}, {1, 2}}}, // wraps in both groups
+        {.frontier = 4, .rows = {{0, 1, 2, 3}, {2, 3}}},          // shorter than the window
+        {.frontier = 12, .rows = {{6, 7, 8, 9, 10, 11}, {0, 1}}},
+    };
+    for (const auto& c : cases) {
+        fill_slot(pool, 0, 0x11, device.stream);
+        fill_slot(pool, 1, 0x47, device.stream);
+        pool.copy_to_host(0, host.writable_view(*handle), device.stream, c.frontier);
+        pool.copy_from_host(host.view(*handle), 1, device.stream, c.frontier);
+        device.synchronize();
+        const std::string label = "live rows at frontier " + std::to_string(c.frontier);
+        expect_bytes(pool.continuation_hidden_slot(1), 0x11 + 0x20, label + ": hidden");
+        for (std::size_t group = 0; group < pool.ring_groups(); ++group) {
+            const std::uint32_t capacity = pool.ring_spec(group).capacity;
+            for (std::uint32_t layer = 0; layer < pool.ring_spec(group).layers; ++layer) {
+                const auto planes = pool.ring_planes(group, layer);
+                const auto in     = static_cast<unsigned char>(0x11 + 0x50 + 8 * group + layer);
+                const auto out    = static_cast<unsigned char>(0x47 + 0x50 + 8 * group + layer);
+                expect_rows(planes.k.slice(3, 1, 1), capacity, c.rows[group], in, out,
+                            label + ": K");
+                expect_rows(planes.v.slice(3, 1, 1), capacity, c.rows[group],
+                            static_cast<unsigned char>(in + 0x40),
+                            static_cast<unsigned char>(out + 0x40), label + ": V");
+                if (!fp8) { continue; }
+                expect_rows(planes.k_scale.slice(3, 1, 1), capacity, c.rows[group],
+                            static_cast<unsigned char>(in + 0x80),
+                            static_cast<unsigned char>(out + 0x80), label + ": K scale");
+                expect_rows(planes.v_scale.slice(3, 1, 1), capacity, c.rows[group],
+                            static_cast<unsigned char>(in + 0xC0),
+                            static_cast<unsigned char>(out + 0xC0), label + ": V scale");
+            }
+        }
+    }
+    // Without a frontier every row moves.
+    fill_slot(pool, 0, 0x11, device.stream);
+    fill_slot(pool, 1, 0x47, device.stream);
+    pool.copy_to_host(0, host.writable_view(*handle), device.stream);
+    pool.copy_from_host(host.view(*handle), 1, device.stream);
+    device.synchronize();
+    expect_slot(pool, 1, 0x11, "every row without a frontier");
+}
+
 } // namespace
 
 int main() {
@@ -357,6 +443,8 @@ int main() {
     test_host_roundtrip(true, device, false, true, true);
     test_fp8_rings(device);
     test_host_roundtrip(false, device, false, true, false, true);
+    test_ring_live_rows(device, false);
+    test_ring_live_rows(device, true);
 
     return failures == 0 ? 0 : 1;
 }

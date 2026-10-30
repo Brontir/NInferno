@@ -311,7 +311,8 @@ PersistentLayout dense_layout(const StateShape& shape, const SequencePlanImpl& p
                                 .capacity = shape.window + ring_decoder_widest_call(plan) - 1U,
                                 .kv_heads = shape.sliding_kv_heads,
                                 .head_dim = shape.sliding_head_dim,
-                                .fp8      = plan.ring_storage == KvCacheStorage::Fp8E4M3Row256});
+                                .fp8      = plan.ring_storage == KvCacheStorage::Fp8E4M3Row256,
+                                .window   = shape.window});
     }
     if (plan.features.masked_draft()) {
         const DrafterStateShape& draft = drafter_of(shape);
@@ -368,7 +369,8 @@ PersistentLayout gemma4_layout(const StateShape& shape, const SequencePlanImpl& 
                                  .capacity = shape.window + ring_decoder_widest_call(plan) - 1U,
                                  .kv_heads = shape.sliding_kv_heads,
                                  .head_dim = shape.sliding_head_dim,
-                                 .fp8      = plan.ring_storage == KvCacheStorage::Fp8E4M3Row256}},
+                                 .fp8      = plan.ring_storage == KvCacheStorage::Fp8E4M3Row256,
+                                 .window   = shape.window}},
                  });
     plan_program_buffers(builder, plan, program_buffers_of(shape), out);
     out.kv_payload_bytes = out.decoder.kv_payload_bytes();
