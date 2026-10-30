@@ -1785,7 +1785,14 @@ function planStateOf(row) {
 // stands for its one quantization.
 // The configuration choice's estimate of a planned row (/api/plan rows' "estimate",
 // src/product/choice): {decode_tok_s, prefill_tok_s, depth, request_seconds, ...}; null without one.
-function rowEstimate(row) { return row && row.estimate && row.estimate.decode_tok_s > 0 ? row.estimate : null; }
+// No speed where the weights alone exceed the card's free memory: the row cannot start at any
+// context, and a number there read as what it would run at (an RTX 3060 showed Q8_0 at 25 tok/s).
+// A row whose weights alone exceed the card's free memory never starts: no speed is shown for it.
+function weightsTooBig(row) { return !!(row && row.plan && row.plan.reason_code === "weights_too_big"); }
+function rowEstimate(row) {
+  if (weightsTooBig(row)) return null;
+  return row && row.estimate && row.estimate.decode_tok_s > 0 ? row.estimate : null;
+}
 // What every other value of an axis would change against the configuration choice (/api/plan's
 // "choice"): one row each, with the own context per stream, decode, prefill and a typical request's
 // time as ratios against the chosen (null where either side has none) and the KLD difference.
@@ -2494,8 +2501,10 @@ function renderKv() {
 function renderAct() {
   const el = $("actsel");
   if (!el || !selected) return;
-  // The choice of the quantization shown (the user's pick, else the plan's: choiceDocOf).
-  const doc = planStale() ? null : quantSel ? choiceDocOf(selected, quantSel) : selected.plan;
+  // The choice of the quantization shown (the user's pick, else the plan's: choiceDocOf); none for
+  // a quantization whose weights do not fit (its speeds are not shown).
+  const doc = planStale() || (quantSel && weightsTooBig(rowPlan(quantSel))) ? null
+            : quantSel ? choiceDocOf(selected, quantSel) : selected.plan;
   // Auto's deltas only for the ask shown (the same quantization, context, streams, KV and
   // speed-up under Auto).
   const autoQ = planQuery({...planAsk(selected), act: "auto"}) + "|" + (quantSel ? quantSel.quant : "");
@@ -2610,7 +2619,8 @@ function renderBody() {
     if (q) {
       const st = selSt, here = localFor(sel.repo, q.quant);
       const mem = stale ? null : planMemory(selRow && selRow.plan), need = mem ? mem.need / GiB : 0;
-      const cdoc = stale ? null : choiceDocOf(sel, q), cho = cdoc && cdoc.choice && cdoc.choice.chosen;
+      // A quantization whose weights do not fit gets neither the choice's speeds nor its panel.
+      const cdoc = stale || weightsTooBig(rowPlan(q)) ? null : choiceDocOf(sel, q), cho = cdoc && cdoc.choice && cdoc.choice.chosen;
       // The server's estimate, with the drafter it decodes with where a measurement gives its gain
       // (the choice's drafter_counted): the page adds no gain of its own.
       const est = cho ? {decode_tok_s: cho.decode_tok_s_at_depth, prefill_tok_s: cho.prefill_tok_s, depth: cho.depth}
