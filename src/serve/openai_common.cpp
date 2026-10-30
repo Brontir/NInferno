@@ -86,10 +86,9 @@ Json make_model_object_json(const std::string& model_id, std::int64_t created,
                                    {"fallback", speculation->fallback}};
     }
     // The board it runs on, beside the fingerprint and not part of it.
-    if (!metadata.device_pci_bus_id.empty()) {
-        meta["device_pci_bus_id"] = metadata.device_pci_bus_id;
-        meta["device_uuid"]       = metadata.device_uuid;
-    }
+    // Each where the driver reported it (an empty one stays out).
+    if (!metadata.device_pci_bus_id.empty()) { meta["device_pci_bus_id"] = metadata.device_pci_bus_id; }
+    if (!metadata.device_uuid.empty()) { meta["device_uuid"] = metadata.device_uuid; }
     return Json{{"id", model_id},
                 {"object", "model"},
                 {"created", created},

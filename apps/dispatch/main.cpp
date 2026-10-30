@@ -121,11 +121,12 @@ struct Driver {
                 if (bus_id != nullptr && bus_id(bus, sizeof(bus), device) == 0) {
                     if (const auto identity = ninferno::parse_pci_bus_id(bus)) {
                         gpu.identity = *identity;
-                        // A UUID the driver does not report stays zero, as on the engine side.
-                        if (uuid == nullptr || uuid(gpu.identity.uuid.data(), device) != 0) {
-                            gpu.identity.uuid.fill(0);
-                        }
                     }
+                }
+                // The UUID on its own, as on the engine side: a board without a reported address
+                // still selects by it. One the driver does not report stays zero.
+                if (uuid == nullptr || uuid(gpu.identity.uuid.data(), device) != 0) {
+                    gpu.identity.uuid.fill(0);
                 }
             }
             out.push_back(std::move(gpu));
