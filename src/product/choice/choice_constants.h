@@ -316,20 +316,10 @@ inline constexpr TileCost kTileCost[] = {
     {"gb20x", TileKernel::Mx, 0.5e-6, 3.4e-9},
 };
 
-// An MoE's expert jobs: the slots (token x pick) a job of up to 64 holds, by the tokens an expert
-// takes from a chunk (chunk x picks / experts). The model's routing on the text, the same on every
-// card: read from the census's grids (Qwen3.6-35B-A3B on the RTX 5070 Ti's chunks of 795 and 1024
-// and the RTX 4090's 2048; gpt-oss-20b on chunks of 744 and 1024). Linear in log2 of the tokens,
-// held at the ends.
-struct JobSlots {
-    std::string_view family;
-    double tokens_per_expert;
-    double slots;
-};
-inline constexpr JobSlots kJobSlots[] = {
-    {"qwen3_5_moe_text", 25, 17.9}, {"qwen3_5_moe_text", 32, 21.3}, {"qwen3_5_moe_text", 57, 30.1},
-    {"moe_decoder", 93, 37.7},      {"moe_decoder", 128, 42.7},
-};
+// An MoE's expert grid: the host launches the bound on the jobs (ops/moe max_jobs: a job is an
+// expert's run of up to kExpertJobSlots of the chunk's slots, token x pick; at most one partial job
+// an expert), ceil(slots / 64) + min(slots, experts) rows of tiles, before the routing is known.
+inline constexpr double kExpertJobSlots = 64; // ops/moe kJobColumns at prefill widths
 
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak

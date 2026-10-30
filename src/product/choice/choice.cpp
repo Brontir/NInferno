@@ -485,25 +485,6 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
     return rate;
 }
 
-// The slots a job of an MoE's experts holds at `per_expert` tokens an expert (kJobSlots), 0 when the
-// family has no row.
-double job_slots(std::string_view family, double per_expert) noexcept {
-    const JobSlots* first = nullptr;
-    const JobSlots* last  = nullptr;
-    for (const JobSlots& row : kJobSlots) {
-        if (row.family != family) { continue; }
-        if (first == nullptr) { first = &row; }
-        if (last != nullptr && per_expert <= row.tokens_per_expert) {
-            const double at = std::log2(per_expert / last->tokens_per_expert) /
-                              std::log2(row.tokens_per_expert / last->tokens_per_expert);
-            return std::max(last->slots + at * (row.slots - last->slots), last->slots);
-        }
-        last = &row;
-    }
-    if (first == nullptr) { return 0; }
-    return per_expert <= first->tokens_per_expert ? first->slots : last->slots;
-}
-
 } // namespace
 
 double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
@@ -531,9 +512,10 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
     if (quant.rest_weights != WeightClass::KQuant && quant.rest_weights != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);
-    const double picks   = model.experts_per_token;
-    const double slots   = std::min(job_slots(model.family, tokens * picks / model.experts), 64.0);
-    if (rest == nullptr || bank == nullptr || slots <= 0) { return 0; }
+    if (rest == nullptr || bank == nullptr) { return 0; }
+    const double picks = model.experts_per_token;
+    const double slots = std::ceil(tokens) * picks;
+    const double jobs  = std::ceil(slots / kExpertJobSlots) + std::min<double>(slots, model.experts);
 
     const double sms = card.sms;
     double seconds = 0, hidden = 0, moe_layers = 0;
@@ -545,7 +527,7 @@ double moe_prefill_linears_seconds(const ModelFacts& model, const CardFacts& car
             // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).
             const double layers = l.per_token / picks;
             if (hidden == 0) { hidden = l.k, moe_layers = layers; }
-            seconds += layers * std::ceil(tokens * picks / slots * cols / sms) * tile;
+            seconds += layers * std::ceil(jobs * cols / sms) * tile;
         } else {
             seconds += l.per_token * std::ceil(std::ceil(tokens / 64) * cols / sms) * tile;
         }

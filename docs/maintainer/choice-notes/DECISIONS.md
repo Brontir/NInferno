@@ -1846,11 +1846,15 @@ same bound the decode census found for IQ3_XXS's routed kernels, DECISIONS 65); 
 step is the same for Q8_0, Q4_K and MXFP4 weights, the 16-bit one's is read on IQ3 weights only.
 
 An MoE's expert grid counts jobs, not tokens: a job is an expert's run of up to 64 of the chunk's
-slots (token x pick), so the jobs are the sum over experts of ceil(n_e / 64), and routing that
-favours some experts makes more partial jobs. Slots a job: Qwen3.6-35B-A3B 30.1 at 57 a expert
-(chunk 2048), gpt-oss-20b 42.7 at 128 and 37.7 at 93 (chunks of 1024 and 744): the model's routing
-on the text, the same on every card (as its acceptance, DECISIONS 64). With K and the jobs the law
-gives the RTX 4090's Qwen3.6 experts at 0.61 of gpt-oss's efficiency; measured 0.62.
+slots (token x pick). The host launches the bound before the routing is known (`ops/moe`
+`max_jobs`): ceil(slots / 64) + min(slots, experts) rows of tiles, every expert's partial job
+counted; the rows past the device's job total exit at once. The census's grids are that bound
+exactly: Qwen3.6-35B-A3B 356 / 384 / 484 rows at chunks of 795 / 1024 / 1819 tokens (256 experts,
+8 picks), gpt-oss-20b 96 at 1024 (32, 4), Gemma 4 26B-A4B 342 at 1714 (128, 8). With K and the
+jobs the law gives the RTX 4090's Qwen3.6 experts at 0.61 of gpt-oss's efficiency; measured 0.62.
+Gemma 4 26B-A4B UD-Q4_K_M on the RTX 4090 (1714 tokens): its experts' gate/up (K 2816) 879 against
+955 us a layer, the down (K 704) 557 against 584; its dense int8 calls 402 / 209 / 211 against
+411 / 225 / 203 us (N 8192 / 4224 / 2816).
 
 What this replaces: the per-generation prefill efficiencies (kPrefillEta's rows, kPrefillTilesEta,
 the MoE rows and kMoeChunkShare) are one number a generation for every shape; a narrow model's
@@ -1864,19 +1868,13 @@ against 50.5 ms, the dense int8 calls 28.2 against 30.0 ms; gpt-oss-20b's expert
 quantization, attention, the recurrence, the MoE's routing kernels (about a quarter of the
 prompt's kernel time) and the prompt's tail calls (DECISIONS 62).
 
-**Jobs by tokens an expert takes.** Slots a job fall as a chunk gives each expert fewer tokens
-(more of them in a partial job): Qwen3.6-35B-A3B 17.9 / 21.3 / 30.1 at 25 / 32 / 57 tokens an
-expert (the RTX 5070 Ti's chunks of 795 and 1024, the RTX 4090's 2048), gpt-oss-20b 37.7 / 42.7 at
-93 / 128. A curve of the model's routing, read once a model (the census's grids), not a card's.
-
 **The prototype against the MoE campaign** (GEMMs by the tile law with these jobs, the routing's
 gather and scatter at T k hidden 2 bytes twice a layer over the DRAM rate, attention as
 before; not yet the recurrence, the small kernels and the prompt's tail calls): gpt-oss-20b -7 ..
 +10 % on the RTX 4090 and 5070 Ti at 2K .. 21K tokens; Qwen3.6-35B-A3B +0 .. +31 % on the RTX 4090
-(the missing terms, a fifth of a 2K prompt there), +24 .. +75 % on Blackwell before the jobs at
-chunk 1024 (about 1.45x the 4090's a slot).
+(the missing terms, a fifth of a 2K prompt there), +24 .. +75 % on Blackwell before the jobs
+bound (at chunk 1024 the bound's 384 rows hold 21 slots a job, the 4090's 2048-token chunk 30).
 
 Next: the plan's linear shapes from the geometry it reads (attention, recurrent, FFN, experts,
 shared expert), the remaining kernels' constants (the 16-bit register MMA, ggml's MMQ — its tile
-cost per K step was read before, about 47-48 SM-clocks — Volta's dp4a route), the jobs as a
-model fact, and the check against the prefill rows of data/prefill/rows.json and the MoE campaign.
+cost per K step was read before, about 47-48 SM-clocks — Volta's dp4a route), and the check against the prefill rows of data/prefill/rows.json and the MoE campaign.
