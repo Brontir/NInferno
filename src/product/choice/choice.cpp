@@ -697,7 +697,11 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
     double clocks = 0, seconds = 0;
     for (double prefix = 0; prefix < prompt; prefix += chunk) {
         const double width  = std::min<double>(chunk, prompt - prefix);
-        if (width <= kAttentionTiledMinWidth) {
+        // BF16 keys of Qwen 3.5's group-8 geometry (16 heads over 2) take 128-row tiles past an 8K
+        // prefix (bf16/plan.cpp Tiled128): not read, the share.
+        const bool tiled128 = bf16 && heads == 16 && model.full_kv_heads == 2 && width >= 1024 &&
+                              std::fmod(width, 128) == 0 && prefix >= 8192;
+        if (width <= kAttentionTiledMinWidth || tiled128) {
             seconds += model.full_layers * 2 * (model.full_attention_width / model.full_layers) *
                        (width * prefix + width * width / 2) / share;
             if (transferred != nullptr && share_transferred) { *transferred = true; }

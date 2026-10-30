@@ -1070,6 +1070,15 @@ void prices_attention_tiles() {
         }
     }
     check(bf16_worst < 0.04, "BF16 keys: the BF16 prompt kernel within 4 % of the census's chunks");
+    // Its group-8 geometry (16 heads over 2 KV heads) takes 128-row tiles past an 8K prefix: the share
+    // there, the same as with no prompt kernel at all.
+    ch::ModelFacts g8  = m;
+    g8.full_kv_heads   = 2;
+    const double at_8k = ch::prefill_attention_tiled_seconds(g8, series[0].card, KvCacheStorage::BFloat16, 8192, 1024);
+    const double at_9k = ch::prefill_attention_tiled_seconds(g8, series[0].card, KvCacheStorage::BFloat16, 9216, 1024);
+    const double pairs = 2 * g8.full_attention_width * (9216.0 * 9216 / 2 - 8192.0 * 8192 / 2);
+    check(std::abs((at_9k - at_8k) * 0.740 * 512 * 170 * 2.407e9 / pairs - 1) < 1e-9,
+          "BF16 keys, 16 heads over 2, past an 8K prefix: the share");
     // A call of 256 tokens or fewer takes the grouped kernels: a 256-token prompt keeps the share, and
     // a 100-token tail after 32K costs its flops at the share, not 16 CTAs over the whole prefix.
     check(ch::prefill_attention_tiled_seconds(m, series[0].card, KvCacheStorage::Int8Group64, 256, 1024) == 0,
