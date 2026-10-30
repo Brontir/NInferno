@@ -38,9 +38,20 @@ void expect(bool ok, const std::string& what) {
 
 bool near(double a, double b, double rel) { return std::abs(a / b - 1) <= rel; }
 
-// A registry pair with its "+head" configurations as measured through the full head: the
-// fixture these checks price their labels on (mtp:3, dflash:7), whichever menu its tune ran.
 const sp::MeasuredPair& pair_of(std::string_view repo_prefix, std::string_view gpu) {
+    for (const auto& p : sp::Registry::builtin().pairs()) {
+        if (std::string_view(p.target_repo).starts_with(repo_prefix) && p.tune.key.gpu == gpu) {
+            return p;
+        }
+    }
+    std::cerr << "no registry pair " << repo_prefix << " on " << gpu << '\n';
+    std::exit(1);
+}
+
+// A synthetic fixture: a registry pair with its "+head" configurations relabelled as drafted
+// through the full head, for the checks of full-head pricing (their tune's rows unused) and the
+// facts' goldens written on those labels.
+const sp::MeasuredPair& full_head_pair(std::string_view repo_prefix, std::string_view gpu) {
     static std::map<std::string, sp::MeasuredPair> full_head;
     const std::string key = std::string(repo_prefix) + "|" + std::string(gpu);
     if (const auto it = full_head.find(key); it != full_head.end()) { return it->second; }
@@ -215,7 +226,7 @@ int main() {
         };
         const double k4070 = sp::card_rates_of_board(0x2782).kappa();
         for (const auto& g : golden) {
-            const auto& p     = pair_of(g.repo, g.gpu);
+            const auto& p     = full_head_pair(g.repo, g.gpu);
             const auto config = sp::SpecConfig::parse(g.config);
             const auto a = sp::round_cost(*p.round_facts, config, k4070);
             const auto b = sp::round_cost(*p.round_facts, config, 0.0);
@@ -292,6 +303,7 @@ int main() {
         // a dearer round.
         {
             auto counted = pair_of(kQ9, "ad104:60sm");
+            const std::string mtp3 = "mtp:3+head";
             for (auto& m : counted.tune.measurements) {
                 m.graph_rounds  = std::max<std::int64_t>(m.config.enabled() ? m.rounds : m.tokens, 1);
                 m.graph_kernels = (m.config.enabled() ? 500 : 311) * m.graph_rounds;
@@ -305,7 +317,7 @@ int main() {
             const auto rtx4060 = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
             const auto with    = sp::round_cost_estimate(counted, rtx4060);
             const auto without = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060);
-            expect(with.known && without.known && with.cost.at("mtp:3") != without.cost.at("mtp:3"),
+            expect(with.known && without.known && with.cost.at(mtp3) != without.cost.at(mtp3),
                    "counted launches enter the estimate");
             // Each section counts once, as in its measured cost: a section of other kernel
             // counts that ran ten times the rounds moves nothing.
@@ -325,12 +337,12 @@ int main() {
             const auto b = sp::round_cost_estimate(longer, rtx4060);
             expect(std::any_of(mixed.tune.measurements.begin(), mixed.tune.measurements.end(),
                                [&](const auto& m) { return m.family != first; }) &&
-                       a.known && b.known && near(a.cost.at("mtp:3"), b.cost.at("mtp:3"), 1e-12),
+                       a.known && b.known && near(a.cost.at(mtp3), b.cost.at(mtp3), 1e-12),
                    "launch counts average over the sections, not their rounds");
         }
         // The lab's rows ride in its tune (spec-tune records them): they round-trip; zero rows are
         // refused.
-        auto pair                            = pair_of(kQ9, "ad104:60sm");
+        auto pair                            = full_head_pair(kQ9, "ad104:60sm");
         pair.tune.proposal_rows              = after;
         const auto again                     = sp::parse_pair(sp::pair_json(pair));
         expect(again.tune.proposal_rows == after, "a tune's proposal rows round-trip");
@@ -344,8 +356,8 @@ int main() {
         // The lab card's own rounds at its rows, the card's at its artifact's: a lab artifact of
         // the full head and a card's of MTP's prefix price the card's MTP rounds cheaper.
         const auto rtx4060ti = card("ad106:34sm", "ad106", "sm89", 89, 34, 2535, 288);
-        const auto lab       = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti);
-        const auto mine      = sp::round_cost_estimate(pair_of(kQ9, "ad104:60sm"), rtx4060ti, &after);
+        const auto lab       = sp::round_cost_estimate(full_head_pair(kQ9, "ad104:60sm"), rtx4060ti);
+        const auto mine      = sp::round_cost_estimate(full_head_pair(kQ9, "ad104:60sm"), rtx4060ti, &after);
         expect(lab.known && mine.known && mine.cost.at("mtp:3") < lab.cost.at("mtp:3") &&
                    mine.cost.at("dflash:7") == lab.cost.at("dflash:7"),
                "the card's artifact rows price its MTP rounds; DFlash's (not named) stay");
@@ -401,7 +413,7 @@ int main() {
                "rounds dearer than their bytes on the lab card: raised, said: " + raised.note);
         const auto q9         = pair_of(kQ9, "ad104:60sm");
         const auto deep       = sp::round_cost_estimate(q9, rtx4060ti);
-        expect(deep.known && !deep.cost.contains("dflash:11") && deep.cost.contains("dflash:7"),
+        expect(deep.known && !deep.cost.contains("dflash:11+head") && deep.cost.contains("dflash:7+head"),
                "deeper than kPortableDepth is not estimated away from the lab card");
         auto no_facts        = q9;
         no_facts.round_facts.reset();
@@ -627,7 +639,7 @@ int main() {
         };
         expect(two && other && two->source.find("(2 lab card(s))") != std::string::npos &&
                    !r(two).empty() && !r(other).empty() &&
-                   std::abs(r(other).at("mtp:3") / r(two).at("mtp:3") - 1) < 1e-9,
+                   std::abs(r(other).at("mtp:3+head") / r(two).at("mtp:3+head") - 1) < 1e-9,
                "two boards of one class are two cards, priced by their median: " +
                    (two ? two->source : std::string()));
         // So in a group: the two boards are two cards (enough for a group's choice); a record naming
