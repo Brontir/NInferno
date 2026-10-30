@@ -885,6 +885,12 @@ void prices_dense_prefill_tiles() {
         std::cout << "dense Q8 tiles, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
     }
     check(worst < 0.10, "a dense model's Q8 linears by their tiles within 10 % of the census");
+    // A grid of no more CTAs than SMs runs one a SM: a 64-token chunk of one 4096 x 4096 linear on
+    // the RTX 4090 (64 CTAs) is one tile's time, (3352 + 4096 x 12.15) SM-clocks.
+    ch::ModelFacts one;
+    one.linears.push_back({4096, 4096, 1, false});
+    const double lone = ch::prefill_linears_seconds(one, rows[3].card, q, 64);
+    check(std::abs(lone - (3352 + 4096 * 12.15) / 2.52e9) < 1e-12, "an underfilled grid: one tile a SM");
     q.weights = ch::WeightClass::KQuant;
     check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "K-quant dense linears (ggml's MMQ): unknown");
 }
