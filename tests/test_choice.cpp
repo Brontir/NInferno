@@ -407,11 +407,12 @@ void prices_attention(const json& fixture) {
     volta.minor = 0;
     ch::CardFacts turing = volta;
     turing.minor         = 5;
-    // Linears only: Volta's int8 route runs at its BF16 rate (no int8 MMA), 1536 against Turing's 2048.
+    // Linears only: Volta's int8 route runs at its BF16 rate (no int8 MMA), 1536 against Turing's
+    // 2048, at its own row (the GV100 census: dequantized FP16 on the HMMA tiles), one card.
     const ch::Speed v = ch::speed_of(none, volta, b.quants[0], c, 1, 4096, 4096);
     const ch::Speed t = ch::speed_of(none, turing, b.quants[0], c, 1, 4096, 4096);
-    check(v.transferred && std::abs(v.prefill / t.prefill - 1536.0 / 2048.0) < 1e-9,
-          "Volta's prefill takes Turing's rows (the same BF16 tensor rate a SM)");
+    check(v.transferred && std::abs(v.prefill / t.prefill - (0.248 * 1536.0) / (0.185 * 2048.0)) < 1e-9,
+          "Volta's prefill takes its own row, transferred (one card)");
 }
 
 void chooses(const json& fixture) {
