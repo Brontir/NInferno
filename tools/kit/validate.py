@@ -44,14 +44,19 @@ def window_indices(tel, name_prefix):
 def window_load(passes, metric):
     """The median SM clock (MHz) and power draw (W) over the metric's windows of `passes`, each None
     when no sample fell inside one: the clock a speed was measured at (a long prefill runs into the
-    power limit, which a short one finishes before the limiter acts)."""
+    power limit, which a short one finishes before the limiter acts). Only the windows of the
+    requests the speed counts: request i of a kind is window "<kind> i" (measure.timed), and an
+    excluded one is left out as the speed leaves it out."""
     clock, power = [], []
     for p in passes:
         tel = p.get("telemetry") or {}
         columns = tel.get("columns") or {}
         instant = columns.get("power.draw.instant") or []
         draw = "power.draw.instant" if any(isinstance(v, float) for v in instant) else "power.draw"
-        for i in window_indices(tel, metric):
+        mine = [r for r in p.get("requests") or [] if r.get("kind") == metric]
+        excluded = {f"{metric} {i}" for i, r in enumerate(mine) if "excluded" in r}
+        kept = dict(tel, marks=[m for m in tel.get("marks") or [] if m["name"] not in excluded])
+        for i in window_indices(kept, metric):
             for name, out in (("clocks.sm", clock), (draw, power)):
                 values = columns.get(name) or []
                 if i < len(values) and isinstance(values[i], float):

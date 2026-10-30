@@ -82,6 +82,13 @@ class Rules(unittest.TestCase):
                                                           for x in p["telemetry"]["t"]]
         r = validate.validate(doc(passes=[p, loaded(decode=50.5)]))
         self.assertEqual(metric(r, "prefill")["power_w"], 572)  # median of 575 and 570 samples
+        # An excluded request's window (a reused prefix) is not the speed's: its samples are left out.
+        p = loaded()
+        p["requests"] = [{"kind": "prefill", "excluded": "a reused prefix (cache_n > 0)"}]
+        q = loaded(decode=50.5)
+        q["telemetry"]["columns"]["clocks.sm"] = [2600.0 if 5 <= x < 7 else 2800.0
+                                                  for x in q["telemetry"]["t"]]
+        self.assertEqual(validate.window_load([p, q], "prefill")[0], 2600)
         # No clock column (an old file): nothing is recorded or printed.
         self.assertNotIn("sm_clock_mhz", metric(validate.validate(doc()), "prefill"))
 
