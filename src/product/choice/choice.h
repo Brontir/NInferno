@@ -77,6 +77,7 @@ struct DrafterOption {
 struct LinearShape {
     double n = 0, k = 0, per_token = 0;
     bool expert = false;
+    bool gated  = false; // a gated FFN's gate and up: two matrices of n / 2 rows, one input
 };
 
 struct ModelFacts {

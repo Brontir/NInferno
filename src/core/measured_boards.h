@@ -50,4 +50,18 @@ struct Gate {
     }
 }
 
+// Whether ggml's matrix kernel takes a prefill of the ggml block formats from 17 tokens on
+// (ops/generic generic_gemm.cpp mmq_prefill_wins, where the measurements stand): the nearest
+// measured board's answer of its instruction set, at any distance.
+inline constexpr Gate kMmqPrefillPays[] = {
+    {kRtx5090, true},    {kRtx5060Ti, false}, {kRtx4090, true},
+    {kL4, true},         {kRtx4060Ti, true},  {kA10, true},
+    {kA100Sxm40, false}, {kRtx2080Ti, true}};
+
+// kMmqPrefillPays for `board` (the product's estimate of a board it is not running on).
+[[nodiscard]] inline bool mmq_prefill_pays(const Board& board) noexcept {
+    const Gate* g = nearest_measured(std::span<const Gate>(kMmqPrefillPays), board);
+    return g != nullptr && g->pays;
+}
+
 } // namespace ninferno::measured

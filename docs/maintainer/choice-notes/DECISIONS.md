@@ -2132,3 +2132,63 @@ full layers' (513 CTAs of 256 threads at 229 registers) one: 430 / 575 SM-clocks
 +4 %, the first chunk the -9 %; full -2 .. +5 %), about 2.3x Ada's (Turing's HMMA without the int8
 and BF16 paths Ada's kernel takes). One card: transferred. The prefill estimate of Gemma 4 12B on the
 RTX 2080 Ti had +16 .. +25 % from its attention's share (DECISIONS 69's open point).
+
+## 69. A dense K-quant's prefill linears from ggml's matrix kernel's tiles (31.10, measured)
+
+**What changed.** A dense model's K-quant linears (Q4_K_M ... Q6_K: `WeightClass::KQuant`) were priced
+by a share of the int8 peak a generation. Where the product prefills them on ggml's matrix kernel
+(ops/generic `mmq_prefill_wins`: the nearest measured board of the card's instruction set pays,
+`measured::kMmqPrefillPays`, which now lives in core/measured_boards.h so the ops and the estimate
+read one table) `prefill_linears_seconds` prices them by MMQ's tiles:
+
+- a call runs 512 tokens at a time (`kMmqPrefillSlice`); a tile is 128 weight rows x 128 tokens over
+  the whole K, one CTA a SM (256 threads at 254 registers); a slice of fewer tokens takes ggml's
+  narrowest column tile with the fewest tiles (16, 32, 64, 128), its K step 0.43 + 0.57 J / 128 of
+  a 128-column tile's (the RTX 4060 Ti's 64-column Q4_K tiles: 0.716);
+- a gated FFN's gate and up run as two grids of half the rows (`LinearShape::gated`), each with its
+  own rounds or stream-k;
+- a slice's grid of ceil(N / 128) x ceil(t / 128) tiles runs a tile a CTA in rounds of SMs where it
+  fills its last wave to 90 %, else stream-k: the SMs share the tiles' K steps evenly, and a fixup
+  kernel adds the split tiles (ggml mmq.cuh);
+- a tile takes c0 + K c1 SM-clocks, c1 by the weights' format: Q3_K's decode (its high-bit mask and
+  6-bit scales) costs as much as Q6_K's, Q4_K the least. A hub row names no tensor's format, so a mix
+  takes its label's format (Q4_K_M: Q4_K), its bits a weight past that format's moving it toward
+  Q6_K's (the mixes raise ffn_down, attn_v and the like to Q5_K / Q6_K); Q2_K and the IQ formats are
+  not read (the share);
+- beside the tiles, every grid's quantization of its input to q8_1 (3.125 bytes an input element: the
+  census runs one a grid, a gated pair's two each), the epilogue's FP32 -> 16-bit output (4 bytes read
+  an output element, 2 written an element of the call's output: a SwiGLU pair writes one row of the
+  two), and a stream-k call's fixup (a tile's FP32 partial a SM, written and read), all at the DRAM
+  rate. The small kernels' passes, read on the int8 route, also count that route's one quantization an
+  input, which MMQ does not run: not taken out (without MMQ's own quantization the fixture's points ran
+  +2 .. +5 % faster than measured).
+
+**Read** on Qwen3.5 9B's Q3_K_M, Q4_K_M (the MTP file: Q4_K / Q5_K / Q6_K by tensor), Q5_K_M and Q6_K
+at 7K tokens (nsys; the calls by ggml type and grid against the GGUF's tensor types and the runtime's
+fusions — a Gated DeltaNet layer's qkv and gate fuse when their formats match, a full layer's q, k
+and v likewise; gate and up run apart), each generation's cards together; checked on Q4_K_S, which
+they were not read on:
+
+| generation | cards | c0 | Q3_K / Q4_K / Q5_K / Q6_K | read | Q4_K_S |
+|---|---|---|---|---|---|
+| Ada | RTX 4060 Ti, 4070 Ti | 2000 | 51.5 / 42.75 / 45.25 / 50.75 | -5 .. +3 % | -3 .. +8 % |
+| Ampere | RTX 3060 | 4000 | 49.25 / 41.5 / 43.5 / 48.75 | -1 .. +1 % | 0 % |
+| Turing | RTX 2080 Ti | 0 | 91.75 / 71.75 / 74.5 / 77.75 | -8 .. +4 % | -2 .. +2 % |
+| Blackwell | RTX 5090 (stream-k throughout) | 3000 | 60.5 / 45.5 / 49.5 / 59 | -7 .. +7 % | -5 .. +7 % |
+
+A first reading by bits a weight alone (c1 = a + b x bits, from Q4_K / Q5_K / Q6_K) missed Q3_K by
+-32 %: its decode is not its bits'.
+Checked where not read: Gemma 4 12B Q4_K_M on the RTX 2080 Ti, its calls by grid -4 .. -3 %, the
+stream-k mixture +2 %. The bytes beside the tiles: RTX 3060, 2080 Ti and 5090 within 8 %; Ada's L2
+holds part of them (0.65 .. 0.77 of the bytes' time). A card whose nearest measured board keeps the
+tiles (the RTX 5070 Ti, as the 5060 Ti: `w4a8_ws` for Q4_K / Q6_K on Blackwell, the classic tiles
+for the rest) keeps the share: those tiles are not read yet (the 5070 Ti's Q6_K `w4a8_ws` tile:
+about 20000 + 24.1 K SM-clocks, 128 tokens x 64 rows, one CTA a SM). An MoE keeps its rows.
+
+In the estimate (the fixture's prefill points): Q4_K_M rms 6.9 -> 6.7 %; Qwen3.5 9B's points within
+-3 .. +5 % but the RTX 4090's +4 .. +12 % (no 4090 census of MMQ), Gemma 4 12B's -7 .. +7 % on six
+cards. Open: Gemma 4 12B on the RTX 2080 Ti +19 .. +25 % (its MMQ priced right, its attention is the
+share's: Turing's Gemma kernel runs one CTA a SM, DECISIONS 66); the stream-k fixup on the RTX 5090
+runs at 1.7x its bytes' time; Q3_K mixes are not a K-quant class (`weight_class_of`), so their row
+(Q3_K's K step as Q6_K's: Ada 51.5, Ampere 49.25, Turing 91.75, Blackwell 60.5) waits for them; the
+bits a weight are the whole file's.

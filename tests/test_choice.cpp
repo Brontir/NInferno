@@ -76,7 +76,8 @@ ch::ModelFacts model_of(const json& m) {
     out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
     if (m.contains("linears")) {
         for (const json& l : m.at("linears")) {
-            out.linears.push_back({l.at(0).get<double>(), l.at(1).get<double>(), l.at(2).get<double>(), false});
+            out.linears.push_back({l.at(0).get<double>(), l.at(1).get<double>(), l.at(2).get<double>(), false,
+                                   l.size() > 3 && l.at(3).get<int>() != 0});
         }
     }
     if (m.contains("ring_bytes_per_token")) {
@@ -923,7 +924,26 @@ void prices_dense_prefill_tiles() {
     }
     check(lone_worst < 0.06, "an underfilled grid: a CTA alone on its SM, within 6 % on six cards");
     q.weights = ch::WeightClass::KQuant;
-    check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "K-quant dense linears (ggml's MMQ): unknown");
+    check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "a K-quant without a K format in its label: unknown");
+    // ggml's matrix kernel by its tiles (DECISIONS 69): Qwen3.5 9B Q6_K's 512-token calls on the RTX
+    // 4060 Ti, 12288 x 4096 (a tile a CTA in 12 rounds of its 34 SMs: the census's 998.6 us) and
+    // 4096 x 12288 (four rounds: 994.8 us, from the census's mixture with the K-4096 calls of that
+    // grid), the epilogue apart (the DRAM rate set out of reach); a gated pair as two grids.
+    {
+        ch::QuantOption q6 = q;
+        q6.label           = "Q6_K";
+        const ch::CardFacts ti{.major = 8, .minor = 9, .sms = 34, .clock_hz = 2.535e9, .dram_bytes_per_s = 288e15};
+        const auto call = [&](double n, double k, bool gated) {
+            ch::ModelFacts one = m;
+            one.linears        = {{n, k, 1, false, gated}};
+            return ch::prefill_linears_seconds(one, ti, q6, 512) * 1e6;
+        };
+        const double e1 = call(12288, 4096, false) / 998.6 - 1, e2 = call(4096, 12288, false) / 994.8 - 1;
+        std::cout << "MMQ tiles, RTX 4060 Ti: " << e1 * 100 << " %, " << e2 * 100 << " %\n";
+        check(std::abs(e1) < 0.05 && std::abs(e2) < 0.05, "MMQ's tiles in rounds within 5 % of the census's calls");
+        check(std::abs(call(24576, 4096, true) / (2 * call(12288, 4096, false)) - 1) < 1e-3,
+              "a gated pair: two grids of half its rows");
+    }
 }
 
 // The small kernels beside a prefill's linears (DECISIONS 66): Qwen3.5 9B Q8_0's 1819-token prompt,
