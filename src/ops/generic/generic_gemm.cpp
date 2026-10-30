@@ -488,8 +488,9 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // IQ2_XS / IQ2_XXS / Q2_K) gave 949 on the 4060 Ti. The small sm_120 keeps the tiles (RTX 5060 Ti,
 // 36 SMs: 1047 -> 1015), and so does sm_80: A100 40 GB 1340 -> 1142. Every other board takes the
 // nearest measured board's answer of its instruction set at any distance, as the "64 SMs" line
-// between the 5060 Ti and the 5090 did (an RTX 5080 or 5070 Ti the 5090's, an RTX 5070 or 5060 the
-// 5060 Ti's); Volta and the architectures nobody measured keep the tiles.
+// between the 5060 Ti and the 5090 did (an RTX 5080 the 5090's, an RTX 5070 Ti, 5070 or 5060 the
+// 5060 Ti's: the 5070 Ti's route profile prefills on the tiles, DECISIONS 62); Volta and the
+// architectures nobody measured keep the tiles.
 constexpr measured::Gate kMmqPrefillPays[] = {
     {measured::kRtx5090, true},    {measured::kRtx5060Ti, false}, {measured::kRtx4090, true},
     {measured::kL4, true},         {measured::kRtx4060Ti, true},  {measured::kA10, true},
@@ -1501,6 +1502,17 @@ void record_problem(const Problem& p) {
 }
 
 } // namespace
+
+// The W4A8 schedule run_route executes for `route`: a producer-warp tile the weight is not admitted
+// to runs the classic tile of its shape, and a w4a8_ws_extra format's classic tile its
+// producer-warp twin (the same bytes either way).
+Route w4a8_executed_route(Route route, const Weight& w) {
+    if (route.family != Family::W4a8Mma) return route;
+    const bool producers = w4a8_schedule_info(route.schedule).producers > 0;
+    if (producers && !w4a8_ws_admits(w)) return w4a8_classic_twin(route);
+    if (!producers && w4a8_ws_extra(w.qtype) && w4a8_ws_admits(w)) return w4a8_ws_twin(route);
+    return route;
+}
 
 // The DRAM bytes the board's bandwidth asks of each SM per cycle: the facts' bandwidth over the
 // SMs times the reference clock (rmma_latency_pays reads it); 0 when a fact is unknown.
@@ -3638,14 +3650,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     }
     // A producer-warp W4A8 tile the weight is not admitted to (another format, an IQ3_XXS sign
     // plane off 8 bytes) runs the classic tile of its shape: the same bytes.
-    if (route.family == Family::W4a8Mma && w4a8_schedule_info(route.schedule).producers > 0 &&
-        !w4a8_ws_admits(w)) {
-        route = w4a8_classic_twin(route);
-    }
-    if (route.family == Family::W4a8Mma && w4a8_schedule_info(route.schedule).producers == 0 &&
-        w4a8_ws_extra(w.qtype) && w4a8_ws_admits(w)) {
-        route = w4a8_ws_twin(route);
-    }
+    route = w4a8_executed_route(route, w);
     if (route.family == Family::StagedMma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0)) {
         // The register MMA with WarpsK == 1 gives the same bytes; the scalar kernel where even it
         // cannot read x, as for the register MMA.

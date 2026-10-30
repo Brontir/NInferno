@@ -25,6 +25,9 @@
 #include "ninferno_bench_common.h"
 #include "ops/common/shape_routes.h"
 #include "quantized_weight.cuh"
+#include "random_weight.h"
+#include "ops/generic/route_table.h"
+#include "ops/linear/linear_registry.h"
 
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
@@ -37,6 +40,7 @@
 #include <exception>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -69,6 +73,9 @@ struct Options {
     bool quantized_both = false;
     bool random_weight  = false;
     bool class_table    = true;
+    // Times every W4A8 schedule the weight admits at each T as well (a tile's waves: a schedule
+    // the heuristic does not pick at that T is timed only here).
+    bool w4a8_schedules = false;
     int warmup          = 2;
     int repeat          = 10;
     std::string csv_out;
@@ -89,6 +96,12 @@ QType parse_qtype(std::string_view text) {
     if (v == "bf16") return QType::BF16;
     if (v == "nvfp4") return QType::NVFP4;
     if (v == "fp8") return QType::FP8_E4M3FN_ROW_BF16;
+    // Every other format by the route table's name (q4k, iq4xs, mxfp4, ...).
+    for (int value = 0; value <= 0xff; ++value) {
+        const auto q           = static_cast<QType>(value);
+        const std::string name = ops::detail::generic::qtype_name(q);
+        if (name != "unknown" && v == name) return q;
+    }
     throw std::invalid_argument("unknown qtype " + std::string(text));
 }
 
@@ -101,7 +114,7 @@ const char* qtype_name(QType q) {
     case QType::BF16: return "BF16";
     case QType::NVFP4: return "NVFP4";
     case QType::FP8_E4M3FN_ROW_BF16: return "FP8";
-    default: return "?";
+    default: return ops::detail::generic::qtype_name(q);
     }
 }
 
@@ -149,6 +162,7 @@ Options parse_args(int argc, char** argv) {
         else if (a == "--quantized") o.quantized_both = next() == "both";
         else if (a == "--random-weight") o.random_weight = true;
         else if (a == "--no-class-table") o.class_table = false;
+        else if (a == "--w4a8-schedules") o.w4a8_schedules = true;
         else if (a == "--warmup") o.warmup = std::atoi(std::string(next()).c_str());
         else if (a == "--repeat") o.repeat = std::atoi(std::string(next()).c_str());
         else if (a == "--csv-out") o.csv_out = std::string(next());
@@ -162,6 +176,9 @@ Options parse_args(int argc, char** argv) {
 struct BenchWeight {
     DeviceBuffer storage;
     Weight weight{};
+    // A ggml or other format's random parent (random_weight.h); its Weight names the parent by
+    // address, so it lives on the heap.
+    std::unique_ptr<bench::RandomWeight> generic;
 };
 
 // Pseudo-random bytes (a multiplicative hash of the index), masked: every code of the integer
@@ -189,7 +206,7 @@ void randomize_bytes(void* base, std::uint64_t offset, std::uint64_t count, std:
 BenchWeight make_weight(QType qtype, std::int32_t n, std::int32_t k, bool random) {
     if (qtype == QType::BF16) {
         auto direct = bench::make_direct_bf16_weight(n, k); // already pseudo-random
-        return {std::move(direct.storage), direct.weight};
+        return {std::move(direct.storage), direct.weight, nullptr};
     }
     if (qtype == QType::NVFP4) {
         auto packed = bench::make_nvfp4_weight(n, k);
@@ -200,6 +217,16 @@ BenchWeight make_weight(QType qtype, std::int32_t n, std::int32_t k, bool random
         auto packed = bench::make_fp8_weight(n, k);
         if (random) randomize_bytes(packed.storage.p, 0, packed.low_bytes, 0xf8, 0xbf);
         return {std::move(packed.storage), packed.weight};
+    }
+    if (qtype != QType::Q4_G64_FP16 && qtype != QType::Q5_G64_FP16 && qtype != QType::Q6_G64_FP16 &&
+        qtype != QType::Q8_G32_FP16) {
+        BenchWeight out;
+        out.generic = std::make_unique<bench::RandomWeight>(bench::random_weight(qtype, n, k, 501U));
+        const auto& g = out.generic->parent.geometry;
+        const WeightView view{g.shape, {WeightRegion{&out.generic->parent, 0, g.elements}}};
+        out.generic->weight = native_weight(view, 4.0F);
+        out.weight          = out.generic->weight;
+        return out;
     }
     const auto padded_k = static_cast<std::int32_t>((static_cast<std::int64_t>(k) + 127) / 128 * 128);
     auto packed         = bench::make_row_split_weight(qtype, n, k, padded_k, 0x31U);
@@ -374,6 +401,78 @@ int main(int argc, char** argv) {
                     best    = timing.median_us;
                     best_as = as;
                     best_q  = quantized;
+                }
+            }
+            if (o.w4a8_schedules) {
+                namespace generic = ops::detail::generic;
+                // The route ops::linear takes, as dispatch_linear (linear.cpp) decides it: the
+                // prefill A8 policy first, then whether the generic path claims the call.
+                const Weight& w              = weight.weight;
+                LinearPolicy policy          = o.policy;
+                const LinearPolicy a8_policy = generic::prefill_a8_policy(w.qtype, policy);
+                const bool prefill_a8        = generic::q8_prefill_a8(w, a8_policy, t);
+                if (prefill_a8) policy = a8_policy;
+                const generic::Problem problem{w.qtype, policy, w.n, w.k, generic::Epilogue::Store};
+                const bool generic_claims =
+                    ops::invariant_routes_active() ||
+                    !ops::detail::linear_shape_registered(w.qtype, w.n, w.k) ||
+                    generic::owned_decode_r8(w, policy, t) || prefill_a8 ||
+                    generic::owned_prefill_w4a8(w, policy, t) ||
+                    generic::volta_tiled_route(w, policy, t).has_value() ||
+                    generic::table_claims(problem, t, ops::prefill_routes_active());
+                const std::string chosen =
+                    generic_claims && generic::supports(w)
+                        ? generic::route_name(
+                              generic::select_route(problem, w, t, ops::prefill_routes_active()))
+                        : std::string("the shape's own table");
+                std::fprintf(stderr, "T=%5d dispatcher route %s\n", t, chosen.c_str());
+                if (o.policy == LinearPolicy::A16Only) {
+                    std::fprintf(stderr, "T=%5d w4a8 schedules need --policy a8 or a4\n", t);
+                }
+                for (int i = 0; i < generic::w4a8_schedule_count(); ++i) {
+                    const generic::Route route{generic::Family::W4a8Mma, static_cast<std::uint8_t>(i)};
+                    const auto info = generic::w4a8_schedule_info(i);
+                    if (!generic::route_admits(route, weight.weight, o.policy)) continue;
+                    // run_route may execute the schedule's twin: time each executed kernel once.
+                    const generic::Route executed = generic::w4a8_executed_route(route, weight.weight);
+                    if (executed.schedule != route.schedule) {
+                        std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d runs as %s\n", t, info.block_m,
+                                     info.block_n, generic::route_name(executed).c_str());
+                        continue;
+                    }
+                    if (generic::route_workspace_bytes(route, o.k, t) > ws_bytes) {
+                        std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d skipped: workspace\n", t,
+                                     info.block_m, info.block_n);
+                        continue;
+                    }
+                    generic::Call c;
+                    c.x               = &xt;
+                    c.weight          = &weight.weight;
+                    c.rows            = o.n;
+                    c.out[0]          = &ot;
+                    c.segment_rows[0] = o.n;
+                    const auto run    = [&](cudaStream_t s) {
+                        workspace.reset();
+                        generic::run_route(route, c, &workspace, s);
+                    };
+                    // quantized -2 marks a schedule row (tools/route_as_table.py reads -1, 0, 1).
+                    try {
+                        run(stream);
+                        CUDA_CHECK(cudaStreamSynchronize(stream));
+                    } catch (const std::exception& e) {
+                        std::string what = e.what();
+                        std::replace(what.begin(), what.end(), ',', ';');
+                        row(-(i + 1), -2, NAN, NAN, NAN, NAN, "rejected: " + what);
+                        continue;
+                    }
+                    const double err =
+                        rel_l2(out, ref, static_cast<std::uint64_t>(o.n) * t, sums, stream);
+                    const auto timing =
+                        bench::measure_cold_launch(run, flush, stream, o.warmup, o.repeat);
+                    row(-(i + 1), -2, timing.median_us, timing.min_us, timing.p95_us, err,
+                        err <= kRankableRelL2 ? "ok" : "mismatch");
+                    std::fprintf(stderr, "T=%5d w4a8 %3dx%-3d%s %9.2f us\n", t, info.block_m,
+                                 info.block_n, info.producers > 0 ? "ws" : "  ", timing.median_us);
                 }
             }
             std::fprintf(stderr, "T=%5d dispatcher %9.2f us | best %9.2f us (as=%d q=%d) %+6.1f%%\n",
