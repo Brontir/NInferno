@@ -547,11 +547,10 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
         const double tile  = (c.c0 + l.k * c.c1) / card.clock_hz;
         const double cols  = std::ceil(l.n / 64);
         // A grid's rounds of SMs x resident CTAs, each `resident` tiles' time; a grid of no more CTAs
-        // than SMs runs one a SM, a tile's time (Codex on #251: the RTX 5090's 16-CTA calls took 27 us
-        // against a tile's 20 and a round's 41).
+        // than SMs runs one a SM alone (kLoneTile).
         const double resident = std::max(c.resident, 1);
         const auto waves      = [&](double ctas) {
-            return ctas <= sms ? 1.0 : std::ceil(ctas / (sms * resident)) * resident;
+            return resident > 1 && ctas <= sms ? kLoneTile : std::ceil(ctas / (sms * resident)) * resident;
         };
         if (l.expert && moe) {
             // A layer's bank is one call over its jobs; the gate and up come first (K the hidden).

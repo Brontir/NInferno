@@ -885,12 +885,24 @@ void prices_dense_prefill_tiles() {
         std::cout << "dense Q8 tiles, " << r.card.sms << " SMs: " << t * 1e3 << " ms against " << r.ms << "\n";
     }
     check(worst < 0.10, "a dense model's Q8 linears by their tiles within 10 % of the census");
-    // A grid of no more CTAs than SMs runs one a SM: a 64-token chunk of one 4096 x 4096 linear on
-    // the RTX 4090 (64 CTAs) is one tile's time, (3352 + 4096 x 12.15) SM-clocks.
+    // A grid of no more CTAs than SMs runs one a SM alone (kLoneTile): Qwen3.5 9B's b/a projection
+    // (N 64, K 4096) over a 1024-token chunk, 16 CTAs, against the census on six cards.
     ch::ModelFacts one;
-    one.linears.push_back({4096, 4096, 1, false});
-    const double lone = ch::prefill_linears_seconds(one, rows[3].card, q, 64);
-    check(std::abs(lone - (3352 + 4096 * 12.15) / 2.52e9) < 1e-12, "an underfilled grid: one tile a SM");
+    one.linears.push_back({64, 4096, 1, false});
+    struct Lone {
+        ch::CardFacts card;
+        double us;
+    };
+    const Lone lone[] = {
+        {rows[0].card, 39.3}, {rows[1].card, 28.4}, {rows[2].card, 26.1}, {rows[3].card, 27.5}, {rows[4].card, 25.5},
+        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9}, 27.1},
+    };
+    double lone_worst = 0;
+    for (const Lone& l : lone) {
+        const double t = ch::prefill_linears_seconds(one, l.card, q, 1024);
+        lone_worst     = std::max(lone_worst, std::abs(t * 1e6 / l.us - 1));
+    }
+    check(lone_worst < 0.06, "an underfilled grid: a CTA alone on its SM, within 6 % on six cards");
     q.weights = ch::WeightClass::KQuant;
     check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "K-quant dense linears (ggml's MMQ): unknown");
 }
