@@ -166,8 +166,8 @@ int main() {
                       "server record artifact type mismatch");
     failures += check(server.at("schema_version") == kRequestLogSchemaVersion,
                       "server record schema mismatch");
-    // Schema 31: environment.gpu_pci_bus_id beside gpu_uuid.
-    failures += check(kRequestLogSchemaVersion == 31 &&
+    // Schema 33: environment.gpu_pci_bus_id beside gpu_uuid.
+    failures += check(kRequestLogSchemaVersion >= 33 &&
                           server.at("environment").at("gpu_pci_bus_id") == "0000:01:00.0",
                       "schema 33: the GPU's PCI bus id missing");
     failures += check(server.at("event") == "server_start", "server event mismatch");
@@ -553,7 +553,7 @@ int main() {
                       "thinking-control result accounting missing");
     // Schema 32: whether the thinking budget was the answer room (thinking closes at 3/4 of the
     // request's output limit) rather than the request's or the server's own budget.
-    failures += check(kRequestLogSchemaVersion == 32 &&
+    failures += check(kRequestLogSchemaVersion >= 32 &&
                           done.at("result").at("thinking_budget_answer_room").is_boolean(),
                       "schema 32: thinking_budget_answer_room missing");
     failures +=
