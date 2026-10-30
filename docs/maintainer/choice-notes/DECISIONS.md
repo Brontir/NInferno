@@ -1796,8 +1796,12 @@ eight rows once its constants were gone.
 
 **Open.**
 - UD-IQ3_XXS on the RTX 5070 Ti, 7-13 % slow at 2-6 rows: its banks are IQ3_XXS throughout (a
-  codebook decode a weight), UD-Q3_K_S's a mix. A format's decode work against the SMs (70 on
-  the 5070 Ti) is the candidate fact; not measured apart.
+  codebook decode a weight), UD-Q3_K_S's a mix. The census without PDL (a lab build with
+  `pdl::supported()` false, so the kernels' times are their own) puts its routed kernels at 6.1 /
+  6.9 / 6.9 weights a SM-clock at 1 / 4 / 8 rows: the same rate whatever the rows, compute-bound
+  on the 70-SM board (0.45-0.51 of its DRAM rate), where the RTX 4090's 128 SMs at that rate reach
+  their DRAM rate. A format's decode rate a SM-clock against the bytes is the candidate fact for
+  the routed share (Blackwell's lower row with it); the next decision.
 - gpt-oss-20b (MXFP4): decode and prefill take format routes of their own on every generation;
   the next decision. What the censuses show (nsys, master kit build):
   - Blackwell's prefill runs the experts on the block-scaled MMA (`moe_w4a8_kernel<W4a8Mxfp4Mx>`,
