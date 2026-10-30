@@ -1660,3 +1660,44 @@ closure's frontier, one between parts stays at its part's end. `ninferno_qwen3_5
 (Qwen3.5 9B MTP Q4_K_M, RTX 5070 Ti): every restore case byte-exact against its cold prefill. The prefill tail count (`prompt_tail.cpp`,
 DECISIONS 62) reads where the program places the capture, so it drops the call without a change.
 
+
+## 64. Served speculation = the tune's round cost × the requests' acceptance; acceptance is the model's and the text's, not the card's (30.10, measured)
+
+**Question.** The plan's speculation gain is 6–11 % above the gain measured on the hard question set
+(hard50, `--spec auto`, one request at a time) on every card. Is the round cost model wrong
+(DECISIONS 53), or is the text different?
+
+**Prediction.** A served round costs what the tune measured (same kernels, same depth), and plain
+decode costs what the tune measured; only the tokens a round keeps depend on the text. So
+gain on hard50 = tune plain ms/token × hard50 tokens per round / tune ms per round, with hard50's
+tokens per round one number per model for every card (greedy decoding, same drafter).
+
+**Measured** (hard50 with the #244 registry, 30.10; tokens per round from the server's per-request
+`accepted` counts; the prediction uses the mean of the cards, 4.758 Qwen, 4.360 Gemma, except GV100
+Gemma which served mtp:3 by the thinking flag):
+
+| card | model, served | tokens/round: corpus math, hard50 | ms/round: tune, hard50 | gain: predicted, measured |
+|---|---|---|---|---|
+| RTX 5090 | Qwen 9B Q4_K_M, dflash:7+head | 5.51, 4.71 | 6.40, 6.27 | ×2.79, ×2.81 |
+| RTX 4090 | Qwen 9B Q4_K_M, dflash:7+head | 5.41, 4.74 | 9.68, 9.67 | ×3.01, ×2.99 |
+| RTX 5070 Ti | Qwen 9B Q4_K_M, dflash:7+head | 5.46, 4.75 | 10.77, 10.66 | ×2.97, ×2.97 |
+| RTX 2080 Ti | Qwen 9B Q4_K_M, dflash:7+head | 5.39, 4.81 | 19.23, 19.18 | ×2.65, ×2.65 |
+| GV100 | Qwen 9B Q4_K_M, dflash:7 | 5.34, 4.77 | 22.83, 20.89 | ×2.49, ×2.43 |
+| RTX 5090 | Gemma 12B Q4_K_M, mtp:5 | 4.87, 4.34 | 7.37, 7.63 | ×3.12, ×3.06 |
+| RTX 4090 | Gemma 12B Q4_K_M, mtp:5 | 4.97, 4.35 | 11.69, 11.85 | ×3.21, ×3.21 |
+| RTX 5070 Ti | Gemma 12B Q4_K_M, mtp:5 | 4.97, 4.29 | 13.16, 13.35 | ×3.13, ×3.09 |
+| RTX 2080 Ti | Gemma 12B Q4_K_M, mtp:5 | 4.97, 4.46 | 24.93, 27.39 | ×2.66, ×2.60 |
+| GV100 | Gemma 12B Q4_K_M, mtp:3 | 3.60, 3.37 | 22.24, 23.83 | ×2.35, ×2.33 |
+
+Every gain within 2.5 % of the prediction. The served round costs the tune's round within 2 % (the
+2080 Ti's Gemma round and the GV100 rows move with the plain decode of the same run: clock and the
+older GV100 tune); hard50's tokens per round agree across cards within ±1.1 % (Qwen) and ±2.2 %
+(Gemma). The whole gap to the plan is the text: hard50's math keeps 12–15 % fewer tokens per round
+than the tune corpus's math section.
+
+**Decision.** The round cost model stands; nothing is fitted. Acceptance is a property of the model,
+the drafter and the text, so one card's measurement of a text transfers to every card. The plan
+keeps pricing the tune corpus by the benchmark mix (DECISIONS 50); a mix of harder text is a new
+corpus section measured once per model, not a per-card factor. The GV100 Gemma row is the mix at
+work: by the thinking flag the non-thinking requests get mtp:3, the best on the corpus mix (prose
+weighs 8 of 19), while math alone would take mtp:5 (predicted ×2.78 on hard50).
