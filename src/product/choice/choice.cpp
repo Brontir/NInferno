@@ -468,10 +468,22 @@ double tiles_eta(std::string_view generation, bool& transferred) noexcept {
     return prefill_eta(false, generation, Route::Int8, transferred);
 }
 
-// The linears' prefill rate (tokens a second) with chunks of `filled` tokens: an MoE's chunk fills
-// its experts only as far as its tokens reach (its share of the saturated rate).
+// A chunk of `tokens` on the int8 route by its tiles and the small kernels beside them (DECISIONS 66:
+// prefill_linears_seconds, prefill_small_seconds), seconds; 0 where either has no row (the shares
+// below stand). One card's census of the small kernels prices only its own boards.
+double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                           Route route, double tokens, bool& transferred) noexcept;
+
+// The linears' prefill rate (tokens a second) with chunks of `filled` tokens: by the tiles where
+// they have a row (`tiles`; decode's compute bound keeps the shares), else the generation's share of
+// the peak, an MoE's chunk filling its experts only as far as its tokens reach (its share of the
+// saturated rate).
 double linear_prefill(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
-                      Route route, std::uint32_t filled, bool& transferred) noexcept {
+                      Route route, std::uint32_t filled, bool& transferred, bool tiles = true) noexcept {
+    if (tiles && filled > 0) {
+        const double seconds = tiled_chunk_seconds(model, card, quant, route, filled, transferred);
+        if (seconds > 0) { return filled / seconds; }
+    }
     const double params = model.active_params > 0 ? model.active_params : model.params;
     if (params <= 0) { return 0; }
     const std::string_view gen = generation_of(card);
@@ -553,6 +565,23 @@ double prefill_small_seconds(const ModelFacts& model, const CardFacts& card, dou
 
 namespace {
 
+double tiled_chunk_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                           Route route, double tokens, bool& transferred) noexcept {
+    if (route != Route::Int8) { return 0; }
+    const double linears = prefill_linears_seconds(model, card, quant, tokens);
+    const double small   = linears > 0 ? prefill_small_seconds(model, card, tokens) : 0;
+    if (small <= 0) { return 0; }
+    const std::string_view gen = generation_of(card);
+    for (const SmallKernelCost& row : kSmallKernelCost) {
+        if (row.generation == gen) { transferred = transferred || row.cards < 2; }
+    }
+    return linears + small;
+}
+
+} // namespace
+
+namespace {
+
 // The calls a prefill runs after the prompt's chunks (ModelFacts::prompt_tail_calls): each a few
 // tokens through every layer, a plain decode step's reads at the prompt's depth (DECISIONS 62:
 // two such calls on Qwen3.5 9B, 2 x the weights over the DRAM rate predicted 22.5 / 11.3 / 12.7 ms
@@ -631,7 +660,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
     decode_quant.weights     = WeightClass::KQuant;
-    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred) * 2 * params;
+    const double flops_rate  = linear_prefill(model, card, decode_quant, route, kDefaultChunk, flops_transferred, false) * 2 * params;
     const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
     const double step        = std::max(reads + launches + exact, flops);
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
