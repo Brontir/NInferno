@@ -315,6 +315,9 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                   "a codes-only tile is read only directly");
     constexpr bool Volta = Tile::Volta;
     static_assert(!Volta || (!KDirect && !VDirect));
+#if defined(__CUDA_ARCH__)
+    static_assert(!Volta || NINFERNO_HMMA884, "the Volta route compiles only where m8n8k4 does");
+#endif
     const float NegInf       = -CUDART_INF_F;
 
     extern __shared__ __align__(128) unsigned char gemma4_smem[];
