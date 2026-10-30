@@ -3348,8 +3348,12 @@ std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t toke
 // tensor mma.sync, so the tiled kernel's one 128-token block multiplies on FP32 FMAs: 2 x 128 x N x
 // K flops at 15.7 TFLOPS (V100), 16 ps per weight, where the decoded copy writes and reads two FP16
 // bytes a weight, 4.6 ps at 870 GB/s, and its HMMA GEMM of a block is a few percent of that. The
-// copy pays from the first block (V100 Qwen3.5 9B, Q4_K swiglu 24576 x 4096 at T = 17..128: the
-// tile 1.27 ms, the copy about 0.5).
+// copy pays from the first block. V100 (ninferno_linear_bench, T = 32..240, the tile's time against
+// the copy's): Q4_K 24576 x 4096 1.36..2.29 ms against 1.20..1.40, 4096 x 12288 1.07..1.31 against
+// 0.82..0.88, 4096 x 4096 0.36..0.44 against 0.27..0.28, Q5_K 4096 x 12288 1.13..1.37 against
+// 0.90..0.94; one shape keeps the tile ahead below 129 tokens, 10240 x 4096 (80 tiles, one wave of
+// the 80 SMs: 0.37..0.47 ms against 0.50), and loses from 129 (0.82..0.93 against 0.52..0.54). A
+// Qwen3.5 9B layer's four linears: 14 % less time at T = 64, 35 % at T = 192.
 constexpr std::int32_t kVoltaCutlassMinTokens = 17;
 
 bool volta_cutlass_takes(std::int32_t tokens) {
