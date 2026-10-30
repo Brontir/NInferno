@@ -1559,6 +1559,21 @@ and Volta one attention share cannot hold Gemma and Qwen together (GV100 Gemma 1
 attention path are the missing fact. The product's constants stay as they are until those two facts
 are in; the refit is the diagnosis.
 
+**The big boards' shortfall is the tiles' waves (30.10, predicted against measured).** After DECISIONS
+63 the user kits measure the 2048-token prefill at x0.97 of the estimate on the RTX 5070 Ti (Qwen 9B
+and Gemma 12B) but x0.85 / x0.81 on the RTX 5090 and x0.91 / x0.83 on the RTX 4090. The clocks are
+not it: under the prefill all three hold 7 .. 10 % above boost (5090 2660 MHz, 4090 2700, 5070 Ti
+2700). Gated DeltaNet's scan is 1.6 .. 2.3 % of the window. The linears are 78 .. 87 % of it, and on
+gb20x they run on the W4A8 producer-warp tile, one CTA a SM (384 threads x 142 .. 168 registers),
+whose grid of ceil(N / tile rows) x ceil(T / 128) tiles takes whole waves of the SMs: the 5070 Ti's
+70 SMs fill them to 0.91 .. 0.99, the 5090's 170 to 0.75 .. 0.90. Weighting each launch of the 5070
+Ti's server profile (962 / 1912 / 2862-token requests) by its time, the waves predict the 5090 at
+0.926 / 0.915 / 0.891 of the 5070 Ti's efficiency; the kits measured 0.878 (Qwen) and 0.837 (Gemma)
+at 2048: the waves are about 70 % of the gap. Ada's MMQ runs stream-K (its partial wave is spread),
+which leaves the 4090's shortfall unexplained so far. Next: the choice prices a launch's waves from
+the route's tile and the model's linear shapes (the ops' own tile count, shared with the product),
+and the gb20x row is refit at full waves.
+
 ## 63. OpenAI's automatic cache boundary is taken at the closed turn's end (30.10, measured)
 
 **What the profiles showed.** Every chat request on the RTX 4070 Ti ran one whole-model call more
