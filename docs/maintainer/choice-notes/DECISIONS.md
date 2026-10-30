@@ -1805,8 +1805,8 @@ eight rows once its constants were gone.
   their DRAM rate. A format's decode rate a SM-clock against the bytes is the candidate fact for
   the routed share (Blackwell's lower row with it); the next decision.
 - Gemma 4 26B-A4B (UD-Q4_K_M, RTX 4090, KV and ring fp8 as the server chose): its routed share
-  measured as above rises with the rows, 0.81 / 0.79 / 0.84 / 0.94 at 1 / 2 / 4 / 8, where Qwen3.6's
-  falls (0.93 / 0.91 / 0.81 at 2 / 4 / 8): the estimate is 4-6 % fast at 1-4 rows and 9 % slow at
+  measured as above rises with the rows, 0.81 / 0.79 / 0.85 / 0.95 at 1 / 2 / 4 / 8, where Qwen3.6's
+  falls (0.93 / 0.91 / 0.81 at 2 / 4 / 8): the estimate is 3-6 % fast at 1-4 rows and 9 % slow at
   eight. Its experts are 4 MB each (Qwen3.6's 1.3 MB), 30 MB a layer at one row, and a dense MLP
   runs beside them; which of these the step's census shows is the next measurement. Until then its
   rows are kept out of the table (`CHECK_ONLY` in the fit).

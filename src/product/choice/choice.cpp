@@ -144,7 +144,7 @@ StepKernels kernels_of(const ModelFacts& model, const DecodeLaunches& row, doubl
 StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double rows, bool& transferred) noexcept {
     const auto find = [](std::string_view family, WeightClass w) -> const DecodeLaunches* {
         for (const DecodeLaunches& r : kDecodeLaunches) {
-            if (r.family == family && r.weights == w) { return &r; }
+            if (!r.moe && r.family == family && r.weights == w) { return &r; } // a dense model's rows
         }
         return nullptr;
     };
@@ -160,7 +160,7 @@ StepKernels step_kernels(const ModelFacts& model, WeightClass weights, double ro
         row         = find(model.family, WeightClass::KQuant);
     }
     for (const DecodeLaunches& r : kDecodeLaunches) {
-        if (row == nullptr && r.family == model.family) { row = &r; }
+        if (row == nullptr && !r.moe && r.family == model.family) { row = &r; }
     }
     if (row == nullptr) { row = find(kDecodeLaunches[0].family, weights); }
     if (row == nullptr) { row = &kDecodeLaunches[0]; }

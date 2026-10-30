@@ -113,8 +113,8 @@
   },
   "gemma-4-26B-A4B": {
    "family": "gemma4_text",
-   "params": 25250000000.0,
-   "active_params": 3840000000.0,
+   "params": 26190000000.0,
+   "active_params": 4777000000.0,
    "experts": 128,
    "experts_per_token": 8,
    "routed_expert_params": 22840000000.0,
@@ -123,11 +123,11 @@
    "recurrent": false,
    "window": 1024,
    "kv_bytes_per_token": {
-    "bf16": 10240,
-    "fp8": 5140,
-    "int8": 5280,
-    "k8v4": 4010,
-    "nvfp4": 2880
+    "bf16": 20480,
+    "fp8": 10280,
+    "int8": 10560,
+    "k8v4": 8020,
+    "nvfp4": 5760
    },
    "ring_bytes_per_token": {
     "bf16": 204800,
