@@ -1829,12 +1829,17 @@ such call:
 | int8 tile (W4A8) | Ada | 1.33 us | 4.82 ns | Qwen3.6 experts K 2048 / 512, gpt-oss K 2880; dense K 2048 |
 | int8 tile (W4A8) | Blackwell | 0.5 us | 4.74 ns | dense K 2048 / 2880 / 4096 |
 | block-scaled MX (MXFP4 experts) | Blackwell | ~0.5 us | ~3.4 ns | gpt-oss experts K 2880 |
+| 16-bit register MMA (A16 experts) | Ada | 0.93 us | 7.1 ns | Qwen3.6 UD-Q3_K_S experts K 2048 (IQ3_XXS) / 512 (IQ3_S), a 64 x 64 tile's share |
+| 16-bit register MMA (A16 experts) | Blackwell | 0.32 us | 6.1 ns | the same |
 
 On the RTX 4090 the law gives the dense calls of Qwen3.6-35B-A3B within 1-6 % (the Gated DeltaNet
 in-projection 11.2 against 11.5 us a CTA, attention's qkv 370 against 375 us, the shared expert's
 gate/up 45 against 47 us) and gpt-oss's experts from Qwen's (15.2 against 15.0 / 13.6 us a CTA).
 c1 is the same in nanoseconds on both generations at their different clocks: 1.7 int8 TOPS a SM,
-a third of the tensor peak, in every call.
+a third of the tensor peak, in every call. The 16-bit register MMA's K step costs only 1.5x the int8 tile's at a quarter of
+its tensor peak: both are bound by decoding the weights on the CUDA cores, not by the MMA (the
+same bound the decode census found for IQ3_XXS's routed kernels, DECISIONS 65); the int8 tile's
+step is the same for Q8_0, Q4_K and MXFP4 weights, the 16-bit one's is read on IQ3 weights only.
 
 An MoE's expert grid counts jobs, not tokens: a job is an expert's run of up to 64 of the chunk's
 slots (token x pick), so the jobs are the sum over experts of ceil(n_e / 64), and routing that
