@@ -318,13 +318,17 @@ public:
         source_object.device_slot.reset();
     }
 
-    void freeze(StateImageHandle handle) {
+    // `frontier`: the positions the checkpoint holds (0 .. frontier - 1), so its Host transfers move
+    // only the rows of its rings a later call reads (StateImageDevicePool::copy_to_host); omitted,
+    // every row.
+    void freeze(StateImageHandle handle, std::optional<std::uint64_t> frontier = std::nullopt) {
         Object& object = require(handle);
         if (object.role != StateImageRole::ActiveMutable || !object.device_slot ||
             object.source_pins != 0 || object.destination_pinned || has_pending_replica(object)) {
             throw std::logic_error("StateImage active image is not freezable");
         }
         object.content_epoch = next_epoch();
+        object.frontier      = frontier;
         object.role          = StateImageRole::CheckpointImmutable;
     }
 
@@ -335,6 +339,7 @@ public:
             object.destination_pinned || has_pending_replica(object)) {
             throw std::logic_error("StateImage checkpoint is not thawable");
         }
+        object.frontier.reset();
         object.role = StateImageRole::ActiveMutable;
     }
 
@@ -506,7 +511,7 @@ public:
             throw std::logic_error("StateImage Device-to-Host transfer is not enqueueable");
         }
         device_->copy_to_host(*object.device_slot, host_->writable_view(*object.pending_host_slot),
-                              stream);
+                              stream, object.frontier);
     }
 
     [[nodiscard]] std::optional<StateImageTransfer>
@@ -538,7 +543,8 @@ public:
         object.destination_pinned    = true;
         ++object.source_pins;
         try {
-            device_->copy_from_host(host_->view(*object.host_slot), *target, stream);
+            device_->copy_from_host(host_->view(*object.host_slot), *target, stream,
+                                    object.frontier);
         } catch (...) {
             --object.source_pins;
             object.destination_pinned = false;
@@ -575,7 +581,8 @@ public:
         destination_object.content_epoch       = source_object.content_epoch;
         ++source_object.source_pins;
         try {
-            device_->copy_from_host(host_->view(*source_object.host_slot), *target, stream);
+            device_->copy_from_host(host_->view(*source_object.host_slot), *target, stream,
+                                    source_object.frontier);
         } catch (...) {
             --source_object.source_pins;
             destination_object.pending_device_slot.reset();
@@ -715,6 +722,7 @@ private:
     struct Object {
         std::uint32_t generation    = 1;
         std::uint64_t content_epoch = 0;
+        std::optional<std::uint64_t> frontier; // a checkpoint's positions (freeze)
         std::optional<std::int32_t> device_slot;
         std::optional<qwen3_5::HostStateSlotHandle> host_slot;
         std::optional<std::int32_t> pending_device_slot;
