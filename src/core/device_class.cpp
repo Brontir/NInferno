@@ -165,7 +165,7 @@ std::unique_ptr<DeviceClass> query(int device) {
         out->identity = query_device_identity(device);
     } catch (const std::runtime_error&) {
         (void)cudaGetLastError();
-        out->identity = {.pci_domain = 0xFFFFFFFFu};
+        out->identity = {.pci_domain = kUnknownPciDomain};
     }
     return out;
 }
@@ -731,7 +731,7 @@ std::vector<DeviceIdentity> visible_device_identities() {
             identities.push_back(query_device_identity(device));
         } catch (const std::runtime_error&) {
             (void)cudaGetLastError();
-            identities.push_back({.pci_domain = 0xFFFFFFFFu});
+            identities.push_back({.pci_domain = kUnknownPciDomain});
         }
     }
     return identities;
@@ -768,9 +768,10 @@ std::string visible_devices_note(int device, const DeviceSelector& selector) {
     const std::string how = selector.kind == DeviceSelector::Kind::Default
                                 ? "first in PCI order; --device to choose"
                                 : "--device " + device_selector_text(selector);
+    const DeviceIdentity& board = identities[static_cast<std::size_t>(device)];
     return std::to_string(identities.size()) + " GPUs visible; using " +
-           pci_bus_id_text(identities[static_cast<std::size_t>(device)]) + ' ' + prop.name + " (" +
-           how + ")";
+           (pci_known(board) ? pci_bus_id_text(board) : std::string("an unreported PCI address")) +
+           ' ' + prop.name + " (" + how + ")";
 }
 
 const DeviceIdentity& device_identity() { return device_class().identity; }

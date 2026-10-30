@@ -192,8 +192,9 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
     // Which board: beside the fingerprint, not in it (core/device_identity.h).
     try {
         const DeviceIdentity& board     = device_class(resolved.device).identity;
-        load.metadata.device_pci_bus_id = pci_bus_id_text(board);
-        load.metadata.device_uuid       = uuid_text(board);
+        // An unreported address or UUID stays empty (ModelMetadata), never a sentinel's text.
+        if (pci_known(board)) { load.metadata.device_pci_bus_id = pci_bus_id_text(board); }
+        if (uuid_known(board)) { load.metadata.device_uuid = uuid_text(board); }
     } catch (const std::exception&) {}
     std::string why;
     try {

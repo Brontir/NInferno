@@ -869,7 +869,7 @@ ServerLogEnvironment query_server_log_environment(int device) {
     try {
         const DeviceIdentity identity = query_device_identity(device);
         environment.gpu_pci_bus_id    = pci_bus_id_text(identity);
-        environment.gpu_uuid          = uuid_text(identity);
+        if (uuid_known(identity)) { environment.gpu_uuid = uuid_text(identity); }
     } catch (const std::runtime_error&) { (void)cudaGetLastError(); }
     cudaDeviceProp properties{};
     if (cudaGetDeviceProperties(&properties, device) == cudaSuccess) {

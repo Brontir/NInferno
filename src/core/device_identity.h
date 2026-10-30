@@ -48,6 +48,21 @@ struct DeviceIdentity {
     friend auto operator<=>(const DeviceIdentity&, const DeviceIdentity&) = default;
 };
 
+// The domain of a board CUDA could not report a PCI address for: sorted last, never named.
+inline constexpr std::uint32_t kUnknownPciDomain = 0xFFFFFFFFu;
+
+// Whether the identity's PCI address and UUID were reported (an unknown one is never printed as
+// if it named a board).
+[[nodiscard]] inline bool pci_known(const DeviceIdentity& identity) noexcept {
+    return identity.pci_domain != kUnknownPciDomain;
+}
+[[nodiscard]] inline bool uuid_known(const DeviceIdentity& identity) noexcept {
+    for (const std::uint8_t byte : identity.uuid) {
+        if (byte != 0) { return true; }
+    }
+    return false;
+}
+
 // "dddd:bb:dd.f" in hex as cudaDeviceGetPCIBusId and NVML write it (NVML's domain has 8 digits,
 // CUDA's 4); nullopt for anything else.
 [[nodiscard]] inline std::optional<DeviceIdentity> parse_pci_bus_id(std::string_view text) {

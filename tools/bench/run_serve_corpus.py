@@ -460,7 +460,6 @@ def validate_server_start(event: dict[str, Any], spec: RunSpec, device: int) -> 
     require_server_log_identity(event, "server_start")
     engine = event.get("engine", {})
     actual = {
-        "device": engine.get("device"),
         "max_context": engine.get("max_context"),
         "kv_capacity": engine.get("kv_capacity"),
         "prefill_chunk": engine.get("prefill_chunk"),
