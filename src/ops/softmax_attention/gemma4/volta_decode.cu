@@ -85,6 +85,10 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
     constexpr int J       = D >= kVoltaThreads ? D / kVoltaThreads : 1;
     constexpr int Warps   = kVoltaThreads / 32;
     constexpr int PerWarp = kVoltaTile / Warps;
+    // Keys whose dims a lane holds at once: 32 floats of keys, 32 of values.
+    constexpr int KeyBatch   = E >= 32 ? 1 : (32 / E < PerWarp ? 32 / E : PerWarp);
+    constexpr int ValueBatch = 32 / J < kVoltaTile ? 32 / J : kVoltaTile;
+    static_assert(PerWarp % KeyBatch == 0);
     const float NegInf    = -CUDART_INF_F;
 
     __shared__ __align__(16) float q_s[MaxRows * D];
@@ -145,39 +149,48 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
     __syncthreads();
 
     for (int k0 = begin; k0 < end; k0 += kVoltaTile) {
-        // Scores: warp w takes keys k0 + w * PerWarp .. + PerWarp - 1.
+        // Scores: warp w takes keys k0 + w * PerWarp .. + PerWarp - 1, KeyBatch of them loaded
+        // before the first is used: a batch waits on memory once, not once a key (one key at a
+        // time, a tile's eight scores and 32 values were 40 serial reads: GV100 Gemma 4 12B, 40 us
+        // a sliding layer against its bytes' ~8).
 #pragma unroll 1
-        for (int i = 0; i < PerWarp; ++i) {
-            const int kk  = warp * PerWarp + i;
-            const int key = k0 + kk;
-            float kf[E];
-            if (key < end) {
-                const int slot = gemma4_kv_slot(args.kv, binding, key);
-                load_dims<E>(k_plane, k_scales, slot, lane * E, D, kf);
-            } else {
+        for (int i0 = 0; i0 < PerWarp; i0 += KeyBatch) {
+            float kf[KeyBatch][E];
 #pragma unroll
-                for (int e = 0; e < E; ++e) kf[e] = 0.0F;
-            }
-#pragma unroll
-            for (int r = 0; r < MaxRows; ++r) {
-                if (r >= rows_total) break;
-                const float* qr = q_s + r * D + lane * E;
-                float dot       = 0.0F;
-                if constexpr (E >= 4) {
-#pragma unroll
-                    for (int e = 0; e < E; e += 4) {
-                        const float4 qv = *reinterpret_cast<const float4*>(qr + e);
-                        dot             = fmaf(qv.x, kf[e], dot);
-                        dot             = fmaf(qv.y, kf[e + 1], dot);
-                        dot             = fmaf(qv.z, kf[e + 2], dot);
-                        dot             = fmaf(qv.w, kf[e + 3], dot);
-                    }
+            for (int b = 0; b < KeyBatch; ++b) {
+                const int key = k0 + warp * PerWarp + i0 + b;
+                if (key < end) {
+                    const int slot = gemma4_kv_slot(args.kv, binding, key);
+                    load_dims<E>(k_plane, k_scales, slot, lane * E, D, kf[b]);
                 } else {
 #pragma unroll
-                    for (int e = 0; e < E; ++e) dot = fmaf(qr[e], kf[e], dot);
+                    for (int e = 0; e < E; ++e) kf[b][e] = 0.0F;
                 }
-                dot = warp_sum(dot);
-                if (lane == 0) s_s[r][kk] = dot;
+            }
+#pragma unroll
+            for (int b = 0; b < KeyBatch; ++b) {
+                const int kk = warp * PerWarp + i0 + b;
+#pragma unroll
+                for (int r = 0; r < MaxRows; ++r) {
+                    if (r >= rows_total) break;
+                    const float* qr = q_s + r * D + lane * E;
+                    float dot       = 0.0F;
+                    if constexpr (E >= 4) {
+#pragma unroll
+                        for (int e = 0; e < E; e += 4) {
+                            const float4 qv = *reinterpret_cast<const float4*>(qr + e);
+                            dot             = fmaf(qv.x, kf[b][e], dot);
+                            dot             = fmaf(qv.y, kf[b][e + 1], dot);
+                            dot             = fmaf(qv.z, kf[b][e + 2], dot);
+                            dot             = fmaf(qv.w, kf[b][e + 3], dot);
+                        }
+                    } else {
+#pragma unroll
+                        for (int e = 0; e < E; ++e) dot = fmaf(qr[e], kf[b][e], dot);
+                    }
+                    dot = warp_sum(dot);
+                    if (lane == 0) s_s[r][kk] = dot;
+                }
             }
         }
         __syncthreads();
@@ -224,39 +237,53 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
             for (int j = 0; j < J; ++j) acc[r][j] *= a;
         }
         const int keys = tid * J < D ? min(kVoltaTile, end - k0) : 0;
+        // ValueBatch keys' values loaded before the first is used; the sums keep the key order.
 #pragma unroll 1
-        for (int kk = 0; kk < keys; ++kk) {
-            const int slot = gemma4_kv_slot(args.kv, binding, k0 + kk);
-            float vf[J];
-            if (fp8) {
-                const auto* p = static_cast<const std::uint8_t*>(v_plane) +
-                                static_cast<std::int64_t>(slot) * D + tid * J;
-                const float scale = v_scales[slot];
-                unsigned w        = J == 4   ? *reinterpret_cast<const unsigned*>(p)
-                                    : J == 2 ? *reinterpret_cast<const unsigned short*>(p)
-                                             : static_cast<unsigned>(*p);
-                if constexpr (J >= 2) {
+        for (int k1 = 0; k1 < keys; k1 += ValueBatch) {
+            float vf[ValueBatch][J];
 #pragma unroll
-                    for (int j = 0; j < J; j += 2) {
-                        const float2 v = __half22float2(e4m3x2_to_half2((w >> (8 * j)) & 0xffffU));
-                        vf[j]          = scale * v.x;
-                        vf[j + 1]      = scale * v.y;
+            for (int b = 0; b < ValueBatch; ++b) {
+                if (k1 + b >= keys) {
+#pragma unroll
+                    for (int j = 0; j < J; ++j) vf[b][j] = 0.0F;
+                    continue;
+                }
+                const int slot = gemma4_kv_slot(args.kv, binding, k0 + k1 + b);
+                if (fp8) {
+                    const auto* p = static_cast<const std::uint8_t*>(v_plane) +
+                                    static_cast<std::int64_t>(slot) * D + tid * J;
+                    const float scale = v_scales[slot];
+                    unsigned w        = J == 4   ? *reinterpret_cast<const unsigned*>(p)
+                                        : J == 2 ? *reinterpret_cast<const unsigned short*>(p)
+                                                 : static_cast<unsigned>(*p);
+                    if constexpr (J >= 2) {
+#pragma unroll
+                        for (int j = 0; j < J; j += 2) {
+                            const float2 v =
+                                __half22float2(e4m3x2_to_half2((w >> (8 * j)) & 0xffffU));
+                            vf[b][j]     = scale * v.x;
+                            vf[b][j + 1] = scale * v.y;
+                        }
+                    } else {
+                        vf[b][0] = scale * fp8_value(w);
                     }
                 } else {
-                    vf[0] = scale * fp8_value(w);
-                }
-            } else {
-                const auto* p = static_cast<const __nv_bfloat16*>(v_plane) +
-                                static_cast<std::int64_t>(slot) * D + tid * J;
+                    const auto* p = static_cast<const __nv_bfloat16*>(v_plane) +
+                                    static_cast<std::int64_t>(slot) * D + tid * J;
 #pragma unroll
-                for (int j = 0; j < J; ++j) vf[j] = __bfloat162float(p[j]);
+                    for (int j = 0; j < J; ++j) vf[b][j] = __bfloat162float(p[j]);
+                }
             }
 #pragma unroll
-            for (int r = 0; r < MaxRows; ++r) {
-                if (r >= rows_total) break;
-                const float pr = s_s[r][kk];
+            for (int b = 0; b < ValueBatch; ++b) {
+                if (k1 + b >= keys) break;
 #pragma unroll
-                for (int j = 0; j < J; ++j) acc[r][j] = fmaf(pr, vf[j], acc[r][j]);
+                for (int r = 0; r < MaxRows; ++r) {
+                    if (r >= rows_total) break;
+                    const float pr = s_s[r][k1 + b];
+#pragma unroll
+                    for (int j = 0; j < J; ++j) acc[r][j] = fmaf(pr, vf[b][j], acc[r][j]);
+                }
             }
         }
         __syncthreads();
