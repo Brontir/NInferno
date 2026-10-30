@@ -2058,9 +2058,22 @@ longest CTA's time, not the work over the SMs.
 
 A call of 256 tokens or fewer (a short prompt, a short last chunk, a chunk pinned that narrow) takes
 the grouped kernels (int8/plan.cpp, the keys split over the SMs), not this one: it keeps the share.
-Not modelled: the kernel's narrow layouts (four-warp CTAs, or half-height leading slots where they
-shorten the last wave: up to 1/0.72 of a full CTA's cost; at 1024-token chunks only the RTX 5070 Ti's
-first chunk shows it, -10 %), and the invariant route profile (every width on ParallelGrouped).
+Not modelled at first: the kernel's narrow layouts (four-warp CTAs, or half-height leading slots
+where they shorten the last wave), and the invariant route profile (every width on ParallelGrouped:
+exact activations keep the share).
+
+**The kernel's layout and a CTA's own cost** (21K-token prompts, 21 chunks, on five cards). The 21K
+census showed the RTX 4070 Ti +12 .. +17 % past the first chunks: its 60 SMs take two half-height
+leading slots (grid 9 x 16, int8_prompt_fast_layout), which the law dealt as full CTAs. The law now
+runs the kernel's own layout choice (its makespan in hundredths of a CTA, half-height at the
+kernel's figure 0.72) and deals those CTAs last. Then a constant a CTA (`cta`) besides its keys:
+Blackwell's two cards agree on 20800 SM-clocks (the RTX 5070 Ti's first chunk, 128 CTAs over 70
+SMs, was its -10 %), Ampere's one card cannot tell it from zero. Read on both cards of a generation
+at once: Blackwell 195 / 152 / 20800 (5090 -1 .. +2 %, 5070 Ti -1 .. +2 %), Ampere 378 / 190 / 0
+(3060 -0.4 .. +0.8 %), Ada 328 / 188 / 0 (4060 Ti -3 .. +9 %, 4070 Ti -8 .. +4 %). Open on Ada: the
+two cards' first chunks want opposite CTA costs (the 4060 Ti none, the 4070 Ti 28500 SM-clocks;
+each alone fits within 1 %); a clock ramp after the pause is refuted (the chunk's linears run their
+steady time from the first chunk on).
 
 In the estimate (Qwen3.5 9B's points): Q8_0 rms 7.6 -> 7.1 %, Q4_K_M 6.0 -> 6.4 % (MMQ's shares were
 read with the old attention term beside them). Not yet: Gemma 4's kernel (sliding layers: 2 CTAs a SM,
