@@ -1954,7 +1954,14 @@ registers, 40 KB), so a grid runs in rounds of SMs x 2, each two tiles' time; th
 calls at a 1024-token chunk (1024 CTAs) take 4 rounds of 340, 8 tiles' time, where 6.02 waves of
 170 said 7 (`TileCost::resident`; the other cards move 0-3 %). The 5090 is now +6 .. +17 %, the
 RTX 4090's Gemma +10 .. +18 %; its clock is not the cause (2546 MHz on average over the prompt
-against its reference 2407). The MoE campaign's 16-GB quants (UD-IQ3_XXS on the
+against its reference 2407).
+**Gemma 4 12B on the RTX 5090** (added after, sm_bench.py prefill at 3K-14K, master f8d4399d):
+Q8_0 +17 .. +26 %, Q4_K_M +12 .. +17 % (MMQ's share, not the tiles): the shared term is attention.
+The census at 1714 tokens: Gemma's attention kernel 14.2 ms against the term's 7.7 on the 5090,
+18.3 / 9.7 on the 4090, 29.1 / 20.0 on the 4070 Ti, 51.4 / 36.4 on the 4060 Ti, 23.4 / 18.3 on the
+5070 Ti, 87.4 / 94.1 on the RTX 3060: kPrefillAttentionEta's 0.74 is Qwen's kernels', and Gemma's
+falls further below it the more SMs the card has, a grid's quantization (heads x query blocks) the
+first suspect. Next: attention by its own tiles. Q8_0 points: rms 9.5 %, worst 26 %. The MoE campaign's 16-GB quants (UD-IQ3_XXS on the
 RTX 4060 Ti and 5070 Ti, master f8d4399d) keep the shares: their linears beside the experts are
 Q6_K (`w4a8_ws_kernel` on Blackwell, 55-66 ms of a 230 ms prompt; the Q6_K tile and MMQ on Ada),
 a tile without a clock count yet.
