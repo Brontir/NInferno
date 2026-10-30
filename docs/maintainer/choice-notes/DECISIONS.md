@@ -1954,6 +1954,17 @@ priced now), the RTX 4090's Gemma +10 .. +18 %. The MoE campaign's 16-GB quants 
 RTX 4060 Ti and 5070 Ti, master f8d4399d) keep the shares: their linears beside the experts are
 Q6_K (`w4a8_ws_kernel` on Blackwell, 55-66 ms of a 230 ms prompt; the Q6_K tile and MMQ on Ada),
 a tile without a clock count yet.
+An MoE's whole prefill through the tiles (the choice test's `prefills_moe_by_tiles`, master
+f8d4399d's rows at 2K / 7K / 22K tokens): Qwen3.6-35B-A3B UD-Q4_K_M on the RTX 4090 +7 / +7 / +0 %,
+the RTX 5090 +13 / +8 / -1 %; Gemma 4 26B-A4B UD-Q4_K_M on the RTX 4090 +12 / +13 / +11 % with its
+two tail calls (the census: two decode steps' kernels after the chunk, 13 ms). Not yet priced: the
+router and the selection (1.7-2.8 ms), Gemma's heavier norms (its small kernels ran 21-27 % over the
+term on Ada, DECISIONS 66 above).
+Measured clocks (nsys GPU metrics over the prefill window): the RTX 4090 runs Qwen3.5 9B Q8_0's
+prompt at 2422 MHz on average (2225-2535) against its reference 2520; the RTX 2080 Ti board at
+1860 MHz (power-capped) against 1545: the "power-limited clock" reading of the 2080 Ti's Q8 gap is
+refuted (its clock is above the reference); its int8 tile takes 30-34 SM-clocks a K step at that
+clock, 2.5-2.8x Ada's, not the 2x of half the CUDA cores a SM.
 
 Next: a dense K-quant's prefill runs
 ggml's MMQ (stream-K: on the RTX 4070 Ti one wave of 60 CTAs, or waves of 71.9 us at K 4096 for
