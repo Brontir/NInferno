@@ -67,6 +67,12 @@ ch::ModelFacts model_of(const json& m) {
     out.sliding_attention_width = m.value("sliding_attention_width", 0.0);
     out.layers                  = m.value("layers", 0U);
     out.hidden                  = m.value("hidden", 0.0);
+    out.recurrent_state_elements = m.value("recurrent_state_elements", 0.0);
+    if (m.contains("linears")) {
+        for (const json& l : m.at("linears")) {
+            out.linears.push_back({l.at(0).get<double>(), l.at(1).get<double>(), l.at(2).get<double>(), false});
+        }
+    }
     if (m.contains("ring_bytes_per_token")) {
         const json ring         = m.at("ring_bytes_per_token");
         out.ring_bytes_per_token = [ring](KvCacheStorage s) {
@@ -352,6 +358,7 @@ void prefills_by_format(const json& fixture) {
     ch::ModelFacts linears_only          = mf;
     linears_only.full_attention_width    = 0;
     linears_only.sliding_attention_width = 0;
+    linears_only.linears.clear(); // the shares: without the shapes the tiles by linear have nothing to price
     const auto tiles_over_mmq            = [&](double hidden) {
         linears_only.hidden = hidden;
         return at("RTX 4090", q8, linears_only, 1).prefill / at("RTX 4090", kq, linears_only, 1).prefill;
