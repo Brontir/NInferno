@@ -1694,9 +1694,10 @@ RTX 5090, 4090 and 5070 Ti and the 2080 Ti's Qwen; the 2080 Ti's Gemma (+9.9 %) 
 (-8.5 %, +7.1 %) move with the plain decode of the same run (clock; the GV100's older tune), and
 their round over their plain step agrees with the tune's within 5 % (+4.6, +2.4, +0.7 %): the
 prediction takes that ratio. hard50's tokens per round agree across cards within ±1.1 % (Qwen) and
-±2.2 % (Gemma at mtp:5). The whole gap to the plan is the text: hard50's math keeps fewer tokens per
+±2.2 % (Gemma at mtp:5). The gap to the tune's math gain is the text: hard50's math keeps fewer tokens per
 round than the tune corpus's math section, 11–15 % for Qwen at dflash:7(+head), 10–14 % for Gemma at
-mtp:5 (6 % at the GV100's mtp:3).
+mtp:5 (6 % at the GV100's mtp:3); the gap to the plan is the same against the thinking section the
+plan prices (below).
 
 **Decision.** The round cost model stands; nothing is fitted. Acceptance is a property of the model,
 the drafter and the text, so one card's measurement of a text transfers to every card. The plan
