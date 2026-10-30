@@ -369,19 +369,21 @@ inline constexpr double kExpertJobSlots = 64; // ops/moe kJobColumns at prefill 
 
 // The INT8-KV prompt kernel (ops/softmax_attention int8/prompt_fast.cuh, sm_80 on, a head width of
 // 256 and int8 keys and values: Qwen 3.5's full layers): a CTA of 128 query rows of one head over
-// every key before its last row, one CTA a SM (98 KiB of shared memory), the grid (query blocks,
-// heads) dealt to the SMs in launch order. A CTA takes `in_chunk` SM-clocks a key of its own chunk
-// (the causal diagonal) and `prefix` a key before the chunk. Read on the census of a 7K-token
-// prompt in seven 1024-token chunks (nsys, the RTX 5090 on a lab build without PDL): the RTX 3060
-// 314 / 186 (-1 .. +1 % over its seven chunks), the 5090 210 / 154 (-1 .. +1 %), the RTX 4060 Ti
-// and 4090 (1.8K) 270 / 186 (-12 .. +10 %).
+// every key before its last row, one CTA a SM (98 KiB of shared memory), issued longest first (the
+// last row block of every head, then the one before) to the SM that frees first. A CTA takes
+// `in_chunk` SM-clocks a key of its own chunk (the causal diagonal) and `prefix` a key before the
+// chunk. Read on the census of a 7K-token prompt in seven 1024-token chunks (nsys; Blackwell on a
+// lab build without PDL): RTX 4060 Ti and 4090 (its 1.8K prompt) 304 / 194 (-4 .. +2 %), RTX 3060
+// 374 / 188 (-1 .. 0 %), RTX 5090 210 / 154 (-1 .. +1 %). Checked on what they were not read from:
+// a 21K prompt's 21 chunks on the 3060, 4060 Ti and 5090 within -1 .. +2 %, the RTX 5070 Ti's 7K
+// prompt -10 .. +1 %.
 struct AttentionTileCost {
     std::string_view generation;
     double in_chunk, prefix; // SM-clocks a key of a CTA
     int cards;
 };
 inline constexpr AttentionTileCost kAttentionTileCost[] = {
-    {"ada", 270, 186, 2}, {"ga10x", 314, 186, 1}, {"gb20x", 210, 154, 1}};
+    {"ada", 304, 194, 2}, {"ga10x", 374, 188, 1}, {"gb20x", 210, 154, 2}};
 inline constexpr double kAttentionQueryRows = 128; // a CTA's query rows (8 warps x 16)
 inline constexpr double kAttentionTileHeadDim = 256;
 

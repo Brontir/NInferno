@@ -601,12 +601,12 @@ double prefill_attention_tiled_seconds(const ModelFacts& model, const CardFacts&
     for (double prefix = 0; prefix < prompt; prefix += chunk) {
         const double width  = std::min<double>(chunk, prompt - prefix);
         const double blocks = std::ceil(width / kAttentionQueryRows);
-        // The grid in launch order (the query blocks of one head, then the next head), each CTA to
-        // the SM that frees first.
+        // The kernel's issue order, longest first (the last row block of every head, then the one
+        // before), each CTA to the SM that frees first.
         std::fill(free.begin(), free.end(), 0.0);
         std::make_heap(free.begin(), free.end(), std::greater<>());
-        for (double h = 0; h < heads; ++h) {
-            for (double b = 0; b < blocks; ++b) {
+        for (double b = blocks - 1; b >= 0; --b) {
+            for (double h = 0; h < heads; ++h) {
                 const double keys = std::min((b + 1) * kAttentionQueryRows, width);
                 std::pop_heap(free.begin(), free.end(), std::greater<>());
                 free.back() += prefix * cost->prefix + keys * cost->in_chunk;
