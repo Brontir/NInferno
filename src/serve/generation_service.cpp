@@ -861,10 +861,32 @@ void GenerationService::choose_speculation(bool thinking, std::optional<std::uin
                                                                   engine.acceptance_floor)
                                 : RequestSpeculation{.draft_tokens     = *draft_tokens,
                                                      .acceptance_floor = engine.acceptance_floor};
-        if (*draft_tokens == 0) { speculation.acceptance_floor = 0.0; }
-        SpeculativeOptions label       = engine;
-        label.draft_tokens             = *draft_tokens;
-        prepared.speculation_config    = *draft_tokens == 0 ? "plain" : product::speculation_label(label);
+        if (!served_speculation_) {
+            // An explicit --spec: its own step-down depths below the request's, as the default
+            // path's (the Engine's SpeculativeOptions::step_down).
+            for (const SpeculationStep& step : engine.step_down) {
+                if (step.draft_tokens < *draft_tokens) { speculation.step_down.push_back(step); }
+            }
+        }
+        if (*draft_tokens == 0) {
+            speculation.acceptance_floor = 0.0;
+            speculation.step_down.clear();
+        }
+        // The label in the form the rest of the server's requests take: the profile's config at
+        // depth K under --spec auto, the explicit --spec's otherwise.
+        std::string config = "plain";
+        if (*draft_tokens > 0 && served_speculation_) {
+            const spec::SpeculationMenu& menu = served_speculation_->menu;
+            spec::SpecConfig at = menu.primary.config.enabled() ? menu.primary.config : menu.overall.config;
+            at.mode             = menu.mode;
+            at.k                = static_cast<int>(*draft_tokens);
+            config              = at.label();
+        } else if (*draft_tokens > 0) {
+            SpeculativeOptions label = engine;
+            label.draft_tokens       = *draft_tokens;
+            config                   = product::speculation_label(label);
+        }
+        prepared.speculation_config    = std::move(config);
         prepared.speculation_selection = "request";
         prepared.speculation_reason    = "ninferno.draft_tokens";
         prepared.speculation_fallback  = "none";
