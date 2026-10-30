@@ -138,7 +138,10 @@ int check_case(const Case& c, cudaStream_t stream) {
     std::vector<std::optional<generic::Route>> tuned(generic::kDenseTuneMaxTokens + 1);
     for (std::int32_t t = 1; t <= generic::kDenseTuneMaxTokens; ++t) {
         tuned[t] = generic::tuned_dense_route(problem, t);
-        const auto heuristic = generic::heuristic_route(problem, d.weight, t, false);
+        // Volta's own rules route a call before the heuristic (select_route), and the tuner
+        // leaves those widths.
+        const auto heuristic = generic::volta_fixed_route(problem, d.weight, t)
+                                   .value_or(generic::heuristic_route(problem, d.weight, t, false));
         const auto chosen    = generic::select_route(problem, d.weight, t, false);
         if (!tuned[t]) {
             if (!(chosen == heuristic)) {
