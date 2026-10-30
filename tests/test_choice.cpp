@@ -296,6 +296,7 @@ void prefills_pay_tail_calls(const json& fixture) {
 // one card each, so in sample).
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0};
+    std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
@@ -308,11 +309,17 @@ void prefills_by_format(const json& fixture) {
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
+        if (i == 1) { by_card[row.at("card").get<std::string>()].push_back(d); }
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
         ++n[i];
     }
     const double mmq = std::sqrt(sq[0] / n[0]), tiles = std::sqrt(sq[1] / n[1]);
+    for (const auto& [card, ds] : by_card) {
+        std::cout << "  Q8_0 " << card << ":";
+        for (const double d : ds) { std::cout << " " << std::lround(d * 100) << " %"; }
+        std::cout << "\n";
+    }
     std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
@@ -333,7 +340,8 @@ void prefills_by_format(const json& fixture) {
         return ch::speed_of(model, card_of(fixture.at("cards").at(card)), q, c, rows, 4096, 2048);
     };
     const ch::Speed ada_q8 = at("RTX 4090", q8, mf, 1), ada_kq = at("RTX 4090", kq, mf, 1);
-    check(ada_q8.prefill < ada_kq.prefill * 0.8, "Ada: a Q8 prefill takes the tiles row (0.212 against 0.306)");
+    // Since PR #249 the tiles row (the tile's clock count, 0.308) is MMQ's int8 row (0.306) within 1 %.
+    check(std::abs(ada_q8.prefill / ada_kq.prefill - 1) < 0.05, "Ada: a Q8 prefill takes the tiles row (0.308 against 0.306)");
     check(!ada_q8.transferred, "Ada: the tiles row rests on three cards");
     // One card's rows price only their own boards: marked transferred.
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
