@@ -91,11 +91,13 @@
    "quants": {
     "UD-IQ3_XXS": {
      "bits_per_weight": 3.05,
-     "weight_bytes": 13211155424
+     "weight_bytes": 13211155424,
+     "routed_expert_bytes": 11108614144
     },
     "UD-Q4_K_M": {
      "bits_per_weight": 5.11,
-     "weight_bytes": 22134528992
+     "weight_bytes": 22134528992,
+     "routed_expert_bytes": 19568525312
     }
    },
    "full_attention_width": 81920.0,

@@ -103,6 +103,8 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
     // What a decode step reads (product::quant_option_of): the file less its MTP layers and drafter.
     out.weight_bytes    = q.at("weight_bytes").get<double>() - q.value("speculation_bytes", 0.0);
     out.weights         = ch::weight_class_of({}, label);
+    // An MoE's routed banks as its GGUF's tensor table stores them (ffn_*_exps).
+    out.routed_expert_bytes = q.value("routed_expert_bytes", 0.0);
     return out;
 }
 
