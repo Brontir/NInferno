@@ -103,9 +103,12 @@ inline constexpr std::uint32_t kUnknownPciDomain = 0xFFFFFFFFu;
     return text;
 }
 
-// "0000:01:00.0 GPU-...": how logs and the fingerprint name a board.
+// "0000:01:00.0 GPU-...": how logs name a board, each part only where the driver reported it
+// ("PCI address unknown" for a missing address, no UUID for a missing one).
 [[nodiscard]] inline std::string identity_text(const DeviceIdentity& identity) {
-    return pci_bus_id_text(identity) + ' ' + uuid_text(identity);
+    std::string text = pci_known(identity) ? pci_bus_id_text(identity) : "PCI address unknown";
+    if (uuid_known(identity)) { text += ' ' + uuid_text(identity); }
+    return text;
 }
 
 // The ordinals of `enumerated` (entry i is ordinal i's identity) in canonical order. The same set
