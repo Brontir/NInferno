@@ -669,7 +669,8 @@ def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wd
         for f in (profile, publish):
             f.unlink(missing_ok=True)  # never an earlier run's file
         if smi_id:
-            sampler = gpu.Sampler(smi_id).start()
+            # The tune runs for minutes and has no short window: 500 ms keeps its file small.
+            sampler = gpu.Sampler(smi_id, period_ms=500).start()
         t0 = sampler.now() if sampler else 0
         run["configs"] = lab_configs(model)
         menu = ["--configs", ",".join(run["configs"])] if run["configs"] else []

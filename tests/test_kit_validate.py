@@ -65,6 +65,33 @@ class Rules(unittest.TestCase):
         p = metric(r, "prefill")
         self.assertTrue(p["verdict"].startswith("contradicts"))  # 3000 against 3400: 12 % off
 
+    def test_clock_and_power_of_each_metric(self):
+        def loaded(**kw):
+            p = one_pass(**kw)
+            t = p["telemetry"]["t"]
+            p["telemetry"]["columns"]["clocks.sm"] = [2400.0 if 5 <= x < 7 else 2800.0 for x in t]
+            p["telemetry"]["columns"]["power.draw"] = [570.0 if 5 <= x < 7 else 300.0 for x in t]
+            return p
+        r = validate.validate(doc(passes=[loaded(), loaded(decode=50.5)]))
+        self.assertEqual((metric(r, "prefill")["sm_clock_mhz"], metric(r, "prefill")["power_w"]), (2400, 570))
+        self.assertEqual((metric(r, "decode")["sm_clock_mhz"], metric(r, "decode")["power_w"]), (2800, 300))
+        self.assertIn("at 2400 MHz, 570 W", validate.render(r))
+        # The instant draw, where the driver reads it, over the one-second average.
+        p = loaded()
+        p["telemetry"]["columns"]["power.draw.instant"] = [575.0 if 5 <= x < 7 else 290.0
+                                                          for x in p["telemetry"]["t"]]
+        r = validate.validate(doc(passes=[p, loaded(decode=50.5)]))
+        self.assertEqual(metric(r, "prefill")["power_w"], 572)  # median of 575 and 570 samples
+        # An excluded request's window (a reused prefix) is not the speed's: its samples are left out.
+        p = loaded()
+        p["requests"] = [{"kind": "prefill", "excluded": "a reused prefix (cache_n > 0)"}]
+        q = loaded(decode=50.5)
+        q["telemetry"]["columns"]["clocks.sm"] = [2600.0 if 5 <= x < 7 else 2800.0
+                                                  for x in q["telemetry"]["t"]]
+        self.assertEqual(validate.window_load([p, q], "prefill")[0], 2600)
+        # No clock column (an old file): nothing is recorded or printed.
+        self.assertNotIn("sm_clock_mhz", metric(validate.validate(doc()), "prefill"))
+
     def test_schema(self):
         bad = doc()
         bad["schema"] = "ninferno-user-run/2.0"
