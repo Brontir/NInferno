@@ -2361,7 +2361,10 @@ below sm_89 (open).
 of kKvSmRate (choice_constants.h): the bytes it reads a SM-clock at the board's reference clock, for
 the family's kernel and the codec. A row's KV then costs the longer of its DRAM time and SMs x clock x
 that rate, in place of kKvReadFactor's codec factor (read on another family's kernel). Rows: Turing,
-Qwen3.5's int8 grouped kernel 3.58 B a SM-clock, Gemma 4's BF16 full-layer kernel 2.67.
+Qwen3.5's int8 grouped kernel 3.58 B a SM-clock, Gemma 4's BF16 full-layer kernel 2.67, each for
+the geometry it was read on (a full layer's head width, query and KV heads: 256 / 16 / 4 on Qwen3.5
+9B, 512 / 16 / 1 on Gemma 4 12B; the grouped kernels' rows and tiles follow the group): another
+geometry keeps the codec's factor.
 
 **Why.** The long-context decode rows (DECISIONS 70's verification, Long-context decode) put the RTX 2080 Ti's KV at 1.70 of
 its DRAM time on int8 and 2.16 on Gemma's BF16 where the estimate took 1.0 and 3.38. The nsys census of
@@ -2377,7 +2380,7 @@ CTAs bound it is read on one stream only.
 
 **Check.** The 9 Turing long rows -12 .. +9 % before, -4 .. +2 % after; Turing, Ada, Blackwell and
 Ampere's 63 long rows rms 3.0 %. Turing's 12 short-context rows keep their stated rms (the KV term is
-small there); speed_measured.json's 26 one-stream rows rms 4.73 -> 4.71 %. Open: kKvReadFactor's Turing
+small there); speed_measured.json's rows name no head geometry: unchanged. Open: kKvReadFactor's Turing
 rows were read on Qwen at 22K against int8 taken at the DRAM rate (now 1.55 of it on a 2080 Ti): its
 BF16 3.38 for Qwen is that much low; Qwen3.5's MoE family (qwen3_5_moe_text) keeps 1.0 (its kernel
 not censused on Turing); Volta's kernels (the GV100's census queued).

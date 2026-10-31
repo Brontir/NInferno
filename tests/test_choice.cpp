@@ -277,6 +277,21 @@ void decodes_from_facts(const json& fixture) {
     // The worst: the RTX 4070 Ti at 82K (+6 .. +15 %, measured twice; open).
     check(longs == 63 && long_open == 9 && std::sqrt(long_sq / longs) < 0.04 && long_worst < 0.16,
           "long-context decode on Turing, Ada, Blackwell and Ampere within 4 %");
+    {
+        // kKvSmRate holds for the geometry it was read on: Gemma 4 12B's one KV head; two (the 26B's
+        // group 8) keep the codec's factor.
+        const json& g            = fixture.at("models").at("gemma-4-12b");
+        const ch::CardFacts tu   = card_of(fixture.at("cards").at("RTX 2080 Ti"));
+        const ch::QuantOption qo = quant_of("Q4_K_M", g.at("quants").at("Q4_K_M"));
+        ch::Candidate c;
+        c.kv = c.ring            = KvCacheStorage::BFloat16;
+        const ch::ModelFacts own = model_at(g, "Q4_K_M");
+        ch::ModelFacts other     = own;
+        other.full_kv_heads      = 2;
+        const double a           = ch::speed_of(own, tu, qo, c, 1, 82000).decode_per_stream;
+        const double b           = ch::speed_of(other, tu, qo, c, 1, 82000).decode_per_stream;
+        check(a > b * 1.1, "the SM rate holds only for its own head geometry");
+    }
 }
 
 // The kernels a step launches are the graph's (kDecodeLaunches against the nsys census,
