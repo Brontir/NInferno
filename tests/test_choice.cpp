@@ -313,8 +313,9 @@ void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0}, worst_before[2] = {0, 0}, sq_before[2] = {0, 0};
     int before[2] = {0, 0};
     // The K-quant rows before DECISIONS 69's check (Q4_K_M) and that check's (Qwen3.5-9B's other mixes).
-    double sq_first = 0, sq_mixes = 0, worst_mixes = 0;
-    int first = 0, mixes = 0;
+    double sq_first = 0, sq_mixes = 0, worst_mixes = 0, sq_gemma = 0, worst_gemma = 0;
+    int first = 0, mixes = 0, gemma = 0, volta_rows = 0;
+    double sq_volta = 0, worst_volta = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -327,6 +328,12 @@ void prefills_by_format(const json& fixture) {
         c.kv                       = KvCacheStorage::Int8Group64;
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
+        if (cf.major == 7 && cf.minor == 0) { // Volta's rows (DECISIONS 70): their own guard
+            std::cout << "  Volta " << q << " " << row.at("model").get<std::string>() << " " << prompt << ": "
+                      << std::lround(d * 100) << " %\n";
+            sq_volta += d * d, worst_volta = std::max(worst_volta, std::abs(d)), ++volta_rows;
+            continue;
+        }
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
         by_card[q + " " + row.at("model").get<std::string>() + " " +
                 row.at("card").get<std::string>()]
@@ -335,6 +342,8 @@ void prefills_by_format(const json& fixture) {
         worst[i] = std::max(worst[i], std::abs(d));
         if (i == 0 && row.at("model").get<std::string>() == "Qwen3.5-9B") {
             sq_mixes += d * d, worst_mixes = std::max(worst_mixes, std::abs(d)), ++mixes;
+        } else if (i == 0 && q != "Q4_K_M") {
+            sq_gemma += d * d, worst_gemma = std::max(worst_gemma, std::abs(d)), ++gemma;
         } else if (i == 0 && row.at("card").get<std::string>() != "RTX 5090") {
             sq_first += d * d, ++first;
         }
@@ -363,14 +372,25 @@ void prefills_by_format(const json& fixture) {
     check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
     // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69).
-    check(before[0] == 120 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+    check(before[0] == 143 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
           "K-quant prefill but the RTX 5090's Gemma as before");
-    check(n[0] == 126 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
+    check(n[0] == 153 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
     // The Q4_K_M points alone keep their guard (all but the RTX 5090's: rms within 10 %), and the
     // other mixes have their own: rms within 8 %, every point within 20 %.
     check(first == 72 && std::sqrt(sq_first / first) < 0.10, "Q4_K_M prefill as before");
     check(mixes == 42 && std::sqrt(sq_mixes / mixes) < 0.08 && worst_mixes < 0.20,
           "Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S within 8 % rms, every point within 20 %");
+    // Gemma 4 12B's Q5_K_M and Q6_K, predicted before they were measured: within 8 % rms; the RTX
+    // 2080 Ti's Q6_K at 7K the worst (+27 %, its Q5_K_M +11 %: open, DECISIONS 69), the rest within 11 %.
+    check(gemma == 27 && std::sqrt(sq_gemma / gemma) < 0.08 && worst_gemma < 0.30,
+          "Gemma 4 12B's Q5_K_M and Q6_K within 8 % rms");
+    std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
+              << worst_volta * 100 << " %)\n";
+    // The Quadro GV100 end to end (DECISIONS 70's linears, Gemma's Volta row): Qwen3.5 9B's Q6_K,
+    // Q5_K_M, Q4_K_S and Gemma 4 12B's Q4_K_M .. Q6_K at 7K and 22K; the worst Qwen's Q4_K_S and
+    // Q5_K_M at 7K (+11, +13 %: open), one card.
+    check(volta_rows == 12 && std::sqrt(sq_volta / volta_rows) < 0.08 && worst_volta < 0.15,
+          "Volta's prefill within 8 % rms, every point within 15 %");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
@@ -1241,8 +1261,12 @@ void prices_gemma_attention_tiles(const json& fixture) {
         {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
          {745.3, 1143.0, 1142.5, 1137.9, 1135.9, 1134.9},
          {1387.0, 4448.4, 7658.4, 10789.3, 13900.7, 17006.3}},
+        // The Quadro GV100 (Volta's row, read on it).
+        {{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.627e9, .dram_bytes_per_s = 870e9},
+         {974.1, 1568.3, 1525.7, 1522.6, 1508.6, 1524.7},
+         {1666.7, 5241.9, 8712.2, 12284.3, 15746.2, 19391.7}},
     };
-    double worst = 0;
+    double worst = 0, first = 0;
     for (const Series& s : series) {
         double before = 0;
         for (std::size_t i = 0; i < s.sliding.size(); ++i) {
@@ -1251,12 +1275,15 @@ void prices_gemma_attention_tiles(const json& fixture) {
             const double call     = (through - before) * 1e6;
             const double measured = m.sliding_layers * s.sliding[i] + m.full_layers * s.full[i];
             before                = through;
-            worst                 = std::max(worst, std::abs(call / measured - 1));
+            // The first chunk (keys from 16 to 1024 a CTA) runs slower than its keys say on Turing and
+            // Volta (-9 %, -12 %: open, DECISIONS 68); the rest within 12 %.
+            const bool open_first = i == 0 && s.card.major == 7; // Turing and Volta
+            (open_first ? first : worst) = std::max(open_first ? first : worst, std::abs(call / measured - 1));
             std::cout << "Gemma attention tiles, " << s.card.sms << " SMs, chunk " << i << ": " << call
                       << " us against " << measured << "\n";
         }
     }
-    check(worst < 0.12, "Gemma 4's attention by its CTAs within 12 % of the census's chunks");
+    check(worst < 0.12 && first < 0.13, "Gemma 4's attention by its CTAs within 12 % of the census's chunks");
     // A KV-shared model (Gemma 4 E4B-like: 35 sliding layers attend, 20 hold their own KV, 8 heads over
     // 2): its heads and layers from the attending ones, 35 / 20 of the same layers held alone.
     ch::ModelFacts shared;

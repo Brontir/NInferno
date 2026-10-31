@@ -2133,6 +2133,14 @@ full layers' (513 CTAs of 256 threads at 229 registers) one: 430 / 575 SM-clocks
 and BF16 paths Ada's kernel takes). One card: transferred. The prefill estimate of Gemma 4 12B on the
 RTX 2080 Ti had +16 .. +25 % from its attention's share (DECISIONS 69's open point).
 
+**Volta's row for Gemma 4's kernel** (31.10): the Quadro GV100's census of Gemma 4 12B Q4_K_M at 7K
+tokens (Volta's m8n8k4 route of the kernel, `kGemma4VoltaHmma`, same grids: sliding 65 x 8 CTAs of 128
+threads at 255 registers and 44 KiB, two a SM by both; full 513 CTAs of 256 threads, 89 KiB, one).
+615 / 805 SM-clocks a key (sliding -16 .. +3 %, the first chunk the -16 %; full -1 .. +1 %), 1.4x
+Turing's. The first chunk, where a CTA holds 16 .. 1024 keys, runs slower than its keys say on Turing
+(-9 %) and Volta (-12 % of the chunk): open, not a per-CTA constant (two levels of data, one
+unknown each). One card: transferred.
+
 ## 69. A dense K-quant's prefill linears from ggml's matrix kernel's tiles (31.10, measured)
 
 **What changed.** A dense model's K-quant linears (Q4_K_M ... Q6_K: `WeightClass::KQuant`) were priced
@@ -2206,6 +2214,13 @@ Q6_K and Q5_K_M rows went from +14 .. +16 % to 0 .. +4 %, its Q4_K_M from 0 .. +
 every K-quant point of the fixture rms 4.5 -> 3.5 %, worst 16.4 -> 12.1 % (Qwen3.5 9B Q4_K_M on the
 RTX 4090's 3K prompt).
 
+**Gemma 4 12B's Q5_K_M and Q6_K** (31.10, DECISIONS 69's law, predicted before the measurement):
+mpref.sh rows at 7K and 22K on the seven cards (master f8d4399d): 26 of 27 points within -3 .. +11 %
+(rms with the outlier 6 %). Open: the RTX 2080 Ti's Q6_K at 7K runs +27 % slower than the estimate
+(1150 prompt tokens a second; its Q5_K_M 1353, +11 %), where every other card's Q6_K runs 0.92 .. 0.96
+of its Q5_K_M and the 2080 Ti's 0.85; 1.4 GiB free after 9.1 GiB of weights (its 22K row did not
+fit). A census is queued.
+
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 
 **What changed.** Volta has no int8 or FP16-accumulate mma.sync path the other generations' tiles take:
@@ -2229,7 +2244,8 @@ chunk recurrence and its preparation), the rest 56 bytes a token, layer and hidd
 tokens (nsys 2025.1: the system's 2026.3 records no kernel on Volta): the GEMM's calls -4 .. 0 %, the
 decode -2 .. +1 %, the cast and epilogue at 0.75 of the DRAM rate (-21 .. -27 % on a tenth of the
 time); the linears together Q8_0 -2.3 %, Q6_K +1.2 %. One card: transferred (DECISIONS 52: an
-architecture's facts). Not read: the attention (Qwen's sm70 flash kernel, Gemma 4's) keeps its share.
+architecture's facts). Not read: Qwen's attention (its sm70 flash kernel) keeps its share; Gemma 4's is Volta's row of
+DECISIONS 68.
 
 **Where the route is not CUTLASS** (the review): CUTLASS is built for sm_70 alone, so an sm_72 board
 (Jetson Xavier) keeps the share, as does a call under 17 tokens (the HMMA band); a tiled format's call (Q8_0, Q4_K, Q5_K) under 256 tokens on a board
@@ -2239,3 +2255,11 @@ segments, its gate and up as `linear_swiglu`); Gemma 4 and the generic dense pas
 v and gate-up calls directly (a separate `gelu_tanh_mul` after the gate-up) and cast once a call, a few
 per cent of their linears' time. A grid of at most SMs CTAs (a short call of few rows) is priced at two
 tiles' time, not a lone tile's.
+
+
+**The Quadro GV100 end to end** (31.10): mpref.sh rows (lgv100's kit build fd6e572c) of Qwen3.5 9B's
+Q6_K, Q5_K_M, Q4_K_S and Gemma 4 12B's Q4_K_M, Q5_K_M, Q6_K at 7K and 22K against the estimate with
+DECISIONS 70's linears and Gemma's Volta row: rms 6.4 %, -6 .. +13 %. Open: Qwen's Q4_K_S and Q5_K_M
+at 7K (+13, +11 %) where its Q6_K is +4 %: the GV100 runs Qwen's Q6_K faster than both (3017 against
+2737 and 2742 prompt tokens a second), the decode costs read on the Q4_K_M file give them the other
+order.
