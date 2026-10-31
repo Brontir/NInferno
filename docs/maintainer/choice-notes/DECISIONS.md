@@ -2443,11 +2443,14 @@ long-context Q4_K_M at 8 rows +16 % (open). The Quadro GV100's 12 points stay ou
 census out of decode_census.json: its one-stream repeats spread 9 .. 11 % and its Q8_0 runs one stream
 slower than two (open: measured again before Volta gets rows).
 
-**The big models' steps at a long context** (31.10, verification): mbatchl.sh steps at 1, 2, 4 and 8 rows
-(each row its own ~18K-token prompt and 6000 tokens; the context the rows' mean prompt + 3000, within
-about 3000 tokens) of Qwen3.6 35B-A3B's UD-Q3_K_S and UD-Q4_K_M and Qwen3.8 27B's UD-Q4_K_XL on the RTX
-5090 and 4090 and the 35B's UD-Q3_K_S on the 5070 Ti (the others refused there: 16 GB), predicted before
-the measurement (speed_measured.json, rows marked long): 26 points, rms 5.1 %, -13 .. +7 %. Open: the
-35B's UD-Q4_K_M at 4 and 8 rows, -11 and -13 % on the 5090, -4 and -9 % on the 4090 (the estimate
-slower: its routed banks' share at many rows; Blackwell's kMoeRoutedEta was read on UD-IQ3_XXS and
-UD-Q3_K_S only).
+**The big models' steps at a long context** (31.10, verification): mbatchl.sh steps (each row its own
+~18K-token prompt and 6000 tokens; the context the rows' mean prompt + 3000, within about 3000 tokens;
+row counts with fewer than 4 windows left out) of Qwen3.6 35B-A3B's UD-Q3_K_S and UD-Q4_K_M and Qwen3.8
+27B's UD-Q4_K_XL at 1, 2, 4 and 8 rows on the RTX 5090 and 4090 (the 5090's 35B 1- and 2-row phases
+under 4 windows), and the 35B's UD-Q3_K_S at 1 and 2 rows on the 5070 Ti (its pool held three; the
+others refused there), each row under the KV the server picked (its capacity line: the 4090's 35B
+UD-Q4_K_M K8V4 and 27B NVFP4 to hold their context, int8 elsewhere), predicted before the measurement
+(speed_measured.json, rows marked long): 22 points, rms 4.8 %, -13 .. +7 %. Open: the 35B's UD-Q4_K_M
+at 4 and 8 rows on the 5090, -11 and -13 % (the estimate slower; the 4090's -1, -5 %): Blackwell's
+kMoeRoutedEta was read on UD-IQ3_XXS and UD-Q3_K_S only. The fixture's older rows of these two models
+on the 4090 name int8 KV, a choice the server's capacity lines of those runs would confirm (open).

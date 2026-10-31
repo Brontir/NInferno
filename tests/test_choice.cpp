@@ -213,7 +213,7 @@ void reproduces_the_measurements(const json& fixture) {
     std::cout << "big models' long steps " << bigs << " points: rms " << std::sqrt(big_sq / std::max(bigs, 1)) * 100
               << " %, worst " << big_worst * 100 << " %\n";
     // The worst: Qwen3.6 35B-A3B's UD-Q4_K_M at 4 and 8 rows on the RTX 5090 (-11, -13 %; open).
-    check(bigs == 26 && std::sqrt(big_sq / bigs) < 0.06 && big_worst < 0.14,
+    check(bigs == 22 && std::sqrt(big_sq / bigs) < 0.06 && big_worst < 0.14,
           "the big models' steps at a long context within the model's error");
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
