@@ -254,11 +254,16 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // same at every T so that a token's bytes do not depend on T. nullopt: the class was not measured,
 // and its default route stays A16.
 struct A8Route {
-    std::array<int, kR8Tokens> gate_up{};
-    std::array<int, kR8Tokens> gate_up_frag{};
+    // The R8 schedule of a published 2-bit codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S) at each
+    // T; every other R8 bank, and a ggml_frag_v1 bank, takes w4r1 (schedule 0) at every T.
+    std::array<int, kR8Tokens> gate_up_2bit{};
     int down = -1;
-    [[nodiscard]] int gate_up_at(std::int32_t tokens, bool frag) const {
-        return (frag ? gate_up_frag : gate_up)[static_cast<std::size_t>(tokens - 1)];
+    [[nodiscard]] int gate_up_at(std::int32_t tokens, const Weight& bank) const {
+        const bool two_bit = bank.qtype == QType::GGML_IQ2_XXS ||
+                             bank.qtype == QType::GGML_IQ2_XS || bank.qtype == QType::GGML_IQ2_S;
+        return two_bit && bank.layout != QuantLayout::GgmlFrag
+                   ? gate_up_2bit[static_cast<std::size_t>(tokens - 1)]
+                   : 0;
     }
 };
 [[nodiscard]] std::optional<A8Route> a8_default_route();

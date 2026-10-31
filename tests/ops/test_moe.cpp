@@ -692,7 +692,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
             const auto p = moe::select_plan(l.weights, c.config, t, false);
             const std::string label = c.label + " A8 default T=" + std::to_string(t) + " (" +
                                       moe::plan_name(p) + ")";
-            const int gate_up   = route ? route->gate_up_at(t, false) : -1;
+            const int gate_up   = route ? route->gate_up_at(t, l.weights.gate_up) : -1;
             const bool expected = gate_up >= 0 ? p.gate_up_r8 == gate_up && p.down_r8 < 0 &&
                                                      (down < 0 || p.down_schedule == down)
                                                : p.gate_up_r8 < 0 && p.down_r8 < 0;
@@ -924,7 +924,7 @@ int check_r8_table() {
             if (q == QType::GGML_IQ3_XXS) {
                 // The measured down (1 x 4, which the heuristic route would take to the class's
                 // down schedule) under the class's A8 gate/up at decode widths.
-                const int s   = route && decode ? route->gate_up_at(t, false) : -1;
+                const int s   = route && decode ? route->gate_up_at(t, l.weights.gate_up) : -1;
                 const auto r8 = s >= 0 ? moe::r8_schedule_info(s) : moe::R8ScheduleInfo{0, 0};
                 expected      = s >= 0 ? "r8.w" + std::to_string(r8.warps) + "r" +
                                         std::to_string(r8.rows) + "|" + tuned_down
@@ -977,7 +977,7 @@ int check_r8_k_limit() {
     int failures = 0;
     for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
         const auto p = moe::select_plan(l.weights, c.config, t, false);
-        const bool a8 = route && t <= 2 && route->gate_up_at(t, false) >= 0;
+        const bool a8 = route && t <= 2 && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
             c.label + " T=" + std::to_string(t) + " (" + moe::plan_name(p) + ")";
         if ((p.gate_up_r8 >= 0) != a8 || p.down_r8 >= 0) {
@@ -1057,7 +1057,7 @@ int check_expert_policy() {
         }
         for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
             const auto p = moe::select_plan(w, config, t, false);
-            const int expected = a8 && route ? route->gate_up_at(t, false) : -1;
+            const int expected = a8 && route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 >= 0) {
                 std::cerr << label << " T=" << t << ": " << moe::plan_name(p) << ", gate/up R8 "
                           << expected << " expected\n";
@@ -1065,7 +1065,7 @@ int check_expert_policy() {
             }
         }
     }
-    // A Q4_0 or Q4_K frag bank under an A8 policy takes the class's frag route (its fragment-order
+    // A Q4_0 or Q4_K frag bank under an A8 policy takes w4r1 at every T (its fragment-order
     // R8 codecs, moe_r8.cuh); an IQ3_S bank labelled ggml_frag_v1 (no frag codec; the grouped
     // kernel has no frag map for it either, so only the R8 admission is asked) stays on A16.
     for (const QType q : {QType::GGML_Q4_0, QType::GGML_Q4_K}) {
@@ -1079,7 +1079,7 @@ int check_expert_policy() {
         w.expert_policy  = ops::LinearPolicy::AllowA8;
         for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
             const auto p       = moe::select_plan(w, config, t, false);
-            const int expected = route ? route->gate_up_at(t, true) : -1;
+            const int expected = route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 != -1 || !moe::r8_admits(w, w.gate_up, t)) {
                 std::cerr << "frag " << qname(q) << " T=" << t << ": took " << moe::plan_name(p)
                           << '\n';
