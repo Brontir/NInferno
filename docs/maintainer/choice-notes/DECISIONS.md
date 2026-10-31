@@ -2402,7 +2402,7 @@ fewer than 4 windows left out), Qwen3.5 9B's Q4_K_M and Q8_0 on seven cards and 
 the five of sm_89 and up, predicted before the measurement (decode_measured.json, rows marked long from
 mbatchl): 72 points, rms 3.2 %. The nsys census of the same steps (mdcenb.sh, 3000 tokens, Qwen
 Q4_K_M, the int8 grouped kernel per call against every row's KV bytes) reads the KV term directly: the
-RTX 2080 Ti 294, 322, 307, 308 GB/s at 1, 2, 4, 8 rows (80 .. 86 % of the 376 DECISIONS 71 reads at
+RTX 2080 Ti 294, 322, 307, 308 GB/s at 1, 2, 4, 8 rows (78 .. 86 % of the 376 DECISIONS 71 reads at
 82K: the rate holds at every row count, its gap at 18K not a fixed per-call cost, open), the RTX 5090
 1256 .. 1496 GB/s and the 5070 Ti 697 .. 760 (74 .. 88 % and 82 .. 90 % of 0.946 of their DRAM rate).
 Open: the 8-row steps where the estimate is slow (the 2080 Ti's Qwen Q4_K_M -9 %, the 5070 Ti's -8 %,
