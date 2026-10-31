@@ -89,9 +89,10 @@ def main():
         cost.setdefault(gen_of[r["card"]], []).append((r["card"], tg, ts, CLASS.get(r["quant"], "kq")))
     t_gemv, t_small = {}, {}
     for gen, v in cost.items():
-        t_gemv[gen] = statistics.mean(x[1] for x in v if (gen, x[3]) not in SM_BOUND)
+        g = [x[1] for x in v if (gen, x[3]) not in SM_BOUND]
+        t_gemv[gen] = statistics.mean(g)
         t_small[gen] = statistics.mean(x[2] for x in v)
-        print(f"{gen}: t_gemv {t_gemv[gen] * 1e6:.2f} us ({min(x[1] for x in v) * 1e6:.2f}..{max(x[1] for x in v) * 1e6:.2f}), "
+        print(f"{gen}: t_gemv {t_gemv[gen] * 1e6:.2f} us ({min(g) * 1e6:.2f}..{max(g) * 1e6:.2f}), "
               f"t_small {t_small[gen] * 1e6:.2f} us ({min(x[2] for x in v) * 1e6:.2f}..{max(x[2] for x in v) * 1e6:.2f}), "
               f"{len({x[0] for x in v})} card(s)")
 

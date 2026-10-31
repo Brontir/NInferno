@@ -154,7 +154,8 @@ inline constexpr DecodeLaunches kDecodeLaunches[] = {
 // Turing: a weight-reading kernel 7.2-11.2 us beyond its bytes (the three models' means), one card. A row of one card prices only its own boards'
 // estimate (marked transferred; no decision reads it: the choice prices on a reference card's
 // generation; DECISIONS 60); a generation without a row takes Ada's (transferred). Ampere (RTX 3060,
-// one card): a weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2.
+// one card): a weight-reading kernel 3.1-5.8 us, no PDL, no Ada L2. Volta (Quadro GV100, one card):
+// its own row, a weight-reading kernel's from Q8_0 alone (its K-quants: kWeightSmRate, DECISIONS 72).
 struct KernelCost {
     std::string_view generation;
     double gemv;  // seconds a weight-reading kernel beyond its bytes
@@ -176,7 +177,8 @@ inline constexpr KernelCost kKernelCost[] = {
 // linear in log2 C between points; beyond the last, the last's): measured, the mean over the class's
 // models and the generation's cards, the launches at kDecodeLaunches and kKernelCost. Ada K-quants
 // 0.88-0.92 / 0.85-0.89 / 0.74-0.85 at 2 / 4 / 8 rows (Gemma 4's shapes the lowest), Q8 0.92-0.95 /
-// 0.90-0.93 / 0.84-0.89; Blackwell K-quants 0.92-0.93 / 0.78-0.81 / 0.71-0.81. Turing: one card. A
+// 0.90-0.93 / 0.84-0.89; Blackwell K-quants 0.92-0.93 / 0.78-0.81 / 0.71-0.81. Turing: one card;
+// Volta: its Q8_0 only (its K-quants: kWeightSmRate), one card. A
 // class without rows (WeightClass::Other) takes the K-quants' and is marked transferred.
 struct RowsEta {
     std::string_view generation;

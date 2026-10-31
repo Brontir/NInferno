@@ -80,9 +80,8 @@ double rows_eta(std::string_view generation, WeightClass weights, double rows, b
         return std::any_of(std::begin(kRowsEta), std::end(kRowsEta),
                            [&](const RowsEta& r) { return r.generation == g && r.weights == w; });
     };
-    const bool own = std::any_of(std::begin(kRowsEta), std::end(kRowsEta),
-                                 [&](const RowsEta& r) { return r.generation == gen; });
-    if (!own) {
+    // A generation's own rows: the class's, else its K-quants'; without either, Ada's.
+    if (!has(gen, weights) && !has(gen, WeightClass::KQuant)) {
         gen         = kTransferGeneration;
         transferred = transferred || rows > 1;
     }
@@ -1158,7 +1157,8 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
     // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
-    const double sm_rate = weight_sm_rate(gen, rest, rows, transferred);
+    // (an MoE's rest by the file's own class: its Q8_0 tensors are not a K-quant's)
+    const double sm_rate = weight_sm_rate(gen, quant.weights, rows, transferred);
     const double share   = sm_rate > 0 ? std::min(dram_eta(gen), card.sms * card.clock_hz * sm_rate /
                                                                        card.dram_bytes_per_s)
                                        : rows_eta(gen, rest, rows, transferred);

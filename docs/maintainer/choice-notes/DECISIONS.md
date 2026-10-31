@@ -1343,7 +1343,7 @@ the tier (even one that does not fit); then the rule's pick stands.
   for Turing, a second GA10x (RTX 3070/3080/3090, A4000/A5000) for Ampere.
 - The 3060 census (29.10) gives t_gemv 4.55 us and t_small 2.61 us, and 1.8 % rms on its 12 points
   (up to +18 % on Ada's rows).
-- Volta takes Turing's rows, transferred.
+- Volta takes Turing's rows, transferred (decode: its own rows since DECISIONS 72).
 
 **The defaults this changes against master 8bbf2e72.** Ada; plan without load, 7 models x 3 cards
 x {default, 4 streams, 128K}. The measurements are on the RTX 4060 Ti:
@@ -2490,4 +2490,6 @@ kernels at one row; the launches keep the family's count). fit_decode.py derives
 
 **Check.** The GV100's 12 short-context points rms 3.4 %, worst 5.8 % (the Turing rows: up to +48 %);
 the other generations' 100 points unchanged (rms 2.4 %). Open: the long-context rows (a cool re-measure,
-mdecl3.sh, queued); a rate for V100 boards transfers by SMs x reference clock.
+mdecl3.sh, queued); a rate for V100 boards transfers by SMs x reference clock; Volta's MoE routed banks
+(K-quant kernels too, likely SM-bound) keep kMoeRoutedEta's Ada shares, no census; the 8 extra small
+kernels a Qwen step are not launches the model counts (about 40 us, 0.3 %).
