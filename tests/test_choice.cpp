@@ -324,7 +324,7 @@ void prefills_by_format(const json& fixture) {
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
-        by_card[std::string(i == 1 ? "Q8_0 " : "Q4_K_M ") + row.at("model").get<std::string>() + " " +
+        by_card[q + " " + row.at("model").get<std::string>() + " " +
                 row.at("card").get<std::string>()]
             .push_back(d);
         sq[i] += d * d;
@@ -342,7 +342,7 @@ void prefills_by_format(const json& fixture) {
         for (const double d : ds) { std::cout << " " << std::lround(d * 100) << " %"; }
         std::cout << "\n";
     }
-    std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
+    std::cout << "prefill by format: K-quants " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
     // DECISIONS 66: the tiles by linear in rounds of SMs x resident CTAs and the small kernels, no
@@ -353,9 +353,10 @@ void prefills_by_format(const json& fixture) {
     check(n[1] == 66 && tiles < 0.10 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
-    check(before[0] == 78 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
-          "Q4_K_M prefill but the RTX 5090's Gemma as before");
-    check(n[0] == 84 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+    // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards: DECISIONS 69).
+    check(before[0] == 141 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+          "K-quant prefill but the RTX 5090's Gemma as before");
+    check(n[0] == 147 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
