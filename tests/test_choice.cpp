@@ -407,14 +407,15 @@ void prefills_by_format(const json& fixture) {
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
               at("RTX 3060", q8, mf, 1).transferred,
           "Turing / Ampere prefill rows of one card are transferred");
-    // A generation without a tiles row keeps its int8 row, transferred (Volta: its own).
+    // Volta prefills Q8_0 on its CUTLASS route (DECISIONS 70: one card, transferred); a K-quant without
+    // its format in the label keeps the share, transferred too.
     ch::CardFacts volta = card_of(fixture.at("cards").at("RTX 2080 Ti"));
     volta.major = 7;
     volta.minor = 0;
     const ch::Speed v8 = ch::speed_of(mf, volta, q8, c, 1, 4096, 2048);
     const ch::Speed vk = ch::speed_of(mf, volta, kq, c, 1, 4096, 2048);
-    check(v8.transferred && std::abs(v8.prefill / vk.prefill - 1) < 1e-9,
-          "no tiles row: the int8 row, transferred");
+    check(v8.transferred && vk.transferred && v8.prefill > 0 && vk.prefill > 0 && v8.prefill != vk.prefill,
+          "Volta: Q8_0 on its CUTLASS route, the label-less K-quant on the share, both transferred");
     // An MoE keeps its MoE row whatever its weights.
     ch::ModelFacts moe        = mf;
     moe.experts               = 128;
@@ -1023,7 +1024,7 @@ void prices_prefill_small_kernels() {
     }
     check(worst < 0.25, "a prefill's small kernels by the scan's clocks and the rest's bytes within a quarter");
     const ch::CardFacts v100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.53e9, .dram_bytes_per_s = 900e9};
-    check(ch::prefill_small_seconds(m, v100, 1819) == 0, "no small-kernel census on Volta: unknown");
+    check(ch::prefill_small_seconds(m, v100, 1819) > 0, "Volta's small kernels: the GV100's census (DECISIONS 70)");
 }
 
 // An MoE's whole prefill through the tiles (DECISIONS 66): the model's facts (speed_measured.json)

@@ -2205,3 +2205,28 @@ RTX 5090 per element (Q4_K 45.5 = 2 x 22.75). One card: transferred. In the esti
 Q6_K and Q5_K_M rows went from +14 .. +16 % to 0 .. +4 %, its Q4_K_M from 0 .. +4 % to +2 .. +6 %;
 every K-quant point of the fixture rms 4.5 -> 3.5 %, worst 16.4 -> 12.1 % (Qwen3.5 9B Q4_K_M on the
 RTX 4090's 3K prompt).
+
+## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
+
+**What changed.** Volta has no int8 or FP16-accumulate mma.sync path the other generations' tiles take:
+a dense prefill casts the activation to FP16, decodes each linear's weight rows to FP16 in chunks
+(`kChunkWeightBytes`, 17408 rows at K 4096, a gated pair's gate and up together), multiplies each
+chunk on CUTLASS's sm_70 GEMM (128 x 128 x 32 tiles of tokens x weight rows, two CTAs a SM) and stores
+through its epilogue (generic_volta_cutlass.cu). Its prefill was a share of the peak (no tiles row,
+no small-kernel row: `tiled_chunk_seconds` gave up). `volta_linears_seconds` prices the route:
+
+- the GEMM: a chunk's tiles in rounds of SMs x 2, each two tiles' time, a tile's K step 52.4 SM-clocks
+  (format-blind: one GEMM after the decode);
+- the decode: a weight element's SM-clocks by format — Q8_0 0.69, Q4_K 0.99, Q5_K 1.11, Q6_K 0.94 (the
+  K-quants' decode is compute, Q8_0's near its bytes), a mix by its label's format;
+- the cast (4 bytes an input element) and the epilogue (6 bytes an output, a SwiGLU pair 10; a plain
+  projection of the hidden width is stored by the GEMM) at Volta's DRAM rate.
+
+and `kSmallKernelCost` takes a Volta row: the scan 0.381 SM-clocks a token and state element (the
+chunk recurrence and its preparation), the rest 56 bytes a token, layer and hidden element.
+
+**Read** on the Quadro GV100's census of Qwen3.5 9B's Q8_0, Q6_K and Q4_K_M (the MTP file) at 7K
+tokens (nsys 2025.1: the system's 2026.3 records no kernel on Volta): the GEMM's calls -4 .. 0 %, the
+decode -2 .. +1 %, the cast and epilogue at 0.75 of the DRAM rate (-21 .. -27 % on a tenth of the
+time); the linears together Q8_0 -2.3 %, Q6_K +1.2 %. One card: transferred (DECISIONS 52: an
+architecture's facts). Not read: the attention (Qwen's sm70 flash kernel, Gemma 4's) keeps its share.
