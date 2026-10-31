@@ -2333,3 +2333,9 @@ Qwen3.5 9B Q6_K at 2 and 4 rows +25, +20 % (the estimate faster).
 9216, the 9B's heads, KV and GDN, tied embeddings), its Q4_K_M by its linears' formats, mpref.sh rows at
 7K and 22K on eight cards predicted before the measurement: -6 .. +9 % on the seven (the RTX 5070 Ti the
 +9, +7), the Quadro GV100 +13, +1 %. Facts as plan_facts derives them from the GGUF's metadata (prefill_measured.json).
+
+**Long prompts** (31.10, verification): mprefl.sh rows at 41K and 82K tokens (the median of three
+slices, master f8d4399d; the Quadro GV100 fd6e572c) of Qwen3.5 9B's Q4_K_M and Q8_0 and Gemma 4 12B's
+Q4_K_M on seven cards against the estimate as it stood (the attention laws of DECISIONS 68 read up to
+22K): 42 points, rms 5.1 %; the consumer cards -6 .. +10 % (the RTX 5090's Q8_0 the +10), the GV100's
+Qwen -5 .. -14 % (its attention the share's, DECISIONS 70), its Gemma +3, -1 %.
