@@ -2395,17 +2395,20 @@ seconds and 210 .. 825 MHz under a thermal slowdown (reason 0x20) for the rest, 
 (the memory's heat, not read): the board's cooling, not a law.
 
 **Steps at a long context** (31.10, verification of DECISIONS 71 and the rows' KV term): mbatchl.sh
-steps at 1 .. 8 rows (1, 2, 4, 8; the RTX 3060's Q8_0 5 and 6 where 8 never held), each row its own ~18K-token prompt and 6000 tokens (the server's 5-second
-windows whose mean batch is C, the median; context the rows' mean prompt + 3000), Qwen3.5 9B's Q4_K_M
-and Q8_0 and Gemma 4 12B's Q4_K_M on seven cards, predicted before the measurement (decode_measured.json,
-rows marked long from mbatchl): 77 points, rms 3.3 %. The nsys census of the same steps (mdcenb.sh,
-Qwen Q4_K_M, the int8 grouped kernel per call against every row's KV bytes) reads the KV term directly:
-the RTX 2080 Ti 294, 322, 307, 308 GB/s at 1, 2, 4, 8 rows (the rate DECISIONS 71 reads holds at every
-row count; less a per-call cost, its 376), the RTX 5090 1256 .. 1496 (74 .. 88 % of its DRAM: a call's
-fixed cost, ~8 us, against 37 .. 314 MB), the RTX 5070 Ti 697 .. 760 (82 .. 90 %). Open: the 8-row
-steps where the estimate is slow (the 2080 Ti's Qwen Q4_K_M -9 %, the 5070 Ti's -8 %, the 4060 Ti's -6
-%): the rest of the step, not the KV (the 2080 Ti's 8-row step less its attention kernels 13.1 ms
-against the estimate's 16.8), the open 8-row term of the dense steps above; the RTX 3060's Qwen Q4_K_M
-at 8 rows +14 % (its 4 rows +1 %). Gemma 4 12B at 8 rows on the 12 GB RTX 3060 and 11 GB 2080 Ti plans
-an 8,192-token KV and refuses the ~18K prompts (HTTP 400); its server then segfaults at exit (open,
-being reproduced).
+steps at 1, 2, 4 and 8 rows, each row its own ~18K-token prompt and 6000 tokens (the server's 5-second
+windows whose mean batch is C, the median; such windows pool the C-row phase with the ends of the later
+phases, so the context, the rows' mean prompt + 3000, holds within about 3000 tokens; row counts with
+fewer than 4 windows left out), Qwen3.5 9B's Q4_K_M and Q8_0 on seven cards and Gemma 4 12B's Q4_K_M on
+the five of sm_89 and up, predicted before the measurement (decode_measured.json, rows marked long from
+mbatchl): 72 points, rms 3.2 %. The nsys census of the same steps (mdcenb.sh, 3000 tokens, Qwen
+Q4_K_M, the int8 grouped kernel per call against every row's KV bytes) reads the KV term directly: the
+RTX 2080 Ti 294, 322, 307, 308 GB/s at 1, 2, 4, 8 rows (80 .. 86 % of the 376 DECISIONS 71 reads at
+82K: the rate holds at every row count, its gap at 18K not a fixed per-call cost, open), the RTX 5090
+1256 .. 1496 GB/s and the 5070 Ti 697 .. 760 (74 .. 88 % and 82 .. 90 % of 0.946 of their DRAM rate).
+Open: the 8-row steps where the estimate is slow (the 2080 Ti's Qwen Q4_K_M -9 %, the 5070 Ti's -8 %,
+the 4060 Ti's -6 %): the rest of the step, not the KV (the 2080 Ti's 8-row step less its attention
+kernels 13.1 ms against the estimate's 16.8; its K-quant weights at 8 rows reach 0.74 of the DRAM rate
+against kRowsEta's 0.628, read 28.10 on an older build: the campaign is being measured again on master
+f68eca34); the RTX 3060's Qwen Q4_K_M at 8 rows +14 % (its 4 rows +1 %). Gemma 4 12B at 8 rows on the
+12 GB RTX 3060 and 11 GB 2080 Ti plans an 8,192-token KV and refuses the ~18K prompts (HTTP 400); its
+server then segfaulted at exit (being reproduced).

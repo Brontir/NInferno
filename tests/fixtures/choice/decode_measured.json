@@ -1,5 +1,5 @@
 {
- "about": "Plain decode per stream (tokens a second, the server's timings) at `concurrency` streams decoding 256 tokens each from short prompts, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model). The facts: the GGUF tensor tables (unsloth/Qwen3.5-9B-MTP-GGUF, unsloth/gemma-4-12b-it-GGUF) and the plan's. Long contexts (rows marked long: one stream decoding 513 tokens after 7K, 41K and 82K-token prompts, mdecl.sh, 2026-10-31; context = the prompt + 256, the decode's mean) of the same three files on eight cards, the GV100 among them. Steps at 1, 2, 4 and 8 rows at a long context (mbatchl.sh, 2026-10-31: each row its own ~18K-token prompt and 6000 tokens; context = the rows' mean prompt + 3000, the decode's mean).",
+ "about": "Plain decode per stream (tokens a second, the server's timings) at `concurrency` streams decoding 256 tokens each from short prompts, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model). The facts: the GGUF tensor tables (unsloth/Qwen3.5-9B-MTP-GGUF, unsloth/gemma-4-12b-it-GGUF) and the plan's. Long contexts (rows marked long: one stream decoding 513 tokens after 7K, 41K and 82K-token prompts, mdecl.sh, 2026-10-31; context = the prompt + 256, the decode's mean) of the same three files on eight cards, the GV100 among them. Steps at 1, 2, 4 and 8 rows at a long context (mbatchl.sh, 2026-10-31: each row its own ~18K-token prompt and 6000 tokens; the windows whose mean batch is C pool the C-row phase with the ends of the later phases, so the context, the rows' mean prompt + 3000, holds within about 3000 tokens; row counts other than 1, 2, 4, 8 or with fewer than 4 windows left out).",
  "models": {
   "Qwen3.5-9B-MTP": {
    "family": "qwen3_5_text",
@@ -3066,38 +3066,10 @@
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
-   "concurrency": 3,
-   "context": 21514,
-   "decode": 47.5,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 3 rows (4), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
-   "long": true
-  },
-  {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
    "concurrency": 4,
    "context": 21291,
    "decode": 45.8,
    "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 4 rows (25), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
-   "long": true
-  },
-  {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 7,
-   "context": 21547,
-   "decode": 40.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 7 rows (22), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
    "long": true
   },
   {
@@ -3423,34 +3395,6 @@
    "long": true
   },
   {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 5,
-   "context": 21301,
-   "decode": 26.8,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 5 rows (10), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
-   "long": true
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 6,
-   "context": 21302,
-   "decode": 27.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 6 rows (30), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l3060)",
-   "long": true
-  },
-  {
    "card": "RTX 2080 Ti",
    "model": "Qwen3.5-9B-MTP",
    "quant": "Q4_K_M",
@@ -3532,20 +3476,6 @@
    "context": 21307,
    "decode": 50.8,
    "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 2 rows (31), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
-   "long": true
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 3,
-   "context": 21514,
-   "decode": 47.0,
-   "source": "mbatchl.sh: the server's 5-second windows whose mean batch is 3 rows (63), ~18K-token prompts and 6000 tokens each, the median; master f8d4399d (the stands' kit build), 2026-10-31 (l2080)",
    "long": true
   }
  ]

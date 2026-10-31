@@ -284,7 +284,7 @@ void decodes_from_facts(const json& fixture) {
     std::cout << "long-context steps, " << long_steps << " points: rms "
               << std::sqrt(steps_sq / std::max(long_steps, 1)) * 100 << " %, worst " << steps_worst * 100 << " %\n";
     // The worst: the RTX 3060's Qwen Q4_K_M at 8 rows (+14 %, its 4 rows +1 %; open).
-    check(long_steps == 77 && std::sqrt(steps_sq / long_steps) < 0.04 && steps_worst < 0.15,
+    check(long_steps == 72 && std::sqrt(steps_sq / long_steps) < 0.04 && steps_worst < 0.15,
           "steps at 1 .. 8 rows at a long context within 4 %");
     {
         // kKvSmRate holds for the geometry it was read on: Gemma 4 12B's one KV head; two (the 26B's
