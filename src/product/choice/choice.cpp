@@ -509,16 +509,17 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 // A label's tokens (weight_class_of reads them too).
 std::vector<std::string> label_tokens(std::string_view label);
 
-// A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost), where the card's nearest
-// measured board takes it; 0 elsewhere (the classic tiles: not read).
+// A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost) where the card's nearest
+// measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation has no
+// row.
 double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                            double tokens, bool* transferred) noexcept {
     const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
                                 card.dram_bytes_per_s / 1e9};
-    if (!measured::mmq_prefill_pays(board)) { return 0; }
+    const bool mmq             = measured::mmq_prefill_pays(board);
     const std::string_view gen = generation_of(card);
     const MmqTileCost* cost    = nullptr;
-    for (const MmqTileCost& row : kMmqTileCost) {
+    for (const MmqTileCost& row : mmq ? std::span(kMmqTileCost) : std::span(kW4a8KquantCost)) {
         if (row.generation == gen) { cost = &row; }
     }
     if (cost == nullptr) { return 0; }
@@ -542,6 +543,13 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                               : 0;
     const double sms = card.sms, step = format->step + (cost->q6 - format->step) * toward;
     double clocks = 0, bytes = 0;
+    if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
+        for (const LinearShape& l : model.linears) {
+            const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);
+            clocks += l.per_token * std::ceil(tiles / sms) * (cost->c0 + l.k * step);
+        }
+        return clocks / card.clock_hz;
+    }
     for (const LinearShape& l : model.linears) {
         // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
         const double grids = l.gated ? 2 : 1, n = l.n / grids;
