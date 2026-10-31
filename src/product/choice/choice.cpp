@@ -1080,6 +1080,7 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
             kv_factor = std::max(1.0, dram_eta(gen) * card.dram_bytes_per_s /
                                            (card.sms * card.clock_hz * r.bytes_per_sm_clock));
             if (r.cards < 2) { transferred = true; }
+            break;
         }
     }
     const double row_bytes = context * kv * kv_factor + 2 * state + window_rows * ring;
