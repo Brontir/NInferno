@@ -1277,7 +1277,8 @@ void prices_gemma_attention_tiles(const json& fixture) {
             before                = through;
             // The first chunk (keys from 16 to 1024 a CTA) runs slower than its keys say on Turing and
             // Volta (-9 %, -12 %: open, DECISIONS 68); the rest within 12 %.
-            (i == 0 ? first : worst) = std::max(i == 0 ? first : worst, std::abs(call / measured - 1));
+            const bool open_first = i == 0 && s.card.major == 7; // Turing and Volta
+            (open_first ? first : worst) = std::max(open_first ? first : worst, std::abs(call / measured - 1));
             std::cout << "Gemma attention tiles, " << s.card.sms << " SMs, chunk " << i << ": " << call
                       << " us against " << measured << "\n";
         }

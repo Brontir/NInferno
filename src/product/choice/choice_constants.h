@@ -521,7 +521,7 @@ inline constexpr double kAttentionTiledMinWidth = 256;
 // Gemma 4's attention kernel (ops/softmax_attention/gemma4, BF16 or FP8 planes; DECISIONS 68). A CTA
 // is a row block of one KV head: 32 packed rows, 32 / group tokens (block_rows / G), the grid one
 // block more than the rows need, issued longest first within a head. The sliding layers' D=256
-// tile holds two CTAs a SM (40 KiB), over at most the window's keys; the full layers' D=512 tile
+// tile holds two CTAs a SM (40 KiB; Volta 44 with its scratch), over at most the window's keys; the full layers' D=512 tile
 // (group 16: the 12B; a group-8 model's full layers from 1024 tokens take the wide tile, not read)
 // one (80 KiB), over every key before its rows; where the generation chains (GenerationRow::
 // attention_chain) a full layer's grid that fills its last wave under 90 % runs persistent, its work
