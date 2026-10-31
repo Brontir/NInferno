@@ -315,7 +315,8 @@ void prefills_by_format(const json& fixture) {
     // The K-quant rows before DECISIONS 69's check (Q4_K_M) and that check's (Qwen3.5-9B's other mixes).
     double sq_first = 0, sq_mixes = 0, worst_mixes = 0, sq_gemma = 0, worst_gemma = 0;
     int first = 0, mixes = 0, gemma = 0, volta_rows = 0;
-    double sq_volta = 0, worst_volta = 0;
+    double sq_volta = 0, worst_volta = 0, sq_q3 = 0, worst_q3 = 0;
+    int q3 = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -340,7 +341,11 @@ void prefills_by_format(const json& fixture) {
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
-        if (i == 0 && row.at("model").get<std::string>() == "Qwen3.5-9B") {
+        if (i == 0 && q.rfind("Q3_K", 0) == 0) { // on MMQ's tiles; the RTX 5070 Ti's W4A8 tiles: the share
+            if (row.at("card").get<std::string>() != "RTX 5070 Ti") {
+                sq_q3 += d * d, worst_q3 = std::max(worst_q3, std::abs(d)), ++q3;
+            }
+        } else if (i == 0 && row.at("model").get<std::string>() == "Qwen3.5-9B") {
             sq_mixes += d * d, worst_mixes = std::max(worst_mixes, std::abs(d)), ++mixes;
         } else if (i == 0 && q != "Q4_K_M") {
             sq_gemma += d * d, worst_gemma = std::max(worst_gemma, std::abs(d)), ++gemma;
@@ -372,9 +377,9 @@ void prefills_by_format(const json& fixture) {
     check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
     // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69).
-    check(before[0] == 143 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+    check(before[0] == 157 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
           "K-quant prefill but the RTX 5090's Gemma as before");
-    check(n[0] == 153 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
+    check(n[0] == 167 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
     // The Q4_K_M points alone keep their guard (all but the RTX 5090's: rms within 10 %), and the
     // other mixes have their own: rms within 8 %, every point within 20 %.
     check(first == 72 && std::sqrt(sq_first / first) < 0.10, "Q4_K_M prefill as before");
@@ -384,6 +389,10 @@ void prefills_by_format(const json& fixture) {
     // 2080 Ti's Q6_K at 7K the worst (+27 %, its Q5_K_M +11 %: open, DECISIONS 69), the rest within 11 %.
     check(gemma == 27 && std::sqrt(sq_gemma / gemma) < 0.08 && worst_gemma < 0.30,
           "Gemma 4 12B's Q5_K_M and Q6_K within 8 % rms");
+    std::cout << "Q3_K_M prefill: " << q3 << " points rms " << std::sqrt(sq_q3 / q3) * 100 << " % (worst "
+              << worst_q3 * 100 << " %)\n";
+    // Qwen3.5 9B's Q3_K_M on MMQ (Q3_K's K step Q6_K's), predicted: six cards at 7K and 22K.
+    check(q3 == 12 && std::sqrt(sq_q3 / q3) < 0.07 && worst_q3 < 0.10, "Q3_K_M prefill on MMQ's tiles within 10 %");
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
               << worst_volta * 100 << " %)\n";
     // The Quadro GV100 end to end (DECISIONS 70's linears, Gemma's Volta row): Qwen3.5 9B's Q6_K,

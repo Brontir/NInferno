@@ -571,12 +571,18 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         std::string_view name;
         double bits, step;
     };
-    const Format formats[] = {{"Q4", 4.5, cost->q4}, {"Q5", 5.5, cost->q5}, {"Q6", 6.5625, cost->q6}};
+    // Q3_K (a Q3_K mix, WeightClass::Other) unpacks its high bits and 6-bit scales as Q6_K does: its K
+    // step is Q6_K's (DECISIONS 69, the census's Q3_K_M calls).
+    const Format formats[] = {
+        {"Q3", 3.4375, cost->q6}, {"Q4", 4.5, cost->q4}, {"Q5", 5.5, cost->q5}, {"Q6", 6.5625, cost->q6}};
     const std::vector<std::string> tokens_of = label_tokens(quant.label);
     const Format* format = nullptr;
     for (std::size_t i = 0; i + 1 < tokens_of.size(); ++i) {
+        // Not another engine's repacked layouts (Q4_K_R4: weight_class_of's Other).
+        const bool repacked = i + 2 < tokens_of.size() && tokens_of[i + 2].size() >= 2 && tokens_of[i + 2][0] == 'R' &&
+                              std::isdigit(static_cast<unsigned char>(tokens_of[i + 2][1]));
         for (const Format& f : formats) {
-            if (tokens_of[i] == f.name && tokens_of[i + 1] == "K") { format = &f; }
+            if (tokens_of[i] == f.name && tokens_of[i + 1] == "K" && !repacked) { format = &f; }
         }
     }
     if (format == nullptr) { return 0; }
@@ -588,7 +594,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     double clocks = 0, bytes = 0;
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
     // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
-    if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0)) { return 0; }
+    // Q3_K on the W4A8 tiles: not read (the share).
+    if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0 || format->bits < 4)) {
+        return 0;
+    }
     if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
         for (const LinearShape& l : model.linears) {
             const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);
@@ -652,7 +661,12 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Unknown: return 0;
     }
     if (!moe && gen == "volta") { return volta_linears_seconds(model, card, quant, tokens, transferred); }
-    if (!moe && quant.weights == WeightClass::KQuant) { return mmq_linears_seconds(model, card, quant, tokens, transferred); }
+    // A K-quant mix, or another class's label with a K-quant format in it (Q3_K_M: mmq_linears_seconds
+    // reads the format, 0 for none).
+    if (!moe && (quant.weights == WeightClass::KQuant || quant.weights == WeightClass::Other)) {
+        const double mmq = mmq_linears_seconds(model, card, quant, tokens, transferred);
+        if (mmq > 0 || quant.weights == WeightClass::KQuant) { return mmq; }
+    }
     if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);
     const TileCost* bank = cost(banks);

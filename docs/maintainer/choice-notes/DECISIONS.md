@@ -2197,8 +2197,7 @@ In the estimate (the fixture's prefill points): Q4_K_M rms 6.9 -> 6.7 %; Qwen3.5
 -3 .. +5 % but the RTX 4090's +4 .. +12 % (no 4090 census of MMQ), Gemma 4 12B's -7 .. +7 % on six
 cards. Open: Gemma 4 12B on the RTX 2080 Ti +19 .. +25 % (its MMQ priced right, its attention is the
 share's: Turing's Gemma kernel runs one CTA a SM, DECISIONS 66); the stream-k fixup on the RTX 5090
-runs at 1.7x its bytes' time; Q3_K mixes are not a K-quant class (`weight_class_of`), so their row
-(Q3_K's K step as Q6_K's: Ada 51.5, Ampere 49.25, Turing 91.75, Blackwell 60.5) waits for them; the
+runs at 1.7x its bytes' time; Q3_K mixes (below: Q3_K mixes on MMQ); the
 bits a weight are the whole file's.
 
 **Where MMQ does not pay: the W4A8 tiles** (`kW4a8KquantCost`, 31.10). A card whose nearest measured
@@ -2220,6 +2219,16 @@ mpref.sh rows at 7K and 22K on the seven cards (master f8d4399d): 26 of 27 point
 (1150 prompt tokens a second; its Q5_K_M 1353, +11 %), where every other card's Q6_K runs 0.92 .. 0.96
 of its Q5_K_M and the 2080 Ti's 0.85; 1.4 GiB free after 9.1 GiB of weights (its 22K row did not
 fit). A census is queued.
+
+**Q3_K mixes on MMQ** (31.10): a Q3_K mix stays `WeightClass::Other` (its decode keeps the Other
+row), but its prefill linears take DECISIONS 69's law where MMQ pays: the label's format Q3_K
+(3.4375 bits a weight) with Q6_K's K step (Q3_K unpacks its high bits and 6-bit scales as Q6_K
+does: the census's Q3_K_M calls), toward Q6_K by the file's bits as the other formats. Predicted for
+Qwen3.5 9B's Q3_K_M (Q3_K gate, up, q, k and attention gate; Q4_K the rest; 4.176 bits a weight) at 7K
+and 22K on six cards: -8 .. +3 %, rms 5.1 %. Open: where MMQ does not pay (the RTX 5070 Ti) Q3_K runs
+the classic W4A8 64 x 64 tile (two CTAs a SM, about 31.5 us a tile at K 4096) and the mix's Q4_K the
+producer-warp one: one label, two tiles, so the share prices it (+22 .. +24 %) until a model's
+linears carry their own formats. Another engine's repacked layouts (Q4_K_R4) stay out.
 
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 
