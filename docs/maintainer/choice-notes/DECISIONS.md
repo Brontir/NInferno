@@ -2449,4 +2449,5 @@ about 3000 tokens) of Qwen3.6 35B-A3B's UD-Q3_K_S and UD-Q4_K_M and Qwen3.8 27B'
 5090 and 4090 and the 35B's UD-Q3_K_S on the 5070 Ti (the others refused there: 16 GB), predicted before
 the measurement (speed_measured.json, rows marked long): 26 points, rms 5.1 %, -13 .. +7 %. Open: the
 35B's UD-Q4_K_M at 4 and 8 rows, -11 and -13 % on the 5090, -4 and -9 % on the 4090 (the estimate
-slower: its routed banks' share at many rows, kMoeRoutedEta read on UD-Q3_K_S and UD-IQ3_XXS).
+slower: its routed banks' share at many rows; Blackwell's kMoeRoutedEta was read on UD-IQ3_XXS and
+UD-Q3_K_S only).
