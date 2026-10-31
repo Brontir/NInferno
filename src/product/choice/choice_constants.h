@@ -79,7 +79,8 @@ enum class Route : std::uint8_t {
 // census's measured residual); eta_rows(C) the share of the DRAM rate C rows' weight reads reach on
 // the weight class's routes (kRowsEta, measured). Measured against tests/fixtures/choice/
 // decode_measured.json (Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, 1/2/4/8 streams, seven cards,
-// master 03afc418) and the census tests/fixtures/choice/decode_census.json;
+// master f68eca34, 2026-10-31; first master 03afc418, 2026-10-28) and the census
+// tests/fixtures/choice/decode_census.json (likewise);
 // choice-notes/lab/speed_model/fit_decode.py derives every row from the two.
 // The share of the DRAM rate a weight read long enough to saturate it reaches: per kernel 0.946-0.952
 // on GDDR6, 6X and 7 (nsys census of Qwen3.5-9B decode, 28.10: RTX 4090, 4070 Ti, 4060 Ti, 5070 Ti;
@@ -161,17 +162,17 @@ struct KernelCost {
     int cards;
 };
 inline constexpr KernelCost kKernelCost[] = {
-    {"ada", 2.34e-6, 1.93e-6, 3},    // RTX 4060 Ti, 4070 Ti, 4090
-    {"gb20x", 1.87e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
-    {"ga10x", 4.55e-6, 2.61e-6, 1},  // RTX 3060
-    {"turing", 8.30e-6, 5.09e-6, 1}, // RTX 2080 Ti
+    {"ada", 2.35e-6, 1.94e-6, 3},    // RTX 4060 Ti, 4070 Ti, 4090
+    {"gb20x", 1.90e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
+    {"ga10x", 4.72e-6, 2.55e-6, 1},  // RTX 3060
+    {"turing", 8.56e-6, 4.30e-6, 1}, // RTX 2080 Ti
 };
 
 // The share of the DRAM rate C rows' weight reads reach on a weight class's routes (C = 1: kDramEta;
 // linear in log2 C between points; beyond the last, the last's): measured, the mean over the class's
 // models and the generation's cards, the launches at kDecodeLaunches and kKernelCost. Ada K-quants
-// 0.87-0.93 / 0.86-0.89 / 0.75-0.85 at 2 / 4 / 8 rows (Gemma 4's shapes the lowest), Q8 0.92-0.95 /
-// 0.90-0.93 / 0.84-0.89; Blackwell K-quants 0.91-0.93 / 0.78-0.81 / 0.68-0.79. Turing: one card. A
+// 0.88-0.92 / 0.85-0.89 / 0.74-0.85 at 2 / 4 / 8 rows (Gemma 4's shapes the lowest), Q8 0.92-0.95 /
+// 0.90-0.93 / 0.84-0.89; Blackwell K-quants 0.92-0.93 / 0.78-0.81 / 0.71-0.80. Turing: one card. A
 // class without rows (WeightClass::Other) takes the K-quants' and is marked transferred.
 struct RowsEta {
     std::string_view generation;
@@ -181,20 +182,20 @@ struct RowsEta {
     int cards;
 };
 inline constexpr RowsEta kRowsEta[] = {
-    {"ada", WeightClass::KQuant, 2, 0.904, 3},    {"ada", WeightClass::KQuant, 4, 0.877, 3},
-    {"ada", WeightClass::KQuant, 8, 0.794, 3},    {"ada", WeightClass::Q8, 2, 0.933, 3},
-    {"ada", WeightClass::Q8, 4, 0.915, 3},        {"ada", WeightClass::Q8, 8, 0.868, 3},
+    {"ada", WeightClass::KQuant, 2, 0.906, 3},    {"ada", WeightClass::KQuant, 4, 0.875, 3},
+    {"ada", WeightClass::KQuant, 8, 0.795, 3},    {"ada", WeightClass::Q8, 2, 0.936, 3},
+    {"ada", WeightClass::Q8, 4, 0.915, 3},        {"ada", WeightClass::Q8, 8, 0.869, 3},
     {"ada", WeightClass::IQ4, 2, 0.927, 2},       {"ada", WeightClass::IQ4, 4, 0.885, 2},
     {"ada", WeightClass::IQ4, 8, 0.773, 2}, // RTX 4060 Ti, 4070 Ti: IQ4_XS, IQ4_NL
-    {"gb20x", WeightClass::KQuant, 2, 0.922, 2},  {"gb20x", WeightClass::KQuant, 4, 0.795, 2},
-    {"gb20x", WeightClass::KQuant, 8, 0.732, 2},  {"gb20x", WeightClass::Q8, 2, 0.951, 2},
-    {"gb20x", WeightClass::Q8, 4, 0.911, 2},      {"gb20x", WeightClass::Q8, 8, 0.867, 2},
-    {"ga10x", WeightClass::KQuant, 2, 0.895, 1},  {"ga10x", WeightClass::KQuant, 4, 0.774, 1},
-    {"ga10x", WeightClass::KQuant, 8, 0.744, 1},  {"ga10x", WeightClass::Q8, 2, 0.938, 1},
-    {"ga10x", WeightClass::Q8, 4, 0.906, 1},      {"ga10x", WeightClass::Q8, 8, 0.804, 1},
-    {"turing", WeightClass::KQuant, 2, 0.863, 1}, {"turing", WeightClass::KQuant, 4, 0.712, 1},
-    {"turing", WeightClass::KQuant, 8, 0.628, 1}, {"turing", WeightClass::Q8, 2, 0.961, 1},
-    {"turing", WeightClass::Q8, 4, 0.898, 1},     {"turing", WeightClass::Q8, 8, 0.687, 1},
+    {"gb20x", WeightClass::KQuant, 2, 0.924, 2},  {"gb20x", WeightClass::KQuant, 4, 0.795, 2},
+    {"gb20x", WeightClass::KQuant, 8, 0.753, 2},  {"gb20x", WeightClass::Q8, 2, 0.951, 2},
+    {"gb20x", WeightClass::Q8, 4, 0.913, 2},      {"gb20x", WeightClass::Q8, 8, 0.869, 2},
+    {"ga10x", WeightClass::KQuant, 2, 0.891, 1},  {"ga10x", WeightClass::KQuant, 4, 0.770, 1},
+    {"ga10x", WeightClass::KQuant, 8, 0.761, 1},  {"ga10x", WeightClass::Q8, 2, 0.936, 1},
+    {"ga10x", WeightClass::Q8, 4, 0.903, 1},      {"ga10x", WeightClass::Q8, 8, 0.790, 1},
+    {"turing", WeightClass::KQuant, 2, 0.870, 1}, {"turing", WeightClass::KQuant, 4, 0.721, 1},
+    {"turing", WeightClass::KQuant, 8, 0.688, 1}, {"turing", WeightClass::Q8, 2, 0.942, 1},
+    {"turing", WeightClass::Q8, 4, 0.881, 1},     {"turing", WeightClass::Q8, 8, 0.678, 1},
 };
 
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
@@ -224,7 +225,7 @@ struct PredictionError {
     std::string_view generation;
     double rms;
 };
-inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.028}, {"gb20x", 0.020}};
+inline constexpr PredictionError kDecodePredictionError[] = {{"ada", 0.0259}, {"gb20x", 0.0171}};
 
 // kDp4aOpsPerSmClock (a generation without an int8 MMA decodes its int8 route at it, choice.cpp
 // decode_int8_peak): core/cost_constants.h, a chip fact shared with spec/round_cost.h.
