@@ -220,6 +220,8 @@ void decodes_from_facts(const json& fixture) {
     double own_worst = 0; // the worst on the generations that decide
     double long_sq = 0, long_worst = 0;
     int longs = 0, long_open = 0; // Volta's long rows: open
+    double steps_sq = 0, steps_worst = 0;
+    int long_steps = 0; // several rows at an ~18K-token context (mbatchl.sh)
     for (const json& row : fixture.at("rows")) {
         const json& m            = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q      = row.at("quant").get<std::string>();
@@ -238,7 +240,9 @@ void decodes_from_facts(const json& fixture) {
                   << row.at("decode").get<double>() << " (" << d * 100 << " %)\n";
         if (row.value("long", false)) { // 7K .. 82K tokens of context (2026-10-31): their own guard
             const std::string gen = std::string(ch::generation_of(cf));
-            if (gen != "volta") {
+            if (row.at("concurrency").get<int>() > 1 || row.at("source").get<std::string>().starts_with("mbatchl")) {
+                steps_sq += d * d, steps_worst = std::max(steps_worst, std::abs(d)), ++long_steps;
+            } else if (gen != "volta") {
                 long_sq += d * d, long_worst = std::max(long_worst, std::abs(d)), ++longs;
             } else {
                 ++long_open;
@@ -277,6 +281,11 @@ void decodes_from_facts(const json& fixture) {
     // The worst: the RTX 4070 Ti at 82K (+6 .. +15 %, measured twice; open).
     check(longs == 63 && long_open == 9 && std::sqrt(long_sq / longs) < 0.04 && long_worst < 0.16,
           "long-context decode on Turing, Ada, Blackwell and Ampere within 4 %");
+    std::cout << "long-context steps, " << long_steps << " points: rms "
+              << std::sqrt(steps_sq / std::max(long_steps, 1)) * 100 << " %, worst " << steps_worst * 100 << " %\n";
+    // The worst: the RTX 3060's Qwen Q4_K_M at 8 rows (+14 %, its 4 rows +1 %; open).
+    check(long_steps == 77 && std::sqrt(steps_sq / long_steps) < 0.04 && steps_worst < 0.15,
+          "steps at 1 .. 8 rows at a long context within 4 %");
     {
         // kKvSmRate holds for the geometry it was read on: Gemma 4 12B's one KV head; two (the 26B's
         // group 8) keep the codec's factor.
