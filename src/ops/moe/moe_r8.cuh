@@ -153,8 +153,24 @@ __device__ __forceinline__ void fused_combine_tail(const GemmArgs& a, int r0, in
     }
 }
 
+// EXPERIMENT: the codecs whose loads hold the most registers (one load slot) and the warps per SM
+// their launch asks for (NINFERNO_EXP_R8_WARPS, 0: no bound).
+template <class C>
+constexpr bool r8_one_slot() {
+    return std::is_same_v<C, generic::W4a8Q6K> || std::is_same_v<C, generic::W4a8Q3K>;
+}
+#ifndef NINFERNO_EXP_R8_WARPS
+#define NINFERNO_EXP_R8_WARPS 12
+#endif
+template <class C, class S>
+constexpr int r8_min_blocks() {
+    return r8_one_slot<C>() && NINFERNO_EXP_R8_WARPS > 0
+               ? (NINFERNO_EXP_R8_WARPS * 32 + S::kThreads - 1) / S::kThreads
+               : 1;
+}
+
 template <class C, class S, int NT, Stage St, bool kPre = false>
-__global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
+__global__ __launch_bounds__(S::kThreads, (r8_min_blocks<C, S>())) void moe_r8_kernel(GemmArgs a) {
     static_assert(St != Stage::Router, "the router runs on the register MMA");
     constexpr int kSets    = St == Stage::GateUp ? 2 : 1;
     constexpr bool kFirst  = St == Stage::GateUp || St == Stage::Up; // slots gather tokens
@@ -165,7 +181,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
     constexpr int kGroup   = kSpan * kStride;
     static_assert(4 % kGroup == 0, "a 128-value K tile holds whole groups");
     using Raw = typename C::Raw;
-    constexpr bool kOneSlot = std::is_same_v<C, generic::W4a8Q6K> || std::is_same_v<C, generic::W4a8Q3K>;
+    constexpr bool kOneSlot = r8_one_slot<C>();
     extern __shared__ __align__(16) unsigned char moe_r8_shared[];
 
     // GemmArgs::pdl: the plan and the activation come from the producer.
