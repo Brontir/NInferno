@@ -440,7 +440,7 @@ void prefills_by_format(const json& fixture) {
         check(ch::prefill_linears_seconds(xl_named, ada, xl, 1024) > 0, "UD-Q4_K_XL in the IQ4 class on its linears");
         ch::ModelFacts unnamed = named;
         for (ch::LinearShape& l : unnamed.linears) { l.format.clear(); }
-        check(ch::prefill_linears_seconds(named, ada, xs, 1024) > 0 &&
+        check(ch::prefill_linears_seconds(named, ada, xs, 1024) > 0 && ch::prefill_linears_seconds(named, ada, xs, 16) == 0 &&
                   ch::prefill_linears_seconds(unnamed, ada, km, 1024) == 0 &&
                   ch::prefill_linears_seconds(with_nl, ada, xs, 1024) == 0,
               "IQ4_NL, an iq4_nl linear and an unnamed K label in the IQ4 class keep the share");

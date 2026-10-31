@@ -561,6 +561,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
                                 card.dram_bytes_per_s / 1e9};
     const bool mmq             = measured::mmq_prefill_pays(board);
+    if (mmq && tokens < kMmqMinTokens) { return 0; } // a call under the prefill band: not read (the share)
     const std::string_view gen = generation_of(card);
     const MmqTileCost* cost    = nullptr;
     for (const MmqTileCost& row : mmq ? std::span<const MmqTileCost>(kMmqTileCost) : std::span<const MmqTileCost>(kW4a8KquantCost)) {
