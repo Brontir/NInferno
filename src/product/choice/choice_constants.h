@@ -212,7 +212,7 @@ struct MoeRoutedEta {
 };
 inline constexpr MoeRoutedEta kMoeRoutedEta[] = {
     // Ada: RTX 4090 (UD-Q4_K_M, UD-Q3_K_S), 4060 Ti (UD-Q3_K_S, 7 rows its most: no 8-row point).
-    {"ada", 2, 0.928, 2}, {"ada", 4, 0.911, 2}, {"ada", 8, 0.806, 1},
+    {"ada", 2, 0.926, 2}, {"ada", 4, 0.909, 2}, {"ada", 8, 0.803, 1},
     // Blackwell: RTX 5070 Ti (UD-IQ3_XXS, UD-Q3_K_S), 5090 (UD-Q3_K_S).
     {"gb20x", 2, 0.918, 2}, {"gb20x", 4, 0.740, 2}, {"gb20x", 8, 0.634, 2},
 };

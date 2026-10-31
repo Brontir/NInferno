@@ -2442,3 +2442,17 @@ the 200 dense steps 5.81 % (from 6.05), their worst the 2080 Ti's Q6_K at 2 rows
 long-context Q4_K_M at 8 rows +16 % (open). The Quadro GV100's 12 points stay out of the fit and its
 census out of decode_census.json: its one-stream repeats spread 9 .. 11 % and its Q8_0 runs one stream
 slower than two (open: measured again before Volta gets rows).
+
+**The big models' steps at a long context** (31.10, verification): mbatchl.sh steps (each row its own
+~18K-token prompt and 6000 tokens; the context the rows' mean prompt + 3000, within about 3000 tokens;
+row counts with fewer than 4 windows left out) of Qwen3.6 35B-A3B's UD-Q3_K_S and UD-Q4_K_M and Qwen3.8
+27B's UD-Q4_K_XL at 1, 2, 4 and 8 rows on the RTX 5090 and 4090 (the 5090's 35B 1- and 2-row phases
+under 4 windows), and the 35B's UD-Q3_K_S at 1 and 2 rows on the 5070 Ti (its pool held three; the
+others refused there), each row under the KV the server picked (its capacity line: the 4090's 35B
+UD-Q4_K_M K8V4 and 27B NVFP4 to hold their context, int8 elsewhere), predicted before the measurement
+(speed_measured.json, rows marked long): 22 points, rms 4.8 %, -13 .. +7 %. Open: the 35B's UD-Q4_K_M
+at 4 and 8 rows on the 5090, -11 and -13 % (the estimate slower; the 4090's -1, -5 %): Blackwell's
+kMoeRoutedEta was read on UD-IQ3_XXS and UD-Q3_K_S only. The fixture's older rows of these two models
+on the 4090: its 35B UD-Q4_K_M steps of 30.10 (mbatch.sh) ran under K8V4 too (the server's capacity
+line), now so named; kMoeRoutedEta's Ada rows refitted on them (fit_moe_decode.py, which now leaves the
+long rows out): 0.928 / 0.911 / 0.806 -> 0.926 / 0.909 / 0.803 at 2 / 4 / 8 rows.

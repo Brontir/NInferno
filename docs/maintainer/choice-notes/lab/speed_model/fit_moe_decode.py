@@ -65,7 +65,8 @@ def terms(m, q, r, bw, gen):
 def main():
     fx = json.loads(Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "tests/fixtures/choice/speed_measured.json").read_text())
     # The MoE step rows (the dense ones verify the dense step: test_choice.cpp).
-    rows = [r for r in fx["rows"] if r.get("step") and fx["models"][r["model"]].get("experts", 0) > 0]
+    # The short-context steps only: the long rows (marked long) verify the KV term.
+    rows = [r for r in fx["rows"] if r.get("step") and not r.get("long") and fx["models"][r["model"]].get("experts", 0) > 0]
     eta = {}
     for r in rows:
         card = fx["cards"][r["card"]]
