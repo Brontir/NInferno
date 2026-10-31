@@ -165,14 +165,23 @@ enum class ExpertPrefill : std::uint8_t {
     Mxfp4, // MXFP4 banks: int8 as Int8, or the block-scaled MMA where the build has it (sm_120a)
 };
 
+// Which of a layer's weights a linear multiplies (product/plan: a GGUF's tensors by name).
+enum class LinearRole : std::uint8_t { Other, AttentionIn, AttentionOut, MixerIn, MixerOut, FfnUp, FfnDown };
+
 // One linear a token runs in prefill (DECISIONS 66): N output rows, K deep, `per_token` times (its
 // layers; a routed expert's, its picks a token across the layers).
+
 struct PlanLinear {
     double n         = 0;
     double k         = 0;
     double per_token = 0;
     bool expert      = false; // a routed expert's bank (its grid counts jobs, not tokens)
     bool gated       = false; // a gated FFN's gate and up: two matrices of n / 2 rows, one input
+    LinearRole role  = LinearRole::Other;
+    // Its weights' storage format (convert::format_of_ggml: "ggml_q4_k", ...) where the file names
+    // one; "": the quantization's label stands for it. A role whose layers differ in format is
+    // one linear a format, per_token its layers' share.
+    std::string format;
 };
 
 struct PlanModelFacts {

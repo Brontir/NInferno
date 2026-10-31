@@ -1,5 +1,5 @@
 {
- "about": "Prefill (prompt tokens a second, the server's timings) of one request of `prompt` tokens, max_tokens 1, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model; the Q8_0 and Gemma 4 12B rows master f8d4399d, 2026-10-30, after PR #249); Qwen3.5-9B's Q6_K, Q5_K_M and Q4_K_S rows by mpref.sh on master f8d4399d (2026-10-31, the median of three, 7K and 22K prompts), as are Gemma 4 12B's Q5_K_M and Q6_K rows (the RTX 2080 Ti's 22K Q6_K did not run); prompts of 3K tokens and more (below, a request's fixed time the model leaves out dominates).",
+ "about": "Prefill (prompt tokens a second, the server's timings) of one request of `prompt` tokens, max_tokens 1, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model; the Q8_0 and Gemma 4 12B rows master f8d4399d, 2026-10-30, after PR #249); Qwen3.5-9B's Q6_K, Q5_K_M and Q4_K_S rows by mpref.sh on master f8d4399d (2026-10-31, the median of three, 7K and 22K prompts), as are Gemma 4 12B's Q5_K_M and Q6_K rows (the RTX 2080 Ti's 22K Q6_K did not run); prompts of 3K tokens and more (below, a request's fixed time the model leaves out dominates). A quantization's role_formats: its GGUF's trunk linears' formats by role (plan_facts.cpp gguf_role), shares of the role's elements (scratchpad grole.py, 2026-10-31); the models' linear_roles name each linear's.",
  "models": {
   "Qwen3.5-9B-MTP": {
    "family": "qwen3_5_text",
@@ -66,7 +66,30 @@
      "bits_per_weight": 5.095,
      "weight_bytes": 5857857536,
      "input_table_bytes": 572129280,
-     "speculation_bytes": 167757824
+     "speculation_bytes": 167757824,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q4_k": 0.95,
+       "ggml_q6_k": 0.05
+      },
+      "AttentionOut": {
+       "ggml_q4_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q4_k": 0.5,
+       "ggml_q6_k": 0.5
+      },
+      "FfnUp": {
+       "ggml_q4_k": 1.0
+      },
+      "MixerIn": {
+       "ggml_q4_k": 0.6667,
+       "ggml_q6_k": 0.3333
+      },
+      "MixerOut": {
+       "ggml_q5_k": 1.0
+      }
+     }
     },
     "Q8_0": {
      "bits_per_weight": 8.503,
@@ -74,7 +97,15 @@
      "input_table_bytes": 1080688640,
      "speculation_bytes": 258557952
     }
-   }
+   },
+   "linear_roles": [
+    "AttentionIn",
+    "AttentionOut",
+    "MixerIn",
+    "MixerOut",
+    "FfnUp",
+    "FfnDown"
+   ]
   },
   "gemma-4-12b": {
    "family": "gemma4_text",
@@ -96,8 +127,7 @@
     [
      8192,
      3840,
-     40,
-     1
+     40
     ],
     [
      3840,
@@ -150,7 +180,23 @@
      "bits_per_weight": 4.774,
      "weight_bytes": 7106035904,
      "input_table_bytes": 0,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q4_k": 0.8969,
+       "ggml_q6_k": 0.1031
+      },
+      "AttentionOut": {
+       "ggml_q4_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q4_k": 0.5,
+       "ggml_q6_k": 0.5
+      },
+      "FfnUp": {
+       "ggml_q4_k": 1.0
+      }
+     }
     },
     "Q8_0": {
      "bits_per_weight": 8.49,
@@ -162,15 +208,53 @@
      "bits_per_weight": 5.642,
      "weight_bytes": 8397750464,
      "input_table_bytes": 0,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q5_k": 0.8969,
+       "ggml_q6_k": 0.1031
+      },
+      "AttentionOut": {
+       "ggml_q5_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q5_k": 0.5,
+       "ggml_q6_k": 0.5
+      },
+      "FfnUp": {
+       "ggml_q5_k": 1.0
+      }
+     }
     },
     "Q6_K": {
      "bits_per_weight": 6.564,
      "weight_bytes": 9770197184,
      "input_table_bytes": 0,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q6_k": 1.0
+      },
+      "AttentionOut": {
+       "ggml_q6_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q6_k": 1.0
+      },
+      "FfnUp": {
+       "ggml_q6_k": 1.0
+      }
+     }
     }
-   }
+   },
+   "linear_roles": [
+    "AttentionIn",
+    "AttentionOut",
+    "AttentionIn",
+    "AttentionOut",
+    "FfnUp",
+    "FfnDown"
+   ]
   },
   "Qwen3.5-9B": {
    "family": "qwen3_5_text",
@@ -237,27 +321,124 @@
      "bits_per_weight": 6.664,
      "weight_bytes": 7458301152,
      "input_table_bytes": 834355200,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q6_k": 1.0
+      },
+      "AttentionOut": {
+       "ggml_q6_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q6_k": 1.0
+      },
+      "FfnUp": {
+       "ggml_q6_k": 1.0
+      },
+      "MixerIn": {
+       "ggml_q6_k": 1.0
+      },
+      "MixerOut": {
+       "q8_g32_fp16": 1.0
+      }
+     }
     },
     "Q5_K_M": {
      "bits_per_weight": 5.877,
      "weight_bytes": 6577841376,
      "input_table_bytes": 699269120,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q5_k": 0.9375,
+       "ggml_q6_k": 0.0625
+      },
+      "AttentionOut": {
+       "ggml_q5_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q5_k": 0.5,
+       "ggml_q6_k": 0.5
+      },
+      "FfnUp": {
+       "ggml_q5_k": 1.0
+      },
+      "MixerIn": {
+       "ggml_q5_k": 0.3333,
+       "ggml_q6_k": 0.6667
+      },
+      "MixerOut": {
+       "ggml_q6_k": 1.0
+      }
+     }
     },
     "Q4_K_S": {
      "bits_per_weight": 4.819,
      "weight_bytes": 5394097376,
      "input_table_bytes": 572129280,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q4_k": 0.95,
+       "ggml_q5_k": 0.05
+      },
+      "AttentionOut": {
+       "ggml_q4_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q4_k": 0.875,
+       "ggml_q5_k": 0.125
+      },
+      "FfnUp": {
+       "ggml_q4_k": 1.0
+      },
+      "MixerIn": {
+       "ggml_q4_k": 1.0
+      },
+      "MixerOut": {
+       "ggml_q5_k": 1.0
+      }
+     }
     },
     "Q3_K_M": {
      "bits_per_weight": 4.176,
      "weight_bytes": 4673643744,
      "input_table_bytes": 437043200,
-     "speculation_bytes": 0
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q3_k": 0.9,
+       "ggml_q4_k": 0.075,
+       "ggml_q5_k": 0.025
+      },
+      "AttentionOut": {
+       "ggml_q4_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q4_k": 0.9375,
+       "ggml_q5_k": 0.0625
+      },
+      "FfnUp": {
+       "ggml_q3_k": 1.0
+      },
+      "MixerIn": {
+       "ggml_q3_k": 0.3333,
+       "ggml_q4_k": 0.6667
+      },
+      "MixerOut": {
+       "ggml_q4_k": 1.0
+      }
+     }
     }
-   }
+   },
+   "linear_roles": [
+    "AttentionIn",
+    "AttentionOut",
+    "MixerIn",
+    "MixerOut",
+    "FfnUp",
+    "FfnDown"
+   ]
   }
  },
  "cards": {

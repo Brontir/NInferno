@@ -44,6 +44,9 @@ struct GgufTensorTable {
     std::optional<std::uint64_t> routed_expert_bytes;
     std::optional<std::uint64_t> mtp_routed_expert_bytes;
     std::optional<std::uint64_t> token_table_bytes;
+    // Its linears by their tensors' formats (plan_facts split_linears_by_format); empty: none named.
+    // Another row's are not this one's: a row without its own keeps the label's.
+    std::vector<runtime::PlanLinear> linears;
 };
 // The table from the facts of a head read (nullopt: a split part or no tensor table).
 [[nodiscard]] std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts);

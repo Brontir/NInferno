@@ -78,6 +78,9 @@ struct LinearShape {
     double n = 0, k = 0, per_token = 0;
     bool expert = false;
     bool gated  = false; // a gated FFN's gate and up: two matrices of n / 2 rows, one input
+    // Its weights' storage format where the file names one (ggml_q4_k, ...; runtime::PlanLinear);
+    // "": the quantization's label stands for it.
+    std::string format;
 };
 
 struct ModelFacts {

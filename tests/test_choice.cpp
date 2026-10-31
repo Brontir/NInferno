@@ -96,6 +96,20 @@ ch::ModelFacts model_at(const json& m, const std::string& quant) {
     ch::ModelFacts out      = model_of(m);
     const json& q           = m.at("quants").at(quant);
     out.input_table_bytes   = q.value("input_table_bytes", 0.0);
+    // Each linear a format by its role's shares, as plan_facts.cpp splits a GGUF's.
+    if (q.contains("role_formats") && m.contains("linear_roles")) {
+        std::vector<ch::LinearShape> split;
+        for (std::size_t i = 0; i < out.linears.size(); ++i) {
+            const json& shares = q.at("role_formats").at(m.at("linear_roles").at(i).get<std::string>());
+            for (const auto& [format, share] : shares.items()) {
+                ch::LinearShape part = out.linears[i];
+                part.per_token *= share.get<double>();
+                part.format = format;
+                split.push_back(part);
+            }
+        }
+        out.linears = std::move(split);
+    }
     return out;
 }
 
