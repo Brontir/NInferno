@@ -391,7 +391,8 @@ void prefills_by_format(const json& fixture) {
     check(n[1] == 66 && tiles < 0.10 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
-    // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69).
+    // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69),
+    // with Q3_K_M and IQ4_XS.
     check(before[0] == 169 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
           "K-quant prefill but the RTX 5090's Gemma as before");
     check(n[0] == 179 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
@@ -412,6 +413,25 @@ void prefills_by_format(const json& fixture) {
     std::cout << "IQ4_XS prefill: " << iq4 << " points rms " << std::sqrt(sq_iq4 / iq4) * 100 << " % (worst "
               << worst_iq4 * 100 << " %)\n";
     check(iq4 == 12 && std::sqrt(sq_iq4 / iq4) < 0.07 && worst_iq4 < 0.10, "IQ4_XS prefill on its tiles within 10 %");
+    {
+        // What the IQ4 law leaves to the share: an IQ4_NL label, an iq4_nl linear, a K-quant label in
+        // the IQ4 class (a Q4_K_M file with an iq4 tensor).
+        const json& qm             = fixture.at("models").at("Qwen3.5-9B");
+        const ch::ModelFacts named = model_at(qm, "IQ4_XS");
+        const ch::CardFacts ada    = card_of(fixture.at("cards").at("RTX 4060 Ti"));
+        ch::QuantOption xs         = quant_of("IQ4_XS", qm.at("quants").at("IQ4_XS"));
+        xs.weights                 = ch::WeightClass::IQ4;
+        ch::QuantOption nl = xs, km = xs;
+        nl.label           = "IQ4_NL";
+        km.label           = "Q4_K_M";
+        ch::ModelFacts with_nl = named;
+        with_nl.linears.front().format = "ggml_iq4_nl";
+        check(ch::prefill_linears_seconds(named, ada, xs, 1024) > 0 &&
+                  ch::prefill_linears_seconds(named, ada, nl, 1024) == 0 &&
+                  ch::prefill_linears_seconds(named, ada, km, 1024) == 0 &&
+                  ch::prefill_linears_seconds(with_nl, ada, xs, 1024) == 0,
+              "IQ4_NL, an iq4_nl linear and a K label in the IQ4 class keep the share");
+    }
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
               << worst_volta * 100 << " %)\n";
     // The Quadro GV100 end to end (DECISIONS 70's linears, Gemma's Volta row): Qwen3.5 9B's Q6_K,

@@ -553,9 +553,9 @@ double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, con
     return clocks / card.clock_hz + bytes / (dram_eta("volta") * card.dram_bytes_per_s);
 }
 
-// A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost) where the card's nearest
-// measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation has no
-// row.
+// A dense model's K-quant or IQ4_XS linears on ggml's matrix kernel (kMmqTileCost) where the card's
+// nearest measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation
+// has no row or a linear's format was not read.
 double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                            double tokens, bool* transferred) noexcept {
     const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
@@ -612,6 +612,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                                       std::pair{"ggml_iq4_xs", &formats[4]}}) {
             if (l.format == name) { return f->step; }
         }
+        // Another ggml block format (IQ4_NL: a 64 x 64 W4A8 tile, its MMQ step not read): none.
+        if (l.format.starts_with("ggml_") && l.format != "ggml_f16") { return 0.0; }
         return named ? format->step : label_step;
     };
     double clocks = 0, bytes = 0;
@@ -643,6 +645,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     for (const LinearShape& l : model.linears) {
         // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
         const double grids = l.gated ? 2 : 1, n = l.n / grids, step = step_of(l);
+        if (step <= 0) { return 0; }
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             double columns = kMmqTile; // ggml's narrowest column tile with the fewest tiles
@@ -696,8 +699,8 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Unknown: return 0;
     }
     if (!moe && gen == "volta") { return volta_linears_seconds(model, card, quant, tokens, transferred); }
-    // A K-quant mix, or another class's label with a K-quant format in it (Q3_K_M: mmq_linears_seconds
-    // reads the format, 0 for none).
+    // A K-quant mix, an IQ4_XS file, or another class's label with a K-quant format in it (Q3_K_M:
+    // mmq_linears_seconds reads the format, 0 for none).
     if (!moe && (quant.weights == WeightClass::KQuant || quant.weights == WeightClass::IQ4 ||
                  quant.weights == WeightClass::Other)) {
         const double mmq = mmq_linears_seconds(model, card, quant, tokens, transferred);

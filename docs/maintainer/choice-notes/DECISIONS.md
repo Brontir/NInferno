@@ -2267,7 +2267,10 @@ dense linears on MMQ where MMQ pays, its K step read on the census of Qwen3.5 9B
 than Q4_K's scale unpacking); where it does not (the RTX 5070 Ti) the producer-warp 128 x 64 tile
 as Q4_K, 20.2 a K step (the four grids' rounds 20.0 .. 20.4). Its Q5_K linears (attention values,
 the GDN output) by their own format. Predicted against mpref.sh rows at 7K and 22K on six cards:
--4 .. +4 %, rms 2.5 %. IQ4_NL: not read (the share).
+-4 .. +4 %, rms 2.5 %. IQ4_NL: not read (the share): an IQ4_NL label, and a file whose linears name
+another ggml block format (an IQ4_XS file's iq4_nl FFN down, where the FFN is no multiple of 256:
+the W4A8 64 x 64 tile there). Open: the dense tuner's shipped gb206 (RTX 5060 Ti) IQ4_XS bands move a
+27B's shapes to the 64 x 64 tile at 128 .. 1024 tokens; the estimate prices the producer-warp one.
 
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 
