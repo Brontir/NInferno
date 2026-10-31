@@ -375,6 +375,18 @@ inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75
                                                {"turing", 0, 71.75, 74.5, 77.75, 1},
                                                {"gb20x", 3000, 45.5, 49.5, 59, 1}};
 inline constexpr double kMmqTileFixed = 0.43;
+// Where MMQ does not pay (measured::kMmqPrefillPays: the RTX 5070 Ti as the 5060 Ti) a dense
+// K-quant prefills on the W4A8 tiles (generic_gemm.cpp: Q4_K and Q6_K the producer-warp 128 x 64
+// tile on Blackwell, w4a8_ws_wins; Q5_K the classic 128 x 64): a tile is 128 tokens x 64 weight rows
+// (a gated pair's 32 gate and 32 up rows) over the whole K, one CTA a SM (86-92 KiB, 61 KiB with 256
+// threads), a call's grid ceil(N / 64) x ceil(t / 128) tiles in rounds of SMs, the activations'
+// quantization and the epilogue the small kernels'. Read on the RTX 5070 Ti's census of Qwen3.5 9B's
+// Q4_K_M, Q4_K_S, Q5_K_M and Q6_K at 7K tokens (the calls by format and grid, as MMQ's), c0 within
+// a few K step: Q4_K 23, Q5_K 28, Q6_K 29.5 SM-clocks a K step (the K-4096 and K-12288 calls agree
+// within 2 %) — a 128 x 128 MMQ tile's on the RTX 5090 per element (45.5 = 2 x 22.75 for Q4_K).
+inline constexpr MmqTileCost kW4a8KquantCost[] = {{"gb20x", 0, 23, 28, 29.5, 1}};
+inline constexpr double kW4a8KquantTokens = 128;
+inline constexpr double kW4a8KquantRows   = 64;
 inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
 inline constexpr double kMmqTile        = 128;
 // Beside the tiles, every grid quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes
