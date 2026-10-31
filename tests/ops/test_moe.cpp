@@ -883,8 +883,7 @@ int check_a8_route_rule() {
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     if (!route) {
-        std::cerr << "A8 route: no default route
-";
+        std::cerr << "A8 route: no default route\n";
         return 1;
     }
     int failures = 0;
@@ -906,16 +905,14 @@ int check_a8_route_rule() {
                     std::cerr << "A8 route " << qname(q)
                               << (layout == QuantLayout::GgmlFrag ? " frag" : "") << " T=" << t
                               << ": schedule " << route->gate_up_at(t, w) << ", " << expected
-                              << " expected
-";
+                              << " expected\n";
                     ++failures;
                 }
             }
         }
     }
     if (failures == 0) {
-        std::cout << "A8 route: w4r1 on every gate/up bank but a published 2-bit codebook's
-";
+        std::cout << "A8 route: w4r1 on every gate/up bank but a published 2-bit codebook's\n";
     }
     return failures;
 }
