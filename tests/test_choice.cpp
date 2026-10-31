@@ -235,7 +235,8 @@ void decodes_from_facts(const json& fixture) {
     int longs = 0, long_open = 0; // Volta's long rows: open
     double steps_sq = 0, steps_worst = 0;
     int long_steps = 0; // several rows at an ~18K-token context (mbatchl.sh)
-    int volta_open = 0;
+    double volta_sq = 0, volta_worst = 0;
+    int volta_rows = 0; // the Quadro GV100's: its own rows (DECISIONS 72), one card
     for (const json& row : fixture.at("rows")) {
         const json& m            = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q      = row.at("quant").get<std::string>();
@@ -264,8 +265,8 @@ void decodes_from_facts(const json& fixture) {
             continue;
         }
         const std::string gen = std::string(ch::generation_of(cf));
-        if (gen == "volta") { // the Quadro GV100's points (2026-10-31): open, no census of its step yet
-            ++volta_open;
+        if (gen == "volta") { // the Quadro GV100's cool points (thchk.sh): their own guard
+            volta_sq += d * d, volta_worst = std::max(volta_worst, std::abs(d)), ++volta_rows;
             continue;
         }
         sq += d * d;
@@ -278,7 +279,12 @@ void decodes_from_facts(const json& fixture) {
     }
     const double rms = std::sqrt(sq / n);
     std::cout << "decode from facts, " << n << " points: rms " << rms * 100 << " %, worst " << worst * 100 << " %\n";
-    check(n == 100 && volta_open == 12 && rms < 0.04, "decode from facts within the model's spread");
+    check(n == 100 && rms < 0.04, "decode from facts within the model's spread");
+    // Volta (DECISIONS 72): its K-quants at the SMs' bytes a clock, its Q8_0 at its HBM2's share.
+    const double volta_rms = std::sqrt(volta_sq / volta_rows);
+    std::cout << "Volta decode, " << volta_rows << " points: rms " << volta_rms * 100 << " %, worst "
+              << volta_worst * 100 << " %\n";
+    check(volta_rows == 12 && volta_rms < 0.04 && volta_worst < 0.07, "Volta decode from its own rows");
     // The generations whose rows rest on their own census: within 10 %; Turing (one card) within its
     // stated rows' 6 % rms; Ampere (one card, its own census) within 3 %.
     const auto gen_rms = [&](const char* g) {
@@ -338,7 +344,11 @@ void counts_the_kernels(const json& census) {
         }
         check(row.at("gemv_kernels").get<double>() == l->gemv, "the weight-reading kernels a step: the census's");
         if (row.at("streams").get<int>() == 1) {
-            check(row.at("small_kernels").get<double>() == l->small[0], "the small kernels at one row: the census's");
+            // The Quadro GV100 appends Qwen3.5's int8 KV in a kernel of its own a full-attention layer
+            // (kv_cache_append_full_i8, 8; fused into the norm and RoPE from Turing on): 8 more.
+            const bool own_append = row.at("card").get<std::string>() == "Quadro GV100" && family == "qwen3_5_text";
+            check(row.at("small_kernels").get<double>() == l->small[0] + (own_append ? 8 : 0),
+                  "the small kernels at one row: the census's");
         }
         ++n;
     }

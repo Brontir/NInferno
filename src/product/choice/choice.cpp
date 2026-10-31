@@ -80,7 +80,8 @@ double rows_eta(std::string_view generation, WeightClass weights, double rows, b
         return std::any_of(std::begin(kRowsEta), std::end(kRowsEta),
                            [&](const RowsEta& r) { return r.generation == g && r.weights == w; });
     };
-    if (!has(gen, WeightClass::KQuant)) {
+    // A generation's own rows: the class's, else its K-quants'; without either, Ada's.
+    if (!has(gen, weights) && !has(gen, WeightClass::KQuant)) {
         gen         = kTransferGeneration;
         transferred = transferred || rows > 1;
     }
@@ -101,6 +102,38 @@ double rows_eta(std::string_view generation, WeightClass weights, double rows, b
         lo_eta  = r.eta;
     }
     return scale * lo_eta;
+}
+
+// The bytes a SM-clock a weight class's reads reach at `rows` rows where the SMs bound them
+// (kWeightSmRate: linear in log2 rows between points, the last's beyond); 0 where none does. A class
+// without its own row takes the generation's K-quant row (transferred) unless kRowsEta prices it there.
+double weight_sm_rate(std::string_view generation, WeightClass weights, double rows, bool& transferred) noexcept {
+    const auto has = [&](WeightClass w) {
+        return std::any_of(std::begin(kWeightSmRate), std::end(kWeightSmRate),
+                           [&](const WeightSmRate& r) { return r.generation == generation && r.weights == w; });
+    };
+    WeightClass cls = weights;
+    if (!has(cls)) {
+        const bool tabled = std::any_of(std::begin(kRowsEta), std::end(kRowsEta), [&](const RowsEta& r) {
+            return r.generation == generation && r.weights == weights;
+        });
+        if (tabled || !has(WeightClass::KQuant)) { return 0; }
+        cls         = WeightClass::KQuant;
+        transferred = true;
+    }
+    double lo_rows = 0, lo_rate = 0;
+    for (const WeightSmRate& r : kWeightSmRate) {
+        if (r.generation != generation || r.weights != cls) { continue; }
+        if (r.cards < 2) { transferred = true; } // one card: its boards' estimate only
+        if (rows <= r.rows) {
+            if (lo_rows == 0) { return r.bytes_per_sm_clock; }
+            const double t = std::log2(rows / lo_rows) / std::log2(r.rows / lo_rows);
+            return lo_rate + t * (r.bytes_per_sm_clock - lo_rate);
+        }
+        lo_rows = r.rows;
+        lo_rate = r.bytes_per_sm_clock;
+    }
+    return lo_rate;
 }
 
 // An MoE's routed banks' share of the DRAM rate at `rows` concurrent rows (kMoeRoutedEta: linear
@@ -1115,20 +1148,33 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         weights -= routed;
         routed_read = routed * apart;
     }
-    // A generation without a row: the one whose launches it shares (Volta: Turing's, neither has
-    // PDL nor Ada's L2), else Ada's; transferred either way.
-    const KernelCost* cost = measured_row_of(kKernelCost, gen == "volta" ? std::string_view("turing") : gen,
-                                             transferred);
-    if (gen == "volta") { transferred = true; }
+    // A generation's own row (one card's marks the estimate transferred), else Ada's (transferred).
+    const KernelCost* cost = measured_row_of(kKernelCost, gen, transferred);
     // A dense model of another class: no census of its routes. An MoE's rest reads at the K-quant
-    // rows, the rows its routed banks' share was measured against (kMoeRoutedEta).
+    // rows, the rows its routed banks' share was measured against (kMoeRoutedEta); on a generation
+    // without its own routed row (Volta), at its own linears' class (rest_weights).
     if (quant.weights == WeightClass::Other && !model.moe()) { transferred = true; }
-    const WeightClass rest = model.moe() ? WeightClass::KQuant : quant.weights;
+    const bool moe_row     = std::any_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta),
+                                         [&](const MoeRoutedEta& r) { return r.generation == gen; });
+    const WeightClass rest = !model.moe() ? quant.weights : moe_row ? WeightClass::KQuant : quant.rest_weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
-    double reads = weights / (rows_eta(gen, rest, rows, transferred) * card.dram_bytes_per_s) +
+    // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
+    // An MoE's rest by its own linears' class (rest_weights), its routed banks by the file's.
+    const auto sm_share = [&](WeightClass w) {
+        const double rate = weight_sm_rate(gen, w, rows, transferred);
+        return rate > 0 ? card.sms * card.clock_hz * rate / card.dram_bytes_per_s : 0.0;
+    };
+    const double rest_sm = sm_share(model.moe() ? quant.rest_weights : quant.weights);
+    const double share   = rest_sm > 0 ? std::min(dram_eta(gen), rest_sm) : rows_eta(gen, rest, rows, transferred);
+    double reads = weights / (share * card.dram_bytes_per_s) +
                    rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
-    if (routed_read > 0) { reads += routed_read / (moe_routed_eta(gen, rows, transferred) * card.dram_bytes_per_s); }
+    if (routed_read > 0) {
+        // The banks decode on the same SMs: no faster than the class's rate (not measured on Volta).
+        double routed_share = moe_routed_eta(gen, rows, transferred);
+        if (const double sm = sm_share(quant.weights); sm > 0) { routed_share = std::min(routed_share, sm); }
+        reads += routed_read / (routed_share * card.dram_bytes_per_s);
+    }
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;

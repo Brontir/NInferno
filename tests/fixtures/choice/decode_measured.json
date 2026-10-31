@@ -1,5 +1,5 @@
 {
- "about": "Plain decode per stream (tokens a second, the server's timings) at `concurrency` streams decoding 256 tokens each from short prompts, --spec none --no-prefix-reuse, master f68eca34 (2026-10-31, the Quadro GV100 among the cards; first measured at master 03afc418 on 2026-10-28, choice-notes/lab/speed_model). The facts: the GGUF tensor tables (unsloth/Qwen3.5-9B-MTP-GGUF, unsloth/gemma-4-12b-it-GGUF) and the plan's. Long contexts (rows marked long: one stream decoding 513 tokens after 7K, 41K and 82K-token prompts, mdecl.sh, 2026-10-31; context = the prompt + 256, the decode's mean) of the same three files on eight cards, the GV100 among them. Steps at 1, 2, 4 and 8 rows at a long context (mbatchl.sh, 2026-10-31: each row its own ~18K-token prompt and 6000 tokens; the windows whose mean batch is C pool the C-row phase with the ends of the later phases, so the context, the rows' mean prompt + 3000, holds within about 3000 tokens; row counts other than 1, 2, 4, 8 or with fewer than 4 windows left out).",
+ "about": "Plain decode per stream (tokens a second, the server's timings) at `concurrency` streams decoding 256 tokens each from short prompts, --spec none --no-prefix-reuse, master f68eca34 (2026-10-31, the Quadro GV100 among the cards; first measured at master 03afc418 on 2026-10-28, choice-notes/lab/speed_model). The facts: the GGUF tensor tables (unsloth/Qwen3.5-9B-MTP-GGUF, unsloth/gemma-4-12b-it-GGUF) and the plan's. Long contexts (rows marked long: one stream decoding 513 tokens after 7K, 41K and 82K-token prompts, mdecl.sh, 2026-10-31; context = the prompt + 256, the decode's mean) of the same three files on eight cards, the GV100 among them. Steps at 1, 2, 4 and 8 rows at a long context (mbatchl.sh, 2026-10-31: each row its own ~18K-token prompt and 6000 tokens; the windows whose mean batch is C pool the C-row phase with the ends of the later phases, so the context, the rows' mean prompt + 3000, holds within about 3000 tokens; row counts other than 1, 2, 4, 8 or with fewer than 4 windows left out). The Quadro GV100's short-context points: a cool board (thchk.sh, 2026-10-31: a 120-second rest, the clocks sampled, the mean of two runs), the board slowing to 1140-1300 MHz when hot (DECISIONS 72).",
  "models": {
   "Qwen3.5-9B-MTP": {
    "family": "qwen3_5_text",
@@ -1472,8 +1472,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 95.81,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 95.88,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1485,8 +1485,8 @@
    "ring": "bf16",
    "concurrency": 2,
    "context": 159,
-   "decode": 81.63,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 81.6,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1498,8 +1498,8 @@
    "ring": "bf16",
    "concurrency": 4,
    "context": 159,
-   "decode": 68.56,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 68.5,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1511,8 +1511,8 @@
    "ring": "bf16",
    "concurrency": 8,
    "context": 159,
-   "decode": 58.24,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 56.49,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1524,8 +1524,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 56.63,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 67.84,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1537,8 +1537,8 @@
    "ring": "bf16",
    "concurrency": 2,
    "context": 159,
-   "decode": 62.58,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 63.1,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1550,8 +1550,8 @@
    "ring": "bf16",
    "concurrency": 4,
    "context": 159,
-   "decode": 57.97,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 58.16,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1563,8 +1563,8 @@
    "ring": "bf16",
    "concurrency": 8,
    "context": 159,
-   "decode": 50.03,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 49.44,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1576,8 +1576,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 160,
-   "decode": 57.49,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 64.12,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1589,8 +1589,8 @@
    "ring": "bf16",
    "concurrency": 2,
    "context": 160,
-   "decode": 52.89,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 52.84,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1602,8 +1602,8 @@
    "ring": "bf16",
    "concurrency": 4,
    "context": 160,
-   "decode": 44.29,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 43.93,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "Quadro GV100",
@@ -1615,8 +1615,8 @@
    "ring": "bf16",
    "concurrency": 8,
    "context": 160,
-   "decode": 36.67,
-   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
+   "decode": 36.18,
+   "source": "thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled, the mean of two runs; master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "RTX 5090",

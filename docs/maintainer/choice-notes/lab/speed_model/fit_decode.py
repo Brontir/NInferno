@@ -30,6 +30,13 @@ ETA_OF = {"volta": 660.0 / 870.0}
 
 def eta_of(gen):
     return ETA_OF.get(gen, ETA)
+
+
+# The weight classes whose decode routes the SMs bound below the DRAM rate (choice_constants.h
+# kWeightSmRate): Volta's K-quants (no int8 MMA: R8's dp4a, the vector kernel, the HMMA tiles decode on
+# the SMs). Their reads are priced in bytes a SM-clock at every row count; their census rows give no
+# launch cost (the residual would carry the decode), the generation's other classes do.
+SM_BOUND = {("volta", "kq")}
 CENSUS_CONTEXT = 160
 GEN = {(7, 0): "volta", (7, 5): "turing", (8, 6): "ga10x", (8, 9): "ada", (12, 0): "gb20x"}
 CLASS = {"Q8_0": "q8", "IQ4_XS": "iq4", "IQ4_NL": "iq4"}  # else K-quants
@@ -79,25 +86,34 @@ def main():
         e = eta_of(gen_of[r["card"]])
         tg = (r["gemv_us"] * 1e-6 - weights(m, r["quant"]) / (e * bw)) / r["gemv_kernels"]
         ts = (r["small_us"] * 1e-6 - row_bytes(m, ctx) / (e * bw)) / r["small_kernels"]
-        cost.setdefault(gen_of[r["card"]], []).append((r["card"], tg, ts))
+        cost.setdefault(gen_of[r["card"]], []).append((r["card"], tg, ts, CLASS.get(r["quant"], "kq")))
     t_gemv, t_small = {}, {}
     for gen, v in cost.items():
-        t_gemv[gen] = statistics.mean(x[1] for x in v)
+        g = [x[1] for x in v if (gen, x[3]) not in SM_BOUND]
+        t_gemv[gen] = statistics.mean(g)
         t_small[gen] = statistics.mean(x[2] for x in v)
-        print(f"{gen}: t_gemv {t_gemv[gen] * 1e6:.2f} us ({min(x[1] for x in v) * 1e6:.2f}..{max(x[1] for x in v) * 1e6:.2f}), "
+        print(f"{gen}: t_gemv {t_gemv[gen] * 1e6:.2f} us ({min(g) * 1e6:.2f}..{max(g) * 1e6:.2f}), "
               f"t_small {t_small[gen] * 1e6:.2f} us ({min(x[2] for x in v) * 1e6:.2f}..{max(x[2] for x in v) * 1e6:.2f}), "
               f"{len({x[0] for x in v})} card(s)")
 
-    # kRowsEta per generation, class and rows.
-    eta = {}
+    # kRowsEta per generation, class and rows; kWeightSmRate (bytes a SM-clock) for an SM-bound class.
+    eta, rate = {}, {}
     for r in fx["rows"]:
-        gen, n = gen_of[r["card"]], r["concurrency"]
-        if n == 1 or gen not in t_gemv:
+        gen, n, cls = gen_of[r["card"]], r["concurrency"], CLASS.get(r["quant"], "kq")
+        sm_bound = (gen, cls) in SM_BOUND
+        if (n == 1 and not sm_bound) or gen not in t_gemv:
             continue
-        m, bw = fx["models"][r["model"]], fx["cards"][r["card"]]["dram_bytes_per_s"]
+        c = fx["cards"][r["card"]]
+        m, bw = fx["models"][r["model"]], c["dram_bytes_per_s"]
         ng, ns = kernels(r["model"], r["quant"], n)
         t = 1 / r["decode"] - n * row_bytes(m, r) / (eta_of(gen) * bw) - ng * t_gemv[gen] - ns * t_small[gen]
-        eta.setdefault((gen, CLASS.get(r["quant"], "kq"), n), []).append(weights(m, r["quant"]) / (bw * t))
+        if sm_bound:
+            rate.setdefault((gen, cls, n), []).append(weights(m, r["quant"]) / (t * c["sms"] * c["clock_hz"]))
+        else:
+            eta.setdefault((gen, cls, n), []).append(weights(m, r["quant"]) / (bw * t))
+    for k in sorted(rate):
+        v = rate[k]
+        print(f"  sm rate {k}: {statistics.mean(v):.2f} B/SM-clock ({min(v):.2f}..{max(v):.2f}, {len(v)} points)")
     for k in sorted(eta):
         v = eta[k]
         # kRowsEta holds a generation's shares in kDramEta's units (choice.cpp rows_eta scales them by
@@ -114,7 +130,10 @@ def main():
         m, bw = fx["models"][r["model"]], fx["cards"][r["card"]]["dram_bytes_per_s"]
         cls = CLASS.get(r["quant"], "kq")
         e = eta_of(gen)
-        if n > 1:
+        if (gen, cls) in SM_BOUND:
+            c = fx["cards"][r["card"]]
+            e = statistics.mean(rate[(gen, cls, n)]) * c["sms"] * c["clock_hz"] / bw
+        elif n > 1:
             pts = [(1, eta_of(gen))] + [(c, statistics.mean(eta[(gen, cls, c)])) for c in (2, 4, 8) if (gen, cls, c) in eta]
             e = pts[-1][1]
             for (r0, e0), (r1, e1) in zip(pts, pts[1:]):

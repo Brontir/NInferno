@@ -1343,7 +1343,7 @@ the tier (even one that does not fit); then the rule's pick stands.
   for Turing, a second GA10x (RTX 3070/3080/3090, A4000/A5000) for Ampere.
 - The 3060 census (29.10) gives t_gemv 4.55 us and t_small 2.61 us, and 1.8 % rms on its 12 points
   (up to +18 % on Ada's rows).
-- Volta takes Turing's rows, transferred.
+- Volta takes Turing's rows, transferred (decode: its own rows since DECISIONS 72).
 
 **The defaults this changes against master 8bbf2e72.** Ada; plan without load, 7 models x 3 cards
 x {default, 4 streams, 128K}. The measurements are on the RTX 4060 Ti:
@@ -2456,3 +2456,41 @@ kMoeRoutedEta was read on UD-IQ3_XXS and UD-Q3_K_S only. The fixture's older row
 on the 4090: its 35B UD-Q4_K_M steps of 30.10 (mbatch.sh) ran under K8V4 too (the server's capacity
 line), now so named; kMoeRoutedEta's Ada rows refitted on them (fit_moe_decode.py, which now leaves the
 long rows out): 0.928 / 0.911 / 0.806 -> 0.926 / 0.909 / 0.803 at 2 / 4 / 8 rows.
+
+## 72. Volta's decode weight reads bound by its SMs (31.10, measured)
+
+**Decision.** A weight class whose decode routes the SMs bound below the DRAM rate has rows of
+kWeightSmRate (choice_constants.h): the bytes its reads reach a SM-clock (the reference clock) at 1, 2, 4
+and 8 rows. Its weights then take the longer of their time at the generation's DRAM share and at SMs x
+clock x that rate, in place of kRowsEta. Rows: Volta's K-quants, 4.41 / 3.90 / 3.15 / 2.45 B a SM-clock;
+a class without its own row on Volta (IQ4, the codebook formats) takes them, transferred. Volta's Q8_0
+keeps kRowsEta (its own rows, 0.952 / 0.871 / 0.730 in kDramEta's units) and Volta its own kKernelCost
+(a weight-reading kernel 6.37 us beyond its bytes, a small one 5.06 us). One card: transferred, an
+estimate only (Volta has no kReferenceCards row).
+
+**Why.** Volta has no int8 MMA: its K-quants decode on the SMs at every width (R8's dp4a at one row,
+ggml's vector kernel at 2-4, the HMMA tiles from five). The Quadro GV100's nsys census of one row
+(80 SMs, 1627 MHz reference) reads it: Qwen3.5 9B Q4_K_M's and Gemma 4 12B's weight-reading kernels
+527 and 523 GB/s, 80 % of the 660 its HBM2 with ECC holds, its Q8_0's 607 (92 %); per kernel R8's
+Q4_K 86 %, its Q6_K 69 % (more decode a byte). The RTX 2080 Ti's reads, with an int8 MMA, hold
+83-85 % of its DRAM in every format alike. Priced by kernels the GV100's residual came out by format
+(Q8_0 6.4 us a kernel, the K-quants 13.3), and the Turing rows Volta took put its K-quant steps at
++6 .. +48 % (8 rows: Qwen +32, Gemma +48), Q8_0 within -6 .. 0.
+
+**Measurements.** The GV100 runs hot under sustained load: 82-83 C, its clock 1447 -> 1140-1300 MHz
+(reason 0x20, a software thermal slowdown) and its campaign points 8-17 % slow at random. Its rows are
+a cool board's (thchk.sh: sm_bench.py decode after a 120-second rest, the clocks sampled; two runs
+repeat within 1 %). Volta's node-level trace (the cuda129x nsys; the system one records no kernels
+there) lengthens a one-row step by 2.7-3.7 us a kernel against the untraced step (Qwen Q4_K_M, Q8_0,
+Gemma: 3.70, 2.71, 3.32); the census rows are taken less their own run's delta (the census gives the
+split, the untraced step the total), one row only (at 2-8 rows the traced step departs unevenly).
+Volta's graph appends Qwen3.5's int8 KV in a kernel of its own a full-attention layer (8 more small
+kernels at one row; the launches keep the family's count). fit_decode.py derives every Volta row
+(SM_BOUND: the class's census rows give no launch cost, its rates come from the cool steps).
+
+**Check.** The GV100's 12 short-context points rms 3.4 %, worst 5.8 % (the Turing rows: up to +48 %);
+the other generations' 100 points unchanged (rms 2.4 %). Open: the long-context rows (a cool re-measure,
+mdecl3.sh, queued); a rate for V100 boards transfers by SMs x reference clock; Volta's MoE: its rest
+by its own linears' class (rest_weights), its routed banks at kMoeRoutedEta's Ada shares capped by the
+file's class rate (the same SMs decode them; no census); the 8 extra small
+kernels a Qwen step are not launches the model counts (about 40 us, 0.3 %).
