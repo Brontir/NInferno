@@ -613,8 +613,11 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                                       std::pair{"ggml_iq4_xs", &formats[4]}}) {
             if (l.format == name) { return f->step; }
         }
-        // Another ggml block format (IQ4_NL: a 64 x 64 W4A8 tile, its MMQ step not read): none.
-        if (l.format.starts_with("ggml_") && l.format != "ggml_f16") { return 0.0; }
+        // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none.
+        // Q8_0 and 16-bit linears among the named ones take the label's step (open: their own routes).
+        if (!l.format.empty() && l.format != "q8_g32_fp16" && l.format != "bf16" && l.format != "ggml_f16") {
+            return 0.0;
+        }
         return named ? format->step : label_step;
     };
     double clocks = 0, bytes = 0;

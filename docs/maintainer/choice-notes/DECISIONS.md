@@ -2273,7 +2273,10 @@ the W4A8 64 x 64 tile there). Open: the dense tuner's shipped gb206 (RTX 5060 Ti
 27B's shapes to the 64 x 64 tile at 128 .. 1024 tokens; the estimate prices the producer-warp one. A file whose linears name their
 formats is priced by them whatever its class: unsloth's UD-Q4_K_XL (Q4_K, Q5_K, Q6_K, IQ4_XS and Q8_0
 linears; the IQ4 class by its iq4_xs tensors, its label Q4_K's) on Qwen3.5 9B, 7K and 22K on seven
-cards: -1 .. +9 % (the RTX 4090 the +9, +7), rms 3.6 %.
+cards: -1 .. +9 % (the RTX 4090 the +9, +7), rms 3.6 %. A named format the laws do not read (IQ4_NL,
+MXFP4, NVFP4) keeps the share. Open: a named file's Q8_0 and 16-bit linears (UD-Q4_K_XL's GDN output)
+take the label's K step, where the runtime runs them on the int8 tile and the 16-bit GEMM; a split
+UD file names no linears and its IQ4 class keeps the share.
 
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 

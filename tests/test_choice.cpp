@@ -442,10 +442,8 @@ void prefills_by_format(const json& fixture) {
         for (ch::LinearShape& l : unnamed.linears) { l.format.clear(); }
         check(ch::prefill_linears_seconds(named, ada, xs, 1024) > 0 &&
                   ch::prefill_linears_seconds(unnamed, ada, km, 1024) == 0 &&
-                  ch::prefill_linears_seconds(named, ada, nl, 1024) == 0 &&
-
                   ch::prefill_linears_seconds(with_nl, ada, xs, 1024) == 0,
-              "IQ4_NL, an iq4_nl linear and a K label in the IQ4 class keep the share");
+              "IQ4_NL, an iq4_nl linear and an unnamed K label in the IQ4 class keep the share");
     }
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
               << worst_volta * 100 << " %)\n";
