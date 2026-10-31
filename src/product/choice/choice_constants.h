@@ -630,6 +630,10 @@ struct KvSmRate {
 inline constexpr KvSmRate kKvSmRate[] = {
     {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1}, // Qwen3.5 9B
     {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},     // Gemma 4 12B
+    // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4 12B's
+    // BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8 kernel,
+    // int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).
+    {"volta", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 1.66, 1},
 };
 
 // The prefill chunk. An MoE's prefill grows with the tokens each expert takes from a chunk (chunk x

@@ -2412,3 +2412,14 @@ against kRowsEta's 0.628, read 28.10 on an older build: the campaign is being me
 f68eca34); the RTX 3060's Qwen Q4_K_M at 8 rows +14 % (its 4 rows +1 %). Gemma 4 12B at 8 rows on the
 12 GB RTX 3060 and 11 GB 2080 Ti plans an 8,192-token KV and refuses the ~18K prompts (HTTP 400); its
 server then segfaulted at exit (being reproduced).
+
+**Volta's decode attention** (31.10, DECISIONS 71's census on the Quadro GV100, mdcenv.sh with the
+cuda129x nsys that records Volta's kernels): Qwen3.5 9B's int8 kernel (int8_kv_key_major_kt) adds 247 us
+a call for the 159 MB the 75K tokens between 7K and 82K add, 643 GB/s, 97 % of the 660 its HBM2 with
+ECC holds (kDramEtaOf): the estimate's DRAM time, no row. Gemma 4 12B's BF16 full layer adds 707 us for
+153 MB, 216 GB/s (25 % of 870): kKvSmRate's Volta row, 1.66 B a reference SM-clock (it took Ada's 1.06
+BF16 factor before, a third of the time): the GV100's Gemma long rows +23, +35 % at 41K, 82K -> +8,
++8 %. Open: the GV100's step without its attention, +16 .. +19 % at
+7K (its decode census 12.0 ms a step against the estimate's 10.1; its launches priced at Turing's
+kKernelCost): the speed-model campaign at master f68eca34 runs on it too, for its own kKernelCost and
+kRowsEta rows.
