@@ -2442,3 +2442,11 @@ the 200 dense steps 5.81 % (from 6.05), their worst the 2080 Ti's Q6_K at 2 rows
 long-context Q4_K_M at 8 rows +16 % (open). The Quadro GV100's 12 points stay out of the fit and its
 census out of decode_census.json: its one-stream repeats spread 9 .. 11 % and its Q8_0 runs one stream
 slower than two (open: measured again before Volta gets rows).
+
+**The big models' steps at a long context** (31.10, verification): mbatchl.sh steps at 1, 2, 4 and 8 rows
+(each row its own ~18K-token prompt and 6000 tokens; the context the rows' mean prompt + 3000, within
+about 3000 tokens) of Qwen3.6 35B-A3B's UD-Q3_K_S and UD-Q4_K_M and Qwen3.8 27B's UD-Q4_K_XL on the RTX
+5090 and 4090 and the 35B's UD-Q3_K_S on the 5070 Ti (the others refused there: 16 GB), predicted before
+the measurement (speed_measured.json, rows marked long): 26 points, rms 5.1 %, -13 .. +7 %. Open: the
+35B's UD-Q4_K_M at 4 and 8 rows, -11 and -13 % on the 5090, -4 and -9 % on the 4090 (the estimate
+slower: its routed banks' share at many rows, kMoeRoutedEta read on UD-Q3_K_S and UD-IQ3_XXS).

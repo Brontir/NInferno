@@ -145,6 +145,8 @@ void reproduces_the_measurements(const json& fixture) {
     int decodes = 0, prefills = 0, moes = 0;
     double dense_sq = 0, dense_worst = 0;
     int denses = 0;
+    double big_sq = 0, big_worst = 0;
+    int bigs = 0;
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q     = row.at("quant").get<std::string>();
@@ -165,7 +167,12 @@ void reproduces_the_measurements(const json& fixture) {
         // concurrent requests apart from their prompts); the other several-stream rows are wave
         // aggregates.
         const bool step = row.at("concurrency").get<std::uint32_t>() == 1 || row.value("step", false);
-        if (mf.moe() && step) {
+        if (row.value("long", false)) {
+            // The big models' steps at an ~18K-token context (mbatchl.sh, 2026-10-31): their own guard.
+            big_sq += d * d, big_worst = std::max(big_worst, std::abs(d)), ++bigs;
+            std::cout << "  long step " << row.at("card").get<std::string>() << ' ' << row.at("model").get<std::string>()
+                      << ' ' << q << " x" << row.at("concurrency").get<int>() << ": " << std::lround(d * 100) << " %\n";
+        } else if (mf.moe() && step) {
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
@@ -203,6 +210,11 @@ void reproduces_the_measurements(const json& fixture) {
     // +27, +22 % under the decode rows of master f68eca34, open).
     check(denses == 200 && std::sqrt(dense_sq / denses) < 0.07 && dense_worst < 0.28,
           "a dense model's step at C rows within the model's error");
+    std::cout << "big models' long steps " << bigs << " points: rms " << std::sqrt(big_sq / std::max(bigs, 1)) * 100
+              << " %, worst " << big_worst * 100 << " %\n";
+    // The worst: Qwen3.6 35B-A3B's UD-Q4_K_M at 4 and 8 rows on the RTX 5090 (-11, -13 %; open).
+    check(bigs == 26 && std::sqrt(big_sq / bigs) < 0.06 && big_worst < 0.14,
+          "the big models' steps at a long context within the model's error");
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
     // 33 points (2026-10-30): rms 4.4 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).
