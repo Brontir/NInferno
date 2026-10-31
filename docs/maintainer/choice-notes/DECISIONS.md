@@ -2332,4 +2332,4 @@ Qwen3.5 9B Q6_K at 2 and 4 rows +25, +20 % (the estimate faster).
 **Qwen3.5 4B's prefill** (31.10, verification): another geometry of the same family (hidden 2560, FFN
 9216, the 9B's heads, KV and GDN, tied embeddings), its Q4_K_M by its linears' formats, mpref.sh rows at
 7K and 22K on eight cards predicted before the measurement: -6 .. +9 % on the seven (the RTX 5070 Ti the
-+9, +7), the Quadro GV100 +13, +1 %. Facts from the GGUF's metadata (prefill_measured.json).
++9, +7), the Quadro GV100 +13, +1 %. Facts as plan_facts derives them from the GGUF's metadata (prefill_measured.json).

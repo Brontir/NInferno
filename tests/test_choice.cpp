@@ -334,7 +334,7 @@ void prefills_pay_tail_calls(const json& fixture) {
 }
 
 // Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt
-// of tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven; Q8_0
+// of tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven, Qwen3.5 4B on eight; Q8_0
 // re-measured after PR #249, master f8d4399d; Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S at 7K and 22K),
 // Q8_0 on the int8 tiles, the K-quants on MMQ's tiles (DECISIONS 69) where the card takes MMQ.
 // The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its

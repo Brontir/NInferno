@@ -501,8 +501,8 @@
   },
   "Qwen3.5-4B": {
    "family": "qwen3_5_text",
-   "params": 4120903680.0,
-   "active_params": 4120903680.0,
+   "params": 4118937600.0,
+   "active_params": 4118937600.0,
    "experts": 0,
    "experts_per_token": 0,
    "routed_expert_params": 0,
