@@ -165,6 +165,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
     constexpr int kGroup   = kSpan * kStride;
     static_assert(4 % kGroup == 0, "a 128-value K tile holds whole groups");
     using Raw = typename C::Raw;
+    constexpr bool kOneSlot = std::is_same_v<C, generic::W4a8Q6K> || std::is_same_v<C, generic::W4a8Q3K>;
     extern __shared__ __align__(16) unsigned char moe_r8_shared[];
 
     // GemmArgs::pdl: the plan and the activation come from the producer.
@@ -198,7 +199,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                                 (s == 1 ? a.up_offset : 0));
     };
 
-    Raw ring[2][kSets][kRows][kStride];
+    Raw ring[kOneSlot ? 1 : 2][kSets][kRows][kStride];
     const auto fetch = [&](auto slot_tag, int group) {
         constexpr int slot = decltype(slot_tag)::value;
 #pragma unroll
@@ -314,13 +315,24 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
         }
     };
 
+    if constexpr (kOneSlot) {
+        // One slot: the codec's loads of a row set hold too many registers to keep two in flight
+        // (EXPERIMENT); the CTA's warps hide the latency instead.
+        if (sl < groups) compute(Slot0{}, sl);
 #pragma unroll 1
-    for (int g = sl; g < groups; g += 2 * lanes) {
-        if (g + lanes < groups) fetch(Slot1{}, g + lanes);
-        compute(Slot0{}, g);
-        if (g + lanes >= groups) break;
-        if (g + 2 * lanes < groups) fetch(Slot0{}, g + 2 * lanes);
-        compute(Slot1{}, g + lanes);
+        for (int g = sl + lanes; g < groups; g += lanes) {
+            fetch(Slot0{}, g);
+            compute(Slot0{}, g);
+        }
+    } else {
+#pragma unroll 1
+        for (int g = sl; g < groups; g += 2 * lanes) {
+            if (g + lanes < groups) fetch(Slot1{}, g + lanes);
+            compute(Slot0{}, g);
+            if (g + lanes >= groups) break;
+            if (g + 2 * lanes < groups) fetch(Slot0{}, g + 2 * lanes);
+            compute(Slot1{}, g + lanes);
+        }
     }
 
     // Butterfly within each row group: every lane ends with its group's sum (each step adds a pair
