@@ -571,10 +571,9 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         std::string_view name;
         double bits, step;
     };
-    // Q3_K (a Q3_K mix, WeightClass::Other) unpacks its high bits and 6-bit scales as Q6_K does: its K
-    // step is Q6_K's (DECISIONS 69, the census's Q3_K_M calls).
+    // Q3_K: a Q3_K mix (WeightClass::Other), its K step read on the census's Q3_K_M calls.
     const Format formats[] = {
-        {"Q3", 3.4375, cost->q6}, {"Q4", 4.5, cost->q4}, {"Q5", 5.5, cost->q5}, {"Q6", 6.5625, cost->q6}};
+        {"Q3", 3.4375, cost->q3}, {"Q4", 4.5, cost->q4}, {"Q5", 5.5, cost->q5}, {"Q6", 6.5625, cost->q6}};
     const std::vector<std::string> tokens_of = label_tokens(quant.label);
     const Format* format = nullptr;
     for (std::size_t i = 0; i + 1 < tokens_of.size(); ++i) {
@@ -585,8 +584,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             if (tokens_of[i] == f.name && tokens_of[i + 1] == "K" && !repacked) { format = &f; }
         }
     }
-    if (format == nullptr) { return 0; }
-    if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
+    // Another class's label (Other: a format beside the label's own) is priced only as a Q3_K mix.
+    if (format == nullptr || format->step <= 0 || (quant.weights != WeightClass::KQuant && format->bits >= 4)) {
+        return 0;
+    }
     const double toward = format->bits < 6.5625
                               ? std::clamp((quant.bits_per_weight - format->bits) / (6.5625 - format->bits), 0.0, 1.0)
                               : 0;
@@ -598,6 +599,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0 || format->bits < 4)) {
         return 0;
     }
+    if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
     if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
         for (const LinearShape& l : model.linears) {
             const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);

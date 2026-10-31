@@ -391,7 +391,7 @@ void prefills_by_format(const json& fixture) {
           "Gemma 4 12B's Q5_K_M and Q6_K within 8 % rms");
     std::cout << "Q3_K_M prefill: " << q3 << " points rms " << std::sqrt(sq_q3 / q3) * 100 << " % (worst "
               << worst_q3 * 100 << " %)\n";
-    // Qwen3.5 9B's Q3_K_M on MMQ (Q3_K's K step Q6_K's), predicted: six cards at 7K and 22K.
+    // Qwen3.5 9B's Q3_K_M on MMQ (Q3_K's K step from the census), six cards at 7K and 22K.
     check(q3 == 12 && std::sqrt(sq_q3 / q3) < 0.07 && worst_q3 < 0.10, "Q3_K_M prefill on MMQ's tiles within 10 %");
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
               << worst_volta * 100 << " %)\n";

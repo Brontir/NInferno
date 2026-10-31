@@ -2222,10 +2222,13 @@ fit). A census is queued.
 
 **Q3_K mixes on MMQ** (31.10): a Q3_K mix stays `WeightClass::Other` (its decode keeps the Other
 row), but its prefill linears take DECISIONS 69's law where MMQ pays: the label's format Q3_K
-(3.4375 bits a weight) with Q6_K's K step (Q3_K unpacks its high bits and 6-bit scales as Q6_K
-does: the census's Q3_K_M calls), toward Q6_K by the file's bits as the other formats. Predicted for
+(3.4375 bits a weight) with its own K step read on the census's Q3_K_M calls (Ada 51.5, Ampere
+49.25, Turing 91.75, Blackwell 60.5: Q6_K's within 3 % but on Turing, 18 % above it), toward Q6_K by
+the file's bits as the other formats. Another Other label (a K-quant label whose file holds another
+format) keeps the share. Predicted for
 Qwen3.5 9B's Q3_K_M (Q3_K gate, up, q, k and attention gate; Q4_K the rest; 4.176 bits a weight) at 7K
-and 22K on six cards: -8 .. +3 %, rms 5.1 %. Open: where MMQ does not pay (the RTX 5070 Ti) Q3_K runs
+and 22K on six cards: -9 .. -3 %, rms 6.6 % (slower than measured throughout: the mix's Q4_K
+calls, cheaper than Q3_K's, priced on the label's one step toward Q6_K). Open: where MMQ does not pay (the RTX 5070 Ti) Q3_K runs
 the classic W4A8 64 x 64 tile (two CTAs a SM, about 31.5 us a tile at K 4096) and the mix's Q4_K the
 producer-warp one: one label, two tiles, so the share prices it (+22 .. +24 %) until a model's
 linears carry their own formats. Another engine's repacked layouts (Q4_K_R4) stay out.
