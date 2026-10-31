@@ -705,9 +705,48 @@ int artifact_errors() {
 
 } // namespace
 
+// A GGUF's linears take their tensors' formats by role: a recurrent layer's attn_qkv is its mixer's
+// input, a role whose layers differ in format splits by their elements.
+int gguf_linear_formats() {
+    int failures = 0;
+    namespace g  = ninferno::convert::ggml;
+    GgufFile file;
+    file.metadata = qwen35_metadata();
+    file.tensors.push_back(tensor("token_embd.weight", {5120, 248320}, g::Q6_K, 1000));
+    file.tensors.push_back(tensor("blk.0.attn_qkv.weight", {5120, 10240}, g::Q3_K, 500));
+    file.tensors.push_back(tensor("blk.0.ssm_out.weight", {6144, 5120}, g::Q5_K, 500));
+    file.tensors.push_back(tensor("blk.3.attn_q.weight", {5120, 12288}, g::Q4_K, 500));
+    file.tensors.push_back(tensor("blk.0.ffn_down.weight", {17408, 5120}, g::Q4_K, 500));
+    file.tensors.push_back(tensor("blk.1.ffn_down.weight", {17408, 5120}, g::Q6_K, 500));
+    const auto f = pr::plan_facts_of_gguf(file, 999999);
+    const auto find = [&](rt::LinearRole role, const std::string& format) -> const rt::PlanLinear* {
+        for (const rt::PlanLinear& l : f.model.linears) {
+            if (l.role == role && l.format == format) { return &l; }
+        }
+        return nullptr;
+    };
+    const rt::PlanLinear* mixer = find(rt::LinearRole::MixerIn, "ggml_q3_k");
+    const rt::PlanLinear* out   = find(rt::LinearRole::MixerOut, "ggml_q5_k");
+    const rt::PlanLinear* query = find(rt::LinearRole::AttentionIn, "ggml_q4_k");
+    const rt::PlanLinear* down4 = find(rt::LinearRole::FfnDown, "ggml_q4_k");
+    const rt::PlanLinear* down6 = find(rt::LinearRole::FfnDown, "ggml_q6_k");
+    failures += check(mixer != nullptr && mixer->per_token == 48, "the recurrent layers' input in Q3_K");
+    failures += check(out != nullptr && out->per_token == 48, "the recurrent layers' output in Q5_K");
+    const auto queries = std::count_if(f.model.linears.begin(), f.model.linears.end(), [](const rt::PlanLinear& l) {
+        return l.role == rt::LinearRole::AttentionIn && l.format == "ggml_q4_k" && l.per_token == 1;
+    });
+    failures += check(query != nullptr && queries == 16, "the full layers' inputs in Q4_K, one a layer");
+    failures += check(down4 != nullptr && down6 != nullptr && down4->per_token == 32 && down6->per_token == 32,
+                      "the FFN down split by its layers' formats");
+    failures += check(find(rt::LinearRole::FfnUp, "") != nullptr && find(rt::LinearRole::AttentionOut, "") != nullptr,
+                      "a role without tensors keeps the label's format");
+    return failures;
+}
+
 int main() {
     const int failures = gguf_qwen35() + config_qwen35() + qwen35_moe() + gemma4() + gpt_oss() +
-                         nemotron_h() + llama() + model_types() + boards() + artifact_errors();
+                         nemotron_h() + llama() + model_types() + boards() + artifact_errors() +
+                         gguf_linear_formats();
     if (failures == 0) { std::cout << "plan facts OK\n"; }
     return failures == 0 ? 0 : 1;
 }

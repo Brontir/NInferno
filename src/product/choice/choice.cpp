@@ -11,6 +11,7 @@
 #include <span>
 #include <sstream>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ninferno::product::choice {
@@ -591,7 +592,16 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     const double toward = format->bits < 6.5625
                               ? std::clamp((quant.bits_per_weight - format->bits) / (6.5625 - format->bits), 0.0, 1.0)
                               : 0;
-    const double sms = card.sms, step = format->step + (cost->q6 - format->step) * toward;
+    const double sms = card.sms, label_step = format->step + (cost->q6 - format->step) * toward;
+    // A linear whose file names its format takes that format's step; else the label's (its bits
+    // toward Q6_K stand for the mix).
+    const auto step_of = [&](const LinearShape& l) {
+        for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
+                                      std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]}}) {
+            if (l.format == name) { return f->step; }
+        }
+        return label_step;
+    };
     double clocks = 0, bytes = 0;
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
     // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
@@ -602,6 +612,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
     if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
         for (const LinearShape& l : model.linears) {
+            const double step = step_of(l);
+            if (step <= 0) { return 0; } // Q3_K's tile there: not read (the share)
             const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);
             clocks += l.per_token * std::ceil(tiles / sms) * (cost->c0 + l.k * step);
         }
@@ -609,7 +621,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     }
     for (const LinearShape& l : model.linears) {
         // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
-        const double grids = l.gated ? 2 : 1, n = l.n / grids;
+        const double grids = l.gated ? 2 : 1, n = l.n / grids, step = step_of(l);
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             double columns = kMmqTile; // ggml's narrowest column tile with the fewest tiles

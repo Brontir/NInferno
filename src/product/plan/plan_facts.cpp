@@ -132,9 +132,11 @@ void add_attention(Geometry& g, bool sliding, bool own_kv, double heads, double 
     ++g.attention_layers;
     g.attention_params += g.hidden * heads * (key + value);
     const double kv = own_kv && kv_heads > 0 ? kv_heads * (keys_are_values ? key : key + value) : 0;
-    g.attention_linears.push_back({heads * key + kv, static_cast<double>(g.hidden), 1, false});
+    g.attention_linears.push_back(
+        {heads * key + kv, static_cast<double>(g.hidden), 1, false, false, runtime::LinearRole::AttentionIn});
     g.attention_queries.push_back(heads * key);
-    g.attention_linears.push_back({static_cast<double>(g.hidden), heads * value, 1, false});
+    g.attention_linears.push_back(
+        {static_cast<double>(g.hidden), heads * value, 1, false, false, runtime::LinearRole::AttentionOut});
     (sliding ? g.sliding_attention_width : g.full_attention_width) += heads * (key + value);
     ++(sliding ? g.sliding_attending : g.full_attending);
     if (!own_kv || kv_heads <= 0) { return; } // reads an earlier layer's keys and values
@@ -308,13 +310,14 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
             m.linears.push_back(l);
         }
         if (r > 0 && g.ssm_inner > 0) {
-            m.linears.push_back({2 * g.ssm_inner + 2 * g.ssm_groups * g.ssm_state, hidden, r, false});
-            m.linears.push_back({hidden, g.ssm_inner, r, false});
+            m.linears.push_back({2 * g.ssm_inner + 2 * g.ssm_groups * g.ssm_state, hidden, r, false, false,
+                                 runtime::LinearRole::MixerIn});
+            m.linears.push_back({hidden, g.ssm_inner, r, false, false, runtime::LinearRole::MixerOut});
         }
         const double up = g.ffn_matrices - 1; // gate and up, or up alone
         if (f > 0 && dense_width > 0) {
-            m.linears.push_back({up * dense_width, hidden, f, false, up == 2});
-            m.linears.push_back({hidden, dense_width, f, false});
+            m.linears.push_back({up * dense_width, hidden, f, false, up == 2, runtime::LinearRole::FfnUp});
+            m.linears.push_back({hidden, dense_width, f, false, false, runtime::LinearRole::FfnDown});
         }
         if (f > 0 && g.shared_ffn > 0) {
             m.linears.push_back({up * g.shared_ffn, hidden, f, false, up == 2});
@@ -811,6 +814,58 @@ PlanSourceFacts plan_facts_of_gguf_metadata(const json& metadata, std::uint64_t 
     return out;
 }
 
+namespace {
+
+// A role's weights' elements by storage format.
+using RoleFormats = std::map<runtime::LinearRole, std::map<std::string, double>>;
+
+// The role of a trunk layer's GGUF tensor (blk.<b>.<role>.weight): a recurrent layer's attn_qkv and
+// attn_gate (Qwen 3.5's GatedDeltaNet) are its mixer's input, ssm_out its output.
+runtime::LinearRole gguf_role(const std::string& name, bool recurrent) {
+    const auto dot = name.find('.', 4);
+    if (dot == std::string::npos) { return runtime::LinearRole::Other; }
+    const std::string_view rest = std::string_view(name).substr(dot + 1);
+    const auto is = [rest](std::string_view r) {
+        return rest.size() > r.size() && rest.substr(0, r.size()) == r && rest[r.size()] == '.';
+    };
+    using R = runtime::LinearRole;
+    if (is("attn_q") || is("attn_k") || is("attn_v") || is("attn_qkv") || is("attn_gate")) {
+        return recurrent ? R::MixerIn : R::AttentionIn;
+    }
+    if (is("attn_output")) { return R::AttentionOut; }
+    if (is("ssm_in")) { return R::MixerIn; }
+    if (is("ssm_out")) { return R::MixerOut; }
+    if (is("ffn_gate") || is("ffn_up")) { return R::FfnUp; }
+    if (is("ffn_down")) { return R::FfnDown; }
+    return R::Other;
+}
+
+// Each linear of a role whose tensors were read, one a format: per_token at the format's share of
+// the role's elements (a Q4_K_M's FFN down in Q6_K on some layers, Q4_K on the rest).
+void split_linears_by_format(std::vector<runtime::PlanLinear>& linears, const RoleFormats& formats) {
+    std::vector<runtime::PlanLinear> out;
+    for (const runtime::PlanLinear& l : linears) {
+        const auto it = formats.find(l.role);
+        double total  = 0;
+        if (it != formats.end()) {
+            for (const auto& [format, elements] : it->second) { total += elements; }
+        }
+        if (l.expert || total <= 0) {
+            out.push_back(l);
+            continue;
+        }
+        for (const auto& [format, elements] : it->second) {
+            runtime::PlanLinear part = l;
+            part.per_token           = l.per_token * elements / total;
+            part.format              = format;
+            out.push_back(part);
+        }
+    }
+    linears = std::move(out);
+}
+
+} // namespace
+
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
     std::set<std::string> names;
     for (const auto& t : head.tensors) { names.insert(t.name); }
@@ -836,6 +891,13 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     std::uint64_t input_table_bytes = 0;
     std::uint64_t output_bytes = 0, embedding_bytes = 0, routed = 0, mtp_routed = 0;
     ExpertRoutes expert_routes;
+    // The trunk's linears' formats by role, weighted by their elements (split_linears_by_format).
+    std::set<std::uint64_t> recurrent_blocks; // a recurrent mixer's layers (their attn_qkv is its input)
+    for (const auto& t : head.tensors) {
+        const auto block = block_of(t.name);
+        if (block && t.name.find(".ssm_out.") != std::string::npos) { recurrent_blocks.insert(*block); }
+    }
+    RoleFormats role_formats;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
@@ -861,6 +923,12 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         if (t.name != "token_embd.weight" && t.name != "output.weight" && !mtp) {
             layer_formats.insert(format_of_ggml(t.type));
             if (t.name.find("_exps.") == std::string::npos) { rest_formats.insert(format_of_ggml(t.type)); }
+            if (block && t.ne.size() >= 2) {
+                const runtime::LinearRole role = gguf_role(t.name, recurrent_blocks.count(*block) > 0);
+                if (role != runtime::LinearRole::Other) {
+                    role_formats[role][format_of_ggml(t.type)] += static_cast<double>(t.elements());
+                }
+            }
         }
     }
     // The tensor table names the whole model only in an unsplit file: a split part's head lists
@@ -875,6 +943,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
+    split_linears_by_format(out.model.linears, role_formats);
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
         out.shape.base_models = {std::move(*base)};
     }

@@ -2233,6 +2233,17 @@ the classic W4A8 64 x 64 tile (two CTAs a SM, about 31.5 us a tile at K 4096) an
 producer-warp one: one label, two tiles, so the share prices it (+22 .. +24 %) until a model's
 linears carry their own formats. Another engine's repacked layouts (Q4_K_R4) stay out.
 
+**Linears by their tensors' formats** (31.10): a GGUF's plan facts tag each linear with its role
+(attention in and out, a recurrent mixer's in and out, FFN up and down: `gguf_role`, a recurrent
+layer's attn_qkv and attn_gate its mixer's input) and split a role whose tensors differ in format
+into one linear a format, its layers at the format's share of the role's elements
+(`split_linears_by_format`: a Q4_K_M's FFN down half Q6_K). MMQ and the W4A8 tiles price each by its
+format's K step; a linear of no named K format (a role without tensors, Q8_0's ssm_out in a Q6_K
+file) keeps the label's. On the fixture (the GGUFs' role shares, scratchpad grole.py): Qwen3.5 9B's
+Q3_K_M -9 .. -3 % -> -4 .. +3 % (rms 6.6 -> 2.5 %); the K-quants together (167 points) rms 4.9 % with
+the two RTX 5070 Ti Q3_K_M points still the share's (+22, +24 %: Q3_K's 64 x 64 W4A8 tile not read).
+Gemma 4 12B's sliding attention input was marked a gated pair in the fixture: fixed.
+
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 
 **What changed.** Volta has no int8 or FP16-accumulate mma.sync path the other generations' tiles take:
