@@ -1,5 +1,5 @@
 {
- "about": "Prefill (prompt tokens a second, the server's timings) of one request of `prompt` tokens, max_tokens 1, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model; the Q8_0 and Gemma 4 12B rows master f8d4399d, 2026-10-30, after PR #249); Qwen3.5-9B's Q6_K, Q5_K_M and Q4_K_S rows by mpref.sh on master f8d4399d (2026-10-31, the median of three, 7K and 22K prompts); prompts of 3K tokens and more (below, a request's fixed time the model leaves out dominates).",
+ "about": "Prefill (prompt tokens a second, the server's timings) of one request of `prompt` tokens, max_tokens 1, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model; the Q8_0 and Gemma 4 12B rows master f8d4399d, 2026-10-30, after PR #249); Qwen3.5-9B's Q6_K, Q5_K_M and Q4_K_S rows by mpref.sh on master f8d4399d (2026-10-31, the median of three, 7K and 22K prompts), as are Gemma 4 12B's Q5_K_M and Q6_K rows (the RTX 2080 Ti's 22K Q6_K did not run); prompts of 3K tokens and more (below, a request's fixed time the model leaves out dominates).",
  "models": {
   "Qwen3.5-9B-MTP": {
    "family": "qwen3_5_text",
@@ -155,6 +155,18 @@
     "Q8_0": {
      "bits_per_weight": 8.49,
      "weight_bytes": 12653822144,
+     "input_table_bytes": 0,
+     "speculation_bytes": 0
+    },
+    "Q5_K_M": {
+     "bits_per_weight": 5.642,
+     "weight_bytes": 8397750464,
+     "input_table_bytes": 0,
+     "speculation_bytes": 0
+    },
+    "Q6_K": {
+     "bits_per_weight": 6.564,
+     "weight_bytes": 9770197184,
      "input_table_bytes": 0,
      "speculation_bytes": 0
     }
@@ -1836,6 +1848,222 @@
    "prompt": 21928,
    "prefill": 2418.3,
    "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 8764.1,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 7822.8,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 7552.8,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 6866.6,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 6860.1,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 6138.1,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 6327.7,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 5713.2,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 3818.9,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 3401.5,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 3669.5,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 3292.9,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 3541.3,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 3094.7,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 3263.5,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 2886.1,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 1907.0,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 1673.9,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 1753.3,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 1555.7,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 1200.5,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 1026.3,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 1105.2,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 959.1,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 1352.8,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 1108.4,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 1149.8,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
   }
  ]
 }

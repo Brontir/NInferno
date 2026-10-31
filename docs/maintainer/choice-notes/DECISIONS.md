@@ -2247,3 +2247,10 @@ threads at 255 registers and 44 KiB, two a SM by both; full 513 CTAs of 256 thre
 Turing's. The first chunk, where a CTA holds 16 .. 1024 keys, runs slower than its keys say on Turing
 (-9 %) and Volta (-12 % of the chunk): open, not a per-CTA constant (two levels of data, one
 unknown each). One card: transferred.
+
+**Gemma 4 12B's Q5_K_M and Q6_K** (31.10, DECISIONS 69's law, predicted before the measurement):
+mpref.sh rows at 7K and 22K on the seven cards (master f8d4399d): 26 of 27 points within -3 .. +11 %
+(rms with the outlier 6 %). Open: the RTX 2080 Ti's Q6_K at 7K runs +27 % slower than the estimate
+(1150 prompt tokens a second; its Q5_K_M 1353, +11 %), where every other card's Q6_K runs 0.92 .. 0.96
+of its Q5_K_M and the 2080 Ti's 0.85; 1.4 GiB free after 9.1 GiB of weights (its 22K row did not
+fit). A census is queued.
