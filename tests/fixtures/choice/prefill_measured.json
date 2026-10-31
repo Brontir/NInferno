@@ -498,6 +498,106 @@
     "FfnUp",
     "FfnDown"
    ]
+  },
+  "Qwen3.5-4B": {
+   "family": "qwen3_5_text",
+   "params": 4118937600.0,
+   "active_params": 4118937600.0,
+   "experts": 0,
+   "experts_per_token": 0,
+   "routed_expert_params": 0,
+   "input_table_params": 0,
+   "layers": 32,
+   "hidden": 2560,
+   "full_layers": 8,
+   "full_head_dim": 256,
+   "recurrent_state_elements": 12582912,
+   "linears": [
+    [
+     10240,
+     2560,
+     8
+    ],
+    [
+     2560,
+     4096,
+     8
+    ],
+    [
+     12288,
+     2560,
+     24
+    ],
+    [
+     2560,
+     4096,
+     24
+    ],
+    [
+     18432,
+     2560,
+     32,
+     1
+    ],
+    [
+     2560,
+     9216,
+     32
+    ]
+   ],
+   "recurrent": true,
+   "kv_bytes_per_token": {
+    "bf16": 32768,
+    "fp8": 16512,
+    "int8": 16896,
+    "k8v4": 12864,
+    "nvfp4": 9216
+   },
+   "state_bytes": {
+    "f16": 26345472,
+    "f32": 52690944
+   },
+   "full_attention_width": 65536.0,
+   "sliding_attention_width": 0.0,
+   "quants": {
+    "Q4_K_M": {
+     "bits_per_weight": 5.214,
+     "weight_bytes": 2740937888,
+     "input_table_bytes": 0,
+     "speculation_bytes": 0,
+     "role_formats": {
+      "AttentionIn": {
+       "ggml_q4_k": 0.9375,
+       "ggml_q6_k": 0.0625
+      },
+      "AttentionOut": {
+       "ggml_q4_k": 1.0
+      },
+      "FfnDown": {
+       "ggml_q4_k": 0.5,
+       "ggml_q6_k": 0.5
+      },
+      "FfnUp": {
+       "ggml_q4_k": 1.0
+      },
+      "MixerIn": {
+       "ggml_q4_k": 0.3333,
+       "ggml_q5_k": 0.6667
+      },
+      "MixerOut": {
+       "ggml_q5_k": 1.0
+      }
+     }
+    }
+   },
+   "linear_roles": [
+    "AttentionIn",
+    "AttentionOut",
+    "MixerIn",
+    "MixerOut",
+    "FfnUp",
+    "FfnDown"
+   ]
   }
  },
  "cards": {
@@ -2734,6 +2834,134 @@
    "prompt": 21928,
    "prefill": 2313.8,
    "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 24247.3,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 22607.2,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 20082.1,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 18789.4,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4090)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 12132.5,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 11320.7,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l5070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 10504.1,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 9629.6,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 5920.4,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 5428.5,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 3558.2,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 3256.3,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l3060)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 4116.8,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 3660.3,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 7406,
+   "prefill": 4503.4,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-4B",
+   "quant": "Q4_K_M",
+   "prompt": 21928,
+   "prefill": 4061.2,
+   "source": "mpref.sh (unsloth/Qwen3.5-4B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (the stands' kit build), 2026-10-31 (lgv100)"
   }
  ]
 }
