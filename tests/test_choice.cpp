@@ -963,8 +963,7 @@ void prices_dense_prefill_tiles() {
         ch::ModelFacts gate_up = m;
         gate_up.linears        = {{24576, 4096, 1, false, true}};
         const double ws        = ch::prefill_linears_seconds(gate_up, r5070, q6, 1024) * 1e6 / 2131.1 - 1;
-        std::cout << "W4A8 tiles, RTX 5070 Ti: " << ws * 100 << " %
-";
+        std::cout << "W4A8 tiles, RTX 5070 Ti: " << ws * 100 << " %\n";
         check(std::abs(ws) < 0.05 && ch::prefill_linears_seconds(gate_up, r5070, q6, 100) == 0,
               "the W4A8 tiles where MMQ does not pay, from 128 tokens");
         check(std::abs(call(24576, 4096, true) / (2 * call(12288, 4096, false)) - 1) < 1e-3,
