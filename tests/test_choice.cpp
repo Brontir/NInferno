@@ -1241,6 +1241,10 @@ void prices_gemma_attention_tiles(const json& fixture) {
         {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
          {745.3, 1143.0, 1142.5, 1137.9, 1135.9, 1134.9},
          {1387.0, 4448.4, 7658.4, 10789.3, 13900.7, 17006.3}},
+        // The Quadro GV100 (Volta's row, read on it).
+        {{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.627e9, .dram_bytes_per_s = 870e9},
+         {974.1, 1568.3, 1525.7, 1522.6, 1508.6, 1524.7},
+         {1666.7, 5241.9, 8712.2, 12284.3, 15746.2, 19391.7}},
     };
     double worst = 0;
     for (const Series& s : series) {
