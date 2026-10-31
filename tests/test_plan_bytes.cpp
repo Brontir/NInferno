@@ -1090,6 +1090,15 @@ void test_proposal_bytes_per_quant() {
         check(pr::row_facts(moe, scaled).model.routed_expert_bytes ==
                   pr::with_weights(moe, row.weight_bytes, row.basis).model.routed_expert_bytes,
               "a table without banks keeps the scaled ones");
+        // Linears' formats: a row's own table's, never the shape's (another file's).
+        pr::PlanSourceFacts named = moe;
+        named.model.linears = {{1024, 2048, 1, false, false, rt::LinearRole::FfnDown, "ggml_q3_k"}};
+        check(pr::row_facts(named, row).model.linears.front().format.empty(),
+              "a row without its own formats keeps the label's");
+        pr::QuantRow own_formats = row;
+        own_formats.listing.table->linears = {{1024, 2048, 1, false, false, rt::LinearRole::FfnDown, "ggml_q6_k"}};
+        check(pr::row_facts(named, own_formats).model.linears.front().format == "ggml_q6_k",
+              "a row's own table gives its linears' formats");
     }
     // The 9B's verify as the converter reads it (the embedding out): the rows its conversions
     // logged (147,456 with DFlash, 57,344 for MTP alone), from the whole tensor table.

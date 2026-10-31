@@ -943,7 +943,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
-    split_linears_by_format(out.model.linears, role_formats);
+    // A split part's head lists its own tensors only: no shares from it (the label stands).
+    if (whole) { split_linears_by_format(out.model.linears, role_formats); }
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
         out.shape.base_models = {std::move(*base)};
     }

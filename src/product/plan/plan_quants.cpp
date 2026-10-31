@@ -1352,16 +1352,26 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
         facts.model.weight_bytes == 0) {
         return std::nullopt;
     }
-    return GgufTensorTable{.tensor_bytes            = facts.model.weight_bytes,
-                           .mtp_bytes               = facts.model.mtp_bytes,
-                           .own_drafter_bytes       = facts.model.own_drafter_bytes,
-                           .routed_expert_bytes     = facts.model.routed_expert_bytes,
-                           .mtp_routed_expert_bytes = facts.model.mtp_routed_expert_bytes,
-                           .token_table_bytes       = facts.model.token_table_bytes};
+    GgufTensorTable table{.tensor_bytes            = facts.model.weight_bytes,
+                          .mtp_bytes               = facts.model.mtp_bytes,
+                          .own_drafter_bytes       = facts.model.own_drafter_bytes,
+                          .routed_expert_bytes     = facts.model.routed_expert_bytes,
+                          .mtp_routed_expert_bytes = facts.model.mtp_routed_expert_bytes,
+                          .token_table_bytes       = facts.model.token_table_bytes};
+    const bool named = std::any_of(facts.model.linears.begin(), facts.model.linears.end(),
+                                   [](const runtime::PlanLinear& l) { return !l.format.empty(); });
+    if (named) { table.linears = facts.model.linears; }
+    return table;
 }
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // Its linears' formats from its own table; the shape's are another file's (the label stands).
+    if (row.listing.table && !row.listing.table->linears.empty()) {
+        out.model.linears = row.listing.table->linears;
+    } else {
+        for (runtime::PlanLinear& l : out.model.linears) { l.format.clear(); }
+    }
     // A row's own table: its NextN share and its own drafter as the table counts them (none for a
     // GGUF; an artifact's own), never the shape's scaled.
     if (row.mtp_bytes) {

@@ -165,10 +165,11 @@ enum class ExpertPrefill : std::uint8_t {
     Mxfp4, // MXFP4 banks: int8 as Int8, or the block-scaled MMA where the build has it (sm_120a)
 };
 
-// One linear a token runs in prefill (DECISIONS 66): N output rows, K deep, `per_token` times (its
-// layers; a routed expert's, its picks a token across the layers).
 // Which of a layer's weights a linear multiplies (product/plan: a GGUF's tensors by name).
 enum class LinearRole : std::uint8_t { Other, AttentionIn, AttentionOut, MixerIn, MixerOut, FfnUp, FfnDown };
+
+// One linear a token runs in prefill (DECISIONS 66): N output rows, K deep, `per_token` times (its
+// layers; a routed expert's, its picks a token across the layers).
 
 struct PlanLinear {
     double n         = 0;

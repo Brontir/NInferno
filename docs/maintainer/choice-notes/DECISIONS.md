@@ -2243,6 +2243,11 @@ file) keeps the label's. On the fixture (the GGUFs' role shares, scratchpad grol
 Q3_K_M -9 .. -3 % -> -4 .. +3 % (rms 6.6 -> 2.5 %); the K-quants together (167 points) rms 4.9 % with
 the two RTX 5070 Ti Q3_K_M points still the share's (+22, +24 %: Q3_K's 64 x 64 W4A8 tile not read).
 Gemma 4 12B's sliding attention input was marked a gated pair in the fixture: fixed.
+A table's rows each take their own file's formats (their GGUF tensor table's linears) and a row without
+its own keeps the label's step, never the read file's (a repository's smallest file is the
+shape); a split part's head names no shares. Where the file names formats, a linear of none (Q8_0,
+16-bit) takes the label's format's own step, not its bits toward Q6_K (the Q6_K parts priced as
+theirs already).
 
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 

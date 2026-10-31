@@ -593,14 +593,17 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                               ? std::clamp((quant.bits_per_weight - format->bits) / (6.5625 - format->bits), 0.0, 1.0)
                               : 0;
     const double sms = card.sms, label_step = format->step + (cost->q6 - format->step) * toward;
-    // A linear whose file names its format takes that format's step; else the label's (its bits
-    // toward Q6_K stand for the mix).
+    // A linear whose file names its format takes that format's step. Else the label's: its bits
+    // toward Q6_K stand for the mix where no linear is named; where the file names them (its Q6_K
+    // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
+    const bool named = std::any_of(model.linears.begin(), model.linears.end(),
+                                   [](const LinearShape& l) { return !l.format.empty(); });
     const auto step_of = [&](const LinearShape& l) {
         for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
                                       std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]}}) {
             if (l.format == name) { return f->step; }
         }
-        return label_step;
+        return named ? format->step : label_step;
     };
     double clocks = 0, bytes = 0;
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
