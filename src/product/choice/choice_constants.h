@@ -368,7 +368,8 @@ struct MmqTileCost {
     std::string_view generation;
     double c0;
     double q4, q5, q6; // SM-clocks a K step of a 128-column tile, by format
-    double q3;         // Q3_K's (a Q3_K mix's calls in the census; 0: not read)
+    double q3;         // Q3_K's (a Q3_K mix's calls in the census; 0: not read). The W4A8 row's: a
+                       // round of two 64 x 64 tiles a SM (kW4a8Q3kTile), not a 128-column tile
     int cards;
 };
 inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75, 51.5, 2},

@@ -608,7 +608,6 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     double clocks = 0, bytes = 0;
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
     // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
-    // Q3_K on the W4A8 tiles: not read (the share).
     // A Q3_K label whose linears are not named: its Q3_K and Q4_K parts take two tiles (the share).
     if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0 || (format->bits < 4 && !named))) {
         return 0;
@@ -618,6 +617,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         for (const LinearShape& l : model.linears) {
             const double step = step_of(l);
             if (step <= 0) { return 0; }
+            // A Q3_K label's linear of no K format: the label's step is the 64 x 64 tile's (the share).
+            const bool k_format = l.format == "ggml_q3_k" || l.format == "ggml_q4_k" || l.format == "ggml_q5_k" ||
+                                  l.format == "ggml_q6_k";
+            if (format->bits < 4 && !k_format) { return 0; }
             if (l.format == "ggml_q3_k") { // the classic 64 x 64 tile, two a SM (kW4a8Q3kTile)
                 const double tiles = std::ceil(l.n / kW4a8Q3kTile) * std::ceil(tokens / kW4a8Q3kTile);
                 clocks += l.per_token * std::ceil(tiles / (kW4a8Q3kResident * sms)) * l.k * step;
