@@ -2323,7 +2323,8 @@ order.
 
 **Dense decode steps by quantization** (31.10, verification): mbatch.sh steps at 1, 2, 4 and 8 rows of
 Qwen3.5 9B's Q3_K_M, IQ4_XS, Q4_K_S, Q5_K_M, Q6_K and Gemma 4 12B's Q4_K_M, Q5_K_M, Q6_K on seven
-cards (speed_measured.json, 200 points) against the decode estimate as it stood (predicted before the
+cards, the non-MTP GGUFs (speed_measured.json, 200 points: Gemma's 4 and 8 rows missing for four card
+and quantization pairs whose windows never held them) against the decode estimate as it stood (predicted before the
 measurement): rms 6.0 %, one row 3.0 %; by card 3.2 .. 9.7 % (the RTX 2080 Ti the 9.7). Open: at 8 rows
 the estimate is 6 % slower on average (Gemma 4 12B on the RTX 4060 Ti -16 .. -18 %); the RTX 2080 Ti's
 Qwen3.5 9B Q6_K at 2 and 4 rows +25, +20 % (the estimate faster).

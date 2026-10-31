@@ -138,7 +138,7 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
 
 // The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
 // (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
-// aggregates, not a step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
+// aggregates, not a step's rate: decodes_from_facts measures those) and its steps at C rows (mbatch.sh); prefill (the 22K points, at their prompt,
 // attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
     double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
@@ -169,7 +169,7 @@ void reproduces_the_measurements(const json& fixture) {
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
-        } else if (!mf.moe() && step && row.value("step", false)) {
+        } else if (!mf.moe() && row.value("step", false)) {
             // A dense model's step at C rows (mbatch.sh, 2026-10-31: Qwen3.5 9B's and Gemma 4 12B's
             // quantizations on seven cards).
             dense_sq += d * d;
