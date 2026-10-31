@@ -608,8 +608,9 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 // the longer of its time at the DRAM rate and at SMs x clock x this, in place of kKvReadFactor's
 // codec factor (read on another family's kernel). The rate is per reference clock: a board holding
 // another share of its reference clock than the 2080 Ti's 1.15 (a power-capped one) moves off it.
-// One card: the rows feed the estimate a Turing board shows (transferred), never a decision (Turing
-// has no kReferenceCards row: its KV codec, activations and quantization keep the family's defaults).
+// One card: the rows feed the estimate a Turing or Volta board shows (transferred), never a decision
+// (neither has a kReferenceCards row: their KV codec, activations and quantization keep the family's
+// defaults).
 // A row holds for the geometry it was read on (a full layer's head width, query and KV heads: the
 // grouped kernels' rows and tiles follow the group); another geometry keeps the codec's factor. From the nsys census of one
 // stream's decode at 7K and 82K (mdcen.sh, 2026-10-31, the RTX 2080 Ti: 68 SMs, 1545 MHz reference,
@@ -630,6 +631,10 @@ struct KvSmRate {
 inline constexpr KvSmRate kKvSmRate[] = {
     {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 256, 16, 4, 3.58, 1}, // Qwen3.5 9B
     {"turing", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 2.67, 1},     // Gemma 4 12B
+    // The Quadro GV100 (80 SMs, 1627 MHz reference; mdcenv.sh, the census at 7K and 82K): Gemma 4 12B's
+    // BF16 full layer 707 us a call for 153 MB, 216 GB/s, 25 % of its 870 (Qwen3.5's int8 kernel,
+    // int8_kv_key_major_kt, reaches 643 GB/s, 97 % of the 660 its HBM2 holds: no row).
+    {"volta", "gemma4_text", KvCacheStorage::BFloat16, 512, 16, 1, 1.66, 1},
 };
 
 // The prefill chunk. An MoE's prefill grows with the tokens each expert takes from a chunk (chunk x
