@@ -763,8 +763,8 @@ std::optional<StageRoute> parse_stage(std::string_view name) {
 // in ggml_frag_v1 (whose 2-byte gathers favour one row per warp), and the schedule an IQ3_XXS
 // down of width 512..1023 then takes instead of the streaming 1 x 4 warps, the same at every T of
 // an A8 call so that a token's bytes do not depend on T (the A16 route keeps the streaming order).
-// Down stays on the register MMA everywhere: its K (the expert width) is short, so an R8 warp's
-// lanes share a few 32-value blocks. A board of an instruction set without an entry takes w4r1 on
+// A K-quant or codebook down stays on the register MMA: its K (the expert width) is short, so an R8
+// warp's lanes share a few blocks (a 32-value-block down takes R8: r8_down). A board of an instruction set without an entry takes w4r1 on
 // gate/up at every T
 // and keeps the down (kFallbackA8Route). Gate/up us, R8
 // against the register MMA:
@@ -799,8 +799,26 @@ constexpr ClassA8Route kA8Routes[] = {
 // of the layers; V100 x3.5..4); ad102's route, w4r1 at every T and the streaming down.
 constexpr A8Route kFallbackA8Route{{0, 0, 0, 0}, {0, 0, 0, 0}, -1};
 
+// A down bank of 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1, IQ4_NL) on R8 w4r1 at the A8 widths:
+// its lanes take whole 32-value blocks, so a short K still fills a warp (moe_r8.cuh's lane split),
+// and the call reads its bytes once without the register MMA's tile staging. moe_bench, Gemma 4
+// 26B's layer (H 2816, F 704, 128 experts, top 8: Q4_K frag gate/up, Q5_0 down), the layer at
+// T = 1 / 2 / 3 / 4 against the streaming 1 x 4: RTX 5090 34.8 / 57.3 / 77.8 / 96.3 us against
+// 41.0 / 61.4 / 84.0 / 104.5, RTX 5070 Ti 57.3 / 96.2 / 137.2 / 174.1 against 65.0 / 106.5 /
+// 151.6 / 190.5, RTX 4090 62.5 / 99.3 / 140.3 / 177.2 against 65.5 / 102.4 / 142.3 / 178.2 (any R8
+// schedule within 2 us). Decode of gemma-4-26B-A4B UD-Q4_K_M (sm_bench.py, 1 / 2 / 4 streams, two
+// runs each): RTX 5090 +2.1 / +3.9 / +2.5 %, RTX 4090 +2.1 / +2.0 / +2.2 %.
+constexpr int kR8DownSchedule = 0; // w4r1
+bool r8_down(const MoeWeights& w, std::int32_t tokens) {
+    const auto q       = w.down.qtype;
+    const bool blocks32 = q == QType::GGML_Q4_0 || q == QType::GGML_Q4_1 || q == QType::GGML_Q5_0 ||
+                          q == QType::GGML_Q5_1 || q == QType::GGML_IQ4_NL;
+    return blocks32 && r8_admits(w, w.down, tokens);
+}
+
 // The class's default A8 route on top of plan p: R8 on gate/up where the layer admits it and, on a
-// heuristic plan (not a route-table band's, whose down schedule was measured), the class's down.
+// heuristic plan (not a route-table band's, whose down schedule was measured), the class's down
+// (R8 for a 32-value-block down bank, r8_down).
 MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int32_t tokens,
                      bool tuned = false) {
     const auto route = a8_default_route();
@@ -811,7 +829,7 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
         streaming_schedule(g.inter) == 1 && p.down_schedule == 1) {
         p.down_schedule = route->down;
     }
-    return with_r8(p, gate_up, -1);
+    return with_r8(p, gate_up, !tuned && r8_down(w, tokens) ? kR8DownSchedule : -1);
 }
 
 } // namespace
