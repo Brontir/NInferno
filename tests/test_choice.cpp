@@ -312,6 +312,9 @@ void prefills_pay_tail_calls(const json& fixture) {
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0}, worst_before[2] = {0, 0}, sq_before[2] = {0, 0};
     int before[2] = {0, 0};
+    // The K-quant rows before DECISIONS 69's check (Q4_K_M) and that check's (Qwen3.5-9B's other mixes).
+    double sq_first = 0, sq_mixes = 0, worst_mixes = 0;
+    int first = 0, mixes = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -330,6 +333,11 @@ void prefills_by_format(const json& fixture) {
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
+        if (i == 0 && row.at("model").get<std::string>() == "Qwen3.5-9B") {
+            sq_mixes += d * d, worst_mixes = std::max(worst_mixes, std::abs(d)), ++mixes;
+        } else if (i == 0 && row.at("card").get<std::string>() != "RTX 5090") {
+            sq_first += d * d, ++first;
+        }
         if (!(row.at("model").get<std::string>() == "gemma-4-12b" && row.at("card").get<std::string>() == "RTX 5090")) {
             worst_before[i] = std::max(worst_before[i], std::abs(d));
             sq_before[i] += d * d;
@@ -358,6 +366,11 @@ void prefills_by_format(const json& fixture) {
     check(before[0] == 120 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
           "K-quant prefill but the RTX 5090's Gemma as before");
     check(n[0] == 126 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
+    // The Q4_K_M points alone keep their guard (all but the RTX 5090's: rms within 10 %), and the
+    // other mixes have their own: rms within 8 %, every point within 20 %.
+    check(first == 72 && std::sqrt(sq_first / first) < 0.10, "Q4_K_M prefill as before");
+    check(mixes == 42 && std::sqrt(sq_mixes / mixes) < 0.08 && worst_mixes < 0.20,
+          "Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S within 8 % rms, every point within 20 %");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
