@@ -2328,3 +2328,8 @@ and quantization pairs whose windows never held them) against the decode estimat
 measurement): rms 6.0 %, one row 3.0 %; by card 3.2 .. 9.7 % (the RTX 2080 Ti the 9.7). Open: at 8 rows
 the estimate is 6 % slower on average (Gemma 4 12B on the RTX 4060 Ti -16 .. -18 %); the RTX 2080 Ti's
 Qwen3.5 9B Q6_K at 2 and 4 rows +25, +20 % (the estimate faster).
+
+**Qwen3.5 4B's prefill** (31.10, verification): another geometry of the same family (hidden 2560, FFN
+9216, the 9B's heads, KV and GDN, tied embeddings), its Q4_K_M by its linears' formats, mpref.sh rows at
+7K and 22K on eight cards predicted before the measurement: -6 .. +9 % on the seven (the RTX 5070 Ti the
++9, +7), the Quadro GV100 +13, +1 %. Facts from the GGUF's metadata (prefill_measured.json).
