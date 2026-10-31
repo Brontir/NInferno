@@ -978,6 +978,15 @@ void prices_dense_prefill_tiles() {
             const double v8 = prompt(q8v) / 1842 - 1, v6 = prompt(q6) / 1882 - 1;
             std::cout << "Volta linears: Q8_0 " << v8 * 100 << " %, Q6_K " << v6 * 100 << " %\n";
             check(std::abs(v8) < 0.06 && std::abs(v6) < 0.06, "Volta's CUTLASS route within 6 % of the census");
+            // Off the route: sm_72 (no CUTLASS in its tree), and a tiled format's short call on slow DRAM.
+            ch::CardFacts xavier = gv100, titan_v = gv100;
+            xavier.minor             = 2;
+            titan_v.dram_bytes_per_s = 653e9;
+            check(ch::prefill_linears_seconds(qwen, xavier, q6, 1024) == 0 &&
+                      ch::prefill_linears_seconds(qwen, titan_v, q8v, 128) == 0 &&
+                      ch::prefill_linears_seconds(qwen, titan_v, q8v, 256) > 0 &&
+                      ch::prefill_linears_seconds(qwen, titan_v, q6, 128) > 0,
+                  "Volta's estimate keeps CUTLASS where the runtime takes it");
         }
         // Where MMQ does not pay: the RTX 5070 Ti's producer-warp Q6_K tiles, the gate and up's 1024-token
         // call (384 x 8 tiles in 44 rounds of its 70 SMs: the census's 2131.1 us); a call under 128

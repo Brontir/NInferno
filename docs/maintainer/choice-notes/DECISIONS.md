@@ -2230,3 +2230,12 @@ tokens (nsys 2025.1: the system's 2026.3 records no kernel on Volta): the GEMM's
 decode -2 .. +1 %, the cast and epilogue at 0.75 of the DRAM rate (-21 .. -27 % on a tenth of the
 time); the linears together Q8_0 -2.3 %, Q6_K +1.2 %. One card: transferred (DECISIONS 52: an
 architecture's facts). Not read: the attention (Qwen's sm70 flash kernel, Gemma 4's) keeps its share.
+
+**Where the route is not CUTLASS** (the review): CUTLASS is built for sm_70 alone, so an sm_72 board
+(Jetson Xavier) keeps the share; a tiled format's call (Q8_0, Q4_K, Q5_K) under 256 tokens on a board
+below 770 GB/s (the Titan V) runs its own tile (`volta_copy_pays`), not read: the share prices it.
+Open: the epilogue's bytes follow Qwen3.5's fused calls (its qkv and GDN input projections of 2 .. 4
+segments, its gate and up as `linear_swiglu`); Gemma 4 and the generic dense pass store their q / k /
+v and gate-up calls directly (a separate `gelu_tanh_mul` after the gate-up) and cast once a call, a few
+per cent of their linears' time. A grid of at most SMs CTAs (a short call of few rows) is priced at two
+tiles' time, not a lone tile's.
