@@ -355,10 +355,8 @@ void prefills_by_format(const json& fixture) {
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
-        if (i == 0 && q.rfind("Q3_K", 0) == 0) { // on MMQ's tiles; the RTX 5070 Ti's W4A8 tiles: the share
-            if (row.at("card").get<std::string>() != "RTX 5070 Ti") {
-                sq_q3 += d * d, worst_q3 = std::max(worst_q3, std::abs(d)), ++q3;
-            }
+        if (i == 0 && q.rfind("Q3_K", 0) == 0) { // MMQ's tiles; the RTX 5070 Ti's W4A8 ones
+            sq_q3 += d * d, worst_q3 = std::max(worst_q3, std::abs(d)), ++q3;
         } else if (i == 0 && row.at("model").get<std::string>() == "Qwen3.5-9B") {
             sq_mixes += d * d, worst_mixes = std::max(worst_mixes, std::abs(d)), ++mixes;
         } else if (i == 0 && q != "Q4_K_M") {
@@ -405,8 +403,8 @@ void prefills_by_format(const json& fixture) {
           "Gemma 4 12B's Q5_K_M and Q6_K within 8 % rms");
     std::cout << "Q3_K_M prefill: " << q3 << " points rms " << std::sqrt(sq_q3 / q3) * 100 << " % (worst "
               << worst_q3 * 100 << " %)\n";
-    // Qwen3.5 9B's Q3_K_M on MMQ (Q3_K's K step from the census), six cards at 7K and 22K.
-    check(q3 == 12 && std::sqrt(sq_q3 / q3) < 0.07 && worst_q3 < 0.10, "Q3_K_M prefill on MMQ's tiles within 10 %");
+    // Qwen3.5 9B's Q3_K_M on its tiles (MMQ; the RTX 5070 Ti's W4A8 64 x 64), seven cards at 7K and 22K.
+    check(q3 == 14 && std::sqrt(sq_q3 / q3) < 0.07 && worst_q3 < 0.10, "Q3_K_M prefill on its tiles within 10 %");
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
               << worst_volta * 100 << " %)\n";
     // The Quadro GV100 end to end (DECISIONS 70's linears, Gemma's Volta row): Qwen3.5 9B's Q6_K,

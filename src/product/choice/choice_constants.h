@@ -368,7 +368,8 @@ struct MmqTileCost {
     std::string_view generation;
     double c0;
     double q4, q5, q6; // SM-clocks a K step of a 128-column tile, by format
-    double q3;         // Q3_K's (a Q3_K mix's calls in the census; 0: not read)
+    double q3;         // Q3_K's (a Q3_K mix's calls in the census; 0: not read). The W4A8 row's: a
+                       // round of two 64 x 64 tiles a SM (kW4a8Q3kTile), not a 128-column tile
     int cards;
 };
 inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75, 51.5, 2},
@@ -385,9 +386,15 @@ inline constexpr double kMmqTileFixed = 0.43;
 // Q4_K_M, Q4_K_S, Q5_K_M and Q6_K at 7K tokens (the calls by format and grid, as MMQ's), c0 within
 // a few K step: Q4_K 23, Q5_K 28, Q6_K 29.5 SM-clocks a K step (the K-4096 and K-12288 calls agree
 // within 2 %) — a 128 x 128 MMQ tile's on the RTX 5090 per element (45.5 = 2 x 22.75 for Q4_K).
-inline constexpr MmqTileCost kW4a8KquantCost[] = {{"gb20x", 0, 23, 28, 29.5, 0, 1}};
+inline constexpr MmqTileCost kW4a8KquantCost[] = {{"gb20x", 0, 23, 28, 29.5, 37.4, 1}};
 inline constexpr double kW4a8KquantTokens = 128;
 inline constexpr double kW4a8KquantRows   = 64;
+// Q3_K there runs the classic tile (W4a8Q3K, W4a8Schedule<64, 64, 2, 2>): 64 tokens x 64 weight rows,
+// 128 threads at 185 registers and 40 KiB, two CTAs a SM; a grid of ceil(N / 64) x ceil(t / 64)
+// tiles in rounds of 2 x SMs, a round 37.4 SM-clocks a K step (`q3` above: the RTX 5070 Ti's census
+// of Qwen3.5 9B's Q3_K_M at 7K, its three grids' rounds within 3 %: 62.2 .. 64.3 us at K 4096).
+inline constexpr double kW4a8Q3kTile     = 64;
+inline constexpr double kW4a8Q3kResident = 2;
 inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
 inline constexpr double kMmqTile        = 128;
 // Beside the tiles, every grid quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes
