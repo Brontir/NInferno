@@ -138,11 +138,13 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
 
 // The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
 // (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
-// aggregates, not a step's rate: decodes_from_facts measures those); prefill (the 22K points, at their prompt,
+// aggregates, not a step's rate: decodes_from_facts measures those) and its steps at C rows (mbatch.sh); prefill (the 22K points, at their prompt,
 // attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
     double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
     int decodes = 0, prefills = 0, moes = 0;
+    double dense_sq = 0, dense_worst = 0;
+    int denses = 0;
     for (const json& row : fixture.at("rows")) {
         const json& m           = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q     = row.at("quant").get<std::string>();
@@ -167,6 +169,14 @@ void reproduces_the_measurements(const json& fixture) {
             moe_sq += d * d;
             moe_worst = std::max(moe_worst, std::abs(d));
             ++moes;
+        } else if (!mf.moe() && row.value("step", false)) {
+            // A dense model's step at C rows (mbatch.sh, 2026-10-31: Qwen3.5 9B's and Gemma 4 12B's
+            // quantizations on seven cards).
+            dense_sq += d * d;
+            dense_worst = std::max(dense_worst, std::abs(d));
+            ++denses;
+            std::cout << "  step " << row.at("card").get<std::string>() << ' ' << row.at("model").get<std::string>() << ' '
+                      << q << " x" << row.at("concurrency").get<int>() << ": " << std::lround(d * 100) << " %\n";
         } else if (!mf.moe() && row.at("concurrency").get<std::uint32_t>() == 1) {
             decode_sq += d * d;
             decode_worst = std::max(decode_worst, std::abs(d));
@@ -186,6 +196,12 @@ void reproduces_the_measurements(const json& fixture) {
               << " %, worst " << prefill_worst * 100 << " %\n";
     const double moe_rms = std::sqrt(moe_sq / moes);
     std::cout << "MoE decode " << moes << " points: rms " << moe_rms * 100 << " %, worst " << moe_worst * 100 << " %\n";
+    std::cout << "dense step " << denses << " points: rms " << std::sqrt(dense_sq / std::max(denses, 1)) * 100
+              << " %, worst " << dense_worst * 100 << " %\n";
+    // 200 steps (2026-10-31, predicted before they were measured): rms 6.0 %, 1 row 3.0 %, 8 rows -6 %
+    // on average (the estimate slower); the worst the RTX 2080 Ti's Q6_K at 2 and 4 rows (+25, +20 %).
+    check(denses == 200 && std::sqrt(dense_sq / denses) < 0.07 && dense_worst < 0.27,
+          "a dense model's step at C rows within the model's error");
     check(decodes == 26 && prefills == 15, "the fixture's decode points and 15 prefill points");
     check(decode_rms < 0.10 && decode_worst < 0.17, "a dense model's one-stream decode within the model's error");
     // 33 points (2026-10-30): rms 4.4 %, worst 13 % (UD-IQ3_XXS at 4-6 rows on the RTX 5070 Ti).

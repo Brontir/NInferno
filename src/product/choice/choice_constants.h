@@ -200,7 +200,7 @@ inline constexpr RowsEta kRowsEta[] = {
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
 // each for a row or two, many small reads apart from the dense GEMVs kRowsEta measures. Their share
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
-// the step rows of speed_measured.json (the server's windows of exactly C rows, eight different
+// the MoE step rows of speed_measured.json (the server's windows of exactly C rows, eight different
 // tasks) less every other term of the step, the mean over the generation's cards and quantizations
 // (lab/speed_model/fit_moe_decode.py). A generation without rows takes Ada's (transferred).
 struct MoeRoutedEta {
