@@ -303,9 +303,10 @@ void prefills_pay_tail_calls(const json& fixture) {
               << prompt / t2 << " tok/s\n";
 }
 
-// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of
-// tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven; Q8_0
-// re-measured after PR #249, master f8d4399d), Q8_0 on the int8 tiles, Q4_K_M on MMQ's int8 rows.
+// Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt
+// of tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven; Q8_0
+// re-measured after PR #249, master f8d4399d; Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S at 7K and 22K),
+// Q8_0 on the int8 tiles, the K-quants on MMQ's tiles (DECISIONS 69) where the card takes MMQ.
 // The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
 // measured row.
 void prefills_by_format(const json& fixture) {
@@ -353,10 +354,10 @@ void prefills_by_format(const json& fixture) {
     check(n[1] == 66 && tiles < 0.10 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
-    // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards: DECISIONS 69).
-    check(before[0] == 141 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+    // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69).
+    check(before[0] == 120 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
           "K-quant prefill but the RTX 5090's Gemma as before");
-    check(n[0] == 147 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
+    check(n[0] == 126 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
