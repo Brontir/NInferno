@@ -333,7 +333,8 @@ void prefills_pay_tail_calls(const json& fixture) {
               << prompt / t2 << " tok/s\n";
 }
 
-// Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt
+// Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt (the 41K
+// and 82K ones apart, their own guard)
 // of tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven, Qwen3.5 4B on eight; Q8_0
 // re-measured after PR #249, master f8d4399d; Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S at 7K and 22K),
 // Q8_0 on the int8 tiles, the K-quants on MMQ's tiles (DECISIONS 69) where the card takes MMQ.
@@ -472,7 +473,7 @@ void prefills_by_format(const json& fixture) {
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";
     // 41K and 82K prompts (2026-10-31, predicted before the measurement): Qwen3.5 9B's Q4_K_M and Q8_0 and
-    // Gemma 4 12B's Q4_K_M on seven cards, rms 5.1 %; the worst the Quadro GV100's Qwen (-10 .. -14 %).
+    // Gemma 4 12B's Q4_K_M on seven cards, rms 5.1 %; the worst the Quadro GV100's Qwen (-5 .. -14 %).
     check(long_rows == 42 && std::sqrt(sq_long / long_rows) < 0.07 && worst_long < 0.16,
           "long-prompt prefill within the model's error");
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
