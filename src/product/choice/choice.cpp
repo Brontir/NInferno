@@ -509,6 +509,49 @@ double linear_prefill(const ModelFacts& model, const CardFacts& card, const Quan
 // A label's tokens (weight_class_of reads them too).
 std::vector<std::string> label_tokens(std::string_view label);
 
+// A dense model's Q8_0 / K-quant linears on Volta's CUTLASS route (kVoltaPrefillCost); 0 for another
+// class or a K-quant label without its format.
+double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
+                             double tokens, bool* transferred) noexcept {
+    const VoltaPrefillCost& cost = kVoltaPrefillCost;
+    double decode                = 0;
+    if (quant.weights == WeightClass::Q8) {
+        decode = cost.q8;
+    } else if (quant.weights == WeightClass::KQuant) {
+        const std::vector<std::string> t = label_tokens(quant.label);
+        for (std::size_t i = 0; i + 1 < t.size(); ++i) {
+            if (t[i + 1] != "K") { continue; }
+            if (t[i] == "Q4") { decode = cost.q4k; }
+            if (t[i] == "Q5") { decode = cost.q5k; }
+            if (t[i] == "Q6") { decode = cost.q6k; }
+        }
+    }
+    if (decode <= 0) { return 0; }
+    // CUTLASS is built for sm_70 alone (CMakeLists.txt): sm_72's tree runs the tiles and the scalar path.
+    if (card.major != 7 || card.minor != 0 || tokens < kVoltaCutlassMinTokens) { return 0; }
+    if (decode != cost.q6k && tokens < kVoltaCopyMinTokens && card.dram_bytes_per_s < kVoltaCopyMinDramBps) {
+        return 0;
+    }
+    if (transferred != nullptr && cost.cards < 2) { *transferred = true; }
+    const double sms = card.sms, slots = 2 * card.sms;
+    double clocks = 0, bytes = 0;
+    for (const LinearShape& l : model.linears) {
+        const double step = std::max(256.0, std::floor(kVoltaChunkBytes / (l.k * 2) / 128) * 128);
+        for (double r0 = 0; r0 < l.n; r0 += step) {
+            const double rows  = std::min(step, l.n - r0);
+            const double tiles = std::ceil(tokens / 128) * std::ceil(rows / 128);
+            clocks += l.per_token * (std::ceil(tiles / slots) * 2 * l.k * cost.tile_step + rows * l.k * decode / sms);
+        }
+        bytes += l.per_token * tokens * l.k * 4; // the cast to FP16
+        if (l.gated) {
+            bytes += l.per_token * tokens * l.n / 2 * 10;
+        } else if (l.n != model.hidden) { // a fused projection's epilogue (a plain one the GEMM stores)
+            bytes += l.per_token * tokens * l.n * 6;
+        }
+    }
+    return clocks / card.clock_hz + bytes / (dram_eta("volta") * card.dram_bytes_per_s);
+}
+
 // A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost) where the card's nearest
 // measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation has no
 // row.
@@ -608,6 +651,7 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Mxfp4: banks = gen == "gb20x" ? TileKernel::Mx : TileKernel::Int8; break;
     case ExpertBanks::Unknown: return 0;
     }
+    if (!moe && gen == "volta") { return volta_linears_seconds(model, card, quant, tokens, transferred); }
     if (!moe && quant.weights == WeightClass::KQuant) { return mmq_linears_seconds(model, card, quant, tokens, transferred); }
     if ((moe ? quant.rest_weights : quant.weights) != WeightClass::Q8) { return 0; }
     const TileCost* rest = cost(TileKernel::Int8);

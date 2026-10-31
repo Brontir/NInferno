@@ -407,14 +407,15 @@ void prefills_by_format(const json& fixture) {
     check(at("RTX 2080 Ti", q8, mf, 1).transferred && at("RTX 2080 Ti", kq, mf, 1).transferred &&
               at("RTX 3060", q8, mf, 1).transferred,
           "Turing / Ampere prefill rows of one card are transferred");
-    // A generation without a tiles row keeps its int8 row, transferred (Volta: its own).
+    // Volta prefills Q8_0 on its CUTLASS route (DECISIONS 70: one card, transferred); a K-quant without
+    // its format in the label keeps the share, transferred too.
     ch::CardFacts volta = card_of(fixture.at("cards").at("RTX 2080 Ti"));
     volta.major = 7;
     volta.minor = 0;
     const ch::Speed v8 = ch::speed_of(mf, volta, q8, c, 1, 4096, 2048);
     const ch::Speed vk = ch::speed_of(mf, volta, kq, c, 1, 4096, 2048);
-    check(v8.transferred && std::abs(v8.prefill / vk.prefill - 1) < 1e-9,
-          "no tiles row: the int8 row, transferred");
+    check(v8.transferred && vk.transferred && v8.prefill > 0 && vk.prefill > 0 && v8.prefill != vk.prefill,
+          "Volta: Q8_0 on its CUTLASS route, the label-less K-quant on the share, both transferred");
     // An MoE keeps its MoE row whatever its weights.
     ch::ModelFacts moe        = mf;
     moe.experts               = 128;
@@ -956,6 +957,38 @@ void prices_dense_prefill_tiles() {
         const double e1 = call(12288, 4096, false) / 998.6 - 1, e2 = call(4096, 12288, false) / 994.8 - 1;
         std::cout << "MMQ tiles, RTX 4060 Ti: " << e1 * 100 << " %, " << e2 * 100 << " %\n";
         check(std::abs(e1) < 0.05 && std::abs(e2) < 0.05, "MMQ's tiles in rounds within 5 % of the census's calls");
+        // Volta (DECISIONS 70): the Quadro GV100's CUTLASS route, a 7K prompt's linears in 1024-token
+        // chunks against the census's GEMM, decode, cast and epilogue (Q8_0 1842 ms, Q6_K 1882).
+        {
+            const ch::CardFacts gv100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.627e9, .dram_bytes_per_s = 870e9};
+            ch::ModelFacts qwen = m;
+            qwen.hidden         = 4096;
+            qwen.linears        = {{10240, 4096, 8}, {4096, 4096, 8}, {12288, 4096, 24}, {4096, 4096, 24},
+                                   {24576, 4096, 32, false, true}, {4096, 12288, 32}};
+            const auto prompt = [&](const ch::QuantOption& quant) {
+                double s = 0;
+                for (double done = 0; done < 7238; done += 1024) {
+                    s += ch::prefill_linears_seconds(qwen, gv100, quant, std::min(1024.0, 7238 - done));
+                }
+                return s * 1e3;
+            };
+            ch::QuantOption q8v = q6;
+            q8v.weights         = ch::WeightClass::Q8;
+            q8v.label           = "Q8_0";
+            const double v8 = prompt(q8v) / 1842 - 1, v6 = prompt(q6) / 1882 - 1;
+            std::cout << "Volta linears: Q8_0 " << v8 * 100 << " %, Q6_K " << v6 * 100 << " %\n";
+            check(std::abs(v8) < 0.06 && std::abs(v6) < 0.06, "Volta's CUTLASS route within 6 % of the census");
+            // Off the route: sm_72 (no CUTLASS in its tree), and a tiled format's short call on slow DRAM.
+            ch::CardFacts xavier = gv100, titan_v = gv100;
+            xavier.minor             = 2;
+            titan_v.dram_bytes_per_s = 653e9;
+            check(ch::prefill_linears_seconds(qwen, xavier, q6, 1024) == 0 &&
+                      ch::prefill_linears_seconds(qwen, titan_v, q8v, 128) == 0 &&
+                      ch::prefill_linears_seconds(qwen, gv100, q6, 16) == 0 &&
+                      ch::prefill_linears_seconds(qwen, titan_v, q8v, 256) > 0 &&
+                      ch::prefill_linears_seconds(qwen, titan_v, q6, 128) > 0,
+                  "Volta's estimate keeps CUTLASS where the runtime takes it");
+        }
         // Where MMQ does not pay: the RTX 5070 Ti's producer-warp Q6_K tiles, the gate and up's 1024-token
         // call (384 x 8 tiles in 44 rounds of its 70 SMs: the census's 2131.1 us); a call under 128
         // tokens keeps the share.
@@ -1001,7 +1034,7 @@ void prices_prefill_small_kernels() {
     }
     check(worst < 0.25, "a prefill's small kernels by the scan's clocks and the rest's bytes within a quarter");
     const ch::CardFacts v100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.53e9, .dram_bytes_per_s = 900e9};
-    check(ch::prefill_small_seconds(m, v100, 1819) == 0, "no small-kernel census on Volta: unknown");
+    check(ch::prefill_small_seconds(m, v100, 1819) > 0, "Volta's small kernels: the GV100's census (DECISIONS 70)");
 }
 
 // An MoE's whole prefill through the tiles (DECISIONS 66): the model's facts (speed_measured.json)
