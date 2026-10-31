@@ -156,14 +156,14 @@ __device__ __forceinline__ void fused_combine_tail(const GemmArgs& a, int r0, in
 // EXPERIMENT: the codecs whose loads hold the most registers (one load slot) and the warps per SM
 // their launch asks for (NINFERNO_EXP_R8_WARPS, 0: no bound).
 template <class C>
-constexpr bool r8_one_slot() {
+__host__ __device__ constexpr bool r8_one_slot() {
     return std::is_same_v<C, generic::W4a8Q6K> || std::is_same_v<C, generic::W4a8Q3K>;
 }
 #ifndef NINFERNO_EXP_R8_WARPS
 #define NINFERNO_EXP_R8_WARPS 12
 #endif
 template <class C, class S>
-constexpr int r8_min_blocks() {
+__host__ __device__ constexpr int r8_min_blocks() {
     return r8_one_slot<C>() && NINFERNO_EXP_R8_WARPS > 0
                ? (NINFERNO_EXP_R8_WARPS * 32 + S::kThreads - 1) / S::kThreads
                : 1;
