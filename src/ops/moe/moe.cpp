@@ -758,28 +758,36 @@ std::optional<StageRoute> parse_stage(std::string_view name) {
 }
 
 // The default A8 route per GPU class, measured where it is listed (bench/ops/moe_bench.cu --a8 1
-// --plans sweep [--frag 1] on the Qwen3.6-35B-A3B UD-IQ3_XXS experts: IQ2_S gate/up, IQ3_XXS
-// down, H 2048, F 512): the R8 schedule of a codebook gate/up bank at each T = 1..4, published and
-// in ggml_frag_v1 (whose 2-byte gathers favour one row per warp), and the schedule an IQ3_XXS
+// --plans sweep [--frag 1], E 128, k 8, H 2048, F 512): the R8 schedule of a published 2-bit
+// codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S) at each T = 1..4, and the schedule an IQ3_XXS
 // down of width 512..1023 then takes instead of the streaming 1 x 4 warps, the same at every T of
 // an A8 call so that a token's bytes do not depend on T (the A16 route keeps the streaming order).
+// Every other R8 gate/up bank takes w4r1 at every T (A8Route::gate_up_at). Two rows per warp
+// (w4r2) read each quantized activation once for both rows: it pays only where a row's weights
+// are the fewest bytes per value, so the activation reads are the largest share, and costs one
+// timer step (2 us) or more everywhere else; one row per warp also suits ggml_frag_v1's 2-byte
+// gathers. R8 schedules give the same bytes, so a schedule may change with T.
 // Down stays on the register MMA everywhere: its K (the expert width) is short, so an R8 warp's
 // lanes share a few 32-value blocks. A board of an instruction set without an entry takes w4r1 on
-// gate/up at every T
-// and keeps the down (kFallbackA8Route). Gate/up us, R8
-// against the register MMA:
-//   ad102 published, T = 1 / 2 / 4: w4r1 17.4 / 24.8 / 44.0 against 19.5 / 33.8 / 54.3; down
-//          2 x 2 12.3 / 20.5 / 31.7 against 1 x 4 13.3 / 19.5 / 30.8. Frag: the published route.
-//   gb202 published, T = 1 / 2 / 4: w4r1 14.3, w4r2 22.5 / 34.8, against 20.4 / 30.7 / 41.0;
-//          down, T = 1..4: 2 x 2 no faster (12.3 / 16.4 / 20.5 / 24.6 both; frag 2 us ahead
-//          at T = 3 and 4 only, the call no faster), 4 x 1 2 us behind at T = 1; it keeps the
-//          streaming 1 x 4. Frag, T = 1..4: w4r1 14.3, w4r1 22.5, w8r1 30.7 / 36.9 against
-//          18.4 / 28.7 / 36.9 / 41.0 (w4r2 16.4 / 26.6 / 36.9 / 43.0).
-//   gb203 published, T = 1 / 2 / 4: w8r1 18.1, w4r2 30.4 / 53.2, against 30.4 / 44.7 / 67.6;
-//          down, T = 1..4: 4 x 1 16.4 / 22.5 / 26.6 / 34.8 against 1 x 4 16.4 / 22.5 / 32.5 /
-//          38.9 (2 x 2 16.4 / 24.6 / 32.8 / 40.6); Qwen3.6 decode x1.004 at C = 1, x1.015 at
-//          C = 4. Frag, T = 1..4: w4r1 20.2, w4r1 30.4, w8r1 46.8 / 57.3 against 28.4 / 43.0
-//          / 55.3 / 65.5 (w4r2 38.6 / 59.1 / 71.3 from T = 2).
+// gate/up at every T and keeps the down (kFallbackA8Route). IQ2_XXS takes the 2-bit column by
+// the same property (fewest bytes per value; not measured). Gate/up us, the call (gb202 and
+// gb203: Q5_K down, 2026-10-31, master 1fe59ada, w4r1 against the board's former route; ad102:
+// the earlier run on the IQ2_S / IQ3_XXS experts):
+//   ad102 published, T = 1 / 2 / 4: w4r1 17.4 / 24.8 / 44.0 against the register MMA 19.5 /
+//          33.8 / 54.3; down 2 x 2 12.3 / 20.5 / 31.7 against 1 x 4 13.3 / 19.5 / 30.8.
+//   gb202, T = 2 / 3 / 4: Q6_K w4r1 49.1 / 71.7 / 86.0 (w2r1 84.0 at 4) against w4r2 69.6 / 112.6
+//          / 122.9; Q4_K 36.9 / 51.2 / 61.4 against 40.9 / 55.3 / 67.6; IQ4_XS, IQ3_S, Q5_0
+//          the same or 2 us ahead; IQ2_S and IQ2_XS within one timer step either way. Frag Q4_K,
+//          T = 3 / 4: w4r1 53.2 / 65.5 against w8r1 55.3 / 65.5. Down: 2 x 2 no faster (12.3 /
+//          16.4 / 20.5 / 24.6 both), 4 x 1 2 us behind at T = 1; it keeps the streaming 1 x 4.
+//   gb203, T = 3 / 4: IQ2_S w4r2 77.8 / 94.2 against w4r1 79.9 / 100.3, IQ2_XS 73.7 / 90.1
+//          against 77.8 / 96.3; at T = 1 / 2 w4r1 the same or 2 us ahead (IQ2_S 36.9 / 55.3
+//          against w4r2 36.9 / 57.3; w8r1, the former T = 1 schedule, 36.9 at T = 1). IQ4_XS, IQ3_S, Q5_0, Q4_K, Q6_K: w4r1 (or w2r1) best at
+//          every T, w4r2 2..40 us behind (Q6_K T = 3: 40 %). Frag Q4_K, T = 3 / 4: w4r1 85.7 /
+//          106.5 against w8r1 92.2 / 114.7; IQ2_S frag w4r1 83.9 / 102.4 against w4r2 92.2 /
+//          112.6. Down, T = 1..4: 4 x 1 16.4 / 22.5 / 26.6 / 34.8 against 1 x 4 16.4 / 22.5 /
+//          32.5 / 38.9 (2 x 2 16.4 / 24.6 / 32.8 / 40.6); Qwen3.6 decode x1.004 at C = 1, x1.015
+//          at C = 4.
 // The lists name the boards (ad102: the RTX 4090, gb202: the RTX 5090, gb203: the RTX 5080); a
 // device takes the nearest measured board's route within measured::kCarryDistance, else the
 // fallback below (nearest_measured).
@@ -789,15 +797,15 @@ struct ClassA8Route {
 };
 // R8 schedules (NINFERNO_MOE_R8_SCHEDULES): 0 w4r1, 1 w4r2, 2 w8r1, 3 w2r1.
 constexpr ClassA8Route kA8Routes[] = {
-    {measured::kRtx4090, {{0, 0, 0, 0}, {0, 0, 0, 0}, 2}},
-    {measured::kRtx5090, {{0, 1, 1, 1}, {0, 0, 2, 2}, -1}},
-    {measured::kRtx5080, {{2, 1, 1, 1}, {0, 0, 2, 2}, 3}},
+    {measured::kRtx4090, {{0, 0, 0, 0}, 2}},
+    {measured::kRtx5090, {{0, 0, 0, 0}, -1}},
+    {measured::kRtx5080, {{0, 0, 1, 1}, 3}},
 };
 // Every other class. The MoE tuner's choices of eight cards (A100, RTX 2080 Ti, 3090, 4060 Ti,
 // 5060 Ti, V100, and the 4090 and 5090 above) put an R8 schedule on gate/up at T = 1..4 for
 // nearly every A8 layer, mostly w4r1, where the register MMA lost by x1.15..1.36 per card (median
 // of the layers; V100 x3.5..4); ad102's route, w4r1 at every T and the streaming down.
-constexpr A8Route kFallbackA8Route{{0, 0, 0, 0}, {0, 0, 0, 0}, -1};
+constexpr A8Route kFallbackA8Route{{0, 0, 0, 0}, -1};
 
 // The class's default A8 route on top of plan p: R8 on gate/up where the layer admits it and, on a
 // heuristic plan (not a route-table band's, whose down schedule was measured), the class's down.
@@ -805,7 +813,7 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
                      bool tuned = false) {
     const auto route = a8_default_route();
     if (!route || !r8_admits(w, w.gate_up, tokens)) { return p; }
-    const int gate_up = route->gate_up_at(tokens, is_frag(w.gate_up));
+    const int gate_up = route->gate_up_at(tokens, w.gate_up);
     if (gate_up < 0) { return p; }
     if (!tuned && route->down >= 0 && w.down.qtype == QType::GGML_IQ3_XXS &&
         streaming_schedule(g.inter) == 1 && p.down_schedule == 1) {

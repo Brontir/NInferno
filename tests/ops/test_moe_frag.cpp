@@ -258,14 +258,14 @@ int check_a8(const Case& c, std::uint32_t seed) {
     const bool down_r8 = dmoe::r8_expert_supports(l.frag.down);
     const auto x = random_bf16(static_cast<std::size_t>(dmoe::kR8Tokens) * c.hidden, seed + 7);
     int failures = 0, compared = 0;
-    // The default route takes the class's frag schedule on the frag bank (A16 without a route).
+    // The default route takes w4r1 on the frag bank at every T (A16 without a route).
     const auto route = dmoe::a8_default_route();
     for (std::int32_t t = 1; t <= dmoe::kR8Tokens; ++t, ++compared) {
-        const int expected = route ? route->gate_up_at(t, true) : -1;
+        const int expected = route ? route->gate_up_at(t, l.frag.gate_up) : -1;
         const auto p       = dmoe::select_plan(l.frag, l.config, t, false);
         if (p.gate_up_r8 != expected) {
             std::cerr << c.label << " T=" << t << ": the frag bank took " << dmoe::plan_name(p)
-                      << ", not the class's frag schedule " << expected << '\n';
+                      << ", not the default frag schedule " << expected << '\n';
             ++failures;
         }
         failures += compare(c.label + " A8 default T=" + std::to_string(t),

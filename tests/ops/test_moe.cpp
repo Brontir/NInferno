@@ -613,7 +613,7 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 // a slot's bytes depend on its own activation only, so every call with R8 on both stages gives a
 // token the bytes of the widest one whatever its schedule, T or position. The default route is the
 // GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS down of width 512..1023
-// on the class's down schedule), A16 on a class without one; its bytes, too, do not depend on T or
+// on the class's down schedule; w4r1 on gate/up for a class without an entry); its bytes, too, do not depend on T or
 // position. Two exceptions keep A16: a call of T >= 5 (verify, prefill: refused for a forced R8
 // plan), and a bank whose K is too wide for a CTA's quantized activation (above 10922 at T = 3 or
 // 4). Any R8 plan under A16Only is refused, and the default route there stays on the register MMA.
@@ -692,7 +692,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
             const auto p = moe::select_plan(l.weights, c.config, t, false);
             const std::string label = c.label + " A8 default T=" + std::to_string(t) + " (" +
                                       moe::plan_name(p) + ")";
-            const int gate_up   = route ? route->gate_up_at(t, false) : -1;
+            const int gate_up   = route ? route->gate_up_at(t, l.weights.gate_up) : -1;
             const bool expected = gate_up >= 0 ? p.gate_up_r8 == gate_up && p.down_r8 < 0 &&
                                                      (down < 0 || p.down_schedule == down)
                                                : p.gate_up_r8 < 0 && p.down_r8 < 0;
@@ -876,6 +876,47 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
     return failures;
 }
 
+// The default A8 route's gate/up rule on every class: w4r1 (schedule 0) on every bank but a published
+// 2-bit codebook one (IQ2_XXS, IQ2_XS, IQ2_S), which takes the class's column; a frag IQ2_S bank
+// takes w4r1 too.
+int check_a8_route_rule() {
+    namespace moe = ops::detail::moe;
+    const auto route = moe::a8_default_route();
+    if (!route) {
+        std::cerr << "A8 route: no default route\n";
+        return 1;
+    }
+    int failures = 0;
+    for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+        for (const QType q : {QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS, QType::GGML_IQ2_S,
+                              QType::GGML_IQ3_XXS, QType::GGML_IQ3_S, QType::GGML_Q3_K,
+                              QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q6_K,
+                              QType::GGML_Q4_0}) {
+            for (const auto layout : {QuantLayout::GgmlBlocks, QuantLayout::GgmlFrag}) {
+                Weight w;
+                w.qtype  = q;
+                w.layout = layout;
+                const bool two_bit = q == QType::GGML_IQ2_XXS || q == QType::GGML_IQ2_XS ||
+                                     q == QType::GGML_IQ2_S;
+                const int expected = two_bit && layout != QuantLayout::GgmlFrag
+                                         ? route->gate_up_2bit[static_cast<std::size_t>(t - 1)]
+                                         : 0;
+                if (route->gate_up_at(t, w) != expected) {
+                    std::cerr << "A8 route " << qname(q)
+                              << (layout == QuantLayout::GgmlFrag ? " frag" : "") << " T=" << t
+                              << ": schedule " << route->gate_up_at(t, w) << ", " << expected
+                              << " expected\n";
+                    ++failures;
+                }
+            }
+        }
+    }
+    if (failures == 0) {
+        std::cout << "A8 route: w4r1 on every gate/up bank but a published 2-bit codebook's\n";
+    }
+    return failures;
+}
+
 int check_r8_table() {
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
@@ -924,7 +965,7 @@ int check_r8_table() {
             if (q == QType::GGML_IQ3_XXS) {
                 // The measured down (1 x 4, which the heuristic route would take to the class's
                 // down schedule) under the class's A8 gate/up at decode widths.
-                const int s   = route && decode ? route->gate_up_at(t, false) : -1;
+                const int s   = route && decode ? route->gate_up_at(t, l.weights.gate_up) : -1;
                 const auto r8 = s >= 0 ? moe::r8_schedule_info(s) : moe::R8ScheduleInfo{0, 0};
                 expected      = s >= 0 ? "r8.w" + std::to_string(r8.warps) + "r" +
                                         std::to_string(r8.rows) + "|" + tuned_down
@@ -977,7 +1018,7 @@ int check_r8_k_limit() {
     int failures = 0;
     for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
         const auto p = moe::select_plan(l.weights, c.config, t, false);
-        const bool a8 = route && t <= 2 && route->gate_up_at(t, false) >= 0;
+        const bool a8 = route && t <= 2 && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
             c.label + " T=" + std::to_string(t) + " (" + moe::plan_name(p) + ")";
         if ((p.gate_up_r8 >= 0) != a8 || p.down_r8 >= 0) {
@@ -1057,7 +1098,7 @@ int check_expert_policy() {
         }
         for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
             const auto p = moe::select_plan(w, config, t, false);
-            const int expected = a8 && route ? route->gate_up_at(t, false) : -1;
+            const int expected = a8 && route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 >= 0) {
                 std::cerr << label << " T=" << t << ": " << moe::plan_name(p) << ", gate/up R8 "
                           << expected << " expected\n";
@@ -1065,7 +1106,7 @@ int check_expert_policy() {
             }
         }
     }
-    // A Q4_0 or Q4_K frag bank under an A8 policy takes the class's frag route (its fragment-order
+    // A Q4_0 or Q4_K frag bank under an A8 policy takes w4r1 at every T (its fragment-order
     // R8 codecs, moe_r8.cuh); an IQ3_S bank labelled ggml_frag_v1 (no frag codec; the grouped
     // kernel has no frag map for it either, so only the R8 admission is asked) stays on A16.
     for (const QType q : {QType::GGML_Q4_0, QType::GGML_Q4_K}) {
@@ -1079,7 +1120,7 @@ int check_expert_policy() {
         w.expert_policy  = ops::LinearPolicy::AllowA8;
         for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
             const auto p       = moe::select_plan(w, config, t, false);
-            const int expected = route ? route->gate_up_at(t, true) : -1;
+            const int expected = route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 != -1 || !moe::r8_admits(w, w.gate_up, t)) {
                 std::cerr << "frag " << qname(q) << " T=" << t << ": took " << moe::plan_name(p)
                           << '\n';
@@ -1100,7 +1141,7 @@ int check_expert_policy() {
     }
     if (failures == 0) {
         std::cout << "expert policy: a down bank on A16Only keeps the layer A16; Q4_0 and Q4_K "
-                     "frag banks take the frag route, a frag bank without frag R8 codecs stays "
+                     "frag banks take w4r1 at every T, a frag bank without frag R8 codecs stays "
                      "A16\n";
     }
     return failures;
@@ -1760,6 +1801,7 @@ int main(int argc, char** argv) {
                 // NVFP4 experts (per-tensor divisor 16) take R8 without the native NVFP4 kernels.
                 if (!ops::detail::kNativeNvfp4) failures += check_r8(qwen3_like(), 95U, {1, 4});
                 failures += check_r8_table();
+                failures += check_a8_route_rule();
                 failures += check_r8_k_limit();
                 failures += check_expert_policy();
             }
