@@ -956,6 +956,28 @@ void prices_dense_prefill_tiles() {
         const double e1 = call(12288, 4096, false) / 998.6 - 1, e2 = call(4096, 12288, false) / 994.8 - 1;
         std::cout << "MMQ tiles, RTX 4060 Ti: " << e1 * 100 << " %, " << e2 * 100 << " %\n";
         check(std::abs(e1) < 0.05 && std::abs(e2) < 0.05, "MMQ's tiles in rounds within 5 % of the census's calls");
+        // Volta (DECISIONS 70): the Quadro GV100's CUTLASS route, a 7K prompt's linears in 1024-token
+        // chunks against the census's GEMM, decode, cast and epilogue (Q8_0 1842 ms, Q6_K 1882).
+        {
+            const ch::CardFacts gv100{.major = 7, .minor = 0, .sms = 80, .clock_hz = 1.627e9, .dram_bytes_per_s = 870e9};
+            ch::ModelFacts qwen = m;
+            qwen.hidden         = 4096;
+            qwen.linears        = {{10240, 4096, 8}, {4096, 4096, 8}, {12288, 4096, 24}, {4096, 4096, 24},
+                                   {24576, 4096, 32, false, true}, {4096, 12288, 32}};
+            const auto prompt = [&](const ch::QuantOption& quant) {
+                double s = 0;
+                for (double done = 0; done < 7238; done += 1024) {
+                    s += ch::prefill_linears_seconds(qwen, gv100, quant, std::min(1024.0, 7238 - done));
+                }
+                return s * 1e3;
+            };
+            ch::QuantOption q8v = q6;
+            q8v.weights         = ch::WeightClass::Q8;
+            q8v.label           = "Q8_0";
+            const double v8 = prompt(q8v) / 1842 - 1, v6 = prompt(q6) / 1882 - 1;
+            std::cout << "Volta linears: Q8_0 " << v8 * 100 << " %, Q6_K " << v6 * 100 << " %\n";
+            check(std::abs(v8) < 0.06 && std::abs(v6) < 0.06, "Volta's CUTLASS route within 6 % of the census");
+        }
         // Where MMQ does not pay: the RTX 5070 Ti's producer-warp Q6_K tiles, the gate and up's 1024-token
         // call (384 x 8 tiles in 44 rounds of its 70 SMs: the census's 2131.1 us); a call under 128
         // tokens keeps the share.

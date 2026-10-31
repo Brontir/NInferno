@@ -417,7 +417,30 @@ struct SmallKernelCost {
     int cards;
 };
 inline constexpr SmallKernelCost kSmallKernelCost[] = {
-    {"ada", 0.058, 30, 3}, {"gb20x", 0.048, 30, 2}, {"ga10x", 0.051, 60, 1}, {"turing", 0.196, 88, 1}};
+    {"ada", 0.058, 30, 3}, {"gb20x", 0.048, 30, 2}, {"ga10x", 0.051, 60, 1}, {"turing", 0.196, 88, 1},
+    // The Quadro GV100's census of Qwen3.5 9B Q8_0 at 7K tokens (DECISIONS 70): the scan's chunk
+    // recurrence and its preparation 267 ms, the rest (the convolution, norms, gates, the a / b
+    // projections on R8, conversions) 80 ms.
+    {"volta", 0.381, 56, 1}};
+
+// Volta's dense prefill (generic_volta_cutlass.cu, DECISIONS 70): a call casts its activation to FP16,
+// decodes its weight rows to FP16 in chunks of kVoltaChunkBytes (gate and up rows together), multiplies
+// each chunk on CUTLASS's sm_70 GEMM (128 x 128 x 32 tiles of tokens x weight rows, two CTAs a SM,
+// rounds of SMs x 2 each two tiles' time) and stores through its epilogue (FP32 in, 16 bits out; a
+// gated pair's SwiGLU reads both halves, a single plain projection of the hidden width is stored by
+// the GEMM itself). Read on the Quadro GV100's census of Qwen3.5 9B's Q8_0, Q6_K and Q4_K_M (the MTP
+// file) at 7K tokens: a tile's K step 52.4 SM-clocks (the GEMM's calls -4 .. 0 %, format-blind: one
+// GEMM for every format); a weight element's decode Q8_0 0.69, Q4_K 0.99, Q5_K 1.11, Q6_K 0.94
+// SM-clocks (-2 .. +1 %: the K-quants' decode is compute, Q8_0's near its bytes); the cast (4 bytes an
+// input element) and the epilogue (6, a SwiGLU pair 10 an output) at the DRAM rate (they ran at 0.75
+// of it: -21 .. -27 % on a tenth of the time). One card: transferred.
+struct VoltaPrefillCost {
+    double tile_step;              // SM-clocks a K step of a 128 x 128 tile
+    double q8, q4k, q5k, q6k;      // SM-clocks a weight element's decode
+    int cards;
+};
+inline constexpr VoltaPrefillCost kVoltaPrefillCost{52.4, 0.69, 0.99, 1.11, 0.94, 1};
+inline constexpr double kVoltaChunkBytes = 4096.0 * 17408 * 2; // generic_volta_cutlass.cu kChunkWeightBytes
 
 // An MoE's expert grid: the host launches the bound on the jobs (ops/moe max_jobs: a job is an
 // expert's run of up to kExpertJobSlots of the chunk's slots, token x pick; at most one partial job
