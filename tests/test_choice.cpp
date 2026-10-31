@@ -218,6 +218,8 @@ void decodes_from_facts(const json& fixture) {
     int n = 0;
     std::map<std::string, std::pair<double, int>> by_generation; // sum of ln(predicted / measured)^2
     double own_worst = 0; // the worst on the generations that decide
+    double long_sq = 0, long_worst = 0;
+    int longs = 0, long_open = 0; // Turing's and Volta's long rows: open (their KV reads not yet read)
     for (const json& row : fixture.at("rows")) {
         const json& m            = fixture.at("models").at(row.at("model").get<std::string>());
         const std::string q      = row.at("quant").get<std::string>();
@@ -234,6 +236,15 @@ void decodes_from_facts(const json& fixture) {
         std::cout << "  " << row.at("card").get<std::string>() << ' ' << row.at("model").get<std::string>() << ' ' << q
                   << " x" << row.at("concurrency").get<int>() << ": " << s.decode_per_stream << " against "
                   << row.at("decode").get<double>() << " (" << d * 100 << " %)\n";
+        if (row.value("long", false)) { // 7K .. 82K tokens of context (2026-10-31): their own guard
+            const std::string gen = std::string(ch::generation_of(cf));
+            if (gen == "ada" || gen == "gb20x" || gen == "ga10x") {
+                long_sq += d * d, long_worst = std::max(long_worst, std::abs(d)), ++longs;
+            } else {
+                ++long_open;
+            }
+            continue;
+        }
         sq += d * d;
         worst = std::max(worst, std::abs(d));
         ++n;
@@ -261,6 +272,11 @@ void decodes_from_facts(const json& fixture) {
         check(g.second >= 24 && std::abs(g_rms - e.rms) < 0.0015, "the stated decode error is the measured one");
     }
     check(own_worst < 0.10, "the deciding generations' worst point within 10 %");
+    std::cout << "long-context decode, " << longs << " points: rms " << std::sqrt(long_sq / std::max(longs, 1)) * 100
+              << " %, worst " << long_worst * 100 << " % (" << long_open << " open)\n";
+    // The worst: the RTX 4070 Ti at 82K (+6 .. +15 %, measured twice; open).
+    check(longs == 54 && long_open == 18 && std::sqrt(long_sq / longs) < 0.04 && long_worst < 0.16,
+          "long-context decode on Ada, Blackwell and Ampere within 4 %");
 }
 
 // The kernels a step launches are the graph's (kDecodeLaunches against the nsys census,
