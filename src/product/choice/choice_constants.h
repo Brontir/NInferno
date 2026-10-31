@@ -603,6 +603,28 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
     {"ada", KvCacheStorage::Fp8KeyNvfp4Value, 1.025}, {"ada", KvCacheStorage::Nvfp4Group16, 1.235},
 };
 
+// A decode attention kernel whose KV read the SMs bound below the DRAM rate: the bytes it reads a
+// SM-clock (at the board's reference clock), the family's kernel on the generation. A row's KV takes
+// the longer of its DRAM time (kKvReadFactor) and SMs x clock x this. From the nsys census of one
+// stream's decode at 7K and 82K (mdcen.sh, 2026-10-31, the RTX 2080 Ti: 68 SMs, 1545 MHz reference,
+// 1770 held): the kernel's time per call over the KV bytes the 75K tokens between add, Qwen3.5 9B's
+// int8 grouped kernel (int8_kv_grouped_mma) 423 us for 159 MB, Gemma 4 12B's BF16 full layer
+// (gemma4_attention_kernel, 512-wide heads) 545 us for 153 MB: 376 and 281 GB/s, 61 and 46 % of the
+// card's 616. The same kernels on the RTX 3060 (360 GB/s, 28 SMs) and the RTX 4070 Ti reach 92 .. 94 %
+// of their DRAM rate: their generations have no row.
+struct KvSmRate {
+    std::string_view generation;
+    std::string_view family;
+    KvCacheStorage kv;
+    double bytes_per_sm_clock;
+    int cards;
+};
+
+inline constexpr KvSmRate kKvSmRate[] = {
+    {"turing", "qwen3_5_text", KvCacheStorage::Int8Group64, 3.58, 1},
+    {"turing", "gemma4_text", KvCacheStorage::BFloat16, 2.67, 1},
+};
+
 // The prefill chunk. An MoE's prefill grows with the tokens each expert takes from a chunk (chunk x
 // experts per token / experts), one curve across models and cards: its share of the saturated rate
 // (run_chunk.sh at a 22K prompt, 2026-10-23/24; decode unchanged at every chunk):

@@ -2354,3 +2354,26 @@ The GV100 is +6 .. +24 % at 7K already (no decode row measured on it beyond the 
 kDramEtaOf) and its spans are not monotonic (Qwen 4.4 then 0.9): 9 points +6 .. +35 %. The campaign
 rows of 28.10 price Gemma on the RTX 3060 and 2080 Ti with FP8 KV, which the server no longer picks
 below sm_89 (open).
+
+## 71. Turing's decode attention bound by its SMs (31.10, measured)
+
+**Decision.** A decode attention kernel that reads its KV below the DRAM rate on a generation has a row
+of kKvSmRate (choice_constants.h): the bytes it reads a SM-clock at the board's reference clock, for
+the family's kernel and the codec. A row's KV then costs the longer of its DRAM time and SMs x clock x
+that rate, in place of kKvReadFactor's codec factor (read on another family's kernel). Rows: Turing,
+Qwen3.5's int8 grouped kernel 3.58 B a SM-clock, Gemma 4's BF16 full-layer kernel 2.67.
+
+**Why.** The long-context decode rows (DECISIONS 70's verification, Long-context decode) put the RTX 2080 Ti's KV at 1.70 of
+its DRAM time on int8 and 2.16 on Gemma's BF16 where the estimate took 1.0 and 3.38. The nsys census of
+one stream's decode at 7K and 82K (mdcen.sh) reads the kernels directly: per call, the 75K tokens
+between add 423 us for 159 MB on Qwen's int8_kv_grouped_mma (376 GB/s) and 545 us for 153 MB on
+Gemma's 512-wide full layer (281 GB/s): 61 and 46 % of the card's 616 GB/s, at the 1770 MHz the board
+holds (sampled). The same kernels on the RTX 3060 and 4070 Ti reach 92 .. 94 % of their DRAM: the SMs,
+not the DRAM, bound Turing's (68 SMs of 64 FP32 lanes). The rate a SM-clock carries to Turing boards of
+other SM counts, clocks and buses; one card: transferred.
+
+**Check.** The 9 Turing long rows -12 .. +9 % before, -4 .. +2 % after; Turing, Ada, Blackwell and
+Ampere's 63 long rows rms 3.0 %. Turing's 12 short-context rows keep their stated rms (the KV term is
+small there); speed_measured.json's 26 one-stream rows rms 4.73 -> 4.71 %. Open: kKvReadFactor's Turing
+rows were read on Qwen at 22K against int8 taken at the DRAM rate (now 1.55 of it on a 2080 Ti): its
+BF16 3.38 for Qwen is that much low; Volta's kernels (the GV100's census queued).
