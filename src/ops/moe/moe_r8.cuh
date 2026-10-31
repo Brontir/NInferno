@@ -165,6 +165,21 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
     constexpr int kGroup   = kSpan * kStride;
     static_assert(4 % kGroup == 0, "a 128-value K tile holds whole groups");
     using Raw = typename C::Raw;
+    // One load slot instead of two for the codecs whose loads hold the most registers (Q6_K:
+    // 20 per load, two loads per group, gate and up: 160 registers for two slots, 254 per
+    // thread in all, 16 % occupancy and 75 % of DRAM bandwidth at T = 4 on the RTX 4090
+    // against the register MMA's 128, 33 % and 84 %; Q3_K 190). With one slot (Q6_K 167, Q3_K
+    // 142 registers) the CTA's warps hide the load latency instead. A lane sums the same
+    // blocks in the same order: the bytes do not change. Gate/up us, T = 1 / 2 / 3 / 4
+    // (moe_bench, H 2048, F 512, E 128, k 8), two slots against one:
+    //   RTX 3060:    Q3_K 73.7 / 130.1 / 238.6 / 306.2 against 69.6 / 119.8 / 229.4 / 295.9;
+    //                Q6_K 91.1 / 165.9 / 269.3 / 346.1 against 90.1 / 157.7 / 268.3 / 345.1
+    //   RTX 4090:    Q3_K 37.9 / 58.4 / 81.9 / 99.3 against 36.9 / 53.3 / 74.8 / 92.2;
+    //                Q6_K 52.2 / 85.0 / 122.9 / 151.6 against 52.2 / 84.0 / 121.9 / 153.6
+    //   RTX 5070 Ti: Q3_K 34.8 / 57.3 / 92.2 / 116.7 against 34.8 / 55.3 / 84.0 / 108.5;
+    //                Q6_K 45.1 / 79.9 / 116.4 / 143.4 against 45.1 / 77.8 / 110.6 / 137.2
+    constexpr bool kOneSlot =
+        std::is_same_v<C, generic::W4a8Q6K> || std::is_same_v<C, generic::W4a8Q3K>;
     extern __shared__ __align__(16) unsigned char moe_r8_shared[];
 
     // GemmArgs::pdl: the plan and the activation come from the producer.
@@ -198,7 +213,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                                 (s == 1 ? a.up_offset : 0));
     };
 
-    Raw ring[2][kSets][kRows][kStride];
+    Raw ring[kOneSlot ? 1 : 2][kSets][kRows][kStride];
     const auto fetch = [&](auto slot_tag, int group) {
         constexpr int slot = decltype(slot_tag)::value;
 #pragma unroll
@@ -314,13 +329,22 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
         }
     };
 
+    if constexpr (kOneSlot) {
+        if (sl < groups) compute(Slot0{}, sl);
 #pragma unroll 1
-    for (int g = sl; g < groups; g += 2 * lanes) {
-        if (g + lanes < groups) fetch(Slot1{}, g + lanes);
-        compute(Slot0{}, g);
-        if (g + lanes >= groups) break;
-        if (g + 2 * lanes < groups) fetch(Slot0{}, g + 2 * lanes);
-        compute(Slot1{}, g + lanes);
+        for (int g = sl + lanes; g < groups; g += lanes) {
+            fetch(Slot0{}, g);
+            compute(Slot0{}, g);
+        }
+    } else {
+#pragma unroll 1
+        for (int g = sl; g < groups; g += 2 * lanes) {
+            if (g + lanes < groups) fetch(Slot1{}, g + lanes);
+            compute(Slot0{}, g);
+            if (g + lanes >= groups) break;
+            if (g + 2 * lanes < groups) fetch(Slot0{}, g + 2 * lanes);
+            compute(Slot1{}, g + lanes);
+        }
     }
 
     // Butterfly within each row group: every lane ends with its group's sum (each step adds a pair
