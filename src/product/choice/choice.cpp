@@ -553,14 +553,15 @@ double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, con
     return clocks / card.clock_hz + bytes / (dram_eta("volta") * card.dram_bytes_per_s);
 }
 
-// A dense model's K-quant linears on ggml's matrix kernel (kMmqTileCost) where the card's nearest
-// measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation has no
-// row.
+// A dense model's K-quant or IQ4_XS linears on ggml's matrix kernel (kMmqTileCost) where the card's
+// nearest measured board takes it, else on the W4A8 tiles (kW4a8KquantCost); 0 where the generation
+// has no row or a linear's format was not read.
 double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const QuantOption& quant,
                            double tokens, bool* transferred) noexcept {
     const ::ninferno::Board board{card.major, card.minor, card.sms, card.l2_bytes / (1 << 20),
                                 card.dram_bytes_per_s / 1e9};
     const bool mmq             = measured::mmq_prefill_pays(board);
+    if (mmq && tokens < kMmqMinTokens) { return 0; } // a call under the prefill band: not read (the share)
     const std::string_view gen = generation_of(card);
     const MmqTileCost* cost    = nullptr;
     for (const MmqTileCost& row : mmq ? std::span<const MmqTileCost>(kMmqTileCost) : std::span<const MmqTileCost>(kW4a8KquantCost)) {
@@ -573,8 +574,13 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         double bits, step;
     };
     // Q3_K: a Q3_K mix (WeightClass::Other), its K step read on the census's Q3_K_M calls.
-    const Format formats[] = {
-        {"Q3", 3.4375, cost->q3}, {"Q4", 4.5, cost->q4}, {"Q5", 5.5, cost->q5}, {"Q6", 6.5625, cost->q6}};
+    // IQ4_XS: an IQ4_XS file (WeightClass::IQ4), its step read on the census's calls (IQ4_NL: not read).
+    const Format formats[] = {{"Q3", 3.4375, cost->q3},
+                              {"Q4", 4.5, cost->q4},
+                              {"Q5", 5.5, cost->q5},
+                              {"Q6", 6.5625, cost->q6},
+                              {"IQ4", 4.25, cost->iq4xs}};
+    const Format* const iq4xs = &formats[4];
     const std::vector<std::string> tokens_of = label_tokens(quant.label);
     const Format* format = nullptr;
     for (std::size_t i = 0; i + 1 < tokens_of.size(); ++i) {
@@ -582,11 +588,17 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         const bool repacked = i + 2 < tokens_of.size() && tokens_of[i + 2].size() >= 2 && tokens_of[i + 2][0] == 'R' &&
                               std::isdigit(static_cast<unsigned char>(tokens_of[i + 2][1]));
         for (const Format& f : formats) {
-            if (tokens_of[i] == f.name && tokens_of[i + 1] == "K" && !repacked) { format = &f; }
+            if (tokens_of[i] == f.name && tokens_of[i + 1] == (&f == iq4xs ? "XS" : "K") && !repacked) { format = &f; }
         }
     }
-    // Another class's label (Other: a format beside the label's own) is priced only as a Q3_K mix.
-    if (format == nullptr || format->step <= 0 || (quant.weights != WeightClass::KQuant && format->bits >= 4)) {
+    // Where the file names its linears' formats each takes its own (an unread one: the share), whatever
+    // the class (UD-Q4_K_XL: IQ4 by its iq4_xs tensors). Else another class's label (Other: a format
+    // beside the label's own) is priced only as a Q3_K mix, an IQ4_XS label only as its class's.
+    const bool named = std::any_of(model.linears.begin(), model.linears.end(),
+                                   [](const LinearShape& l) { return !l.format.empty(); });
+    if (format == nullptr || format->step <= 0 ||
+        (!named && (format == iq4xs ? quant.weights != WeightClass::IQ4
+                                    : quant.weights != WeightClass::KQuant && format->bits >= 4))) {
         return 0;
     }
     const double toward = format->bits < 6.5625
@@ -596,12 +608,16 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // A linear whose file names its format takes that format's step. Else the label's: its bits
     // toward Q6_K stand for the mix where no linear is named; where the file names them (its Q6_K
     // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
-    const bool named = std::any_of(model.linears.begin(), model.linears.end(),
-                                   [](const LinearShape& l) { return !l.format.empty(); });
     const auto step_of = [&](const LinearShape& l) {
         for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
-                                      std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]}}) {
+                                      std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]},
+                                      std::pair{"ggml_iq4_xs", &formats[4]}}) {
             if (l.format == name) { return f->step; }
+        }
+        // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none.
+        // Q8_0 and 16-bit linears among the named ones take the label's step (open: their own routes).
+        if (!l.format.empty() && l.format != "q8_g32_fp16" && l.format != "bf16" && l.format != "ggml_f16") {
+            return 0.0;
         }
         return named ? format->step : label_step;
     };
@@ -634,6 +650,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     for (const LinearShape& l : model.linears) {
         // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
         const double grids = l.gated ? 2 : 1, n = l.n / grids, step = step_of(l);
+        if (step <= 0) { return 0; }
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             double columns = kMmqTile; // ggml's narrowest column tile with the fewest tiles
@@ -687,9 +704,10 @@ double prefill_linears_seconds(const ModelFacts& model, const CardFacts& card, c
     case ExpertBanks::Unknown: return 0;
     }
     if (!moe && gen == "volta") { return volta_linears_seconds(model, card, quant, tokens, transferred); }
-    // A K-quant mix, or another class's label with a K-quant format in it (Q3_K_M: mmq_linears_seconds
-    // reads the format, 0 for none).
-    if (!moe && (quant.weights == WeightClass::KQuant || quant.weights == WeightClass::Other)) {
+    // A K-quant mix, an IQ4_XS file, or another class's label with a K-quant format in it (Q3_K_M:
+    // mmq_linears_seconds reads the format, 0 for none).
+    if (!moe && (quant.weights == WeightClass::KQuant || quant.weights == WeightClass::IQ4 ||
+                 quant.weights == WeightClass::Other)) {
         const double mmq = mmq_linears_seconds(model, card, quant, tokens, transferred);
         if (mmq > 0 || quant.weights == WeightClass::KQuant) { return mmq; }
     }

@@ -2260,6 +2260,24 @@ linears are not named keeps the share there (two tiles, no split). Open: the den
 5120, FFN 17408) from the 64 x 64 tile to the classic 128 x 64 at 128 .. 2048 tokens; the estimate
 prices them on the 64 x 64 (the census card, the 5070 Ti, has no Q3_K band).
 
+**IQ4_XS on MMQ and the W4A8 tiles** (31.10): an IQ4_XS file (`WeightClass::IQ4`) prefills its
+dense linears on MMQ where MMQ pays, its K step read on the census of Qwen3.5 9B's IQ4_XS at 7K
+(the calls by grid, c0 the generation's): Ada 38.3, Ampere 36.6, Turing 59.6, Blackwell 42.9 SM-clocks
+(each card's call groups within 2 %), below Q4_K's (the IQ4_XS block's lookup decode is cheaper
+than Q4_K's scale unpacking); where it does not (the RTX 5070 Ti) the producer-warp 128 x 64 tile
+as Q4_K, 20.2 a K step (the four grids' rounds 20.0 .. 20.4). Its Q5_K linears (attention values,
+the GDN output) by their own format. Predicted against mpref.sh rows at 7K and 22K on six cards:
+-4 .. +4 %, rms 2.5 %. IQ4_NL: not read (the share): an IQ4_NL label, and a file whose linears name
+another ggml block format (an IQ4_XS file's iq4_nl FFN down, where the FFN is no multiple of 256:
+the W4A8 64 x 64 tile there). Open: the dense tuner's shipped gb206 (RTX 5060 Ti) IQ4_XS bands move a
+27B's shapes to the 64 x 64 tile at 128 .. 1024 tokens; the estimate prices the producer-warp one. A file whose linears name their
+formats is priced by them whatever its class: unsloth's UD-Q4_K_XL (Q4_K, Q5_K, Q6_K, IQ4_XS and Q8_0
+linears; the IQ4 class by its iq4_xs tensors, its label Q4_K's) on Qwen3.5 9B, 7K and 22K on seven
+cards: -1 .. +9 % (the RTX 4090 the +9, +7), rms 3.6 %. A named format the laws do not read (IQ4_NL,
+MXFP4, NVFP4) keeps the share. Open: a named file's Q8_0 and 16-bit linears (UD-Q4_K_XL's GDN output)
+take the label's K step, where the runtime runs them on the int8 tile and the 16-bit GEMM; a split
+UD file names no linears and its IQ4 class keeps the share.
+
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 
 **What changed.** Volta has no int8 or FP16-accumulate mma.sync path the other generations' tiles take:
