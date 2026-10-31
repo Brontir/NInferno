@@ -519,7 +519,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     const bool mmq             = measured::mmq_prefill_pays(board);
     const std::string_view gen = generation_of(card);
     const MmqTileCost* cost    = nullptr;
-    for (const MmqTileCost& row : mmq ? std::span(kMmqTileCost) : std::span(kW4a8KquantCost)) {
+    for (const MmqTileCost& row : mmq ? std::span<const MmqTileCost>(kMmqTileCost) : std::span<const MmqTileCost>(kW4a8KquantCost)) {
         if (row.generation == gen) { cost = &row; }
     }
     if (cost == nullptr) { return 0; }
