@@ -2192,3 +2192,16 @@ share's: Turing's Gemma kernel runs one CTA a SM, DECISIONS 66); the stream-k fi
 runs at 1.7x its bytes' time; Q3_K mixes are not a K-quant class (`weight_class_of`), so their row
 (Q3_K's K step as Q6_K's: Ada 51.5, Ampere 49.25, Turing 91.75, Blackwell 60.5) waits for them; the
 bits a weight are the whole file's.
+
+**Where MMQ does not pay: the W4A8 tiles** (`kW4a8KquantCost`, 31.10). A card whose nearest measured
+board keeps the tiles (the RTX 5070 Ti, as the 5060 Ti) prefills a dense K-quant on the W4A8 tiles:
+on Blackwell Q4_K and Q6_K the producer-warp 128 x 64 tile (`w4a8_ws_wins`), Q5_K the classic one. A
+tile is 128 tokens x 64 weight rows (a gated pair's 32 gate and 32 up rows) over the whole K, one CTA
+a SM, a call's grid ceil(N / 64) x ceil(t / 128) in rounds of SMs; the activations' quantization and
+the epilogue are the small kernels' (the int8 route's own). Read on the RTX 5070 Ti's census of
+Qwen3.5 9B's Q4_K_M, Q4_K_S, Q5_K_M and Q6_K at 7K tokens: c0 within a few K steps, Q4_K 23, Q5_K 28,
+Q6_K 29.5 SM-clocks a K step, the K-4096 and K-12288 calls within 2 % — a 128 x 128 MMQ tile's on the
+RTX 5090 per element (Q4_K 45.5 = 2 x 22.75). One card: transferred. In the estimate the 5070 Ti's
+Q6_K and Q5_K_M rows went from +14 .. +16 % to 0 .. +4 %, its Q4_K_M from 0 .. +4 % to +2 .. +6 %;
+every K-quant point of the fixture rms 4.5 -> 3.5 %, worst 16.4 -> 12.1 % (Qwen3.5 9B Q4_K_M on the
+RTX 4090's 3K prompt).
