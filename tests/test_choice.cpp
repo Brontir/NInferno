@@ -303,14 +303,18 @@ void prefills_pay_tail_calls(const json& fixture) {
               << prompt / t2 << " tok/s\n";
 }
 
-// Prefill by format (choice_constants.h kPrefillTilesEta): every 3K-16K-token prompt of
-// tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven; Q8_0
-// re-measured after PR #249, master f8d4399d), Q8_0 on the int8 tiles, Q4_K_M on MMQ's int8 rows.
+// Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt
+// of tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven; Q8_0
+// re-measured after PR #249, master f8d4399d; Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S at 7K and 22K),
+// Q8_0 on the int8 tiles, the K-quants on MMQ's tiles (DECISIONS 69) where the card takes MMQ.
 // The Q8 rows are the tile's clock count, not a fit of these points (DECISIONS 67); Turing's is its
 // measured row.
 void prefills_by_format(const json& fixture) {
     double sq[2] = {0, 0}, worst[2] = {0, 0}, worst_before[2] = {0, 0}, sq_before[2] = {0, 0};
     int before[2] = {0, 0};
+    // The K-quant rows before DECISIONS 69's check (Q4_K_M) and that check's (Qwen3.5-9B's other mixes).
+    double sq_first = 0, sq_mixes = 0, worst_mixes = 0;
+    int first = 0, mixes = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -324,11 +328,16 @@ void prefills_by_format(const json& fixture) {
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
-        by_card[std::string(i == 1 ? "Q8_0 " : "Q4_K_M ") + row.at("model").get<std::string>() + " " +
+        by_card[q + " " + row.at("model").get<std::string>() + " " +
                 row.at("card").get<std::string>()]
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
+        if (i == 0 && row.at("model").get<std::string>() == "Qwen3.5-9B") {
+            sq_mixes += d * d, worst_mixes = std::max(worst_mixes, std::abs(d)), ++mixes;
+        } else if (i == 0 && row.at("card").get<std::string>() != "RTX 5090") {
+            sq_first += d * d, ++first;
+        }
         if (!(row.at("model").get<std::string>() == "gemma-4-12b" && row.at("card").get<std::string>() == "RTX 5090")) {
             worst_before[i] = std::max(worst_before[i], std::abs(d));
             sq_before[i] += d * d;
@@ -342,7 +351,7 @@ void prefills_by_format(const json& fixture) {
         for (const double d : ds) { std::cout << " " << std::lround(d * 100) << " %"; }
         std::cout << "\n";
     }
-    std::cout << "prefill by format: Q4_K_M " << n[0] << " points rms " << mmq * 100 << " % (worst "
+    std::cout << "prefill by format: K-quants " << n[0] << " points rms " << mmq * 100 << " % (worst "
               << worst[0] * 100 << " %), Q8_0 " << n[1] << " rms " << tiles * 100 << " % (worst " << worst[1] * 100
               << " %)\n";
     // DECISIONS 66: the tiles by linear in rounds of SMs x resident CTAs and the small kernels, no
@@ -353,9 +362,15 @@ void prefills_by_format(const json& fixture) {
     check(n[1] == 66 && tiles < 0.10 && worst[1] < 0.27, "Q8_0 prefill on the int8 tiles within the model's spread");
     check(before[1] == 60 && std::sqrt(sq_before[1] / before[1]) < 0.08 && worst_before[1] < 0.20,
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
-    check(before[0] == 78 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
-          "Q4_K_M prefill but the RTX 5090's Gemma as before");
-    check(n[0] == 84 && mmq < 0.10 && worst[0] < 0.28, "Q4_K_M prefill on MMQ's rows as before");
+    // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69).
+    check(before[0] == 120 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+          "K-quant prefill but the RTX 5090's Gemma as before");
+    check(n[0] == 126 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
+    // The Q4_K_M points alone keep their guard (all but the RTX 5090's: rms within 10 %), and the
+    // other mixes have their own: rms within 8 %, every point within 20 %.
+    check(first == 72 && std::sqrt(sq_first / first) < 0.10, "Q4_K_M prefill as before");
+    check(mixes == 42 && std::sqrt(sq_mixes / mixes) < 0.08 && worst_mixes < 0.20,
+          "Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S within 8 % rms, every point within 20 %");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.
