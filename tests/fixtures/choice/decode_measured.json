@@ -1886,8 +1886,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 7194,
-   "decode": 58.6,
-   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "decode": 58.62,
+   "source": "mdecl.sh: 513 tokens after a 6938-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
    "long": true
   },
   {
@@ -1900,8 +1900,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 41481,
-   "decode": 55.28,
-   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "decode": 56.31,
+   "source": "mdecl.sh: 513 tokens after a 41225-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
    "long": true
   },
   {
@@ -1914,8 +1914,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 81990,
-   "decode": 50.67,
-   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "decode": 51.42,
+   "source": "mdecl.sh: 513 tokens after a 81734-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
    "long": true
   },
   {
@@ -1928,8 +1928,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 7262,
-   "decode": 49.52,
-   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "decode": 53.29,
+   "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20: the first run's 7K Q8_0 row 49.52)",
    "long": true
   },
   {
@@ -1942,8 +1942,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 41614,
-   "decode": 48.0,
-   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "decode": 48.09,
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
    "long": true
   },
   {
@@ -1956,8 +1956,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 82583,
-   "decode": 40.48,
-   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070)",
+   "decode": 40.42,
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4070, measured again at 08:20)",
    "long": true
   },
   {
@@ -2056,6 +2056,34 @@
    "context": 7262,
    "decode": 31.14,
    "source": "mdecl.sh: 513 tokens after a 7006-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "long": true
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 1,
+   "context": 41614,
+   "decode": 29.14,
+   "source": "mdecl.sh: 513 tokens after a 41358-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
+   "long": true
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 1,
+   "context": 82583,
+   "decode": 27.04,
+   "source": "mdecl.sh: 513 tokens after a 82327-token prompt less the first token's time, the median of 3, master f8d4399d (the stands' kit build), 2026-10-31 (l4060)",
    "long": true
   },
   {

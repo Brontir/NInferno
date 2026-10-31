@@ -274,7 +274,8 @@ void decodes_from_facts(const json& fixture) {
     check(own_worst < 0.10, "the deciding generations' worst point within 10 %");
     std::cout << "long-context decode, " << longs << " points: rms " << std::sqrt(long_sq / std::max(longs, 1)) * 100
               << " %, worst " << long_worst * 100 << " % (" << long_open << " open)\n";
-    check(longs == 52 && long_open == 18 && std::sqrt(long_sq / longs) < 0.04,
+    // The worst: the RTX 4070 Ti at 82K (+6 .. +15 %, measured twice; open).
+    check(longs == 54 && long_open == 18 && std::sqrt(long_sq / longs) < 0.04 && long_worst < 0.16,
           "long-context decode on Ada, Blackwell and Ampere within 4 %");
 }
 
