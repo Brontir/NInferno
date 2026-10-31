@@ -2249,6 +2249,14 @@ shape); a split part's head names no shares. Where the file names formats, a lin
 16-bit) takes the label's format's own step, not its bits toward Q6_K (the Q6_K parts priced as
 theirs already).
 
+**Q3_K on the W4A8 tiles** (31.10): where MMQ does not pay (the RTX 5070 Ti) a named Q3_K linear
+runs the classic W4A8 tile (W4a8Q3K, `W4a8Schedule<64, 64, 2, 2>`: 64 tokens x 64 rows, 128 threads
+at 185 registers and 40 KiB, two CTAs a SM), a grid of ceil(N / 64) x ceil(t / 64) tiles in rounds
+of 2 x SMs, a round 37.4 SM-clocks a K step (the census's three grids' rounds 62.2 .. 64.3 us at K
+4096); its Q4_K and Q6_K parts keep the producer-warp tile. Qwen3.5 9B's Q3_K_M on the RTX 5070 Ti:
++24, +22 % (the share) -> +3, +2 %; the K-quants together rms 4.9 -> 4.2 %. A Q3_K label whose
+linears are not named keeps the share there (two tiles, no split).
+
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 
 **What changed.** Volta has no int8 or FP16-accumulate mma.sync path the other generations' tiles take:
