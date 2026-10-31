@@ -2354,3 +2354,42 @@ The GV100 is +6 .. +24 % at 7K already (no decode row measured on it beyond the 
 kDramEtaOf) and its spans are not monotonic (Qwen 4.4 then 0.9): 9 points +6 .. +35 %. The campaign
 rows of 28.10 price Gemma on the RTX 3060 and 2080 Ti with FP8 KV, which the server no longer picks
 below sm_89 (open).
+
+## 71. Turing's decode attention bound by its SMs (31.10, measured)
+
+**Decision.** A decode attention kernel that reads its KV below the DRAM rate on a generation has a row
+of kKvSmRate (choice_constants.h): the bytes it reads a SM-clock at the board's reference clock, for
+the family's kernel and the codec. A row's KV then costs the longer of its DRAM time and SMs x clock x
+that rate, in place of kKvReadFactor's codec factor (read on another family's kernel). Rows: Turing,
+Qwen3.5's int8 grouped kernel 3.58 B a SM-clock, Gemma 4's BF16 full-layer kernel 2.67, each for
+the geometry it was read on (a full layer's head width, query and KV heads: 256 / 16 / 4 on Qwen3.5
+9B, 512 / 16 / 1 on Gemma 4 12B; the grouped kernels' rows and tiles follow the group): another
+geometry keeps the codec's factor.
+
+**Why.** The long-context decode rows (DECISIONS 70's verification, Long-context decode) put the RTX 2080 Ti's KV at 1.70 of
+its DRAM time on int8 and 2.16 on Gemma's BF16 where the estimate took 1.0 and 3.38. The nsys census of
+one stream's decode at 7K and 82K (mdcen.sh) reads the kernels directly: per call, the 75K tokens
+between add 423 us for 159 MB on Qwen's int8_kv_grouped_mma (376 GB/s) and 545 us for 153 MB on
+Gemma's 512-wide full layer (281 GB/s): 61 and 46 % of the card's 616 GB/s, at the 1770 MHz the board
+holds (sampled). The same kernels on the RTX 3060 and 4070 Ti reach 92 .. 94 % of their DRAM: the SMs,
+not the DRAM, bound Turing's (68 SMs of 64 FP32 lanes; the 3060's 128 lanes a SM read 6.6 B a SM-clock
+there, still DRAM-bound). The rate a reference SM-clock carries to Turing boards of other SM counts and
+buses whose held clock is the same share of their reference (the 2080 Ti's 1.15; a power-capped board
+such as the T4 holds less: its KV priced cheap); one card: transferred. That the SMs and not one row's
+CTAs bound it is read on one stream only.
+
+**Check.** The 9 Turing long rows -12 .. +9 % before, -4 .. +2 % after; Turing, Ada, Blackwell and
+Ampere's 63 long rows rms 3.0 %. Turing's 12 short-context rows keep their stated rms (the KV term is
+small there). speed_measured.json now names Qwen3.5 9B's and Gemma 4 12B's head geometry (as
+choice_model_of does): its one-stream rows rms 4.73 -> 4.71 % (prefill 6.18 -> 5.67 %, DECISIONS 68's
+tiles now read there), its dense steps 6.03 -> 6.05 %. Open: kKvReadFactor's Turing
+rows were read on Qwen at 22K against int8 taken at the DRAM rate (now 1.55 of it on a 2080 Ti): its
+BF16 3.38 for Qwen is that much low; Qwen3.5's MoE family (qwen3_5_moe_text) keeps 1.0 (its kernel
+not censused on Turing); Volta's kernels (the GV100's census queued).
+
+**The RTX 4070 Ti at 82K** (31.10, the long-context decode's open rows): the server's own decode rate
+(mdecl2.sh, timings.predicted_per_second) repeats them (Qwen Q4_K_M 64.9, Gemma 51.1), while the nsys
+census puts its attention kernel at the estimate's KV time (+2.67 ms a step against 2.66). Its clocks
+sampled through the run: power-capped at 284 W in the 82K prefill, then 2760 MHz in the decode's first
+seconds and 210 .. 825 MHz under a thermal slowdown (reason 0x20) for the rest, the GPU at 57 .. 65 C
+(the memory's heat, not read): the board's cooling, not a law.

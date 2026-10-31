@@ -60,7 +60,10 @@
    },
    "full_attention_width": 65536.0,
    "sliding_attention_width": 0.0,
-   "layers": 32
+   "layers": 32,
+   "full_layers": 8,
+   "full_head_dim": 256,
+   "full_kv_heads": 4
   },
   "Qwen3.8-27B": {
    "family": "qwen3_5_text",
@@ -225,7 +228,10 @@
      "input_table_bytes": 0,
      "speculation_bytes": 0
     }
-   }
+   },
+   "full_layers": 8,
+   "full_head_dim": 512,
+   "full_kv_heads": 1
   }
  },
  "cards": {

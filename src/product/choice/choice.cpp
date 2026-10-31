@@ -1070,7 +1070,23 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double ring  = model.ring_bytes_per_token ? model.ring_bytes_per_token(candidate.ring) : 0;
     const double window_rows = model.window > 0 ? std::min<double>(context, model.window) : 0;
     // A row's own reads: its KV over the context, its recurrent state (read and written), its ring.
-    const double row_bytes = context * kv * kkv + 2 * state + window_rows * ring;
+    // A kernel the SMs bound (kKvSmRate: the family's own kernel, in place of the codec's factor read
+    // on another family's) reads its KV no faster than SMs x clock x its rate, nor than the DRAM: the
+    // KV counts as the bytes the DRAM reads in that time.
+    double kv_factor = kkv;
+    const double full_heads = model.full_layers > 0 && model.full_head_dim > 0
+                                  ? std::round(model.full_attention_width / (model.full_layers * 2 * model.full_head_dim))
+                                  : 0;
+    for (const KvSmRate& r : kKvSmRate) {
+        if (r.generation == gen && r.family == model.family && r.kv == candidate.kv && r.head_dim == model.full_head_dim &&
+            r.heads == full_heads && r.kv_heads == model.full_kv_heads && card.sms > 0 && card.clock_hz > 0) {
+            kv_factor = std::max(1.0, dram_eta(gen) * card.dram_bytes_per_s /
+                                           (card.sms * card.clock_hz * r.bytes_per_sm_clock));
+            if (r.cards < 2) { transferred = true; }
+            break;
+        }
+    }
+    const double row_bytes = context * kv * kv_factor + 2 * state + window_rows * ring;
     // The exact route's compute beyond the fast route's (choice_constants.h kExactComputeEta).
     const double exact = route == Route::Bf16 ? rows * 2 * params /
                                                     (exact_eta(gen, transferred) * peak(card, Route::Int8))

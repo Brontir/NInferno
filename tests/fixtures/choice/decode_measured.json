@@ -49,7 +49,10 @@
      "input_table_bytes": 572129280,
      "speculation_bytes": 154224640
     }
-   }
+   },
+   "full_layers": 8,
+   "full_head_dim": 256,
+   "full_kv_heads": 4
   },
   "gemma-4-12b": {
    "family": "gemma4_text",
@@ -86,7 +89,10 @@
      "input_table_bytes": 0,
      "speculation_bytes": 0
     }
-   }
+   },
+   "full_layers": 8,
+   "full_head_dim": 512,
+   "full_kv_heads": 1
   }
  },
  "cards": {
