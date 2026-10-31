@@ -333,7 +333,8 @@ void prefills_pay_tail_calls(const json& fixture) {
               << prompt / t2 << " tok/s\n";
 }
 
-// Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt
+// Prefill by format (choice_constants.h kPrefillTilesEta, kMmqTileCost): every 3K-22K-token prompt (the 41K
+// and 82K ones apart, their own guard)
 // of tests/fixtures/choice/prefill_measured.json (Qwen3.5 9B on seven cards, Gemma 4 12B on seven, Qwen3.5 4B on eight; Q8_0
 // re-measured after PR #249, master f8d4399d; Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S at 7K and 22K),
 // Q8_0 on the int8 tiles, the K-quants on MMQ's tiles (DECISIONS 69) where the card takes MMQ.
@@ -346,6 +347,8 @@ void prefills_by_format(const json& fixture) {
     double sq_first = 0, sq_mixes = 0, worst_mixes = 0, sq_gemma = 0, worst_gemma = 0;
     int first = 0, mixes = 0, gemma = 0, volta_rows = 0;
     double sq_volta = 0, worst_volta = 0, sq_q3 = 0, worst_q3 = 0;
+    double sq_long = 0, worst_long = 0;
+    int long_rows = 0;
     int q3 = 0, iq4 = 0;
     double sq_iq4 = 0, worst_iq4 = 0, sq_xl = 0, worst_xl = 0;
     int xl_rows = 0;
@@ -361,6 +364,12 @@ void prefills_by_format(const json& fixture) {
         c.kv                       = KvCacheStorage::Int8Group64;
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
+        if (prompt > 30000) { // the long prompts (41K, 82K): their own guard
+            std::cout << "  long " << row.at("card").get<std::string>() << ' ' << row.at("model").get<std::string>() << ' '
+                      << q << ' ' << prompt << ": " << std::lround(d * 100) << " %\n";
+            sq_long += d * d, worst_long = std::max(worst_long, std::abs(d)), ++long_rows;
+            continue;
+        }
         if (cf.major == 7 && cf.minor == 0) { // Volta's rows (DECISIONS 70): their own guard
             std::cout << "  Volta " << q << " " << row.at("model").get<std::string>() << " " << prompt << ": "
                       << std::lround(d * 100) << " %\n";
@@ -461,6 +470,12 @@ void prefills_by_format(const json& fixture) {
                   ch::prefill_linears_seconds(with_nl, ada, xs, 1024) == 0,
               "IQ4_NL, an iq4_nl linear and an unnamed K label in the IQ4 class keep the share");
     }
+    std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
+              << " % (worst " << worst_long * 100 << " %)\n";
+    // 41K and 82K prompts (2026-10-31, predicted before the measurement): Qwen3.5 9B's Q4_K_M and Q8_0 and
+    // Gemma 4 12B's Q4_K_M on seven cards, rms 5.1 %; the worst the Quadro GV100's Qwen (-5 .. -14 %).
+    check(long_rows == 42 && std::sqrt(sq_long / long_rows) < 0.07 && worst_long < 0.16,
+          "long-prompt prefill within the model's error");
     std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
               << worst_volta * 100 << " %)\n";
     // The Quadro GV100 end to end (DECISIONS 70's linears, Gemma's Volta row): Qwen3.5 9B's Q6_K,
