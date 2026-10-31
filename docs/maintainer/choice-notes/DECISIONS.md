@@ -2270,7 +2270,10 @@ the GDN output) by their own format. Predicted against mpref.sh rows at 7K and 2
 -4 .. +4 %, rms 2.5 %. IQ4_NL: not read (the share): an IQ4_NL label, and a file whose linears name
 another ggml block format (an IQ4_XS file's iq4_nl FFN down, where the FFN is no multiple of 256:
 the W4A8 64 x 64 tile there). Open: the dense tuner's shipped gb206 (RTX 5060 Ti) IQ4_XS bands move a
-27B's shapes to the 64 x 64 tile at 128 .. 1024 tokens; the estimate prices the producer-warp one.
+27B's shapes to the 64 x 64 tile at 128 .. 1024 tokens; the estimate prices the producer-warp one. A file whose linears name their
+formats is priced by them whatever its class: unsloth's UD-Q4_K_XL (Q4_K, Q5_K, Q6_K, IQ4_XS and Q8_0
+linears; the IQ4 class by its iq4_xs tensors, its label Q4_K's) on Qwen3.5 9B, 7K and 22K on seven
+cards: -1 .. +9 % (the RTX 4090 the +9, +7), rms 3.6 %.
 
 ## 70. Volta's dense prefill from its CUTLASS route (31.10, measured)
 

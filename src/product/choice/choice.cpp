@@ -590,11 +590,14 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             if (tokens_of[i] == f.name && tokens_of[i + 1] == (&f == iq4xs ? "XS" : "K") && !repacked) { format = &f; }
         }
     }
-    // Another class's label (Other: a format beside the label's own) is priced only as a Q3_K mix; an
-    // IQ4_XS label only as its class's.
+    // Where the file names its linears' formats each takes its own (an unread one: the share), whatever
+    // the class (UD-Q4_K_XL: IQ4 by its iq4_xs tensors). Else another class's label (Other: a format
+    // beside the label's own) is priced only as a Q3_K mix, an IQ4_XS label only as its class's.
+    const bool named = std::any_of(model.linears.begin(), model.linears.end(),
+                                   [](const LinearShape& l) { return !l.format.empty(); });
     if (format == nullptr || format->step <= 0 ||
-        (format == iq4xs ? quant.weights != WeightClass::IQ4
-                         : quant.weights != WeightClass::KQuant && format->bits >= 4)) {
+        (!named && (format == iq4xs ? quant.weights != WeightClass::IQ4
+                                    : quant.weights != WeightClass::KQuant && format->bits >= 4))) {
         return 0;
     }
     const double toward = format->bits < 6.5625
@@ -604,8 +607,6 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // A linear whose file names its format takes that format's step. Else the label's: its bits
     // toward Q6_K stand for the mix where no linear is named; where the file names them (its Q6_K
     // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
-    const bool named = std::any_of(model.linears.begin(), model.linears.end(),
-                                   [](const LinearShape& l) { return !l.format.empty(); });
     const auto step_of = [&](const LinearShape& l) {
         for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
                                       std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]},

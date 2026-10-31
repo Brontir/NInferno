@@ -331,7 +331,8 @@ void prefills_by_format(const json& fixture) {
     int first = 0, mixes = 0, gemma = 0, volta_rows = 0;
     double sq_volta = 0, worst_volta = 0, sq_q3 = 0, worst_q3 = 0;
     int q3 = 0, iq4 = 0;
-    double sq_iq4 = 0, worst_iq4 = 0;
+    double sq_iq4 = 0, worst_iq4 = 0, sq_xl = 0, worst_xl = 0;
+    int xl_rows = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -356,7 +357,9 @@ void prefills_by_format(const json& fixture) {
             .push_back(d);
         sq[i] += d * d;
         worst[i] = std::max(worst[i], std::abs(d));
-        if (i == 0 && q == "IQ4_XS") {
+        if (i == 0 && q == "UD-Q4_K_XL") {
+            sq_xl += d * d, worst_xl = std::max(worst_xl, std::abs(d)), ++xl_rows;
+        } else if (i == 0 && q == "IQ4_XS") {
             sq_iq4 += d * d, worst_iq4 = std::max(worst_iq4, std::abs(d)), ++iq4;
         } else if (i == 0 && q.rfind("Q3_K", 0) == 0) { // MMQ's tiles; the RTX 5070 Ti's W4A8 ones
             sq_q3 += d * d, worst_q3 = std::max(worst_q3, std::abs(d)), ++q3;
@@ -393,9 +396,9 @@ void prefills_by_format(const json& fixture) {
           "Q8_0 prefill but the RTX 5090's Gemma: rms within 8 %, every point within 20 %");
     // The K-quants (Q4_K_M, and Qwen3.5 9B's Q6_K, Q5_K_M and Q4_K_S on seven cards at 7K and 22K: DECISIONS 69),
     // with Q3_K_M and IQ4_XS.
-    check(before[0] == 169 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
+    check(before[0] == 183 && std::sqrt(sq_before[0] / before[0]) < 0.10 && worst_before[0] < 0.28,
           "K-quant prefill but the RTX 5090's Gemma as before");
-    check(n[0] == 179 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
+    check(n[0] == 193 && mmq < 0.10 && worst[0] < 0.28, "K-quant prefill on MMQ's tiles within the model's spread");
     // The Q4_K_M points alone keep their guard (all but the RTX 5090's: rms within 10 %), and the
     // other mixes have their own: rms within 8 %, every point within 20 %.
     check(first == 72 && std::sqrt(sq_first / first) < 0.10, "Q4_K_M prefill as before");
@@ -413,6 +416,10 @@ void prefills_by_format(const json& fixture) {
     std::cout << "IQ4_XS prefill: " << iq4 << " points rms " << std::sqrt(sq_iq4 / iq4) * 100 << " % (worst "
               << worst_iq4 * 100 << " %)\n";
     check(iq4 == 12 && std::sqrt(sq_iq4 / iq4) < 0.07 && worst_iq4 < 0.10, "IQ4_XS prefill on its tiles within 10 %");
+    std::cout << "UD-Q4_K_XL prefill: " << xl_rows << " points rms " << std::sqrt(sq_xl / xl_rows) * 100 << " % (worst "
+              << worst_xl * 100 << " %)\n";
+    // Unsloth's UD-Q4_K_XL (Q4_K, Q5_K, Q6_K, IQ4_XS and Q8_0 linears) by its linears' formats.
+    check(xl_rows == 14 && std::sqrt(sq_xl / xl_rows) < 0.07 && worst_xl < 0.12, "UD-Q4_K_XL prefill within 12 %");
     {
         // What the IQ4 law leaves to the share: an IQ4_NL label, an iq4_nl linear, a K-quant label in
         // the IQ4 class (a Q4_K_M file with an iq4 tensor).
@@ -426,9 +433,17 @@ void prefills_by_format(const json& fixture) {
         km.label           = "Q4_K_M";
         ch::ModelFacts with_nl = named;
         with_nl.linears.front().format = "ggml_iq4_nl";
+        // A K label whose named linears hold iq4_xs ones (UD-Q4_K_XL: the IQ4 class) takes its linears'.
+        ch::QuantOption xl = quant_of("UD-Q4_K_XL", qm.at("quants").at("UD-Q4_K_XL"));
+        xl.weights         = ch::WeightClass::IQ4;
+        const ch::ModelFacts xl_named = model_at(qm, "UD-Q4_K_XL");
+        check(ch::prefill_linears_seconds(xl_named, ada, xl, 1024) > 0, "UD-Q4_K_XL in the IQ4 class on its linears");
+        ch::ModelFacts unnamed = named;
+        for (ch::LinearShape& l : unnamed.linears) { l.format.clear(); }
         check(ch::prefill_linears_seconds(named, ada, xs, 1024) > 0 &&
+                  ch::prefill_linears_seconds(unnamed, ada, km, 1024) == 0 &&
                   ch::prefill_linears_seconds(named, ada, nl, 1024) == 0 &&
-                  ch::prefill_linears_seconds(named, ada, km, 1024) == 0 &&
+
                   ch::prefill_linears_seconds(with_nl, ada, xs, 1024) == 0,
               "IQ4_NL, an iq4_nl linear and a K label in the IQ4 class keep the share");
     }
