@@ -2125,6 +2125,14 @@ chunk: 40 MiB over its 32 MiB L2, which still holds a part, 1.27x the DRAM rate)
 5070 Ti +3 .. +7 %, 4070 Ti -2 .. +8 %. Open: the 5090's 21K chunks hold the partials in its L2 only
 partly (1.6x, not 3x): the merge of a long prompt there is under-priced.
 
+**Turing's row for Gemma 4's kernel** (31.10): the RTX 2080 Ti's census of Gemma 4 12B Q4_K_M at 7K
+tokens. Its sliding layers' grid (65 x 8 CTAs of 128 threads at 230 registers, 20 KiB) runs two CTAs
+a SM as on the other generations (one a SM misses the first chunk by -22 % and the rest by +5 %), its
+full layers' (513 CTAs of 256 threads at 229 registers) one: 430 / 575 SM-clocks a key (sliding -9 ..
++4 %, the first chunk the -9 %; full -2 .. +5 %), about 2.3x Ada's (Turing's HMMA without the int8
+and BF16 paths Ada's kernel takes). One card: transferred. The prefill estimate of Gemma 4 12B on the
+RTX 2080 Ti had +16 .. +25 % from its attention's share (DECISIONS 69's open point).
+
 ## 69. A dense K-quant's prefill linears from ggml's matrix kernel's tiles (31.10, measured)
 
 **What changed.** A dense model's K-quant linears (Q4_K_M ... Q6_K: `WeightClass::KQuant`) were priced

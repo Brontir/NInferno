@@ -488,8 +488,9 @@ inline constexpr double kAttentionTiledMinWidth = 256;
 // Read on Gemma 4 12B Q4_K_M's 7K and 21K prompts (nsys, a layer's median a 1024-token chunk; the
 // RTX 5090 on a lab build without PDL): RTX 4060 Ti 186 / 250 (sliding -3 .. +3 %, full -6 .. +8 %),
 // RTX 3060 180 / 255 (-2 .. 0 %, -8 .. +7 %), RTX 5070 Ti and 5090 157 / 222 (-8 .. +7 %, -13 .. +9
-// %). A short last chunk whose last round holds one CTA a SM runs faster than this deals it (+14 ..
-// +80 % there: the lone CTA of kLoneTile, not modelled here).
+// %); RTX 2080 Ti 430 / 575 (sliding -9 .. +4 %: its first chunk the -9 %, two CTAs a SM as on the
+// others; full -2 .. +5 %; one card). A short last chunk whose last round holds one CTA a SM runs
+// faster than this deals it (+14 .. +80 % there: the lone CTA of kLoneTile, not modelled here).
 struct GemmaAttentionCost {
     std::string_view generation;
     double sliding, full; // SM-clocks a key of a CTA
@@ -497,7 +498,7 @@ struct GemmaAttentionCost {
 };
 inline constexpr double kGemmaChainMinTokens = 16; // gemma4/launch.h kGemma4DecodeMaxTokens: no chain
 inline constexpr GemmaAttentionCost kGemmaAttentionCost[] = {
-    {"ada", 186, 250, 1}, {"ga10x", 180, 255, 1}, {"gb20x", 157, 222, 2}};
+    {"ada", 186, 250, 1}, {"ga10x", 180, 255, 1}, {"gb20x", 157, 222, 2}, {"turing", 430, 575, 1}};
 
 // The attention a prefill runs over its prompt (choice.cpp attention_seconds: the full layers over
 // every earlier token, the sliding ones over the window) reaches this share of the BF16 tensor peak

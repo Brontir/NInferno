@@ -1166,7 +1166,7 @@ void prices_attention_tiles() {
 
 // Gemma 4 12B's attention by its CTAs (DECISIONS 68): its 40 sliding layers (16 heads of 256 over
 // 8 KV heads, a 1024 window) and 8 full ones (16 heads of 512 over 1), a 7K prompt's 1024-token
-// chunks, the census's per-layer medians summed over the layers, on the RTX 4060 Ti and 5090.
+// chunks, the census's per-layer medians summed over the layers, on the RTX 4060 Ti, 5090 and 2080 Ti.
 void prices_gemma_attention_tiles(const json& fixture) {
     const ch::ModelFacts m = model_of(fixture.at("models").at("gemma-4-12b"));
     struct Series {
@@ -1180,6 +1180,10 @@ void prices_gemma_attention_tiles(const json& fixture) {
         {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.407e9, .dram_bytes_per_s = 1792e9},
          {83.0, 141.7, 142.6, 143.4, 143.3, 143.9},
          {154.0, 492.4, 735.8, 1052.7, 1282.6, 1605.3}},
+        // The RTX 2080 Ti (Turing's row, read on it).
+        {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
+         {745.3, 1143.0, 1142.5, 1137.9, 1135.9, 1134.9},
+         {1387.0, 4448.4, 7658.4, 10789.3, 13900.7, 17006.3}},
     };
     double worst = 0;
     for (const Series& s : series) {
