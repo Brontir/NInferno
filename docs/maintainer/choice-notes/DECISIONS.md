@@ -2490,6 +2490,7 @@ kernels at one row; the launches keep the family's count). fit_decode.py derives
 
 **Check.** The GV100's 12 short-context points rms 3.4 %, worst 5.8 % (the Turing rows: up to +48 %);
 the other generations' 100 points unchanged (rms 2.4 %). Open: the long-context rows (a cool re-measure,
-mdecl3.sh, queued); a rate for V100 boards transfers by SMs x reference clock; Volta's MoE routed banks
-(K-quant kernels too, likely SM-bound) keep kMoeRoutedEta's Ada shares, no census; the 8 extra small
+mdecl3.sh, queued); a rate for V100 boards transfers by SMs x reference clock; Volta's MoE: its rest
+by its own linears' class (rest_weights), its routed banks at kMoeRoutedEta's Ada shares capped by the
+file's class rate (the same SMs decode them; no census); the 8 extra small
 kernels a Qwen step are not launches the model counts (about 40 us, 0.3 %).

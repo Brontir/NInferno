@@ -1157,14 +1157,21 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
     // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
-    // (an MoE's rest by the file's own class: its Q8_0 tensors are not a K-quant's)
-    const double sm_rate = weight_sm_rate(gen, quant.weights, rows, transferred);
-    const double share   = sm_rate > 0 ? std::min(dram_eta(gen), card.sms * card.clock_hz * sm_rate /
-                                                                       card.dram_bytes_per_s)
-                                       : rows_eta(gen, rest, rows, transferred);
+    // An MoE's rest by its own linears' class (rest_weights), its routed banks by the file's.
+    const auto sm_share = [&](WeightClass w) {
+        const double rate = weight_sm_rate(gen, w, rows, transferred);
+        return rate > 0 ? card.sms * card.clock_hz * rate / card.dram_bytes_per_s : 0.0;
+    };
+    const double rest_sm = sm_share(model.moe() ? quant.rest_weights : quant.weights);
+    const double share   = rest_sm > 0 ? std::min(dram_eta(gen), rest_sm) : rows_eta(gen, rest, rows, transferred);
     double reads = weights / (share * card.dram_bytes_per_s) +
                    rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
-    if (routed_read > 0) { reads += routed_read / (moe_routed_eta(gen, rows, transferred) * card.dram_bytes_per_s); }
+    if (routed_read > 0) {
+        // The banks decode on the same SMs: no faster than the class's rate (not measured on Volta).
+        double routed_share = moe_routed_eta(gen, rows, transferred);
+        if (const double sm = sm_share(quant.weights); sm > 0) { routed_share = std::min(routed_share, sm); }
+        reads += routed_read / (routed_share * card.dram_bytes_per_s);
+    }
     bool flops_transferred = false;
     // Decode never takes the int8 tiles (q8_prefill_a8 is a prefill route): MMQ's rate.
     QuantOption decode_quant = quant;
