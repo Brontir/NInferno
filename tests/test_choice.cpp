@@ -612,6 +612,8 @@ void prices_attention(const json& fixture) {
         return 1 / ch::speed_of(m, b.card, b.quants[0], c, 1, n, n).prefill;
     };
     ch::ModelFacts none = b.model, full = b.model, sliding = b.model;
+    // The share's attention (no head geometry: no prompt kernel's tiles, DECISIONS 68).
+    none.full_head_dim = full.full_head_dim = sliding.full_head_dim = 0;
     none.full_attention_width    = 0;
     full.full_attention_width    = 65536;
     sliding.full_attention_width = 0;

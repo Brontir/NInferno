@@ -2380,7 +2380,9 @@ CTAs bound it is read on one stream only.
 
 **Check.** The 9 Turing long rows -12 .. +9 % before, -4 .. +2 % after; Turing, Ada, Blackwell and
 Ampere's 63 long rows rms 3.0 %. Turing's 12 short-context rows keep their stated rms (the KV term is
-small there); speed_measured.json's rows name no head geometry: unchanged. Open: kKvReadFactor's Turing
+small there). speed_measured.json now names Qwen3.5 9B's and Gemma 4 12B's head geometry (as
+choice_model_of does): its one-stream rows rms 4.73 -> 4.71 % (prefill 6.18 -> 5.67 %, DECISIONS 68's
+tiles now read there), its dense steps 6.03 -> 6.05 %. Open: kKvReadFactor's Turing
 rows were read on Qwen at 22K against int8 taken at the DRAM rate (now 1.55 of it on a 2080 Ti): its
 BF16 3.38 for Qwen is that much low; Qwen3.5's MoE family (qwen3_5_moe_text) keeps 1.0 (its kernel
 not censused on Turing); Volta's kernels (the GV100's census queued).
