@@ -42,6 +42,8 @@ def row_bytes(m, r):
 
 def main():
     fx = json.loads(Path(sys.argv[1] if len(sys.argv) > 1 else ROOT / "tests/fixtures/choice/decode_measured.json").read_text())
+    # The campaign's short-context points only: the long-context rows (marked long) verify the KV term.
+    fx["rows"] = [r for r in fx["rows"] if not r.get("long")]
     cen = json.loads(Path(sys.argv[2] if len(sys.argv) > 2 else ROOT / "tests/fixtures/choice/decode_census.json").read_text())
     gen_of = {name: GEN[(c["major"], c["minor"])] for name, c in fx["cards"].items()}
     # The kernel counts by (model, quant, rows): the census's modal count on the reference generation's
