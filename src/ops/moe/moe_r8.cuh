@@ -179,7 +179,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
     //   RTX 5070 Ti: Q3_K 34.8 / 57.3 / 92.2 / 116.7 against 34.8 / 55.3 / 84.0 / 108.5;
     //                Q6_K 45.1 / 79.9 / 116.4 / 143.4 against 45.1 / 77.8 / 110.6 / 137.2
     constexpr bool kOneSlot =
-        std::is_same_v<C, generic::W4a8Q6K> || std::is_same_v<C, generic::W4a8Q3K>;
+        true; // EXPERIMENT: every codec
     extern __shared__ __align__(16) unsigned char moe_r8_shared[];
 
     // GemmArgs::pdl: the plan and the activation come from the producer.
