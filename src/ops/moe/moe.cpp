@@ -769,18 +769,20 @@ std::optional<StageRoute> parse_stage(std::string_view name) {
 // gathers. R8 schedules give the same bytes, so a schedule may change with T.
 // Down stays on the register MMA everywhere: its K (the expert width) is short, so an R8 warp's
 // lanes share a few 32-value blocks. A board of an instruction set without an entry takes w4r1 on
-// gate/up at every T and keeps the down (kFallbackA8Route). Gate/up us (the call, Q5_K down;
-// 2026-10-31, master 1fe59ada), w4r1 against the board's former route:
+// gate/up at every T and keeps the down (kFallbackA8Route). IQ2_XXS takes the 2-bit column by
+// the same property (fewest bytes per value; not measured). Gate/up us, the call (gb202 and
+// gb203: Q5_K down, 2026-10-31, master 1fe59ada, w4r1 against the board's former route; ad102:
+// the earlier run on the IQ2_S / IQ3_XXS experts):
 //   ad102 published, T = 1 / 2 / 4: w4r1 17.4 / 24.8 / 44.0 against the register MMA 19.5 /
 //          33.8 / 54.3; down 2 x 2 12.3 / 20.5 / 31.7 against 1 x 4 13.3 / 19.5 / 30.8.
-//   gb202, T = 2 / 3 / 4: Q6_K w4r1 49.1 / 71.7 / 84.0 (w2r1 at 4) against w4r2 69.6 / 112.6
+//   gb202, T = 2 / 3 / 4: Q6_K w4r1 49.1 / 71.7 / 86.0 (w2r1 84.0 at 4) against w4r2 69.6 / 112.6
 //          / 122.9; Q4_K 36.9 / 51.2 / 61.4 against 40.9 / 55.3 / 67.6; IQ4_XS, IQ3_S, Q5_0
 //          the same or 2 us ahead; IQ2_S and IQ2_XS within one timer step either way. Frag Q4_K,
 //          T = 3 / 4: w4r1 53.2 / 65.5 against w8r1 55.3 / 65.5. Down: 2 x 2 no faster (12.3 /
 //          16.4 / 20.5 / 24.6 both), 4 x 1 2 us behind at T = 1; it keeps the streaming 1 x 4.
 //   gb203, T = 3 / 4: IQ2_S w4r2 77.8 / 94.2 against w4r1 79.9 / 100.3, IQ2_XS 73.7 / 90.1
 //          against 77.8 / 96.3; at T = 1 / 2 w4r1 the same or 2 us ahead (IQ2_S 36.9 / 55.3
-//          against w4r2 36.9 / 57.3). IQ4_XS, IQ3_S, Q5_0, Q4_K, Q6_K: w4r1 (or w2r1) best at
+//          against w4r2 36.9 / 57.3; w8r1, the former T = 1 schedule, 36.9 at T = 1). IQ4_XS, IQ3_S, Q5_0, Q4_K, Q6_K: w4r1 (or w2r1) best at
 //          every T, w4r2 2..40 us behind (Q6_K T = 3: 40 %). Frag Q4_K, T = 3 / 4: w4r1 85.7 /
 //          106.5 against w8r1 92.2 / 114.7; IQ2_S frag w4r1 83.9 / 102.4 against w4r2 92.2 /
 //          112.6. Down, T = 1..4: 4 x 1 16.4 / 22.5 / 26.6 / 34.8 against 1 x 4 16.4 / 22.5 /

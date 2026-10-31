@@ -247,12 +247,11 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // activation that fits a CTA; moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
 
-// The current GPU class's default A8 route (moe.cpp's per-class table): the R8 schedule of a
-// codebook gate/up bank at each T = 1..kR8Tokens, for a bank in its published layout and in
-// ggml_frag_v1 (-1: that call stays A16), and the register-MMA schedule an IQ3_XXS down of width
-// 512..1023 of an A8 call takes instead of the streaming 1 x 4 warps (-1: the streaming one), the
-// same at every T so that a token's bytes do not depend on T. nullopt: the class was not measured,
-// and its default route stays A16.
+// The current GPU class's default A8 route (moe.cpp's per-class table, kFallbackA8Route for a class
+// without an entry): the R8 schedule of a gate/up bank at each T = 1..kR8Tokens (gate_up_at), and
+// the register-MMA schedule an IQ3_XXS down of width 512..1023 of an A8 call takes instead of the
+// streaming 1 x 4 warps (-1: the streaming one), the same at every T so that a token's bytes do
+// not depend on T.
 struct A8Route {
     // The R8 schedule of a published 2-bit codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S) at each
     // T; every other R8 bank, and a ggml_frag_v1 bank, takes w4r1 (schedule 0) at every T.
