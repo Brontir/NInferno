@@ -1151,9 +1151,12 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // A generation's own row (one card's marks the estimate transferred), else Ada's (transferred).
     const KernelCost* cost = measured_row_of(kKernelCost, gen, transferred);
     // A dense model of another class: no census of its routes. An MoE's rest reads at the K-quant
-    // rows, the rows its routed banks' share was measured against (kMoeRoutedEta).
+    // rows, the rows its routed banks' share was measured against (kMoeRoutedEta); on a generation
+    // without its own routed row (Volta), at its own linears' class (rest_weights).
     if (quant.weights == WeightClass::Other && !model.moe()) { transferred = true; }
-    const WeightClass rest = model.moe() ? WeightClass::KQuant : quant.weights;
+    const bool moe_row     = std::any_of(std::begin(kMoeRoutedEta), std::end(kMoeRoutedEta),
+                                         [&](const MoeRoutedEta& r) { return r.generation == gen; });
+    const WeightClass rest = !model.moe() ? quant.weights : moe_row ? WeightClass::KQuant : quant.rest_weights;
     const StepKernels kernels = step_kernels(model, quant.weights, rows, transferred);
     const double launches = cost != nullptr ? kernels.gemv * cost->gemv + kernels.small * cost->small : 0;
     // A class the SMs bound (kWeightSmRate): its reads at the longer of the DRAM rate and the SMs'.
