@@ -607,7 +607,9 @@ inline constexpr KvReadFactor kKvReadFactor[] = {
 // SM-clock (at the board's reference clock), the family's kernel on the generation. A row's KV takes
 // the longer of its time at the DRAM rate and at SMs x clock x this, in place of kKvReadFactor's
 // codec factor (read on another family's kernel). The rate is per reference clock: a board holding
-// another share of its reference clock than the 2080 Ti's 1.15 (a power-capped one) moves off it. From the nsys census of one
+// another share of its reference clock than the 2080 Ti's 1.15 (a power-capped one) moves off it.
+// One card: the rows feed the estimate a Turing board shows (transferred), never a decision (Turing
+// has no kReferenceCards row: its KV codec, activations and quantization keep the family's defaults). From the nsys census of one
 // stream's decode at 7K and 82K (mdcen.sh, 2026-10-31, the RTX 2080 Ti: 68 SMs, 1545 MHz reference,
 // 1770 held): the kernel's time per call over the KV bytes the 75K tokens between add, Qwen3.5 9B's
 // int8 grouped kernel (int8_kv_grouped_mma) 423 us for 159 MB, Gemma 4 12B's BF16 full layer
