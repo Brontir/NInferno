@@ -1,5 +1,5 @@
 {
- "about": "nsys census of one plain decode step (ana2.py: per-position medians over ~125 steps, critical path busy + gap), master f68eca34, 2026-10-31 (the RTX 4070 Ti and the IQ4 rows: master 03afc418, 2026-10-28) (choice-notes/lab/speed_model/census.sh): the kernels that read weights (R8, register MMA, ggml vec and MMQ, W4A8 tiles) and the small ones (norms, the recurrent update, attention, convolution, quantize, sampling), their counts and summed time a step.",
+ "about": "nsys census of one plain decode step (ana2.py: per-position medians over ~125 steps, critical path busy + gap), master f68eca34, 2026-10-31 (the RTX 4070 Ti and the IQ4 rows: master 03afc418, 2026-10-28) (choice-notes/lab/speed_model/census.sh): the kernels that read weights (R8, register MMA, ggml vec and MMQ, W4A8 tiles) and the small ones (norms, the recurrent update, attention, convolution, quantize, sampling), their counts and summed time a step. The Quadro GV100's one-row rows (census31c.sh, 2026-10-31: a 120-second rest before each run; the cuda129x nsys, the only one recording kernels on Volta) less the node trace's own cost: each run's kernels less (the traced step - the cool untraced step of thchk.sh) / its kernels, 2.7-3.7 us (DECISIONS 72).",
  "rows": [
   {
    "card": "RTX 4060 Ti",
@@ -690,6 +690,36 @@
    "gemv_us": 17958.3,
    "small_kernels": 345,
    "small_us": 1311.4
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 9708.8,
+   "small_kernels": 175,
+   "small_us": 720.9
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 13903.9,
+   "small_kernels": 199,
+   "small_us": 836.7
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 13581.7,
+   "small_kernels": 249,
+   "small_us": 2014.1
   }
  ]
 }

@@ -166,6 +166,10 @@ inline constexpr KernelCost kKernelCost[] = {
     {"gb20x", 1.90e-6, 2.29e-6, 2},  // RTX 5070 Ti, 5090
     {"ga10x", 4.72e-6, 2.55e-6, 1},  // RTX 3060
     {"turing", 8.56e-6, 4.30e-6, 1}, // RTX 2080 Ti
+    // Quadro GV100 (thchk.sh, a cool board; its census less the node trace's 2.7-3.7 us a kernel):
+    // a weight-reading kernel from Q8_0 alone (its K-quants' residual is their SM-bound decode,
+    // kWeightSmRate), a small one from the three models.
+    {"volta", 6.37e-6, 5.06e-6, 1},
 };
 
 // The share of the DRAM rate C rows' weight reads reach on a weight class's routes (C = 1: kDramEta;
@@ -196,6 +200,32 @@ inline constexpr RowsEta kRowsEta[] = {
     {"turing", WeightClass::KQuant, 2, 0.870, 1}, {"turing", WeightClass::KQuant, 4, 0.721, 1},
     {"turing", WeightClass::KQuant, 8, 0.691, 1}, {"turing", WeightClass::Q8, 2, 0.942, 1},
     {"turing", WeightClass::Q8, 4, 0.881, 1},     {"turing", WeightClass::Q8, 8, 0.678, 1},
+    // Quadro GV100's Q8_0 (in kDramEta's units: rows_eta scales them by its HBM2's 660 / 870).
+    {"volta", WeightClass::Q8, 2, 0.952, 1},      {"volta", WeightClass::Q8, 4, 0.871, 1},
+    {"volta", WeightClass::Q8, 8, 0.730, 1},
+};
+
+// A weight class whose decode routes the SMs bound below the DRAM rate (DECISIONS 72): its reads at
+// C rows take the longer of their time at the DRAM rate and at SMs x clock x these bytes a SM-clock
+// (the reference clock; linear in log2 C between points, the last's beyond). Volta has no int8 MMA:
+// its K-quants decode on the SMs at every width (R8's dp4a at one row, ggml's vector kernel at 2-4,
+// the HMMA tiles from five), while its Q8_0 reads hold 92 % of the HBM2's 660 GB/s (kRowsEta). The
+// Quadro GV100's census of one row (80 SMs, 1627 MHz reference): Qwen3.5 9B Q4_K_M's weight-reading
+// kernels 527 GB/s (4.05 B a SM-clock), Gemma 4 12B's 523, its Q8_0's 607; per kernel R8's Q4_K
+// 86 % of the 660, its Q6_K 69 % (more decode a byte). The rows: the cool decode steps less the
+// rows' own bytes and the launches (fit_decode.py), Qwen3.5 9B and Gemma 4 12B Q4_K_M, one card
+// (an estimate only: Volta has no kReferenceCards row). A class without its own row on a generation
+// with a K-quant row takes it (transferred), unless kRowsEta prices the class there.
+struct WeightSmRate {
+    std::string_view generation;
+    WeightClass weights;
+    double rows;
+    double bytes_per_sm_clock;
+    int cards;
+};
+inline constexpr WeightSmRate kWeightSmRate[] = {
+    {"volta", WeightClass::KQuant, 1, 4.41, 1}, {"volta", WeightClass::KQuant, 2, 3.90, 1},
+    {"volta", WeightClass::KQuant, 4, 3.15, 1}, {"volta", WeightClass::KQuant, 8, 2.45, 1},
 };
 
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
