@@ -2339,3 +2339,15 @@ slices, master f8d4399d; the Quadro GV100 fd6e572c) of Qwen3.5 9B's Q4_K_M and Q
 Q4_K_M on seven cards against the estimate as it stood (the attention laws of DECISIONS 68 read up to
 22K): 42 points, rms 5.1 %; the consumer cards -6 .. +10 % (the RTX 5090's Q8_0 the +10), the GV100's
 Qwen -5 .. -14 % (its attention the share's, DECISIONS 70), its Gemma +3, -1 %.
+
+**Long-context decode** (31.10, verification): mdecl.sh rows (one stream, 513 tokens after 7K, 41K and
+82K-token prompts less the first token's time, the median of three; master f8d4399d, the Quadro GV100
+fd6e572c) of Qwen3.5 9B's Q4_K_M and Q8_0 (KV int8) and Gemma 4 12B's Q4_K_M (KV and rings FP8 on
+sm_89 and up, BF16 below: the server's own) on eight cards against the decode estimate as it stood
+(decode_measured.json, rows marked long, the context the prompt + 256): Ada, Blackwell and Ampere 52
+points, rms 3.4 %; each extra KV byte costs them 1.05 .. 1.15 of its DRAM time (the estimate's 1 /
+kDramEta, 1.06). Open: Turing reads int8 KV at 1.70 of its DRAM time (Qwen, both files, both spans)
+and Gemma's BF16 at 2.16, where the estimate takes 1.0 and 3.38 (kKvReadFactor's BF16 row read on
+Qwen at 22K): 9 points -12 .. +9 %. The GV100 is +6 .. +24 % at 7K already (no decode row measured on
+it beyond the HBM2 share, kDramEtaOf) and its spans are not monotonic (Qwen 4.4 then 0.9): 9 points
++6 .. +35 %.
