@@ -23,6 +23,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[5]
 ETA = 0.946
+# The share of the DRAM rate a saturating weight read reaches (choice_constants.h kDramEta, kDramEtaOf):
+# Volta's HBM2 with ECC tops out at 660 of its 870 GB/s.
+ETA_OF = {"volta": 660.0 / 870.0}
+
+
+def eta_of(gen):
+    return ETA_OF.get(gen, ETA)
 CENSUS_CONTEXT = 160
 GEN = {(7, 0): "volta", (7, 5): "turing", (8, 6): "ga10x", (8, 9): "ada", (12, 0): "gb20x"}
 CLASS = {"Q8_0": "q8", "IQ4_XS": "iq4", "IQ4_NL": "iq4"}  # else K-quants
@@ -69,8 +76,9 @@ def main():
         # The census ran the decode campaign's storages (its one-row point) at a ~160-token context.
         ctx = dict(next(x for x in fx["rows"] if x["card"] == r["card"] and x["model"] == r["model"]
                         and x["quant"] == r["quant"] and x["concurrency"] == 1), context=CENSUS_CONTEXT)
-        tg = (r["gemv_us"] * 1e-6 - weights(m, r["quant"]) / (ETA * bw)) / r["gemv_kernels"]
-        ts = (r["small_us"] * 1e-6 - row_bytes(m, ctx) / (ETA * bw)) / r["small_kernels"]
+        e = eta_of(gen_of[r["card"]])
+        tg = (r["gemv_us"] * 1e-6 - weights(m, r["quant"]) / (e * bw)) / r["gemv_kernels"]
+        ts = (r["small_us"] * 1e-6 - row_bytes(m, ctx) / (e * bw)) / r["small_kernels"]
         cost.setdefault(gen_of[r["card"]], []).append((r["card"], tg, ts))
     t_gemv, t_small = {}, {}
     for gen, v in cost.items():
@@ -88,11 +96,14 @@ def main():
             continue
         m, bw = fx["models"][r["model"]], fx["cards"][r["card"]]["dram_bytes_per_s"]
         ng, ns = kernels(r["model"], r["quant"], n)
-        t = 1 / r["decode"] - n * row_bytes(m, r) / (ETA * bw) - ng * t_gemv[gen] - ns * t_small[gen]
+        t = 1 / r["decode"] - n * row_bytes(m, r) / (eta_of(gen) * bw) - ng * t_gemv[gen] - ns * t_small[gen]
         eta.setdefault((gen, CLASS.get(r["quant"], "kq"), n), []).append(weights(m, r["quant"]) / (bw * t))
     for k in sorted(eta):
         v = eta[k]
-        print(f"  eta {k}: {statistics.mean(v):.3f} ({min(v):.3f}..{max(v):.3f}, {len(v)} points)")
+        # kRowsEta holds a generation's shares in kDramEta's units (choice.cpp rows_eta scales them by
+        # dram_eta / kDramEta): Volta's printed so.
+        unit = f", table {statistics.mean(v) * ETA / eta_of(k[0]):.3f}" if k[0] in ETA_OF else ""
+        print(f"  eta {k}: {statistics.mean(v):.3f} ({min(v):.3f}..{max(v):.3f}, {len(v)} points{unit})")
 
     # kDecodePredictionError: every point under the rows above.
     err = {}
@@ -102,16 +113,16 @@ def main():
             continue
         m, bw = fx["models"][r["model"]], fx["cards"][r["card"]]["dram_bytes_per_s"]
         cls = CLASS.get(r["quant"], "kq")
-        e = ETA
+        e = eta_of(gen)
         if n > 1:
-            pts = [(1, ETA)] + [(c, statistics.mean(eta[(gen, cls, c)])) for c in (2, 4, 8) if (gen, cls, c) in eta]
+            pts = [(1, eta_of(gen))] + [(c, statistics.mean(eta[(gen, cls, c)])) for c in (2, 4, 8) if (gen, cls, c) in eta]
             e = pts[-1][1]
             for (r0, e0), (r1, e1) in zip(pts, pts[1:]):
                 if n <= r1:
                     e = e0 + math.log2(n / r0) / math.log2(r1 / r0) * (e1 - e0)
                     break
         ng, ns = kernels(r["model"], r["quant"], n)
-        t = weights(m, r["quant"]) / (e * bw) + n * row_bytes(m, r) / (ETA * bw) + ng * t_gemv[gen] + ns * t_small[gen]
+        t = weights(m, r["quant"]) / (e * bw) + n * row_bytes(m, r) / (eta_of(gen) * bw) + ng * t_gemv[gen] + ns * t_small[gen]
         err.setdefault(gen, []).append(math.log((1 / t) / r["decode"]))
     for gen, v in err.items():
         print(f"{gen}: prediction error rms {math.sqrt(sum(x * x for x in v) / len(v)):.4f}, "

@@ -1,5 +1,5 @@
 {
- "about": "nsys census of one plain decode step (ana2.py: per-position medians over ~125 steps, critical path busy + gap), master f68eca34, 2026-10-31 (the IQ4 rows: master 03afc418, 2026-10-28) (choice-notes/lab/speed_model/census.sh): the kernels that read weights (R8, register MMA, ggml vec and MMQ, W4A8 tiles) and the small ones (norms, the recurrent update, attention, convolution, quantize, sampling), their counts and summed time a step.",
+ "about": "nsys census of one plain decode step (ana2.py: per-position medians over ~125 steps, critical path busy + gap), master f68eca34, 2026-10-31 (the RTX 4070 Ti and the IQ4 rows: master 03afc418, 2026-10-28) (choice-notes/lab/speed_model/census.sh): the kernels that read weights (R8, register MMA, ggml vec and MMQ, W4A8 tiles) and the small ones (norms, the recurrent update, attention, convolution, quantize, sampling), their counts and summed time a step.",
  "rows": [
   {
    "card": "RTX 4060 Ti",

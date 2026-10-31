@@ -2424,17 +2424,21 @@ BF16 factor before, a third of the time): the GV100's Gemma long rows +23, +35 %
 kKernelCost): the speed-model campaign at master f68eca34 runs on it too, for its own kKernelCost and
 kRowsEta rows.
 
-**The decode campaign at master f68eca34** (31.10, the constants measured again): sm_run.sh on the eight
+**The decode campaign at master f68eca34** (31.10, the constants measured again): sm_run.sh on eight
 cards (plain decode at 1 / 2 / 4 / 8 streams of Qwen3.5 9B's Q4_K_M and Q8_0 and Gemma 4 12B's Q4_K_M,
-the 28.10 method) and census.sh's nsys of one step at 1 / 2 / 8 streams on six, in place of the 28.10
-rows (the IQ4 rows stay: measured apart); fit_decode.py derives kKernelCost, kRowsEta and
-kDecodePredictionError from them. Since 28.10: the RTX 2080 Ti 3.5 .. 9 % faster (its kernels at 8
-rows 7 % shorter: Turing's K-quant 8-row share 0.628 -> 0.688), the other cards within 3 %; the
-RTX 4070 Ti's first campaign run 4 .. 12 % slow under its thermal slowdown (reason 0x20, as the 82K
-rows above), measured again on a cooled board (thchk.sh, a 120-second rest, the throttle reasons
-sampled) and those rows taken. Within the census the 4090's 8-row Q4_K_M step adds 16
-mul_mat_q_stream_k_fixup launches: small kernels, not weight reads (kDecodeLaunches' 145 stands). The
-estimate against the new rows: decode_measured.json's 100 rms 2.58 % (from 3.06), Ada 0.0259 and
-Blackwell 0.0171 stated; the long-context steps 2.98 % (from 3.19); the 200 dense steps 5.90 % (from
-6.05), their worst the 2080 Ti's Q6_K at 2 rows +27 % and the 3060's long-context Q4_K_M at 8 rows
-+16 % (open). The Quadro GV100's 12 points are kept out of the fit (no census of its step yet: open).
+the 28.10 method; IQ4_XS and IQ4_NL on the RTX 4060 Ti and 4070 Ti) and census.sh's nsys of one step at
+1 / 2 / 8 streams on six (the RTX 4070 Ti's census rows and the IQ4 ones stay those of 28.10) in place
+of the 28.10 rows; fit_decode.py derives kDecodeLaunches, kKernelCost, kRowsEta and
+kDecodePredictionError from them (it now reads each generation's DRAM share, kDramEtaOf). Since 28.10:
+the RTX 2080 Ti 3.5 .. 9 % faster (Turing's K-quant 8-row share 0.628 -> 0.691), IQ4_NL at 8 rows +14
+and +10 % on the 4060 Ti and 4070 Ti (Ada's IQ4 8-row share 0.773 -> 0.824), the rest within 3 %;
+Gemma's rows on the RTX 3060 and 2080 Ti now name the KV the server picks there (BF16, not FP8). The
+RTX 4070 Ti's first campaign run was 4 .. 12 % slow under its thermal slowdown (reason 0x20, as the
+82K rows above): measured again on a cooled board (thchk.sh, a 120-second rest, the throttle reasons
+sampled) and those rows taken. The 4090's 8-row Q4_K_M step adds 16 mul_mat_q_stream_k_fixup launches:
+small kernels, not weight reads. The estimate against the new rows: decode_measured.json's 100 rms
+2.43 % (from 3.06), Ada 0.0226 and Blackwell 0.0170 stated; the long-context steps 2.97 % (from 3.19);
+the 200 dense steps 5.81 % (from 6.05), their worst the 2080 Ti's Q6_K at 2 rows +27 % and the 3060's
+long-context Q4_K_M at 8 rows +16 % (open). The Quadro GV100's 12 points stay out of the fit and its
+census out of decode_census.json: its one-stream repeats spread 9 .. 11 % and its Q8_0 runs one stream
+slower than two (open: measured again before Volta gets rows).
