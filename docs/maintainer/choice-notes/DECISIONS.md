@@ -2453,4 +2453,6 @@ UD-Q4_K_M K8V4 and 27B NVFP4 to hold their context, int8 elsewhere), predicted b
 (speed_measured.json, rows marked long): 22 points, rms 4.8 %, -13 .. +7 %. Open: the 35B's UD-Q4_K_M
 at 4 and 8 rows on the 5090, -11 and -13 % (the estimate slower; the 4090's -1, -5 %): Blackwell's
 kMoeRoutedEta was read on UD-IQ3_XXS and UD-Q3_K_S only. The fixture's older rows of these two models
-on the 4090 name int8 KV, a choice the server's capacity lines of those runs would confirm (open).
+on the 4090: its 35B UD-Q4_K_M steps of 30.10 (mbatch.sh) ran under K8V4 too (the server's capacity
+line), now so named; kMoeRoutedEta's Ada rows refitted on them (fit_moe_decode.py, which now leaves the
+long rows out): 0.928 / 0.911 / 0.806 -> 0.926 / 0.909 / 0.803 at 2 / 4 / 8 rows.
