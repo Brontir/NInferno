@@ -2254,3 +2254,10 @@ mpref.sh rows at 7K and 22K on the seven cards (master f8d4399d): 26 of 27 point
 (1150 prompt tokens a second; its Q5_K_M 1353, +11 %), where every other card's Q6_K runs 0.92 .. 0.96
 of its Q5_K_M and the 2080 Ti's 0.85; 1.4 GiB free after 9.1 GiB of weights (its 22K row did not
 fit). A census is queued.
+
+**The Quadro GV100 end to end** (31.10): mpref.sh rows (lgv100's kit build fd6e572c) of Qwen3.5 9B's
+Q6_K, Q5_K_M, Q4_K_S and Gemma 4 12B's Q4_K_M, Q5_K_M, Q6_K at 7K and 22K against the estimate with
+DECISIONS 70's linears and Gemma's Volta row: rms 6.4 %, -6 .. +13 %. Open: Qwen's Q4_K_S and Q5_K_M
+at 7K (+13, +11 %) where its Q6_K is +4 %: the GV100 runs Qwen's Q6_K faster than both (3017 against
+2737 and 2742 prompt tokens a second), the decode costs read on the Q4_K_M file give them the other
+order.

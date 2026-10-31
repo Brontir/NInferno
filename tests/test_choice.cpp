@@ -314,7 +314,8 @@ void prefills_by_format(const json& fixture) {
     int before[2] = {0, 0};
     // The K-quant rows before DECISIONS 69's check (Q4_K_M) and that check's (Qwen3.5-9B's other mixes).
     double sq_first = 0, sq_mixes = 0, worst_mixes = 0, sq_gemma = 0, worst_gemma = 0;
-    int first = 0, mixes = 0, gemma = 0;
+    int first = 0, mixes = 0, gemma = 0, volta_rows = 0;
+    double sq_volta = 0, worst_volta = 0;
     std::map<std::string, std::vector<double>> by_card;
     int n[2] = {0, 0};
     for (const json& row : fixture.at("rows")) {
@@ -327,6 +328,12 @@ void prefills_by_format(const json& fixture) {
         c.kv                       = KvCacheStorage::Int8Group64;
         const std::uint32_t prompt = row.at("prompt").get<std::uint32_t>();
         const double d = ch::speed_of(mf, cf, qo, c, 1, prompt, prompt).prefill / row.at("prefill").get<double>() - 1;
+        if (cf.major == 7 && cf.minor == 0) { // Volta's rows (DECISIONS 70): their own guard
+            std::cout << "  Volta " << q << " " << row.at("model").get<std::string>() << " " << prompt << ": "
+                      << std::lround(d * 100) << " %\n";
+            sq_volta += d * d, worst_volta = std::max(worst_volta, std::abs(d)), ++volta_rows;
+            continue;
+        }
         const int i    = qo.weights == ch::WeightClass::Q8 ? 1 : 0;
         by_card[q + " " + row.at("model").get<std::string>() + " " +
                 row.at("card").get<std::string>()]
@@ -377,6 +384,13 @@ void prefills_by_format(const json& fixture) {
     // 2080 Ti's Q6_K at 7K the worst (+27 %, its Q5_K_M +11 %: open, DECISIONS 69), the rest within 11 %.
     check(gemma == 27 && std::sqrt(sq_gemma / gemma) < 0.08 && worst_gemma < 0.30,
           "Gemma 4 12B's Q5_K_M and Q6_K within 8 % rms");
+    std::cout << "Volta prefill: " << volta_rows << " points rms " << std::sqrt(sq_volta / volta_rows) * 100 << " % (worst "
+              << worst_volta * 100 << " %)\n";
+    // The Quadro GV100 end to end (DECISIONS 70's linears, Gemma's Volta row): Qwen3.5 9B's Q6_K,
+    // Q5_K_M, Q4_K_S and Gemma 4 12B's Q4_K_M .. Q6_K at 7K and 22K; the worst Qwen's Q4_K_S and
+    // Q5_K_M at 7K (+11, +13 %: open), one card.
+    check(volta_rows == 12 && std::sqrt(sq_volta / volta_rows) < 0.08 && worst_volta < 0.15,
+          "Volta's prefill within 8 % rms, every point within 15 %");
 
     // What the tiles row changes, and what it leaves. The model's Q8_0 and Q4_K_M at one size
     // (the rate is per parameter), so the weight class alone differs.

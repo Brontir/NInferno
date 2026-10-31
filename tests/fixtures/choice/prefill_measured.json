@@ -310,6 +310,14 @@
    "clock_hz": 2407000000.0,
    "dram_bytes_per_s": 1792000000000.0,
    "fp4": true
+  },
+  "Quadro GV100": {
+   "major": 7,
+   "minor": 0,
+   "sms": 80,
+   "clock_hz": 1627000000.0,
+   "dram_bytes_per_s": 870400000000.0,
+   "fp4": false
   }
  },
  "rows": [
@@ -2064,6 +2072,102 @@
    "prompt": 7347,
    "prefill": 1149.8,
    "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master f8d4399d (the stands' kit build), 2026-10-31 (l2080)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B",
+   "quant": "Q6_K",
+   "prompt": 7406,
+   "prefill": 3016.7,
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B",
+   "quant": "Q6_K",
+   "prompt": 21928,
+   "prefill": 2879.4,
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B",
+   "quant": "Q5_K_M",
+   "prompt": 7406,
+   "prefill": 2741.7,
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B",
+   "quant": "Q5_K_M",
+   "prompt": 21928,
+   "prefill": 2623.4,
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B",
+   "quant": "Q4_K_S",
+   "prompt": 7406,
+   "prefill": 2736.5,
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "Qwen3.5-9B",
+   "quant": "Q4_K_S",
+   "prompt": 21928,
+   "prefill": 2603.3,
+   "source": "mpref.sh (unsloth/Qwen3.5-9B-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 7347,
+   "prefill": 1518.1,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "prompt": 21721,
+   "prefill": 1247.4,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 7347,
+   "prefill": 1670.2,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q5_K_M",
+   "prompt": 21721,
+   "prefill": 1281.7,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 7347,
+   "prefill": 1693.7,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
+  },
+  {
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q6_K",
+   "prompt": 21721,
+   "prefill": 1298.8,
+   "source": "mpref.sh (unsloth/gemma-4-12b-it-GGUF, --no-prefix-reuse, median of 3), master fd6e572c (lgv100's kit build: Volta's prefill route as on f8d4399d), 2026-10-31 (lgv100)"
   }
  ]
 }
