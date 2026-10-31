@@ -543,6 +543,9 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                               : 0;
     const double sms = card.sms, step = format->step + (cost->q6 - format->step) * toward;
     double clocks = 0, bytes = 0;
+    // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
+    // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
+    if (!mmq && (tokens < kW4a8KquantTokens || card.major != 12 || card.minor != 0)) { return 0; }
     if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
         for (const LinearShape& l : model.linears) {
             const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);

@@ -956,6 +956,17 @@ void prices_dense_prefill_tiles() {
         const double e1 = call(12288, 4096, false) / 998.6 - 1, e2 = call(4096, 12288, false) / 994.8 - 1;
         std::cout << "MMQ tiles, RTX 4060 Ti: " << e1 * 100 << " %, " << e2 * 100 << " %\n";
         check(std::abs(e1) < 0.05 && std::abs(e2) < 0.05, "MMQ's tiles in rounds within 5 % of the census's calls");
+        // Where MMQ does not pay: the RTX 5070 Ti's producer-warp Q6_K tiles, the gate and up's 1024-token
+        // call (384 x 8 tiles in 44 rounds of its 70 SMs: the census's 2131.1 us); a call under 128
+        // tokens keeps the share.
+        const ch::CardFacts r5070{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.452e9, .dram_bytes_per_s = 896e9};
+        ch::ModelFacts gate_up = m;
+        gate_up.linears        = {{24576, 4096, 1, false, true}};
+        const double ws        = ch::prefill_linears_seconds(gate_up, r5070, q6, 1024) * 1e6 / 2131.1 - 1;
+        std::cout << "W4A8 tiles, RTX 5070 Ti: " << ws * 100 << " %
+";
+        check(std::abs(ws) < 0.05 && ch::prefill_linears_seconds(gate_up, r5070, q6, 100) == 0,
+              "the W4A8 tiles where MMQ does not pay, from 128 tokens");
         check(std::abs(call(24576, 4096, true) / (2 * call(12288, 4096, false)) - 1) < 1e-3,
               "a gated pair: two grids of half its rows");
     }
