@@ -2239,3 +2239,11 @@ segments, its gate and up as `linear_swiglu`); Gemma 4 and the generic dense pas
 v and gate-up calls directly (a separate `gelu_tanh_mul` after the gate-up) and cast once a call, a few
 per cent of their linears' time. A grid of at most SMs CTAs (a short call of few rows) is priced at two
 tiles' time, not a lone tile's.
+
+**Volta's row for Gemma 4's kernel** (31.10): the Quadro GV100's census of Gemma 4 12B Q4_K_M at 7K
+tokens (Volta's m8n8k4 route of the kernel, `kGemma4VoltaHmma`, same grids: sliding 65 x 8 CTAs of 128
+threads at 255 registers and 44 KiB, two a SM by both; full 513 CTAs of 256 threads, 89 KiB, one).
+615 / 805 SM-clocks a key (sliding -16 .. +3 %, the first chunk the -16 %; full -1 .. +1 %), 1.4x
+Turing's. The first chunk, where a CTA holds 16 .. 1024 keys, runs slower than its keys say on Turing
+(-9 %) and Volta (-12 % of the chunk): open, not a per-CTA constant (two levels of data, one
+unknown each). One card: transferred.
