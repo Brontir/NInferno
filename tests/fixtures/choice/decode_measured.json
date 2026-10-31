@@ -1,5 +1,5 @@
 {
- "about": "Plain decode per stream (tokens a second, the server's timings) at `concurrency` streams decoding 256 tokens each from short prompts, --spec none --no-prefix-reuse, master 03afc418 (2026-10-28, choice-notes/lab/speed_model). The facts: the GGUF tensor tables (unsloth/Qwen3.5-9B-MTP-GGUF, unsloth/gemma-4-12b-it-GGUF) and the plan's. Long contexts (rows marked long: one stream decoding 513 tokens after 7K, 41K and 82K-token prompts, mdecl.sh, 2026-10-31; context = the prompt + 256, the decode's mean) of the same three files on eight cards, the GV100 among them. Steps at 1, 2, 4 and 8 rows at a long context (mbatchl.sh, 2026-10-31: each row its own ~18K-token prompt and 6000 tokens; the windows whose mean batch is C pool the C-row phase with the ends of the later phases, so the context, the rows' mean prompt + 3000, holds within about 3000 tokens; row counts other than 1, 2, 4, 8 or with fewer than 4 windows left out).",
+ "about": "Plain decode per stream (tokens a second, the server's timings) at `concurrency` streams decoding 256 tokens each from short prompts, --spec none --no-prefix-reuse, master f68eca34 (2026-10-31, the Quadro GV100 among the cards; first measured at master 03afc418 on 2026-10-28, choice-notes/lab/speed_model). The facts: the GGUF tensor tables (unsloth/Qwen3.5-9B-MTP-GGUF, unsloth/gemma-4-12b-it-GGUF) and the plan's. Long contexts (rows marked long: one stream decoding 513 tokens after 7K, 41K and 82K-token prompts, mdecl.sh, 2026-10-31; context = the prompt + 256, the decode's mean) of the same three files on eight cards, the GV100 among them. Steps at 1, 2, 4 and 8 rows at a long context (mbatchl.sh, 2026-10-31: each row its own ~18K-token prompt and 6000 tokens; the windows whose mean batch is C pool the C-row phase with the ends of the later phases, so the context, the rows' mean prompt + 3000, holds within about 3000 tokens; row counts other than 1, 2, 4, 8 or with fewer than 4 windows left out).",
  "models": {
   "Qwen3.5-9B-MTP": {
    "family": "qwen3_5_text",
@@ -173,7 +173,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 51.09,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -184,9 +184,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 48.67,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "context": 159,
+   "decode": 48.66,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -197,9 +197,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 45.71,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "context": 159,
+   "decode": 45.7,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -210,9 +210,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 42.97,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "context": 159,
+   "decode": 43.11,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -225,7 +225,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 31.59,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -236,9 +236,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 30.88,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "context": 159,
+   "decode": 30.89,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -249,9 +249,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 29.77,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "context": 159,
+   "decode": 29.78,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -262,9 +262,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 27.96,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "context": 159,
+   "decode": 27.98,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -277,7 +277,7 @@
    "concurrency": 1,
    "context": 160,
    "decode": 36.85,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -290,7 +290,7 @@
    "concurrency": 2,
    "context": 160,
    "decode": 34.33,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -303,7 +303,7 @@
    "concurrency": 4,
    "context": 160,
    "decode": 33.53,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4060 Ti",
@@ -315,8 +315,112 @@
    "ring": "fp8",
    "concurrency": 8,
    "context": 160,
-   "decode": 31.35,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4060)"
+   "decode": 31.42,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 1,
+   "context": 159,
+   "decode": 54.94,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 2,
+   "context": 159,
+   "decode": 52.67,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 4,
+   "context": 159,
+   "decode": 49.39,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 8,
+   "context": 159,
+   "decode": 46.75,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 1,
+   "context": 159,
+   "decode": 53.2,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 2,
+   "context": 159,
+   "decode": 50.76,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 4,
+   "context": 159,
+   "decode": 47.87,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
+  },
+  {
+   "card": "RTX 4060 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 8,
+   "context": 159,
+   "decode": 45.43,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4060)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -329,7 +433,7 @@
    "concurrency": 1,
    "context": 159,
    "decode": 86.69,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -340,9 +444,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 81.48,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "context": 159,
+   "decode": 81.49,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -353,9 +457,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 77.72,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "context": 159,
+   "decode": 77.78,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -366,9 +470,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 69.82,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "context": 159,
+   "decode": 70.48,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -380,8 +484,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 49.38,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "decode": 53.88,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -392,9 +496,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 51.78,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "context": 159,
+   "decode": 52.2,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -405,9 +509,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 50.57,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "context": 159,
+   "decode": 50.58,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -418,9 +522,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 47.22,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "context": 159,
+   "decode": 47.2,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -432,8 +536,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 160,
-   "decode": 62.44,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "decode": 62.43,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -445,8 +549,8 @@
    "ring": "fp8",
    "concurrency": 2,
    "context": 160,
-   "decode": 55.85,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "decode": 56.37,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -458,8 +562,8 @@
    "ring": "fp8",
    "concurrency": 4,
    "context": 160,
-   "decode": 54.89,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "decode": 54.25,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4070 Ti",
@@ -471,8 +575,112 @@
    "ring": "fp8",
    "concurrency": 8,
    "context": 160,
-   "decode": 49.08,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4070)"
+   "decode": 48.2,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 1,
+   "context": 159,
+   "decode": 91.55,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 2,
+   "context": 159,
+   "decode": 86.66,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 4,
+   "context": 159,
+   "decode": 83.65,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_XS",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 8,
+   "context": 159,
+   "decode": 73.3,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 1,
+   "context": 159,
+   "decode": 90.12,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 2,
+   "context": 159,
+   "decode": 86.0,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 4,
+   "context": 159,
+   "decode": 78.0,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
+  },
+  {
+   "card": "RTX 4070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "IQ4_NL",
+   "activations": "fast",
+   "kv": "int8",
+   "state": "f16",
+   "ring": "bf16",
+   "concurrency": 8,
+   "context": 159,
+   "decode": 71.45,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4070)"
   },
   {
    "card": "RTX 4090",
@@ -484,8 +692,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 162.97,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "decode": 162.87,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -496,9 +704,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 151.27,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "context": 159,
+   "decode": 151.15,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -509,9 +717,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 144.44,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "context": 159,
+   "decode": 144.32,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -522,9 +730,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 130.07,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "context": 159,
+   "decode": 131.05,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -536,8 +744,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 101.18,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "decode": 101.11,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -548,9 +756,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 96.42,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "context": 159,
+   "decode": 96.41,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -561,9 +769,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 93.73,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "context": 159,
+   "decode": 93.71,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -574,9 +782,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 86.8,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "context": 159,
+   "decode": 86.84,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -588,8 +796,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 160,
-   "decode": 116.28,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "decode": 116.32,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -601,8 +809,8 @@
    "ring": "fp8",
    "concurrency": 2,
    "context": 160,
-   "decode": 106.32,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "decode": 106.35,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -614,8 +822,8 @@
    "ring": "fp8",
    "concurrency": 4,
    "context": 160,
-   "decode": 102.22,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "decode": 102.29,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 4090",
@@ -627,8 +835,8 @@
    "ring": "fp8",
    "concurrency": 8,
    "context": 160,
-   "decode": 92.42,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l4090)"
+   "decode": 93.36,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l4090)"
   },
   {
    "card": "RTX 3060",
@@ -640,8 +848,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 61.11,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "decode": 60.96,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -652,9 +860,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 57.17,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "context": 159,
+   "decode": 56.89,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -665,9 +873,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 49.82,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "context": 159,
+   "decode": 49.4,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -678,9 +886,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 47.88,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "context": 159,
+   "decode": 48.35,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -692,8 +900,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 38.78,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "decode": 38.72,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -704,9 +912,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 36.94,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "context": 159,
+   "decode": 36.85,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -717,9 +925,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 35.36,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "context": 159,
+   "decode": 35.23,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
@@ -730,61 +938,61 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 31.03,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "context": 159,
+   "decode": 30.56,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 1,
    "context": 160,
-   "decode": 43.66,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "decode": 43.37,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 2,
    "context": 160,
-   "decode": 40.25,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "decode": 39.82,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 4,
    "context": 160,
-   "decode": 34.72,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "decode": 34.28,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 3060",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 8,
    "context": 160,
-   "decode": 33.18,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l3060)"
+   "decode": 33.52,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l3060)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -796,8 +1004,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 96.0,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "decode": 95.87,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -808,9 +1016,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 85.85,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "context": 159,
+   "decode": 85.5,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -821,9 +1029,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 73.55,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "context": 159,
+   "decode": 74.47,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -834,9 +1042,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 65.52,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "context": 159,
+   "decode": 70.45,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -848,8 +1056,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 58.47,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "decode": 58.38,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -860,9 +1068,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 56.23,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "context": 159,
+   "decode": 56.1,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -873,9 +1081,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 52.71,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "context": 159,
+   "decode": 52.59,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
@@ -886,61 +1094,61 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 41.62,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "context": 159,
+   "decode": 41.55,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 1,
    "context": 160,
-   "decode": 63.43,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "decode": 65.62,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 2,
    "context": 160,
-   "decode": 51.19,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "decode": 53.92,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 4,
    "context": 160,
-   "decode": 43.42,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "decode": 44.96,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 2080 Ti",
    "model": "gemma-4-12b",
    "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "fp8",
+   "kv": "bf16",
    "state": "f32",
-   "ring": "fp8",
+   "ring": "bf16",
    "concurrency": 8,
    "context": 160,
-   "decode": 41.79,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l2080)"
+   "decode": 45.58,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l2080)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -952,8 +1160,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 149.81,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "decode": 150.04,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -964,9 +1172,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 138.22,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "context": 159,
+   "decode": 138.39,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -977,9 +1185,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 118.9,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "context": 159,
+   "decode": 119.07,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -990,9 +1198,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 117.01,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "context": 159,
+   "decode": 119.49,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1004,8 +1212,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 92.93,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "decode": 92.97,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1016,9 +1224,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 89.13,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "context": 159,
+   "decode": 89.15,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1029,9 +1237,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 84.7,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "context": 159,
+   "decode": 84.76,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1042,9 +1250,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 79.84,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "context": 159,
+   "decode": 79.97,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1056,8 +1264,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 160,
-   "decode": 105.31,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "decode": 105.51,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1069,8 +1277,8 @@
    "ring": "fp8",
    "concurrency": 2,
    "context": 160,
-   "decode": 95.89,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "decode": 95.98,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1082,8 +1290,8 @@
    "ring": "fp8",
    "concurrency": 4,
    "context": 160,
-   "decode": 86.11,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "decode": 86.25,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5070 Ti",
@@ -1095,8 +1303,8 @@
    "ring": "fp8",
    "concurrency": 8,
    "context": 160,
-   "decode": 79.51,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5070)"
+   "decode": 82.53,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5070)"
   },
   {
    "card": "RTX 5090",
@@ -1108,8 +1316,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 268.52,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "decode": 268.38,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1120,9 +1328,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 245.11,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "context": 159,
+   "decode": 244.96,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1133,9 +1341,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 214.43,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "context": 159,
+   "decode": 213.67,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1146,9 +1354,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 206.12,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "context": 159,
+   "decode": 209.89,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1160,8 +1368,8 @@
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 170.48,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "decode": 170.41,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1172,9 +1380,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 161.8,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "context": 159,
+   "decode": 161.64,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1185,9 +1393,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
+   "context": 159,
    "decode": 155.15,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1198,9 +1406,9 @@
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 145.53,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "context": 159,
+   "decode": 145.57,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1212,8 +1420,8 @@
    "ring": "fp8",
    "concurrency": 1,
    "context": 160,
-   "decode": 189.42,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "decode": 189.75,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1225,8 +1433,8 @@
    "ring": "fp8",
    "concurrency": 2,
    "context": 160,
-   "decode": 165.61,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "decode": 165.73,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1238,8 +1446,8 @@
    "ring": "fp8",
    "concurrency": 4,
    "context": 160,
-   "decode": 146.78,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "decode": 146.41,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
    "card": "RTX 5090",
@@ -1251,216 +1459,164 @@
    "ring": "fp8",
    "concurrency": 8,
    "context": 160,
-   "decode": 140.47,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-28 (l5090)"
+   "decode": 145.3,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (l5090)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "quant": "Q4_K_M",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 54.95,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "decode": 95.81,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "quant": "Q4_K_M",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 52.69,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 159,
+   "decode": 81.63,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "quant": "Q4_K_M",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 49.42,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 159,
+   "decode": 68.56,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "quant": "Q4_K_M",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 46.62,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 159,
+   "decode": 58.24,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
+   "quant": "Q8_0",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 1,
    "context": 159,
-   "decode": 53.19,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "decode": 56.63,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
+   "quant": "Q8_0",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 50.75,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 159,
+   "decode": 62.58,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
+   "quant": "Q8_0",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 4,
-   "context": 160,
-   "decode": 47.86,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 159,
+   "decode": 57.97,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4060 Ti",
+   "card": "Quadro GV100",
    "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
+   "quant": "Q8_0",
    "activations": "fast",
    "kv": "int8",
    "state": "f16",
    "ring": "bf16",
    "concurrency": 8,
-   "context": 160,
-   "decode": 39.81,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4060, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 159,
+   "decode": 50.03,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
+   "kv": "bf16",
+   "state": "f32",
    "ring": "bf16",
    "concurrency": 1,
-   "context": 159,
-   "decode": 91.52,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 160,
+   "decode": 57.49,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
+   "kv": "bf16",
+   "state": "f32",
    "ring": "bf16",
    "concurrency": 2,
-   "context": 158,
-   "decode": 86.62,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "context": 160,
+   "decode": 52.89,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
+   "kv": "bf16",
+   "state": "f32",
    "ring": "bf16",
    "concurrency": 4,
    "context": 160,
-   "decode": 83.63,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-MTP-GGUF)"
+   "decode": 44.29,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_XS",
+   "card": "Quadro GV100",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
    "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
+   "kv": "bf16",
+   "state": "f32",
    "ring": "bf16",
    "concurrency": 8,
    "context": 160,
-   "decode": 72.88,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-MTP-GGUF)"
-  },
-  {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 1,
-   "context": 159,
-   "decode": 91.4,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-GGUF)"
-  },
-  {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 2,
-   "context": 158,
-   "decode": 86.87,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-GGUF)"
-  },
-  {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 4,
-   "context": 160,
-   "decode": 79.34,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-GGUF)"
-  },
-  {
-   "card": "RTX 4070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "IQ4_NL",
-   "activations": "fast",
-   "kv": "int8",
-   "state": "f16",
-   "ring": "bf16",
-   "concurrency": 8,
-   "context": 160,
-   "decode": 65.14,
-   "source": "sm_bench.py decode, master 03afc418, 2026-10-29 (l4070, unsloth/Qwen3.5-9B-GGUF)"
+   "decode": 36.67,
+   "source": "sm_bench.py decode, master f68eca34, 2026-10-31 (lgv100)"
   },
   {
    "card": "RTX 5090",

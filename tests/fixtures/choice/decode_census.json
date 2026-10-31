@@ -1,5 +1,5 @@
 {
- "about": "nsys census of one plain decode step (ana2.py: per-position medians over ~125 steps, critical path busy + gap), master 03afc418, 2026-10-28 (choice-notes/lab/speed_model/census.sh): the kernels that read weights (R8, register MMA, ggml vec and MMQ, W4A8 tiles) and the small ones (norms, the recurrent update, attention, convolution, quantize, sampling), their counts and summed time a step.",
+ "about": "nsys census of one plain decode step (ana2.py: per-position medians over ~125 steps, critical path busy + gap), master f68eca34, 2026-10-31 (the RTX 4070 Ti and the IQ4 rows: master 03afc418, 2026-10-28) (choice-notes/lab/speed_model/census.sh): the kernels that read weights (R8, register MMA, ggml vec and MMQ, W4A8 tiles) and the small ones (norms, the recurrent update, attention, convolution, quantize, sampling), their counts and summed time a step.",
  "rows": [
   {
    "card": "RTX 4060 Ti",
@@ -7,9 +7,9 @@
    "quant": "Q4_K_M",
    "streams": 1,
    "gemv_kernels": 145,
-   "gemv_us": 19094.0,
+   "gemv_us": 19096.3,
    "small_kernels": 167,
-   "small_us": 501.5
+   "small_us": 502.7
   },
   {
    "card": "RTX 4060 Ti",
@@ -17,9 +17,9 @@
    "quant": "Q4_K_M",
    "streams": 2,
    "gemv_kernels": 145,
-   "gemv_us": 19658.5,
+   "gemv_us": 19663.6,
    "small_kernels": 295,
-   "small_us": 783.3
+   "small_us": 786.0
   },
   {
    "card": "RTX 4060 Ti",
@@ -27,9 +27,9 @@
    "quant": "Q4_K_M",
    "streams": 8,
    "gemv_kernels": 145,
-   "gemv_us": 20986.1,
+   "gemv_us": 20926.8,
    "small_kernels": 199,
-   "small_us": 1373.9
+   "small_us": 1371.5
   },
   {
    "card": "RTX 4060 Ti",
@@ -37,9 +37,9 @@
    "quant": "Q8_0",
    "streams": 1,
    "gemv_kernels": 177,
-   "gemv_us": 31250.1,
+   "gemv_us": 31253.5,
    "small_kernels": 191,
-   "small_us": 426.9
+   "small_us": 427.0
   },
   {
    "card": "RTX 4060 Ti",
@@ -47,9 +47,9 @@
    "quant": "Q8_0",
    "streams": 2,
    "gemv_kernels": 177,
-   "gemv_us": 31451.1,
+   "gemv_us": 31453.6,
    "small_kernels": 367,
-   "small_us": 798.0
+   "small_us": 800.4
   },
   {
    "card": "RTX 4060 Ti",
@@ -57,9 +57,9 @@
    "quant": "Q8_0",
    "streams": 8,
    "gemv_kernels": 177,
-   "gemv_us": 33075.1,
-   "small_kernels": 367,
-   "small_us": 1463.5
+   "gemv_us": 33042.9,
+   "small_kernels": 368,
+   "small_us": 1448.7
   },
   {
    "card": "RTX 4060 Ti",
@@ -67,9 +67,9 @@
    "quant": "Q4_K_M",
    "streams": 1,
    "gemv_kernels": 213,
-   "gemv_us": 26465.5,
+   "gemv_us": 26471.4,
    "small_kernels": 249,
-   "small_us": 654.7
+   "small_us": 663.9
   },
   {
    "card": "RTX 4060 Ti",
@@ -77,9 +77,9 @@
    "quant": "Q4_K_M",
    "streams": 2,
    "gemv_kernels": 213,
-   "gemv_us": 27720.3,
+   "gemv_us": 27723.6,
    "small_kernels": 557,
-   "small_us": 1142.6
+   "small_us": 1159.3
   },
   {
    "card": "RTX 4060 Ti",
@@ -87,9 +87,459 @@
    "quant": "Q4_K_M",
    "streams": 8,
    "gemv_kernels": 213,
-   "gemv_us": 28404.3,
+   "gemv_us": 28359.2,
    "small_kernels": 329,
-   "small_us": 1558.4
+   "small_us": 1589.3
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 5749.3,
+   "small_kernels": 167,
+   "small_us": 417.3
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 145,
+   "gemv_us": 5970.7,
+   "small_kernels": 295,
+   "small_us": 623.7
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 145,
+   "gemv_us": 6534.6,
+   "small_kernels": 215,
+   "small_us": 742.8
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 9473.5,
+   "small_kernels": 191,
+   "small_us": 420.3
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 2,
+   "gemv_kernels": 177,
+   "gemv_us": 9567.3,
+   "small_kernels": 367,
+   "small_us": 760.3
+  },
+  {
+   "card": "RTX 4090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 8,
+   "gemv_kernels": 177,
+   "gemv_us": 10223.3,
+   "small_kernels": 368,
+   "small_us": 869.1
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 7970.7,
+   "small_kernels": 249,
+   "small_us": 665.8
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 213,
+   "gemv_us": 8230.9,
+   "small_kernels": 557,
+   "small_us": 1173.0
+  },
+  {
+   "card": "RTX 4090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 213,
+   "gemv_us": 9015.9,
+   "small_kernels": 345,
+   "small_us": 1165.3
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 15861.7,
+   "small_kernels": 167,
+   "small_us": 589.0
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 145,
+   "gemv_us": 16465.7,
+   "small_kernels": 295,
+   "small_us": 1006.4
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 145,
+   "gemv_us": 17549.9,
+   "small_kernels": 167,
+   "small_us": 2037.1
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 25323.2,
+   "small_kernels": 191,
+   "small_us": 520.0
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 2,
+   "gemv_kernels": 177,
+   "gemv_us": 25982.2,
+   "small_kernels": 367,
+   "small_us": 1009.5
+  },
+  {
+   "card": "RTX 3060",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 8,
+   "gemv_kernels": 177,
+   "gemv_us": 29054.6,
+   "small_kernels": 368,
+   "small_us": 2131.5
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 21992.3,
+   "small_kernels": 249,
+   "small_us": 967.6
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 213,
+   "gemv_us": 22878.3,
+   "small_kernels": 557,
+   "small_us": 1719.4
+  },
+  {
+   "card": "RTX 3060",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 213,
+   "gemv_us": 24767.0,
+   "small_kernels": 345,
+   "small_us": 2760.9
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 9829.8,
+   "small_kernels": 167,
+   "small_us": 726.0
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 145,
+   "gemv_us": 10683.4,
+   "small_kernels": 279,
+   "small_us": 1055.6
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 145,
+   "gemv_us": 12055.8,
+   "small_kernels": 167,
+   "small_us": 1524.9
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 16460.6,
+   "small_kernels": 191,
+   "small_us": 740.6
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 2,
+   "gemv_kernels": 177,
+   "gemv_us": 16510.3,
+   "small_kernels": 367,
+   "small_us": 1340.2
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 8,
+   "gemv_kernels": 177,
+   "gemv_us": 21192.3,
+   "small_kernels": 368,
+   "small_us": 2005.5
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 13739.8,
+   "small_kernels": 249,
+   "small_us": 1524.8
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 213,
+   "gemv_us": 15724.3,
+   "small_kernels": 557,
+   "small_us": 2633.2
+  },
+  {
+   "card": "RTX 2080 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 213,
+   "gemv_us": 16787.1,
+   "small_kernels": 345,
+   "small_us": 3341.0
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 6196.0,
+   "small_kernels": 167,
+   "small_us": 461.2
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 145,
+   "gemv_us": 6685.2,
+   "small_kernels": 295,
+   "small_us": 475.5
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 145,
+   "gemv_us": 7340.6,
+   "small_kernels": 167,
+   "small_us": 640.4
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 10381.4,
+   "small_kernels": 191,
+   "small_us": 363.7
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 2,
+   "gemv_kernels": 177,
+   "gemv_us": 10426.5,
+   "small_kernels": 367,
+   "small_us": 710.0
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 8,
+   "gemv_kernels": 177,
+   "gemv_us": 11144.7,
+   "small_kernels": 368,
+   "small_us": 832.2
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 8832.9,
+   "small_kernels": 249,
+   "small_us": 621.2
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 213,
+   "gemv_us": 9290.8,
+   "small_kernels": 557,
+   "small_us": 1002.5
+  },
+  {
+   "card": "RTX 5070 Ti",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 213,
+   "gemv_us": 10328.1,
+   "small_kernels": 249,
+   "small_us": 899.7
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 145,
+   "gemv_us": 3196.3,
+   "small_kernels": 167,
+   "small_us": 521.8
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 145,
+   "gemv_us": 3600.5,
+   "small_kernels": 295,
+   "small_us": 444.3
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 145,
+   "gemv_us": 3990.8,
+   "small_kernels": 167,
+   "small_us": 550.8
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 1,
+   "gemv_kernels": 177,
+   "gemv_us": 5492.5,
+   "small_kernels": 191,
+   "small_us": 363.3
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 2,
+   "gemv_kernels": 177,
+   "gemv_us": 5450.7,
+   "small_kernels": 367,
+   "small_us": 680.5
+  },
+  {
+   "card": "RTX 5090",
+   "model": "Qwen3.5-9B-MTP",
+   "quant": "Q8_0",
+   "streams": 8,
+   "gemv_kernels": 177,
+   "gemv_us": 5852.4,
+   "small_kernels": 368,
+   "small_us": 709.0
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 1,
+   "gemv_kernels": 213,
+   "gemv_us": 4544.6,
+   "small_kernels": 249,
+   "small_us": 713.5
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 2,
+   "gemv_kernels": 213,
+   "gemv_us": 4941.8,
+   "small_kernels": 557,
+   "small_us": 1027.1
+  },
+  {
+   "card": "RTX 5090",
+   "model": "gemma-4-12b",
+   "quant": "Q4_K_M",
+   "streams": 8,
+   "gemv_kernels": 213,
+   "gemv_us": 5568.6,
+   "small_kernels": 329,
+   "small_us": 874.2
   },
   {
    "card": "RTX 4060 Ti",
@@ -240,446 +690,6 @@
    "gemv_us": 17958.3,
    "small_kernels": 345,
    "small_us": 1311.4
-  },
-  {
-   "card": "RTX 4090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 145,
-   "gemv_us": 5746.8,
-   "small_kernels": 167,
-   "small_us": 415.4
-  },
-  {
-   "card": "RTX 4090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 145,
-   "gemv_us": 5966.4,
-   "small_kernels": 295,
-   "small_us": 619.1
-  },
-  {
-   "card": "RTX 4090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 145,
-   "gemv_us": 6586.2,
-   "small_kernels": 215,
-   "small_us": 739.2
-  },
-  {
-   "card": "RTX 4090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 1,
-   "gemv_kernels": 177,
-   "gemv_us": 9464.7,
-   "small_kernels": 191,
-   "small_us": 418.0
-  },
-  {
-   "card": "RTX 4090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 2,
-   "gemv_kernels": 177,
-   "gemv_us": 9570.6,
-   "small_kernels": 367,
-   "small_us": 755.2
-  },
-  {
-   "card": "RTX 4090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 8,
-   "gemv_kernels": 177,
-   "gemv_us": 10230.9,
-   "small_kernels": 367,
-   "small_us": 867.6
-  },
-  {
-   "card": "RTX 4090",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 213,
-   "gemv_us": 7969.6,
-   "small_kernels": 249,
-   "small_us": 659.8
-  },
-  {
-   "card": "RTX 4090",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 213,
-   "gemv_us": 8225.2,
-   "small_kernels": 557,
-   "small_us": 1162.8
-  },
-  {
-   "card": "RTX 4090",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 213,
-   "gemv_us": 9108.6,
-   "small_kernels": 345,
-   "small_us": 1162.9
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 145,
-   "gemv_us": 15818.1,
-   "small_kernels": 167,
-   "small_us": 577.8
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 145,
-   "gemv_us": 16418.4,
-   "small_kernels": 295,
-   "small_us": 992.7
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 145,
-   "gemv_us": 17819.4,
-   "small_kernels": 167,
-   "small_us": 2033.2
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 1,
-   "gemv_kernels": 177,
-   "gemv_us": 25321.7,
-   "small_kernels": 191,
-   "small_us": 515.2
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 2,
-   "gemv_kernels": 177,
-   "gemv_us": 25978.2,
-   "small_kernels": 367,
-   "small_us": 1007.0
-  },
-  {
-   "card": "RTX 3060",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 8,
-   "gemv_kernels": 177,
-   "gemv_us": 28970.7,
-   "small_kernels": 367,
-   "small_us": 2147.5
-  },
-  {
-   "card": "RTX 3060",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 213,
-   "gemv_us": 21952.2,
-   "small_kernels": 249,
-   "small_us": 949.9
-  },
-  {
-   "card": "RTX 3060",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 213,
-   "gemv_us": 22828.4,
-   "small_kernels": 557,
-   "small_us": 1686.6
-  },
-  {
-   "card": "RTX 3060",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 213,
-   "gemv_us": 25172.6,
-   "small_kernels": 345,
-   "small_us": 2720.6
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 145,
-   "gemv_us": 9796.2,
-   "small_kernels": 167,
-   "small_us": 710.1
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 145,
-   "gemv_us": 10627.7,
-   "small_kernels": 279,
-   "small_us": 1037.8
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 145,
-   "gemv_us": 12994.6,
-   "small_kernels": 167,
-   "small_us": 1522.8
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 1,
-   "gemv_kernels": 177,
-   "gemv_us": 16412.5,
-   "small_kernels": 191,
-   "small_us": 731.3
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 2,
-   "gemv_kernels": 177,
-   "gemv_us": 16438.1,
-   "small_kernels": 367,
-   "small_us": 1315.6
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 8,
-   "gemv_kernels": 177,
-   "gemv_us": 21201.9,
-   "small_kernels": 367,
-   "small_us": 2016.0
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 213,
-   "gemv_us": 13679.7,
-   "small_kernels": 249,
-   "small_us": 2104.1
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 213,
-   "gemv_us": 15595.7,
-   "small_kernels": 557,
-   "small_us": 3773.5
-  },
-  {
-   "card": "RTX 2080 Ti",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 213,
-   "gemv_us": 17875.3,
-   "small_kernels": 345,
-   "small_us": 4222.9
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 145,
-   "gemv_us": 6191.5,
-   "small_kernels": 167,
-   "small_us": 463.4
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 145,
-   "gemv_us": 6680.5,
-   "small_kernels": 295,
-   "small_us": 475.4
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 145,
-   "gemv_us": 7500.0,
-   "small_kernels": 167,
-   "small_us": 638.3
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 1,
-   "gemv_kernels": 177,
-   "gemv_us": 10375.9,
-   "small_kernels": 191,
-   "small_us": 361.2
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 2,
-   "gemv_kernels": 177,
-   "gemv_us": 10421.1,
-   "small_kernels": 367,
-   "small_us": 707.2
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 8,
-   "gemv_kernels": 177,
-   "gemv_us": 11161.4,
-   "small_kernels": 367,
-   "small_us": 837.4
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 213,
-   "gemv_us": 8830.2,
-   "small_kernels": 249,
-   "small_us": 616.9
-  },
-  {
-   "card": "RTX 5070 Ti",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 213,
-   "gemv_us": 9286.2,
-   "small_kernels": 557,
-   "small_us": 997.8
-  },
-  {
-   "card": "RTX 5090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 145,
-   "gemv_us": 3180.8,
-   "small_kernels": 167,
-   "small_us": 524.4
-  },
-  {
-   "card": "RTX 5090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 145,
-   "gemv_us": 3586.9,
-   "small_kernels": 295,
-   "small_us": 441.1
-  },
-  {
-   "card": "RTX 5090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 145,
-   "gemv_us": 4058.0,
-   "small_kernels": 167,
-   "small_us": 550.3
-  },
-  {
-   "card": "RTX 5090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 1,
-   "gemv_kernels": 177,
-   "gemv_us": 5488.1,
-   "small_kernels": 191,
-   "small_us": 360.4
-  },
-  {
-   "card": "RTX 5090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 2,
-   "gemv_kernels": 177,
-   "gemv_us": 5445.5,
-   "small_kernels": 367,
-   "small_us": 675.1
-  },
-  {
-   "card": "RTX 5090",
-   "model": "Qwen3.5-9B-MTP",
-   "quant": "Q8_0",
-   "streams": 8,
-   "gemv_kernels": 177,
-   "gemv_us": 5852.5,
-   "small_kernels": 367,
-   "small_us": 704.4
-  },
-  {
-   "card": "RTX 5090",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 1,
-   "gemv_kernels": 213,
-   "gemv_us": 4546.8,
-   "small_kernels": 249,
-   "small_us": 714.7
-  },
-  {
-   "card": "RTX 5090",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 2,
-   "gemv_kernels": 213,
-   "gemv_us": 4934.6,
-   "small_kernels": 557,
-   "small_us": 1027.0
-  },
-  {
-   "card": "RTX 5090",
-   "model": "gemma-4-12b",
-   "quant": "Q4_K_M",
-   "streams": 8,
-   "gemv_kernels": 213,
-   "gemv_us": 5757.6,
-   "small_kernels": 329,
-   "small_us": 871.1
   }
  ]
 }
