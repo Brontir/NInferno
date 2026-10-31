@@ -2232,7 +2232,7 @@ time); the linears together Q8_0 -2.3 %, Q6_K +1.2 %. One card: transferred (DEC
 architecture's facts). Not read: the attention (Qwen's sm70 flash kernel, Gemma 4's) keeps its share.
 
 **Where the route is not CUTLASS** (the review): CUTLASS is built for sm_70 alone, so an sm_72 board
-(Jetson Xavier) keeps the share; a tiled format's call (Q8_0, Q4_K, Q5_K) under 256 tokens on a board
+(Jetson Xavier) keeps the share, as does a call under 17 tokens (the HMMA band); a tiled format's call (Q8_0, Q4_K, Q5_K) under 256 tokens on a board
 below 770 GB/s (the Titan V) runs its own tile (`volta_copy_pays`), not read: the share prices it.
 Open: the epilogue's bytes follow Qwen3.5's fused calls (its qkv and GDN input projections of 2 .. 4
 segments, its gate and up as `linear_swiglu`); Gemma 4 and the generic dense pass store their q / k /

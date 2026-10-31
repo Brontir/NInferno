@@ -528,7 +528,7 @@ double volta_linears_seconds(const ModelFacts& model, const CardFacts& card, con
     }
     if (decode <= 0) { return 0; }
     // CUTLASS is built for sm_70 alone (CMakeLists.txt): sm_72's tree runs the tiles and the scalar path.
-    if (card.major != 7 || card.minor != 0) { return 0; }
+    if (card.major != 7 || card.minor != 0 || tokens < kVoltaCutlassMinTokens) { return 0; }
     if (decode != cost.q6k && tokens < kVoltaCopyMinTokens && card.dram_bytes_per_s < kVoltaCopyMinDramBps) {
         return 0;
     }

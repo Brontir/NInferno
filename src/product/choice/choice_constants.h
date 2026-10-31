@@ -444,6 +444,7 @@ inline constexpr double kVoltaChunkBytes = 4096.0 * 17408 * 2; // generic_volta_
 // A tiled format's call (Q8_0, Q4_K, Q5_K: their own tile beside the copy) takes the copy from this
 // many tokens, or at any width on a board of this much DRAM (generic_gemm.cpp volta_copy_pays); a
 // shorter call on a slower board runs the tile, not read: the share prices it.
+inline constexpr double kVoltaCutlassMinTokens = 17; // volta_cutlass_takes: the prefill band
 inline constexpr double kVoltaCopyMinTokens   = 256;   // kVoltaTileMaxTokens
 inline constexpr double kVoltaCopyMinDramBps  = 870e9 / 1.13; // kVoltaCopyMinDramGbps
 

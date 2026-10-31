@@ -984,6 +984,7 @@ void prices_dense_prefill_tiles() {
             titan_v.dram_bytes_per_s = 653e9;
             check(ch::prefill_linears_seconds(qwen, xavier, q6, 1024) == 0 &&
                       ch::prefill_linears_seconds(qwen, titan_v, q8v, 128) == 0 &&
+                      ch::prefill_linears_seconds(qwen, gv100, q6, 16) == 0 &&
                       ch::prefill_linears_seconds(qwen, titan_v, q8v, 256) > 0 &&
                       ch::prefill_linears_seconds(qwen, titan_v, q6, 128) > 0,
                   "Volta's estimate keeps CUTLASS where the runtime takes it");
