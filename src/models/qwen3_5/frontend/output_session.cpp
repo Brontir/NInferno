@@ -828,11 +828,24 @@ runtime::OutputDecision OutputSession::preview_control(std::span<const TokenId> 
     if (!model_close.empty() && impl_->preview_state.quoted_close_is_text &&
         impl_->preview_state.in_reasoning &&
         impl_->preview_state.think_marker_pending.ends_with(model_close)) {
-        std::string& held = impl_->preview_state.think_marker_pending;
+        std::string held = std::move(impl_->preview_state.think_marker_pending);
+        impl_->preview_state.think_marker_pending.clear();
+        // The held bytes are the model's: they may complete a stop string, which ends the
+        // output before the control is applied.
+        StopMatch match;
         feed_channel(impl_->preview_state, OutputChannel::Reasoning, held, impl_->policy,
-                     impl_->preview_output, 0, nullptr);
+                     impl_->preview_output, 0, &match);
+        if (match.found) {
+            impl_->preview_state = terminal_state(std::move(impl_->preview_state));
+            impl_->preview_state.matched_stop_order = match.declaration_order;
+            impl_->preview_output                   = std::move(match.output);
+            impl_->preview_semantic.control_pending = false;
+            impl_->preview_finish_reason            = FinishReason::StopString;
+            impl_->preview_ready                    = true;
+            return runtime::OutputDecision{.accepted_tokens = 0,
+                                           .finish_reason   = FinishReason::StopString};
+        }
         impl_->preview_state.reasoning_last = held.back();
-        held.clear();
     }
     if (!model_close.empty() && impl_->preview_semantic.quoted_close_is_text &&
         impl_->preview_semantic.in_reasoning &&
