@@ -285,10 +285,9 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
 
     // Block kb of every slot against block sp of load q of each row (kb = group*kGroup + q +
     // kStride*sp): a group's blocks in ascending order, as generic R8 sums them.
-    const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
+    const auto compute_block = [&](const auto& raws, int q, int sp, int kb, int slot) {
         uint4 xl[NT], xh[NT];
         float xs[NT], xm[NT];
-        const int slot = kPre ? x_slot(kb) : kb;
 #pragma unroll
         for (int n = 0; n < NT; ++n) {
             // CTA-uniform: a slot past the job's count is never read below (most jobs hold one
@@ -338,10 +337,21 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                 }
             }
     };
+    // x_group the kernel's own group (every codec but those whose host group differs): a group's
+    // blocks sit at one base, width apart.
+    const bool same_group = a.x_group == kGroup;
+    int group_slot = 0, group_width = 1;
     const auto compute = [&](int group) {
+        if (kPre && same_group) {
+            const int i  = group >> lg_lanes;
+            group_width  = ((i + 1) << lg_lanes) <= x_groups ? lanes : x_groups - (i << lg_lanes);
+            group_slot   = ((i << lg_group) << lg_lanes) + (group - (i << lg_lanes));
+        }
 #pragma unroll
         for (int j = 0; j < kGroup; ++j) {
-            compute_block(ring, j % kStride, j / kStride, group * kGroup + j);
+            const int kb = group * kGroup + j;
+            compute_block(ring, j % kStride, j / kStride, kb,
+                          !kPre ? kb : same_group ? group_slot + j * group_width : x_slot(kb));
         }
     };
 
