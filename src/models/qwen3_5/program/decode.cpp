@@ -312,9 +312,24 @@ void ProgramImpl::install_sampling(SequenceState& sequence, RequestControl& requ
     // Depth 0 in a speculative engine: plain decode from the first step.
     request.plain        = speculative && request.draft_depth == 0;
     request.load_latch_origin = false;
-    const bool penalties = request.sampling_host.presence_penalty != 0.0F ||
-                           request.sampling_host.frequency_penalty != 0.0F;
-    if (penalties) { CUDA_CHECK(cudaMemsetAsync(counts.data, 0, counts.bytes(), device.stream)); }
+    const bool repetition = request.sampling_host.repetition_penalty != 1.0F;
+    const bool penalties  = request.sampling_host.presence_penalty != 0.0F ||
+                           request.sampling_host.frequency_penalty != 0.0F || repetition;
+    if (repetition && request.prefill) {
+        // The prompt's tokens, marked for repetition_penalty (kPromptTokenSeen); the output's
+        // counts start at zero. A pageable copy has read the host words when it returns.
+        const auto domain = static_cast<std::size_t>(model.traits().public_tokens);
+        repetition_seed_.assign(domain, 0);
+        for (const TokenId token : request.prefill->prompt.token_ids) {
+            if (token >= 0 && static_cast<std::size_t>(token) < domain) {
+                repetition_seed_[static_cast<std::size_t>(token)] = ops::kPromptTokenSeen;
+            }
+        }
+        CUDA_CHECK(cudaMemcpyAsync(counts.data, repetition_seed_.data(), counts.bytes(),
+                                   cudaMemcpyHostToDevice, device.stream));
+    } else if (penalties) {
+        CUDA_CHECK(cudaMemsetAsync(counts.data, 0, counts.bytes(), device.stream));
+    }
     request.sampling_host.token_counts =
         penalties ? static_cast<std::int32_t*>(counts.data) : nullptr;
     Tensor config_lane = sampling_config.slice(1, static_cast<std::int32_t>(sequence.lane), 1);

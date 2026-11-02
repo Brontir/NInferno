@@ -158,6 +158,7 @@ Json sampler_json(const ninferno::ResolvedSamplingParameters& sampling) {
                 {"min_p", sampling.min_p},
                 {"presence_penalty", sampling.presence_penalty},
                 {"frequency_penalty", sampling.frequency_penalty},
+                {"repetition_penalty", sampling.repetition_penalty},
                 {"seed", sampling.seed}};
 }
 
@@ -177,6 +178,7 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
                 {"min_p", nullptr},
                 {"presence_penalty", nullptr},
                 {"frequency_penalty", nullptr},
+                {"repetition_penalty", nullptr},
                 {"seed", nullptr}};
     if (overrides.temperature) { result["temperature"] = *overrides.temperature; }
     if (overrides.top_p) { result["top_p"] = *overrides.top_p; }
@@ -184,6 +186,9 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
     if (overrides.min_p) { result["min_p"] = *overrides.min_p; }
     if (overrides.presence_penalty) { result["presence_penalty"] = *overrides.presence_penalty; }
     if (overrides.frequency_penalty) { result["frequency_penalty"] = *overrides.frequency_penalty; }
+    if (overrides.repetition_penalty) {
+        result["repetition_penalty"] = *overrides.repetition_penalty;
+    }
     if (overrides.seed) { result["seed"] = *overrides.seed; }
     return result;
 }

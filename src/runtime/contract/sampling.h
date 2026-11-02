@@ -23,7 +23,8 @@ namespace ninferno::runtime {
 inline void check_resolved_sampling(const ResolvedSamplingParameters& sampling) {
     if (!std::isfinite(sampling.temperature) || !std::isfinite(sampling.top_p) ||
         !std::isfinite(sampling.min_p) || !std::isfinite(sampling.presence_penalty) ||
-        !std::isfinite(sampling.frequency_penalty)) {
+        !std::isfinite(sampling.frequency_penalty) ||
+        !std::isfinite(sampling.repetition_penalty)) {
         throw std::invalid_argument("sampling parameters must be finite");
     }
     const auto check = [](float value, SamplingRange range, std::string_view field) {
@@ -34,6 +35,9 @@ inline void check_resolved_sampling(const ResolvedSamplingParameters& sampling) 
     check(sampling.min_p, kProbabilityRange, "min_p");
     check(sampling.presence_penalty, kPenaltyRange, "presence_penalty");
     check(sampling.frequency_penalty, kPenaltyRange, "frequency_penalty");
+    if (!repetition_penalty_valid(sampling.repetition_penalty)) {
+        throw std::invalid_argument("repetition_penalty must be in (0,2]");
+    }
     if (sampling.top_k < 1 || sampling.top_k > kMaximumTopK) {
         throw std::invalid_argument("resolved top_k must be in [1," + std::to_string(kMaximumTopK) +
                                     "]");

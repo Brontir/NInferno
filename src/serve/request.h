@@ -188,6 +188,7 @@ struct SamplingParams {
     std::optional<int> top_k;
     std::optional<double> presence_penalty;
     std::optional<double> frequency_penalty;
+    std::optional<double> repetition_penalty;
     std::optional<std::uint64_t> seed;
 };
 

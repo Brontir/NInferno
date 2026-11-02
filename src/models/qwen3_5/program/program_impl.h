@@ -720,6 +720,8 @@ public:
     std::optional<Tensor> score_hidden;
     Tensor sampling_config;
     Tensor token_counts;
+    // Host words of a request's prompt marks for repetition_penalty (install_sampling).
+    std::vector<std::int32_t> repetition_seed_;
 
     std::vector<SequenceState> continuation_states;
     std::vector<ContinuationSlot> continuation_slots;

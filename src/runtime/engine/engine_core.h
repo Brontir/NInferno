@@ -2201,6 +2201,7 @@ private:
         return instance_.frontend.resumable(request.prompt) &&
                execution.sampling.presence_penalty == 0.0F &&
                execution.sampling.frequency_penalty == 0.0F &&
+               execution.sampling.repetition_penalty == 1.0F &&
                !request.options.constraint.compiled;
     }
 

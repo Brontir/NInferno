@@ -164,6 +164,9 @@ ninferno::SamplingOverrides resolve_sampling_overrides(const SamplingParams& req
     if (request.frequency_penalty) {
         sampling.frequency_penalty = static_cast<float>(*request.frequency_penalty);
     }
+    if (request.repetition_penalty) {
+        sampling.repetition_penalty = static_cast<float>(*request.repetition_penalty);
+    }
     if (request.seed) {
         sampling.seed = *request.seed;
     } else if (server.sampling_overrides.seed) {
@@ -176,7 +179,8 @@ ninferno::SamplingOverrides resolve_sampling_overrides(const SamplingParams& req
         return !value || std::isfinite(*value);
     };
     if (!finite(sampling.temperature) || !finite(sampling.top_p) || !finite(sampling.min_p) ||
-        !finite(sampling.presence_penalty) || !finite(sampling.frequency_penalty)) {
+        !finite(sampling.presence_penalty) || !finite(sampling.frequency_penalty) ||
+        !finite(sampling.repetition_penalty)) {
         invalid_sampling("sampling parameters must be finite", "sampling");
     }
     const auto check = [](const std::optional<float>& value, SamplingRange range,
@@ -193,6 +197,9 @@ ninferno::SamplingOverrides resolve_sampling_overrides(const SamplingParams& req
     check(sampling.min_p, kProbabilityRange, "min_p");
     check(sampling.presence_penalty, kPenaltyRange, "presence_penalty");
     check(sampling.frequency_penalty, kPenaltyRange, "frequency_penalty");
+    if (sampling.repetition_penalty && !repetition_penalty_valid(*sampling.repetition_penalty)) {
+        invalid_sampling("repetition_penalty must be in (0,2]", "repetition_penalty");
+    }
     if (server.greedy) { sampling.temperature = 0.0F; }
     return sampling;
 }

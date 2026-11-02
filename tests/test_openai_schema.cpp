@@ -1101,9 +1101,13 @@ int test_reasoning_and_extensions() {
     failures +=
         check(parse(body).generation.messages.size() == 1, "neutral ecosystem defaults accepted");
     body["repetition_penalty"] = 1.1;
-    failures +=
-        check(api_error([&] { (void)parse(body); }).code == "repetition_penalty_not_supported",
-              "non-neutral repetition penalty rejected");
+    failures += check(parse(body).generation.sampling.repetition_penalty == 1.1,
+                      "a repetition penalty was not passed to the sampler (#296)");
+    for (const double bad : {0.0, -1.0, 2.5}) {
+        body["repetition_penalty"] = bad;
+        failures += check(api_error([&] { (void)parse(body); }).param == "repetition_penalty",
+                          "a repetition penalty outside (0,2] was accepted");
+    }
     body                        = base_request();
     body["mm_processor_kwargs"] = Json{{"max_pixels", 100}};
     failures +=
