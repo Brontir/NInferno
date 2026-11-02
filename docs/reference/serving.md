@@ -50,8 +50,7 @@ searched.
 - `$HF_TOKEN` authorizes gated and private models.
 - `HF_HUB_OFFLINE=1` uses the cache only.
 - The served model id is the hub id.
-- `--prepare-only` fetches and converts, then exits (no GPU). It converts the companion drafters
-  too (as `--with-drafters`): the start with the same flags converts nothing.
+- `--prepare-only` fetches and converts, then exits (no GPU).
 - A GGUF hub model's separate drafters (a separate download: Gemma 4's assistant, a Qwen DFlash
   drafter) are an axis of the configuration choice: a start attaches them when the choice on this
   GPU drafts with one (the plan before the download), and not otherwise. `--with-drafters` always
