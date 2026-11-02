@@ -626,7 +626,7 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
                         constexpr std::string_view kVisionEnd = "<|vision_end|>";
                         std::size_t end =
                             layout.media_placeholders[*origin.part_media[part]].bytes.end;
-                        const std::string_view rendered(output);
+                        const std::string_view rendered(output.text);
                         if (end <= rendered.size() &&
                             rendered.substr(end).starts_with(kVisionEnd)) {
                             end += kVisionEnd.size();

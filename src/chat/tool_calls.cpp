@@ -1117,10 +1117,27 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
         // The only call of the region was cut off (nothing but format whitespace before its open
         // marker): no call is complete, and its markup is not the answer either (a forced call
         // must not reach the client as text). The answer is empty, with the finish reason length.
+        // Only a call that began is dropped: after the marker, its body opens ('{' or '<') and
+        // names a declared tool. Prose that quotes the marker ("the `<tool_call>` tag") opens a
+        // region too, and stays text.
+        const auto began_call = [&](std::size_t open_at) {
+            const std::string_view body =
+                std::string_view(tool_region_).substr(open_at + syntax_->open().size());
+            const std::size_t first = body.find_first_not_of(" \t\r\n");
+            if (first == std::string_view::npos || (body[first] != '{' && body[first] != '<')) {
+                return false;
+            }
+            return std::any_of(contract_->tools.begin(), contract_->tools.end(),
+                               [&](const ToolCallOutputContract::Tool& tool) {
+                                   return !tool.name.empty() &&
+                                          body.find(tool.name) != std::string_view::npos;
+                               });
+        };
         if (last != std::string::npos && tool_region_.find(close) == std::string::npos &&
             std::all_of(tool_region_.begin(),
                         tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
-                        [](char byte) { return is_format_whitespace(byte); })) {
+                        [](char byte) { return is_format_whitespace(byte); }) &&
+            began_call(last)) {
             held_.clear();
             tool_region_.clear();
             ToolCallParseDiagnostics diagnostics = parsed.diagnostics;

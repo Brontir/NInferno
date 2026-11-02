@@ -962,6 +962,14 @@ int test_cut_off_last_call() {
     failures += check(lone_end.tool_calls.empty() && shown.empty() && lone_end.content.empty() &&
                           lone_end.diagnostics.cut_calls_dropped == 1,
                       "a lone cut-off call's markup reached the content");
+    // Prose that quotes the marker and runs into the limit began no call: it stays text.
+    const std::string prose = "It uses the `<tool_call>` tag, then the arguments as";
+    fi::ToolCallOutputDecoder quoted(contract, 64);
+    const std::string before = quoted.feed(prose);
+    auto quoted_end          = quoted.finish(true);
+    failures += check(quoted_end.tool_calls.empty() && before + quoted_end.content == prose &&
+                          quoted_end.diagnostics.cut_calls_dropped == 0,
+                      "prose quoting the open marker was dropped as a cut-off call");
     return failures;
 }
 
