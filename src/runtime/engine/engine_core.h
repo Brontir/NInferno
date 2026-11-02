@@ -980,6 +980,7 @@ private:
         result.reasoning_tokens = result.reasoning.find_first_not_of(" \t\r\n") == std::string::npos
                                       ? 0
                                       : request->output.reasoning_tokens();
+        result.reasoning_span_tokens   = request->output.reasoning_span_tokens();
         result.finish_reason           = reason;
         result.matched_stop_string     = request->output.matched_stop_string();
         result.timings.prepare_seconds = request->prepare_seconds;

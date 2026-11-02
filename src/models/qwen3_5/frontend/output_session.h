@@ -110,6 +110,9 @@ public:
     [[nodiscard]] std::vector<GeneratedToolCall> take_tool_calls() noexcept;
     [[nodiscard]] ToolCallParseDiagnostics tool_call_parse_diagnostics() const noexcept;
     [[nodiscard]] std::uint32_t reasoning_tokens() const noexcept;
+    // The generated tokens the reasoning spans from the output's start, its open and close markers
+    // included (an empty thought's too); 0 when the output has none.
+    [[nodiscard]] std::uint32_t reasoning_span_tokens() const noexcept;
     [[nodiscard]] ThinkingBudgetStats thinking_stats() const noexcept;
     [[nodiscard]] std::optional<std::string> matched_stop_string() const;
 

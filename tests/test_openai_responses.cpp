@@ -1602,13 +1602,15 @@ int test_stream_logprobs() {
     const auto add = [&wire](std::vector<std::string> next) {
         wire.insert(wire.end(), next.begin(), next.end());
     };
-    add(encoder.reasoning_delta("thought"));
     add(encoder.content_delta("answer"));
-    GenerationOutcome outcome = sample_outcome();
-    outcome.reasoning_tokens  = 1;
-    outcome.logprobs          = std::vector<ServedLogprob>{
-        entry("thought", -0.5F), entry("ans", -0.25F), entry("wer", -0.125F),
-        entry("<|im_end|>", -0.0625F)};
+    // An empty thought (Gemma 4 after a tool result): its two markers lead the output and no
+    // reasoning token is counted for them; they are not the output_text's.
+    GenerationOutcome outcome     = sample_outcome();
+    outcome.reasoning_tokens      = 0;
+    outcome.reasoning_span_tokens = 2;
+    outcome.logprobs              = std::vector<ServedLogprob>{
+        entry("<|channel>", -0.5F), entry("<channel|>", -0.5F), entry("ans", -0.25F),
+        entry("wer", -0.125F), entry("<turn|>", -0.0625F)};
     OpenAIResponsesStreamFinish finish = encoder.finish(outcome);
     add(finish.events_before_terminal);
     wire.push_back(encoder.terminal(finish.response));

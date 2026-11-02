@@ -2531,6 +2531,9 @@ int test_reasoning_split(const Frontend& frontend) {
                       "content channel did not strip the post-thinking separator");
     failures += check(session.reasoning_tokens() == 2,
                       "reasoning token usage did not count accepted reasoning tokens exactly");
+    failures += check(session.reasoning_span_tokens() == 2 &&
+                          canonical_session.reasoning_span_tokens() == canonical_tokens.size(),
+                      "the reasoning span did not end at the token that closed the reasoning");
     // Thinking without a budget still counts its model-origin tokens: the request
     // log reports them, and they match the reasoning usage at a canonical close.
     auto counted = frontend.make_output_session(prompt, {});
@@ -2596,6 +2599,24 @@ int test_special_token_reasoning_markers() {
                       "a special-token reasoning open marker did not open the reasoning channel");
     failures += check(channel_text(output, ninferno::OutputChannel::Content) == "answer",
                       "special-token reasoning markers leaked into the content channel");
+    const auto close_at = static_cast<std::uint32_t>(std::find(tokens.begin(), tokens.end(), 103) -
+                                                     tokens.begin() + 1);
+    failures += check(session.reasoning_span_tokens() == close_at,
+                      "a model-opened reasoning span did not run from the opener to the close");
+    // An empty thought (Gemma 4 after a tool result with thinking off): no reasoning text, but its
+    // two markers lead the output and are not the answer's tokens.
+    auto empty = frontend.make_output_session(prompt, {});
+    const std::vector<ninferno::TokenId> empty_tokens =
+        tokenizer.encode("<|channel>thought
+<channel|>answer");
+    (void)empty.preview_model(empty_tokens, static_cast<std::uint32_t>(empty_tokens.size() + 1U),
+                              ninferno::FinishReason::OutputLimit);
+    const auto empty_output = empty.commit_preview();
+    const auto empty_close  = static_cast<std::uint32_t>(
+        std::find(empty_tokens.begin(), empty_tokens.end(), 103) - empty_tokens.begin() + 1);
+    failures += check(channel_text(empty_output, ninferno::OutputChannel::Content) == "answer" &&
+                          empty.reasoning_span_tokens() == empty_close,
+                      "an empty thought's markers were not the reasoning span");
     return failures;
 }
 

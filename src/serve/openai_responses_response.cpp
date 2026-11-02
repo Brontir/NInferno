@@ -132,12 +132,12 @@ Json response_common(const std::string& id, std::int64_t created_at,
 }
 
 // The message's output_text part; with include message.output_text.logprobs, the log
-// probabilities of the tokens after the reasoning (the reasoning's, its close included, lead the
-// output).
+// probabilities of the tokens after the reasoning (the reasoning's, its markers included, lead the
+// output: an empty thought's two markers too, though no reasoning token is counted for them).
 Json output_text_logprobs(const GenerationOutcome& outcome) {
     if (!outcome.logprobs) { return Json::array(); }
-    const std::size_t reasoning = std::min(
-        outcome.logprobs->size(), static_cast<std::size_t>(std::max(0, outcome.reasoning_tokens)));
+    const std::size_t reasoning =
+        std::min(outcome.logprobs->size(), static_cast<std::size_t>(outcome.reasoning_span_tokens));
     return openai_logprob_content(std::vector<ServedLogprob>(
         outcome.logprobs->begin() + static_cast<std::ptrdiff_t>(reasoning),
         outcome.logprobs->end()));
