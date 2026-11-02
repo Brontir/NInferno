@@ -275,14 +275,17 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
         float xs[NT], xm[NT];
 #pragma unroll
         for (int n = 0; n < NT; ++n) {
+            // CTA-uniform: a slot past the job's count is never read below (most jobs hold one
+            // token at decode widths), so its activation is not loaded either.
+            if (n >= count) break;
             if constexpr (kPre) {
                 const std::int64_t at =
                     static_cast<std::int64_t>(src_token[n]) * (a.x_ld / 32) + kb;
                 const auto* c = reinterpret_cast<const uint4*>(a.x_codes + at * 32);
                 xl[n]         = c[0];
                 xh[n]         = c[1];
-                xs[n]         = n < count ? a.x_scales[at] : 0.0F;
-                xm[n]         = C::kMin && n < count ? a.x_sums[at] : 0.0F;
+                xs[n]         = a.x_scales[at];
+                xm[n]         = C::kMin ? a.x_sums[at] : 0.0F;
             } else {
                 xl[n] = x_lo[n * blocks + kb];
                 xh[n] = x_hi[n * blocks + kb];
