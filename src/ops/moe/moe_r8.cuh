@@ -343,15 +343,17 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
     int group_slot = 0, group_width = 1;
     const auto compute = [&](int group) {
         if (kPre && same_group) {
-            const int i  = group >> lg_lanes;
-            group_width  = ((i + 1) << lg_lanes) <= x_groups ? lanes : x_groups - (i << lg_lanes);
-            group_slot   = ((i << lg_group) << lg_lanes) + (group - (i << lg_lanes));
+            const int i = group >> lg_lanes;
+            group_width = ((i + 1) << lg_lanes) <= x_groups ? lanes : x_groups - (i << lg_lanes);
+            group_slot  = ((i << lg_group) << lg_lanes) + (group - (i << lg_lanes));
         }
 #pragma unroll
         for (int j = 0; j < kGroup; ++j) {
             const int kb = group * kGroup + j;
             compute_block(ring, j % kStride, j / kStride, kb,
-                          !kPre ? kb : same_group ? group_slot + j * group_width : x_slot(kb));
+                          !kPre        ? kb
+                          : same_group ? group_slot + j * group_width
+                                       : x_slot(kb));
         }
     };
 
