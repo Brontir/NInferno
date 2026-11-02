@@ -268,9 +268,24 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
 #pragma unroll
             for (int n = 0; n < NT; ++n) acc[s][r][n] = 0.0F;
 
+    // kPre: block kb of a token's row sits at r8_x_slot(kb, x_ld / 32, lanes, x_group), here with
+    // shifts (lanes and x_group are powers of two).
+    const int x_blocks = a.x_ld / 32;
+    const int lg_lanes = __ffs(lanes) - 1;
+    const int lg_group = __ffs(a.x_group) - 1;
+    const int x_groups = x_blocks >> lg_group;
+    const auto x_slot  = [&](int kb) {
+        const int g     = kb >> lg_group;
+        const int j     = kb - (g << lg_group);
+        const int i     = g >> lg_lanes;
+        const int sl    = g - (i << lg_lanes);
+        const int width = ((i + 1) << lg_lanes) <= x_groups ? lanes : x_groups - (i << lg_lanes);
+        return ((i << lg_group) << lg_lanes) + j * width + sl;
+    };
+
     // Block kb of every slot against block sp of load q of each row (kb = group*kGroup + q +
     // kStride*sp): a group's blocks in ascending order, as generic R8 sums them.
-    const auto compute_block = [&](const auto& raws, int q, int sp, int kb) {
+    const auto compute_block = [&](const auto& raws, int q, int sp, int kb, int slot) {
         uint4 xl[NT], xh[NT];
         float xs[NT], xm[NT];
 #pragma unroll
@@ -282,8 +297,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
             // 350.6 / 351.7; one timer step, C2..C8 the same).
             if (NT > 1 && n >= count) break;
             if constexpr (kPre) {
-                const std::int64_t at =
-                    static_cast<std::int64_t>(src_token[n]) * (a.x_ld / 32) + kb;
+                const std::int64_t at = static_cast<std::int64_t>(src_token[n]) * x_blocks + slot;
                 const auto* c = reinterpret_cast<const uint4*>(a.x_codes + at * 32);
                 xl[n]         = c[0];
                 xh[n]         = c[1];
@@ -326,10 +340,23 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                 }
             }
     };
+    // x_group the kernel's own group (every codec but those whose host group differs): a group's
+    // blocks sit at one base, width apart.
+    const bool same_group = a.x_group == kGroup;
+    int group_slot = 0, group_width = 1;
     const auto compute = [&](int group) {
+        if (kPre && same_group) {
+            const int i = group >> lg_lanes;
+            group_width = ((i + 1) << lg_lanes) <= x_groups ? lanes : x_groups - (i << lg_lanes);
+            group_slot  = ((i << lg_group) << lg_lanes) + (group - (i << lg_lanes));
+        }
 #pragma unroll
         for (int j = 0; j < kGroup; ++j) {
-            compute_block(ring, j % kStride, j / kStride, group * kGroup + j);
+            const int kb = group * kGroup + j;
+            compute_block(ring, j % kStride, j / kStride, kb,
+                          !kPre        ? kb
+                          : same_group ? group_slot + j * group_width
+                                       : x_slot(kb));
         }
     };
 

@@ -59,7 +59,7 @@ __global__ __launch_bounds__(kRouterSimtWarps *
                  static_cast<std::int64_t>(blockIdx.x) * kRouterSimtWarps * 32 + threadIdx.x;
              task < tasks; task += stride) {
             quantize_x_task(static_cast<const __nv_bfloat16*>(a.xq), a.xq_ldx, a.xq_k, a.xq_ld,
-                            task, a.xq_codes, a.xq_scales, a.xq_sums);
+                            task, a.xq_codes, a.xq_scales, a.xq_sums, a.xq_lanes, a.xq_group);
         }
     }
     auto* xs      = reinterpret_cast<__nv_bfloat16*>(router_smem);

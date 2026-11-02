@@ -115,11 +115,13 @@ struct GemmArgs {
     int sub_tiles           = 1;       // job width / columns of one CTA
     int r8_lanes            = 32;      // an R8 warp's lanes per row: 8, 16 or 32 (moe_r8.cuh)
     // An R8 gate/up stage's activation quantized once per token (codes [T, x_ld], scales and sums
-    // [T, x_ld / 32], quantize_x_task's layout); nullptr: every CTA quantizes its slots.
+    // [T, x_ld / 32], quantize_x_task's layout: a row's blocks at r8_x_slot(block, x_ld / 32,
+    // r8_lanes, x_group)); nullptr: every CTA quantizes its slots.
     const std::int8_t* x_codes = nullptr;
     const float* x_scales      = nullptr;
     const float* x_sums        = nullptr;
     int x_ld                   = 0;
+    int x_group                = 1;
     // Router: its CTAs also quantize xq (T rows at stride xq_ldx, xq_k values) into xq_codes,
     // xq_scales and xq_sums at stride xq_ld, the tasks spread over the grid: the R8 gate/up's
     // x_codes, without a launch of their own.
@@ -130,6 +132,8 @@ struct GemmArgs {
     std::int8_t* xq_codes = nullptr;
     float* xq_scales      = nullptr;
     float* xq_sums        = nullptr;
+    int xq_lanes          = 1; // the R8 gate/up's r8_lanes and x_group: the blocks' order
+    int xq_group          = 1;
     // Rows: output row l of expert e reads weight row e * expert_rows + l * row_step (+ up_offset
     // for GateUp's up row).
     int rows        = 0;
@@ -209,6 +213,7 @@ inline constexpr std::int32_t kR8Tokens = 4;
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.
 [[nodiscard]] int r8_lanes(const Weight& w);
+[[nodiscard]] int r8_x_group(const Weight& w);
 
 // The route of one call: a compiled schedule per stage and the job width (the columns one job
 // covers; a multiple of both grouped register-MMA schedules' columns, at most kJobColumns). A
