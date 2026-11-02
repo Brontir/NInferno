@@ -174,6 +174,14 @@ operator semantics, shape, compute profile, and execution platform.
 Native Op implementations define these combinations and check them when preparing or consuming
 operands. A recipe's ability to encode a combination is independent of native execution support.
 
+Volta (sm_70, no tensor `mma.sync`) multiplies with FP16 operands: a linear call of 17 tokens or
+more decodes its weight to FP16 once (CUTLASS) or per tile (the tiled kernel) and casts the
+activation to FP16. Activations past the FP16 range saturate at ±65504. A decoded weight value
+(code times its group scale) past it saturates in the CUTLASS copy too; the tiled kernel divides
+such a row by a power of two and multiplies its sums back. No published checkpoint holds such
+values (a group scale above 512 for Q8); the scale-domain oracle (`test_linear_scale_domain`)
+reaches them, and on Volta it accepts either the exact or the saturated result for those calls.
+
 ### 2.8 Runtime-state codec
 
 KV-cache quantization, activation quantization, temporary kernel compression, recurrent state, and
