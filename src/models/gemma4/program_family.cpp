@@ -131,10 +131,27 @@ public:
             scratch.bytes      = workspace_plan_.handoff_offset_bytes;
             timers_.emplace_back(device_);
             timers_.back().start();
-            encoder_.encode(VisionImage{.patches = payload->span(),
-                                        .width   = item.grid.width,
-                                        .rows    = item.grid.height},
-                            output, scratch, device_.stream);
+            try {
+                encoder_.encode(VisionImage{.patches = payload->span(),
+                                            .width   = item.grid.width,
+                                            .rows    = item.grid.height},
+                                output, scratch, device_.stream);
+            } catch (const std::invalid_argument& error) {
+                // The span the call took and the item's own, for a shape the plan got wrong.
+                std::string spans = "; use [" + std::to_string(use.begin) + ", " +
+                                    std::to_string(use.end) + ")";
+                if (plan_.control_plan != nullptr &&
+                    use.prepared_item_index < plan_.control_plan->items.size()) {
+                    const auto& own = plan_.control_plan->items[use.prepared_item_index];
+                    spans += ", item [" + std::to_string(own.token_begin) + ", " +
+                             std::to_string(own.token_end) + ")";
+                }
+                for (const VisionUseSpan& planned : plan_.uses) {
+                    spans += ", planned [" + std::to_string(planned.begin) + ", " +
+                             std::to_string(planned.end) + ")";
+                }
+                throw std::invalid_argument(error.what() + spans);
+            }
             timers_.back().record_stop();
             active_item_          = use.prepared_item_index;
             active_handoff_bytes_ = static_cast<std::size_t>(output.bytes());
