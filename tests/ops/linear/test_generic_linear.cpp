@@ -800,9 +800,12 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
         }
     }
     if (failures == 0) {
-        std::cout << f.name << " " << op_name(op) << (a4 ? " A4" : a8 ? " A8" : "") << " ["
-                  << rows_n << "," << k
-                  << "]: " << routes.size() << " routes x " << std::size(windows) << " windows byte-identical\n";
+        std::cout << f.name << " " << op_name(op)
+                  << (a4   ? " A4"
+                      : a8 ? " A8"
+                           : "")
+                  << " [" << rows_n << "," << k << "]: " << routes.size() << " routes x "
+                  << std::size(windows) << " windows byte-identical\n";
     }
     return failures;
 }
