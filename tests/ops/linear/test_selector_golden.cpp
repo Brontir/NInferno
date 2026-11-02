@@ -254,14 +254,16 @@ int run_board(const GoldenBoard& b, bool update) {
 // A board the PCI-ID table knows is decided from its row (core/machine_facts.h), so the clocks
 // its driver reports (a factory overclock, a vendor's lower boost, a rounding) must not move a
 // choice. Every line after the header is compared, the pure query's included; a route that read
-// the driver's clocks past the facts fails here even where no text scan sees the read.
+// the driver's clocks past the facts fails here even where no text scan sees the read. A memory
+// clock more than half a grid step (2.2 %) below the row's is another board under the id (a
+// slower memory) and is read on purpose; the variants stay inside that step.
 int run_clock_invariance(const GoldenBoard& b) {
     if (b.pci_device_id == 0) return 0; // unknown ids are priced from the driver's values
     const auto body = [](const std::string& dump) { return dump.substr(dump.find('\n') + 1); };
     const std::string stock = body(dump_board(b));
     constexpr struct {
         double sm, memory;
-    } kVariants[] = {{0.85, 1.0}, {1.08, 1.0}, {1.0, 0.95}, {1.0, 1.07}, {1.1, 1.1}};
+    } kVariants[] = {{0.85, 1.0}, {1.08, 1.0}, {1.0, 0.985}, {1.0, 1.07}, {1.1, 1.1}};
     int failed = 0;
     for (const auto v : kVariants) {
         if (body(dump_board(b, v.sm, v.memory)) == stock) continue;
