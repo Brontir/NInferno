@@ -415,6 +415,24 @@ runtime::ContextTransactionReserveStatus ProgramImpl::reserve_active_capture_imp
         skip_capture(std::move(offer));
         return runtime::ContextTransactionReserveStatus::Aborted;
     }
+    // A shared victim that shares its StateImage with one of the capturing sequence's own
+    // checkpoints would hand that image to the sequence mid-capture, after the assessment priced
+    // the drop without it (#317). The capture is optional: it waits for another round.
+    if (pressure_details != nullptr && assessment.publishes_private) {
+        const SequenceState& owner = active_sequence(ContractAccess::lane(offer).value);
+        for (const std::uint32_t victim : pressure_details->shared_pressure_indices) {
+            if (victim >= shared_prefix_capacity) { continue; }
+            const StateImageHandle state = shared_prefix_states[victim].state;
+            const bool aliased =
+                (owner.rewrite_state && *owner.rewrite_state == state) ||
+                std::any_of(owner.long_anchors.begin(), owner.long_anchors.end(),
+                            [&](const LongAnchorCheckpoint& anchor) { return anchor.state == state; });
+            if (aliased) {
+                skip_capture(std::move(offer));
+                return runtime::ContextTransactionReserveStatus::Aborted;
+            }
+        }
+    }
 
     const std::uint32_t lane         = ContractAccess::lane(offer).value;
     RequestControl::Prefill& prefill = *requests[lane].prefill;

@@ -886,8 +886,44 @@ ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
             std::terminate();
         }
         if (!text_kv_addresses->release(shared.kv->text)) { std::terminate(); }
-        state_store->release_checkpoint_reference(shared.state);
-        if (last_state_reference && !state_store->release(shared.state)) { std::terminate(); }
+        const StateImageHandle released_state = shared.state;
+        state_store->release_checkpoint_reference(released_state);
+        if (last_state_reference && !state_store->release(released_state)) { std::terminate(); }
+        // A checkpoint an active sequence keeps (its rewrite state or an anchor) that this prefix
+        // also referenced was counted by neither owner (each counts only what it holds alone).
+        // It is the sequence's alone now: its request takes it in its optional and active
+        // resources, so the slot it occupies is counted and a later drop of it subtracts what the
+        // request holds (#317). A capture never evicts a prefix aliasing its own sequence's
+        // checkpoints (reserve_active_capture_impl), and a replaced one is priced by its
+        // assessment, so the capture that drops it later sees it as the sequence's.
+        if (!last_state_reference) {
+            for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+                if (active_continuations[lane] >= continuation_capacity) { continue; }
+                const SequenceState& sequence = active_sequence(lane);
+                const bool kept =
+                    (sequence.rewrite_state && *sequence.rewrite_state == released_state) ||
+                    std::any_of(sequence.long_anchors.begin(), sequence.long_anchors.end(),
+                                [&](const LongAnchorCheckpoint& anchor) {
+                                    return anchor.state == released_state;
+                                });
+                if (!kept || !state_exclusive_to_sequence(sequence, released_state)) { continue; }
+                detail::PhysicalResources transferred;
+                const StateReplicaResidency residency = state_store->residency(released_state);
+                if (residency == StateReplicaResidency::DeviceOnly ||
+                    residency == StateReplicaResidency::Both) {
+                    transferred.device.state_slots = 1;
+                }
+                if (residency == StateReplicaResidency::HostOnly ||
+                    residency == StateReplicaResidency::Both) {
+                    transferred.host.state_slots = 1;
+                }
+                requests[lane].optional_resources =
+                    checked_resource_sum(requests[lane].optional_resources, transferred);
+                requests[lane].active_resources =
+                    checked_resource_sum(requests[lane].active_resources, transferred);
+                break;
+            }
+        }
 
         shared    = SharedPrefixState{};
         slot.role = SharedPrefixSlotRole::Free;
