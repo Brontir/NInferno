@@ -1491,12 +1491,17 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
         chunks = {kDefaultChunk};
     }
     const std::uint32_t default_chunk = pins.chunk.value_or(kDefaultChunk);
-    // The drafter: pinned (--spec given), else plain decode and each the model carries.
+    // The drafter: pinned (--spec given), else plain decode and each the model carries, by label.
+    // The enumeration order breaks exact ties (better()), so it must not follow the order the
+    // manifest or the profile happens to list the drafters in.
     std::vector<std::size_t> drafters;
     if (pins.drafter) {
         drafters.push_back(*pins.drafter);
     } else {
         for (std::size_t d = 0; d <= model.drafters.size(); ++d) { drafters.push_back(d); }
+        std::stable_sort(drafters.begin() + 1, drafters.end(), [&](std::size_t a, std::size_t b) {
+            return model.drafters[a - 1].label < model.drafters[b - 1].label;
+        });
     }
     for (const KvCacheStorage kv : kvs) {
         for (const ActivationMode mode : modes) {
