@@ -28,9 +28,11 @@ __host__ __device__ constexpr int logprob_width(int /*digit*/) { return 12; }
 static_assert(kMaximumLogprobTokenDomain == (1 << kLogprobIdBits));
 static_assert(kLogprobBins % kLogprobBlock == 0);
 
+// NaN reads as -inf; +inf as the largest finite float, so a row holding it keeps a finite
+// log-sum-exp (inf - inf would make every value NaN).
 __device__ __forceinline__ float logprob_value(__nv_bfloat16 raw) {
     const float value = __bfloat162float(raw);
-    return isnan(value) ? -CUDART_INF_F : value;
+    return isnan(value) ? -CUDART_INF_F : fminf(value, 3.402823466e+38F);
 }
 
 // Higher logit => higher key; equal logits => the lower id has the higher key. NaN is -inf and

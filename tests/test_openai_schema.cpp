@@ -142,8 +142,6 @@ int test_standard_field_policy() {
     };
 
     rejected("n", 2, "n_not_supported");
-    rejected("logprobs", true, "logprobs_not_supported");
-    rejected("top_logprobs", 2, "logprobs_not_supported");
     rejected("response_format", Json{{"type", "xml"}}, "response_format_not_supported");
     rejected("modalities", Json::array({"text", "audio"}), "modality_not_supported");
     rejected("web_search_options", Json::object(), "web_search_not_supported");

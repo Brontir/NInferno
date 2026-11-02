@@ -636,7 +636,8 @@ llama.cpp-style base URLs.
   a constraint mask, so they do not depend on the sampling settings. Every output token is listed in
   order, reasoning included; a token the engine injected (the thinking budget's close) has
   logprob 0 and no alternatives; a token the model cannot produce reports -9999. A request with
-  logprobs decodes plainly (no speculative drafts), one token a step. A stream carries each token's
+  logprobs decodes plainly (no speculative drafts), one token a step, and a round that holds it
+  runs one step for its batch neighbours too. A stream carries each token's
   entry in the first chunk sent after it, which may have text from later tokens or none.
 - vLLM's `repetition_penalty` (`(0,2]`, 1 neutral; outside the range a 400 naming the field): a
   token the prompt or the output already holds has its logit divided by the penalty when positive

@@ -816,7 +816,12 @@ void parse_sampling(const Json& body, GenerationRequest& output) {
         bad_request("repetition_penalty must be in (0,2]", "repetition_penalty");
     }
     sampling.seed              = get_seed(body);
-    if (logprobs) { sampling.logprobs = static_cast<std::uint32_t>(top_logprobs.value_or(0)); }
+    // logprobs/top_logprobs: validated with the output controls.
+    if (body.contains("logprobs") && body.at("logprobs").is_boolean() &&
+        body.at("logprobs").get<bool>()) {
+        sampling.logprobs =
+            static_cast<std::uint32_t>(optional_int(body, "top_logprobs").value_or(0));
+    }
     // logit_bias: {"<token id>": offset}, the model's token ids, offsets in [-100, 100].
     if (body.contains("logit_bias") && !body.at("logit_bias").is_null()) {
         const Json& biases = body.at("logit_bias");
