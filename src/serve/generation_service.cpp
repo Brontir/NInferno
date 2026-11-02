@@ -436,7 +436,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     // where the served choice drafts with DFlash and the model's Engine family runs the width;
     // otherwise it is dropped with a note (product::fit_draft_widths), so a width never keeps a
     // server from starting (an explicit --spec keeps it as given, for the Engine to refuse).
-    if (options_.speculation_from_profile) {
+    // A plain decode the configuration choice picked under --spec auto drafts nothing either: a
+    // --draft-width given for the auto choice is dropped with it.
+    if (options_.speculation_from_profile || options_.speculation_plain_by_choice) {
         engine_options.speculative.draft_width = DFlashDraftWidth::Default;
     }
     const auto bound_load = [&](SpeculativeOptions& speculative) {
