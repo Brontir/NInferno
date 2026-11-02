@@ -374,6 +374,93 @@ int test_worker_plan_answers_every_connection() {
     listener.join();
     return failures;
 }
+
+// An error response the application marks reusable keeps the connection for the caller's next
+// request; one that sends `Connection: close` also closes the socket, so a client waiting for EOF
+// is not held until the keep-alive timeout (#319).
+int test_error_connection_reuse() {
+    httplib::Server server;
+    server.set_read_timeout(5, 0);
+    server.set_keep_alive_timeout(30);
+    server.Get("/refuse", [](const httplib::Request&, httplib::Response& response) {
+        response.status                 = 401;
+        response.keep_alive_after_error = true;
+        response.set_content("no", "text/plain");
+    });
+    server.Get("/close", [](const httplib::Request&, httplib::Response& response) {
+        response.status = 503;
+        response.set_content("bye", "text/plain");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    if (port <= 0) { return check(false, "test HTTP server could not bind"); }
+    std::thread listener([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
+
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in address{};
+    address.sin_family      = AF_INET;
+    address.sin_port        = htons(static_cast<std::uint16_t>(port));
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    timeval timeout{3, 0};
+    int failures = 0;
+    if (fd < 0 || ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        failures += check(false, "test HTTP client could not connect");
+    } else {
+        // Reads one response (headers and a Content-Length body); empty on EOF or timeout.
+        std::string pending;
+        const auto read_response = [&]() -> std::string {
+            char buffer[512];
+            for (;;) {
+                const std::size_t end = pending.find("
+
+");
+                if (end != std::string::npos) {
+                    const std::size_t at = pending.find("Content-Length: ");
+                    const std::size_t length =
+                        at == std::string::npos ? 0 : std::stoul(pending.substr(at + 16));
+                    if (pending.size() >= end + 4 + length) {
+                        std::string response = pending.substr(0, end + 4 + length);
+                        pending.erase(0, end + 4 + length);
+                        return response;
+                    }
+                }
+                const ssize_t got = ::recv(fd, buffer, sizeof(buffer), 0);
+                if (got <= 0) { return {}; }
+                pending.append(buffer, static_cast<std::size_t>(got));
+            }
+        };
+        const auto send_request = [&](const char* path) {
+            const std::string request =
+                std::string("GET ") + path + " HTTP/1.1
+Host: 127.0.0.1
+
+";
+            return ::send(fd, request.data(), request.size(), 0) ==
+                   static_cast<ssize_t>(request.size());
+        };
+        const bool refused = send_request("/refuse");
+        const std::string first = read_response();
+        failures += check(refused && first.find(" 401 ") != std::string::npos &&
+                              first.find("Connection: close") == std::string::npos,
+                          "a reusable HTTP refusal closed the connection");
+        const bool closing = send_request("/close");
+        const std::string second = read_response();
+        failures += check(closing && second.find(" 503 ") != std::string::npos &&
+                              second.find("Connection: close") != std::string::npos,
+                          "an HTTP error was not answered on the reused connection with close");
+        char byte = 0;
+        const auto start  = std::chrono::steady_clock::now();
+        const ssize_t eof = ::recv(fd, &byte, 1, 0);
+        failures += check(eof == 0 && std::chrono::steady_clock::now() - start <
+                                          std::chrono::seconds(2),
+                          "an HTTP response with Connection: close left the socket open");
+    }
+    if (fd >= 0) { ::close(fd); }
+    server.stop();
+    listener.join();
+    return failures;
+}
 #endif
 
 // /health reports a stalled executor. Busy without progress for the threshold is a stall;
@@ -415,6 +502,7 @@ int main() {
     failures += test_inherited_socket_liveness();
     failures += test_worker_plan_answers_every_connection();
     failures += test_successor_binds_over_time_wait();
+    failures += test_error_connection_reuse();
 #endif
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
