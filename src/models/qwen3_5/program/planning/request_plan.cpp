@@ -712,6 +712,11 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                     continue;
                 }
                 unique.push_back(state);
+                // A checkpoint another owner also references (a shared prefix captured at the
+                // same frontier) is not the sequence's to convert: the start counts only the
+                // states it owns alone (reserve_state_entitlement), and an image counted here
+                // would leave its destination unreserved on a full store (#315).
+                if (!state_exclusive_to_sequence(*source, state)) { continue; }
                 const StateReplicaResidency residency = state_store->residency(state);
                 if (residency == StateReplicaResidency::DeviceOnly ||
                     residency == StateReplicaResidency::Both) {
