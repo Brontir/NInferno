@@ -529,7 +529,8 @@ prefix, with the same behavior, errors, and request IDs.
 - **Connections.** HTTP/1.1 keep-alive holds for refusals too: an error the server rendered after
   reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
   for the caller's next request. A refusal that leaves a body unread (413, 415, a key refused
-  before the body was read) and every answer while the server drains close it.
+  before the body was read), every answer while the server drains and `/health`'s 503 of a failed
+  server close it.
 
 ### Request IDs
 
