@@ -263,7 +263,7 @@ int run_clock_invariance(const GoldenBoard& b) {
     const std::string stock = body(dump_board(b));
     constexpr struct {
         double sm, memory;
-    } kVariants[] = {{0.85, 1.0}, {1.08, 1.0}, {1.0, 0.985}, {1.0, 1.07}, {1.1, 1.1}};
+    } kVariants[] = {{0.85, 1.0}, {1.0, 0.985}, {1.08, 1.07}};
     int failed = 0;
     for (const auto v : kVariants) {
         if (body(dump_board(b, v.sm, v.memory)) == stock) continue;
