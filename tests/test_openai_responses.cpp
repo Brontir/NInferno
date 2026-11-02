@@ -258,6 +258,26 @@ int test_reasoning_encrypted_content_request() {
                       "duplicate supported include entries are idempotent");
 
     body["include"] = Json::array({"message.output_text.logprobs"});
+    {
+        // #295: the output_text's log probabilities, with top_logprobs alternatives.
+        const auto asked = parse_openai_responses_create_request(body, limits());
+        failures += check(asked.include_logprobs &&
+                              asked.prompt.generation.sampling.logprobs == 0U,
+                          "include message.output_text.logprobs asks for log probabilities");
+        body["top_logprobs"] = 3;
+        const auto top       = parse_openai_responses_create_request(body, limits());
+        failures += check(top.top_logprobs == 3 && top.prompt.generation.sampling.logprobs == 3U,
+                          "top_logprobs reaches the sampler");
+        body.erase("include");
+        failures += check(parse_openai_responses_create_request(body, limits()).include_logprobs,
+                          "nonzero top_logprobs alone asks for log probabilities");
+        body["top_logprobs"] = 0;
+        failures += check(!parse_openai_responses_create_request(body, limits())
+                               .prompt.generation.sampling.logprobs,
+                          "top_logprobs 0 without the include asks for nothing");
+        body.erase("top_logprobs");
+    }
+    body["include"] = Json::array({"file_search_call.results"});
     const ApiError unsupported =
         api_error([&] { (void)parse_openai_responses_create_request(body, limits()); });
     failures += check(unsupported.status == 400 && unsupported.param == "include" &&

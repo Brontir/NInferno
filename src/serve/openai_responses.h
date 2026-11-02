@@ -20,6 +20,8 @@
 
 namespace ninferno::serve {
 
+struct ServedLogprob;
+
 struct GenerationOutcome;
 
 struct OpenAIResponsesFunctionIdentity {
@@ -66,6 +68,9 @@ struct OpenAIResponsesCreateRequest {
     bool store                               = true;
     bool stream                              = false;
     bool include_reasoning_encrypted_content = false;
+    // include "message.output_text.logprobs", and top_logprobs (echoed in the response).
+    bool include_logprobs                    = false;
+    int top_logprobs                         = 0;
 };
 
 struct OpenAIResponsesResolvedPrompt {
@@ -127,6 +132,8 @@ public:
     std::vector<std::string> start();
     std::vector<std::string> reasoning_delta(const std::string& text);
     std::vector<std::string> content_delta(const std::string& text);
+    // Held until the next output_text event, which carries them (include_logprobs only).
+    void note_logprobs(const std::vector<ServedLogprob>& entries);
     OpenAIResponsesStreamFinish finish(const GenerationOutcome& outcome);
     std::string terminal(const BuiltOpenAIResponse& response);
     std::string failed(const ApiError& error);

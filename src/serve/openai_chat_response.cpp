@@ -2,7 +2,6 @@
 
 #include "serve/generation_service.h"
 #include "serve/openai_common.h"
-#include "core/utf8.h"
 
 #include <nlohmann/json.hpp>
 
@@ -272,32 +271,6 @@ void require_prefix(std::string_view complete, std::string_view streamed, const 
     }
 }
 
-// One token's entry: its text (invalid UTF-8, a token that splits a character, as U+FFFD), log
-// probability (-inf, a token the model cannot produce, as OpenAI's -9999 floor: JSON has no
-// infinity) and bytes.
-Json token_logprob_json(const std::string& bytes, float logprob) {
-    Json list = Json::array();
-    for (const char byte : bytes) { list.push_back(static_cast<int>(static_cast<unsigned char>(byte))); }
-    return Json{{"token", lossy_utf8(bytes)},
-                {"logprob", std::isfinite(logprob) ? static_cast<double>(logprob) : -9999.0},
-                {"bytes", std::move(list)}};
-}
-
-// OpenAI's logprobs.content: per token its text, log probability, bytes and alternatives.
-Json logprob_content(const std::vector<ServedLogprob>& entries) {
-    Json content = Json::array();
-    for (const ServedLogprob& entry : entries) {
-        Json top = Json::array();
-        for (const ServedTokenLogprob& alternative : entry.top) {
-            top.push_back(token_logprob_json(alternative.bytes, alternative.logprob));
-        }
-        Json item            = token_logprob_json(entry.bytes, entry.logprob);
-        item["top_logprobs"] = std::move(top);
-        content.push_back(std::move(item));
-    }
-    return content;
-}
-
 } // namespace
 
 OpenAIChatResponseIdentity make_openai_chat_response_identity(std::string model) {
@@ -324,7 +297,7 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
     payload["choices"] = Json::array(
         {Json{{"index", 0},
               {"message", std::move(message)},
-              {"logprobs", outcome.logprobs ? Json{{"content", logprob_content(*outcome.logprobs)},
+              {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
                                                    {"refusal", nullptr}}
                                             : Json(nullptr)},
               {"finish_reason",
@@ -371,7 +344,7 @@ std::string OpenAIChatStream::stream_event(Json delta, Json finish_reason, Json 
 
 void OpenAIChatStream::note_logprobs(const std::vector<ServedLogprob>& entries) {
     if (!started_ || finished_) { throw std::logic_error("invalid OpenAI Chat logprobs state"); }
-    for (Json& item : logprob_content(entries)) { pending_logprobs_.push_back(std::move(item)); }
+    for (Json& item : openai_logprob_content(entries)) { pending_logprobs_.push_back(std::move(item)); }
 }
 
 void OpenAIChatStream::note_start(const ninferno::GenerationStart& start) {

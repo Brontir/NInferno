@@ -1,4 +1,7 @@
 #include "serve/openai_common.h"
+
+#include "core/utf8.h"
+#include "serve/generation_service.h"
 #include "serve/generation_service.h"
 #include "serve/request_validation.h"
 
@@ -351,6 +354,32 @@ std::string make_model_object(const std::string& model_id, std::int64_t created,
                               std::uint32_t max_model_len, const ninferno::ModelMetadata& metadata,
                               const StartupSpeculation* speculation) {
     return make_model_object_json(model_id, created, max_model_len, metadata, speculation).dump();
+}
+
+// One token's entry: its text (invalid UTF-8, a token that splits a character, as U+FFFD), log
+// probability (-inf, a token the model cannot produce, as OpenAI's -9999 floor: JSON has no
+// infinity) and bytes.
+static nlohmann::json token_logprob_json(const std::string& bytes, float logprob) {
+    nlohmann::json list = nlohmann::json::array();
+    for (const char byte : bytes) { list.push_back(static_cast<int>(static_cast<unsigned char>(byte))); }
+    return nlohmann::json{{"token", lossy_utf8(bytes)},
+                {"logprob", std::isfinite(logprob) ? static_cast<double>(logprob) : -9999.0},
+                {"bytes", std::move(list)}};
+}
+
+// OpenAI's logprobs.content: per token its text, log probability, bytes and alternatives.
+nlohmann::json openai_logprob_content(const std::vector<ServedLogprob>& entries) {
+    nlohmann::json content = nlohmann::json::array();
+    for (const ServedLogprob& entry : entries) {
+        nlohmann::json top = nlohmann::json::array();
+        for (const ServedTokenLogprob& alternative : entry.top) {
+            top.push_back(token_logprob_json(alternative.bytes, alternative.logprob));
+        }
+        nlohmann::json item            = token_logprob_json(entry.bytes, entry.logprob);
+        item["top_logprobs"] = std::move(top);
+        content.push_back(std::move(item));
+    }
+    return content;
 }
 
 std::string make_error_body(const ApiError& error) {

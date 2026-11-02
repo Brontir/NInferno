@@ -126,9 +126,20 @@ Json response_common(const std::string& id, std::int64_t created_at,
         {"text", Json{{"format", request.text_format}}},
         {"tool_choice", request.tool_choice},
         {"tools", request.tools},
-        {"top_logprobs", 0},
+        {"top_logprobs", request.top_logprobs},
         {"top_p", runtime.top_p},
         {"truncation", "disabled"}};
+}
+
+// The message's output_text part; with include message.output_text.logprobs, its tokens' log
+// probabilities.
+Json output_text_part(const OpenAIResponsesCreateRequest& request,
+                      const GenerationOutcome& outcome) {
+    Json part = {{"type", "output_text"}, {"annotations", Json::array()}, {"text", outcome.text}};
+    if (request.include_logprobs && outcome.logprobs) {
+        part["logprobs"] = openai_logprob_content(*outcome.logprobs);
+    }
+    return part;
 }
 
 bool needs_message_item(const GenerationOutcome& outcome, const std::string& status) {
@@ -168,9 +179,7 @@ BuiltOpenAIResponse build_response(const std::string& id, std::int64_t created_a
                  {"type", "message"},
                  {"status", item_status},
                  {"role", "assistant"},
-                 {"content", Json::array({Json{{"type", "output_text"},
-                                               {"annotations", Json::array()},
-                                               {"text", outcome.text}}})}});
+                 {"content", Json::array({output_text_part(request, outcome)})}});
     }
 
     ids.function_calls.resize(outcome.tool_calls.size());
@@ -379,7 +388,7 @@ public:
                                                             {"output_index", message_index},
                                                             {"content_index", 0},
                                                             {"text", content_text},
-                                                            {"logprobs", Json::array()}})),
+                                                            {"logprobs", take_logprobs()}})),
                 sse(event("response.content_part.done", Json{{"item_id", ids.message},
                                                              {"output_index", message_index},
                                                              {"content_index", 0},
@@ -405,6 +414,15 @@ public:
     bool terminal_emitted  = false;
     std::string reasoning_text;
     std::string content_text;
+    // Log probabilities noted since the last output_text event (include_logprobs).
+    Json pending_logprobs = Json::array();
+
+    // The pending entries for the next output_text event, taken.
+    Json take_logprobs() {
+        Json out         = std::move(pending_logprobs);
+        pending_logprobs = Json::array();
+        return out;
+    }
     ItemIds ids;
 };
 
@@ -460,8 +478,18 @@ std::vector<std::string> OpenAIResponsesEventStream::content_delta(const std::st
                                                             {"output_index", impl_->message_index},
                                                             {"content_index", 0},
                                                             {"delta", text},
-                                                            {"logprobs", Json::array()}})));
+                                                            {"logprobs", impl_->take_logprobs()}})));
     return events;
+}
+
+void OpenAIResponsesEventStream::note_logprobs(const std::vector<ServedLogprob>& entries) {
+    if (!impl_->started || impl_->finish_built) {
+        throw std::logic_error("invalid Responses logprobs state");
+    }
+    if (!impl_->request.include_logprobs) { return; }
+    for (Json& item : openai_logprob_content(entries)) {
+        impl_->pending_logprobs.push_back(std::move(item));
+    }
 }
 
 OpenAIResponsesStreamFinish OpenAIResponsesEventStream::finish(const GenerationOutcome& outcome) {
@@ -505,7 +533,7 @@ OpenAIResponsesStreamFinish OpenAIResponsesEventStream::finish(const GenerationO
                                                        {"output_index", impl_->message_index},
                                                        {"content_index", 0},
                                                        {"delta", suffix},
-                                                       {"logprobs", Json::array()}})));
+                                                       {"logprobs", impl_->take_logprobs()}})));
             }
         }
         append(impl_->close_message(outcome.text, item_status));
