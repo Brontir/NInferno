@@ -205,16 +205,16 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
     // the load latency (Q6_K 179, Q3_K 142, Q5_K 134, Q4_K 118 registers). A lane sums the same
     // blocks in the same order: the bytes do not change. Gate/up us at T = 1 / 2 / 3 / 4
     // (moe_bench, H 2048, F 512, E 128, k 8, published layout), two slots against one:
-    //   RTX 3060:    Q3_K 73.7 / 130.1 / 237.6 / 305.2 against 69.6 / 118.8 / 228.4 / 293.9;
-    //                Q5_K 89.1 / 154.6 / 233.5 / 301.1 against 86.0 / 148.5 / 214.0 / 276.5;
-    //                IQ2_S 86.0 / 148.5 / 214.0 / 276.5 against 77.8 / 136.2 / 210.9 / 273.4;
-    //                IQ3_XXS 73.7 / 122.9 / 182.3 / 235.5 against 67.6 / 114.7 / 187.4 / 242.7
-    //   RTX 4070 Ti: Q6_K 81.9 / 148.5 / 216.1 / 267.3 against 80.9 / 144.4 / 208.9 / 263.2;
-    //                IQ3_XXS 54.3 / 80.9 / 108.5 / 139.3 against 52.2 / 80.9 / 109.6 / 140.3
+    //   RTX 5090:    Q6_K 30.7 / 49.2 / 71.7 / 86.0 against 30.7 / 47.1 / 67.6 / 79.9
+    //   RTX 4090:    Q6_K 52.2 / 86.0 / 122.9 / 154.6 against 52.2 / 84.0 / 118.8 / 147.5;
+    //                Q3_K 37.9 / 58.4 / 81.9 / 98.3 against 36.9 / 54.3 / 74.8 / 92.2
     //   RTX 5070 Ti: Q6_K 46.8 / 79.6 / 116.7 / 143.4 against 43.0 / 77.8 / 110.6 / 137.2;
     //                Q3_K 34.8 / 57.3 / 92.2 / 116.7 against 34.8 / 55.3 / 84.0 / 108.2
-    // and Q4_K, Q4_0, Q5_0, IQ4_XS the same or ahead on each; IQ3_XXS at T = 3 / 4 is the one
-    // point behind (1..3 %, one timer step on the RTX 5070 Ti).
+    //   RTX 3060:    Q5_K 89.1 / 154.6 / 233.5 / 301.1 against 86.0 / 148.5 / 214.0 / 276.5
+    //   RTX 2080 Ti: Q5_K 83.8 / 115.0 / 172.3 / 210.1 against 67.6 / 103.2 / 143.5 / 176.2
+    //   GV100:       Q5_0 118.8 / 193.5 / 259.1 / 324.6 against 97.3 / 160.8 / 230.3 / 288.7
+    // and every other format the same or ahead on each of those and the RTX 4060 Ti and 4070 Ti,
+    // but IQ3_XXS at T = 3 / 4 (1..2 % behind on the RTX 5070 Ti and GV100, within a timer step).
     Raw ring[kSets][kRows][kStride];
     const auto fetch = [&](int group) {
 #pragma unroll
