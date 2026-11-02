@@ -613,6 +613,9 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
                 if (sink != nullptr) { sink->start(GenerationStart{.prompt = result.prompt}); }
                 return std::move(result);
             }
+
+            // Nothing queues: its stream starts at once.
+            bool wait_admitted(const CancellationView&) override { return true; }
         };
 
         auto immediate = std::make_unique<ImmediateSubmission>();
