@@ -1151,10 +1151,13 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
         // Only a call that began is dropped: after the marker, the body writes the syntax's call
         // header and, at its name position, a declared tool's name or (cut there) a prefix of
         // one. Prose that quotes the marker ("the `<tool_call>` tag") opens a region too, and
-        // stays text.
+        // stays text. A region without the open marker is a bare call (Qwen's <function=NAME>
+        // block, which opens a region on its own): its body is the whole region.
         const auto began_call = [&](std::size_t open_at) {
+            const std::string_view region = tool_region_;
             const std::string_view body =
-                std::string_view(tool_region_).substr(open_at + syntax_->open().size());
+                open_at == std::string::npos ? region
+                                             : region.substr(open_at + syntax_->open().size());
             const auto cut = syntax_->cut_call_name(body);
             if (!cut) { return false; }
             if (cut->name.empty()) { return !cut->complete; }
@@ -1165,9 +1168,10 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
                                                         : name.starts_with(cut->name);
                                });
         };
-        if (last != std::string::npos && tool_region_.find(close) == std::string::npos &&
+        const std::size_t lead = last == std::string::npos ? 0 : last;
+        if (tool_region_.find(close) == std::string::npos &&
             std::all_of(tool_region_.begin(),
-                        tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
+                        tool_region_.begin() + static_cast<std::ptrdiff_t>(lead),
                         [](char byte) { return is_format_whitespace(byte); }) &&
             began_call(last)) {
             held_.clear();

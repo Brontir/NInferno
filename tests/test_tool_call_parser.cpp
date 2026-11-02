@@ -981,6 +981,15 @@ int test_cut_off_last_call() {
                               named_end.diagnostics.cut_calls_dropped == 1,
                           "a call cut inside its name reached the content");
     }
+    // A bare Qwen call (no <tool_call> wrapper) the limit cut off is dropped too.
+    {
+        fi::ToolCallOutputDecoder bare(contract, 64);
+        const std::string bare_shown = bare.feed("<function=search>\n<parameter=q>\nfir");
+        auto bare_end                = bare.finish(true);
+        failures += check(bare_shown.empty() && bare_end.content.empty() &&
+                              bare_end.diagnostics.cut_calls_dropped == 1,
+                          "a lone cut-off bare Qwen call reached the content");
+    }
     // A body that names a tool only in its text, not at the name position, began no call.
     const std::string markup = "See <tool_call> <b>search</b> for";
     fi::ToolCallOutputDecoder tagged(contract, 64);
