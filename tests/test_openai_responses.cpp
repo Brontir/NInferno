@@ -1585,8 +1585,8 @@ int test_input_item_limit() {
     return failures;
 }
 
-// #295: the reasoning's entries stay out of output_text; each delta carries its tokens', the done
-// events the rest, and the message's part every entry after the reasoning.
+// #295: output_text's log probabilities are every entry after the reasoning, the same at the done
+// events and in the terminal response; the deltas carry none.
 int test_stream_logprobs() {
     OpenAIResponsesCreateRequest request = parse_openai_responses_create_request(
         Json{{"model", "m"},
@@ -1602,11 +1602,8 @@ int test_stream_logprobs() {
     const auto add = [&wire](std::vector<std::string> next) {
         wire.insert(wire.end(), next.begin(), next.end());
     };
-    encoder.note_logprobs({entry("thought", -0.5F)});
     add(encoder.reasoning_delta("thought"));
-    encoder.note_logprobs({entry("ans", -0.25F), entry("wer", -0.125F)});
     add(encoder.content_delta("answer"));
-    encoder.note_logprobs({entry("<|im_end|>", -0.0625F)});
     GenerationOutcome outcome = sample_outcome();
     outcome.reasoning_tokens  = 1;
     outcome.logprobs          = std::vector<ServedLogprob>{
@@ -1634,8 +1631,8 @@ int test_stream_logprobs() {
             }
         }
     }
-    failures += check(deltas == 2 && done == 1,
-                      "the delta carries its two tokens, the done event the stop token");
+    failures += check(deltas == 0 && done == 3,
+                      "the deltas carry none, output_text.done every entry after the reasoning");
     failures += check(part == 3 && terminal == 3,
                       "the message's part holds every entry after the reasoning, streamed or not");
     return failures;

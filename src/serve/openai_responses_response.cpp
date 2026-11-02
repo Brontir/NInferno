@@ -134,16 +134,19 @@ Json response_common(const std::string& id, std::int64_t created_at,
 // The message's output_text part; with include message.output_text.logprobs, the log
 // probabilities of the tokens after the reasoning (the reasoning's, its close included, lead the
 // output).
+Json output_text_logprobs(const GenerationOutcome& outcome) {
+    if (!outcome.logprobs) { return Json::array(); }
+    const std::size_t reasoning = std::min(
+        outcome.logprobs->size(), static_cast<std::size_t>(std::max(0, outcome.reasoning_tokens)));
+    return openai_logprob_content(std::vector<ServedLogprob>(
+        outcome.logprobs->begin() + static_cast<std::ptrdiff_t>(reasoning),
+        outcome.logprobs->end()));
+}
+
 Json output_text_part(const OpenAIResponsesCreateRequest& request,
                       const GenerationOutcome& outcome) {
     Json part = {{"type", "output_text"}, {"annotations", Json::array()}, {"text", outcome.text}};
-    if (request.include_logprobs && outcome.logprobs) {
-        const std::size_t reasoning = std::min(
-            outcome.logprobs->size(), static_cast<std::size_t>(std::max(0, outcome.reasoning_tokens)));
-        part["logprobs"] = openai_logprob_content(std::vector<ServedLogprob>(
-            outcome.logprobs->begin() + static_cast<std::ptrdiff_t>(reasoning),
-            outcome.logprobs->end()));
-    }
+    if (request.include_logprobs) { part["logprobs"] = output_text_logprobs(outcome); }
     return part;
 }
 
@@ -378,14 +381,14 @@ public:
     }
 
     std::vector<std::string> close_message(const std::string& final_text,
-                                           const char* item_status = "completed") {
+                                           const char* item_status = "completed",
+                                           Json logprobs           = Json::array()) {
         if (!message_started || message_done) { return {}; }
         message_done    = true;
         content_text    = final_text;
-        Json done_logprobs = take_logprobs();
         Json part = {
             {"type", "output_text"}, {"annotations", Json::array()}, {"text", content_text}};
-        if (request.include_logprobs) { part["logprobs"] = text_logprobs; }
+        if (request.include_logprobs) { part["logprobs"] = logprobs; }
         const Json item = {{"id", ids.message},
                            {"type", "message"},
                            {"status", item_status},
@@ -395,7 +398,7 @@ public:
                                                             {"output_index", message_index},
                                                             {"content_index", 0},
                                                             {"text", content_text},
-                                                            {"logprobs", std::move(done_logprobs)}})),
+                                                            {"logprobs", logprobs}})),
                 sse(event("response.content_part.done", Json{{"item_id", ids.message},
                                                              {"output_index", message_index},
                                                              {"content_index", 0},
@@ -421,18 +424,6 @@ public:
     bool terminal_emitted  = false;
     std::string reasoning_text;
     std::string content_text;
-    // Log probabilities noted since the last output event (include_logprobs), and every entry
-    // the output_text events carried (the message's part at its done events).
-    Json pending_logprobs = Json::array();
-    Json text_logprobs    = Json::array();
-
-    // The pending entries for the next output_text event, taken.
-    Json take_logprobs() {
-        Json out         = std::move(pending_logprobs);
-        pending_logprobs = Json::array();
-        for (const Json& item : out) { text_logprobs.push_back(item); }
-        return out;
-    }
     ItemIds ids;
 };
 
@@ -463,8 +454,6 @@ std::vector<std::string> OpenAIResponsesEventStream::reasoning_delta(const std::
         throw std::logic_error("invalid reasoning delta event state");
     }
     if (text.empty()) { return {}; }
-    // The entries noted before reasoning text are the reasoning's: not the output_text's.
-    impl_->pending_logprobs = Json::array();
     std::vector<std::string> events = impl_->ensure_reasoning();
     impl_->reasoning_text += text;
     events.push_back(sse(
@@ -490,19 +479,10 @@ std::vector<std::string> OpenAIResponsesEventStream::content_delta(const std::st
                                                             {"output_index", impl_->message_index},
                                                             {"content_index", 0},
                                                             {"delta", text},
-                                                            {"logprobs", impl_->take_logprobs()}})));
+                                                            {"logprobs", Json::array()}})));
     return events;
 }
 
-void OpenAIResponsesEventStream::note_logprobs(const std::vector<ServedLogprob>& entries) {
-    if (!impl_->started || impl_->finish_built) {
-        throw std::logic_error("invalid Responses logprobs state");
-    }
-    if (!impl_->request.include_logprobs) { return; }
-    for (Json& item : openai_logprob_content(entries)) {
-        impl_->pending_logprobs.push_back(std::move(item));
-    }
-}
 
 OpenAIResponsesStreamFinish OpenAIResponsesEventStream::finish(const GenerationOutcome& outcome) {
     if (!impl_->started || impl_->finish_built) {
@@ -545,10 +525,12 @@ OpenAIResponsesStreamFinish OpenAIResponsesEventStream::finish(const GenerationO
                                                        {"output_index", impl_->message_index},
                                                        {"content_index", 0},
                                                        {"delta", suffix},
-                                                       {"logprobs", impl_->take_logprobs()}})));
+                                                       {"logprobs", Json::array()}})));
             }
         }
-        append(impl_->close_message(outcome.text, item_status));
+        append(impl_->close_message(
+            outcome.text, item_status,
+            impl_->request.include_logprobs ? output_text_logprobs(outcome) : Json::array()));
     }
 
     impl_->ids.function_calls.reserve(outcome.tool_calls.size());
