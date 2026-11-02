@@ -334,6 +334,7 @@ int main() {
     prepared.sampling.top_k                            = 20;
     prepared.sampling.min_p                            = 0.0F;
     prepared.sampling.presence_penalty                 = 1.0F;
+    prepared.sampling.logit_bias = {ninferno::LogitBias{.token = 12, .bias = -100.0F}};
     prepared.sampling.frequency_penalty                = 0.0F;
     prepared.sampling.seed                             = 7632647173703958409ULL;
     prepared.acquisition_seconds                       = 0.004;
@@ -408,6 +409,9 @@ int main() {
                       "resolved preserve-thinking metadata missing");
     failures += check(started.at("request").at("sampling").at("seed") == 7632647173703958409ULL,
                       "resolved seed missing");
+    failures += check(started.at("request").at("sampling").at("logit_bias") ==
+                          Json{{"12", -100.0}},
+                      "the request's logit_bias is missing from its record");
     failures += check(started.at("request").at("media_item_count") == 1 &&
                           started.at("preparation_seconds").at("acquisition") == 0.004 &&
                           started.at("preparation_seconds").at("media_preprocess_work") == 0.31 &&
