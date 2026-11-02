@@ -502,8 +502,9 @@ struct Problem {
 // NVFP4 call of two token tiles or more that gives every SM a tile takes the tiled route in that
 // same order. A GPU without tensor mma.sync takes volta_tiled_route first.
 // A route pin (ops/route_pins.h: --prefill-route, --decode-route) applies after the invariant
-// profile, a route probe and Volta's tiled route: a call of its band takes the pinned family where
-// pinned_family_route gives one, else the automatic route; without a pin nothing changes.
+// profile, a route probe and Volta's tiled route (which the pin ledger notes as the a16 family's):
+// a call of its band takes the pinned family where pinned_family_route gives one, else the
+// automatic route; without a pin nothing changes.
 [[nodiscard]] Route select_route(const Problem& problem, const Weight& weight, std::int32_t tokens,
                                  bool prefill);
 

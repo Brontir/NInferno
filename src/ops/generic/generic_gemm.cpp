@@ -3072,7 +3072,15 @@ Route select_route(const Problem& problem, const Weight& weight, std::int32_t to
         if (route_admits(r, weight, problem.policy)) return r;
         return Route{Family::Scalar, 0};
     }
-    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) return *r;
+    if (const auto r = volta_tiled_route(weight, problem.policy, tokens)) {
+        // Volta keeps its tiled route under a prefill pin (f16 activations: the a16 family's
+        // there), and the ledger notes it, so a pin no prefill call can take is refused.
+        if (tokens >= kPrefillPinMinTokens && route_pins().prefill != PrefillRoute::Auto) {
+            note_prefill_pin(route_pins().prefill == PrefillRoute::A16,
+                             family_bit(PrefillRoute::A16));
+        }
+        return *r;
+    }
     // A maintainer's route pin (--prefill-route, --decode-route; ops/route_pins.h): the pinned
     // family where it can compute the call, else the automatic route below. No pin: nothing here.
     // It acts before Volta's HMMA verify route (volta_fixed_route's second half), the automatic
