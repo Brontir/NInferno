@@ -24,9 +24,9 @@
 #include "spec/engine_support.h"
 
 #include <algorithm>
-#include <limits>
 #include <array>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <vector>
@@ -60,13 +60,30 @@ public:
                         qwen3_5::PreparedPromptData& prompt, const VisionPrefillPlan& plan,
                         std::size_t& handoff_peak_bytes)
         : device_(device), encoder_(encoder), workspace_(workspace), workspace_plan_(workspace_plan),
-          prompt_(prompt), plan_(plan), handoff_peak_bytes_(handoff_peak_bytes) {
+          prompt_(prompt), plan_(plan), uses_(plan.uses),
+          handoff_peak_bytes_(handoff_peak_bytes) {
         if (workspace_.data == nullptr || workspace_.bytes < workspace_plan_.capacity_bytes ||
-            plan_.uses.empty()) {
+            uses_.empty()) {
             throw std::invalid_argument("Gemma 4 Vision prefill plan or workspace is invalid");
         }
+        // Under MTP the request plan opens each image's span one token early, for a drafter that
+        // fills its own keys over the prompt (Qwen's MTP head). Gemma 4's drafter keeps none and
+        // an image call's embeddings are its soft tokens alone, so the image call begins at its
+        // first soft token and the token before it stays in the text call. The soft tokens end
+        // the span, and their count is the encoder's for the item's patch grid (Gemma's plan
+        // carries no Qwen control plan to read the item's own begin from).
+        for (VisionUseSpan& use : uses_) {
+            if (use.prepared_item_index >= prompt_.vision_items.size()) { continue; }
+            const qwen3_5::VisionItem& item = prompt_.vision_items[use.prepared_item_index];
+            const std::int64_t patches =
+                static_cast<std::int64_t>(item.grid.width) * item.grid.height;
+            if (patches <= 0 || patches > std::numeric_limits<std::int32_t>::max()) { continue; }
+            const auto soft = static_cast<std::uint32_t>(
+                encoder_.soft_tokens(static_cast<std::int32_t>(patches)));
+            if (use.end >= soft && use.end - use.begin > soft) { use.begin = use.end - soft; }
+        }
         std::uint32_t previous_end = 0;
-        for (const VisionUseSpan& use : plan_.uses) {
+        for (const VisionUseSpan& use : uses_) {
             if (use.begin >= use.end || use.begin < previous_end ||
                 use.end > prompt_.token_ids.size() ||
                 use.prepared_item_index >= prompt_.vision_items.size() ||
@@ -76,14 +93,14 @@ public:
             }
             previous_end = use.end;
         }
-        timers_.reserve(plan_.uses.size());
+        timers_.reserve(uses_.size());
     }
 
     // An image is one call: a unit whose end would cut one ends where it begins (a prompt of 1900
     // text tokens and a 282-token image no longer asks for a larger --prefill-chunk at a 2048 one).
     [[nodiscard]] std::uint32_t unit_end(std::uint32_t cursor,
                                          std::uint32_t end) const noexcept override {
-        for (const VisionUseSpan& use : plan_.uses) {
+        for (const VisionUseSpan& use : uses_) {
             if (use.begin > cursor && use.begin < end && end < use.end) { return use.begin; }
         }
         return end;
@@ -91,7 +108,7 @@ public:
 
     // The image whose soft tokens hold `position`, or null.
     [[nodiscard]] const VisionUseSpan* use_at(std::uint32_t position) const noexcept {
-        for (const VisionUseSpan& use : plan_.uses) {
+        for (const VisionUseSpan& use : uses_) {
             if (use.begin <= position && position < use.end) { return &use; }
         }
         return nullptr;
@@ -99,7 +116,7 @@ public:
 
     // The first image beginning at or after `position`, or null.
     [[nodiscard]] const VisionUseSpan* next_use(std::uint32_t position) const noexcept {
-        for (const VisionUseSpan& use : plan_.uses) {
+        for (const VisionUseSpan& use : uses_) {
             if (use.begin >= position) { return &use; }
         }
         return nullptr;
@@ -119,10 +136,27 @@ public:
             scratch.bytes      = workspace_plan_.handoff_offset_bytes;
             timers_.emplace_back(device_);
             timers_.back().start();
-            encoder_.encode(VisionImage{.patches = payload->span(),
-                                        .width   = item.grid.width,
-                                        .rows    = item.grid.height},
-                            output, scratch, device_.stream);
+            try {
+                encoder_.encode(VisionImage{.patches = payload->span(),
+                                            .width   = item.grid.width,
+                                            .rows    = item.grid.height},
+                                output, scratch, device_.stream);
+            } catch (const std::invalid_argument& error) {
+                // The span the call took and the item's own, for a shape the plan got wrong.
+                std::string spans = "; use [" + std::to_string(use.begin) + ", " +
+                                    std::to_string(use.end) + ")";
+                if (plan_.control_plan != nullptr &&
+                    use.prepared_item_index < plan_.control_plan->items.size()) {
+                    const auto& own = plan_.control_plan->items[use.prepared_item_index];
+                    spans += ", item [" + std::to_string(own.token_begin) + ", " +
+                             std::to_string(own.token_end) + ")";
+                }
+                for (const VisionUseSpan& planned : plan_.uses) {
+                    spans += ", planned [" + std::to_string(planned.begin) + ", " +
+                             std::to_string(planned.end) + ")";
+                }
+                throw std::invalid_argument(error.what() + spans);
+            }
             timers_.back().record_stop();
             active_item_          = use.prepared_item_index;
             active_handoff_bytes_ = static_cast<std::size_t>(output.bytes());
@@ -161,6 +195,8 @@ private:
     const VisionWorkspacePlan& workspace_plan_;
     qwen3_5::PreparedPromptData& prompt_;
     const VisionPrefillPlan& plan_;
+    // plan_.uses with each image beginning at its first soft token.
+    std::vector<VisionUseSpan> uses_;
     std::size_t& handoff_peak_bytes_;
     std::optional<std::uint32_t> active_item_;
     std::size_t active_handoff_bytes_ = 0;

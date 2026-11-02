@@ -525,6 +525,12 @@ prefix, with the same behavior, errors, and request IDs.
   `Retry-After`, the Engine resets its sequence state and the context cache, and the queued
   requests go on. A second such error within five minutes is treated as Engine-wide, so a condition
   the reset did not cure ends in a restart.
+- **Request failure.** Any other error raised while serving requests on a healthy device (a defect
+  met by one request's output decoding, media prefill or admission) does not stop the server. A
+  request being admitted when it happened is answered with the error (HTTP 500); the requests
+  already running are answered HTTP 503 with `Retry-After`; the Engine resets its sequence state
+  and the context cache as above, and the queued requests go on. Three such failures with no
+  token generated between them are Engine-wide: the server restarts.
 
 - **Connections.** HTTP/1.1 keep-alive holds for refusals too: an error the server rendered after
   reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
@@ -2479,7 +2485,7 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 500 | `numerical_failure` | non-finite hidden state for one request |
 | 502 / 504 | `media_fetch_failed` / `media_fetch_timeout` | remote media unreachable or 5xx / timed out |
 | 503 | `request_queue_timeout` | admission deadline passed (`Retry-After` 5 s) |
-| 503 | `service_unavailable` | CUDA failure; drain; `Retry-After` set |
+| 503 | `service_unavailable` | the Engine reset its running requests (a CUDA failure, or another request's contained failure: retry, the server goes on) or the server is restarting; `Retry-After` set |
 | 529 / 504 | (Anthropic) | local admission overload / queue and media timeouts |
 | 200 + error event | (any code above) | a streamed request that fails after its headers were sent (a queue timeout, an Engine failure): the event carries the code and message, the stream ends |
 | any | `compaction_not_supported` | `POST /v1/responses/compact` |
