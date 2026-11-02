@@ -66,6 +66,18 @@ std::vector<float> repeat_column(const std::vector<float>& column, int columns) 
     return logits;
 }
 
+// A logit with the penalties applied, as the sampler does: repetition_penalty on a token the
+// prompt (kPromptTokenSeen) or the output holds, then presence and frequency on the output count.
+double penalized(double logit, int stored, const ops::SamplingConfig& config) {
+    const int count = stored & ~ops::kPromptTokenSeen;
+    if (config.repetition_penalty != 1.0f && (count > 0 || (stored & ops::kPromptTokenSeen) != 0)) {
+        logit = logit > 0.0 ? logit / config.repetition_penalty
+                            : logit * config.repetition_penalty;
+    }
+    if (count > 0) { logit -= static_cast<double>(config.presence_penalty); }
+    return logit - static_cast<double>(config.frequency_penalty) * static_cast<double>(count);
+}
+
 std::vector<int> greedy_oracle(const std::vector<float>& logits, int physical_rows,
                                int token_domain, int columns, const ops::SamplingConfig& config,
                                const std::vector<int>& counts) {
@@ -75,9 +87,8 @@ std::vector<int> greedy_oracle(const std::vector<float>& logits, int physical_ro
         int best               = 0;
         for (int token = 1; token < token_domain; ++token) {
             const auto adjusted = [&](int candidate) {
-                const int count = counts[static_cast<std::size_t>(candidate)];
-                return logits[base + candidate] - config.presence_penalty * (count > 0) -
-                       config.frequency_penalty * count;
+                return penalized(logits[base + candidate],
+                                 counts[static_cast<std::size_t>(candidate)], config);
             };
             if (adjusted(token) > adjusted(best)) { best = token; }
         }
@@ -92,9 +103,8 @@ Distribution distribution_oracle(const std::vector<float>& column, int token_dom
     std::vector<Candidate> candidates(static_cast<std::size_t>(token_domain));
     for (int token = 0; token < token_domain; ++token) {
         const int count = counts == nullptr ? 0 : (*counts)[static_cast<std::size_t>(token)];
-        double adjusted = static_cast<double>(column[static_cast<std::size_t>(token)]);
-        if (count > 0) { adjusted -= static_cast<double>(config.presence_penalty); }
-        adjusted -= static_cast<double>(config.frequency_penalty) * static_cast<double>(count);
+        const double adjusted =
+            penalized(static_cast<double>(column[static_cast<std::size_t>(token)]), count, config);
         candidates[static_cast<std::size_t>(token)] = {adjusted, token};
     }
     std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
@@ -371,6 +381,46 @@ int greedy_contract(int physical_rows, int token_domain) {
         std::vector<int> expected_counts = counts;
         ++expected_counts[static_cast<std::size_t>(result.tokens[row])];
         failures += verify_exact("sample greedy increments selected token", result.counts[row],
+                                 expected_counts);
+    }
+    return failures;
+}
+
+// repetition_penalty (#296): a prompt token (kPromptTokenSeen) and an output token lose their lead
+// (a positive logit divided, a negative one multiplied); a token the prompt marks keeps its mark
+// and the sampler's increment adds to the output count beside it.
+int repetition_penalty_contract(int physical_rows, int token_domain) {
+    constexpr int batch = 4;
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch, -9.0f);
+    for (int row = 0; row < batch; ++row) {
+        const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
+        logits[base + 5]       = 8.0f;  // prompt token: 8 / 2 = 4
+        logits[base + 6]       = 6.0f;  // output token: 6 / 2 = 3
+        logits[base + 7]       = 5.0f;  // unseen: stays 5, the greedy pick
+        logits[base + 8]       = -1.0f; // prompt token, negative: -2
+    }
+    round_to_bf16(logits);
+    std::vector<int> counts(static_cast<std::size_t>(token_domain), 0);
+    counts[5] = ops::kPromptTokenSeen;
+    counts[6] = 1;
+    counts[8] = ops::kPromptTokenSeen;
+    ops::SamplingConfig config;
+    config.temperature        = 0.0f;
+    config.top_k              = 1;
+    config.repetition_penalty = 2.0f;
+    config.seed               = 99;
+    const RunResult result = run_homogeneous_batch(logits, physical_rows, token_domain, batch,
+                                                   config, 11, ops::kSamplePurposeDecode, &counts);
+    int failures           = result.integrity_failures;
+    const std::vector<int> expected =
+        greedy_oracle(logits, physical_rows, token_domain, batch, config, counts);
+    failures += verify_exact("repetition penalty greedy result", result.tokens, expected);
+    failures += verify_exact("repetition penalty picks the unseen token", result.tokens,
+                             std::vector<int>(batch, 7));
+    for (std::size_t row = 0; row < result.counts.size(); ++row) {
+        std::vector<int> expected_counts = counts;
+        ++expected_counts[static_cast<std::size_t>(result.tokens[row])];
+        failures += verify_exact("repetition penalty keeps the prompt marks", result.counts[row],
                                  expected_counts);
     }
     return failures;
@@ -1138,6 +1188,7 @@ int main() {
     } catch (const std::invalid_argument&) {}
     failures += greedy_contract(248320, 248077);
     failures += greedy_contract(202048, 202048);
+    failures += repetition_penalty_contract(248320, 248077);
     failures += nan_row_contract(248320, 248077);
     failures += nan_row_contract(260, 200);
     failures += deterministic_stochastic_contract();

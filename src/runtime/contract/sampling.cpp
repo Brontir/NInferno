@@ -11,6 +11,7 @@ ResolvedSamplingParameters resolve_sampling(const ModelSamplingDefaults& default
         .min_p             = overrides.min_p.value_or(preset.min_p),
         .presence_penalty  = overrides.presence_penalty.value_or(preset.presence_penalty),
         .frequency_penalty = overrides.frequency_penalty.value_or(preset.frequency_penalty),
+        .repetition_penalty = overrides.repetition_penalty.value_or(1.0F),
         .seed              = overrides.seed.value_or(0),
     };
     // The registered sampling pipeline has an exact top-64 candidate domain. Preserve the

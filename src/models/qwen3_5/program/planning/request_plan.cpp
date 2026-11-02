@@ -28,6 +28,7 @@ ops::SamplingConfig translate_sampling(const ResolvedSamplingParameters& source)
     out.min_p             = source.min_p;
     out.presence_penalty  = source.presence_penalty;
     out.frequency_penalty = source.frequency_penalty;
+    out.repetition_penalty = source.repetition_penalty;
     out.seed              = source.seed;
     out.token_counts      = nullptr;
     return out;

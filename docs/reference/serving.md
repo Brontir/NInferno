@@ -697,7 +697,10 @@ as unknown hints.
   controls, text-only `audio` configuration, and `prediction` are accepted without changing Engine
   execution.
 - Metadata, user/safety identifiers, service-tier and prompt-cache hints are advisory.
-- `repetition_penalty` is accepted only at its neutral value `1`. `mm_processor_kwargs` is accepted
+- `repetition_penalty` (Chat Completions, in (0,2], 1 neutral) is vLLM's: a token the prompt or
+  the output already holds has its logit divided by the penalty when positive and multiplied when
+  negative, before `presence_penalty` and `frequency_penalty` (which count the output only). A
+  model card's own `repetition_penalty` is not applied by default. `mm_processor_kwargs` is accepted
   when empty or containing only null values. String-form image/video URLs are also accepted.
 - Unknown top-level fields are accepted and have no effect. So that a misspelt option
   (`max_token`) does not pass unnoticed, the response carries

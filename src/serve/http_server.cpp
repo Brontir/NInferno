@@ -41,6 +41,7 @@ std::string sampling_defaults_header(const ninferno::ModelSamplingDefaults& defa
     add(overrides.min_p.has_value(), "min_p");
     add(overrides.presence_penalty.has_value(), "presence_penalty");
     add(overrides.frequency_penalty.has_value(), "frequency_penalty");
+    add(overrides.repetition_penalty.has_value(), "repetition_penalty");
     add(overrides.seed.has_value(), "seed");
     if (!named.empty()) { out += "; server flags: " + named; }
     if (options.greedy) { out += "; server --greedy: temperature 0"; }

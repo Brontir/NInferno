@@ -750,7 +750,7 @@ std::optional<ModelSamplingDefaults> generation_sampling(std::string_view genera
         std::ostringstream value;
         value << it->get<double>();
         out.notes.push_back("repetition_penalty " + value.str() +
-                            " is not applied: NInferno has no repetition-penalty sampler");
+                            " is not applied by default: a request sets repetition_penalty");
     }
     if (const auto it = config.find("do_sample"); it != config.end() && it->is_boolean() &&
                                                    !it->get<bool>()) {

@@ -571,6 +571,9 @@ struct SamplingOverrides {
     std::optional<float> min_p;
     std::optional<float> presence_penalty;
     std::optional<float> frequency_penalty;
+    // vLLM's: a token the prompt or the output holds has its logit divided by the penalty when
+    // positive, multiplied when negative. 1 is neutral; no model preset sets it.
+    std::optional<float> repetition_penalty;
     std::optional<std::uint64_t> seed;
 };
 
@@ -592,6 +595,11 @@ struct SamplingRange {
 inline constexpr SamplingRange kTemperatureRange{0.0F, 2.0F};
 inline constexpr SamplingRange kProbabilityRange{0.0F, 1.0F}; // top_p and min_p
 inline constexpr SamplingRange kPenaltyRange{-2.0F, 2.0F};    // presence and frequency penalties
+// repetition_penalty: (0, 2], zero excluded (OpenRouter's range; vLLM requires it positive).
+inline constexpr SamplingRange kRepetitionPenaltyRange{0.0F, 2.0F};
+[[nodiscard]] constexpr bool repetition_penalty_valid(double value) noexcept {
+    return value > 0.0 && kRepetitionPenaltyRange.contains(value);
+}
 
 // Complete parameters after Engine resolution. Target runtimes consume only this type.
 struct ResolvedSamplingParameters {
@@ -600,8 +608,9 @@ struct ResolvedSamplingParameters {
     float top_p             = 1.0F;
     float min_p             = 0.0F;
     float presence_penalty  = 0.0F;
-    float frequency_penalty = 0.0F;
-    std::uint64_t seed      = 0;
+    float frequency_penalty  = 0.0F;
+    float repetition_penalty = 1.0F;
+    std::uint64_t seed       = 0;
 };
 
 enum class OutputChannel : std::uint8_t {

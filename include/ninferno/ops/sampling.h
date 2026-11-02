@@ -41,6 +41,10 @@ enum SamplePurpose : std::int32_t {
 // block stores 1 to *token_mask_fault (when non-null) and proceeds; the result of such a call is
 // unconstrained and the caller must discard it. A null token_mask keeps the unconstrained route
 // unchanged.
+// The token_counts bit that marks a prompt token for repetition_penalty; the count of a token in
+// the output is the rest of the word.
+inline constexpr std::int32_t kPromptTokenSeen = 1 << 30;
+
 struct SamplingConfig {
     float temperature          = 0.0f; // <= 0 => greedy argmax (bit-identical to argmax())
     std::int32_t top_k         = 20;   // runtime contract is [1, kMaximumTopK]; Op caps otherwise
@@ -48,6 +52,10 @@ struct SamplingConfig {
     float min_p                = 0.0f; // <= 0 => disabled
     float presence_penalty     = 0.0f;
     float frequency_penalty    = 0.0f;
+    // 1 => off. A token in the prompt or the output: logit / penalty when positive, * penalty
+    // when negative, before the presence/frequency penalties (vLLM's order). The prompt's tokens
+    // carry kPromptTokenSeen in token_counts, which the output counts do not include.
+    float repetition_penalty   = 1.0f;
     unsigned long long seed    = 0;
     std::int32_t* token_counts = nullptr; // device [token_domain] i32, or null
     const std::uint32_t* token_mask         = nullptr; // [columns, token_mask_words], or null
