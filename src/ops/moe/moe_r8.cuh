@@ -270,11 +270,11 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
 
     // kPre: block kb of a token's row sits at r8_x_slot(kb, x_ld / 32, lanes, x_group), here with
     // shifts (lanes and x_group are powers of two).
-    const int x_blocks  = a.x_ld / 32;
-    const int lg_lanes  = __ffs(lanes) - 1;
-    const int lg_group  = __ffs(a.x_group) - 1;
-    const int x_groups  = x_blocks >> lg_group;
-    const auto x_slot   = [&](int kb) {
+    const int x_blocks = a.x_ld / 32;
+    const int lg_lanes = __ffs(lanes) - 1;
+    const int lg_group = __ffs(a.x_group) - 1;
+    const int x_groups = x_blocks >> lg_group;
+    const auto x_slot  = [&](int kb) {
         const int g     = kb >> lg_group;
         const int j     = kb - (g << lg_group);
         const int i     = g >> lg_lanes;

@@ -43,7 +43,7 @@ __device__ __forceinline__ void quantize_x_task(const __nv_bfloat16* x, int ldx,
     const int blocks  = ld / 32;
     const int row     = static_cast<int>(task / blocks);
     const int block   = static_cast<int>(task - static_cast<std::int64_t>(row) * blocks);
-    const int slot    = r8_x_slot(block, blocks, lanes, group);
+    const int slot        = r8_x_slot(block, blocks, lanes, group);
     const std::int64_t at = static_cast<std::int64_t>(row) * blocks + slot;
     unsigned words[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     float scale       = 0.0F;
