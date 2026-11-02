@@ -2617,7 +2617,7 @@ private:
                         (void)remove_pending_error(subject, failure.error);
                     }
                     recover_after_transient_locked(
-                        unavailable("another request's failure reset the Engine (" +
+                        unavailable("a request in flight failed and the Engine was reset (" +
                                     failure.detail + "); retry the request"));
                     try {
                         publish_runtime_stats();
