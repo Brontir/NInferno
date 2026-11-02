@@ -621,9 +621,17 @@ RenderedChat CompiledChatTemplate::render_once(const std::vector<ChatMessage>& m
                                 unique_output_region(output, origin.part_tags[part]))
                             result.cache_boundaries[i] = region->end;
                     } else if (origin.part_media[part]) {
-                        result.cache_boundaries[i] =
-                            layout.media_placeholders[*origin.part_media[part]].bytes.end +
-                            std::string_view("<|vision_end|>").size();
+                        // After the placeholder and the close marker that follows it in this
+                        // template (Qwen's <|vision_end|>; Gemma 4 renders none there).
+                        constexpr std::string_view kVisionEnd = "<|vision_end|>";
+                        std::size_t end =
+                            layout.media_placeholders[*origin.part_media[part]].bytes.end;
+                        const std::string_view rendered(output);
+                        if (end <= rendered.size() &&
+                            rendered.substr(end).starts_with(kVisionEnd)) {
+                            end += kVisionEnd.size();
+                        }
+                        result.cache_boundaries[i] = end;
                     }
                 }
             }
