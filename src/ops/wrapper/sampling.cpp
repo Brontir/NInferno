@@ -81,6 +81,30 @@ void sample(const Tensor& logits, Tensor& out, std::int32_t token_domain,
     }
 }
 
+void token_logprobs(const Tensor& logits, const Tensor& sampled, std::int32_t token_domain,
+                    const SamplingConfig* configs, TokenLogprobs* out, cudaStream_t stream) {
+    if (logits.dtype != DType::BF16 || logits.ne[2] != 1 || logits.ne[3] != 1 ||
+        logits.ne[0] <= 0 || logits.ne[1] <= 0 || !logits.is_contiguous() ||
+        logits.data == nullptr) {
+        throw std::invalid_argument(
+            "token_logprobs: logits must be contiguous BF16 [physical_rows,B]");
+    }
+    if (sampled.dtype != DType::I32 || sampled.ne[0] != logits.ne[1] || sampled.ne[1] != 1 ||
+        sampled.ne[2] != 1 || sampled.ne[3] != 1 || !sampled.is_contiguous() ||
+        sampled.data == nullptr) {
+        throw std::invalid_argument("token_logprobs: sampled must be contiguous I32 [B]");
+    }
+    if (token_domain <= 0 || token_domain > logits.ne[0] ||
+        token_domain > kMaximumLogprobTokenDomain) {
+        throw std::invalid_argument(
+            "token_logprobs: token_domain must be in [1, min(logits.ne[0], 2^18)]");
+    }
+    if (configs == nullptr || out == nullptr) {
+        throw std::invalid_argument("token_logprobs: configs and out are required");
+    }
+    detail::token_logprobs_launch(logits, sampled, token_domain, configs, out, stream);
+}
+
 void increment_token_counts(const Tensor& token_ids, Tensor& token_counts, cudaStream_t stream) {
     if (token_ids.dtype != DType::I32 || token_ids.ne[0] <= 0 || token_ids.ne[1] != 1 ||
         token_ids.ne[2] != 1 || token_ids.ne[3] != 1 || !token_ids.is_contiguous() ||
