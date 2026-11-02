@@ -427,7 +427,12 @@ ProgramImpl::materialization_source_protection(const ResourceCandidateState& adm
                 state_store->checkpoint_references(*protection.state) !=
                 protection.consumed_state_references;
 
-            if (is_rewrite_checkpoint_restore(admission.reuse)) {
+            // The optional checkpoints the consumed lineage keeps (request_plan.cpp counts the
+            // exclusive ones as the sequence's): one a shared prefix also references becomes the
+            // sequence's when this admission's pressure releases that prefix, a transfer the
+            // projection prices (#315). A consumed endpoint keeps every anchor.
+            const bool endpoint_consumed = admission.reuse == ReusePath::PrivateEndpoint;
+            if (is_rewrite_checkpoint_restore(admission.reuse) || endpoint_consumed) {
                 const auto append_optional_state = [&](StateImageHandle state) {
                     if (!state_store->valid(state) || state_exclusive_to_sequence(source, state) ||
                         std::any_of(
@@ -446,7 +451,7 @@ ProgramImpl::materialization_source_protection(const ResourceCandidateState& adm
                     append_optional_state(*source.rewrite_state);
                 }
                 for (const LongAnchorCheckpoint& anchor : source.long_anchors) {
-                    if (anchor.frontier <= admission.reuse_base) {
+                    if (endpoint_consumed || anchor.frontier <= admission.reuse_base) {
                         append_optional_state(anchor.state);
                     }
                 }
