@@ -1144,7 +1144,8 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
     // prose that follows complete calls), or does not parse up to that marker, stays text.
     const std::string_view close = syntax_->close();
     if (cut_off && saw_tool_marker_ && !close.empty()) {
-        const std::size_t last = tool_region_.rfind(syntax_->open());
+        const ToolCallSyntax::LastCall last_call = syntax_->last_call(tool_region_);
+        const std::size_t last                   = last_call.start;
         // The only call of the region was cut off (nothing but format whitespace before its open
         // marker): no call is complete, and its markup is not the answer either (a forced call
         // must not reach the client as text). The answer is empty, with the finish reason length.
@@ -1153,12 +1154,10 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
         // one. Prose that quotes the marker ("the `<tool_call>` tag") opens a region too, and
         // stays text. A region without the open marker is a bare call (Qwen's <function=NAME>
         // block, which opens a region on its own): its body is the whole region.
-        const auto began_call = [&](std::size_t open_at) {
-            const std::string_view region = tool_region_;
-            const std::string_view body =
-                open_at == std::string::npos ? region
-                                             : region.substr(open_at + syntax_->open().size());
-            const auto cut = syntax_->cut_call_name(body);
+        const auto began_call = [&]() {
+            if (last_call.body == std::string::npos) { return false; }
+            const std::string_view body = std::string_view(tool_region_).substr(last_call.body);
+            const auto cut              = syntax_->cut_call_name(body);
             if (!cut) { return false; }
             if (cut->name.empty()) { return !cut->complete; }
             return std::any_of(contract_->tools.begin(), contract_->tools.end(),
@@ -1168,12 +1167,12 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
                                                         : name.starts_with(cut->name);
                                });
         };
-        const std::size_t lead = last == std::string::npos ? 0 : last;
-        if (tool_region_.find(close) == std::string::npos &&
+        if (last != std::string::npos &&
+            tool_region_.find(last_call.close, last) == std::string::npos &&
             std::all_of(tool_region_.begin(),
-                        tool_region_.begin() + static_cast<std::ptrdiff_t>(lead),
+                        tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
                         [](char byte) { return is_format_whitespace(byte); }) &&
-            began_call(last)) {
+            began_call()) {
             held_.clear();
             tool_region_.clear();
             ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
@@ -1182,7 +1181,7 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
             return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
         }
         if (last != std::string::npos && last != 0 &&
-            tool_region_.find(close, last) == std::string::npos) {
+            tool_region_.find(last_call.close, last) == std::string::npos) {
             ParsedToolCallOutput complete =
                 syntax_->parse(tool_region_.substr(0, last), max_tool_name_length_, *contract_);
             if (complete.is_tool_call_response && !complete.tool_calls.empty()) {
@@ -1393,6 +1392,24 @@ public:
         const ToolCallStart wrapped = match_call_start(held, {}, kToolOpen);
         return wrapped != ToolCallStart::No ? wrapped : match_call_start(held, {}, kFunctionOpen);
     }
+    // A <function=NAME> block right after <tool_call> (format whitespace between) is that wrapped
+    // call's; one anywhere else is a bare call, ended by its </function>.
+    [[nodiscard]] LastCall last_call(std::string_view region) const override {
+        const std::size_t wrapped = region.rfind(kToolOpen);
+        const std::size_t bare    = region.rfind(kFunctionOpen);
+        if (bare == std::string_view::npos || (wrapped != std::string_view::npos && bare < wrapped)) {
+            return ToolCallSyntax::last_call(region);
+        }
+        if (wrapped != std::string_view::npos) {
+            const std::size_t after = wrapped + kToolOpen.size();
+            const std::string_view gap = region.substr(after, bare - after);
+            if (std::all_of(gap.begin(), gap.end(),
+                            [](char byte) { return is_format_whitespace(byte); })) {
+                return LastCall{wrapped, after, kToolClose};
+            }
+        }
+        return LastCall{bare, bare, kFunctionClose};
+    }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
         if (auto xml = cut_name_after_header(body, {kFunctionOpen})) { return xml; }
         return cut_name_after_header(body, {"{", "\"name\"", ":", "\""});
@@ -1494,7 +1511,9 @@ public:
 
     [[nodiscard]] std::string_view close() const noexcept override { return kClose; }
     [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
-        return cut_name_after_header(body, {kCall});
+        // The 4-bit checkpoints' shorthand writes the name after a bare colon (":NAME{").
+        if (auto call = cut_name_after_header(body, {kCall})) { return call; }
+        return cut_name_after_header(body, {":"});
     }
     [[nodiscard]] ParsedToolCallOutput parse(const std::string& text, std::size_t max_length,
                                              const Contract& contract) const override {

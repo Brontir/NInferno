@@ -989,6 +989,15 @@ int test_cut_off_last_call() {
         failures += check(bare_shown.empty() && bare_end.content.empty() &&
                               bare_end.diagnostics.cut_calls_dropped == 1,
                           "a lone cut-off bare Qwen call reached the content");
+        // Two bare calls, the second cut: the first is kept, the second dropped.
+        fi::ToolCallOutputDecoder two(contract, 64);
+        (void)two.feed("<function=search>\n<parameter=q>\nfirst\n</parameter>\n</function>\n"
+                       "<function=search>\n<parameter=q>\nsec");
+        auto two_end = two.finish(true);
+        failures += check(two_end.tool_calls.size() == 1 && two_end.content.empty() &&
+                              two_end.tool_calls[0].arguments_json == R"({"q":"first"})" &&
+                              two_end.diagnostics.cut_calls_dropped == 1,
+                          "a complete bare call before a cut-off one was not kept");
     }
     // A body that names a tool only in its text, not at the name position, began no call.
     const std::string markup = "See <tool_call> <b>search</b> for";

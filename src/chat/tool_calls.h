@@ -105,6 +105,19 @@ public:
         (void)body;
         return std::nullopt;
     }
+    // Where the region's last call begins (`start`, npos for none), where its body begins after
+    // its open marker, and the marker that would end it. The default: the last open(), ended by
+    // close(). A syntax whose calls may also stand bare (Qwen's <function=NAME> blocks) overrides.
+    struct LastCall {
+        std::size_t start = std::string_view::npos;
+        std::size_t body  = std::string_view::npos;
+        std::string_view close;
+    };
+    [[nodiscard]] virtual LastCall last_call(std::string_view region) const {
+        const std::size_t at = region.rfind(open());
+        return at == std::string_view::npos ? LastCall{}
+                                            : LastCall{at, at + open().size(), close()};
+    }
     // Text before the first open marker is content; the region from it must be calls only.
     [[nodiscard]] virtual ParsedToolCallOutput
     parse(const std::string& text, std::size_t max_tool_name_length,
