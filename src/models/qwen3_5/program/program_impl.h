@@ -1282,8 +1282,9 @@ private:
     [[nodiscard]] bool can_release_shared_prefix_state(std::uint32_t index,
                                                        SharedPrefixSlotRole expected_role) const;
     [[nodiscard]] detail::PhysicalResources
-    release_shared_prefix_state_strict(std::uint32_t index,
-                                       SharedPrefixSlotRole expected_role) noexcept;
+    release_shared_prefix_state_strict(
+        std::uint32_t index, SharedPrefixSlotRole expected_role,
+        std::optional<std::uint32_t> resharing_lane = std::nullopt) noexcept;
     [[nodiscard]] detail::PhysicalResources
     install_private_capture(SequenceState& sequence, const CaptureGroup& group,
                             StateImageHandle checkpoint,

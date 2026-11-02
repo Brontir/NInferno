@@ -875,7 +875,8 @@ bool ProgramImpl::can_release_shared_prefix_state(std::uint32_t index,
 
 detail::PhysicalResources
 ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
-                                                SharedPrefixSlotRole expected_role) noexcept {
+                                                SharedPrefixSlotRole expected_role,
+                                                std::optional<std::uint32_t> resharing_lane) noexcept {
     try {
         if (!can_release_shared_prefix_state(index, expected_role)) { std::terminate(); }
         SharedPrefixState& shared               = shared_prefix_states[index];
@@ -885,7 +886,9 @@ ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
         // A full page this prefix shares with an active sequence alone (a capture published it,
         // and its request's active resources gave the page up) is counted by neither owner. Once
         // the prefix is released it is the sequence's alone: its request takes it back, as a
-        // released checkpoint below (#317).
+        // released checkpoint below (#317). A capture that publishes a shared prefix of its own
+        // sequence (resharing_lane) shares those pages again at its commit, which subtracts only
+        // the pages unique when it was assessed: its request does not take them back.
         std::array<detail::PhysicalResources, kMaximumConcurrency> kv_transfers{};
         const auto count_kv_transfers = [&](const KVAddressSpaceStore& addresses,
                                             const LogicalKVPageStore& pages,
@@ -903,7 +906,9 @@ ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
             }
         };
         for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
-            if (active_continuations[lane] >= continuation_capacity) { continue; }
+            if (active_continuations[lane] >= continuation_capacity || resharing_lane == lane) {
+                continue;
+            }
             const SequenceState& sequence = active_sequence(lane);
             if (!sequence.kv) { continue; }
             count_kv_transfers(*text_kv_addresses, *text_kv_pages, shared.kv->text,

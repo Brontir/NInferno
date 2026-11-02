@@ -682,7 +682,8 @@ void ProgramImpl::prepare_active_capture(ActiveCaptureTransaction& transaction) 
                 throw std::logic_error("shared capture replacement is not strictly releasable");
             }
             const detail::PhysicalResources removed = release_shared_prefix_state_strict(
-                *transaction.shared_index, SharedPrefixSlotRole::ReservedReplacement);
+                *transaction.shared_index, SharedPrefixSlotRole::ReservedReplacement,
+                transaction.lane);
             if (removed != transaction.capacity_preparation_removed) {
                 throw std::logic_error("shared capture preparation release changed");
             }
@@ -1111,8 +1112,10 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                     throw std::logic_error(
                         "capture shared pressure victim is not strictly releasable");
                 }
-                const detail::PhysicalResources released =
-                    release_shared_prefix_state_strict(index, SharedPrefixSlotRole::Catalogued);
+                const detail::PhysicalResources released = release_shared_prefix_state_strict(
+                    index, SharedPrefixSlotRole::Catalogued,
+                    transaction.publish_shared ? std::optional<std::uint32_t>(transaction.lane)
+                                               : std::nullopt);
                 if (released != exclusive ||
                     work.option.effect.added != detail::PhysicalResources{}) {
                     throw std::logic_error("capture shared pressure eviction changed");
