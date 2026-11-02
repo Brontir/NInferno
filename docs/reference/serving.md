@@ -625,6 +625,12 @@ llama.cpp-style base URLs.
   batch neighbours, can change the last bits of the logits and so a later draw (Nemotron 3.5: 1 of
   48 repeats; none with `--no-prefix-reuse`).
 - The compatible `top_k` (`0..64`) and `min_p` (`0..1`) sampler extensions.
+- vLLM's `repetition_penalty` (`(0,2]`, 1 neutral; outside the range a 400 naming the field): a
+  token the prompt or the output already holds has its logit divided by the penalty when positive
+  and multiplied when negative, before `presence_penalty` and `frequency_penalty` (which count the
+  output only). A model card's own `repetition_penalty` is not applied by default. Chat
+  Completions only: Responses refuses it as an unknown parameter, Anthropic Messages ignores it
+  with the unknown-field warning.
 - Up to sixteen stop strings, applied to the answer only (a stop never ends a thinking model's
   reasoning). Empty strings mean none and are dropped.
 - The thinking switch as `enable_thinking`, `chat_template_kwargs.enable_thinking`, Ollama's `think`
@@ -697,11 +703,7 @@ as unknown hints.
   controls, text-only `audio` configuration, and `prediction` are accepted without changing Engine
   execution.
 - Metadata, user/safety identifiers, service-tier and prompt-cache hints are advisory.
-- `repetition_penalty` (Chat Completions, in (0,2], 1 neutral) is vLLM's: a token the prompt or
-  the output already holds has its logit divided by the penalty when positive and multiplied when
-  negative, before `presence_penalty` and `frequency_penalty` (which count the output only). A
-  model card's own `repetition_penalty` is not applied by default. `mm_processor_kwargs` is accepted
-  when empty or containing only null values. String-form image/video URLs are also accepted.
+- `mm_processor_kwargs` is accepted when empty or containing only null values. String-form image/video URLs are also accepted.
 - Unknown top-level fields are accepted and have no effect. So that a misspelt option
   (`max_token`) does not pass unnoticed, the response carries
   `X-NInferno-Warning: unknown fields ignored: <names>` (Chat Completions and Anthropic Messages;
