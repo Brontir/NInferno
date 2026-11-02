@@ -819,6 +819,12 @@ runtime::OutputDecision OutputSession::preview_control(std::span<const TokenId> 
     impl_->preview_prefix_execution = impl_->prefix_execution;
     impl_->preview_execution_split_after.reset();
     impl_->preview_output.clear();
+    // The span is the engine's own close, never a quotation: a close right after a quote byte
+    // (Gemma 4's control is <channel|> alone, with no line break after it) still ends the
+    // thinking. The model's own later closes keep the quoted-close rule.
+    const bool quoted_close_is_text              = impl_->preview_state.quoted_close_is_text;
+    impl_->preview_state.quoted_close_is_text    = false;
+    impl_->preview_semantic.quoted_close_is_text = false;
     for (std::size_t index = 0; index < tokens.size(); ++index) {
         const TokenId token                = tokens[index];
         const text::DecodedTokenView decoded = impl_->tokenizer->decoded_token(token);
@@ -835,6 +841,8 @@ runtime::OutputDecision OutputSession::preview_control(std::span<const TokenId> 
         feed_token_bytes(impl_->preview_state, presentation_bytes, impl_->policy, conventions,
                          impl_->preview_output, static_cast<std::uint32_t>(index + 1), nullptr);
     }
+    impl_->preview_state.quoted_close_is_text    = quoted_close_is_text;
+    impl_->preview_semantic.quoted_close_is_text = quoted_close_is_text;
     if (impl_->preview_semantic.in_reasoning) {
         throw std::logic_error("canonical thinking control did not close the thinking phase");
     }

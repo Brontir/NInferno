@@ -2320,6 +2320,10 @@ private:
         std::exception_ptr error;
         bool device_failed = false;
         bool transient     = false;
+        // Neither the device's nor a CUDA error: a defect or an invalid state met while serving
+        // the unit's requests (an output decoding or a media prefill that throws). The device is
+        // healthy and the Program is reset with the unit's requests, so the Engine goes on.
+        bool contained = false;
         std::string detail; // what() of the raised exception
     };
 
@@ -2372,19 +2376,20 @@ private:
         try {
             if (device_failed) {
                 return {unavailable("the GPU failed (" + detail + "); the server is restarting"),
-                        true, false, detail};
+                        true, false, false, detail};
             }
             if (memory) {
                 return {unavailable("out of memory (" + detail + "); retry the request"), false,
-                        true, detail};
+                        true, false, detail};
             }
-            if (!cuda_error) { return {raised, false, false, detail}; }
+            if (!cuda_error) { return {raised, false, false, true, detail}; }
             return {unavailable("a CUDA error (" + detail + "); retry the request"), false, true,
-                    detail};
+                    false, detail};
         } catch (...) {
             // The messages need memory too (an out-of-memory failure may leave none): the raw
             // failure, classified the same way.
-            return {raised, device_failed, !device_failed && (memory || cuda_error), {}};
+            return {raised, device_failed, !device_failed && (memory || cuda_error),
+                    !device_failed && !memory && !cuda_error, {}};
         }
     }
 
@@ -2575,6 +2580,24 @@ private:
                 WorkerFailure failure        = classify_failure(std::current_exception());
                 HostPhaseMeasurement cleanup = begin_host_phase();
                 const auto now               = std::chrono::steady_clock::now();
+                if (failure.contained) {
+                    // One request's defect must not stop the server for every client: the unit's
+                    // requests fail, the Program and the resource catalog are reset as after a
+                    // transient error, and the queue goes on. It does not count towards the
+                    // transient window: the device is healthy, and a retried request that meets
+                    // the defect again fails again without a restart.
+                    std::fprintf(stderr,
+                                 "ninferno: request failure (%s); the unit's requests failed, the "
+                                 "Engine goes on\n",
+                                 failure.detail.c_str());
+                    recover_after_transient_locked(failure.error);
+                    try {
+                        publish_runtime_stats();
+                    } catch (...) {}
+                    finish_engine_phase(cleanup, EngineHostPhase::Maintenance);
+                    previous_unit_was_decode = false;
+                    continue;
+                }
                 if (failure.transient) {
                     const bool repeated = last_transient_error &&
                                           now - *last_transient_error < kTransientCudaErrorWindow;
