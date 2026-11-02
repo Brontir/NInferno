@@ -234,8 +234,10 @@ namespace {
 // library's own, such as 413) leaves it unread, and its bytes would be read as the next request,
 // so the connection closes after such a refusal. A request without a body keeps it (#305).
 bool may_carry_body(const httplib::Request& req) {
+    if (req.has_header("Transfer-Encoding")) { return true; }
     const std::string length = req.get_header_value("Content-Length");
-    return req.has_header("Transfer-Encoding") || (!length.empty() && length != "0");
+    // A malformed length counts as a body (the library refuses it and nothing is read).
+    return !length.empty() && (length.find_first_not_of('0') != std::string::npos);
 }
 
 // An error in the shape the request's endpoint speaks, under the id the response already carries:
@@ -521,7 +523,11 @@ void answer_cors_preflight(const httplib::Request& request, httplib::Response& r
 
 void HttpServer::register_routes() {
     server_.set_error_handler([this](const httplib::Request& request, httplib::Response& response) {
-        return handle_unrendered_http_error(options_, request, response);
+        const auto handled = handle_unrendered_http_error(options_, request, response);
+        // Every error status passes here before the library decides the connection: while the
+        // server drains, an error of a permitted GET (a missing stored response) closes too.
+        if (draining_.load()) { response.keep_alive_after_error = false; }
+        return handled;
     });
     if (options_.enable_cors) {
         server_.set_default_headers(
