@@ -125,6 +125,9 @@ struct ServeOptions {
     // The profile was asked for by default rather than by --spec auto: a model without one for
     // this GPU decodes plain without a warning.
     bool speculation_by_default = false;
+    // --spec auto, and the configuration choice weighed plain decode the best: the service serves
+    // plain as the choice's, not as an explicit --spec (apps/serve: choose_served_axes).
+    bool speculation_plain_by_choice = false;
     // The configuration choice's speculation mode (product::StartAxes::drafter) for --spec auto:
     // the profile chosen again for it (product::subject_of_mode). nullopt: the profile's own.
     std::optional<spec::Mode> speculation_mode;

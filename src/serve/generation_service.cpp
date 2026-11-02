@@ -682,6 +682,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         }
         if (!speculation_absent_notes_.empty()) { why += ")"; }
         startup_speculation_ = {.selection = "startup", .reason = std::move(why)};
+    } else if (options_.speculation_plain_by_choice) {
+        // --spec auto ran nothing: the configuration choice weighed plain decode the best (#283).
+        startup_speculation_ = {.selection = "startup",
+                                .reason    = "the configuration choice decodes plainly"};
     } else {
         const SpeculativeOptions& given = engine_->options().speculative;
         const bool drafts               = given.backend != SpeculativeBackend::None;
