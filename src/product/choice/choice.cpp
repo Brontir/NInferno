@@ -1691,7 +1691,9 @@ std::vector<Alternative> explain(const Choice& choice) {
                 alt.why_code = "tie_order";
                 alt.why_not  = axis == Axis::Activations
                                    ? "the same in every respect (fast and int8 take one route on these weights): the listing's order"
-                                   : "the same in every respect for this request: the listing's order";
+                                   : axis == Axis::Drafter
+                                         ? "the same in every respect for this request: the drafters' label order"
+                                         : "the same in every respect for this request: the listing's order";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
