@@ -808,7 +808,7 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
 }
 
 // Volta's tensor-core verify route (volta_hmma_route, generic_volta_hmma.cu): the dispatch takes it
-// for Q4_K / Q5_K / Q6_K / Q8 at 2..16 tokens (5..16 with an int8 route), and a token's output
+// for Q4_K / Q5_K / Q6_K / Q8 at 1..16 tokens (5..16 with an int8 route), and a token's output
 // bytes equal those of the same token in a call of any other width there (at any start), repeated
 // run to run: its sums read the token's own activation in one order.
 int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
@@ -862,7 +862,8 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
         return 1;
     }
     const std::pair<std::int32_t, std::int32_t> windows[] = {
-        {0, 2}, {3, 2}, {0, 3}, {5, 4}, {0, 7}, {9, 8}, {0, 9}, {1, 13}, {7, 15}, {0, 16}};
+        {0, 1}, {6, 1}, {0, 2}, {3, 2}, {0, 3}, {5, 4}, {0, 7}, {9, 8}, {0, 9}, {1, 13}, {7, 15},
+        {0, 16}};
     for (const auto [offset, t] : windows) {
         // A call with an int8 route keeps it through four tokens (volta_hmma_route).
         if (policy == ops::LinearPolicy::AllowA8 && t <= 4) continue;
@@ -2323,7 +2324,7 @@ int main() {
         }
     }
 
-    // 4b. Volta's tensor-core verify route: token invariance over 2..16 (sm_70 only).
+    // 4b. Volta's tensor-core route: token invariance over 1..16 (sm_70 only).
     if (!device_class().features.mma_tensor) {
         for (const Format& f : kFormats) {
             if (!on_build(f) || (f.qtype != QType::GGML_Q4_K && f.qtype != QType::GGML_Q5_K &&

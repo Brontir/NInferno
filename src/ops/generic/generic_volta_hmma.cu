@@ -1,4 +1,4 @@
-// Volta's speculative-verify widths (T = 2..16) on its tensor cores. sm_70 has no mma.sync of the
+// Volta's decode and speculative-verify widths (T = 1..16) on its tensor cores. sm_70 has no mma.sync of the
 // shapes the register-MMA tiles issue (m16n8k16 BF16/F16, m16n8k32 s8): there those tiles run on
 // FP32 FMAs over warp shuffles (ops/common/mma.cuh) and ggml's vector kernel re-reads the
 // activation for every column on dp4a, so both grow with T and neither streams the weight at the

@@ -137,8 +137,12 @@ void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& arg
 
 // Volta's tensor-core route of the speculative-verify widths (generic_volta_hmma.cu): Q4_K / Q5_K
 // / Q6_K and Q8 G32 at kVoltaHmmaMinTokens..16 tokens, in place of a lane-local register-MMA call
-// (and of ggml's vector kernel, volta_hmma_route).
-inline constexpr std::int32_t kVoltaHmmaMinTokens = 2;
+// (and of ggml's vector kernel, volta_hmma_route). From one token: a register-MMA call of one token
+// summed in the emulated tiles' order and the same token in a wider call in the HMMA kernel's, so
+// an A16 projection's bytes depended on its call's width (an MoE's A16 shared expert at T = 1 + 3
+// against T = 4, test_moe); a call of one token keeps R8 or the vector kernel where an int8 route
+// takes it (volta_hmma_route), as at two to four.
+inline constexpr std::int32_t kVoltaHmmaMinTokens = 1;
 inline constexpr std::int32_t kVoltaHmmaMaxTokens = 16;
 bool volta_hmma_codec(WeightCodec codec);
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args);
