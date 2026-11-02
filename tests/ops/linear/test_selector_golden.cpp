@@ -263,7 +263,9 @@ int run_clock_invariance(const GoldenBoard& b) {
     const std::string stock = body(dump_board(b));
     constexpr struct {
         double sm, memory;
-    } kVariants[] = {{0.85, 1.0}, {1.0, 0.985}, {1.08, 1.07}};
+    } kVariants[] = {{0.85, 1.0}, {1.0, 0.985}, {1.08, 1.07},
+                     // A driver that reports no clock (MIG, some WSL drivers): the table's facts.
+                     {0.0, 1.0}, {1.0, 0.0}, {0.0, 0.0}};
     int failed = 0;
     for (const auto v : kVariants) {
         if (body(dump_board(b, v.sm, v.memory)) == stock) continue;
