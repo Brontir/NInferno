@@ -761,13 +761,38 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
                     impl_->preview_output, count);
         return complete(count, limit_reason);
     }
+    // The control span follows a quote-adjacent close held for its next byte, so the control
+    // preview reads the held bytes as reasoning text. When they complete a stop string the output
+    // ends in this round instead: a control preview cannot finish a request.
+    const auto held_close_stop = [&]() -> std::optional<runtime::OutputDecision> {
+        const std::string_view model_close = impl_->conventions->reasoning_close;
+        if (model_close.empty() || !impl_->preview_state.quoted_close_is_text ||
+            !impl_->preview_state.in_reasoning ||
+            !impl_->preview_state.think_marker_pending.ends_with(model_close)) {
+            return std::nullopt;
+        }
+        DecoderState flushed = impl_->preview_state;
+        const std::string held = std::move(flushed.think_marker_pending);
+        flushed.think_marker_pending.clear();
+        PublishedOutput output = impl_->preview_output;
+        StopMatch match;
+        feed_channel(flushed, OutputChannel::Reasoning, held, impl_->policy, output, count,
+                     &match);
+        if (!match.found) { return std::nullopt; }
+        impl_->preview_state                    = terminal_state(std::move(flushed));
+        impl_->preview_state.matched_stop_order = match.declaration_order;
+        impl_->preview_output                   = std::move(match.output);
+        return complete(count, FinishReason::StopString);
+    };
     if (conclude_thinking && impl_->preview_semantic.in_reasoning) {
+        if (auto stopped = held_close_stop()) { return *stopped; }
         impl_->preview_semantic.control_pending = true;
         impl_->preview_semantic.loop_concluded  = true;
         return complete(count, FinishReason::None, runtime::ContinuationAction::ApplyTargetControl);
     }
     if (impl_->preview_semantic.in_reasoning && impl_->preview_semantic.budget &&
         impl_->preview_semantic.model_thinking_tokens == *impl_->preview_semantic.budget) {
+        if (auto stopped = held_close_stop()) { return *stopped; }
         impl_->preview_semantic.control_pending = true;
         return complete(count, FinishReason::None, runtime::ContinuationAction::ApplyTargetControl);
     }
@@ -830,20 +855,13 @@ runtime::OutputDecision OutputSession::preview_control(std::span<const TokenId> 
         impl_->preview_state.think_marker_pending.ends_with(model_close)) {
         std::string held = std::move(impl_->preview_state.think_marker_pending);
         impl_->preview_state.think_marker_pending.clear();
-        // The held bytes are the model's: they may complete a stop string, which ends the
-        // output before the control is applied.
+        // The model round that requested this control already matched these bytes against the
+        // stop strings (held_close_stop in preview_model): they complete none.
         StopMatch match;
         feed_channel(impl_->preview_state, OutputChannel::Reasoning, held, impl_->policy,
                      impl_->preview_output, 0, &match);
         if (match.found) {
-            impl_->preview_state = terminal_state(std::move(impl_->preview_state));
-            impl_->preview_state.matched_stop_order = match.declaration_order;
-            impl_->preview_output                   = std::move(match.output);
-            impl_->preview_semantic.control_pending = false;
-            impl_->preview_finish_reason            = FinishReason::StopString;
-            impl_->preview_ready                    = true;
-            return runtime::OutputDecision{.accepted_tokens = 0,
-                                           .finish_reason   = FinishReason::StopString};
+            throw std::logic_error("a held close completed a stop string after control was due");
         }
         impl_->preview_state.reasoning_last = held.back();
     }

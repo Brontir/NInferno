@@ -2456,6 +2456,44 @@ int test_quoted_reasoning_close(const Frontend& frontend) {
     return failures;
 }
 
+// A quoted close held for its next byte when the thinking budget runs out is read as reasoning
+// text before the control. When those bytes complete a stop string, the model round ends the
+// output with StopString; the control preview, which cannot finish a request, never sees it.
+int test_held_close_stop_before_control(const Frontend& frontend) {
+    ninferno::ChatMessage message;
+    message.role = ninferno::ChatRole::User;
+    message.parts.push_back(
+        ninferno::MessagePart{.kind = ninferno::MessagePartKind::Text, .text = "x", .media = {}});
+    ninferno::PromptInput input;
+    input.messages.push_back(std::move(message));
+    input.options.continuation    = ninferno::PromptContinuationMode::NewAssistantTurn;
+    input.options.enable_thinking = true;
+    const auto prompt             = frontend.prepare(std::move(input));
+    ninferno::StopPolicy stop;
+    stop.strings.push_back(ninferno::StopString{.text    = "\"</think>",
+                                                .channel = ninferno::OutputChannel::Reasoning});
+    const auto tokens = fixture_tokenizer().encode("It is \"</think>");
+    auto session      = frontend.make_output_session(
+        prompt, stop, {},
+        ninferno::ThinkingControlOptions{.budget = static_cast<std::uint32_t>(tokens.size())},
+        true);
+    std::string reasoning;
+    ninferno::runtime::OutputDecision last;
+    for (const ninferno::TokenId token : tokens) {
+        last = session.preview_model(std::array<ninferno::TokenId, 1>{token}, 4096U,
+                                     ninferno::FinishReason::OutputLimit);
+        reasoning += channel_text(session.commit_preview(), ninferno::OutputChannel::Reasoning);
+        if (last.finished()) { break; }
+    }
+    return check(last.finish_reason == ninferno::FinishReason::StopString &&
+                     last.accepted_tokens == 1 &&
+                     last.continuation == ninferno::runtime::ContinuationAction::Decode &&
+                     reasoning == "It is " && session.pending_control_tokens().empty() &&
+                     session.matched_stop_string() == std::optional<std::string>("\"</think>"),
+                 "a held close completing a stop string at the thinking budget did not end the "
+                 "output in the model round");
+}
+
 int test_reasoning_split(const Frontend& frontend) {
     ninferno::ChatMessage message;
     message.role = ninferno::ChatRole::User;
@@ -3358,6 +3396,7 @@ int main() {
     failures += test_tools_none_without_tools();
     failures += test_reasoning_split(frontend);
     failures += test_quoted_reasoning_close(frontend);
+    failures += test_held_close_stop_before_control(frontend);
     failures += test_special_token_reasoning_markers();
     failures += test_reasoning_declined_by_thinking_switch();
     failures += test_thinking_budget_after_model_opener();
