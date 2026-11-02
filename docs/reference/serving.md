@@ -526,6 +526,11 @@ prefix, with the same behavior, errors, and request IDs.
   requests go on. A second such error within five minutes is treated as Engine-wide, so a condition
   the reset did not cure ends in a restart.
 
+- **Connections.** HTTP/1.1 keep-alive holds for refusals too: an error the server rendered after
+  reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
+  for the caller's next request. A refusal that leaves a body unread (413, 415, a key refused
+  before the body was read) and every answer while the server drains close it.
+
 ### Request IDs
 
 Every OpenAI-compatible response carries an `x-request-id` header, including streaming and

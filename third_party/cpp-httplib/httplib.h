@@ -1764,6 +1764,11 @@ struct Response {
   // by route handlers to pass arbitrary data (e.g. decoded auth tokens).
   UserData user_data;
 
+  // NInferno patch: an error response the application rendered after the
+  // request was read completely keeps the connection (a refused caller's next
+  // request reuses it); every other error response still closes it.
+  bool keep_alive_after_error = false;
+
   bool has_header(const std::string &key) const;
   std::string get_header_value(const std::string &key, const char *def = "",
                                size_t id = 0) const;
@@ -13156,7 +13161,8 @@ inline bool Server::write_response_core(Stream &strm, bool close_connection,
   // Prepare additional headers
   if (close_connection ||
       detail::has_header_token(req.headers, "Connection", "close") ||
-      400 <= res.status) { // Don't leave connections open after errors
+      (400 <= res.status &&
+       !res.keep_alive_after_error)) { // Don't leave connections open after errors
     res.set_header("Connection", "close");
   } else {
     std::string s = "timeout=";

@@ -225,12 +225,23 @@ void write_anthropic_error(httplib::Response& response, const ApiError& api_erro
 
 namespace {
 
+// Whether the request may have a body the server has not read: a refusal before routing (or the
+// library's own, such as 413) leaves it unread, and its bytes would be read as the next request,
+// so the connection closes after such a refusal. A request without a body keeps it (#305).
+bool may_carry_body(const httplib::Request& req) {
+    const std::string length = req.get_header_value("Content-Length");
+    return req.has_header("Transfer-Encoding") || (!length.empty() && length != "0");
+}
+
 // An error in the shape the request's endpoint speaks, under the id the response already carries:
 // a handler that set its request-id (and logged under it) keeps it, as the exception handler's
 // log line does (ensure_request_id).
 void write_error_for(const httplib::Request& request, httplib::Response& response,
                      const ApiError& error) {
     ensure_request_id(request, response);
+    // A handler's refusal comes after the request was read whole: the caller's next request may
+    // reuse the connection (a pre-routing refusal of a request with a body clears it, #305).
+    response.keep_alive_after_error = true;
     if (is_anthropic_path(request.path)) {
         write_anthropic_error(response, error, response.get_header_value("request-id"));
     } else {
@@ -281,6 +292,7 @@ httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions
     // the response is stale, and write_error_for names a fresh one.
     response.headers.erase("request-id");
     write_error_for(request, response, error);
+    response.keep_alive_after_error = !may_carry_body(request);
     return httplib::Server::HandlerResponse::Handled;
 }
 
@@ -530,7 +542,10 @@ void HttpServer::register_routes() {
         if (service_ != nullptr && req.method == "POST" && is_generation_path(req.path)) {
             res.set_header("x-ninferno-sampling-defaults", sampling_defaults_header_);
         }
-        if (reject_while_draining(req, res)) { return httplib::Server::HandlerResponse::Handled; }
+        if (reject_while_draining(req, res)) {
+            res.keep_alive_after_error = false; // the server stops: no connection is kept
+            return httplib::Server::HandlerResponse::Handled;
+        }
         if (refuses_browser_origin(req, options_.enable_cors)) {
             ApiError error;
             error.status  = 403;
@@ -540,6 +555,7 @@ void HttpServer::register_routes() {
                             ascii_preview(req.get_header_value("Origin")) +
                             "' is refused; start the server with --cors to serve browser pages";
             refuse(req, res, error);
+            res.keep_alive_after_error = !may_carry_body(req);
             return httplib::Server::HandlerResponse::Handled;
         }
         if (options_.api_key.empty() || req.path == "/health" || req.method == "OPTIONS") {
@@ -559,6 +575,7 @@ void HttpServer::register_routes() {
             error.code    = "invalid_api_key";
             error.message = "missing or invalid API key";
             refuse(req, res, error); // in the shape the target endpoint speaks
+            res.keep_alive_after_error = !may_carry_body(req);
             return httplib::Server::HandlerResponse::Handled;
         }
         return httplib::Server::HandlerResponse::Unhandled;
