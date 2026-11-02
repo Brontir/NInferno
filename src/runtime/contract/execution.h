@@ -3,6 +3,7 @@
 #include "runtime/contract/request.h"
 #include "runtime/contract/resources.h"
 #include "runtime/contract/execution_timing.h"
+#include "ninferno/ops/sampling.h"
 #include <compare>
 #include <span>
 
@@ -59,6 +60,9 @@ struct GeneratedRound {
     std::span<const TokenId> tokens;
     // Per row, a kRowFault* when the round faulted for it (empty: none).
     std::span<const std::uint8_t> row_faults;
+    // Per row, the sampled token's log probabilities for a row that asked (count < 0: none);
+    // empty when no row asked. A row that asks produces one token a round.
+    std::span<const ops::TokenLogprobs> logprobs;
 };
 
 struct BatchedGeneratedRound {
@@ -67,6 +71,7 @@ struct BatchedGeneratedRound {
     std::span<const std::uint8_t> row_faults;
     std::uint32_t row_stride = 1;
     ExecutionTiming timing;
+    std::span<const ops::TokenLogprobs> logprobs; // as GeneratedRound::logprobs
 };
 
 struct PrefillStepResult {

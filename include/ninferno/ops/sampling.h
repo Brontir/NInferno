@@ -127,8 +127,8 @@ void sample(const Tensor& logits, Tensor& out, std::int32_t token_domain,
 // The most alternatives token_logprobs() reports per row (OpenAI's top_logprobs bound).
 inline constexpr std::int32_t kMaximumTopLogprobs = 20;
 // token_logprobs() orders tokens by a key of the BF16 logit and the token id, which holds ids
-// below 2^18.
-inline constexpr std::int32_t kMaximumLogprobTokenDomain = 1 << 18;
+// below 2^20.
+inline constexpr std::int32_t kMaximumLogprobTokenDomain = 1 << 20;
 
 // One row's log probabilities from the raw logits: log_softmax over the token domain, before
 // logit_bias, the penalties, temperature, the filters and the token mask (vLLM's raw logprobs).

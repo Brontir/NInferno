@@ -45,6 +45,11 @@ inline void check_resolved_sampling(const ResolvedSamplingParameters& sampling) 
                 "logit_bias needs non-negative token ids and values in [-100,100]");
         }
     }
+    if (sampling.logprobs < -1 ||
+        sampling.logprobs > static_cast<std::int32_t>(kMaximumLogprobAlternatives)) {
+        throw std::invalid_argument("top_logprobs must be in [0," +
+                                    std::to_string(kMaximumLogprobAlternatives) + "]");
+    }
     if (sampling.top_k < 1 || sampling.top_k > kMaximumTopK) {
         throw std::invalid_argument("resolved top_k must be in [1," + std::to_string(kMaximumTopK) +
                                     "]");

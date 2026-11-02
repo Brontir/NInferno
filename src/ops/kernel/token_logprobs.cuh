@@ -1,7 +1,7 @@
 #pragma once
 
 // Implements: ops::token_logprobs (include/ninferno/ops/sampling.h)
-// Match: contiguous BF16 logits [physical_rows,B], token domain <= 2^18.
+// Match: contiguous BF16 logits [physical_rows,B], token domain <= 2^20.
 // Algorithm assumptions: one block per row. Pass 1 takes the log-sum-exp online and the histogram
 // of the top key digit; two more passes narrow the digit histogram under the chosen prefix; the
 // key (ordered BF16 bits, inverted id) is unique, so the threshold key leaves exactly `top` keys at
@@ -18,14 +18,12 @@
 namespace ninferno::ops {
 
 inline constexpr int kLogprobBlock   = 1024;
-inline constexpr int kLogprobIdBits  = 18;
+inline constexpr int kLogprobIdBits  = 20;
 inline constexpr int kLogprobBins    = 4096; // the widest digit, 12 bits
 inline constexpr int kLogprobDigits  = 3;
-// Digits of the 34-bit key, most significant first: bits [22,34), [10,22), [0,10).
-__host__ __device__ constexpr int logprob_shift(int digit) {
-    return digit == 0 ? 22 : (digit == 1 ? 10 : 0);
-}
-__host__ __device__ constexpr int logprob_width(int digit) { return digit == 2 ? 10 : 12; }
+// Digits of the 36-bit key, most significant first: bits [24,36), [12,24), [0,12).
+__host__ __device__ constexpr int logprob_shift(int digit) { return (2 - digit) * 12; }
+__host__ __device__ constexpr int logprob_width(int /*digit*/) { return 12; }
 
 static_assert(kMaximumLogprobTokenDomain == (1 << kLogprobIdBits));
 static_assert(kLogprobBins % kLogprobBlock == 0);

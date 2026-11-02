@@ -49,6 +49,9 @@ struct OrdinaryDecodeIngress {
 struct OrdinaryDecodeEgress {
     std::array<TokenId, kMaximumConcurrency> sampled_tokens{};
     std::array<TokenId, kMaximumConcurrency*(kMaximumOrdinaryDecodeSteps - 1)> step_tokens{};
+    // The last step's log probabilities of the rows that asked (SamplingConfig::logprobs >= 0); a
+    // round with such a row runs one step.
+    std::array<ops::TokenLogprobs, kMaximumConcurrency> logprobs{};
 };
 
 // The ingress prefix each later step of a multi-step round takes from the device: its tokens and
@@ -203,6 +206,7 @@ struct RoundStateLayout {
     std::optional<DFlashPrefillStateLayout> dflash_prefill;
     std::optional<MtpDecodeStateLayout> mtp_decode;
     std::optional<DFlashDecodeStateLayout> dflash_decode;
+    std::optional<LayoutRegion> token_logprobs;
     bool complete = false;
 };
 
@@ -218,6 +222,7 @@ struct OrdinaryDecodeState {
     const ops::SamplingConfig* sampling = nullptr;
     Tensor sampled_tokens;
     Tensor step_tokens; // I32 [kMaximumConcurrency * (kMaximumOrdinaryDecodeSteps - 1)]
+    ops::TokenLogprobs* logprobs = nullptr; // the egress's
     Tensor logits;
     Tensor hidden;
 
@@ -364,6 +369,8 @@ struct RoundState {
     std::optional<DFlashPrefillState> dflash_prefill;
     std::optional<MtpDecodeState> mtp_decode;
     std::optional<DFlashDecodeState> dflash_decode;
+    // The step token's log probabilities (one row), when its sampler config asked.
+    ops::TokenLogprobs* token_logprobs = nullptr;
 
     RoundState() = default;
     RoundState(DeviceSpan backing, const RoundStateLayout& layout);

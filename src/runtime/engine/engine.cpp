@@ -591,6 +591,10 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
                                         std::to_string(vocab_size) + ")");
         }
     }
+    // Log probabilities come from the plain sampler: one sampled token a step.
+    if (options.execution.sampling.logprobs) {
+        options.execution.speculation = RequestSpeculation{};
+    }
     runtime::ResolvedRequestOptions resolved_options = resolve_request_options(
         impl_->sampling_defaults, prompt.impl_->sampling_mode, std::move(options));
     const ResolvedSamplingParameters resolved_sampling = resolved_options.execution.sampling;

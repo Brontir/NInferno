@@ -742,9 +742,13 @@ public:
     std::vector<LaunchWindow> launch_windows;
     std::size_t launch_window_index = 0;
 
+    // round_host: the step token, then (8-aligned) its log probabilities.
+    static constexpr std::size_t kRoundHostLogprobsOffset = 8;
     std::optional<PinnedHostBuffer> round_host;
     std::optional<PinnedHostBuffer> score_logprobs_host;
     TokenId* host_tokens = nullptr;
+    // The prefill token's log probabilities (pinned, in round_host after the token).
+    ops::TokenLogprobs* host_token_logprobs = nullptr;
     std::optional<PinnedHostBuffer> ordinary_host;
     qwen3_5::OrdinaryDecodeIngress* ordinary_host_ingress = nullptr;
     qwen3_5::OrdinaryDecodeEgress* ordinary_host_egress   = nullptr;
@@ -759,6 +763,7 @@ public:
     // speculative launch's width.
     std::array<TokenId, kMaximumConcurrency * qwen3_5::kDFlashDecodeMaximumWidth> step_tokens{};
     std::array<std::int32_t, kMaximumConcurrency> step_counts{};
+    std::array<ops::TokenLogprobs, kMaximumConcurrency> round_logprobs{};
     // Rows whose final hidden held a NaN or an infinity, in the step's row order (publish_step).
     NumericStatus numeric_status;
     std::array<std::uint8_t, kMaximumConcurrency> step_faults{};

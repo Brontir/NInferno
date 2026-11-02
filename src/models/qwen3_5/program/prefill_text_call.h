@@ -100,6 +100,8 @@ void finish_prefill_text(PrefillContext& state, const PrefillTextCall& call,
     if (state.sampling != nullptr) {
         ops::sample(logits, core.io.token, public_tokens, state.sampling, core.io.pos,
                     ops::kSamplePurposePrefill, core.work, s);
+        ops::token_logprobs(logits, core.io.token, public_tokens, state.sampling,
+                            core.io.token_logprobs, s);
     } else {
         ops::argmax(logits, core.io.token, public_tokens, s);
     }

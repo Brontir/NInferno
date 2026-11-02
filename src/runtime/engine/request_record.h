@@ -111,7 +111,8 @@ struct RequestRecord {
     using OutputSession  = typename ModelContract::OutputSession;
     using BasePlan       = typename ModelContract::RequestBasePlan;
     using SequenceHandle = typename ModelContract::SequenceHandle;
-    using StreamEvent    = std::variant<GenerationTimingObservation, OutputDelta>;
+    using StreamEvent =
+        std::variant<GenerationTimingObservation, OutputDelta, std::vector<GeneratedLogprob>>;
 
     RequestRecord(std::uint64_t request_identity, std::uint64_t publication_sequence,
                   PreparedPrompt input, OutputSession output_session, PromptSummary summary,
@@ -169,6 +170,10 @@ struct RequestRecord {
     std::optional<BeginSummary> admitted_begin;
     std::optional<BeginSummary> begin;
     std::vector<TokenId> generated;
+    // Aligned with `generated` when the request asked (options.execution.sampling.logprobs >= 0);
+    // a stream has published the first published_logprobs.
+    std::vector<GeneratedLogprob> logprobs;
+    std::size_t published_logprobs = 0;
     std::string content;
     std::string reasoning;
     std::optional<LaneId> lane;

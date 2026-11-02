@@ -97,7 +97,7 @@ void token_logprobs(const Tensor& logits, const Tensor& sampled, std::int32_t to
     if (token_domain <= 0 || token_domain > logits.ne[0] ||
         token_domain > kMaximumLogprobTokenDomain) {
         throw std::invalid_argument(
-            "token_logprobs: token_domain must be in [1, min(logits.ne[0], 2^18)]");
+            "token_logprobs: token_domain must be in [1, min(logits.ne[0], 2^20)]");
     }
     if (configs == nullptr || out == nullptr) {
         throw std::invalid_argument("token_logprobs: configs and out are required");

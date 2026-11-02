@@ -120,6 +120,11 @@ auto ordinary_batch_body(OrdinaryBatchContext& state, std::int32_t batch_size,
                                   .public_token_count),
                     ordinary.sampling, cache_positions, ops::kSamplePurposeDecode,
                     state.execution.work, state.execution.device.stream);
+        ops::token_logprobs(logits, sampled,
+                            dimension(qwen3_5::detail::qwen_parameters(state.execution)
+                                          .model.resources()
+                                          .public_token_count),
+                            ordinary.sampling, ordinary.logprobs, state.execution.device.stream);
         ops::copy_to_pinned_host(&state.host_egress, ordinary.egress.data,
                                  sizeof(qwen3_5::OrdinaryDecodeEgress),
                                  state.execution.device.stream);
@@ -780,11 +785,23 @@ runtime::BatchedGeneratedRound ProgramImpl::publish_step(std::size_t rows,
     }
     const auto row_faults = faulted ? std::span<const std::uint8_t>(step_faults.data(), rows)
                                     : std::span<const std::uint8_t>{};
+    // A row that asked for log probabilities ran plain, one step (launch_ordinary).
+    bool any_logprobs = false;
+    for (std::size_t row = 0; row < rows; ++row) { round_logprobs[row].count = -1; }
+    for (std::size_t i = 0; i < plain.size; ++i) {
+        if (requests[plain.lanes[i]].sampling_host.logprobs < 0) { continue; }
+        round_logprobs[plain.rows[i]] = ordinary_host_egress->logprobs[i];
+        any_logprobs                  = true;
+    }
+    const auto logprobs = any_logprobs
+                              ? std::span<const ops::TokenLogprobs>(round_logprobs.data(), rows)
+                              : std::span<const ops::TokenLogprobs>{};
     if (speculative.size == 0 && ordinary_steps == 1) {
         return runtime::BatchedGeneratedRound{
             .tokens = std::span<const TokenId>(ordinary_host_egress->sampled_tokens.data(), rows),
             .row_faults = row_faults,
             .timing     = timing,
+            .logprobs   = logprobs,
         };
     }
     if (speculative.size == 0) {
@@ -798,6 +815,7 @@ runtime::BatchedGeneratedRound ProgramImpl::publish_step(std::size_t rows,
             .row_faults = row_faults,
             .row_stride = ordinary_steps,
             .timing     = timing,
+            .logprobs   = logprobs,
         };
     }
     const bool mtp               = speculative_backend == SpeculativeBackend::Mtp;
@@ -814,6 +832,7 @@ runtime::BatchedGeneratedRound ProgramImpl::publish_step(std::size_t rows,
             .row_faults = row_faults,
             .row_stride = width,
             .timing     = timing,
+            .logprobs   = logprobs,
         };
     }
     for (std::size_t i = 0; i < speculative.size; ++i) {
@@ -832,6 +851,7 @@ runtime::BatchedGeneratedRound ProgramImpl::publish_step(std::size_t rows,
         .row_faults = row_faults,
         .row_stride = width,
         .timing     = timing,
+        .logprobs   = logprobs,
     };
 }
 
@@ -860,6 +880,8 @@ std::uint32_t ProgramImpl::launch_ordinary(const LaunchRows& part, runtime::Mask
                                      capacity - sequence.execution_frontier});
         // A forking row copies its source's rings before its first step only.
         if (sequence.state.fork_pending) { steps = 1; }
+        // The egress keeps one step's log probabilities.
+        if (request.sampling_host.logprobs >= 0) { steps = 1; }
     }
 
     const auto batch                  = static_cast<std::uint32_t>(part.size);

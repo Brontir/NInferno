@@ -585,7 +585,14 @@ struct SamplingOverrides {
     std::optional<std::uint64_t> seed;
     // Each token at most once (a later entry for the same token replaces it).
     std::vector<LogitBias> logit_bias;
+    // Report each generated token's log probability and this many most likely alternatives, in
+    // [0, kMaximumLogprobAlternatives] (GenerationResult::logprobs, OutputSink::logprobs). A request
+    // that asks runs plain decode: one sampled token a step, no speculation.
+    std::optional<std::uint32_t> logprobs;
 };
+
+// OpenAI's top_logprobs bound.
+inline constexpr std::uint32_t kMaximumLogprobAlternatives = 20;
 
 // The sampler keeps at most this many candidates; a request's top_k is in [0, kMaximumTopK] (0:
 // no limit of its own, so kMaximumTopK) and a resolved one in [1, kMaximumTopK].
@@ -622,6 +629,7 @@ struct ResolvedSamplingParameters {
     float repetition_penalty = 1.0F;
     std::uint64_t seed       = 0;
     std::vector<LogitBias> logit_bias;
+    std::int32_t logprobs = -1; // -1: none; else the alternatives, [0, kMaximumLogprobAlternatives]
 };
 
 enum class OutputChannel : std::uint8_t {
@@ -1192,6 +1200,21 @@ struct OutputDelta {
     std::string text;
 };
 
+// A generated token's log probability (natural log) from the model's raw logits: a log_softmax
+// over the vocabulary before logit_bias, the penalties, temperature, the filters and a constraint
+// mask (vLLM's raw logprobs). `top` holds the most likely tokens, logit descending, lower id first
+// among equals. A token the engine injected rather than sampled (the thinking budget's close) has
+// logprob 0 and no alternatives.
+struct TokenLogprob {
+    TokenId token  = 0;
+    float logprob  = 0.0F;
+};
+struct GeneratedLogprob {
+    TokenId token = 0;
+    float logprob = 0.0F;
+    std::vector<TokenLogprob> top;
+};
+
 // Exact prompt accounting selected at admission. Streaming consumers receive this once before any
 // OutputDelta, after the prefix choice and materialization reservation are committed and before
 // transfer/prefill execution.
@@ -1226,6 +1249,10 @@ public:
     virtual void progress(PromptProgress progress)          = 0;
     virtual void timing(GenerationTimingObservation timing) = 0;
     virtual void publish(OutputDelta delta)                 = 0;
+    // The log probabilities of the tokens generated since the last call, in order, for a request
+    // that asked for them (SamplingOverrides::logprobs). They come before the text those tokens
+    // produce, which a stop string or a tool call may hold back or drop.
+    virtual void logprobs(std::vector<GeneratedLogprob> /*entries*/) {}
 };
 
 enum class OutputConsumerMode : std::uint8_t {
@@ -1475,6 +1502,8 @@ struct MaterializationDiagnostics {
 struct GenerationResult {
     PromptSummary prompt;
     std::vector<TokenId> generated_token_ids;
+    // One entry per generated_token_ids entry when the request asked (SamplingOverrides::logprobs).
+    std::vector<GeneratedLogprob> logprobs;
     std::string content;
     std::string reasoning;
     std::vector<GeneratedToolCall> tool_calls;

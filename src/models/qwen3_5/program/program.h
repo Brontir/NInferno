@@ -689,10 +689,11 @@ public:
           transaction_(std::exchange(other.transaction_, 0)), rows_(other.rows_),
           row_count_(std::exchange(other.row_count_, 0)), tokens_(other.tokens_),
           row_counts_(other.row_counts_), row_faults_(other.row_faults_),
-          row_stride_(other.row_stride_), timing_(other.timing_) {
+          logprobs_(other.logprobs_), row_stride_(other.row_stride_), timing_(other.timing_) {
         other.tokens_     = {};
         other.row_counts_ = {};
         other.row_faults_ = {};
+        other.logprobs_   = {};
         other.row_stride_ = 0;
         other.timing_     = {};
     }
@@ -712,6 +713,11 @@ public:
 
     [[nodiscard]] std::uint32_t row_stride() const noexcept { return row_stride_; }
 
+    // Per row, as runtime::GeneratedRound::logprobs (empty: no row asked).
+    [[nodiscard]] std::span<const ops::TokenLogprobs> logprobs() const noexcept {
+        return logprobs_;
+    }
+
     [[nodiscard]] runtime::ExecutionTiming execution_timing() const noexcept { return timing_; }
 
 private:
@@ -722,6 +728,7 @@ private:
     std::span<const TokenId> tokens_;
     std::span<const std::int32_t> row_counts_;
     std::span<const std::uint8_t> row_faults_;
+    std::span<const ops::TokenLogprobs> logprobs_;
     std::uint32_t row_stride_ = 0;
     runtime::ExecutionTiming timing_;
 
@@ -1134,7 +1141,8 @@ struct RuntimeContractAccess {
     make_pending(const void* owner, std::uint64_t transaction, std::span<const SequenceHandle> rows,
                  std::span<const TokenId> tokens, std::span<const std::int32_t> row_counts,
                  std::uint32_t row_stride, runtime::ExecutionTiming timing,
-                 std::span<const std::uint8_t> row_faults = {}) {
+                 std::span<const std::uint8_t> row_faults           = {},
+                 std::span<const ops::TokenLogprobs> logprobs = {}) {
         PendingBatch out;
         out.owner_       = owner;
         out.transaction_ = transaction;
@@ -1143,6 +1151,7 @@ struct RuntimeContractAccess {
         out.tokens_     = tokens;
         out.row_counts_ = row_counts;
         out.row_faults_ = row_faults;
+        out.logprobs_   = logprobs;
         out.row_stride_ = row_stride;
         out.timing_     = timing;
         return out;
