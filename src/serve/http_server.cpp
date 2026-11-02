@@ -594,6 +594,9 @@ void HttpServer::register_routes() {
                     make_internal_request_failure(RequestFailurePhase::Http, e.what()),
                     response_request_id(res));
                 write_error_for(req, res, internal_error(e));
+                // A failure inside the library (an allocation while the body was being read) may
+                // leave the body half read: a request that could carry one closes the connection.
+                res.keep_alive_after_error = !may_carry_body(req);
             } catch (...) {
                 operational_log_.http_failure(
                     endpoint_name(req.path),
@@ -601,6 +604,7 @@ void HttpServer::register_routes() {
                     response_request_id(res));
                 ApiError error = internal_error("unknown error");
                 write_error_for(req, res, error);
+                res.keep_alive_after_error = !may_carry_body(req);
             }
         });
 
