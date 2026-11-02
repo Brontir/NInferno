@@ -208,10 +208,10 @@ void set_retry_after(httplib::Response& response, int status) {
 } // namespace
 
 // A handler's refusal comes after the request was read whole: the caller's next request may reuse
-// the connection. Every refusal before routing sets it again after writing (a request that may
-// carry an unread body closes, #305; draining closes).
+// the connection, unless the server is draining (it closes every socket). Every refusal before
+// routing sets it again after writing (a request that may carry an unread body closes, #305).
 void write_openai_error(httplib::Response& response, const ApiError& error) {
-    response.keep_alive_after_error = true;
+    response.keep_alive_after_error = error.code != "server_draining";
     response.status                 = error.status;
     set_retry_after(response, error.status);
     response.set_content(make_error_body(error), "application/json");
@@ -220,7 +220,7 @@ void write_openai_error(httplib::Response& response, const ApiError& error) {
 void write_anthropic_error(httplib::Response& response, const ApiError& api_error,
                            const std::string& request_id) {
     const ApiError error            = normalize_anthropic_error(api_error);
-    response.keep_alive_after_error = true;
+    response.keep_alive_after_error = api_error.code != "server_draining";
     response.status                 = error.status;
     set_retry_after(response, error.status);
     response.headers.erase("request-id");
