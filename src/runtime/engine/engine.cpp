@@ -582,6 +582,15 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
         // the request (HTTP 500 structured_output_violation).
         options.stop.include_model_defaults = true;
     }
+    // Checked here, not at planning on the engine thread, so a bad id is the caller's error.
+    const std::uint64_t vocab_size = impl_->load.metadata.vocab_size;
+    for (const LogitBias& entry : options.execution.sampling.logit_bias) {
+        if (static_cast<std::uint64_t>(entry.token) >= vocab_size) {
+            throw std::invalid_argument("logit_bias names token " + std::to_string(entry.token) +
+                                        ", past the model's vocabulary (" +
+                                        std::to_string(vocab_size) + ")");
+        }
+    }
     runtime::ResolvedRequestOptions resolved_options = resolve_request_options(
         impl_->sampling_defaults, prompt.impl_->sampling_mode, std::move(options));
     const ResolvedSamplingParameters resolved_sampling = resolved_options.execution.sampling;

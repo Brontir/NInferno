@@ -179,7 +179,8 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
                 {"presence_penalty", nullptr},
                 {"frequency_penalty", nullptr},
                 {"repetition_penalty", nullptr},
-                {"seed", nullptr}};
+                {"seed", nullptr},
+                {"logit_bias", nullptr}};
     if (overrides.temperature) { result["temperature"] = *overrides.temperature; }
     if (overrides.top_p) { result["top_p"] = *overrides.top_p; }
     if (overrides.top_k) { result["top_k"] = *overrides.top_k; }
@@ -190,6 +191,13 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
         result["repetition_penalty"] = *overrides.repetition_penalty;
     }
     if (overrides.seed) { result["seed"] = *overrides.seed; }
+    if (!overrides.logit_bias.empty()) {
+        Json biases = Json::object();
+        for (const ninferno::LogitBias& entry : overrides.logit_bias) {
+            biases[std::to_string(entry.token)] = entry.bias;
+        }
+        result["logit_bias"] = std::move(biases);
+    }
     return result;
 }
 
