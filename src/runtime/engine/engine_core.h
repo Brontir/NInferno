@@ -2631,6 +2631,10 @@ private:
                                  "ninferno: %d request failures with no token committed between "
                                  "them; the server restarts\n",
                                  static_cast<int>(kContainedFailureStreak));
+                    // Every request in flight and queued is answered as the restart it is (503
+                    // with Retry-After), not with the last request's own defect.
+                    failure.error = unavailable("request failures in a row (" + failure.detail +
+                                                "); the server is restarting");
                 }
                 if (failure.transient) {
                     const bool repeated = last_transient_error &&
