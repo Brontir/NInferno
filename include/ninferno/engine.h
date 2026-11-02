@@ -53,6 +53,11 @@ public:
     // Blocks until the request ends and returns its result (see Engine::submit for the sink).
     // A cancellation that fires ends the request early with its output so far.
     GenerationResult wait(OutputSink* sink = nullptr, const CancellationView& cancellation = {});
+    // Blocks until the request leaves the admission queue for execution (true) or ends before
+    // that (false: wait() then returns or throws what ended it, such as a queue timeout). A
+    // cancellation that fires while it waits cancels the request. The handle stays waitable, so
+    // a server can send a stream's status and headers only once the request runs.
+    bool wait_admitted(const CancellationView& cancellation = {});
 
 private:
     class Impl;

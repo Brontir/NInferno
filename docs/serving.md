@@ -310,8 +310,10 @@ Notes that often matter:
   answers HTTP 429 `server_overloaded`. A request that waits longer than `--pending-timeout-ms`
   gets HTTP 503 `request_queue_timeout` (on `/v1/messages`: 529 and 504, as Anthropic does). Both
   carry `Retry-After`. A streamed request has its HTTP 200 and event-stream headers sent when it
-  is admitted to the queue, so its queue timeout arrives as the dialect's error event
-  (the same code and message) and the stream ends.
+  leaves the queue to run, so a queue timeout (or a drain) before that is answered with its real
+  status and `Retry-After`, as an unstreamed request's is (a proxy can still fail over). A
+  failure after that arrives as the dialect's error event (the same code and message) and the
+  stream ends.
 - **Speculation without a profile.** `--spec auto` speculates with the profile measured for the
   model and GPU (the lab's measured pair for these weights, that of the repository's nearest
   measured quantization, its group's, or a published profile).

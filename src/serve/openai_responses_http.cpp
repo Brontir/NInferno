@@ -380,6 +380,12 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
         return;
     }
 
+    if (!stream_admitted(prepared, req, res, *lifecycle,
+                         [](httplib::Response& response, const ApiError& error) {
+                             write_openai_error(response, responses_error(error));
+                         })) {
+        return;
+    }
     try {
         auto stream                      = std::make_shared<StreamingResponse>();
         stream->prepared                 = std::move(prepared);

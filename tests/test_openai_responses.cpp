@@ -425,10 +425,33 @@ int test_instructions_shared_head() {
             to_prompt_input(resolved.generation, ResolvedPromptSemantics{}, {});
         const bool head_marked = !resolved.generation.messages.empty() &&
                                  resolved.generation.messages.front().cache_boundary_after;
+        // The automatic boundary at the end of the input is there either way (#313).
         failures += check(head_marked == enabled &&
-                              translated.context_cache.markers.size() == (enabled ? 1U : 0U),
+                              translated.context_cache.markers.size() == (enabled ? 2U : 1U),
                           enabled ? "instructions end in a shared-head candidate"
                                   : "the switch off leaves the instructions unmarked");
+    }
+    return failures;
+}
+
+// The automatic boundary lands on the resolved conversation's last input, as on Chat: an
+// identical repeat finds the prompt the first request wrote (#313).
+int test_automatic_boundary_on_input() {
+    int failures = 0;
+    OpenAIResponsesStore store(8, 1ULL << 20);
+    for (const Json& input :
+         {Json("say ok"), Json::array({Json{{"role", "user"}, {"content", "say ok"}}})}) {
+        const Json body     = {{"model", "m"}, {"input", input}, {"store", false}};
+        const auto request  = parse_openai_responses_create_request(body, limits());
+        const auto resolved = resolve_openai_responses_prompt(request.prompt, store, "resp_auto",
+                                                              false);
+        const ninferno::PromptInput translated =
+            to_prompt_input(resolved.generation, ResolvedPromptSemantics{}, {});
+        failures += check(!resolved.generation.messages.empty() &&
+                              !resolved.generation.messages.back().content.empty() &&
+                              resolved.generation.messages.back().content.back().cache_boundary_after &&
+                              translated.context_cache.markers.size() == 1U,
+                          "the input's end carries the automatic shared boundary");
     }
     return failures;
 }
@@ -1551,6 +1574,7 @@ int main() {
     failures += test_reasoning_items_without_text();
     failures += test_typed_items_and_cache_markers();
     failures += test_instructions_shared_head();
+    failures += test_automatic_boundary_on_input();
     failures += test_contiguous_assistant_items();
     failures += test_response_output_history_round_trip();
     failures += test_assistant_item_boundaries_and_errors();

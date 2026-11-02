@@ -525,6 +525,18 @@ prefix, with the same behavior, errors, and request IDs.
   `Retry-After`, the Engine resets its sequence state and the context cache, and the queued
   requests go on. A second such error within five minutes is treated as Engine-wide, so a condition
   the reset did not cure ends in a restart.
+- **Request failure.** Any other error raised while serving requests on a healthy device (a defect
+  met by one request's output decoding, media prefill or admission) does not stop the server. A
+  request being admitted when it happened is answered with the error (HTTP 500); the requests
+  already running are answered HTTP 503 with `Retry-After`; the Engine resets its sequence state
+  and the context cache as above, and the queued requests go on. Three such failures with no
+  token generated between them are Engine-wide: the server restarts.
+
+- **Connections.** HTTP/1.1 keep-alive holds for refusals too: an error the server rendered after
+  reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
+  for the caller's next request. A refusal that leaves a body unread (413, 415, a key refused
+  before the body was read), every answer while the server drains and `/health`'s 503 of a failed
+  server close it.
 
 ### Request IDs
 
@@ -1542,7 +1554,9 @@ and Anthropic SSE.
   next prompt equals the visible-Thinking one. The signature is not encrypted: it hides the
   reasoning from display, not from the client.
 - `preserve_thinking` remains a NInferno extension for closed-turn reasoning history.
-  `output_config.effort` passes its protocol-validated value to the selected template.
+  `output_config.effort` passes its protocol-validated value to the selected template. With
+  `thinking: {"type": "disabled"}` there is no reasoning for it to scale: the request is served
+  without it, and `notes` says so.
 
 ### Tools
 
@@ -1909,7 +1923,8 @@ Details:
   `ended_inside_reasoning` `true`: its reply has reasoning and no content.
 - When the output limit cuts the last call off, the complete calls before it are published, and
   `cut_calls_dropped` counts the unfinished call whose markup was dropped (the finish reason stays
-  `length`).
+  `length`). A turn whose only call was cut off has empty content: the unfinished markup never
+  reaches the client as text.
 - `undeclared_calls` counts the published calls whose name the request did not declare.
 - Fallback reasons are `none`, `malformed_structure`, `duplicate_parameter`, `invalid_tool_name`,
   `undeclared_tool` (Llama 3's JSON form only), and `trailing_content`.
@@ -2492,7 +2507,7 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 500 | `numerical_failure` | non-finite hidden state for one request |
 | 502 / 504 | `media_fetch_failed` / `media_fetch_timeout` | remote media unreachable or 5xx / timed out |
 | 503 | `request_queue_timeout` | admission deadline passed (`Retry-After` 5 s) |
-| 503 | `service_unavailable` | CUDA failure; drain; `Retry-After` set |
+| 503 | `service_unavailable` | the Engine reset its running requests (a CUDA failure, or another request's contained failure: retry, the server goes on) or the server is restarting; `Retry-After` set |
 | 529 / 504 | (Anthropic) | local admission overload / queue and media timeouts |
-| 200 + error event | (any code above) | a streamed request that fails after its headers were sent (a queue timeout, an Engine failure): the event carries the code and message, the stream ends |
+| 200 + error event | (any code above) | a streamed request that fails after it left the queue and its headers were sent (an Engine failure): the event carries the code and message, the stream ends; a queue timeout comes before the headers and keeps its status |
 | any | `compaction_not_supported` | `POST /v1/responses/compact` |

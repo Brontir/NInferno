@@ -177,6 +177,10 @@ private:
             return submission_.wait(sink, cancellation);
         }
 
+        bool wait_admitted(const CancellationView& cancellation) override {
+            return submission_.wait_admitted(cancellation);
+        }
+
     private:
         typename GenerationCore::Submission submission_;
     };

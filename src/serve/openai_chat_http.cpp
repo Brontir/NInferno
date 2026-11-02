@@ -121,6 +121,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
         return;
     }
 
+    if (!stream_admitted(prepared, req, res, *lifecycle, write_openai_error)) { return; }
     try {
         const bool return_progress   = request.return_progress;
         const bool timings_per_token = request.timings_per_token;

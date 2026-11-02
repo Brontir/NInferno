@@ -119,6 +119,8 @@ struct GenerationOutcome {
     std::string reasoning;
     std::vector<ninferno::GeneratedToolCall> tool_calls;
     ninferno::ToolCallParseDiagnostics tool_call_parse;
+    // Calls written under tool_choice none and cut out of the answer (the request log counts them).
+    std::uint32_t tool_calls_discarded = 0;
     int prompt_tokens     = 0;
     int completion_tokens = 0;
     int reasoning_tokens  = 0;
@@ -174,6 +176,8 @@ struct PreparedRequest {
     double speculation_floor = 0.0;
     std::string speculation_fallback = "none"; // the server's (StartupSpeculation::fallback)
     std::uint32_t plan_level         = 0;      // the plan ladder's rung (PlanSummary::rung)
+    // tool_choice none with tools declared: calls the model writes anyway are not returned.
+    bool discard_tool_calls = false;
 };
 
 // Why --spec auto decodes plainly: `refused` (the choice's label) did not fit, the last refusal
@@ -278,6 +282,11 @@ public:
     // Consumes prepared.generation. A PreparedRequest is single-use.
     GenerationOutcome run(PreparedRequest& prepared, const StreamSink* sink,
                           std::function<bool()> is_cancelled = {});
+    // Waits until the request leaves the admission queue (true), or ends before it (false: run()
+    // then throws what ended it, a queue timeout with its status, or returns it cancelled). A
+    // streamed response sends its status and headers after this, so a request that never ran
+    // is answered with a real status (#292).
+    bool await_admission(PreparedRequest& prepared, std::function<bool()> is_cancelled = {});
 
     void warmup();
 

@@ -112,6 +112,14 @@ private:
     // A generation's lifecycle, its log lines naming the response's request id.
     [[nodiscard]] std::shared_ptr<RequestLifecycle>
     begin_request(RequestLogContext context, const httplib::Response& response);
+    // A streamed request's status and event-stream headers go out once it leaves the admission
+    // queue: true then. A request that ended before (a queue timeout, a drain, a client that went
+    // away) is answered here with its real status, as an unstreamed one is, and false returns
+    // (#292). `write_error` writes an ApiError in the endpoint's shape.
+    [[nodiscard]] bool stream_admitted(PreparedRequest& prepared, const httplib::Request& request,
+                                       httplib::Response& response, RequestLifecycle& lifecycle,
+                                       const std::function<void(httplib::Response&,
+                                                                const ApiError&)>& write_error);
     // A client error (status below 500, or any ApiError the HTTP layer raises): logged under the
     // response's request id, then written in the endpoint's shape.
     void refuse(const httplib::Request& request, httplib::Response& response,

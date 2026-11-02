@@ -207,16 +207,21 @@ void set_retry_after(httplib::Response& response, int status) {
 
 } // namespace
 
+// A handler's refusal comes after the request was read whole: the caller's next request may reuse
+// the connection, unless the server is draining (it closes every socket). Every refusal before
+// routing sets it again after writing (a request that may carry an unread body closes, #305).
 void write_openai_error(httplib::Response& response, const ApiError& error) {
-    response.status = error.status;
+    response.keep_alive_after_error = error.code != "server_draining";
+    response.status                 = error.status;
     set_retry_after(response, error.status);
     response.set_content(make_error_body(error), "application/json");
 }
 
 void write_anthropic_error(httplib::Response& response, const ApiError& api_error,
                            const std::string& request_id) {
-    const ApiError error = normalize_anthropic_error(api_error);
-    response.status      = error.status;
+    const ApiError error            = normalize_anthropic_error(api_error);
+    response.keep_alive_after_error = api_error.code != "server_draining";
+    response.status                 = error.status;
     set_retry_after(response, error.status);
     response.headers.erase("request-id");
     response.set_header("request-id", request_id);
@@ -224,6 +229,16 @@ void write_anthropic_error(httplib::Response& response, const ApiError& api_erro
 }
 
 namespace {
+
+// Whether the request may have a body the server has not read: a refusal before routing (or the
+// library's own, such as 413) leaves it unread, and its bytes would be read as the next request,
+// so the connection closes after such a refusal. A request without a body keeps it (#305).
+bool may_carry_body(const httplib::Request& req) {
+    if (req.has_header("Transfer-Encoding")) { return true; }
+    const std::string length = req.get_header_value("Content-Length");
+    // A malformed length counts as a body (the library refuses it and nothing is read).
+    return !length.empty() && (length.find_first_not_of('0') != std::string::npos);
+}
 
 // An error in the shape the request's endpoint speaks, under the id the response already carries:
 // a handler that set its request-id (and logged under it) keeps it, as the exception handler's
@@ -281,6 +296,7 @@ httplib::Server::HandlerResponse handle_unrendered_http_error(const ServeOptions
     // the response is stale, and write_error_for names a fresh one.
     response.headers.erase("request-id");
     write_error_for(request, response, error);
+    response.keep_alive_after_error = !may_carry_body(request);
     return httplib::Server::HandlerResponse::Handled;
 }
 
@@ -400,6 +416,38 @@ void HttpServer::RequestLifecycle::response_not_stored(std::size_t store_capacit
     owner_->operational_log_.response_not_stored(context_.id, store_capacity_bytes);
 }
 
+bool HttpServer::stream_admitted(
+    PreparedRequest& prepared, const httplib::Request& request, httplib::Response& response,
+    RequestLifecycle& lifecycle,
+    const std::function<void(httplib::Response&, const ApiError&)>& write_error) {
+    const auto disconnected = [&request] { return client_disconnected(request); };
+    try {
+        if (service_->await_admission(prepared, disconnected)) { return true; }
+        // It ended before it ran: its wait reports why (a queue timeout throws). One that returns
+        // was cancelled: by a client that went away (no one to answer), or by the server giving
+        // in-flight work up (a drain), answered as an unstreamed request is.
+        StreamSink discarded;
+        (void)service_->run(prepared, &discarded, disconnected);
+        if (client_disconnected(request)) {
+            lifecycle.failure(make_client_disconnected_failure(RequestFailurePhase::Transport));
+        } else {
+            const ApiError error = service_->aborting()
+                                       ? server_draining_error()
+                                       : internal_error("the request ended before it ran");
+            lifecycle.failure(make_request_failure(RequestFailurePhase::Generation, error));
+            write_error(response, error);
+        }
+    } catch (const ApiException& exception) {
+        lifecycle.failure(make_generation_request_failure(exception.error()));
+        write_error(response, exception.error());
+    } catch (const std::exception& exception) {
+        lifecycle.failure(
+            make_internal_request_failure(RequestFailurePhase::Generation, exception.what()));
+        write_error(response, internal_error(exception.what()));
+    }
+    return false;
+}
+
 std::shared_ptr<HttpServer::RequestLifecycle>
 HttpServer::begin_request(RequestLogContext context, const httplib::Response& response) {
     context.http_request_id = response_request_id(response);
@@ -507,7 +555,11 @@ void answer_cors_preflight(const httplib::Request& request, httplib::Response& r
 
 void HttpServer::register_routes() {
     server_.set_error_handler([this](const httplib::Request& request, httplib::Response& response) {
-        return handle_unrendered_http_error(options_, request, response);
+        const auto handled = handle_unrendered_http_error(options_, request, response);
+        // Every error status passes here before the library decides the connection: while the
+        // server drains, an error of a permitted GET (a missing stored response) closes too.
+        if (draining_.load()) { response.keep_alive_after_error = false; }
+        return handled;
     });
     if (options_.enable_cors) {
         server_.set_default_headers(
@@ -530,7 +582,10 @@ void HttpServer::register_routes() {
         if (service_ != nullptr && req.method == "POST" && is_generation_path(req.path)) {
             res.set_header("x-ninferno-sampling-defaults", sampling_defaults_header_);
         }
-        if (reject_while_draining(req, res)) { return httplib::Server::HandlerResponse::Handled; }
+        if (reject_while_draining(req, res)) {
+            res.keep_alive_after_error = false; // the server stops: no connection is kept
+            return httplib::Server::HandlerResponse::Handled;
+        }
         if (refuses_browser_origin(req, options_.enable_cors)) {
             ApiError error;
             error.status  = 403;
@@ -540,6 +595,7 @@ void HttpServer::register_routes() {
                             ascii_preview(req.get_header_value("Origin")) +
                             "' is refused; start the server with --cors to serve browser pages";
             refuse(req, res, error);
+            res.keep_alive_after_error = !may_carry_body(req);
             return httplib::Server::HandlerResponse::Handled;
         }
         if (options_.api_key.empty() || req.path == "/health" || req.method == "OPTIONS") {
@@ -559,6 +615,7 @@ void HttpServer::register_routes() {
             error.code    = "invalid_api_key";
             error.message = "missing or invalid API key";
             refuse(req, res, error); // in the shape the target endpoint speaks
+            res.keep_alive_after_error = !may_carry_body(req);
             return httplib::Server::HandlerResponse::Handled;
         }
         return httplib::Server::HandlerResponse::Unhandled;
@@ -577,6 +634,9 @@ void HttpServer::register_routes() {
                     make_internal_request_failure(RequestFailurePhase::Http, e.what()),
                     response_request_id(res));
                 write_error_for(req, res, internal_error(e));
+                // A failure inside the library (an allocation while the body was being read) may
+                // leave the body half read: a request that could carry one closes the connection.
+                res.keep_alive_after_error = !may_carry_body(req);
             } catch (...) {
                 operational_log_.http_failure(
                     endpoint_name(req.path),
@@ -584,6 +644,7 @@ void HttpServer::register_routes() {
                     response_request_id(res));
                 ApiError error = internal_error("unknown error");
                 write_error_for(req, res, error);
+                res.keep_alive_after_error = !may_carry_body(req);
             }
         });
 
@@ -606,6 +667,9 @@ void HttpServer::register_routes() {
             body["materializing_requests"]   = stats.materializing_requests;
         }
         if (res.status != 200) { res.set_header("Retry-After", kRetryAfterUnavailableSeconds); }
+        // A stalled executor recovers in this process: a load balancer's probe keeps its
+        // connection. A failed or draining server goes away.
+        res.keep_alive_after_error = std::string_view(status) == "stalled";
         res.set_content(body.dump(), "application/json");
     });
     server_.Get("/props", [this](const httplib::Request&, httplib::Response& res) {

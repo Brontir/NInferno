@@ -4,6 +4,7 @@
 // HTTP transport live in separate translation units; only wire-independent GenerationRequest is
 // passed to GenerationService.
 
+#include "serve/openai_common.h"
 #include "serve/openai_responses_store.h"
 #include "serve/request.h"
 #include "serve/request_json.h"
@@ -42,9 +43,11 @@ struct OpenAIResponsesPromptRequest {
     std::optional<std::string> instructions;
     std::optional<std::string> previous_response_id;
     std::optional<std::string> reasoning_summary;
-    // The end of the leading system/developer run (the instructions first) is an automatic
-    // shared-prefix candidate: the instructions join the conversation only when it is resolved.
-    bool system_head_candidate = false;
+    // The request's prompt-cache policy, applied when the conversation is resolved: the
+    // instructions, a parent's turns and the input join it only then, and the automatic boundary
+    // (the end of the last input) and the system-head candidate are theirs (#313). None for a
+    // request that writes no cache (input_tokens).
+    std::optional<OpenAIPromptCachePolicy> cache_policy;
 };
 
 struct OpenAIResponsesCreateRequest {

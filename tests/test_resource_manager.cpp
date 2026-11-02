@@ -3215,6 +3215,31 @@ void test_projected_nested_shared_candidates_use_marginal_value() {
     (void)finish_active(manager, program, active);
 }
 
+// OpenAI's automatic boundaries: the leading system run and the prompt's end. The head below the
+// end is the sibling sessions' value, which this request's demand cannot show: in vacant slots
+// both are captured (#316).
+void test_default_automatic_system_head_is_captured_beside_the_end() {
+    FakeManager manager = make_manager(1, 2, 2);
+    FakeProgram program;
+    FakeRequestBasePlan base = make_base(62);
+    base.cache.opportunities = {
+        FakeContextCache::Opportunity{
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::DefaultAutomatic,
+            .frontier = 32,
+        },
+        FakeContextCache::Opportunity{
+            .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+            .evidence = ninferno::SharedCandidateEvidence::DefaultAutomatic,
+            .frontier = 64,
+        },
+    };
+    const ActiveRequest active = start_active(manager, program, 62, base, 1);
+    require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{32, 64},
+            "the default-automatic system head was not captured beside the prompt's end");
+    (void)finish_active(manager, program, active);
+}
+
 void test_observed_shared_candidate_requires_independent_domains() {
     const auto observed_base = [](std::optional<FakeCacheSessionKey> session) {
         FakeRequestBasePlan base = make_base(71, session);
@@ -4039,6 +4064,8 @@ int main() {
     run_test("in-progress and capture", test_in_progress_adoption_and_private_capture);
     run_test("projected shared marginal value",
              test_projected_nested_shared_candidates_use_marginal_value);
+    run_test("default-automatic system head beside the end",
+             test_default_automatic_system_head_is_captured_beside_the_end);
     run_test("observed shared independent domains",
              test_observed_shared_candidate_requires_independent_domains);
     run_test("zero-prefill private promotion",

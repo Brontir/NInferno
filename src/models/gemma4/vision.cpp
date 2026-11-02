@@ -120,7 +120,11 @@ void VisionEncoder::encode(const VisionImage& image, Tensor& output, DeviceSpan 
     const std::int32_t tokens = soft_tokens(patches);
     if (output.dtype != DType::BF16 || !output.is_contiguous() ||
         output.ne[0] != c.output_hidden || output.ne[1] != tokens || output.ne[2] != 1) {
-        throw std::invalid_argument("gemma4 vision: output must be BF16 [text hidden, tokens]");
+        throw std::invalid_argument(
+            "gemma4 vision: output must be BF16 [text hidden, tokens]: [" +
+            std::to_string(c.output_hidden) + ", " + std::to_string(tokens) + "] wanted, [" +
+            std::to_string(output.ne[0]) + ", " + std::to_string(output.ne[1]) + ", " +
+            std::to_string(output.ne[2]) + "] given");
     }
     const Layout layout = build_layout(c, weights_, patches);
     if (workspace.data == nullptr || workspace.bytes < layout.bytes) {
