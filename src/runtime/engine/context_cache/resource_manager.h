@@ -1944,6 +1944,15 @@ private:
         if (shared_candidates.size() > 7U) {
             throw std::logic_error("prepared shared candidates exceeded the fixed subset bound");
         }
+        // The longest default-automatic candidate (OpenAI's automatic boundary at the prompt's
+        // end): one below it is the leading system/developer run, the head sibling sessions share.
+        std::uint32_t longest_default = 0;
+        for (const ProjectedSharedCandidate& candidate : shared_candidates) {
+            if (has_shared_candidate_evidence(candidate.evidence,
+                                              SharedCandidateEvidence::DefaultAutomatic)) {
+                longest_default = std::max(longest_default, candidate.frontier);
+            }
+        }
         const std::uint32_t subset_count = 1U << shared_candidates.size();
         for (std::uint32_t mask = 1; mask < subset_count; ++mask) {
             const std::uint32_t selected_count = std::popcount(mask);
@@ -1960,13 +1969,19 @@ private:
                 frontiers.push_back(candidate.frontier);
                 const PlanningOwnerId owner{.value = next_projected_owner +
                                                      static_cast<std::uint32_t>(index)};
-                // A surplus candidate (a structural or default guess, written only into a vacant
-                // slot) is worth its own saving: the request's one demand bit counts only its
-                // longest candidate, so a system head below the prompt's end added nothing and
-                // never paid its split, and sibling sessions never shared it (#316). A vacant slot
-                // has no victim to weigh against.
+                // The request's one demand bit counts only its longest candidate, so nested
+                // candidates are valued at the margin. A default-automatic system head below the
+                // automatic prompt end is the one exception: its value is the sibling sessions'
+                // (a request of another domain), which this request's bit cannot show, so in a
+                // vacant slot (no victim) it is worth its own saving; otherwise the prompt end
+                // always won and Chat never shared the head (#316).
+                const bool sibling_head =
+                    !candidate.pressure_capable &&
+                    has_shared_candidate_evidence(candidate.evidence,
+                                                  SharedCandidateEvidence::DefaultAutomatic) &&
+                    candidate.frontier < longest_default;
                 const bool credit =
-                    !candidate.pressure_capable ||
+                    sibling_head ||
                     has_shared_candidate_evidence(candidate.evidence,
                                                   SharedCandidateEvidence::ExplicitBoundary) ||
                     has_shared_candidate_evidence(candidate.evidence,
