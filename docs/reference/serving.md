@@ -2479,7 +2479,7 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 500 | `numerical_failure` | non-finite hidden state for one request |
 | 502 / 504 | `media_fetch_failed` / `media_fetch_timeout` | remote media unreachable or 5xx / timed out |
 | 503 | `request_queue_timeout` | admission deadline passed (`Retry-After` 5 s) |
-| 503 | `service_unavailable` | CUDA failure; drain; `Retry-After` set |
+| 503 | `service_unavailable` | the Engine reset its running requests (a CUDA failure, or another request's contained failure: retry, the server goes on) or the server is restarting; `Retry-After` set |
 | 529 / 504 | (Anthropic) | local admission overload / queue and media timeouts |
 | 200 + error event | (any code above) | a streamed request that fails after its headers were sent (a queue timeout, an Engine failure): the event carries the code and message, the stream ends |
 | any | `compaction_not_supported` | `POST /v1/responses/compact` |
