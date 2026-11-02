@@ -467,9 +467,16 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         try {
             device = product::plan_device_of_cuda(
                 options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
-        } catch (const std::exception& e) {
-            throw std::runtime_error(std::string("no GPU to plan for (") + e.what() +
-                                     "): name a board with --plan-device");
+        } catch (const std::exception& measured) {
+            // A busy card may have no memory left for a context (cudaSetDevice: out of memory),
+            // yet its properties still name the board: the plan is the idle card's, with no free
+            // memory now beside it (#285).
+            try {
+                device = product::plan_device_of_cuda(options.device, false);
+            } catch (const std::exception&) {
+                throw std::runtime_error(std::string("no GPU to plan for (") + measured.what() +
+                                         "): name a board with --plan-device");
+            }
         }
         gpu = spec::gpu_identity(options.device).key;
     }
