@@ -1220,7 +1220,7 @@ response contains typed `output` Items.
 | `top_logprobs` | `0..20`: alternatives per token in `output_text.logprobs`; nonzero asks for log probabilities as the include below does |
 | `service_tier` | omitted, `auto`, or `default`; the response reports `default` |
 | `background` | omitted or `false` |
-| `include` | omitted, empty, `"reasoning.encrypted_content"` (the local raw-reasoning mirror described below) and `"message.output_text.logprobs"` (each output token's log probability in the message's `output_text.logprobs` and in the `response.output_text.delta` events, as Chat Completions reports them) |
+| `include` | omitted, empty, `"reasoning.encrypted_content"` (the local raw-reasoning mirror described below) and `"message.output_text.logprobs"` (the log probability of each output token after the reasoning — the answer, and a tool call's or the stop token — in the message's `output_text.logprobs`, its done events and the `response.output_text.delta` events, as Chat Completions reports them) |
 | `stream_options.include_obfuscation` | optional boolean; accepted as a transport hint, but this local server emits no padding |
 | cache and client hints | `prompt_cache_key`, `prompt_cache_options`, `prompt_cache_retention`, and explicit breakpoints follow [OpenAI prompt caching](#7-openai-prompt-caching); `safety_identifier` and `user` are accepted as client hints |
 

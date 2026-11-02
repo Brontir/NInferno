@@ -1585,9 +1585,66 @@ int test_input_item_limit() {
     return failures;
 }
 
+// #295: the reasoning's entries stay out of output_text; each delta carries its tokens', the done
+// events the rest, and the message's part every entry after the reasoning.
+int test_stream_logprobs() {
+    OpenAIResponsesCreateRequest request = parse_openai_responses_create_request(
+        Json{{"model", "m"},
+             {"input", "hello"},
+             {"include", Json::array({"message.output_text.logprobs"})},
+             {"stream", true}},
+        limits());
+    const auto entry = [](const char* bytes, float logprob) {
+        return ServedLogprob{.bytes = bytes, .logprob = logprob};
+    };
+    OpenAIResponsesEventStream encoder("resp_logprobs", 123, request, {});
+    std::vector<std::string> wire = encoder.start();
+    const auto add = [&wire](std::vector<std::string> next) {
+        wire.insert(wire.end(), next.begin(), next.end());
+    };
+    encoder.note_logprobs({entry("thought", -0.5F)});
+    add(encoder.reasoning_delta("thought"));
+    encoder.note_logprobs({entry("ans", -0.25F), entry("wer", -0.125F)});
+    add(encoder.content_delta("answer"));
+    encoder.note_logprobs({entry("<|im_end|>", -0.0625F)});
+    GenerationOutcome outcome = sample_outcome();
+    outcome.reasoning_tokens  = 1;
+    outcome.logprobs          = std::vector<ServedLogprob>{
+        entry("thought", -0.5F), entry("ans", -0.25F), entry("wer", -0.125F),
+        entry("<|im_end|>", -0.0625F)};
+    OpenAIResponsesStreamFinish finish = encoder.finish(outcome);
+    add(finish.events_before_terminal);
+    wire.push_back(encoder.terminal(finish.response));
+
+    int failures = 0;
+    std::size_t deltas = 0, done = 0, part = 0, terminal = 0;
+    for (const std::string& event : wire) {
+        const Json payload     = parse_event(event);
+        const std::string type = payload.at("type").get<std::string>();
+        if (type == "response.output_text.delta") { deltas += payload.at("logprobs").size(); }
+        if (type == "response.output_text.done") { done += payload.at("logprobs").size(); }
+        if (type == "response.content_part.done" && payload.at("part").contains("logprobs")) {
+            part = payload.at("part").at("logprobs").size();
+        }
+        if (type == "response.completed") {
+            for (const Json& item : payload.at("response").at("output")) {
+                if (item.at("type") == "message") {
+                    terminal = item.at("content").at(0).at("logprobs").size();
+                }
+            }
+        }
+    }
+    failures += check(deltas == 2 && done == 1,
+                      "the delta carries its two tokens, the done event the stop token");
+    failures += check(part == 3 && terminal == 3,
+                      "the message's part holds every entry after the reasoning, streamed or not");
+    return failures;
+}
+
 int main() {
     int failures = 0;
     failures += test_input_item_limit();
+    failures += test_stream_logprobs();
     failures += test_basic_request_and_resolution();
     failures += test_budgets_and_nonsemantic_hints();
     failures += test_reasoning_encrypted_content_request();

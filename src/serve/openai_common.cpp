@@ -2,7 +2,6 @@
 
 #include "core/utf8.h"
 #include "serve/generation_service.h"
-#include "serve/generation_service.h"
 #include "serve/request_validation.h"
 
 #include "ninferno/types.h"
@@ -10,6 +9,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <vector>
 #include <string_view>

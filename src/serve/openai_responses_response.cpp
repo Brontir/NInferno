@@ -131,13 +131,18 @@ Json response_common(const std::string& id, std::int64_t created_at,
         {"truncation", "disabled"}};
 }
 
-// The message's output_text part; with include message.output_text.logprobs, its tokens' log
-// probabilities.
+// The message's output_text part; with include message.output_text.logprobs, the log
+// probabilities of the tokens after the reasoning (the reasoning's, its close included, lead the
+// output).
 Json output_text_part(const OpenAIResponsesCreateRequest& request,
                       const GenerationOutcome& outcome) {
     Json part = {{"type", "output_text"}, {"annotations", Json::array()}, {"text", outcome.text}};
     if (request.include_logprobs && outcome.logprobs) {
-        part["logprobs"] = openai_logprob_content(*outcome.logprobs);
+        const std::size_t reasoning = std::min(
+            outcome.logprobs->size(), static_cast<std::size_t>(std::max(0, outcome.reasoning_tokens)));
+        part["logprobs"] = openai_logprob_content(std::vector<ServedLogprob>(
+            outcome.logprobs->begin() + static_cast<std::ptrdiff_t>(reasoning),
+            outcome.logprobs->end()));
     }
     return part;
 }
@@ -377,8 +382,10 @@ public:
         if (!message_started || message_done) { return {}; }
         message_done    = true;
         content_text    = final_text;
-        const Json part = {
+        Json done_logprobs = take_logprobs();
+        Json part = {
             {"type", "output_text"}, {"annotations", Json::array()}, {"text", content_text}};
+        if (request.include_logprobs) { part["logprobs"] = text_logprobs; }
         const Json item = {{"id", ids.message},
                            {"type", "message"},
                            {"status", item_status},
@@ -388,7 +395,7 @@ public:
                                                             {"output_index", message_index},
                                                             {"content_index", 0},
                                                             {"text", content_text},
-                                                            {"logprobs", take_logprobs()}})),
+                                                            {"logprobs", std::move(done_logprobs)}})),
                 sse(event("response.content_part.done", Json{{"item_id", ids.message},
                                                              {"output_index", message_index},
                                                              {"content_index", 0},
@@ -414,13 +421,16 @@ public:
     bool terminal_emitted  = false;
     std::string reasoning_text;
     std::string content_text;
-    // Log probabilities noted since the last output_text event (include_logprobs).
+    // Log probabilities noted since the last output event (include_logprobs), and every entry
+    // the output_text events carried (the message's part at its done events).
     Json pending_logprobs = Json::array();
+    Json text_logprobs    = Json::array();
 
     // The pending entries for the next output_text event, taken.
     Json take_logprobs() {
         Json out         = std::move(pending_logprobs);
         pending_logprobs = Json::array();
+        for (const Json& item : out) { text_logprobs.push_back(item); }
         return out;
     }
     ItemIds ids;
@@ -453,6 +463,8 @@ std::vector<std::string> OpenAIResponsesEventStream::reasoning_delta(const std::
         throw std::logic_error("invalid reasoning delta event state");
     }
     if (text.empty()) { return {}; }
+    // The entries noted before reasoning text are the reasoning's: not the output_text's.
+    impl_->pending_logprobs = Json::array();
     std::vector<std::string> events = impl_->ensure_reasoning();
     impl_->reasoning_text += text;
     events.push_back(sse(
