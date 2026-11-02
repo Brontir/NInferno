@@ -629,6 +629,9 @@ void HttpServer::register_routes() {
             body["materializing_requests"]   = stats.materializing_requests;
         }
         if (res.status != 200) { res.set_header("Retry-After", kRetryAfterUnavailableSeconds); }
+        // A stalled executor recovers in this process: a load balancer's probe keeps its
+        // connection. A failed or draining server goes away.
+        res.keep_alive_after_error = std::string_view(status) == "stalled";
         res.set_content(body.dump(), "application/json");
     });
     server_.Get("/props", [this](const httplib::Request&, httplib::Response& res) {
