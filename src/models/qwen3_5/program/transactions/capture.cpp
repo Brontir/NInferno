@@ -152,12 +152,22 @@ ProgramImpl::inspect_capture(const CaptureOffer& offer, const SharedPrefixHandle
         if (selected_anchor_replacement != nullptr) {
             add_drop(selected_anchor_replacement->state);
         }
+        // The shared prefix this capture replaces is released first (its preparation): a dropped
+        // checkpoint it also references is the sequence's alone by the time the private
+        // publication drops it, and frees then.
+        const std::optional<StateImageHandle> replaced_shared_state =
+            publish_shared && replacement != nullptr
+                ? std::optional<StateImageHandle>(
+                      shared_prefix_states[ContractAccess::index(*replacement)].state)
+                : std::nullopt;
         for (std::size_t index = 0; index < drop_count; ++index) {
             const DroppedReference& drop = drops[index];
-            if (!state_store->valid(drop.state) ||
-                state_store->checkpoint_references(drop.state) != drop.count) {
-                continue;
+            if (!state_store->valid(drop.state)) { continue; }
+            std::uint32_t references = state_store->checkpoint_references(drop.state);
+            if (replaced_shared_state && *replaced_shared_state == drop.state && references != 0) {
+                --references;
             }
+            if (references != drop.count) { continue; }
             const StateReplicaResidency residency = state_store->residency(drop.state);
             if (residency == StateReplicaResidency::DeviceOnly ||
                 residency == StateReplicaResidency::Both) {
