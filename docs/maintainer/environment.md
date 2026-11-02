@@ -122,9 +122,9 @@ Where they do not: the fused NVFP4 plans of the registered Qwen shapes (attentio
 projections, `linear_add`, `linear_swiglu`) keep their own A4 or A16 choice; the routed experts'
 grouped GEMMs keep their schedules (`--moe-tune` and the route tables' MoE bands); a GPU without
 tensor mma.sync (Volta) keeps its tiled route for calls of 17 tokens or more of a format with a
-tiled codec, the `a16` family's there (f16 activations: a prefill pin of another family that no
-call can take is refused naming `a16`; its HMMA verify kernel, 2..16 tokens, is the `a16` family's there: another decode pin
-takes those calls where it computes them); the invariant routes of `--activations exact` take no pin at all; TMA and other
+tiled codec, and its HMMA verify kernel for 2..16 tokens; both are the `a16` family's there (f16
+activations). A prefill pin of another family that no call can take is refused naming `a16`;
+another decode pin takes the verify calls where it computes them; the invariant routes of `--activations exact` take no pin at all; TMA and other
 schedule-level choices inside a shape table stay the table's.
 
 Refusals, each naming what can run instead:
