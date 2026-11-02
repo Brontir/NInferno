@@ -142,6 +142,13 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
         return;
     }
 
+    if (!stream_admitted(prepared, req, res, *lifecycle,
+                         [&request_id](httplib::Response& response, const ApiError& error) {
+                             write_anthropic_error(response, normalize_anthropic_error(error),
+                                                   request_id);
+                         })) {
+        return;
+    }
     try {
         auto stream  = std::make_shared<HttpGenerationStream>(std::move(prepared));
         auto encoder = std::make_shared<AnthropicMessagesStream>(identity, input_tokens,

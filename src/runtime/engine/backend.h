@@ -40,6 +40,8 @@ class SubmissionBox {
 public:
     virtual ~SubmissionBox() = default;
     virtual GenerationResult wait(OutputSink* sink, const CancellationView& cancellation) = 0;
+    // GenerationHandle::wait_admitted.
+    virtual bool wait_admitted(const CancellationView& cancellation) = 0;
 };
 
 class Backend {

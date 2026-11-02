@@ -170,6 +170,16 @@ public:
             return owner->wait_for_request(std::exchange(request_, nullptr), sink, cancellation);
         }
 
+        // Blocks until the request is admitted (true) or ends before it (false: wait() then
+        // reports why, a queue timeout or a cancellation). A cancellation that fires while it
+        // waits cancels the request. The submission stays waitable.
+        bool wait_admitted(const CancellationView& cancellation) {
+            if (owner_ == nullptr || request_ == nullptr) {
+                throw std::logic_error("concurrent submission is empty");
+            }
+            return owner_->wait_for_admission(*request_, cancellation);
+        }
+
     private:
         Submission(EngineCore& owner, std::shared_ptr<Request> request) noexcept
             : owner_(&owner), request_(std::move(request)) {}
@@ -611,6 +621,31 @@ private:
         }
         cumulative_stats_.reused_prompt_tokens += summary.reusable_prompt_tokens;
         cumulative_stats_.last_selected_frontier_tokens = summary.reusable_prompt_tokens;
+    }
+
+    // A streamed request's admission publishes its generation start (under its mutex), which
+    // its wait consumes later.
+    bool wait_for_admission(Request& request, const CancellationView& cancellation) {
+        if (request.consumer_mode != OutputConsumerMode::Streaming) {
+            throw std::invalid_argument("only a streamed request waits for its admission");
+        }
+        for (;;) {
+            {
+                std::unique_lock lock(request.mutex);
+                request.cv.wait_for(lock, std::chrono::milliseconds(10), [&] {
+                    return request.response_done || request.stream_start.has_value();
+                });
+                if (request.stream_start.has_value()) { return true; }
+                if (request.response_done) { return false; }
+            }
+            if (cancellation.requested()) {
+                request.cancelled.store(true, std::memory_order_release);
+                request_admission_check();
+                queue_cv_.notify_one();
+                return false;
+            }
+            if (worker_exited_.load(std::memory_order_acquire)) { return false; }
+        }
     }
 
     GenerationResult wait_for_request(std::shared_ptr<Request> request, OutputSink* sink,

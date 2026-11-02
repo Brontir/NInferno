@@ -262,6 +262,11 @@ public:
     // Consumes prepared.generation. A PreparedRequest is single-use.
     GenerationOutcome run(PreparedRequest& prepared, const StreamSink* sink,
                           std::function<bool()> is_cancelled = {});
+    // Waits until the request leaves the admission queue (true), or ends before it (false: run()
+    // then throws what ended it, a queue timeout with its status, or returns it cancelled). A
+    // streamed response sends its status and headers after this, so a request that never ran
+    // is answered with a real status (#292).
+    bool await_admission(PreparedRequest& prepared, std::function<bool()> is_cancelled = {});
 
     void warmup();
 

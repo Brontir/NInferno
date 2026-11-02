@@ -400,6 +400,28 @@ void HttpServer::RequestLifecycle::response_not_stored(std::size_t store_capacit
     owner_->operational_log_.response_not_stored(context_.id, store_capacity_bytes);
 }
 
+bool HttpServer::stream_admitted(
+    PreparedRequest& prepared, const httplib::Request& request, httplib::Response& response,
+    RequestLifecycle& lifecycle,
+    const std::function<void(httplib::Response&, const ApiError&)>& write_error) {
+    const auto disconnected = [&request] { return client_disconnected(request); };
+    try {
+        if (service_->await_admission(prepared, disconnected)) { return true; }
+        // It ended before it ran: its wait reports why.
+        StreamSink discarded;
+        (void)service_->run(prepared, &discarded, disconnected);
+        lifecycle.failure(make_client_disconnected_failure(RequestFailurePhase::Transport));
+    } catch (const ApiException& exception) {
+        lifecycle.failure(make_generation_request_failure(exception.error()));
+        write_error(response, exception.error());
+    } catch (const std::exception& exception) {
+        lifecycle.failure(
+            make_internal_request_failure(RequestFailurePhase::Generation, exception.what()));
+        write_error(response, internal_error(exception.what()));
+    }
+    return false;
+}
+
 std::shared_ptr<HttpServer::RequestLifecycle>
 HttpServer::begin_request(RequestLogContext context, const httplib::Response& response) {
     context.http_request_id = response_request_id(response);
