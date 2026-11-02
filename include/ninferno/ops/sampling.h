@@ -58,6 +58,8 @@ struct SamplingConfig {
     float repetition_penalty   = 1.0f;
     unsigned long long seed    = 0;
     std::int32_t* token_counts = nullptr; // device [token_domain] i32, or null
+    // device [token_domain] f32 added to the raw logit first (logit_bias), or null.
+    const float* logit_bias = nullptr;
     const std::uint32_t* token_mask         = nullptr; // [columns, token_mask_words], or null
     const std::uint32_t* token_mask_release = nullptr; // release counter, required with a mask
     std::uint32_t* token_mask_fault         = nullptr; // optional wait-bound fault flag

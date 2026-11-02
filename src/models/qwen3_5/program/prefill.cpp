@@ -663,7 +663,8 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             speculation.draft_depth = 0;
             speculation.step_down.clear();
         }
-        install_sampling(sequence, request, request_plan.sampling, speculation);
+        install_sampling(sequence, request, request_plan.sampling, request_plan.logit_bias,
+                         speculation);
         request.speculative_stats.context_plain = past_context_limit &&
                                                   speculative_backend != SpeculativeBackend::None &&
                                                   request_plan.speculation.draft_depth != 0;

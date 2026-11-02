@@ -625,6 +625,10 @@ llama.cpp-style base URLs.
   batch neighbours, can change the last bits of the logits and so a later draw (Nemotron 3.5: 1 of
   48 repeats; none with `--no-prefix-reuse`).
 - The compatible `top_k` (`0..64`) and `min_p` (`0..1`) sampler extensions.
+- `logit_bias` (Chat Completions): `{"<token id>": offset}` with the model's own token ids and
+  offsets in `[-100,100]`, added to the logit before the penalties and the sampler (-100 bans a
+  token in practice). A token id past the model's vocabulary is refused with 400; zero offsets are
+  dropped. Speculative verification samples from the same biased logits.
 - vLLM's `repetition_penalty` (`(0,2]`, 1 neutral; outside the range a 400 naming the field): a
   token the prompt or the output already holds has its logit divided by the penalty when positive
   and multiplied when negative, before `presence_penalty` and `frequency_penalty` (which count the
@@ -684,7 +688,6 @@ Options whose observable behavior the Engine cannot provide are rejected when th
 behavior:
 
 - JSON constrained output outside the cases above;
-- nonzero `logit_bias`;
 - requested log probabilities;
 - audio/file input or audio output;
 - image detail levels other than `auto`, `low` and `high`;
@@ -699,7 +702,7 @@ as unknown hints.
 
 ### Accepted but neutral fields
 
-- All-zero `logit_bias`, `logprobs:false`, `top_logprobs:0`, `verbosity:"medium"`, empty legacy tool
+- `logprobs:false`, `top_logprobs:0`, `verbosity:"medium"`, empty legacy tool
   controls, text-only `audio` configuration, and `prediction` are accepted without changing Engine
   execution.
 - Metadata, user/safety identifiers, service-tier and prompt-cache hints are advisory.

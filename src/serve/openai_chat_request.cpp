@@ -4,6 +4,7 @@
 #include "serve/request_validation.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <cstdint>
 #include <optional>
@@ -83,22 +84,6 @@ void validate_standard_output_controls(const Json& body) {
         }
     }
 
-    if (body.contains("logit_bias") && !body.at("logit_bias").is_null()) {
-        const Json& biases = body.at("logit_bias");
-        if (!biases.is_object()) { bad_request("logit_bias must be an object", "logit_bias"); }
-        for (auto iterator = biases.begin(); iterator != biases.end(); ++iterator) {
-            if (!iterator.value().is_number()) {
-                bad_request("logit_bias values must be numbers", "logit_bias");
-            }
-            const double value = iterator.value().get<double>();
-            if (!std::isfinite(value) || value != 0.0) {
-                bad_request(
-                    "nonzero logit_bias requires per-token logit modification, which NInferno "
-                    "does not provide",
-                    "logit_bias", "logit_bias_not_supported");
-            }
-        }
-    }
     if (body.contains("logprobs") && !body.at("logprobs").is_null()) {
         if (!body.at("logprobs").is_boolean()) {
             bad_request("logprobs must be a boolean", "logprobs");
@@ -833,6 +818,34 @@ void parse_sampling(const Json& body, GenerationRequest& output) {
         bad_request("repetition_penalty must be in (0,2]", "repetition_penalty");
     }
     sampling.seed              = get_seed(body);
+    // logit_bias: {"<token id>": offset}, the model's token ids, offsets in [-100, 100].
+    if (body.contains("logit_bias") && !body.at("logit_bias").is_null()) {
+        const Json& biases = body.at("logit_bias");
+        if (!biases.is_object()) { bad_request("logit_bias must be an object", "logit_bias"); }
+        for (auto iterator = biases.begin(); iterator != biases.end(); ++iterator) {
+            const std::string& key = iterator.key();
+            std::int32_t token     = 0;
+            const auto [end, error] =
+                std::from_chars(key.data(), key.data() + key.size(), token);
+            if (key.empty() || error != std::errc{} || end != key.data() + key.size() ||
+                token < 0) {
+                bad_request("logit_bias keys must be token ids (non-negative integers)",
+                            "logit_bias");
+            }
+            if (!iterator.value().is_number()) {
+                bad_request("logit_bias values must be numbers", "logit_bias");
+            }
+            const double value = iterator.value().get<double>();
+            if (!std::isfinite(value) || value < -ninferno::kLogitBiasLimit ||
+                value > ninferno::kLogitBiasLimit) {
+                bad_request("logit_bias values must be in [-100,100]", "logit_bias");
+            }
+            if (value != 0.0) {
+                sampling.logit_bias.push_back(
+                    ninferno::LogitBias{.token = token, .bias = static_cast<float>(value)});
+            }
+        }
+    }
 
     // vLLM and SGLang expose top_k/min_p on their OpenAI-compatible endpoints; both map directly
     // to NInferno's native sampler and are useful for Qwen's published sampling presets.

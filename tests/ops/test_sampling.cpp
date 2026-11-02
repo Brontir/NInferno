@@ -68,7 +68,9 @@ std::vector<float> repeat_column(const std::vector<float>& column, int columns) 
 
 // A logit with the penalties applied, as the sampler does: repetition_penalty on a token the
 // prompt (kPromptTokenSeen) or the output holds, then presence and frequency on the output count.
-double penalized(double logit, int stored, const ops::SamplingConfig& config) {
+double penalized(double logit, int stored, const ops::SamplingConfig& config,
+                 const std::vector<float>* bias = nullptr, int token = 0) {
+    if (bias != nullptr) { logit += static_cast<double>((*bias)[static_cast<std::size_t>(token)]); }
     const int count = stored & ~ops::kPromptTokenSeen;
     if (config.repetition_penalty != 1.0f && (count > 0 || (stored & ops::kPromptTokenSeen) != 0)) {
         logit = logit > 0.0 ? logit / config.repetition_penalty
@@ -423,6 +425,34 @@ int repetition_penalty_contract(int physical_rows, int token_domain) {
         failures += verify_exact("repetition penalty keeps the prompt marks", result.counts[row],
                                  expected_counts);
     }
+    return failures;
+}
+
+// logit_bias (#297): -100 removes the leading token, +5 lifts a lower one over the rest.
+int logit_bias_contract(int physical_rows, int token_domain) {
+    constexpr int batch = 4;
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch, -9.0f);
+    for (int row = 0; row < batch; ++row) {
+        const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
+        logits[base + 3]       = 9.0f; // banned: 9 - 100
+        logits[base + 4]       = 6.0f; // stays 6
+        logits[base + 9]       = 2.0f; // lifted: 2 + 5 = 7, the greedy pick
+    }
+    round_to_bf16(logits);
+    std::vector<float> bias(static_cast<std::size_t>(token_domain), 0.0f);
+    bias[3] = -100.0f;
+    bias[9] = 5.0f;
+    DeviceBuffer device_bias = to_device(bias);
+    ops::SamplingConfig config;
+    config.temperature = 0.0f;
+    config.top_k       = 1;
+    config.seed        = 7;
+    config.logit_bias  = static_cast<const float*>(device_bias.p);
+    const RunResult result = run_homogeneous_batch(logits, physical_rows, token_domain, batch,
+                                                   config, 13, ops::kSamplePurposeDecode);
+    int failures = result.integrity_failures;
+    failures += verify_exact("logit bias picks the lifted token", result.tokens,
+                             std::vector<int>(batch, 9));
     return failures;
 }
 
@@ -1189,6 +1219,7 @@ int main() {
     failures += greedy_contract(248320, 248077);
     failures += greedy_contract(202048, 202048);
     failures += repetition_penalty_contract(248320, 248077);
+    failures += logit_bias_contract(248320, 248077);
     failures += nan_row_contract(248320, 248077);
     failures += nan_row_contract(260, 200);
     failures += deterministic_stochastic_contract();

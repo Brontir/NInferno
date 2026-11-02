@@ -287,6 +287,7 @@ void apply_watchdog_trip(RequestControl& request, double shared_floor) {
 
 void ProgramImpl::install_sampling(SequenceState& sequence, RequestControl& request,
                                    const ops::SamplingConfig& config,
+                                   std::span<const LogitBias> logit_bias,
                                    const RequestSpeculationPlan& speculation) {
     Tensor counts = token_counts.slice(1, static_cast<std::int32_t>(sequence.lane), 1)
                         .view({model.traits().public_tokens});
@@ -332,6 +333,20 @@ void ProgramImpl::install_sampling(SequenceState& sequence, RequestControl& requ
     }
     request.sampling_host.token_counts =
         penalties ? static_cast<std::int32_t*>(counts.data) : nullptr;
+    request.sampling_host.logit_bias = nullptr;
+    if (!logit_bias.empty()) {
+        // The request's offsets as a dense table of its lane; a later entry for a token replaces
+        // an earlier one. A pageable copy has read the host words when it returns.
+        Tensor table = logit_bias_table.slice(1, static_cast<std::int32_t>(sequence.lane), 1)
+                           .view({model.traits().public_tokens});
+        logit_bias_host_.assign(static_cast<std::size_t>(model.traits().public_tokens), 0.0F);
+        for (const LogitBias& entry : logit_bias) {
+            logit_bias_host_[static_cast<std::size_t>(entry.token)] = entry.bias;
+        }
+        CUDA_CHECK(cudaMemcpyAsync(table.data, logit_bias_host_.data(), table.bytes(),
+                                   cudaMemcpyHostToDevice, device.stream));
+        request.sampling_host.logit_bias = static_cast<const float*>(table.data);
+    }
     Tensor config_lane = sampling_config.slice(1, static_cast<std::int32_t>(sequence.lane), 1);
     CUDA_CHECK(cudaMemcpyAsync(config_lane.data, &request.sampling_host,
                                sizeof(request.sampling_host), cudaMemcpyHostToDevice,

@@ -279,7 +279,7 @@ __device__ __forceinline__ int sampling_dist_offset(int col, int j) {
 // either, every route keeps its exact raw-logit fast path.
 __device__ __forceinline__ bool sampling_has_penalties(const SamplingConfig& c) {
     return c.presence_penalty != 0.0f || c.frequency_penalty != 0.0f ||
-           c.repetition_penalty != 1.0f;
+           c.repetition_penalty != 1.0f || c.logit_bias != nullptr;
 }
 
 __device__ __forceinline__ bool sampling_adjusts(const SamplingConfig& c) {
@@ -377,6 +377,7 @@ __device__ __forceinline__ float sampling_penalized_logit(float raw, int v, cons
                                                           int overlay_len) {
     float x = raw;
     if (!sampling_has_penalties(c)) { return x; }
+    if (c.logit_bias != nullptr) { x += c.logit_bias[v]; }
     const int stored = c.token_counts != nullptr ? c.token_counts[v] : 0;
     int cnt          = stored & ~kPromptTokenSeen;
     for (int j = 0; j < overlay_len; ++j) {

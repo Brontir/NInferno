@@ -142,7 +142,6 @@ int test_standard_field_policy() {
     };
 
     rejected("n", 2, "n_not_supported");
-    rejected("logit_bias", Json{{"12", 1}}, "logit_bias_not_supported");
     rejected("logprobs", true, "logprobs_not_supported");
     rejected("top_logprobs", 2, "logprobs_not_supported");
     rejected("response_format", Json{{"type", "xml"}}, "response_format_not_supported");
@@ -152,6 +151,23 @@ int test_standard_field_policy() {
     rejected("verbosity", "high", "verbosity_not_supported");
     rejected("store", true, "store_not_supported");
     rejected("functions", Json::array({Json{{"name", "legacy"}}}), "legacy_tools_not_supported");
+
+    {
+        // logit_bias (#297): the model's token ids and offsets in [-100,100]; zeros are dropped.
+        Json biased          = base_request();
+        biased["logit_bias"] = Json{{"12", 5}, {"13", 0}, {"7", -100}};
+        const auto& entries  = parse(biased).generation.sampling.logit_bias;
+        failures += check(entries.size() == 2 && entries[0].token == 12 &&
+                              entries[0].bias == 5.0F && entries[1].token == 7 &&
+                              entries[1].bias == -100.0F,
+                          "logit_bias entries were not passed to the sampler");
+        for (const Json& bad : {Json{{"x", 1}}, Json{{"-1", 1}}, Json{{"12", 101}},
+                                Json{{"12", "a"}}, Json{{"1.5", 1}}}) {
+            biased["logit_bias"] = bad;
+            failures += check(api_error([&] { (void)parse(biased); }).param == "logit_bias",
+                              "an invalid logit_bias was accepted: " + bad.dump());
+        }
+    }
 
     Json neutral                      = base_request();
     neutral["n"]                      = 1;
