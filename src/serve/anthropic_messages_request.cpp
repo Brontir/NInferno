@@ -1037,7 +1037,11 @@ void parse_effort(const Json& body, GenerationRequest& request, ParsePurpose pur
     }
     // In the Anthropic API effort is its own setting, not a switch of extended thinking: with
     // thinking disabled it has no reasoning to scale here, and the request is served without it.
-    if (request.enable_thinking == false) { return; }
+    if (request.enable_thinking == false) {
+        request.notes.push_back("output_config.effort " + value +
+                                " not used: thinking is disabled");
+        return;
+    }
     request.reasoning_effort = *effort;
 }
 

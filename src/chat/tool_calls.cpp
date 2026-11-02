@@ -3,6 +3,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cctype>
 #include <optional>
 #include <stdexcept>
 #include <string_view>
@@ -1029,6 +1030,36 @@ CallStart match_call_start(std::string_view held, std::string_view lead, std::st
 
 } // namespace
 
+namespace {
+
+// A call header (its parts, format whitespace allowed before each) and the name after it in a
+// call the output limit cut off: nullopt when the body leaves the header, an empty name while
+// the body ends inside the header.
+std::optional<ToolCallSyntax::CutCallName>
+cut_name_after_header(std::string_view body, std::initializer_list<std::string_view> header) {
+    std::size_t pos = 0;
+    for (const std::string_view part : header) {
+        while (pos < body.size() && is_format_whitespace(body[pos])) { ++pos; }
+        const std::string_view rest = body.substr(pos);
+        if (rest.size() < part.size()) {
+            if (!part.starts_with(rest)) { return std::nullopt; }
+            return ToolCallSyntax::CutCallName{};
+        }
+        if (!rest.starts_with(part)) { return std::nullopt; }
+        pos += part.size();
+    }
+    const auto name_byte = [](char byte) {
+        return std::isalnum(static_cast<unsigned char>(byte)) != 0 || byte == '_' ||
+               byte == '.' || byte == ':' || byte == '/' || byte == '-';
+    };
+    std::size_t end = pos;
+    while (end < body.size() && name_byte(body[end])) { ++end; }
+    return ToolCallSyntax::CutCallName{.name     = body.substr(pos, end - pos),
+                                       .complete = end < body.size()};
+}
+
+} // namespace
+
 ToolCallStart ToolCallSyntax::match_start(std::string_view held) const {
     return match_call_start(held, lead(), open());
 }
@@ -1117,20 +1148,21 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
         // The only call of the region was cut off (nothing but format whitespace before its open
         // marker): no call is complete, and its markup is not the answer either (a forced call
         // must not reach the client as text). The answer is empty, with the finish reason length.
-        // Only a call that began is dropped: after the marker, its body opens ('{' or '<') and
-        // names a declared tool. Prose that quotes the marker ("the `<tool_call>` tag") opens a
-        // region too, and stays text.
+        // Only a call that began is dropped: after the marker, the body writes the syntax's call
+        // header and, at its name position, a declared tool's name or (cut there) a prefix of
+        // one. Prose that quotes the marker ("the `<tool_call>` tag") opens a region too, and
+        // stays text.
         const auto began_call = [&](std::size_t open_at) {
             const std::string_view body =
                 std::string_view(tool_region_).substr(open_at + syntax_->open().size());
-            const std::size_t first = body.find_first_not_of(" \t\r\n");
-            if (first == std::string_view::npos || (body[first] != '{' && body[first] != '<')) {
-                return false;
-            }
+            const auto cut = syntax_->cut_call_name(body);
+            if (!cut) { return false; }
+            if (cut->name.empty()) { return !cut->complete; }
             return std::any_of(contract_->tools.begin(), contract_->tools.end(),
                                [&](const ToolCallOutputContract::Tool& tool) {
-                                   return !tool.name.empty() &&
-                                          body.find(tool.name) != std::string_view::npos;
+                                   const std::string_view name = tool.name;
+                                   return cut->complete ? name == cut->name
+                                                        : name.starts_with(cut->name);
                                });
         };
         if (last != std::string::npos && tool_region_.find(close) == std::string::npos &&
@@ -1357,6 +1389,10 @@ public:
         const ToolCallStart wrapped = match_call_start(held, {}, kToolOpen);
         return wrapped != ToolCallStart::No ? wrapped : match_call_start(held, {}, kFunctionOpen);
     }
+    [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
+        if (auto xml = cut_name_after_header(body, {kFunctionOpen})) { return xml; }
+        return cut_name_after_header(body, {"{", "\"name\"", ":", "\""});
+    }
     [[nodiscard]] ParsedToolCallOutput parse(const std::string& text, std::size_t max_length,
                                              const Contract& contract) const override {
         return parse_qwen_tool_call_output(text, max_length, contract);
@@ -1375,6 +1411,9 @@ public:
     [[nodiscard]] std::string_view open() const noexcept override { return kToolOpen; }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kToolClose; }
+    [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
+        return cut_name_after_header(body, {"{", "\"name\"", ":", "\""});
+    }
     [[nodiscard]] ParsedToolCallOutput parse(const std::string& text, std::size_t max_length,
                                              const Contract& contract) const override {
         return parse_calls(text, kToolOpen, max_length, contract,
@@ -1450,6 +1489,9 @@ public:
     [[nodiscard]] std::string_view open() const noexcept override { return kOpen; }
 
     [[nodiscard]] std::string_view close() const noexcept override { return kClose; }
+    [[nodiscard]] std::optional<CutCallName> cut_call_name(std::string_view body) const override {
+        return cut_name_after_header(body, {kCall});
+    }
     [[nodiscard]] ParsedToolCallOutput parse(const std::string& text, std::size_t max_length,
                                              const Contract& contract) const override {
         return parse_calls(text, kOpen, max_length, contract,

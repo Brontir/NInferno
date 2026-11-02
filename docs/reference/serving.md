@@ -1523,7 +1523,9 @@ and Anthropic SSE.
   next prompt equals the visible-Thinking one. The signature is not encrypted: it hides the
   reasoning from display, not from the client.
 - `preserve_thinking` remains a NInferno extension for closed-turn reasoning history.
-  `output_config.effort` passes its protocol-validated value to the selected template.
+  `output_config.effort` passes its protocol-validated value to the selected template. With
+  `thinking: {"type": "disabled"}` there is no reasoning for it to scale: the request is served
+  without it, and `notes` says so.
 
 ### Tools
 

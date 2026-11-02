@@ -970,6 +970,25 @@ int test_cut_off_last_call() {
     failures += check(quoted_end.tool_calls.empty() && before + quoted_end.content == prose &&
                           quoted_end.diagnostics.cut_calls_dropped == 0,
                       "prose quoting the open marker was dropped as a cut-off call");
+    // The limit cut the name itself: a prefix of a declared name at the name position is a call.
+    for (const std::string partial : {std::string("<tool_call>\n<function=sea"),
+                                      std::string("<tool_call>\n{\"name\": \"sear"),
+                                      std::string("<tool_call>\n{\"na")}) {
+        fi::ToolCallOutputDecoder named(contract, 64);
+        const std::string named_shown = named.feed(partial);
+        auto named_end                = named.finish(true);
+        failures += check(named_shown.empty() && named_end.content.empty() &&
+                              named_end.diagnostics.cut_calls_dropped == 1,
+                          "a call cut inside its name reached the content");
+    }
+    // A body that names a tool only in its text, not at the name position, began no call.
+    const std::string markup = "See <tool_call> <b>search</b> for";
+    fi::ToolCallOutputDecoder tagged(contract, 64);
+    const std::string tagged_shown = tagged.feed(markup);
+    auto tagged_end                = tagged.finish(true);
+    failures += check(tagged_shown + tagged_end.content == markup &&
+                          tagged_end.diagnostics.cut_calls_dropped == 0,
+                      "markup naming a tool outside the name position was dropped");
     return failures;
 }
 

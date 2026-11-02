@@ -132,7 +132,9 @@ int test_envelope_and_field_policy() {
         disabled["output_config"] = Json{{"effort", "low"}};
         const AnthropicMessagesRequest both = parse(disabled);
         failures += check(both.generation.enable_thinking == false &&
-                              !both.generation.reasoning_effort,
+                              !both.generation.reasoning_effort &&
+                              both.generation.notes.size() == 1 &&
+                              both.generation.notes[0].find("effort") != std::string::npos,
                           "output_config.effort beside disabled thinking was not dropped");
     }
 
