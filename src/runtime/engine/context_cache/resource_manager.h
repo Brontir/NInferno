@@ -1960,7 +1960,13 @@ private:
                 frontiers.push_back(candidate.frontier);
                 const PlanningOwnerId owner{.value = next_projected_owner +
                                                      static_cast<std::uint32_t>(index)};
+                // A surplus candidate (a structural or default guess, written only into a vacant
+                // slot) is worth its own saving: the request's one demand bit counts only its
+                // longest candidate, so a system head below the prompt's end added nothing and
+                // never paid its split, and sibling sessions never shared it (#316). A vacant slot
+                // has no victim to weigh against.
                 const bool credit =
+                    !candidate.pressure_capable ||
                     has_shared_candidate_evidence(candidate.evidence,
                                                   SharedCandidateEvidence::ExplicitBoundary) ||
                     has_shared_candidate_evidence(candidate.evidence,

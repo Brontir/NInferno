@@ -140,31 +140,6 @@ ChatTurn instruction_turn(const std::string& text) {
     return turn;
 }
 
-// Marks the end of the leading system/developer run as an automatic shared-prefix candidate,
-// unless it is marked already or every marker slot is taken.
-void mark_system_head(GenerationRequest& request) {
-    std::size_t leading = 0;
-    while (leading < request.messages.size() &&
-           (request.messages[leading].role == ChatRole::System ||
-            request.messages[leading].role == ChatRole::Developer)) {
-        ++leading;
-    }
-    if (leading == 0 || request.messages[leading - 1].cache_boundary_after) { return; }
-    std::size_t markers = 0;
-    for (const ToolDefinition& tool : request.tools) {
-        markers += tool.cache_boundary_after ? 1U : 0U;
-    }
-    for (const ChatTurn& turn : request.messages) {
-        markers += turn.cache_boundary_after ? 1U : 0U;
-        for (const ContentPart& part : turn.content) {
-            markers += part.cache_boundary_after ? 1U : 0U;
-        }
-    }
-    if (markers >= ninferno::kMaximumExplicitPromptCacheMarkers) { return; }
-    request.messages[leading - 1].cache_boundary_after =
-        CacheBoundary{.evidence = ninferno::SharedCandidateEvidence::DefaultAutomatic};
-}
-
 } // namespace
 
 OpenAIResponsesResolvedPrompt
@@ -204,7 +179,9 @@ resolve_openai_responses_prompt(const OpenAIResponsesPromptRequest& request,
     resolved.generation.messages.insert(resolved.generation.messages.end(),
                                         std::make_move_iterator(context.begin()),
                                         std::make_move_iterator(context.end()));
-    if (request.system_head_candidate) { mark_system_head(resolved.generation); }
+    if (request.cache_policy) {
+        apply_openai_prompt_cache_policy(resolved.generation, *request.cache_policy);
+    }
 
     if (response_id) {
         if (parent_record) {
