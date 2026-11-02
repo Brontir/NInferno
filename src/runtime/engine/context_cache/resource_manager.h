@@ -1944,12 +1944,15 @@ private:
         if (shared_candidates.size() > 7U) {
             throw std::logic_error("prepared shared candidates exceeded the fixed subset bound");
         }
-        // The longest default-automatic candidate (OpenAI's automatic boundary at the prompt's
-        // end): one below it is the leading system/developer run, the head sibling sessions share.
+        // The longest automatic candidate (OpenAI's automatic boundary at the prompt's end, by
+        // default or requested): a default one below it is the leading system/developer run, the
+        // head sibling sessions share.
         std::uint32_t longest_default = 0;
         for (const ProjectedSharedCandidate& candidate : shared_candidates) {
             if (has_shared_candidate_evidence(candidate.evidence,
-                                              SharedCandidateEvidence::DefaultAutomatic)) {
+                                              SharedCandidateEvidence::DefaultAutomatic) ||
+                has_shared_candidate_evidence(candidate.evidence,
+                                              SharedCandidateEvidence::RequestedAutomatic)) {
                 longest_default = std::max(longest_default, candidate.frontier);
             }
         }
