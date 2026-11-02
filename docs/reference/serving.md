@@ -526,10 +526,11 @@ prefix, with the same behavior, errors, and request IDs.
   requests go on. A second such error within five minutes is treated as Engine-wide, so a condition
   the reset did not cure ends in a restart.
 - **Request failure.** Any other error raised while serving requests on a healthy device (a defect
-  met by one request's output decoding or media prefill) fails the requests of that step with HTTP
-  500; the Engine resets its sequence state and the context cache as above, and the queued
-  requests go on. It does not count towards the five-minute window: a retried request that meets
-  the same defect fails again without taking the server down.
+  met by one request's output decoding, media prefill or admission) does not stop the server. A
+  request being admitted when it happened is answered with the error (HTTP 500); the requests
+  already running are answered HTTP 503 with `Retry-After`; the Engine resets its sequence state
+  and the context cache as above, and the queued requests go on. Three such failures with no
+  token generated between them are Engine-wide: the server restarts.
 
 ### Request IDs
 

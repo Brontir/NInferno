@@ -822,6 +822,24 @@ runtime::OutputDecision OutputSession::preview_control(std::span<const TokenId> 
     // The span is the engine's own close, never a quotation: a close right after a quote byte
     // (Gemma 4's control is <channel|> alone, with no line break after it) still ends the
     // thinking. The model's own later closes keep the quoted-close rule.
+    // A close the model wrote right after a quote byte, held for its next byte, is followed by the
+    // injected span, not by a line break: it was the model's quotation, text of the reasoning.
+    const std::string_view model_close = impl_->conventions->reasoning_close;
+    if (!model_close.empty() && impl_->preview_state.quoted_close_is_text &&
+        impl_->preview_state.in_reasoning &&
+        impl_->preview_state.think_marker_pending.ends_with(model_close)) {
+        std::string& held = impl_->preview_state.think_marker_pending;
+        feed_channel(impl_->preview_state, OutputChannel::Reasoning, held, impl_->policy,
+                     impl_->preview_output, 0, nullptr);
+        impl_->preview_state.reasoning_last = held.back();
+        held.clear();
+    }
+    if (!model_close.empty() && impl_->preview_semantic.quoted_close_is_text &&
+        impl_->preview_semantic.in_reasoning &&
+        impl_->preview_semantic.close_pending.ends_with(model_close)) {
+        impl_->preview_semantic.last = impl_->preview_semantic.close_pending.back();
+        impl_->preview_semantic.close_pending.clear();
+    }
     const bool quoted_close_is_text              = impl_->preview_state.quoted_close_is_text;
     impl_->preview_state.quoted_close_is_text    = false;
     impl_->preview_semantic.quoted_close_is_text = false;
