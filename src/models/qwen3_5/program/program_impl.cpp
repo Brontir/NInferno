@@ -72,7 +72,8 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
       continuation_states(continuation_capacity), continuation_slots(continuation_capacity),
       shared_prefix_states(shared_prefix_capacity), shared_prefix_slots(shared_prefix_capacity),
       round_host(plan.causal_scoring ? std::nullopt
-                                     : std::make_optional<PinnedHostBuffer>(sizeof(TokenId))),
+                                     : std::make_optional<PinnedHostBuffer>(
+                                           kRoundHostLogprobsOffset + sizeof(ops::TokenLogprobs))),
       score_logprobs_host(plan.causal_scoring ? std::make_optional<PinnedHostBuffer>(
                                                     kCausalScoreTile * sizeof(float))
                                               : std::nullopt),
@@ -345,6 +346,11 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
     if (!causal_scoring) { set_device_i32(io.backend_kv_table_row, 0); }
 
     host_tokens = round_host ? static_cast<TokenId*>(round_host->data()) : nullptr;
+    host_token_logprobs =
+        round_host ? reinterpret_cast<ops::TokenLogprobs*>(static_cast<unsigned char*>(
+                                                               round_host->data()) +
+                                                           kRoundHostLogprobsOffset)
+                   : nullptr;
     if (!causal_scoring) {
         const auto domain = static_cast<std::uint32_t>(model.traits().public_tokens);
         token_masks = std::make_unique<runtime::TokenMaskStaging>(

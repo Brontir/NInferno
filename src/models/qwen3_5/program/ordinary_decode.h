@@ -52,6 +52,7 @@ ordinary_decode_body(OrdinaryBatchContext& state, std::int32_t batch_size,
         ops::scatter(hidden, destinations, state.continuation_hidden_store, s);
         ops::sample(logits, sampled, public_tokens, io.sampling, positions,
                     ops::kSamplePurposeDecode, core.work, s);
+        ops::token_logprobs(logits, sampled, public_tokens, io.sampling, io.logprobs, s);
         ops::copy_to_pinned_host(&state.host_egress, io.egress.data,
                                  sizeof(qwen3_5::OrdinaryDecodeEgress), s);
     };

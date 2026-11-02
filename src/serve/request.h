@@ -193,6 +193,9 @@ struct SamplingParams {
     // OpenAI's logit_bias: the model's token id and its offset in [-100, 100]; zero entries are
     // dropped.
     std::vector<ninferno::LogitBias> logit_bias;
+    // OpenAI's logprobs/top_logprobs: report each output token's log probability and this many
+    // alternatives; unset: none.
+    std::optional<std::uint32_t> logprobs;
 };
 
 // Constrained-decoding request normalized from any wire dialect (OpenAI response_format and

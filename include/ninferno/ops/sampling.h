@@ -60,6 +60,9 @@ struct SamplingConfig {
     std::int32_t* token_counts = nullptr; // device [token_domain] i32, or null
     // device [token_domain] f32 added to the raw logit first (logit_bias), or null.
     const float* logit_bias = nullptr;
+    // token_logprobs(): -1 => off, else the number of most likely tokens it reports, in
+    // [0, kMaximumTopLogprobs]. sample() ignores it.
+    std::int32_t logprobs = -1;
     const std::uint32_t* token_mask         = nullptr; // [columns, token_mask_words], or null
     const std::uint32_t* token_mask_release = nullptr; // release counter, required with a mask
     std::uint32_t* token_mask_fault         = nullptr; // optional wait-bound fault flag
@@ -120,6 +123,32 @@ inline constexpr unsigned long long kTokenMaskReleaseMaxWaitNs = 30'000'000'000U
 void sample(const Tensor& logits, Tensor& out, std::int32_t token_domain,
             const SamplingConfig* configs, const Tensor& logical_positions, std::int32_t purpose,
             WorkspaceArena& workspace, cudaStream_t stream);
+
+// The most alternatives token_logprobs() reports per row (OpenAI's top_logprobs bound).
+inline constexpr std::int32_t kMaximumTopLogprobs = 20;
+// token_logprobs() orders tokens by a key of the BF16 logit and the token id, which holds ids
+// below 2^20.
+inline constexpr std::int32_t kMaximumLogprobTokenDomain = 1 << 20;
+
+// One row's log probabilities from the raw logits: log_softmax over the token domain, before
+// logit_bias, the penalties, temperature, the filters and the token mask (vLLM's raw logprobs).
+struct TokenLogprobs {
+    float sampled      = 0.0f; // the sampled token's
+    std::int32_t count = 0;    // entries in ids/values
+    std::int32_t ids[kMaximumTopLogprobs]{};
+    float values[kMaximumTopLogprobs]{};
+};
+
+/**
+ * For each row b of `logits` (contiguous BF16 [physical_rows,B]) with configs[b].logprobs >= 0,
+ * writes out[b]: the log probability of sampled[b] (contiguous I32 [B]) and of the
+ * min(configs[b].logprobs, token_domain) most likely tokens in [0,token_domain), by logit
+ * descending with the lower id first among equal logits. A NaN logit ranks and reports as -inf.
+ * Rows with logprobs < 0 are left untouched. `out` is device memory of B entries; token_domain
+ * is at most kMaximumLogprobTokenDomain.
+ */
+void token_logprobs(const Tensor& logits, const Tensor& sampled, std::int32_t token_domain,
+                    const SamplingConfig* configs, TokenLogprobs* out, cudaStream_t stream);
 
 // Adds every id in the contiguous non-empty I32 token_ids vector to the contiguous I32
 // [token_domain] committed count array. IDs must be in [0,token_domain).

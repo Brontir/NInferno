@@ -142,8 +142,6 @@ int test_standard_field_policy() {
     };
 
     rejected("n", 2, "n_not_supported");
-    rejected("logprobs", true, "logprobs_not_supported");
-    rejected("top_logprobs", 2, "logprobs_not_supported");
     rejected("response_format", Json{{"type", "xml"}}, "response_format_not_supported");
     rejected("modalities", Json::array({"text", "audio"}), "modality_not_supported");
     rejected("web_search_options", Json::object(), "web_search_not_supported");
@@ -167,6 +165,27 @@ int test_standard_field_policy() {
             failures += check(api_error([&] { (void)parse(biased); }).param == "logit_bias",
                               "an invalid logit_bias was accepted: " + bad.dump());
         }
+    }
+    {
+        // logprobs/top_logprobs (#295): top_logprobs in [0,20], only with logprobs:true.
+        Json asked              = base_request();
+        asked["logprobs"]       = true;
+        failures += check(parse(asked).generation.sampling.logprobs == 0U,
+                          "logprobs:true did not ask for the sampled token's log probability");
+        asked["top_logprobs"]   = 5;
+        failures += check(parse(asked).generation.sampling.logprobs == 5U,
+                          "top_logprobs was not passed to the sampler");
+        asked["top_logprobs"]   = 21;
+        failures += check(api_error([&] { (void)parse(asked); }).param == "top_logprobs",
+                          "top_logprobs 21 was accepted");
+        Json alone              = base_request();
+        alone["top_logprobs"]   = 2;
+        failures += check(api_error([&] { (void)parse(alone); }).param == "top_logprobs",
+                          "top_logprobs without logprobs was accepted");
+        Json off                = base_request();
+        off["logprobs"]         = false;
+        failures += check(!parse(off).generation.sampling.logprobs,
+                          "logprobs:false asked for log probabilities");
     }
 
     Json neutral                      = base_request();

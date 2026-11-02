@@ -231,9 +231,36 @@ void check_preparation_control(Clock::time_point deadline,
     }
 }
 
+// The engine's log probabilities with each token's bytes.
+std::vector<ServedLogprob> served_logprobs(const ninferno::Engine& engine,
+                                           const std::vector<ninferno::GeneratedLogprob>& entries) {
+    std::vector<ninferno::TokenId> ids;
+    for (const ninferno::GeneratedLogprob& entry : entries) {
+        ids.push_back(entry.token);
+        for (const ninferno::TokenLogprob& alternative : entry.top) {
+            ids.push_back(alternative.token);
+        }
+    }
+    std::vector<std::string> bytes = engine.token_bytes(ids);
+    std::vector<ServedLogprob> out;
+    out.reserve(entries.size());
+    std::size_t next = 0;
+    for (const ninferno::GeneratedLogprob& entry : entries) {
+        ServedLogprob served{.bytes = std::move(bytes[next++]), .logprob = entry.logprob};
+        served.top.reserve(entry.top.size());
+        for (const ninferno::TokenLogprob& alternative : entry.top) {
+            served.top.push_back(
+                ServedTokenLogprob{.bytes = std::move(bytes[next++]), .logprob = alternative.logprob});
+        }
+        out.push_back(std::move(served));
+    }
+    return out;
+}
+
 class ServiceOutputSink final : public ninferno::OutputSink {
 public:
-    explicit ServiceOutputSink(const StreamSink& sink) : sink_(&sink) {}
+    ServiceOutputSink(const StreamSink& sink, const ninferno::Engine& engine)
+        : sink_(&sink), engine_(&engine) {}
 
     void start(ninferno::GenerationStart start) override {
         if (sink_->on_start) { sink_->on_start(start); }
@@ -256,8 +283,15 @@ public:
         }
     }
 
+    void logprobs(std::vector<ninferno::GeneratedLogprob> entries) override {
+        if (sink_->on_logprobs && !entries.empty()) {
+            sink_->on_logprobs(served_logprobs(*engine_, entries));
+        }
+    }
+
 private:
-    const StreamSink* sink_ = nullptr;
+    const StreamSink* sink_          = nullptr;
+    const ninferno::Engine* engine_ = nullptr;
 };
 
 // A same-session follow-up consumes the previous turn's continuation, and its own turn closure
@@ -1028,7 +1062,7 @@ bool GenerationService::await_admission(PreparedRequest& prepared,
 GenerationOutcome GenerationService::run(PreparedRequest& prepared, const StreamSink* sink,
                                          std::function<bool()> is_cancelled) {
     std::unique_ptr<ServiceOutputSink> output_sink;
-    if (sink != nullptr) { output_sink = std::make_unique<ServiceOutputSink>(*sink); }
+    if (sink != nullptr) { output_sink = std::make_unique<ServiceOutputSink>(*sink, *engine_); }
     ninferno::OutputSink* public_sink = output_sink.get();
     const ninferno::CancellationView cancellation(
         [external = abortable(std::move(is_cancelled)), sink]() {
@@ -1057,6 +1091,9 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
         throw ApiException(std::move(error));
     }
     GenerationOutcome outcome;
+    if (prepared.sampling.logprobs >= 0) {
+        outcome.logprobs = served_logprobs(*engine_, result.logprobs);
+    }
     outcome.text                = std::move(result.content);
     outcome.reasoning           = std::move(result.reasoning);
     outcome.prompt_tokens       = static_cast<int>(result.prompt.prompt_tokens);

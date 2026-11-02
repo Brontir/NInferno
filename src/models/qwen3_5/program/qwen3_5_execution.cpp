@@ -50,6 +50,8 @@ void ModelExecution::sample_from_hidden(execution::PrefillContext& state, const 
                                cudaMemcpyHostToDevice, core.device.stream));
     ops::sample(logits, core.io.token, traits().public_tokens, state.sampling, core.io.pos, purpose,
                 core.work, core.device.stream);
+    ops::token_logprobs(logits, core.io.token, traits().public_tokens, state.sampling,
+                        core.io.token_logprobs, core.device.stream);
     core.work.reset();
 }
 

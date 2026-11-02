@@ -11,8 +11,8 @@ Every check is a pair or a table, never a single sample:
 - tool calls: OpenAI arguments is a JSON string, no empty tool_calls array, ids unique;
   Anthropic input is an object; history accepts arguments as a string;
 - unsupported or invalid requests are 4xx in the dialect's error shape, never 5xx, and a
-  streaming request is rejected with a JSON error before any SSE byte (n != 1, logprobs,
-  top_logprobs, nonzero logit_bias, invalid UTF-8, wrong types, out-of-range values);
+  streaming request is rejected with a JSON error before any SSE byte (n != 1, top_logprobs
+  without logprobs or past 20, logit_bias past the vocabulary, invalid UTF-8, wrong types, out-of-range values);
 - response_format json_schema output parses and satisfies the schema; a seeded sampled request
   repeats byte for byte.
 
@@ -440,8 +440,8 @@ def check_rejections(report: Report, client: Client, model: str) -> None:
     base = {"model": model, "messages": [{"role": "user", "content": "hi"}], "max_tokens": 8}
     table = {
         "n=2": {"n": 2},
-        "logprobs=true": {"logprobs": True},
-        "top_logprobs=2": {"top_logprobs": 2},
+        "top_logprobs without logprobs": {"top_logprobs": 2},
+        "top_logprobs=21": {"logprobs": True, "top_logprobs": 21},
         "logit_bias past the vocabulary": {"logit_bias": {"999999999": 5}},
         "logit_bias out of range": {"logit_bias": {"1": 101}},
         "temperature as string": {"temperature": "hot"},

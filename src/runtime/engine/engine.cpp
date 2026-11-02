@@ -389,6 +389,13 @@ public:
         return *compiler;
     }
 
+    // Every token's bytes (Engine::token_bytes), built on first use.
+    [[nodiscard]] const std::vector<std::string>& token_vocabulary() const {
+        std::lock_guard lock(vocabulary_mutex);
+        if (!vocabulary) { vocabulary = backend->grammar_vocabulary().token_bytes; }
+        return *vocabulary;
+    }
+
     EngineOptions options;
     // Before the device: alive while the engine is, released after its backend is gone.
     ProcessOptionsLease process_options;
@@ -398,6 +405,8 @@ public:
     ModelSamplingDefaults sampling_defaults;
     mutable std::mutex constraint_mutex;
     mutable std::unique_ptr<structured::ConstraintCompiler> compiler;
+    mutable std::mutex vocabulary_mutex;
+    mutable std::optional<std::vector<std::string>> vocabulary;
 };
 
 Engine::Engine(EngineOptions options) {
@@ -449,6 +458,19 @@ PreparedPrompt Engine::prepare_tokens(std::vector<TokenId> token_ids,
 std::vector<TokenId> Engine::tokenize_text(std::string_view text) const {
     if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
     return impl_->backend->tokenize_text(text);
+}
+
+std::vector<std::string> Engine::token_bytes(std::span<const TokenId> tokens) const {
+    if (impl_ == nullptr) { throw std::logic_error("Engine is moved from"); }
+    const std::vector<std::string>& vocabulary = impl_->token_vocabulary();
+    std::vector<std::string> out;
+    out.reserve(tokens.size());
+    for (const TokenId token : tokens) {
+        out.push_back(token >= 0 && static_cast<std::size_t>(token) < vocabulary.size()
+                          ? vocabulary[static_cast<std::size_t>(token)]
+                          : std::string());
+    }
+    return out;
 }
 
 std::optional<TokenId> Engine::document_start_token() const {
@@ -599,6 +621,10 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
                                         ", past the model's vocabulary (" +
                                         std::to_string(vocab_size) + ")");
         }
+    }
+    // Log probabilities come from the plain sampler: one sampled token a step.
+    if (options.execution.sampling.logprobs) {
+        options.execution.speculation = RequestSpeculation{};
     }
     runtime::ResolvedRequestOptions resolved_options = resolve_request_options(
         impl_->sampling_defaults, prompt.impl_->sampling_mode, std::move(options));

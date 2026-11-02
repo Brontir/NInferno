@@ -1355,6 +1355,13 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                              sequence.tail_hidden.view({sequence.tail_hidden.ne[0], 1, 1}), nullptr,
                              device.stream);
         copy_round_token();
+        const bool wants_logprobs =
+            request.sampling_host.logprobs >= 0 && io.token_logprobs != nullptr;
+        if (wants_logprobs) {
+            CUDA_CHECK(cudaMemcpyAsync(host_token_logprobs, io.token_logprobs,
+                                       sizeof(ops::TokenLogprobs), cudaMemcpyDeviceToHost,
+                                       device.stream));
+        }
         std::array<TokenId, qwen3_5::kMtpDecodeMaximumDrafts> initial_drafts{};
         if (staged.prepare_mtp && staged.initial_mtp_extent != 0) {
             CUDA_CHECK(cudaMemcpyAsync(initial_drafts.data(), io.mtp->draft_tokens.data,
@@ -1414,7 +1421,11 @@ runtime::PrefillStepResult ProgramImpl::advance_prefill(SequenceState& sequence,
                                                .row_faults = prefill_fault != 0U
                                                                  ? std::span<const std::uint8_t>(
                                                                      &prefill_fault, 1)
-                                                                 : std::span<const std::uint8_t>{}},
+                                                                 : std::span<const std::uint8_t>{},
+                                               .logprobs = wants_logprobs
+                                                               ? std::span<const ops::TokenLogprobs>(
+                                                                     host_token_logprobs, 1)
+                                                               : std::span<const ops::TokenLogprobs>{}},
             .processed_prompt_tokens = processed_prompt_tokens,
             .work                    = unit_work(),
             .complete                = true,

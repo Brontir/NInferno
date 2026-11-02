@@ -132,6 +132,8 @@ OrdinaryDecodeState::OrdinaryDecodeState(DeviceSpan backing,
                             DType::I32,
                             {static_cast<std::int32_t>(kMaximumConcurrency *
                                                        (kMaximumOrdinaryDecodeSteps - 1U))});
+    logprobs       = reinterpret_cast<ops::TokenLogprobs*>(
+        static_cast<unsigned char*>(egress.data) + offsetof(OrdinaryDecodeEgress, logprobs));
     logits         = layout.logits.bind(backing);
     hidden         = layout.hidden.bind(backing);
 }
@@ -237,6 +239,10 @@ void complete_round_state_layout(LayoutBuilder& builder, RoundStateLayout& layou
             builder, DType::BF16, {layout.spec.hidden, columns, batch}, "DFlash target hidden");
         decode.target_continuation_hidden = add_tensor(
             builder, DType::BF16, {layout.spec.hidden, batch}, "DFlash target continuation hidden");
+    }
+    if (!layout.spec.causal_scoring) {
+        layout.token_logprobs =
+            builder.add(sizeof(ops::TokenLogprobs), 256, "step token logprobs");
     }
     layout.complete = true;
 }
@@ -508,6 +514,9 @@ RoundState::RoundState(DeviceSpan backing, const RoundStateLayout& layout) {
         rope_pos             = layout.rope_pos.bind(backing);
         logits               = layout.logits.bind(backing);
         backend_kv_table_row = layout.backend_kv_table_row.bind(backing);
+    }
+    if (layout.token_logprobs) {
+        token_logprobs = static_cast<ops::TokenLogprobs*>(layout.token_logprobs->bind(backing).data);
     }
     if (layout.mtp) { mtp.emplace(backing, *layout.mtp); }
     if (layout.dflash_prefill) { dflash_prefill.emplace(backing, *layout.dflash_prefill); }

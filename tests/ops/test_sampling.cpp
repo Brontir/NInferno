@@ -19,6 +19,7 @@
 #include <limits>
 #include <memory>
 #include <stdexcept>
+#include <string>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -762,6 +763,96 @@ int increment_counts_contract() {
     return failures;
 }
 
+// token_logprobs: an FP64 log_softmax over the BF16 logits and the top list by (logit descending,
+// id ascending), NaN as -inf. Row 1 asks for nothing and must stay untouched; row 2 has many
+// equal logits, so the id order decides the list.
+int token_logprobs_contract(int physical_rows, int token_domain) {
+    constexpr int batch = 3;
+    const std::vector<int> wanted{5, -1, ops::kMaximumTopLogprobs};
+    std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch, 0.0f);
+    std::uint64_t state = 0x9e3779b97f4a7c15ull ^ static_cast<std::uint64_t>(token_domain);
+    const auto next = [&state] {
+        state = state * 6364136223846793005ull + 1442695040888963407ull;
+        return static_cast<double>(state >> 11) * (1.0 / 9007199254740992.0);
+    };
+    for (int row = 0; row < batch; ++row) {
+        const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
+        for (int v = 0; v < physical_rows; ++v) {
+            logits[base + v] = row == 2 ? static_cast<float>(static_cast<int>(next() * 6.0)) - 3.0f
+                                        : static_cast<float>(next() * 16.0 - 8.0);
+        }
+    }
+    logits[static_cast<std::size_t>(physical_rows) * 2 + 7] =
+        std::numeric_limits<float>::quiet_NaN();
+    round_to_bf16(logits);
+    const std::vector<std::int32_t> sampled{std::min(token_domain - 1, 3), std::min(token_domain - 1, 4),
+                                            std::min(token_domain - 1, 7)};
+
+    std::vector<ops::SamplingConfig> configs(batch);
+    for (int row = 0; row < batch; ++row) { configs[static_cast<std::size_t>(row)].logprobs = wanted[row]; }
+    DeviceBuffer device_logits  = to_device(bf16_bits(logits));
+    DeviceBuffer device_sampled = to_device(sampled);
+    DeviceBuffer device_configs = to_device(configs);
+    std::vector<ops::TokenLogprobs> sentinel(batch);
+    for (auto& entry : sentinel) { entry.count = -7; }
+    DeviceBuffer device_out = to_device(sentinel);
+    Tensor logits_tensor(device_logits.p, DType::BF16, {physical_rows, batch});
+    Tensor sampled_tensor(device_sampled.p, DType::I32, {batch});
+    ops::token_logprobs(logits_tensor, sampled_tensor, token_domain,
+                        static_cast<const ops::SamplingConfig*>(device_configs.p),
+                        static_cast<ops::TokenLogprobs*>(device_out.p), nullptr);
+    cuda_synchronize();
+    const std::vector<ops::TokenLogprobs> got = from_device<ops::TokenLogprobs>(device_out, batch);
+
+    int failures = 0;
+    const auto fail = [&failures](const std::string& what) {
+        std::cerr << "token_logprobs(" << what << ")\n";
+        ++failures;
+    };
+    for (int row = 0; row < batch; ++row) {
+        const ops::TokenLogprobs& result = got[static_cast<std::size_t>(row)];
+        const std::string label = "domain " + std::to_string(token_domain) + " row " + std::to_string(row);
+        if (wanted[row] < 0) {
+            if (result.count != -7) { fail(label + ": a row without logprobs was written"); }
+            continue;
+        }
+        const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
+        const auto value = [&](int v) {
+            const double x = logits[base + static_cast<std::size_t>(v)];
+            return std::isnan(x) ? -std::numeric_limits<double>::infinity() : x;
+        };
+        double top = -std::numeric_limits<double>::infinity();
+        for (int v = 0; v < token_domain; ++v) { top = std::max(top, value(v)); }
+        double sum = 0.0;
+        for (int v = 0; v < token_domain; ++v) { sum += std::exp(value(v) - top); }
+        const double lse = top + std::log(sum);
+        std::vector<int> order(static_cast<std::size_t>(token_domain));
+        for (int v = 0; v < token_domain; ++v) { order[static_cast<std::size_t>(v)] = v; }
+        const int count = std::min(wanted[row], token_domain);
+        std::partial_sort(order.begin(), order.begin() + count, order.end(), [&](int a, int b) {
+            return value(a) > value(b) || (value(a) == value(b) && a < b);
+        });
+        if (result.count != count) {
+            fail(label + ": count " + std::to_string(result.count));
+            continue;
+        }
+        for (int i = 0; i < count; ++i) {
+            const int id = order[static_cast<std::size_t>(i)];
+            if (result.ids[i] != id || std::abs(result.values[i] - (value(id) - lse)) > 1e-3) {
+                fail(label + ": entry " + std::to_string(i) + " id " + std::to_string(result.ids[i]) +
+                     " (want " + std::to_string(id) + ") value " + std::to_string(result.values[i]) +
+                     " (want " + std::to_string(value(id) - lse) + ")");
+            }
+        }
+        const double want_sampled = value(sampled[static_cast<std::size_t>(row)]) - lse;
+        if (std::abs(result.sampled - want_sampled) > 1e-3) {
+            fail(label + ": sampled " + std::to_string(result.sampled) + " (want " +
+                 std::to_string(want_sampled) + ")");
+        }
+    }
+    return failures;
+}
+
 // ---- Allowed-token masks ----------------------------------------------------------------------
 
 // Device-mapped pinned host words: the storage the structured-output runtime uses for masks and
@@ -1231,6 +1322,10 @@ int main() {
     failures += rng_key_contract();
     failures += workspace_route_boundary_contract();
     failures += increment_counts_contract();
+    failures += token_logprobs_contract(248320, 248077);
+    failures += token_logprobs_contract(262144, 262144);
+    failures += token_logprobs_contract(260, 200);
+    failures += token_logprobs_contract(8, 3); // fewer tokens than asked
     failures += masked_greedy_contract(248320, 248077);
     failures += masked_greedy_contract(260, 200);
     failures += masked_distribution_contract();

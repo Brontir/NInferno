@@ -1399,6 +1399,10 @@ TextContext::prefill_impl(std::span<const int> ids, const TextPrefill* text_pref
                     ops::sample(logits, io_.token,
                                 dimension(parameters_.model.resources().public_token_count),
                                 sampling_config_, io_.pos, ops::kSamplePurposePrefill, work_, s);
+                    ops::token_logprobs(
+                        logits, io_.token,
+                        dimension(parameters_.model.resources().public_token_count),
+                        sampling_config_, io_.token_logprobs, s);
                 } else {
                     ops::argmax(logits, io_.token,
                                 dimension(parameters_.model.resources().public_token_count), s);

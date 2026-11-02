@@ -6,6 +6,7 @@
 
 #include "ops/common/math.h"
 #include "ops/kernel/sampling.cuh"
+#include "ops/kernel/token_logprobs.cuh"
 #include "core/device.h"
 
 namespace ninferno::ops::detail {
@@ -47,6 +48,14 @@ void sample_batch_launch(const Tensor& logits, Tensor& out, std::int32_t token_d
     sampling_group_finalize_sample_kernel<<<group_grid, kSamplerGroupBlock, 0, stream>>>(
         static_cast<std::int32_t*>(out.data), configs, positions, purpose, token_domain,
         partial_blocks, groups, scratch);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void token_logprobs_launch(const Tensor& logits, const Tensor& sampled, std::int32_t token_domain,
+                           const SamplingConfig* configs, TokenLogprobs* out, cudaStream_t stream) {
+    token_logprobs_kernel<<<static_cast<unsigned int>(logits.ne[1]), kLogprobBlock, 0, stream>>>(
+        static_cast<const __nv_bfloat16*>(logits.data), logits.ne[0], token_domain,
+        static_cast<const std::int32_t*>(sampled.data), configs, out);
     CUDA_CHECK(cudaGetLastError());
 }
 

@@ -1,5 +1,7 @@
 #include "runtime/contract/sampling.h"
 
+#include <algorithm>
+
 namespace ninferno::runtime {
 ResolvedSamplingParameters resolve_sampling(const ModelSamplingDefaults& defaults,
                                             SamplingMode mode, const SamplingOverrides& overrides) {
@@ -14,6 +16,9 @@ ResolvedSamplingParameters resolve_sampling(const ModelSamplingDefaults& default
         .repetition_penalty = overrides.repetition_penalty.value_or(1.0F),
         .seed              = overrides.seed.value_or(0),
         .logit_bias        = overrides.logit_bias,
+        .logprobs          = overrides.logprobs ? static_cast<std::int32_t>(std::min<std::uint32_t>(
+                                                      *overrides.logprobs, 1U << 30))
+                                                : -1,
     };
     // The registered sampling pipeline has an exact top-64 candidate domain. Preserve the
     // existing public meaning of zero (use the target cap), then expose only concrete values to

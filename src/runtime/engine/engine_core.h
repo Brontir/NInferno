@@ -696,6 +696,9 @@ private:
                     for (auto& event : events) {
                         if (auto* timing = std::get_if<GenerationTimingObservation>(&event)) {
                             sink->timing(std::move(*timing));
+                        } else if (auto* logprobs =
+                                       std::get_if<std::vector<GeneratedLogprob>>(&event)) {
+                            sink->logprobs(std::move(*logprobs));
                         } else {
                             sink->publish(std::move(std::get<OutputDelta>(event)));
                         }
@@ -793,13 +796,40 @@ private:
         };
     }
 
+    // The first accepted token of a row that asked takes the round's record (such a row produces
+    // one token a round); a token the engine injected was not sampled: logprob 0, no alternatives.
+    static void append_logprobs(Request& request, std::span<const TokenId> tokens,
+                                const ops::TokenLogprobs* sampled) {
+        for (std::size_t i = 0; i < tokens.size(); ++i) {
+            GeneratedLogprob entry{.token = tokens[i]};
+            if (i == 0 && sampled != nullptr && sampled->count >= 0) {
+                entry.logprob = sampled->sampled;
+                entry.top.reserve(static_cast<std::size_t>(sampled->count));
+                for (std::int32_t k = 0; k < sampled->count; ++k) {
+                    entry.top.push_back(
+                        TokenLogprob{.token = sampled->ids[k], .logprob = sampled->values[k]});
+                }
+            }
+            request.logprobs.push_back(std::move(entry));
+        }
+    }
+
     void append_output(const std::shared_ptr<Request>& request, PublishedOutput output,
                        std::optional<GenerationTimingObservation> timing = std::nullopt) {
-        if (output.empty() && !timing) { return; }
         const bool streaming = request->consumer_mode == OutputConsumerMode::Streaming;
+        // A stream gets the tokens' log probabilities before the text they produce.
+        std::vector<GeneratedLogprob> fresh;
+        if (streaming && request->logprobs.size() > request->published_logprobs) {
+            fresh.assign(request->logprobs.begin() +
+                             static_cast<std::ptrdiff_t>(request->published_logprobs),
+                         request->logprobs.end());
+            request->published_logprobs = request->logprobs.size();
+        }
+        if (output.empty() && !timing && fresh.empty()) { return; }
         {
             std::lock_guard lock(request->mutex);
             if (streaming && timing) { request->events.emplace_back(std::move(*timing)); }
+            if (!fresh.empty()) { request->events.emplace_back(std::move(fresh)); }
             for (OutputDelta& delta : output) {
                 std::string& full = delta.channel == OutputChannel::Reasoning ? request->reasoning
                                                                               : request->content;
@@ -940,6 +970,7 @@ private:
         GenerationResult result;
         result.prompt                  = request->prompt_summary;
         result.generated_token_ids     = std::move(request->generated);
+        result.logprobs                = std::move(request->logprobs);
         result.content                 = std::move(request->content);
         result.reasoning               = std::move(request->reasoning);
         result.tool_calls              = request->output.take_tool_calls();
@@ -1235,6 +1266,9 @@ private:
                 if (request != nullptr && request->generated.size() >= generated_sizes[row]) {
                     request->generated.resize(generated_sizes[row]);
                 }
+                if (request != nullptr && request->logprobs.size() > generated_sizes[row]) {
+                    request->logprobs.resize(generated_sizes[row]);
+                }
             }
             generated_staged = false;
         };
@@ -1306,6 +1340,11 @@ private:
                                    static_cast<std::ptrdiff_t>(row * pending.row_stride());
                 request->generated.insert(request->generated.end(), first,
                                           first + static_cast<std::ptrdiff_t>(accepted));
+                if (request->options.execution.sampling.logprobs >= 0) {
+                    append_logprobs(*request,
+                                    std::span<const TokenId>(&*first, static_cast<std::size_t>(accepted)),
+                                    pending.logprobs().empty() ? nullptr : &pending.logprobs()[row]);
+                }
             }
         } catch (...) {
             const std::exception_ptr error = std::current_exception();
@@ -2291,6 +2330,9 @@ private:
                 if (request != nullptr && request->generated.size() >= generated_sizes[row]) {
                     request->generated.resize(generated_sizes[row]);
                 }
+                if (request != nullptr && request->logprobs.size() > generated_sizes[row]) {
+                    request->logprobs.resize(generated_sizes[row]);
+                }
             }
             generated_staged = false;
         };
@@ -2331,6 +2373,9 @@ private:
                         "admission did not reserve thinking-control token capacity");
                 }
                 request->generated.insert(request->generated.end(), tokens.begin(), tokens.end());
+                if (request->options.execution.sampling.logprobs >= 0) {
+                    append_logprobs(*request, tokens, nullptr);
+                }
             }
             phase.pause_range();
             ProgramCallScope program_call(*this);

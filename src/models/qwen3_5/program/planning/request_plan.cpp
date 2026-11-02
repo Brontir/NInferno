@@ -31,6 +31,7 @@ ops::SamplingConfig translate_sampling(const ResolvedSamplingParameters& source)
     out.repetition_penalty = source.repetition_penalty;
     out.seed              = source.seed;
     out.token_counts      = nullptr;
+    out.logprobs          = source.logprobs;
     return out;
 }
 

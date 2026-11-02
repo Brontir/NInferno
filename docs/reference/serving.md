@@ -641,6 +641,16 @@ llama.cpp-style base URLs.
   offsets in `[-100,100]`, added to the logit before the penalties and the sampler (-100 bans a
   token in practice). A token id past the model's vocabulary is refused with 400; zero offsets are
   dropped. Speculative verification samples from the same biased logits.
+- `logprobs` and `top_logprobs` (Chat Completions; `top_logprobs` in `[0,20]`, nonzero only with
+  `logprobs:true`): each output token's log probability, its text and bytes, and its most likely
+  alternatives in `choices[0].logprobs.content`. They are vLLM's raw log probabilities: a
+  log_softmax of the model's logits before `logit_bias`, the penalties, temperature, the filters and
+  a constraint mask, so they do not depend on the sampling settings. Every output token is listed in
+  order, reasoning included; a token the engine injected (the thinking budget's close) has
+  logprob 0 and no alternatives; a token the model cannot produce reports -9999. A request with
+  logprobs decodes plainly (no speculative drafts), one token a step, and a round that holds it
+  runs one step for its batch neighbours too. A stream carries each token's
+  entry in the first chunk sent after it, which may have text from later tokens or none.
 - vLLM's `repetition_penalty` (`(0,2]`, 1 neutral; outside the range a 400 naming the field): a
   token the prompt or the output already holds has its logit divided by the penalty when positive
   and multiplied when negative, before `presence_penalty` and `frequency_penalty` (which count the
@@ -700,7 +710,7 @@ Options whose observable behavior the Engine cannot provide are rejected when th
 behavior:
 
 - JSON constrained output outside the cases above;
-- requested log probabilities;
+- log probabilities on Responses and Anthropic Messages;
 - audio/file input or audio output;
 - image detail levels other than `auto`, `low` and `high`;
 - web search, moderation, low/high verbosity;
@@ -714,7 +724,7 @@ as unknown hints.
 
 ### Accepted but neutral fields
 
-- `logprobs:false`, `top_logprobs:0`, `verbosity:"medium"`, empty legacy tool
+- `logprobs:false`, `verbosity:"medium"`, empty legacy tool
   controls, text-only `audio` configuration, and `prediction` are accepted without changing Engine
   execution.
 - Metadata, user/safety identifiers, service-tier and prompt-cache hints are advisory.
@@ -960,7 +970,8 @@ the share of responses in schema order and near-empty objects that stopped early
 - When `stream_options.include_usage` is true, a final empty `choices` chunk contains completed
   usage.
 - Aggregate and streamed usage include cached prompt tokens and reasoning-token details. Choices
-  carry `logprobs: null` when log probabilities were not requested. Aggregate assistant messages
+  carry `logprobs: null` when log probabilities were not requested, else
+  `{"content": [...], "refusal": null}`. Aggregate assistant messages
   carry `refusal: null`, because refusal output is not supported.
 
 ### llama.cpp-compatible request observations
