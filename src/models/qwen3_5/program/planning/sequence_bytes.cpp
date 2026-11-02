@@ -474,6 +474,10 @@ void plan_program_buffers(LayoutBuilder& builder, const SequencePlanImpl& plan,
             add_tensor(builder, DType::I32,
                        {traits.public_tokens, static_cast<std::int32_t>(plan.max_concurrency)},
                        "sampling token counts");
+        out.logit_bias =
+            add_tensor(builder, DType::FP32,
+                       {traits.public_tokens, static_cast<std::int32_t>(plan.max_concurrency)},
+                       "sampling logit bias");
         const auto config_words = static_cast<std::int32_t>(
             (sizeof(ops::SamplingConfig) + sizeof(std::int32_t) - 1) / sizeof(std::int32_t));
         out.sampling_config = add_tensor(

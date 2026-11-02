@@ -562,6 +562,14 @@ struct ModelSamplingDefaults {
     }
 };
 
+// OpenAI's logit_bias: an offset in [-100, 100] added to one token's logit before sampling
+// (-100 bans it in practice, 100 forces it). Token ids are the model's.
+struct LogitBias {
+    std::int32_t token = 0;
+    float bias         = 0.0F;
+};
+inline constexpr float kLogitBiasLimit = 100.0F;
+
 // Public request-side overrides. std::nullopt means "use the registered model/mode default";
 // explicit zero remains a real override (including temperature=0 for exact argmax).
 struct SamplingOverrides {
@@ -575,6 +583,8 @@ struct SamplingOverrides {
     // positive, multiplied when negative. 1 is neutral; no model preset sets it.
     std::optional<float> repetition_penalty;
     std::optional<std::uint64_t> seed;
+    // Each token at most once (a later entry for the same token replaces it).
+    std::vector<LogitBias> logit_bias;
 };
 
 // The sampler keeps at most this many candidates; a request's top_k is in [0, kMaximumTopK] (0:
@@ -611,6 +621,7 @@ struct ResolvedSamplingParameters {
     float frequency_penalty  = 0.0F;
     float repetition_penalty = 1.0F;
     std::uint64_t seed       = 0;
+    std::vector<LogitBias> logit_bias;
 };
 
 enum class OutputChannel : std::uint8_t {

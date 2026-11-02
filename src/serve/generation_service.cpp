@@ -823,6 +823,22 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             request_options.execution.thinking.budget.reset();
             prepared.thinking_budget.reset();
         }
+        // A logit_bias token past the vocabulary is the field's error (the Engine checks again).
+        const auto& biases             = request_options.execution.sampling.logit_bias;
+        const std::uint64_t vocab_size =
+            biases.empty() ? 0 : engine_->load_summary().metadata.vocab_size;
+        for (const ninferno::LogitBias& entry : biases) {
+            if (static_cast<std::uint64_t>(entry.token) >= vocab_size) {
+                ApiError error;
+                error.status  = 400;
+                error.param   = "logit_bias";
+                error.code    = "invalid_logit_bias";
+                error.message = "logit_bias names token " + std::to_string(entry.token) +
+                                ", past the model's vocabulary (" + std::to_string(vocab_size) +
+                                ")";
+                throw ApiException(std::move(error));
+            }
+        }
         choose_speculation(prepared.enable_thinking, request.draft_tokens, request_options,
                            prepared);
         prepared.prompt_tokens = static_cast<int>(prompt.summary().prompt_tokens);

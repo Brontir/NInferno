@@ -38,6 +38,13 @@ inline void check_resolved_sampling(const ResolvedSamplingParameters& sampling) 
     if (!repetition_penalty_valid(sampling.repetition_penalty)) {
         throw std::invalid_argument("repetition_penalty must be in (0,2]");
     }
+    for (const LogitBias& entry : sampling.logit_bias) {
+        if (entry.token < 0 || !std::isfinite(entry.bias) || entry.bias < -kLogitBiasLimit ||
+            entry.bias > kLogitBiasLimit) {
+            throw std::invalid_argument(
+                "logit_bias needs non-negative token ids and values in [-100,100]");
+        }
+    }
     if (sampling.top_k < 1 || sampling.top_k > kMaximumTopK) {
         throw std::invalid_argument("resolved top_k must be in [1," + std::to_string(kMaximumTopK) +
                                     "]");

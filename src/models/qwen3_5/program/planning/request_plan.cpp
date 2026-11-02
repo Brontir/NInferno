@@ -248,6 +248,14 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
                                                ? FinishReason::OutputLimit
                                                : FinishReason::ContextCapacity;
     base->sampling                       = translate_sampling(options.sampling);
+    for (const LogitBias& entry : options.sampling.logit_bias) {
+        if (entry.token >= model.traits().public_tokens) {
+            throw std::invalid_argument("logit_bias names token " + std::to_string(entry.token) +
+                                        ", past the model's vocabulary (" +
+                                        std::to_string(model.traits().public_tokens) + ")");
+        }
+    }
+    base->logit_bias = options.sampling.logit_bias;
     base->speculation = RequestSpeculationPlan{.draft_depth      = default_draft_depth,
                                                .acceptance_floor = watchdog_policy.floor_tokens_per_round,
                                                .step_down        = default_step_down};
@@ -520,6 +528,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
     auto plan                         = std::make_unique<AdmissionCandidateImpl>();
     plan->summary                     = base.summary;
     plan->sampling                    = base.sampling;
+    plan->logit_bias                  = base.logit_bias;
     plan->speculation                 = base.speculation;
     plan->text_kv_page_entitlement    = base.text_kv_page_entitlement;
     plan->backend_kv_page_entitlement = base.backend_kv_page_entitlement;

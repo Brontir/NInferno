@@ -325,6 +325,7 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
     if (plan.persistent.sampling_config) {
         sampling_config = plan.persistent.sampling_config->bind(backing);
     }
+    if (plan.persistent.logit_bias) { logit_bias_table = plan.persistent.logit_bias->bind(backing); }
     active_continuations.fill(continuation_capacity);
     for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) { lane_epochs[lane] = 1; }
     for (std::uint32_t index = 0; index < continuation_capacity; ++index) {

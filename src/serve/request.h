@@ -190,6 +190,9 @@ struct SamplingParams {
     std::optional<double> frequency_penalty;
     std::optional<double> repetition_penalty;
     std::optional<std::uint64_t> seed;
+    // OpenAI's logit_bias: the model's token id and its offset in [-100, 100]; zero entries are
+    // dropped.
+    std::vector<ninferno::LogitBias> logit_bias;
 };
 
 // Constrained-decoding request normalized from any wire dialect (OpenAI response_format and

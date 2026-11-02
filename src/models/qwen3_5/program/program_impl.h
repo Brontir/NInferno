@@ -196,6 +196,7 @@ struct RequestBasePlanImpl {
     std::uint32_t root_rebuild_tail_begin = 0;
     qwen3_5::PreparedContextCache context_cache;
     ops::SamplingConfig sampling;
+    std::vector<LogitBias> logit_bias;
     RequestSpeculationPlan speculation;
     std::uint32_t text_kv_page_entitlement    = 0;
     std::uint32_t backend_kv_page_entitlement = 0;
@@ -261,6 +262,7 @@ struct AdmissionCandidateImpl : ResourceCandidateState {
     std::vector<CaptureGroup> capture_groups;
     std::vector<CaptureGroup> shared_candidates;
     ops::SamplingConfig sampling;
+    std::vector<LogitBias> logit_bias;
     RequestSpeculationPlan speculation;
     std::uint32_t text_kv_page_entitlement    = 0;
     std::uint32_t backend_kv_page_entitlement = 0;
@@ -722,6 +724,9 @@ public:
     Tensor token_counts;
     // Host words of a request's prompt marks for repetition_penalty (install_sampling).
     std::vector<std::int32_t> repetition_seed_;
+    // Per-lane logit_bias tables [public_tokens, lanes] f32, and their host staging.
+    Tensor logit_bias_table;
+    std::vector<float> logit_bias_host_;
 
     std::vector<SequenceState> continuation_states;
     std::vector<ContinuationSlot> continuation_slots;
@@ -1316,6 +1321,7 @@ private:
     void prepare_graphs();
     void install_sampling(SequenceState& sequence, RequestControl& request,
                           const ops::SamplingConfig& config,
+                          std::span<const LogitBias> logit_bias,
                           const RequestSpeculationPlan& speculation);
     void set_device_i32(Tensor& tensor, std::int32_t value);
     void copy_tail(SequenceState& sequence, const Tensor& source);

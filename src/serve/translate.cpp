@@ -167,6 +167,7 @@ ninferno::SamplingOverrides resolve_sampling_overrides(const SamplingParams& req
     if (request.repetition_penalty) {
         sampling.repetition_penalty = static_cast<float>(*request.repetition_penalty);
     }
+    sampling.logit_bias = request.logit_bias;
     if (request.seed) {
         sampling.seed = *request.seed;
     } else if (server.sampling_overrides.seed) {

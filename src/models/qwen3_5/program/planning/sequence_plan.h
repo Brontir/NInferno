@@ -77,6 +77,7 @@ struct PersistentLayout {
     std::optional<TensorLayout> score_hidden;
     std::optional<TensorLayout> token_counts;
     std::optional<TensorLayout> sampling_config;
+    std::optional<TensorLayout> logit_bias;
     std::size_t bytes            = 0;
     std::size_t kv_payload_bytes = 0;
 };

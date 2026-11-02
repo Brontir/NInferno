@@ -151,6 +151,14 @@ Json event_base(const std::string& server_instance_id, std::uint64_t timestamp, 
                 {"server_instance_id", server_instance_id}};
 }
 
+// {"<token id>": offset}, or null when the request biases nothing.
+Json logit_bias_json(const std::vector<ninferno::LogitBias>& biases) {
+    if (biases.empty()) { return nullptr; }
+    Json out = Json::object();
+    for (const ninferno::LogitBias& entry : biases) { out[std::to_string(entry.token)] = entry.bias; }
+    return out;
+}
+
 Json sampler_json(const ninferno::ResolvedSamplingParameters& sampling) {
     return Json{{"temperature", sampling.temperature},
                 {"top_p", sampling.top_p},
@@ -159,7 +167,8 @@ Json sampler_json(const ninferno::ResolvedSamplingParameters& sampling) {
                 {"presence_penalty", sampling.presence_penalty},
                 {"frequency_penalty", sampling.frequency_penalty},
                 {"repetition_penalty", sampling.repetition_penalty},
-                {"seed", sampling.seed}};
+                {"seed", sampling.seed},
+                {"logit_bias", logit_bias_json(sampling.logit_bias)}};
 }
 
 Json preset_json(const ninferno::SamplingPreset& preset) {
@@ -179,7 +188,8 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
                 {"presence_penalty", nullptr},
                 {"frequency_penalty", nullptr},
                 {"repetition_penalty", nullptr},
-                {"seed", nullptr}};
+                {"seed", nullptr},
+                {"logit_bias", nullptr}};
     if (overrides.temperature) { result["temperature"] = *overrides.temperature; }
     if (overrides.top_p) { result["top_p"] = *overrides.top_p; }
     if (overrides.top_k) { result["top_k"] = *overrides.top_k; }
@@ -190,6 +200,7 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
         result["repetition_penalty"] = *overrides.repetition_penalty;
     }
     if (overrides.seed) { result["seed"] = *overrides.seed; }
+    result["logit_bias"] = logit_bias_json(overrides.logit_bias);
     return result;
 }
 
