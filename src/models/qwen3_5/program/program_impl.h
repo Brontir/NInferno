@@ -998,6 +998,10 @@ private:
         bool replaces_shared = false;
         std::optional<runtime::CheckpointRef> private_replacement;
         std::optional<std::uint32_t> shared_index;
+        // Full pages the owners this capture released shared with its own sequence alone: the
+        // new prefix shares them again at the publication; an abort gives them to the request
+        // (kv_alias_transfers).
+        detail::PhysicalResources deferred_kv_transfer;
         std::uint64_t replacement_generation = 0;
         StateImageHandle source_state;
         StateImageHandle destination_state;
@@ -1245,12 +1249,14 @@ private:
     [[nodiscard]] const SequenceState& active_sequence(std::uint32_t lane) const;
     [[nodiscard]] bool can_release_continuation_slot_strict(std::uint32_t index) const;
     void release_continuation_slot_strict(
-        std::uint32_t index, std::optional<std::uint32_t> resharing_lane = std::nullopt) noexcept;
+        std::uint32_t index, std::optional<std::uint32_t> resharing_lane = std::nullopt,
+        detail::PhysicalResources* resharing_deferred = nullptr) noexcept;
     [[nodiscard]] std::array<detail::PhysicalResources, kMaximumConcurrency>
-    kv_alias_transfers(const SequenceKVBundle& released, std::uint32_t released_continuation,
-                       std::optional<std::uint32_t> resharing_lane) const;
+    kv_alias_transfers(const SequenceKVBundle& released,
+                       std::uint32_t released_continuation) const;
     void apply_kv_alias_transfers(
-        const std::array<detail::PhysicalResources, kMaximumConcurrency>& transfers);
+        std::array<detail::PhysicalResources, kMaximumConcurrency> transfers,
+        std::optional<std::uint32_t> resharing_lane, detail::PhysicalResources* resharing_deferred);
     void release_continuation_slot_best_effort(std::uint32_t index) noexcept;
     void retire_continuation_slot(std::uint32_t index) noexcept;
     void clear_execution_failure_lanes(std::span<const std::uint32_t> lanes) noexcept;
@@ -1290,7 +1296,8 @@ private:
     [[nodiscard]] detail::PhysicalResources
     release_shared_prefix_state_strict(
         std::uint32_t index, SharedPrefixSlotRole expected_role,
-        std::optional<std::uint32_t> resharing_lane = std::nullopt) noexcept;
+        std::optional<std::uint32_t> resharing_lane = std::nullopt,
+        detail::PhysicalResources* resharing_deferred = nullptr) noexcept;
     [[nodiscard]] detail::PhysicalResources
     install_private_capture(SequenceState& sequence, const CaptureGroup& group,
                             StateImageHandle checkpoint,

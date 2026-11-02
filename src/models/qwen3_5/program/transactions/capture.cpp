@@ -683,7 +683,7 @@ void ProgramImpl::prepare_active_capture(ActiveCaptureTransaction& transaction) 
             }
             const detail::PhysicalResources removed = release_shared_prefix_state_strict(
                 *transaction.shared_index, SharedPrefixSlotRole::ReservedReplacement,
-                transaction.lane);
+                transaction.lane, &transaction.deferred_kv_transfer);
             if (removed != transaction.capacity_preparation_removed) {
                 throw std::logic_error("shared capture preparation release changed");
             }
@@ -817,6 +817,15 @@ void ProgramImpl::enqueue_active_capture_transfers(ActiveCaptureTransaction& tra
 void ProgramImpl::abort_active_capture(ActiveCaptureTransaction& transaction) noexcept {
     if (transaction.lane < max_concurrency &&
         active_continuations[transaction.lane] < continuation_capacity) {
+        // Pages the released owners shared with this sequence are not shared again: they are its
+        // request's (kv_alias_transfers).
+        if (transaction.deferred_kv_transfer != detail::PhysicalResources{}) {
+            try {
+                requests[transaction.lane].active_resources = checked_resource_sum(
+                    requests[transaction.lane].active_resources, transaction.deferred_kv_transfer);
+            } catch (...) { std::terminate(); }
+            transaction.deferred_kv_transfer = {};
+        }
         SequenceState& sequence = active_sequence(transaction.lane);
         if (transaction.backend_snapshot) {
             backend_kv_addresses->abort_active_snapshot(*transaction.backend_snapshot);
@@ -1115,7 +1124,8 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                 const detail::PhysicalResources released = release_shared_prefix_state_strict(
                     index, SharedPrefixSlotRole::Catalogued,
                     transaction.publish_shared ? std::optional<std::uint32_t>(transaction.lane)
-                                               : std::nullopt);
+                                               : std::nullopt,
+                    &transaction.deferred_kv_transfer);
                 if (released != exclusive ||
                     work.option.effect.added != detail::PhysicalResources{}) {
                     throw std::logic_error("capture shared pressure eviction changed");
@@ -1159,9 +1169,10 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                 const detail::PhysicalResources exclusive =
                     owner_exclusive_resources(continuation_states[index]);
                 release_continuation_slot_strict(
-                    index, transaction.publish_shared
-                               ? std::optional<std::uint32_t>(transaction.lane)
-                               : std::nullopt);
+                    index,
+                    transaction.publish_shared ? std::optional<std::uint32_t>(transaction.lane)
+                                               : std::nullopt,
+                    &transaction.deferred_kv_transfer);
                 work.committed_delta    = detail::PhysicalDelta{.removed = exclusive};
                 work.completed          = true;
                 work.mutation_published = true;
