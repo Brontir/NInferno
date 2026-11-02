@@ -58,8 +58,9 @@ two months, an enterprise one in six to eight. NInferno will not offer one.</sub
 - **Weights:** each model runs as published on Hugging Face (GGUF, NVFP4, MXFP4, FP8, AWQ,
   GPTQ), and so do its fine-tunes. A quantization the engine cannot read is refused at start,
   with the reason. [Weight conversion](docs/weight-conversion.md) lists each family's formats.
-- **Image and video:** start with `--vision`, for models that have a vision tower (Gemma 4 12B has
-  none); video is Qwen's. A GGUF needs its `mmproj` file beside it (converted with the model).
+- **Image and video:** start with `--vision`, for models whose vision tower the engine reads
+  (Gemma 4 12B's `gemma4uv` tower is not supported yet); video is Qwen's. A GGUF needs its
+  `mmproj` file beside it (converted with the model).
 - **Speculative decoding:** the full model checks every drafted token. `--activations exact`
   makes the output identical whatever the load, batch or draft, at some speed
   ([quality checks](docs/perplexity.md)).
