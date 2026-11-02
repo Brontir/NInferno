@@ -415,19 +415,30 @@ runtime::ContextTransactionReserveStatus ProgramImpl::reserve_active_capture_imp
         skip_capture(std::move(offer));
         return runtime::ContextTransactionReserveStatus::Aborted;
     }
-    // A shared victim that shares its StateImage with one of the capturing sequence's own
-    // checkpoints would hand that image to the sequence mid-capture, after the assessment priced
-    // the drop without it (#317). The capture is optional: it waits for another round.
+    // A shared victim that shares its StateImage with a checkpoint this capture drops would hand
+    // that image to the sequence mid-capture, after the assessment priced the drop without it
+    // (#317). The capture is optional: it waits for another round. A victim aliasing a checkpoint
+    // the sequence keeps is transferred to its request at the release and needs no abort.
     if (pressure_details != nullptr && assessment.publishes_private) {
-        const SequenceState& owner = active_sequence(ContractAccess::lane(offer).value);
+        const std::uint32_t capture_lane = ContractAccess::lane(offer).value;
+        const SequenceState& owner       = active_sequence(capture_lane);
+        const RequestControl::Prefill& prefill = *requests[capture_lane].prefill;
+        const CaptureGroup& group              = prefill.capture_groups[prefill.next_capture];
         for (const std::uint32_t victim : pressure_details->shared_pressure_indices) {
             if (victim >= shared_prefix_capacity) { continue; }
             const StateImageHandle state = shared_prefix_states[victim].state;
-            const bool aliased =
-                (owner.rewrite_state && *owner.rewrite_state == state) ||
+            const bool drops_rewrite =
+                group.rewrite && owner.rewrite_state && *owner.rewrite_state == state;
+            const bool drops_anchor =
+                private_replacement &&
+                private_replacement->kind == runtime::CheckpointKind::LongAnchor &&
                 std::any_of(owner.long_anchors.begin(), owner.long_anchors.end(),
-                            [&](const LongAnchorCheckpoint& anchor) { return anchor.state == state; });
-            if (aliased) {
+                            [&](const LongAnchorCheckpoint& anchor) {
+                                return anchor.state == state &&
+                                       anchor.frontier == private_replacement->frontier &&
+                                       anchor.ordinal == private_replacement->ordinal;
+                            });
+            if (drops_rewrite || drops_anchor) {
                 skip_capture(std::move(offer));
                 return runtime::ContextTransactionReserveStatus::Aborted;
             }

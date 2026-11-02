@@ -882,6 +882,38 @@ ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
         SharedPrefixSlot& slot                  = shared_prefix_slots[index];
         const detail::PhysicalResources removed = owner_exclusive_resources(shared);
         const bool last_state_reference = state_store->checkpoint_references(shared.state) == 1;
+        // A full page this prefix shares with an active sequence alone (a capture published it,
+        // and its request's active resources gave the page up) is counted by neither owner. Once
+        // the prefix is released it is the sequence's alone: its request takes it back, as a
+        // released checkpoint below (#317).
+        std::array<detail::PhysicalResources, kMaximumConcurrency> kv_transfers{};
+        const auto count_kv_transfers = [&](const KVAddressSpaceStore& addresses,
+                                            const LogicalKVPageStore& pages,
+                                            KVAddressSpaceHandle prefix,
+                                            KVAddressSpaceHandle sequence_kv,
+                                            std::uint32_t& transferred) {
+            const std::uint32_t common =
+                std::min(addresses.mapped_pages(prefix), addresses.mapped_pages(sequence_kv));
+            for (std::uint32_t page = 0; page < common; ++page) {
+                const LogicalKVPageHandle logical = addresses.logical_page(prefix, page);
+                if (addresses.logical_page(sequence_kv, page) != logical) { break; }
+                if (pages.address_references(logical) == 2 && pages.device_resident(logical)) {
+                    ++transferred;
+                }
+            }
+        };
+        for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+            if (active_continuations[lane] >= continuation_capacity) { continue; }
+            const SequenceState& sequence = active_sequence(lane);
+            if (!sequence.kv) { continue; }
+            count_kv_transfers(*text_kv_addresses, *text_kv_pages, shared.kv->text,
+                               sequence.kv->text, kv_transfers[lane].device.main_kv_pages);
+            if (shared.kv->backend && sequence.kv->backend) {
+                count_kv_transfers(*backend_kv_addresses, *backend_kv_pages, *shared.kv->backend,
+                                   *sequence.kv->backend,
+                                   kv_transfers[lane].device.backend_kv_pages);
+            }
+        }
         if (shared.kv->backend && !backend_kv_addresses->release(*shared.kv->backend)) {
             std::terminate();
         }
@@ -923,6 +955,11 @@ ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
                     checked_resource_sum(requests[lane].active_resources, transferred);
                 break;
             }
+        }
+        for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+            if (kv_transfers[lane] == detail::PhysicalResources{}) { continue; }
+            requests[lane].active_resources =
+                checked_resource_sum(requests[lane].active_resources, kv_transfers[lane]);
         }
 
         shared    = SharedPrefixState{};
