@@ -3,8 +3,10 @@
 // l: its values 8 l .. 8 l + 7), codes decoded straight to FP32 and summed against FP32
 // activations. Without tensor mma.sync the register-MMA tiles emulate the MMA fragment layout on
 // FP32 FMAs; at T <= 4 this kernel reads the same bytes in row order. run_route takes it for a
-// lane-local register-MMA call (V100 Gemma 4 31B Q5_K head: 5.6 -> ~1.6 ms, decode 25.5 -> 28.4
-// tok/s).
+// lane-local register-MMA call the HMMA kernel does not (volta_hmma_takes): BF16; the K-quant and
+// Q8 G32 calls go to the HMMA kernel from one token, so a token's bytes do not depend on its call's
+// width (V100 Gemma 4 31B Q5_K head when this kernel took it: 5.6 -> ~1.6 ms, decode 25.5 -> 28.4
+// tok/s; Qwen3.5-9B Q4_K_M decode C1 on the HMMA kernel 0.8 % below it).
 #include "core/device.h"
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.cuh"

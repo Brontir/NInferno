@@ -802,7 +802,7 @@ int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t
     if (failures == 0) {
         std::cout << f.name << " " << op_name(op) << (a4 ? " A4" : a8 ? " A8" : "") << " ["
                   << rows_n << "," << k
-                  << "]: " << routes.size() << " routes x 10 windows byte-identical\n";
+                  << "]: " << routes.size() << " routes x " << std::size(windows) << " windows byte-identical\n";
     }
     return failures;
 }
@@ -888,7 +888,7 @@ int check_volta_hmma_invariance(const Format& f, Op op, std::int32_t out_rows, s
     }
     if (failures == 0) {
         std::cout << f.name << " " << op_name(op) << " Volta HMMA [" << rows_n << "," << k
-                  << "]: 10 windows byte-identical\n";
+                  << "]: " << std::size(windows) << " windows byte-identical\n";
     }
     return failures;
 }
