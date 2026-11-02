@@ -957,8 +957,11 @@ int test_cut_off_last_call() {
     fi::ToolCallOutputDecoder lone(contract, 64);
     const std::string shown = lone.feed(cut.substr(1));
     auto lone_end           = lone.finish(true);
-    failures += check(lone_end.tool_calls.empty() && shown + lone_end.content == cut.substr(1),
-                      "a lone cut-off call was not restored as text");
+    // A lone call the limit cut off is not complete, and its markup is not the answer either
+    // (#291): nothing is published and the drop is counted.
+    failures += check(lone_end.tool_calls.empty() && shown.empty() && lone_end.content.empty() &&
+                          lone_end.diagnostics.cut_calls_dropped == 1,
+                      "a lone cut-off call's markup reached the content");
     return failures;
 }
 

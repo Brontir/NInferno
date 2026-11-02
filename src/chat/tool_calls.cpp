@@ -1114,6 +1114,20 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
     const std::string_view close = syntax_->close();
     if (cut_off && saw_tool_marker_ && !close.empty()) {
         const std::size_t last = tool_region_.rfind(syntax_->open());
+        // The only call of the region was cut off (nothing but format whitespace before its open
+        // marker): no call is complete, and its markup is not the answer either (a forced call
+        // must not reach the client as text). The answer is empty, with the finish reason length.
+        if (last != std::string::npos && tool_region_.find(close) == std::string::npos &&
+            std::all_of(tool_region_.begin(),
+                        tool_region_.begin() + static_cast<std::ptrdiff_t>(last),
+                        [](char byte) { return is_format_whitespace(byte); })) {
+            held_.clear();
+            tool_region_.clear();
+            ToolCallParseDiagnostics diagnostics = parsed.diagnostics;
+            diagnostics.fallback_reason          = ToolCallParseFallbackReason::None;
+            diagnostics.cut_calls_dropped        = 1;
+            return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
+        }
         if (last != std::string::npos && last != 0 &&
             tool_region_.find(close, last) == std::string::npos) {
             ParsedToolCallOutput complete =

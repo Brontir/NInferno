@@ -969,6 +969,10 @@ struct PromptOptions {
     // False (tool_choice none) keeps the declarations in the prompt, so the conversation's cached
     // prefix stays the same, but no output is read back as a call.
     bool tool_calls_enabled = true;
+    // With tool_calls_enabled false and declarations present: a complete call the model writes
+    // anyway is still read out of the text, so its markup never reaches the answer, and dropped
+    // (the serve layer does not return it). Nothing else of the text changes.
+    bool tool_calls_discarded = false;
 };
 
 enum class CacheRetentionHint : std::uint8_t {

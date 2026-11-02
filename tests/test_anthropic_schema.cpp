@@ -124,6 +124,17 @@ int test_envelope_and_field_policy() {
                           request.generation.sampling.top_k == 20 &&
                           request.generation.reasoning_effort == ninferno::ReasoningEffort::Low,
                       "executable Anthropic generation fields were not lowered");
+    {
+        // Effort is its own setting in the Anthropic API: beside disabled thinking it is served
+        // without reasoning, not refused as a conflict (#294).
+        Json disabled             = base_request();
+        disabled["thinking"]      = Json{{"type", "disabled"}};
+        disabled["output_config"] = Json{{"effort", "low"}};
+        const AnthropicMessagesRequest both = parse(disabled);
+        failures += check(both.generation.enable_thinking == false &&
+                              !both.generation.reasoning_effort,
+                          "output_config.effort beside disabled thinking was not dropped");
+    }
 
     body.erase("max_tokens");
     const AnthropicMessagesRequest defaulted = parse(body);

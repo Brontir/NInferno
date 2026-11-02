@@ -780,6 +780,7 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
                 return acquire_media(part, prepared.lifetime->deadline, is_cancelled,
                                      remaining_media_bytes);
             });
+        prepared.discard_tool_calls = input.options.tool_calls_discarded;
         std::vector<PromptCacheMarker> protocol_markers = std::move(input.context_cache.markers);
         const bool protocol_allows_engine_automatic =
             input.context_cache.allow_engine_automatic_shared_prefixes;
@@ -1088,6 +1089,12 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
 
     outcome.tool_calls      = std::move(result.tool_calls);
     outcome.tool_call_parse = result.tool_call_parse;
+    if (prepared.discard_tool_calls && !outcome.tool_calls.empty()) {
+        // tool_choice none: the calls were read out of the text (PromptOptions::
+        // tool_calls_discarded) and are not the answer.
+        outcome.tool_calls_discarded = static_cast<std::uint32_t>(outcome.tool_calls.size());
+        outcome.tool_calls.clear();
+    }
     return outcome;
 }
 
