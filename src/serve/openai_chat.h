@@ -16,6 +16,7 @@
 namespace ninferno::serve {
 
 struct GenerationOutcome;
+struct ServedLogprob;
 
 struct OpenAIChatRequest {
     std::string model;
@@ -59,6 +60,8 @@ public:
     void note_timing(const ninferno::GenerationTimingObservation& timing);
     std::string reasoning_delta(const std::string& text);
     std::string content_delta(const std::string& text);
+    // Held until the next event, which carries them in its choice's logprobs.content.
+    void note_logprobs(const std::vector<ServedLogprob>& entries);
     std::vector<std::string> finish(const GenerationOutcome& outcome);
 
 private:
@@ -73,6 +76,7 @@ private:
     std::string reasoning_;
     std::string content_;
     std::optional<ninferno::GenerationTimingObservation> live_timing_;
+    nlohmann::json pending_logprobs_ = nlohmann::json::array();
     std::uint32_t prompt_tokens_            = 0;
     std::uint32_t cached_tokens_            = 0;
     std::uint32_t last_progress_tokens_     = 0;

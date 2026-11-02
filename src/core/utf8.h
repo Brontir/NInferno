@@ -3,6 +3,7 @@
 // Strict UTF-8 validation: no overlong forms, no surrogates, nothing above U+10FFFF.
 
 #include <cstddef>
+#include <string>
 #include <string_view>
 
 namespace ninferno {
@@ -40,6 +41,28 @@ namespace ninferno {
         i += need + 1;
     }
     return true;
+}
+
+// `text` with each byte that does not start a valid sequence replaced by U+FFFD.
+[[nodiscard]] inline std::string lossy_utf8(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    std::size_t i = 0;
+    while (i < text.size()) {
+        std::size_t length = 1;
+        while (length <= 4 && i + length <= text.size() &&
+               !valid_utf8(text.substr(i, length))) {
+            ++length;
+        }
+        if (length <= 4 && i + length <= text.size()) {
+            out.append(text.substr(i, length));
+            i += length;
+        } else {
+            out += "\xEF\xBF\xBD"; // U+FFFD
+            ++i;
+        }
+    }
+    return out;
 }
 
 } // namespace ninferno

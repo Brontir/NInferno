@@ -100,7 +100,21 @@ struct StartupSpeculation {
     double floor        = 0.0; // the watchdog floor the engine runs without a served menu
 };
 
+// A generated token's log probability as the wire shows it: the token's exact bytes (the
+// encoders render them as text and as a byte list).
+struct ServedTokenLogprob {
+    std::string bytes;
+    float logprob = 0.0F;
+};
+struct ServedLogprob {
+    std::string bytes;
+    float logprob = 0.0F;
+    std::vector<ServedTokenLogprob> top;
+};
+
 struct GenerationOutcome {
+    // Set when the request asked (SamplingParams::logprobs): one entry per output token.
+    std::optional<std::vector<ServedLogprob>> logprobs;
     std::string text;
     std::string reasoning;
     std::vector<ninferno::GeneratedToolCall> tool_calls;
@@ -120,6 +134,8 @@ struct StreamSink {
     std::function<void(const ninferno::GenerationTimingObservation& timing)> on_timing;
     std::function<void(const std::string& delta_text)> on_content;
     std::function<void(const std::string& delta_text)> on_reasoning;
+    // The log probabilities of the tokens generated since the last call, before their text.
+    std::function<void(std::vector<ServedLogprob> entries)> on_logprobs;
     std::function<bool()> is_cancelled;
 };
 

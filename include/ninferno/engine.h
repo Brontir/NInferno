@@ -84,6 +84,10 @@ public:
 
     // Artifact-tokenizer raw-text encoding. No chat template or implicit special token is added.
     [[nodiscard]] std::vector<TokenId> tokenize_text(std::string_view text) const;
+    // The exact bytes of each token (special tokens' text included; empty for an id the
+    // tokenizer does not define or past its vocabulary). The vocabulary is built on first use.
+    // Thread-safe.
+    [[nodiscard]] std::vector<std::string> token_bytes(std::span<const TokenId> tokens) const;
     // The token a document starts with when the model's tokenizer adds one (Gemma 4's <bos>):
     // a causal score of text that starts mid-document begins from it. nullopt when it adds none.
     [[nodiscard]] std::optional<TokenId> document_start_token() const;

@@ -84,23 +84,21 @@ void validate_standard_output_controls(const Json& body) {
         }
     }
 
+    bool logprobs = false;
     if (body.contains("logprobs") && !body.at("logprobs").is_null()) {
         if (!body.at("logprobs").is_boolean()) {
             bad_request("logprobs must be a boolean", "logprobs");
         }
-        if (body.at("logprobs").get<bool>()) {
-            bad_request("logprobs=true requires per-token log probabilities in the response, which "
-                        "NInferno does not provide",
-                        "logprobs", "logprobs_not_supported");
-        }
+        logprobs = body.at("logprobs").get<bool>();
     }
-    if (const std::optional<int> top_logprobs = optional_int(body, "top_logprobs")) {
-        if (*top_logprobs != 0) {
-            bad_request(
-                "nonzero top_logprobs requires alternative-token probabilities in the response, "
-                "which NInferno does not provide",
-                "top_logprobs", "logprobs_not_supported");
-        }
+    const std::optional<int> top_logprobs = optional_int(body, "top_logprobs");
+    if (top_logprobs &&
+        (*top_logprobs < 0 ||
+         *top_logprobs > static_cast<int>(ninferno::kMaximumLogprobAlternatives))) {
+        bad_request("top_logprobs must be in [0,20]", "top_logprobs");
+    }
+    if (top_logprobs && *top_logprobs > 0 && !logprobs) {
+        bad_request("nonzero top_logprobs requires logprobs=true", "top_logprobs");
     }
 
     if (body.contains("modalities") && !body.at("modalities").is_null()) {
@@ -818,6 +816,7 @@ void parse_sampling(const Json& body, GenerationRequest& output) {
         bad_request("repetition_penalty must be in (0,2]", "repetition_penalty");
     }
     sampling.seed              = get_seed(body);
+    if (logprobs) { sampling.logprobs = static_cast<std::uint32_t>(top_logprobs.value_or(0)); }
     // logit_bias: {"<token id>": offset}, the model's token ids, offsets in [-100, 100].
     if (body.contains("logit_bias") && !body.at("logit_bias").is_null()) {
         const Json& biases = body.at("logit_bias");
