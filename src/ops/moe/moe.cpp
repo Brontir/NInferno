@@ -109,6 +109,9 @@ bool r8_expert_supports(const Weight& w) {
 // cover the row's loads at three a lane (K / 32 blocks over the blocks one codec load holds: two
 // for Q4_K and Q5_K, four for Q6_K and Q3_K, one otherwise). Only the speed depends on it
 // (moe_r8.cuh).
+// The blocks an R8 lane of this bank loads together (GemmArgs::x_group, xq_group).
+int r8_x_group(const Weight& w) { return generic::r8_k_values(w.qtype) / 32; }
+
 int r8_lanes(const Weight& w) {
     int per_load = 1;
     switch (w.qtype) {
@@ -1183,6 +1186,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
             args.xq_codes  = static_cast<std::int8_t*>(ws.x_codes.data);
             args.xq_scales = static_cast<float*>(ws.x_scales.data);
             args.xq_sums   = static_cast<float*>(ws.x_sums.data);
+            args.xq_lanes  = r8_lanes(w.gate_up);
+            args.xq_group  = r8_x_group(w.gate_up);
         }
         if (router_simt) {
             launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan);
@@ -1265,6 +1270,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
                 args.x_scales = static_cast<const float*>(ws.x_scales.data);
                 args.x_sums   = static_cast<const float*>(ws.x_sums.data);
                 args.x_ld     = static_cast<int>(ws.x_codes.ne[0]);
+                args.x_group  = r8_x_group(w.gate_up);
             }
             args.r8_lanes  = r8_lanes(w.gate_up);
             const int rows = r8_schedule_info(p.gate_up_r8).rows_per_cta() * (32 / args.r8_lanes);

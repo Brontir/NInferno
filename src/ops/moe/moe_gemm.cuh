@@ -107,7 +107,7 @@ __global__ __launch_bounds__(Schedule::kThreads,
             for (std::int64_t task = cta * Schedule::kThreads + threadIdx.x; task < tasks;
                  task += stride) {
                 quantize_x_task(static_cast<const __nv_bfloat16*>(a.xq), a.xq_ldx, a.xq_k, a.xq_ld,
-                                task, a.xq_codes, a.xq_scales, a.xq_sums);
+                                task, a.xq_codes, a.xq_scales, a.xq_sums, a.xq_lanes, a.xq_group);
             }
         }
     }

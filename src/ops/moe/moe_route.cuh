@@ -13,16 +13,38 @@ namespace ninferno::ops::detail::moe {
 
 inline constexpr int kPerLane = kMaxExperts / 32;
 
+// Where an R8 gate/up keeps 32-value block b of a row of `blocks` (GemmArgs::x_lanes, x_group):
+// R8 lane sl of a row's `lanes` sums groups g = sl, sl + lanes, ... of `group` blocks each, so
+// block j of group g = i * lanes + sl goes to (i * group + j) * w + sl, w the lanes of round i
+// (all but a last, partial round). For each (i, j) a row's lanes then read adjacent blocks: two
+// 128-byte lines a 16-byte load of eight lanes instead of eight (RTX 4090, synthetic Q3_K T = 4
+// over 32 MB: L1 data wavefronts 5.6 -> 2.1 M, 46.9 -> 42.0 us). lanes and group are powers of
+// two, blocks a multiple of group; lanes 1 keeps the row in order.
+__host__ __device__ __forceinline__ int r8_x_slot(int b, int blocks, int lanes, int group) {
+    if (lanes <= 1) return b;
+    const int g      = b / group;
+    const int j      = b - g * group;
+    const int i      = g / lanes;
+    const int sl     = g - i * lanes;
+    const int groups = blocks / group;
+    const int width  = (i + 1) * lanes <= groups ? lanes : groups - i * lanes;
+    return i * group * lanes + j * width + sl;
+}
+
 // One task of the grouped W4A8 activation quantizer: row `task / (ld / 32)`, 32-value block
 // `task % (ld / 32)` of x (rows at stride ldx, K values), into codes at stride ld (blocks past K
-// zero), scales and sums [row * ld / 32 + block]. The dense W4A8 quantizer's arithmetic
-// (w4a8_quantize_block), so a row's codes are the dense path's and the R8 CTA's own.
+// zero), scales and sums [row * ld / 32 + slot], slot = r8_x_slot(block, ld / 32, lanes, group).
+// The dense W4A8 quantizer's arithmetic (w4a8_quantize_block), so a row's codes are the dense
+// path's and the R8 CTA's own.
 __device__ __forceinline__ void quantize_x_task(const __nv_bfloat16* x, int ldx, int k, int ld,
                                                 std::int64_t task, std::int8_t* codes,
-                                                float* scales, float* sums) {
+                                                float* scales, float* sums, int lanes = 1,
+                                                int group = 1) {
     const int blocks  = ld / 32;
     const int row     = static_cast<int>(task / blocks);
     const int block   = static_cast<int>(task - static_cast<std::int64_t>(row) * blocks);
+    const int slot    = r8_x_slot(block, blocks, lanes, group);
+    const std::int64_t at = static_cast<std::int64_t>(row) * blocks + slot;
     unsigned words[8] = {0, 0, 0, 0, 0, 0, 0, 0};
     float scale       = 0.0F;
     int qsum          = 0;
@@ -31,11 +53,11 @@ __device__ __forceinline__ void quantize_x_task(const __nv_bfloat16* x, int ldx,
         generic::w4a8_load_block(x + static_cast<std::int64_t>(row) * ldx + block * 32, v);
         generic::w4a8_quantize_block(v, words, scale, qsum);
     }
-    auto* dst = reinterpret_cast<uint4*>(codes + static_cast<std::int64_t>(row) * ld + block * 32);
-    dst[0]    = make_uint4(words[0], words[1], words[2], words[3]);
-    dst[1]    = make_uint4(words[4], words[5], words[6], words[7]);
-    scales[task] = scale;
-    sums[task]   = scale * static_cast<float>(qsum);
+    auto* dst  = reinterpret_cast<uint4*>(codes + at * 32);
+    dst[0]     = make_uint4(words[0], words[1], words[2], words[3]);
+    dst[1]     = make_uint4(words[4], words[5], words[6], words[7]);
+    scales[at] = scale;
+    sums[at]   = scale * static_cast<float>(qsum);
 }
 
 // The selection order as one unsigned key per expert: a rank's bits made monotonic, with -0
