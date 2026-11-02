@@ -69,13 +69,18 @@ public:
         // Under MTP the request plan opens each image's span one token early, for a drafter that
         // fills its own keys over the prompt (Qwen's MTP head). Gemma 4's drafter keeps none and
         // an image call's embeddings are its soft tokens alone, so the image call begins at its
-        // first soft token and the token before it stays in the text call.
+        // first soft token and the token before it stays in the text call. The soft tokens end
+        // the span, and their count is the encoder's for the item's patch grid (Gemma's plan
+        // carries no Qwen control plan to read the item's own begin from).
         for (VisionUseSpan& use : uses_) {
-            if (plan_.control_plan != nullptr &&
-                use.prepared_item_index < plan_.control_plan->items.size()) {
-                use.begin = std::max(
-                    use.begin, plan_.control_plan->items[use.prepared_item_index].token_begin);
-            }
+            if (use.prepared_item_index >= prompt_.vision_items.size()) { continue; }
+            const qwen3_5::VisionItem& item = prompt_.vision_items[use.prepared_item_index];
+            const std::int64_t patches =
+                static_cast<std::int64_t>(item.grid.width) * item.grid.height;
+            if (patches <= 0 || patches > std::numeric_limits<std::int32_t>::max()) { continue; }
+            const auto soft = static_cast<std::uint32_t>(
+                encoder_.soft_tokens(static_cast<std::int32_t>(patches)));
+            if (use.end >= soft && use.end - use.begin > soft) { use.begin = use.end - soft; }
         }
         std::uint32_t previous_end = 0;
         for (const VisionUseSpan& use : uses_) {
