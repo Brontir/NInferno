@@ -278,7 +278,8 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
             // CTA-uniform: a slot past the job's count is never read below (most jobs hold one
             // token at decode widths), so its activation is not loaded either. With one slot the
             // count is one (a job holds at least one token): no test at all (RTX 5090 decode C1,
-            // Qwen3.6-35B Q4_K_M 379.5 -> 378.9 tok/s, Gemma 4 26B 351.7 -> 350.5 with it).
+            // with the test against without: Qwen3.6-35B Q4_K_M 378.9 / 379.3 tok/s, Gemma 4 26B
+            // 350.6 / 351.7; one timer step, C2..C8 the same).
             if (NT > 1 && n >= count) break;
             if constexpr (kPre) {
                 const std::int64_t at =
