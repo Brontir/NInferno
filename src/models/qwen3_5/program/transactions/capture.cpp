@@ -415,6 +415,35 @@ runtime::ContextTransactionReserveStatus ProgramImpl::reserve_active_capture_imp
         skip_capture(std::move(offer));
         return runtime::ContextTransactionReserveStatus::Aborted;
     }
+    // A shared victim that shares its StateImage with a checkpoint this capture drops would hand
+    // that image to the sequence mid-capture, after the assessment priced the drop without it
+    // (#317). The capture is optional: it waits for another round. A victim aliasing a checkpoint
+    // the sequence keeps is transferred to its request at the release and needs no abort.
+    if (pressure_details != nullptr && assessment.publishes_private) {
+        const std::uint32_t capture_lane = ContractAccess::lane(offer).value;
+        const SequenceState& owner       = active_sequence(capture_lane);
+        const RequestControl::Prefill& prefill = *requests[capture_lane].prefill;
+        const CaptureGroup& group              = prefill.capture_groups[prefill.next_capture];
+        for (const std::uint32_t victim : pressure_details->shared_pressure_indices) {
+            if (victim >= shared_prefix_capacity) { continue; }
+            const StateImageHandle state = shared_prefix_states[victim].state;
+            const bool drops_rewrite =
+                group.rewrite && owner.rewrite_state && *owner.rewrite_state == state;
+            const bool drops_anchor =
+                private_replacement &&
+                private_replacement->kind == runtime::CheckpointKind::LongAnchor &&
+                std::any_of(owner.long_anchors.begin(), owner.long_anchors.end(),
+                            [&](const LongAnchorCheckpoint& anchor) {
+                                return anchor.state == state &&
+                                       anchor.frontier == private_replacement->frontier &&
+                                       anchor.ordinal == private_replacement->ordinal;
+                            });
+            if (drops_rewrite || drops_anchor) {
+                skip_capture(std::move(offer));
+                return runtime::ContextTransactionReserveStatus::Aborted;
+            }
+        }
+    }
 
     const std::uint32_t lane         = ContractAccess::lane(offer).value;
     RequestControl::Prefill& prefill = *requests[lane].prefill;
@@ -653,7 +682,8 @@ void ProgramImpl::prepare_active_capture(ActiveCaptureTransaction& transaction) 
                 throw std::logic_error("shared capture replacement is not strictly releasable");
             }
             const detail::PhysicalResources removed = release_shared_prefix_state_strict(
-                *transaction.shared_index, SharedPrefixSlotRole::ReservedReplacement);
+                *transaction.shared_index, SharedPrefixSlotRole::ReservedReplacement,
+                transaction.lane, &transaction.deferred_kv_transfer);
             if (removed != transaction.capacity_preparation_removed) {
                 throw std::logic_error("shared capture preparation release changed");
             }
@@ -787,6 +817,15 @@ void ProgramImpl::enqueue_active_capture_transfers(ActiveCaptureTransaction& tra
 void ProgramImpl::abort_active_capture(ActiveCaptureTransaction& transaction) noexcept {
     if (transaction.lane < max_concurrency &&
         active_continuations[transaction.lane] < continuation_capacity) {
+        // Pages the released owners shared with this sequence are not shared again: they are its
+        // request's (kv_alias_transfers).
+        if (transaction.deferred_kv_transfer != detail::PhysicalResources{}) {
+            try {
+                requests[transaction.lane].active_resources = checked_resource_sum(
+                    requests[transaction.lane].active_resources, transaction.deferred_kv_transfer);
+            } catch (...) { std::terminate(); }
+            transaction.deferred_kv_transfer = {};
+        }
         SequenceState& sequence = active_sequence(transaction.lane);
         if (transaction.backend_snapshot) {
             backend_kv_addresses->abort_active_snapshot(*transaction.backend_snapshot);
@@ -1082,8 +1121,11 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                     throw std::logic_error(
                         "capture shared pressure victim is not strictly releasable");
                 }
-                const detail::PhysicalResources released =
-                    release_shared_prefix_state_strict(index, SharedPrefixSlotRole::Catalogued);
+                const detail::PhysicalResources released = release_shared_prefix_state_strict(
+                    index, SharedPrefixSlotRole::Catalogued,
+                    transaction.publish_shared ? std::optional<std::uint32_t>(transaction.lane)
+                                               : std::nullopt,
+                    &transaction.deferred_kv_transfer);
                 if (released != exclusive ||
                     work.option.effect.added != detail::PhysicalResources{}) {
                     throw std::logic_error("capture shared pressure eviction changed");
@@ -1126,7 +1168,11 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                 }
                 const detail::PhysicalResources exclusive =
                     owner_exclusive_resources(continuation_states[index]);
-                release_continuation_slot_strict(index);
+                release_continuation_slot_strict(
+                    index,
+                    transaction.publish_shared ? std::optional<std::uint32_t>(transaction.lane)
+                                               : std::nullopt,
+                    &transaction.deferred_kv_transfer);
                 work.committed_delta    = detail::PhysicalDelta{.removed = exclusive};
                 work.completed          = true;
                 work.mutation_published = true;
