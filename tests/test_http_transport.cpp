@@ -412,9 +412,7 @@ int test_error_connection_reuse() {
         const auto read_response = [&]() -> std::string {
             char buffer[512];
             for (;;) {
-                const std::size_t end = pending.find("
-
-");
+                const std::size_t end = pending.find("\r\n\r\n");
                 if (end != std::string::npos) {
                     const std::size_t at = pending.find("Content-Length: ");
                     const std::size_t length =
@@ -432,10 +430,7 @@ int test_error_connection_reuse() {
         };
         const auto send_request = [&](const char* path) {
             const std::string request =
-                std::string("GET ") + path + " HTTP/1.1
-Host: 127.0.0.1
-
-";
+                std::string("GET ") + path + " HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
             return ::send(fd, request.data(), request.size(), 0) ==
                    static_cast<ssize_t>(request.size());
         };
