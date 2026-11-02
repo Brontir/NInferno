@@ -1003,6 +1003,12 @@ int GenerationService::count_prompt_tokens(const GenerationRequest& request,
     }
 }
 
+bool GenerationService::await_admission(PreparedRequest& prepared,
+                                        std::function<bool()> is_cancelled) {
+    return prepared.generation.wait_admitted(
+        ninferno::CancellationView(abortable(std::move(is_cancelled))));
+}
+
 GenerationOutcome GenerationService::run(PreparedRequest& prepared, const StreamSink* sink,
                                          std::function<bool()> is_cancelled) {
     std::unique_ptr<ServiceOutputSink> output_sink;

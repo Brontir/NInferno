@@ -2490,5 +2490,5 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 | 503 | `request_queue_timeout` | admission deadline passed (`Retry-After` 5 s) |
 | 503 | `service_unavailable` | the Engine reset its running requests (a CUDA failure, or another request's contained failure: retry, the server goes on) or the server is restarting; `Retry-After` set |
 | 529 / 504 | (Anthropic) | local admission overload / queue and media timeouts |
-| 200 + error event | (any code above) | a streamed request that fails after its headers were sent (a queue timeout, an Engine failure): the event carries the code and message, the stream ends |
+| 200 + error event | (any code above) | a streamed request that fails after it left the queue and its headers were sent (an Engine failure): the event carries the code and message, the stream ends; a queue timeout comes before the headers and keeps its status |
 | any | `compaction_not_supported` | `POST /v1/responses/compact` |
