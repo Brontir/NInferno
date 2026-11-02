@@ -1535,7 +1535,9 @@ and Anthropic SSE.
   next prompt equals the visible-Thinking one. The signature is not encrypted: it hides the
   reasoning from display, not from the client.
 - `preserve_thinking` remains a NInferno extension for closed-turn reasoning history.
-  `output_config.effort` passes its protocol-validated value to the selected template.
+  `output_config.effort` passes its protocol-validated value to the selected template. With
+  `thinking: {"type": "disabled"}` there is no reasoning for it to scale: the request is served
+  without it, and `notes` says so.
 
 ### Tools
 
@@ -1902,7 +1904,8 @@ Details:
   `ended_inside_reasoning` `true`: its reply has reasoning and no content.
 - When the output limit cuts the last call off, the complete calls before it are published, and
   `cut_calls_dropped` counts the unfinished call whose markup was dropped (the finish reason stays
-  `length`).
+  `length`). A turn whose only call was cut off has empty content: the unfinished markup never
+  reaches the client as text.
 - `undeclared_calls` counts the published calls whose name the request did not declare.
 - Fallback reasons are `none`, `malformed_structure`, `duplicate_parameter`, `invalid_tool_name`,
   `undeclared_tool` (Llama 3's JSON form only), and `trailing_content`.

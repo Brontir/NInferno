@@ -957,8 +957,56 @@ int test_cut_off_last_call() {
     fi::ToolCallOutputDecoder lone(contract, 64);
     const std::string shown = lone.feed(cut.substr(1));
     auto lone_end           = lone.finish(true);
-    failures += check(lone_end.tool_calls.empty() && shown + lone_end.content == cut.substr(1),
-                      "a lone cut-off call was not restored as text");
+    // A lone call the limit cut off is not complete, and its markup is not the answer either
+    // (#291): nothing is published and the drop is counted.
+    failures += check(lone_end.tool_calls.empty() && shown.empty() && lone_end.content.empty() &&
+                          lone_end.diagnostics.cut_calls_dropped == 1,
+                      "a lone cut-off call's markup reached the content");
+    // Prose that quotes the marker and runs into the limit began no call: it stays text.
+    const std::string prose = "It uses the `<tool_call>` tag, then the arguments as";
+    fi::ToolCallOutputDecoder quoted(contract, 64);
+    const std::string before = quoted.feed(prose);
+    auto quoted_end          = quoted.finish(true);
+    failures += check(quoted_end.tool_calls.empty() && before + quoted_end.content == prose &&
+                          quoted_end.diagnostics.cut_calls_dropped == 0,
+                      "prose quoting the open marker was dropped as a cut-off call");
+    // The limit cut the name itself: a prefix of a declared name at the name position is a call.
+    for (const std::string partial : {std::string("<tool_call>\n<function=sea"),
+                                      std::string("<tool_call>\n{\"name\": \"sear"),
+                                      std::string("<tool_call>\n{\"na")}) {
+        fi::ToolCallOutputDecoder named(contract, 64);
+        const std::string named_shown = named.feed(partial);
+        auto named_end                = named.finish(true);
+        failures += check(named_shown.empty() && named_end.content.empty() &&
+                              named_end.diagnostics.cut_calls_dropped == 1,
+                          "a call cut inside its name reached the content");
+    }
+    // A bare Qwen call (no <tool_call> wrapper) the limit cut off is dropped too.
+    {
+        fi::ToolCallOutputDecoder bare(contract, 64);
+        const std::string bare_shown = bare.feed("<function=search>\n<parameter=q>\nfir");
+        auto bare_end                = bare.finish(true);
+        failures += check(bare_shown.empty() && bare_end.content.empty() &&
+                              bare_end.diagnostics.cut_calls_dropped == 1,
+                          "a lone cut-off bare Qwen call reached the content");
+        // Two bare calls, the second cut: the first is kept, the second dropped.
+        fi::ToolCallOutputDecoder two(contract, 64);
+        (void)two.feed("<function=search>\n<parameter=q>\nfirst\n</parameter>\n</function>\n"
+                       "<function=search>\n<parameter=q>\nsec");
+        auto two_end = two.finish(true);
+        failures += check(two_end.tool_calls.size() == 1 && two_end.content.empty() &&
+                              two_end.tool_calls[0].arguments_json == R"({"q":"first"})" &&
+                              two_end.diagnostics.cut_calls_dropped == 1,
+                          "a complete bare call before a cut-off one was not kept");
+    }
+    // A body that names a tool only in its text, not at the name position, began no call.
+    const std::string markup = "See <tool_call> <b>search</b> for";
+    fi::ToolCallOutputDecoder tagged(contract, 64);
+    const std::string tagged_shown = tagged.feed(markup);
+    auto tagged_end                = tagged.finish(true);
+    failures += check(tagged_shown + tagged_end.content == markup &&
+                          tagged_end.diagnostics.cut_calls_dropped == 0,
+                      "markup naming a tool outside the name position was dropped");
     return failures;
 }
 

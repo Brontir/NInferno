@@ -532,6 +532,26 @@ int test_streaming_decoder() {
     failures += check(cut_end.tool_calls.size() == 1 && cut_end.content.empty() &&
                           cut_end.diagnostics.cut_calls_dropped == 1,
                       "gemma decoder lost the call before a cut-off call");
+    // A lone Gemma call the limit cut off is dropped, not shown as markup (#291), also while
+    // the name itself was cut; prose after the marker that names no declared tool stays text.
+    for (const std::string lone : {std::string("<|tool_call>call:weather{city:<|\"|>Os"),
+                                   std::string("<|tool_call>call:wea"),
+                                   std::string("<|tool_call>:weather{city:<|\"|>Os")}) {
+        ninferno::chat::ToolCallOutputDecoder decoder_lone(contract(ToolCallFormat::Gemma4), 64);
+        const std::string shown_lone = decoder_lone.feed(lone);
+        const auto lone_end          = decoder_lone.finish(true);
+        failures += check(shown_lone.empty() && lone_end.content.empty() &&
+                              lone_end.tool_calls.empty() &&
+                              lone_end.diagnostics.cut_calls_dropped == 1,
+                          "a lone cut-off gemma call reached the content: " + lone);
+    }
+    ninferno::chat::ToolCallOutputDecoder undeclared(contract(ToolCallFormat::Gemma4), 64);
+    const std::string other     = "<|tool_call>call:search{q:";
+    const std::string shown_other = undeclared.feed(other);
+    const auto other_end          = undeclared.finish(true);
+    failures += check(shown_other + other_end.content == other && other_end.tool_calls.empty() &&
+                          other_end.diagnostics.cut_calls_dropped == 0,
+                      "a cut-off gemma region naming no declared tool was dropped");
 
     ninferno::chat::ToolCallOutputDecoder plain(contract(ToolCallFormat::Gemma4), 64);
     const std::string prose = "a <|tool b";
