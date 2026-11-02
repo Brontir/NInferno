@@ -260,7 +260,8 @@ int main(int argc, char** argv) {
             // again for its mode.
             if (axes->drafter && options.speculation_from_profile) {
                 if (*axes->drafter == ninferno::spec::Mode::None) {
-                    options.speculation_from_profile = false;
+                    options.speculation_from_profile    = false;
+                    options.speculation_plain_by_choice = true;
                     logger->info("choice | speculation: plain decode, the configuration choice's");
                 } else {
                     options.speculation_mode = axes->drafter;

@@ -170,6 +170,16 @@ public:
             return owner->wait_for_request(std::exchange(request_, nullptr), sink, cancellation);
         }
 
+        // Blocks until the request is admitted (true) or ends before it (false: wait() then
+        // reports why, a queue timeout or a cancellation). A cancellation that fires while it
+        // waits cancels the request. The submission stays waitable.
+        bool wait_admitted(const CancellationView& cancellation) {
+            if (owner_ == nullptr || request_ == nullptr) {
+                throw std::logic_error("concurrent submission is empty");
+            }
+            return owner_->wait_for_admission(*request_, cancellation);
+        }
+
     private:
         Submission(EngineCore& owner, std::shared_ptr<Request> request) noexcept
             : owner_(&owner), request_(std::move(request)) {}
@@ -611,6 +621,40 @@ private:
         }
         cumulative_stats_.reused_prompt_tokens += summary.reusable_prompt_tokens;
         cumulative_stats_.last_selected_frontier_tokens = summary.reusable_prompt_tokens;
+    }
+
+    // A streamed request's admission publishes its generation start (under its mutex), which
+    // its wait consumes later.
+    bool wait_for_admission(Request& request, const CancellationView& cancellation) {
+        if (request.consumer_mode != OutputConsumerMode::Streaming) {
+            throw std::invalid_argument("only a streamed request waits for its admission");
+        }
+        for (;;) {
+            {
+                std::unique_lock lock(request.mutex);
+                request.cv.wait_for(lock, std::chrono::milliseconds(10), [&] {
+                    return request.response_done || request.stream_start.has_value();
+                });
+                if (request.stream_start.has_value()) { return true; }
+                if (request.response_done) { return false; }
+            }
+            bool cancel = false;
+            try {
+                cancel = cancellation.requested();
+            } catch (...) {
+                request.cancelled.store(true, std::memory_order_release);
+                request_admission_check();
+                queue_cv_.notify_one();
+                throw;
+            }
+            if (cancel) {
+                request.cancelled.store(true, std::memory_order_release);
+                request_admission_check();
+                queue_cv_.notify_one();
+                return false;
+            }
+            if (worker_exited_.load(std::memory_order_acquire)) { return false; }
+        }
     }
 
     GenerationResult wait_for_request(std::shared_ptr<Request> request, OutputSink* sink,
@@ -1824,6 +1868,15 @@ private:
     }
 
     AdmissionProgress try_admit_one() {
+        // The request being inspected or admitted: a failure contained after a throw here answers
+        // it, which a throw left queued (the next boundary would inspect it again and throw again).
+        struct AdmissionSubject {
+            std::shared_ptr<Request>& subject;
+            int exceptions = std::uncaught_exceptions();
+            ~AdmissionSubject() {
+                if (std::uncaught_exceptions() == exceptions) { subject.reset(); }
+            }
+        } admission_guard{admission_subject_};
         const auto other_runnable = static_cast<std::uint32_t>(
             std::count_if(slots_.begin(), slots_.end(), [](const auto& request) {
                 return request && !request->capture_pending &&
@@ -1877,6 +1930,7 @@ private:
                 control_progress = true;
                 continue;
             }
+            admission_subject_   = head;
             auto head_inspection = inspect_admission(head, allowance);
             if (head_inspection.readiness == Readiness::PermanentlyInfeasible) {
                 (void)remove_pending_error(
@@ -1951,6 +2005,7 @@ private:
                     control_progress = true;
                     continue;
                 }
+                admission_subject_        = candidate;
                 auto candidate_inspection = inspect_admission(candidate, allowance);
                 if (candidate_inspection.readiness == Readiness::PermanentlyInfeasible) {
                     (void)remove_pending_error(
@@ -2321,12 +2376,18 @@ private:
         std::exception_ptr error;
         bool device_failed = false;
         bool transient     = false;
+        // Neither the device's nor a CUDA error: a defect or an invalid state met while serving
+        // the unit's requests (an output decoding or a media prefill that throws). The device is
+        // healthy and the Program is reset with the unit's requests, so the Engine goes on.
+        bool contained = false;
         std::string detail; // what() of the raised exception
     };
 
     // A second transient CUDA error within this window ends the Engine as a device failure does,
     // so a condition the reset did not cure ends in a restart (within 3 to 5 minutes).
     static constexpr std::chrono::minutes kTransientCudaErrorWindow{5};
+    // Contained failures in a row (no decode token committed between them) that end the Engine.
+    static constexpr std::uint32_t kContainedFailureStreak = 3;
 
     [[nodiscard]] static std::exception_ptr unavailable(const std::string& message) noexcept {
         try {
@@ -2373,19 +2434,20 @@ private:
         try {
             if (device_failed) {
                 return {unavailable("the GPU failed (" + detail + "); the server is restarting"),
-                        true, false, detail};
+                        true, false, false, detail};
             }
             if (memory) {
                 return {unavailable("out of memory (" + detail + "); retry the request"), false,
-                        true, detail};
+                        true, false, detail};
             }
-            if (!cuda_error) { return {raised, false, false, detail}; }
+            if (!cuda_error) { return {raised, false, false, true, detail}; }
             return {unavailable("a CUDA error (" + detail + "); retry the request"), false, true,
-                    detail};
+                    false, detail};
         } catch (...) {
             // The messages need memory too (an out-of-memory failure may leave none): the raw
             // failure, classified the same way.
-            return {raised, device_failed, !device_failed && (memory || cuda_error), {}};
+            return {raised, device_failed, !device_failed && (memory || cuda_error),
+                    !device_failed && !memory && !cuda_error, {}};
         }
     }
 
@@ -2576,6 +2638,49 @@ private:
                 WorkerFailure failure        = classify_failure(std::current_exception());
                 HostPhaseMeasurement cleanup = begin_host_phase();
                 const auto now               = std::chrono::steady_clock::now();
+                // Contained failures in a row with no decode token committed between them: the
+                // Engine is broken rather than one request, and the server restarts.
+                const bool contained_streak =
+                    failure.contained &&
+                    cumulative_stats_.committed_decode_tokens == committed_at_contained_ &&
+                    ++contained_streak_ >= kContainedFailureStreak;
+                if (failure.contained && !contained_streak) {
+                    // One request's defect must not stop the server for every client. The request
+                    // that was being admitted gets the failure (a throw left it queued); the
+                    // started ones are answered Unavailable (they did nothing wrong, and a retry
+                    // runs), the Program and the resource catalog are reset as after a transient
+                    // error, and the queue goes on.
+                    if (cumulative_stats_.committed_decode_tokens != committed_at_contained_) {
+                        contained_streak_ = 1;
+                    }
+                    committed_at_contained_ = cumulative_stats_.committed_decode_tokens;
+                    std::fprintf(stderr,
+                                 "ninferno: request failure (%s); the requests in flight are "
+                                 "answered 503, the Engine goes on\n",
+                                 failure.detail.c_str());
+                    if (const std::shared_ptr<Request> subject = std::move(admission_subject_)) {
+                        (void)remove_pending_error(subject, failure.error);
+                    }
+                    recover_after_transient_locked(
+                        unavailable("a request in flight failed and the Engine was reset (" +
+                                    failure.detail + "); retry the request"));
+                    try {
+                        publish_runtime_stats();
+                    } catch (...) {}
+                    finish_engine_phase(cleanup, EngineHostPhase::Maintenance);
+                    previous_unit_was_decode = false;
+                    continue;
+                }
+                if (contained_streak) {
+                    std::fprintf(stderr,
+                                 "ninferno: %d request failures with no token committed between "
+                                 "them; the server restarts\n",
+                                 static_cast<int>(kContainedFailureStreak));
+                    // Every request in flight and queued is answered as the restart it is (503
+                    // with Retry-After), not with the last request's own defect.
+                    failure.error = unavailable("request failures in a row (" + failure.detail +
+                                                "); the server is restarting");
+                }
                 if (failure.transient) {
                     const bool repeated = last_transient_error &&
                                           now - *last_transient_error < kTransientCudaErrorWindow;
@@ -2636,6 +2741,11 @@ private:
     std::uint64_t next_publication_order_ = 1;
     std::array<std::shared_ptr<Request>, kMaximumConcurrency> slots_{};
     std::optional<MaterializingRequest> materializing_;
+    // try_admit_one's request under inspection (AdmissionSubject).
+    std::shared_ptr<Request> admission_subject_;
+    // The contained failures in a row and the committed decode tokens at the last one.
+    std::uint32_t contained_streak_         = 0;
+    std::uint64_t committed_at_contained_   = 0;
     // Requests that have finished and left their lanes; a preempted request resumes after one.
     std::uint64_t slot_releases_ = 0;
     Scheduling scheduler_;

@@ -2713,19 +2713,15 @@ void map_clip_gemma4(Mapper& m) {
 // clip: a Qwen3.5 / 3.6 / 3.8 vision projector (mmproj-*.gguf, projector type qwen3vl_merger)
 
 void map_clip(Mapper& m) {
-    // Older llama.cpp files name it clip.projector_type; since the audio encoders, the vision
-    // projector is clip.vision.projector_type (Gemma 4's mmproj has only that key).
-    const auto* projector = m.file().find("clip.vision.projector_type");
-    if (!projector) { projector = m.file().find("clip.projector_type"); }
-    const auto type = projector && projector->is_string() ? projector->get<std::string>() : "";
+    const std::string type = clip_projector_type(m.file());
     if (type == "gemma4v") {
         map_clip_gemma4(m);
         return;
     }
     if (type != "qwen3vl_merger") {
         throw std::runtime_error("clip: projector type '" + type +
-                                 "' has no converter mapping; supported: qwen3vl_merger (the "
-                                 "Qwen3.5 / 3.6 / 3.8 vision projector), gemma4v (Gemma 4's)");
+                                 "' has no converter mapping; supported: " +
+                                 kSupportedClipProjectors);
     }
     if (const auto* deep = m.meta("vision.is_deepstack_layers"); deep && deep->is_array()) {
         for (const auto& layer : *deep) {
@@ -2822,6 +2818,18 @@ void map_clip(Mapper& m) {
     config["model_type"]               = "qwen3_vl_projector";
     config["vision_config"]            = std::move(vision);
     m.out.config                       = std::move(config);
+}
+
+std::string clip_projector_type(const GgufFile& file) {
+    // Older llama.cpp files name it clip.projector_type; since the audio encoders, the vision
+    // projector is clip.vision.projector_type (Gemma 4's mmproj has only that key).
+    const auto* projector = file.find("clip.vision.projector_type");
+    if (!projector) { projector = file.find("clip.projector_type"); }
+    return projector && projector->is_string() ? projector->get<std::string>() : "";
+}
+
+bool clip_projector_supported(const std::string& type) {
+    return type == "qwen3vl_merger" || type == "gemma4v";
 }
 
 const std::vector<std::string>& supported_gguf_architectures() {

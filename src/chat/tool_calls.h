@@ -8,6 +8,7 @@
 #include <memory>
 #include <span>
 #include <string>
+#include <optional>
 #include <string_view>
 #include <vector>
 
@@ -92,6 +93,31 @@ public:
     // region. The default: whitespace, an optional lead() and whitespace, then open(). A syntax
     // whose region opens with a header that names the function overrides it.
     [[nodiscard]] virtual ToolCallStart match_start(std::string_view held) const;
+    // The name a call cut off by the output limit had begun to write: `body` follows open().
+    // nullopt when the body does not begin this syntax's call header (then the region is not a
+    // call, e.g. prose quoting the marker); else the name bytes written so far (empty while the
+    // header itself was cut) and whether a byte after them ended the name.
+    struct CutCallName {
+        std::string_view name;
+        bool complete = false;
+    };
+    [[nodiscard]] virtual std::optional<CutCallName> cut_call_name(std::string_view body) const {
+        (void)body;
+        return std::nullopt;
+    }
+    // Where the region's last call begins (`start`, npos for none), where its body begins after
+    // its open marker, and the marker that would end it. The default: the last open(), ended by
+    // close(). A syntax whose calls may also stand bare (Qwen's <function=NAME> blocks) overrides.
+    struct LastCall {
+        std::size_t start = std::string_view::npos;
+        std::size_t body  = std::string_view::npos;
+        std::string_view close;
+    };
+    [[nodiscard]] virtual LastCall last_call(std::string_view region) const {
+        const std::size_t at = region.rfind(open());
+        return at == std::string_view::npos ? LastCall{}
+                                            : LastCall{at, at + open().size(), close()};
+    }
     // Text before the first open marker is content; the region from it must be calls only.
     [[nodiscard]] virtual ParsedToolCallOutput
     parse(const std::string& text, std::size_t max_tool_name_length,

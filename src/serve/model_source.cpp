@@ -146,7 +146,9 @@ ModelSource resolve_model_source(const ServeOptions& options,
     // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
     // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
     // A GGUF model's separate drafters (choice/DECISIONS 45): attached when the choice drafts with
-    // one, as with --with-drafters; --prepare-only, without a GPU to choose for, only with it.
+    // one, as with --with-drafters. --prepare-only asks the same choice where a GPU can be read,
+    // so the start with the same flags converts nothing more (#284); without one, only with
+    // --with-drafters.
     bool drafters = options.with_drafters;
     if (options.quant.empty() && !options.prepare_only) {
         if (const auto choice = largest_fitting_hub_quant(options, log)) {
@@ -154,7 +156,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
             out.planned_context = choice->launch_context;
             drafters            = drafters || choice->drafters;
         }
-    } else if (!options.quant.empty() && !options.prepare_only && !drafters) {
+    } else if (!options.quant.empty() && !drafters) {
         drafters = hub_start_attaches_drafters(options, log);
     }
     if (drafters && !options.with_drafters && log) {

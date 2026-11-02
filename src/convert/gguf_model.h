@@ -76,4 +76,11 @@ using StoredRead   = std::function<void(const TensorInfo&, std::uint64_t, std::u
 // general.architecture values map_gguf_model reads.
 [[nodiscard]] const std::vector<std::string>& supported_gguf_architectures();
 
+// A vision projector's type (clip.vision.projector_type, else clip.projector_type; "" when it
+// names none), and the types map_gguf_model converts, as one line for a refusal.
+[[nodiscard]] std::string clip_projector_type(const GgufFile& file);
+[[nodiscard]] bool clip_projector_supported(const std::string& type);
+inline constexpr const char* kSupportedClipProjectors =
+    "qwen3vl_merger (the Qwen3.5 / 3.6 / 3.8 vision projector), gemma4v (Gemma 4's)";
+
 } // namespace ninferno::convert

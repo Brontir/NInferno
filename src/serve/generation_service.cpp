@@ -436,7 +436,9 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
     // where the served choice drafts with DFlash and the model's Engine family runs the width;
     // otherwise it is dropped with a note (product::fit_draft_widths), so a width never keeps a
     // server from starting (an explicit --spec keeps it as given, for the Engine to refuse).
-    if (options_.speculation_from_profile) {
+    // A plain decode the configuration choice picked under --spec auto drafts nothing either: a
+    // --draft-width given for the auto choice is dropped with it.
+    if (options_.speculation_from_profile || options_.speculation_plain_by_choice) {
         engine_options.speculative.draft_width = DFlashDraftWidth::Default;
     }
     const auto bound_load = [&](SpeculativeOptions& speculative) {
@@ -682,6 +684,10 @@ GenerationService::GenerationService(ServeOptions options, StartupObserver start
         }
         if (!speculation_absent_notes_.empty()) { why += ")"; }
         startup_speculation_ = {.selection = "startup", .reason = std::move(why)};
+    } else if (options_.speculation_plain_by_choice) {
+        // --spec auto ran nothing: the configuration choice weighed plain decode the best (#283).
+        startup_speculation_ = {.selection = "startup",
+                                .reason    = "the configuration choice decodes plainly"};
     } else {
         const SpeculativeOptions& given = engine_->options().speculative;
         const bool drafts               = given.backend != SpeculativeBackend::None;
@@ -780,6 +786,7 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
                 return acquire_media(part, prepared.lifetime->deadline, is_cancelled,
                                      remaining_media_bytes);
             });
+        prepared.discard_tool_calls = input.options.tool_calls_discarded;
         std::vector<PromptCacheMarker> protocol_markers = std::move(input.context_cache.markers);
         const bool protocol_allows_engine_automatic =
             input.context_cache.allow_engine_automatic_shared_prefixes;
@@ -1012,6 +1019,12 @@ int GenerationService::count_prompt_tokens(const GenerationRequest& request,
     }
 }
 
+bool GenerationService::await_admission(PreparedRequest& prepared,
+                                        std::function<bool()> is_cancelled) {
+    return prepared.generation.wait_admitted(
+        ninferno::CancellationView(abortable(std::move(is_cancelled))));
+}
+
 GenerationOutcome GenerationService::run(PreparedRequest& prepared, const StreamSink* sink,
                                          std::function<bool()> is_cancelled) {
     std::unique_ptr<ServiceOutputSink> output_sink;
@@ -1104,6 +1117,12 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
 
     outcome.tool_calls      = std::move(result.tool_calls);
     outcome.tool_call_parse = result.tool_call_parse;
+    if (prepared.discard_tool_calls && !outcome.tool_calls.empty()) {
+        // tool_choice none: the calls were read out of the text (PromptOptions::
+        // tool_calls_discarded) and are not the answer.
+        outcome.tool_calls_discarded = static_cast<std::uint32_t>(outcome.tool_calls.size());
+        outcome.tool_calls.clear();
+    }
     return outcome;
 }
 

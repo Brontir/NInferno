@@ -311,6 +311,14 @@ OperationalRecord render_request_done(const RequestLogContext& context,
 
 std::optional<OperationalRecord> render_tool_call_fallback(const RequestLogContext& context,
                                                            const GenerationOutcome& outcome) {
+    if (outcome.tool_calls_discarded != 0) {
+        return OperationalRecord{
+            .severity = OperationalSeverity::Info,
+            .message  = "req#" + std::to_string(context.id) + " tool_choice none | " +
+                       std::to_string(outcome.tool_calls_discarded) +
+                       " call(s) the model wrote cut from the answer",
+        };
+    }
     const ninferno::ToolCallParseFallbackReason reason = outcome.tool_call_parse.fallback_reason;
     if (!outcome.tool_call_parse.marker_seen ||
         reason == ninferno::ToolCallParseFallbackReason::None) {

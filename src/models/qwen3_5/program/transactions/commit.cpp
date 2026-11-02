@@ -873,21 +873,123 @@ bool ProgramImpl::can_release_shared_prefix_state(std::uint32_t index,
             state_store->can_release_after_checkpoint_references(shared.state, 1));
 }
 
+std::array<detail::PhysicalResources, kMaximumConcurrency>
+ProgramImpl::kv_alias_transfers(const SequenceKVBundle& released,
+                                std::uint32_t released_continuation) const {
+    // A full page an owner being released shares with one active sequence alone (a capture
+    // published it, or the request was admitted retaining it) is counted by neither: each owner
+    // counts what it holds alone, and the request's active resources gave the page up. Once the
+    // owner is released the page is the sequence's alone, and its request takes it back
+    // (apply_kv_alias_transfers).
+    std::array<detail::PhysicalResources, kMaximumConcurrency> transfers{};
+    const auto count = [](const KVAddressSpaceStore& addresses, const LogicalKVPageStore& pages,
+                          KVAddressSpaceHandle owner, KVAddressSpaceHandle sequence_kv,
+                          std::uint32_t& transferred) {
+        const std::uint32_t common =
+            std::min(addresses.mapped_pages(owner), addresses.mapped_pages(sequence_kv));
+        for (std::uint32_t page = 0; page < common; ++page) {
+            const LogicalKVPageHandle logical = addresses.logical_page(owner, page);
+            if (addresses.logical_page(sequence_kv, page) != logical) { break; }
+            if (pages.address_references(logical) == 2 && pages.device_resident(logical)) {
+                ++transferred;
+            }
+        }
+    };
+    for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+        if (active_continuations[lane] >= continuation_capacity ||
+            active_continuations[lane] == released_continuation) {
+            continue;
+        }
+        const SequenceState& sequence = active_sequence(lane);
+        if (!sequence.kv) { continue; }
+        count(*text_kv_addresses, *text_kv_pages, released.text, sequence.kv->text,
+              transfers[lane].device.main_kv_pages);
+        if (released.backend && sequence.kv->backend) {
+            count(*backend_kv_addresses, *backend_kv_pages, *released.backend,
+                  *sequence.kv->backend, transfers[lane].device.backend_kv_pages);
+        }
+    }
+    return transfers;
+}
+
+// A capture that publishes a shared prefix of its own sequence (resharing_lane) shares the pages
+// again at its publication, which subtracts only the pages unique when it was assessed: that
+// lane's transfer waits in `resharing_deferred` (the capture's), and only an abort applies it.
+void ProgramImpl::apply_kv_alias_transfers(
+    std::array<detail::PhysicalResources, kMaximumConcurrency> transfers,
+    std::optional<std::uint32_t> resharing_lane, detail::PhysicalResources* resharing_deferred) {
+    if (resharing_lane && *resharing_lane < max_concurrency) {
+        if (resharing_deferred != nullptr) {
+            *resharing_deferred =
+                checked_resource_sum(*resharing_deferred, transfers[*resharing_lane]);
+        }
+        transfers[*resharing_lane] = {};
+    }
+    for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+        if (transfers[lane] == detail::PhysicalResources{}) { continue; }
+        requests[lane].active_resources =
+            checked_resource_sum(requests[lane].active_resources, transfers[lane]);
+    }
+}
+
 detail::PhysicalResources
 ProgramImpl::release_shared_prefix_state_strict(std::uint32_t index,
-                                                SharedPrefixSlotRole expected_role) noexcept {
+                                                SharedPrefixSlotRole expected_role,
+                                                std::optional<std::uint32_t> resharing_lane,
+                                                detail::PhysicalResources* resharing_deferred) noexcept {
     try {
         if (!can_release_shared_prefix_state(index, expected_role)) { std::terminate(); }
         SharedPrefixState& shared               = shared_prefix_states[index];
         SharedPrefixSlot& slot                  = shared_prefix_slots[index];
         const detail::PhysicalResources removed = owner_exclusive_resources(shared);
         const bool last_state_reference = state_store->checkpoint_references(shared.state) == 1;
+        // Full pages this prefix shares with an active sequence alone return to its request once
+        // the prefix is released (kv_alias_transfers), as a released checkpoint below (#317).
+        const auto kv_transfers =
+            kv_alias_transfers(*shared.kv, continuation_capacity);
         if (shared.kv->backend && !backend_kv_addresses->release(*shared.kv->backend)) {
             std::terminate();
         }
         if (!text_kv_addresses->release(shared.kv->text)) { std::terminate(); }
-        state_store->release_checkpoint_reference(shared.state);
-        if (last_state_reference && !state_store->release(shared.state)) { std::terminate(); }
+        const StateImageHandle released_state = shared.state;
+        state_store->release_checkpoint_reference(released_state);
+        if (last_state_reference && !state_store->release(released_state)) { std::terminate(); }
+        // A checkpoint an active sequence keeps (its rewrite state or an anchor) that this prefix
+        // also referenced was counted by neither owner (each counts only what it holds alone).
+        // It is the sequence's alone now: its request takes it in its optional and active
+        // resources, so the slot it occupies is counted and a later drop of it subtracts what the
+        // request holds (#317). A capture never evicts a prefix aliasing its own sequence's
+        // checkpoints (reserve_active_capture_impl), and a replaced one is priced by its
+        // assessment, so the capture that drops it later sees it as the sequence's.
+        if (!last_state_reference) {
+            for (std::uint32_t lane = 0; lane < max_concurrency; ++lane) {
+                if (active_continuations[lane] >= continuation_capacity) { continue; }
+                const SequenceState& sequence = active_sequence(lane);
+                const bool kept =
+                    (sequence.rewrite_state && *sequence.rewrite_state == released_state) ||
+                    std::any_of(sequence.long_anchors.begin(), sequence.long_anchors.end(),
+                                [&](const LongAnchorCheckpoint& anchor) {
+                                    return anchor.state == released_state;
+                                });
+                if (!kept || !state_exclusive_to_sequence(sequence, released_state)) { continue; }
+                detail::PhysicalResources transferred;
+                const StateReplicaResidency residency = state_store->residency(released_state);
+                if (residency == StateReplicaResidency::DeviceOnly ||
+                    residency == StateReplicaResidency::Both) {
+                    transferred.device.state_slots = 1;
+                }
+                if (residency == StateReplicaResidency::HostOnly ||
+                    residency == StateReplicaResidency::Both) {
+                    transferred.host.state_slots = 1;
+                }
+                requests[lane].optional_resources =
+                    checked_resource_sum(requests[lane].optional_resources, transferred);
+                requests[lane].active_resources =
+                    checked_resource_sum(requests[lane].active_resources, transferred);
+                break;
+            }
+        }
+        apply_kv_alias_transfers(kv_transfers, resharing_lane, resharing_deferred);
 
         shared    = SharedPrefixState{};
         slot.role = SharedPrefixSlotRole::Free;

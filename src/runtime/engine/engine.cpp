@@ -300,6 +300,10 @@ public:
         return submission_->wait(sink, cancellation);
     }
 
+    bool wait_admitted(const CancellationView& cancellation) {
+        return submission_->wait_admitted(cancellation);
+    }
+
     [[nodiscard]] const ResolvedSamplingParameters& resolved_sampling() const noexcept {
         return sampling_;
     }
@@ -324,6 +328,11 @@ GenerationHandle::operator bool() const noexcept { return impl_ != nullptr; }
 const ResolvedSamplingParameters& GenerationHandle::resolved_sampling() const noexcept {
     static const ResolvedSamplingParameters empty;
     return impl_ != nullptr ? impl_->resolved_sampling() : empty;
+}
+
+bool GenerationHandle::wait_admitted(const CancellationView& cancellation) {
+    if (impl_ == nullptr) { throw std::logic_error("GenerationHandle is empty"); }
+    return impl_->wait_admitted(cancellation);
 }
 
 GenerationResult GenerationHandle::wait(OutputSink* sink, const CancellationView& cancellation) {
@@ -613,6 +622,9 @@ GenerationHandle Engine::submit(PreparedPrompt prompt, RequestOptions options,
                 if (sink != nullptr) { sink->start(GenerationStart{.prompt = result.prompt}); }
                 return std::move(result);
             }
+
+            // Nothing queues: its stream starts at once.
+            bool wait_admitted(const CancellationView&) override { return true; }
         };
 
         auto immediate = std::make_unique<ImmediateSubmission>();

@@ -5,6 +5,7 @@
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
+#include "convert/gguf_model.h"
 #include "convert/support.h"
 #include "core/quant_label.h"
 #include "product/plan/plan_cached.h"
@@ -106,6 +107,41 @@ std::uint64_t listed_projector_bytes(const std::vector<convert::RepoQuant>& quan
         }
     }
     return bytes;
+}
+
+// --vision on a GGUF model: its projector's type, read from the projector's header (one range
+// request), must be one the converter maps; otherwise the start would fail only after the
+// download (#282). A projector the listing does not show, or a header the hub does not serve, is
+// left to the start.
+void check_listed_projector(const std::string& spec, const convert::FetchOptions& fetch,
+                            const std::vector<convert::RepoQuant>& quants) {
+    std::vector<std::string> names;
+    for (const auto& q : quants) {
+        for (const auto& file : q.files) { names.push_back(file.path); }
+    }
+    const auto parts = convert::best_projector(names);
+    if (parts.empty()) { return; }
+    std::string type;
+    convert::FetchOptions ask = fetch;
+    ask.quant.clear();
+    ask.include = {parts.front()};
+    for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20}) {
+        try {
+            const auto head = convert::fetch_gguf_head(spec, ask, bytes);
+            type            = convert::clip_projector_type(convert::parse_gguf_head(
+                reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(),
+                head.size, head.path));
+            break;
+        } catch (const convert::GgufTruncated&) {
+            continue;
+        } catch (const std::exception&) { return; }
+    }
+    if (!type.empty() && !convert::clip_projector_supported(type)) {
+        throw std::runtime_error(spec + " cannot be run with --vision: its projector " +
+                                 parts.front() + " is of type '" + type +
+                                 "', not supported yet (supported: " +
+                                 convert::kSupportedClipProjectors + "); start it without --vision");
+    }
 }
 
 // A hub GGUF quantization's own tensor table: its header read as read_hub reads one (nullopt: not
@@ -216,7 +252,10 @@ ModelRead read_hub(const std::string& spec, const std::string& quant, bool visio
                 out.facts = product::plan_facts_of_gguf(file, header->bytes);
                 // A split model's head from the part that holds it (table and --quant alike).
                 product::complete_split_gguf_head(out.facts, spec, fetch, header->quant);
-                if (vision) { out.facts.model.vision_bytes = listed_projector_bytes(quants); }
+                if (vision) {
+                    check_listed_projector(spec, fetch, quants);
+                    out.facts.model.vision_bytes = listed_projector_bytes(quants);
+                }
                 // The quantization read prices its own tensors in the table.
                 for (auto& l : out.listing) {
                     if (!l.drafter && l.format == "gguf" && l.quant == header->quant) {
@@ -467,9 +506,16 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         try {
             device = product::plan_device_of_cuda(
                 options.device, true, runtime::plan_automatic_fit(engine_options_of(options)));
-        } catch (const std::exception& e) {
-            throw std::runtime_error(std::string("no GPU to plan for (") + e.what() +
-                                     "): name a board with --plan-device");
+        } catch (const std::exception& measured) {
+            // A busy card may have no memory left for a context (cudaSetDevice: out of memory),
+            // yet its properties still name the board: the plan is the idle card's, with no free
+            // memory now beside it (#285).
+            try {
+                device = product::plan_device_of_cuda(options.device, false);
+            } catch (const std::exception&) {
+                throw std::runtime_error(std::string("no GPU to plan for (") + measured.what() +
+                                         "): name a board with --plan-device");
+            }
         }
         gpu = spec::gpu_identity(options.device).key;
     }
