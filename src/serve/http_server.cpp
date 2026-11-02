@@ -207,16 +207,21 @@ void set_retry_after(httplib::Response& response, int status) {
 
 } // namespace
 
+// A handler's refusal comes after the request was read whole: the caller's next request may reuse
+// the connection. Every refusal before routing sets it again after writing (a request that may
+// carry an unread body closes, #305; draining closes).
 void write_openai_error(httplib::Response& response, const ApiError& error) {
-    response.status = error.status;
+    response.keep_alive_after_error = true;
+    response.status                 = error.status;
     set_retry_after(response, error.status);
     response.set_content(make_error_body(error), "application/json");
 }
 
 void write_anthropic_error(httplib::Response& response, const ApiError& api_error,
                            const std::string& request_id) {
-    const ApiError error = normalize_anthropic_error(api_error);
-    response.status      = error.status;
+    const ApiError error            = normalize_anthropic_error(api_error);
+    response.keep_alive_after_error = true;
+    response.status                 = error.status;
     set_retry_after(response, error.status);
     response.headers.erase("request-id");
     response.set_header("request-id", request_id);
@@ -239,9 +244,6 @@ bool may_carry_body(const httplib::Request& req) {
 void write_error_for(const httplib::Request& request, httplib::Response& response,
                      const ApiError& error) {
     ensure_request_id(request, response);
-    // A handler's refusal comes after the request was read whole: the caller's next request may
-    // reuse the connection (a pre-routing refusal of a request with a body clears it, #305).
-    response.keep_alive_after_error = true;
     if (is_anthropic_path(request.path)) {
         write_anthropic_error(response, error, response.get_header_value("request-id"));
     } else {
