@@ -1244,7 +1244,13 @@ private:
     [[nodiscard]] SequenceState& active_sequence(std::uint32_t lane);
     [[nodiscard]] const SequenceState& active_sequence(std::uint32_t lane) const;
     [[nodiscard]] bool can_release_continuation_slot_strict(std::uint32_t index) const;
-    void release_continuation_slot_strict(std::uint32_t index) noexcept;
+    void release_continuation_slot_strict(
+        std::uint32_t index, std::optional<std::uint32_t> resharing_lane = std::nullopt) noexcept;
+    [[nodiscard]] std::array<detail::PhysicalResources, kMaximumConcurrency>
+    kv_alias_transfers(const SequenceKVBundle& released, std::uint32_t released_continuation,
+                       std::optional<std::uint32_t> resharing_lane) const;
+    void apply_kv_alias_transfers(
+        const std::array<detail::PhysicalResources, kMaximumConcurrency>& transfers);
     void release_continuation_slot_best_effort(std::uint32_t index) noexcept;
     void retire_continuation_slot(std::uint32_t index) noexcept;
     void clear_execution_failure_lanes(std::span<const std::uint32_t> lanes) noexcept;

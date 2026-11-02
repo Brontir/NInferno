@@ -1158,7 +1158,10 @@ ProgramImpl::progress_active_capture_transaction(runtime::CancellationFlagView c
                 }
                 const detail::PhysicalResources exclusive =
                     owner_exclusive_resources(continuation_states[index]);
-                release_continuation_slot_strict(index);
+                release_continuation_slot_strict(
+                    index, transaction.publish_shared
+                               ? std::optional<std::uint32_t>(transaction.lane)
+                               : std::nullopt);
                 work.committed_delta    = detail::PhysicalDelta{.removed = exclusive};
                 work.completed          = true;
                 work.mutation_published = true;

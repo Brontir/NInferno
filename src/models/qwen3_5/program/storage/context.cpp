@@ -201,14 +201,20 @@ bool ProgramImpl::can_release_continuation_slot_strict(std::uint32_t index) cons
     return true;
 }
 
-void ProgramImpl::release_continuation_slot_strict(std::uint32_t index) noexcept {
+void ProgramImpl::release_continuation_slot_strict(
+    std::uint32_t index, std::optional<std::uint32_t> resharing_lane) noexcept {
     try {
         if (!can_release_continuation_slot_strict(index)) { std::terminate(); }
+        SequenceState& sequence = continuation_states[index];
+        // Full pages it shares with an active sequence alone return to that request (#317).
+        const auto kv_transfers =
+            sequence.kv ? kv_alias_transfers(*sequence.kv, index, resharing_lane)
+                        : std::array<detail::PhysicalResources, kMaximumConcurrency>{};
+        release_sequence_kv_strict(sequence);
+        release_sequence_state_strict(sequence);
+        retire_continuation_slot(index);
+        apply_kv_alias_transfers(kv_transfers);
     } catch (...) { std::terminate(); }
-    SequenceState& sequence = continuation_states[index];
-    release_sequence_kv_strict(sequence);
-    release_sequence_state_strict(sequence);
-    retire_continuation_slot(index);
 }
 
 void ProgramImpl::release_continuation_slot_best_effort(std::uint32_t index) noexcept {
