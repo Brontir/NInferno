@@ -136,6 +136,19 @@ struct Path {
     ActivationCompute compute;
 };
 
+// Volta (no BF16 MMA) multiplies a call of 17 tokens or more with FP16 operands: a decoded
+// weight value past +-65504 saturates in its CUTLASS copy (docs/maintainer/tensor-formats.md 2.7).
+// The scale domain reaches such values (Q8 at s = 2.5: 127 x 640); there the result may also be
+// the one of the weight saturated to the FP16 range. The device, not the route, decides: a tiled
+// call whose row shift broke would pass here too (the CUTLASS copy takes these calls).
+bool fp16_operands(std::int32_t tokens) {
+    int device = 0, major = 0, minor = 0;
+    cuda_check(cudaGetDevice(&device), "device");
+    cuda_check(cudaDeviceGetAttribute(&major, cudaDevAttrComputeCapabilityMajor, device), "major");
+    cuda_check(cudaDeviceGetAttribute(&minor, cudaDevAttrComputeCapabilityMinor, device), "minor");
+    return tokens >= 17 && major == 7 && minor < 5;
+}
+
 int run_path(const Path& path) {
     int failures = 0;
     for (const float s : kTensorScales) {
@@ -175,7 +188,32 @@ int run_path(const Path& path) {
             }
             const std::vector<double> got      = from_device_bf16(output.data(), reference.size());
             const ReductionCriterion criterion = linear_criterion(path.compute);
-            failures += verify_reduction(label, got, reference, criterion);
+            bool saturated_pass                = false;
+            if (fp16_operands(t)) {
+                std::vector<float> clipped(dequant);
+                bool any = false;
+                for (float& v : clipped) {
+                    const float c = std::max(-65504.0F, std::min(65504.0F, v));
+                    any           = any || c != v;
+                    v             = c;
+                }
+                if (any) {
+                    std::vector<double> saturated(reference.size());
+                    cpu_linear_gemm_fp64(clipped.data(), activation.data(), saturated.data(), kN,
+                                         kK, t);
+                    const auto n = static_cast<std::int64_t>(got.size());
+                    saturated_pass =
+                        !reduction_passes(compute_reduction_stats(got.data(), reference.data(), n),
+                                          n, criterion) &&
+                        reduction_passes(compute_reduction_stats(got.data(), saturated.data(), n),
+                                         n, criterion);
+                    if (saturated_pass) {
+                        std::printf("CASE %-26s FP16 operands: the weight saturated to +-65504\n",
+                                    label.c_str());
+                    }
+                }
+            }
+            if (!saturated_pass) { failures += verify_reduction(label, got, reference, criterion); }
             failures += output.verify_guards(label);
             // Every row written: no all-zero (or NaN) row where the reference is nonzero.
             int bad_rows = 0;
