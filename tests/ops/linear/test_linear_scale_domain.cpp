@@ -136,10 +136,11 @@ struct Path {
     ActivationCompute compute;
 };
 
-// Volta (no tensor mma.sync) multiplies a call of 17 tokens or more with FP16 operands: a decoded
+// Volta (no BF16 MMA) multiplies a call of 17 tokens or more with FP16 operands: a decoded
 // weight value past +-65504 saturates in its CUTLASS copy (docs/maintainer/tensor-formats.md 2.7).
 // The scale domain reaches such values (Q8 at s = 2.5: 127 x 640); there the result may also be
-// the one of the weight saturated to the FP16 range.
+// the one of the weight saturated to the FP16 range. The device, not the route, decides: a tiled
+// call whose row shift broke would pass here too (the CUTLASS copy takes these calls).
 bool fp16_operands(std::int32_t tokens) {
     int device = 0, major = 0, minor = 0;
     cuda_check(cudaGetDevice(&device), "device");
