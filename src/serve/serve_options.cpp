@@ -613,6 +613,9 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     if (options.plan_only && options.prepare_only) {
         throw std::invalid_argument("--plan and --prepare-only exclude each other");
     }
+    // --prepare-only leaves nothing for the start to convert: the drafters the configuration
+    // choice may take there (it needs the GPU to decide) are converted with the model (#284).
+    if (options.prepare_only) { options.with_drafters = true; }
     // The default Host tier is a default: the Engine fits it to what the host can pin.
     options.context_cache.host_tier_automatic = !host_tier_explicit;
     if (!options.allow_prefix_reuse) {

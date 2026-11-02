@@ -46,7 +46,8 @@ For a hub id:
   declares. Nothing else on the machine is searched.
 - `$HF_TOKEN` authorizes gated and private models. `HF_HUB_OFFLINE=1` uses the cache only.
 - The served model id is the hub id, without an `@revision`.
-- `--prepare-only` downloads and converts, then exits.
+- `--prepare-only` downloads and converts, then exits. It converts the model's companion drafters
+  too (as `--with-drafters`), so the start with the same flags has nothing left to convert.
 - `--plan` prints the memory plan these options give on this GPU now (the plan ladder, every rung's
   bytes, the rung that fits and what would get more), then exits; `--plan --json` prints it as
   JSON for a UI's fit bar ([reference](reference/serving.md#automatic-context-selection)).
