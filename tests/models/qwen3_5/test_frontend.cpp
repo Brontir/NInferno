@@ -2531,8 +2531,11 @@ int test_reasoning_split(const Frontend& frontend) {
                       "content channel did not strip the post-thinking separator");
     failures += check(session.reasoning_tokens() == 2,
                       "reasoning token usage did not count accepted reasoning tokens exactly");
+    // The canonical close's span ends at </think>: the separator after it is the answer's.
+    const std::size_t canonical_close = fixture_tokenizer().encode("thought\n</think>").size();
     failures += check(session.reasoning_span_tokens() == 2 &&
-                          canonical_session.reasoning_span_tokens() == canonical_tokens.size(),
+                          canonical_session.reasoning_span_tokens() == canonical_close &&
+                          canonical_close < canonical_tokens.size(),
                       "the reasoning span did not end at the token that closed the reasoning");
     // Thinking without a budget still counts its model-origin tokens: the request
     // log reports them, and they match the reasoning usage at a canonical close.
