@@ -1099,6 +1099,7 @@ GenerationOutcome GenerationService::run(PreparedRequest& prepared, const Stream
     outcome.prompt_tokens       = static_cast<int>(result.prompt.prompt_tokens);
     outcome.completion_tokens   = static_cast<int>(result.generated_token_ids.size());
     outcome.reasoning_tokens    = static_cast<int>(result.reasoning_tokens);
+    outcome.reasoning_span_tokens = result.reasoning_span_tokens;
     outcome.thinking            = result.thinking;
     outcome.finish_reason       = result.finish_reason;
     outcome.matched_stop_string = std::move(result.matched_stop_string);

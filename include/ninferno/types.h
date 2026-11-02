@@ -1513,6 +1513,9 @@ struct GenerationResult {
     std::vector<GeneratedToolCall> tool_calls;
     ToolCallParseDiagnostics tool_call_parse;
     std::uint32_t reasoning_tokens = 0;
+    // The leading generated tokens that are the reasoning, its markers included: an empty thought
+    // has none of reasoning_tokens but its two markers here.
+    std::uint32_t reasoning_span_tokens = 0;
     FinishReason finish_reason     = FinishReason::None;
     std::optional<std::string> matched_stop_string;
     std::uint32_t reused_prompt_tokens = 0;

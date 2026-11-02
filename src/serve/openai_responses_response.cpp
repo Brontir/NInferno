@@ -126,9 +126,28 @@ Json response_common(const std::string& id, std::int64_t created_at,
         {"text", Json{{"format", request.text_format}}},
         {"tool_choice", request.tool_choice},
         {"tools", request.tools},
-        {"top_logprobs", 0},
+        {"top_logprobs", request.top_logprobs},
         {"top_p", runtime.top_p},
         {"truncation", "disabled"}};
+}
+
+// The message's output_text part; with include message.output_text.logprobs, the log
+// probabilities of the tokens after the reasoning (the reasoning's, its markers included, lead the
+// output: an empty thought's two markers too, though no reasoning token is counted for them).
+Json output_text_logprobs(const GenerationOutcome& outcome) {
+    if (!outcome.logprobs) { return Json::array(); }
+    const std::size_t reasoning =
+        std::min(outcome.logprobs->size(), static_cast<std::size_t>(outcome.reasoning_span_tokens));
+    return openai_logprob_content(std::vector<ServedLogprob>(
+        outcome.logprobs->begin() + static_cast<std::ptrdiff_t>(reasoning),
+        outcome.logprobs->end()));
+}
+
+Json output_text_part(const OpenAIResponsesCreateRequest& request,
+                      const GenerationOutcome& outcome) {
+    Json part = {{"type", "output_text"}, {"annotations", Json::array()}, {"text", outcome.text}};
+    if (request.include_logprobs) { part["logprobs"] = output_text_logprobs(outcome); }
+    return part;
 }
 
 bool needs_message_item(const GenerationOutcome& outcome, const std::string& status) {
@@ -168,9 +187,7 @@ BuiltOpenAIResponse build_response(const std::string& id, std::int64_t created_a
                  {"type", "message"},
                  {"status", item_status},
                  {"role", "assistant"},
-                 {"content", Json::array({Json{{"type", "output_text"},
-                                               {"annotations", Json::array()},
-                                               {"text", outcome.text}}})}});
+                 {"content", Json::array({output_text_part(request, outcome)})}});
     }
 
     ids.function_calls.resize(outcome.tool_calls.size());
@@ -364,12 +381,14 @@ public:
     }
 
     std::vector<std::string> close_message(const std::string& final_text,
-                                           const char* item_status = "completed") {
+                                           const char* item_status = "completed",
+                                           Json logprobs           = Json::array()) {
         if (!message_started || message_done) { return {}; }
         message_done    = true;
         content_text    = final_text;
-        const Json part = {
+        Json part = {
             {"type", "output_text"}, {"annotations", Json::array()}, {"text", content_text}};
+        if (request.include_logprobs) { part["logprobs"] = logprobs; }
         const Json item = {{"id", ids.message},
                            {"type", "message"},
                            {"status", item_status},
@@ -379,7 +398,7 @@ public:
                                                             {"output_index", message_index},
                                                             {"content_index", 0},
                                                             {"text", content_text},
-                                                            {"logprobs", Json::array()}})),
+                                                            {"logprobs", logprobs}})),
                 sse(event("response.content_part.done", Json{{"item_id", ids.message},
                                                              {"output_index", message_index},
                                                              {"content_index", 0},
@@ -464,6 +483,7 @@ std::vector<std::string> OpenAIResponsesEventStream::content_delta(const std::st
     return events;
 }
 
+
 OpenAIResponsesStreamFinish OpenAIResponsesEventStream::finish(const GenerationOutcome& outcome) {
     if (!impl_->started || impl_->finish_built) {
         throw std::logic_error("invalid Responses stream finish state");
@@ -508,7 +528,9 @@ OpenAIResponsesStreamFinish OpenAIResponsesEventStream::finish(const GenerationO
                                                        {"logprobs", Json::array()}})));
             }
         }
-        append(impl_->close_message(outcome.text, item_status));
+        append(impl_->close_message(
+            outcome.text, item_status,
+            impl_->request.include_logprobs ? output_text_logprobs(outcome) : Json::array()));
     }
 
     impl_->ids.function_calls.reserve(outcome.tool_calls.size());

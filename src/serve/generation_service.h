@@ -124,6 +124,8 @@ struct GenerationOutcome {
     int prompt_tokens     = 0;
     int completion_tokens = 0;
     int reasoning_tokens  = 0;
+    // The leading output tokens that are the reasoning, markers included (logprobs' split).
+    std::uint32_t reasoning_span_tokens = 0;
     ninferno::ThinkingBudgetStats thinking;
     ninferno::FinishReason finish_reason = ninferno::FinishReason::OutputLimit;
     std::optional<std::string> matched_stop_string;

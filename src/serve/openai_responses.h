@@ -20,6 +20,7 @@
 
 namespace ninferno::serve {
 
+
 struct GenerationOutcome;
 
 struct OpenAIResponsesFunctionIdentity {
@@ -66,6 +67,9 @@ struct OpenAIResponsesCreateRequest {
     bool store                               = true;
     bool stream                              = false;
     bool include_reasoning_encrypted_content = false;
+    // include "message.output_text.logprobs", and top_logprobs (echoed in the response).
+    bool include_logprobs                    = false;
+    int top_logprobs                         = 0;
 };
 
 struct OpenAIResponsesResolvedPrompt {

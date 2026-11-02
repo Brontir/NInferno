@@ -197,6 +197,11 @@ struct DecoderState {
     bool terminal                  = false;
     std::uint64_t decoded_bytes    = 0;
     std::uint32_t reasoning_tokens = 0;
+    // Tokens fed, and the count through the last one that was, opened or closed reasoning: the
+    // output's reasoning span, its markers included (an empty thought's too).
+    std::uint32_t tokens_fed            = 0;
+    std::uint32_t reasoning_span_tokens = 0;
+    std::uint32_t reasoning_opens       = 0;
     std::optional<std::uint32_t> matched_stop_order;
     RepetitionTracker repetition;
 };
@@ -255,6 +260,23 @@ std::optional<std::string> feed_semantic_open(SemanticThinkingState& state, std:
     state.in_reasoning = true;
     return pending.substr(open.size());
 }
+
+// One fed token's part in the reasoning span: it extends the span when the decoder was in
+// reasoning before it, or it opened (and maybe closed) reasoning.
+struct ReasoningSpanProbe {
+    bool was_in_reasoning;
+    std::uint32_t opens;
+
+    explicit ReasoningSpanProbe(const DecoderState& state)
+        : was_in_reasoning(state.in_reasoning), opens(state.reasoning_opens) {}
+
+    void after(DecoderState& state) const {
+        ++state.tokens_fed;
+        if (was_in_reasoning || state.in_reasoning || state.reasoning_opens != opens) {
+            state.reasoning_span_tokens = state.tokens_fed;
+        }
+    }
+};
 
 struct StopMatch {
     bool found                      = false;
@@ -388,6 +410,7 @@ void feed_decoded_text(DecoderState& state, std::string_view text, const StopPol
         opened = state.open_pending.substr(open.size());
         state.open_pending.clear();
         state.in_reasoning            = true;
+        ++state.reasoning_opens;
         state.awaiting_content_header = false;
         state.reasoning_strip         = conventions.reasoning_open_suffix;
         text                  = opened;
@@ -715,8 +738,10 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
         const bool hidden = !impl_->preserve_special && decoded.special &&
                             !conventions.structural(token);
         const std::string_view bytes = hidden ? std::string_view{} : decoded.bytes;
+        const ReasoningSpanProbe span(impl_->preview_state);
         feed_token_bytes(impl_->preview_state, bytes, impl_->policy, conventions,
                          impl_->preview_output, count, &match);
+        span.after(impl_->preview_state);
 
         if (match.found) {
             impl_->preview_state = terminal_state(std::move(impl_->preview_state));
@@ -729,6 +754,9 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
             if (!impl_->policy.publish_stop_token) {
                 impl_->preview_state  = std::move(before_state);
                 impl_->preview_output = std::move(before_output);
+                // The engine keeps the stop token in its output (and its log probability): inside
+                // reasoning it is the reasoning's.
+                span.after(impl_->preview_state);
             }
             terminalize(impl_->preview_state, impl_->policy, conventions, impl_->preview_output,
                         count);
@@ -887,8 +915,10 @@ runtime::OutputDecision OutputSession::preview_control(std::span<const TokenId> 
         const bool hidden = !impl_->preserve_special && decoded.special &&
                             !conventions.structural(token);
         const std::string_view presentation_bytes = hidden ? std::string_view{} : decoded.bytes;
+        const ReasoningSpanProbe span(impl_->preview_state);
         feed_token_bytes(impl_->preview_state, presentation_bytes, impl_->policy, conventions,
                          impl_->preview_output, static_cast<std::uint32_t>(index + 1), nullptr);
+        span.after(impl_->preview_state);
     }
     impl_->preview_state.quoted_close_is_text    = quoted_close_is_text;
     impl_->preview_semantic.quoted_close_is_text = quoted_close_is_text;
@@ -1021,6 +1051,10 @@ ToolCallParseDiagnostics OutputSession::tool_call_parse_diagnostics() const noex
 
 std::uint32_t OutputSession::reasoning_tokens() const noexcept {
     return impl_ != nullptr ? impl_->state.reasoning_tokens : 0;
+}
+
+std::uint32_t OutputSession::reasoning_span_tokens() const noexcept {
+    return impl_ != nullptr ? impl_->state.reasoning_span_tokens : 0;
 }
 
 ThinkingBudgetStats OutputSession::thinking_stats() const noexcept {

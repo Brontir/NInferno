@@ -258,6 +258,26 @@ int test_reasoning_encrypted_content_request() {
                       "duplicate supported include entries are idempotent");
 
     body["include"] = Json::array({"message.output_text.logprobs"});
+    {
+        // #295: the output_text's log probabilities, with top_logprobs alternatives.
+        const auto asked = parse_openai_responses_create_request(body, limits());
+        failures += check(asked.include_logprobs &&
+                              asked.prompt.generation.sampling.logprobs == 0U,
+                          "include message.output_text.logprobs asks for log probabilities");
+        body["top_logprobs"] = 3;
+        const auto top       = parse_openai_responses_create_request(body, limits());
+        failures += check(top.top_logprobs == 3 && top.prompt.generation.sampling.logprobs == 3U,
+                          "top_logprobs reaches the sampler");
+        body.erase("include");
+        failures += check(parse_openai_responses_create_request(body, limits()).include_logprobs,
+                          "nonzero top_logprobs alone asks for log probabilities");
+        body["top_logprobs"] = 0;
+        failures += check(!parse_openai_responses_create_request(body, limits())
+                               .prompt.generation.sampling.logprobs,
+                          "top_logprobs 0 without the include asks for nothing");
+        body.erase("top_logprobs");
+    }
+    body["include"] = Json::array({"file_search_call.results"});
     const ApiError unsupported =
         api_error([&] { (void)parse_openai_responses_create_request(body, limits()); });
     failures += check(unsupported.status == 400 && unsupported.param == "include" &&
@@ -1565,9 +1585,65 @@ int test_input_item_limit() {
     return failures;
 }
 
+// #295: output_text's log probabilities are every entry after the reasoning, the same at the done
+// events and in the terminal response; the deltas carry none.
+int test_stream_logprobs() {
+    OpenAIResponsesCreateRequest request = parse_openai_responses_create_request(
+        Json{{"model", "m"},
+             {"input", "hello"},
+             {"include", Json::array({"message.output_text.logprobs"})},
+             {"stream", true}},
+        limits());
+    const auto entry = [](const char* bytes, float logprob) {
+        return ServedLogprob{.bytes = bytes, .logprob = logprob};
+    };
+    OpenAIResponsesEventStream encoder("resp_logprobs", 123, request, {});
+    std::vector<std::string> wire = encoder.start();
+    const auto add = [&wire](std::vector<std::string> next) {
+        wire.insert(wire.end(), next.begin(), next.end());
+    };
+    add(encoder.content_delta("answer"));
+    // An empty thought (Gemma 4 after a tool result): its two markers lead the output and no
+    // reasoning token is counted for them; they are not the output_text's.
+    GenerationOutcome outcome     = sample_outcome();
+    outcome.reasoning_tokens      = 0;
+    outcome.reasoning_span_tokens = 2;
+    outcome.logprobs              = std::vector<ServedLogprob>{
+        entry("<|channel>", -0.5F), entry("<channel|>", -0.5F), entry("ans", -0.25F),
+        entry("wer", -0.125F), entry("<turn|>", -0.0625F)};
+    OpenAIResponsesStreamFinish finish = encoder.finish(outcome);
+    add(finish.events_before_terminal);
+    wire.push_back(encoder.terminal(finish.response));
+
+    int failures = 0;
+    std::size_t deltas = 0, done = 0, part = 0, terminal = 0;
+    for (const std::string& event : wire) {
+        const Json payload     = parse_event(event);
+        const std::string type = payload.at("type").get<std::string>();
+        if (type == "response.output_text.delta") { deltas += payload.at("logprobs").size(); }
+        if (type == "response.output_text.done") { done += payload.at("logprobs").size(); }
+        if (type == "response.content_part.done" && payload.at("part").contains("logprobs")) {
+            part = payload.at("part").at("logprobs").size();
+        }
+        if (type == "response.completed") {
+            for (const Json& item : payload.at("response").at("output")) {
+                if (item.at("type") == "message") {
+                    terminal = item.at("content").at(0).at("logprobs").size();
+                }
+            }
+        }
+    }
+    failures += check(deltas == 0 && done == 3,
+                      "the deltas carry none, output_text.done every entry after the reasoning");
+    failures += check(part == 3 && terminal == 3,
+                      "the message's part holds every entry after the reasoning, streamed or not");
+    return failures;
+}
+
 int main() {
     int failures = 0;
     failures += test_input_item_limit();
+    failures += test_stream_logprobs();
     failures += test_basic_request_and_resolution();
     failures += test_budgets_and_nonsemantic_hints();
     failures += test_reasoning_encrypted_content_request();

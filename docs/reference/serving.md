@@ -710,7 +710,7 @@ Options whose observable behavior the Engine cannot provide are rejected when th
 behavior:
 
 - JSON constrained output outside the cases above;
-- log probabilities on Responses and Anthropic Messages;
+- log probabilities on Anthropic Messages;
 - audio/file input or audio output;
 - image detail levels other than `auto`, `low` and `high`;
 - web search, moderation, low/high verbosity;
@@ -1217,10 +1217,10 @@ response contains typed `output` Items.
 | `parallel_tool_calls` | `true` by default; `false` is accepted only when no effective tool is callable |
 | `max_tool_calls` | non-negative integer accepted as a hosted-tool no-op; NInferno does not execute hosted tools |
 | `truncation` | omitted or `disabled`; overlong input fails instead of silently dropping Items |
-| `top_logprobs` | omitted or `0` |
+| `top_logprobs` | `0..20`: alternatives per token in `output_text.logprobs`; nonzero asks for log probabilities as the include below does |
 | `service_tier` | omitted, `auto`, or `default`; the response reports `default` |
 | `background` | omitted or `false` |
-| `include` | omitted, empty, or `["reasoning.encrypted_content"]`; the supported value requests the local raw-reasoning mirror described below |
+| `include` | omitted, empty, `"reasoning.encrypted_content"` (the local raw-reasoning mirror described below) and `"message.output_text.logprobs"` (the log probability of each output token after the reasoning, as Chat Completions reports them, in the message's `output_text.logprobs`: the terminal response, `response.output_text.done` and the message's done events; the `response.output_text.delta` events carry none. An output of tool calls alone has no `output_text` and so no log probabilities) |
 | `stream_options.include_obfuscation` | optional boolean; accepted as a transport hint, but this local server emits no padding |
 | cache and client hints | `prompt_cache_key`, `prompt_cache_options`, `prompt_cache_retention`, and explicit breakpoints follow [OpenAI prompt caching](#7-openai-prompt-caching); `safety_identifier` and `user` are accepted as client hints |
 

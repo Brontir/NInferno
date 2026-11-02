@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ninferno::serve {
 
@@ -57,6 +58,10 @@ std::string make_prometheus_metrics(const ninferno::RuntimeStats& stats,
                                     std::uint32_t http_active_requests,
                                     const ninferno::ModelMetadata& metadata);
 std::string make_error_body(const ApiError& error);
+// OpenAI's per-token log probabilities (Chat logprobs.content, Responses output_text.logprobs):
+// each token's text, log probability, bytes and top_logprobs.
+struct ServedLogprob;
+nlohmann::json openai_logprob_content(const std::vector<ServedLogprob>& entries);
 std::int64_t unix_time_now();
 
 std::string new_openai_chat_completion_id();

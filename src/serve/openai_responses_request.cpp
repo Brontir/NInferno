@@ -1387,6 +1387,10 @@ OpenAIResponsesCreateRequest parse_openai_responses_create_request(const Json& b
         for (const Json& field : body.at("include")) {
             if (!field.is_string()) { bad_request("include entries must be strings", "include"); }
             const std::string value = field.get<std::string>();
+            if (value == "message.output_text.logprobs") {
+                out.include_logprobs = true;
+                continue;
+            }
             if (value != "reasoning.encrypted_content") {
                 bad_request("additional response field '" + value + "' is not supported", "include",
                             "include_not_supported");
@@ -1421,10 +1425,12 @@ OpenAIResponsesCreateRequest parse_openai_responses_create_request(const Json& b
         if (*top_logprobs < 0 || *top_logprobs > 20) {
             bad_request("top_logprobs must be in [0,20]", "top_logprobs");
         }
-        if (*top_logprobs != 0) {
-            bad_request("the Engine does not return token log probabilities", "top_logprobs",
-                        "logprobs_not_supported");
-        }
+        out.top_logprobs = *top_logprobs;
+    }
+    // Log probabilities when the output_text's are included, or alternatives are asked.
+    if (out.include_logprobs || out.top_logprobs > 0) {
+        out.include_logprobs                     = true;
+        out.prompt.generation.sampling.logprobs = static_cast<std::uint32_t>(out.top_logprobs);
     }
     if (const std::optional<int> max_tool_calls = optional_int(body, "max_tool_calls")) {
         if (*max_tool_calls < 0) {
