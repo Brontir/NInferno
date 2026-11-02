@@ -13,11 +13,12 @@ namespace ninferno::ops::detail::moe {
 
 inline constexpr int kPerLane = kMaxExperts / 32;
 
-// Where an R8 gate/up keeps 32-value block b of a row of `blocks` (GemmArgs::x_lanes, x_group):
+// Where an R8 gate/up keeps 32-value block b of a row of `blocks` (lanes: GemmArgs::r8_lanes and
+// xq_lanes; group: x_group and xq_group):
 // R8 lane sl of a row's `lanes` sums groups g = sl, sl + lanes, ... of `group` blocks each, so
 // block j of group g = i * lanes + sl goes to (i * group + j) * w + sl, w the lanes of round i
-// (all but a last, partial round). For each (i, j) a row's lanes then read adjacent blocks: two
-// 128-byte lines a 16-byte load of eight lanes instead of eight (RTX 4090, synthetic Q3_K T = 4
+// (all but a last, partial round). For each (i, j) a row's lanes then read adjacent blocks: a
+// 16-byte load of eight lanes touches two 128-byte lines, not eight (RTX 4090, synthetic Q3_K T = 4
 // over 32 MB: L1 data wavefronts 5.6 -> 2.1 M, 46.9 -> 42.0 us). lanes and group are powers of
 // two, blocks a multiple of group; lanes 1 keeps the row in order.
 __host__ __device__ __forceinline__ int r8_x_slot(int b, int blocks, int lanes, int group) {

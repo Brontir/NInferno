@@ -105,13 +105,13 @@ bool r8_expert_supports(const Weight& w) {
            reinterpret_cast<std::uintptr_t>(w.qdata) % 16 == 0;
 }
 
+// The blocks an R8 lane of this bank loads together (GemmArgs::x_group, xq_group).
+int r8_x_group(const Weight& w) { return generic::r8_k_values(w.qtype) / 32; }
+
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes): the fewest of 8, 16, 32 that
 // cover the row's loads at three a lane (K / 32 blocks over the blocks one codec load holds: two
 // for Q4_K and Q5_K, four for Q6_K and Q3_K, one otherwise). Only the speed depends on it
 // (moe_r8.cuh).
-// The blocks an R8 lane of this bank loads together (GemmArgs::x_group, xq_group).
-int r8_x_group(const Weight& w) { return generic::r8_k_values(w.qtype) / 32; }
-
 int r8_lanes(const Weight& w) {
     int per_load = 1;
     switch (w.qtype) {
