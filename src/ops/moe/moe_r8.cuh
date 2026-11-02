@@ -198,9 +198,25 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                                 (s == 1 ? a.up_offset : 0));
     };
 
-    Raw ring[2][kSets][kRows][kStride];
-    const auto fetch = [&](auto slot_tag, int group) {
-        constexpr int slot = decltype(slot_tag)::value;
+    // One group's loads per lane, not two in flight: the second slot held the most registers of
+    // the kernel (Q6_K: 20 per load, two loads per group, gate and up: 80 per slot; 254 per
+    // thread in all, 16 % occupancy and 75 % of DRAM bandwidth at T = 4 on the RTX 4090 against
+    // the register MMA's 128, 33 % and 84 %). With one slot the SM holds more warps and they hide
+    // the load latency (Q6_K 179, Q3_K 142, Q5_K 134, Q4_K 118 registers). A lane sums the same
+    // blocks in the same order: the bytes do not change. Gate/up us at T = 1 / 2 / 3 / 4
+    // (moe_bench, H 2048, F 512, E 128, k 8, published layout), two slots against one:
+    //   RTX 5090:    Q6_K 30.7 / 49.2 / 71.7 / 86.0 against 30.7 / 47.1 / 67.6 / 79.9
+    //   RTX 4090:    Q6_K 52.2 / 86.0 / 122.9 / 154.6 against 52.2 / 84.0 / 118.8 / 147.5;
+    //                Q3_K 37.9 / 58.4 / 81.9 / 98.3 against 36.9 / 54.3 / 74.8 / 92.2
+    //   RTX 5070 Ti: Q6_K 46.8 / 79.6 / 116.7 / 143.4 against 43.0 / 77.8 / 110.6 / 137.2;
+    //                Q3_K 34.8 / 57.3 / 92.2 / 116.7 against 34.8 / 55.3 / 84.0 / 108.2
+    //   RTX 3060:    Q5_K 89.1 / 154.6 / 233.5 / 301.1 against 86.0 / 148.5 / 214.0 / 276.5
+    //   RTX 2080 Ti: Q5_K 83.8 / 115.0 / 172.3 / 210.1 against 67.6 / 103.2 / 143.5 / 176.2
+    //   GV100:       Q5_0 118.8 / 193.5 / 259.1 / 324.6 against 97.3 / 160.8 / 230.3 / 288.7
+    // and every other format the same or ahead on each of those and the RTX 4060 Ti and 4070 Ti,
+    // but IQ3_XXS at T = 3 / 4 (1..2 % behind on the RTX 5070 Ti and GV100, within a timer step).
+    Raw ring[kSets][kRows][kStride];
+    const auto fetch = [&](int group) {
 #pragma unroll
         for (int s = 0; s < kSets; ++s)
 #pragma unroll
@@ -209,14 +225,12 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                 if (l < a.rows) {
 #pragma unroll
                     for (int q = 0; q < kStride; ++q) {
-                        ring[slot][s][r][q] = C::load(a.w, weight_row(l, s), group * kGroup + q);
+                        ring[s][r][q] = C::load(a.w, weight_row(l, s), group * kGroup + q);
                     }
                 }
             }
     };
-    using Slot0 = std::integral_constant<int, 0>;
-    using Slot1 = std::integral_constant<int, 1>;
-    if (sl < groups) fetch(Slot0{}, sl);
+    if (sl < groups) fetch(sl);
 
     // The job's activation columns (GateUp: the slot's token; Down: the slot's intermediate row);
     // slots past the job's count hold zeros.
@@ -306,21 +320,19 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                 }
             }
     };
-    const auto compute = [&](auto slot_tag, int group) {
-        constexpr int slot = decltype(slot_tag)::value;
+    const auto compute = [&](int group) {
 #pragma unroll
         for (int j = 0; j < kGroup; ++j) {
-            compute_block(ring[slot], j % kStride, j / kStride, group * kGroup + j);
+            compute_block(ring, j % kStride, j / kStride, group * kGroup + j);
         }
     };
 
+    // The first group's loads were issued before the activation quantize above.
+    if (sl < groups) compute(sl);
 #pragma unroll 1
-    for (int g = sl; g < groups; g += 2 * lanes) {
-        if (g + lanes < groups) fetch(Slot1{}, g + lanes);
-        compute(Slot0{}, g);
-        if (g + lanes >= groups) break;
-        if (g + 2 * lanes < groups) fetch(Slot0{}, g + 2 * lanes);
-        compute(Slot1{}, g + lanes);
+    for (int g = sl + lanes; g < groups; g += lanes) {
+        fetch(g);
+        compute(g);
     }
 
     // Butterfly within each row group: every lane ends with its group's sum (each step adds a pair
