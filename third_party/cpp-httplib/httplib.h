@@ -1764,6 +1764,11 @@ struct Response {
   // by route handlers to pass arbitrary data (e.g. decoded auth tokens).
   UserData user_data;
 
+  // NInferno patch: an error response the application rendered after the
+  // request was read completely keeps the connection (a refused caller's next
+  // request reuses it); every other error response still closes it.
+  bool keep_alive_after_error = false;
+
   bool has_header(const std::string &key) const;
   std::string get_header_value(const std::string &key, const char *def = "",
                                size_t id = 0) const;
@@ -13156,7 +13161,8 @@ inline bool Server::write_response_core(Stream &strm, bool close_connection,
   // Prepare additional headers
   if (close_connection ||
       detail::has_header_token(req.headers, "Connection", "close") ||
-      400 <= res.status) { // Don't leave connections open after errors
+      (400 <= res.status &&
+       !res.keep_alive_after_error)) { // Don't leave connections open after errors
     res.set_header("Connection", "close");
   } else {
     std::string s = "timeout=";
@@ -14426,17 +14432,17 @@ Server::process_request(Stream &strm, const std::string &remote_addr,
   // keep-alive. Without framing there is no body to drain — reading would
   // consume the next request (issue #2450). If the response has committed the
   // connection to close, there is no next request to protect.
-  if (!req.body_consumed_ && detail::has_framed_body(req)) {
-    if (detail::has_header_token(res.headers, "Connection", "close")) {
+  // NInferno patch: a response that sent `Connection: close` ends the
+  // keep-alive loop even when no unread body remains.
+  if (detail::has_header_token(res.headers, "Connection", "close")) {
+    connection_closed = true;
+  } else if (!req.body_consumed_ && detail::has_framed_body(req)) {
+    int dummy_status;
+    if (!detail::read_content(
+            strm, req, payload_max_length_, dummy_status, nullptr,
+            [](const char *, size_t, size_t, size_t) { return true; },
+            false)) {
       connection_closed = true;
-    } else {
-      int dummy_status;
-      if (!detail::read_content(
-              strm, req, payload_max_length_, dummy_status, nullptr,
-              [](const char *, size_t, size_t, size_t) { return true; },
-              false)) {
-        connection_closed = true;
-      }
     }
   }
 
