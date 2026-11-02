@@ -122,15 +122,20 @@ void check_listed_projector(const std::string& spec, const convert::FetchOptions
     const auto parts = convert::best_projector(names);
     if (parts.empty()) { return; }
     std::string type;
-    try {
-        convert::FetchOptions ask = fetch;
-        ask.quant.clear();
-        ask.include = {parts.front()};
-        const auto head = convert::fetch_gguf_head(spec, ask, 8ULL << 20);
-        type            = convert::clip_projector_type(convert::parse_gguf_head(
-            reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(), head.size,
-            head.path));
-    } catch (const std::exception&) { return; }
+    convert::FetchOptions ask = fetch;
+    ask.quant.clear();
+    ask.include = {parts.front()};
+    for (const std::uint64_t bytes : {8ULL << 20, 32ULL << 20}) {
+        try {
+            const auto head = convert::fetch_gguf_head(spec, ask, bytes);
+            type            = convert::clip_projector_type(convert::parse_gguf_head(
+                reinterpret_cast<const std::byte*>(head.bytes.data()), head.bytes.size(),
+                head.size, head.path));
+            break;
+        } catch (const convert::GgufTruncated&) {
+            continue;
+        } catch (const std::exception&) { return; }
+    }
     if (!type.empty() && !convert::clip_projector_supported(type)) {
         throw std::runtime_error(spec + " cannot be run with --vision: its projector " +
                                  parts.front() + " is of type '" + type +
