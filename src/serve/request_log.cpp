@@ -151,6 +151,14 @@ Json event_base(const std::string& server_instance_id, std::uint64_t timestamp, 
                 {"server_instance_id", server_instance_id}};
 }
 
+// {"<token id>": offset}, or null when the request biases nothing.
+Json logit_bias_json(const std::vector<ninferno::LogitBias>& biases) {
+    if (biases.empty()) { return nullptr; }
+    Json out = Json::object();
+    for (const ninferno::LogitBias& entry : biases) { out[std::to_string(entry.token)] = entry.bias; }
+    return out;
+}
+
 Json sampler_json(const ninferno::ResolvedSamplingParameters& sampling) {
     return Json{{"temperature", sampling.temperature},
                 {"top_p", sampling.top_p},
@@ -159,7 +167,8 @@ Json sampler_json(const ninferno::ResolvedSamplingParameters& sampling) {
                 {"presence_penalty", sampling.presence_penalty},
                 {"frequency_penalty", sampling.frequency_penalty},
                 {"repetition_penalty", sampling.repetition_penalty},
-                {"seed", sampling.seed}};
+                {"seed", sampling.seed},
+                {"logit_bias", logit_bias_json(sampling.logit_bias)}};
 }
 
 Json preset_json(const ninferno::SamplingPreset& preset) {
@@ -191,13 +200,7 @@ Json overrides_json(const ninferno::SamplingOverrides& overrides) {
         result["repetition_penalty"] = *overrides.repetition_penalty;
     }
     if (overrides.seed) { result["seed"] = *overrides.seed; }
-    if (!overrides.logit_bias.empty()) {
-        Json biases = Json::object();
-        for (const ninferno::LogitBias& entry : overrides.logit_bias) {
-            biases[std::to_string(entry.token)] = entry.bias;
-        }
-        result["logit_bias"] = std::move(biases);
-    }
+    result["logit_bias"] = logit_bias_json(overrides.logit_bias);
     return result;
 }
 
