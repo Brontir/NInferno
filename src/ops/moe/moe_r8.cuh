@@ -291,8 +291,11 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
 #pragma unroll
         for (int n = 0; n < NT; ++n) {
             // CTA-uniform: a slot past the job's count is never read below (most jobs hold one
-            // token at decode widths), so its activation is not loaded either.
-            if (n >= count) break;
+            // token at decode widths), so its activation is not loaded either. With one slot the
+            // count is one (a job holds at least one token): no test at all (RTX 5090 decode C1,
+            // with the test against without: Qwen3.6-35B Q4_K_M 378.9 / 379.3 tok/s, Gemma 4 26B
+            // 350.6 / 351.7; one timer step, C2..C8 the same).
+            if (NT > 1 && n >= count) break;
             if constexpr (kPre) {
                 const std::int64_t at = static_cast<std::int64_t>(src_token[n]) * x_blocks + slot;
                 const auto* c = reinterpret_cast<const uint4*>(a.x_codes + at * 32);
@@ -321,7 +324,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
                 }
 #pragma unroll
                 for (int n = 0; n < NT; ++n) {
-                    if (n >= count) break; // CTA-uniform: an empty slot adds nothing
+                    if (NT > 1 && n >= count) break; // CTA-uniform: an empty slot adds nothing
                     if constexpr (kHalves) {
                         const int d0  = generic::dp4a_words(lo, xl[n], int_accumulator_zero());
                         const int d1  = generic::dp4a_words(hi, xh[n], int_accumulator_zero());
@@ -373,7 +376,7 @@ __global__ __launch_bounds__(S::kThreads) void moe_r8_kernel(GemmArgs a) {
         for (int r = 0; r < kRows; ++r)
 #pragma unroll
             for (int n = 0; n < NT; ++n) {
-                if (n >= count) break; // CTA-uniform
+                if (NT > 1 && n >= count) break; // CTA-uniform
                 for (int m = lanes >> 1; m > 0; m >>= 1)
                     acc[s][r][n] += __shfl_xor_sync(0xffffffffU, acc[s][r][n], m);
             }
