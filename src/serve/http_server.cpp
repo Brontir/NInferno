@@ -407,10 +407,20 @@ bool HttpServer::stream_admitted(
     const auto disconnected = [&request] { return client_disconnected(request); };
     try {
         if (service_->await_admission(prepared, disconnected)) { return true; }
-        // It ended before it ran: its wait reports why.
+        // It ended before it ran: its wait reports why (a queue timeout throws). One that returns
+        // was cancelled: by a client that went away (no one to answer), or by the server giving
+        // in-flight work up (a drain), answered as an unstreamed request is.
         StreamSink discarded;
         (void)service_->run(prepared, &discarded, disconnected);
-        lifecycle.failure(make_client_disconnected_failure(RequestFailurePhase::Transport));
+        if (client_disconnected(request)) {
+            lifecycle.failure(make_client_disconnected_failure(RequestFailurePhase::Transport));
+        } else {
+            const ApiError error = service_->aborting()
+                                       ? server_draining_error()
+                                       : internal_error("the request ended before it ran");
+            lifecycle.failure(make_request_failure(RequestFailurePhase::Generation, error));
+            write_error(response, error);
+        }
     } catch (const ApiException& exception) {
         lifecycle.failure(make_generation_request_failure(exception.error()));
         write_error(response, exception.error());

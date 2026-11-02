@@ -638,7 +638,16 @@ private:
                 if (request.stream_start.has_value()) { return true; }
                 if (request.response_done) { return false; }
             }
-            if (cancellation.requested()) {
+            bool cancel = false;
+            try {
+                cancel = cancellation.requested();
+            } catch (...) {
+                request.cancelled.store(true, std::memory_order_release);
+                request_admission_check();
+                queue_cv_.notify_one();
+                throw;
+            }
+            if (cancel) {
                 request.cancelled.store(true, std::memory_order_release);
                 request_admission_check();
                 queue_cv_.notify_one();
