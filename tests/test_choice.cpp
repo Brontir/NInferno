@@ -1589,6 +1589,33 @@ void weighs_the_drafters(const json& fixture) {
           "the worth not deciding: the profile's drafter");
 }
 
+// The order a manifest lists its drafters in does not decide: two drafters of equal worth tie
+// and the same one wins whichever comes first (#304).
+void drafter_order_does_not_decide(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    const ch::Gates open{true, true};
+    const auto allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    ch::Task task;
+    task.contexts = {32768};
+    const ch::OwnContextFn room = [&b](const ch::Candidate& c) -> std::uint32_t {
+        const double left = 40e9 - b.quants[0].weight_bytes - (c.drafter != 0 ? 0.2e9 : 0.0);
+        return left <= 0 ? 0 : static_cast<std::uint32_t>(left / b.model.kv_bytes_per_token(c.kv));
+    };
+    const ch::DrafterOption head{"mtp:4+head", "mtp", 2.0, 2, "measured"};
+    const ch::DrafterOption plain_head{"mtp:4", "mtp", 2.0, 2, "measured"};
+    std::vector<std::string> winners;
+    for (const auto& order : {std::vector<ch::DrafterOption>{head, plain_head},
+                              std::vector<ch::DrafterOption>{plain_head, head}}) {
+        b.model.drafters        = order;
+        b.model.default_drafter = 1;
+        const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, room, open);
+        check(c.chosen.has_value(), "two tied drafters: a choice");
+        if (c.chosen) { winners.push_back(chosen(c).drafter); }
+    }
+    check(winners.size() == 2 && winners[0] == winners[1] && winners[0] == "mtp:4",
+          "the tied drafter that wins does not follow the manifest's order");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -1621,6 +1648,7 @@ int main() {
     prices_prefill_small_kernels();
     prices_attention_tiles();
     weighs_the_drafters(fixture);
+    drafter_order_does_not_decide(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

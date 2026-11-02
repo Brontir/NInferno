@@ -211,6 +211,7 @@ struct Case {
     std::optional<std::uint32_t> accepted;
     std::optional<std::size_t> tool_calls;
     std::vector<std::string> call_arguments; // expected arguments_json per call, when given
+    std::optional<std::uint32_t> cut_calls_dropped;
 };
 
 struct Outcome {
@@ -637,15 +638,17 @@ std::vector<Case> corpus() {
                      .content    = "x <tool",
                      .finish     = FinishReason::StopToken,
                      .tool_calls = 0});
-    // A length limit inside a call returns the markup verbatim as content.
-    cases.push_back({.name       = "limit inside a call",
-                     .tokens     = script({P{"Hi"}, P{" <tool_call>"}, P{"\n<function=get_weather>\n"},
-                                           P{"<parameter="}, P{"city>\nOs"}}),
-                     .prompt     = PromptKind::Tools,
-                     .max_tokens = 2 + 1 + 1 + 1,
-                     .content    = "Hi <tool_call>\n<function=get_weather>\n<parameter=",
-                     .finish     = FinishReason::OutputLimit,
-                     .tool_calls = 0});
+    // A length limit inside a call drops the unfinished markup (#325): it is never content.
+    cases.push_back(
+        {.name              = "limit inside a call",
+         .tokens            = script({P{"Hi"}, P{" <tool_call>"}, P{"\n<function=get_weather>\n"},
+                                      P{"<parameter="}, P{"city>\nOs"}}),
+         .prompt            = PromptKind::Tools,
+         .max_tokens        = 2 + 1 + 1 + 1,
+         .content           = "Hi",
+         .finish            = FinishReason::OutputLimit,
+         .tool_calls        = 0,
+         .cut_calls_dropped = 1});
     cases.push_back({.name       = "stop string inside a call region",
                      .tokens     = script({P{"<tool_call>"}, P{"\n<function=search>\n"}, P{"STOP"},
                                            P{"</function>\n</tool_call>"}}),
@@ -834,6 +837,10 @@ int run_case(const Harness& harness, const Case& c, std::size_t& runs) {
     if (c.tool_calls && reference.calls.size() != *c.tool_calls) {
         fail("tool calls " + std::to_string(reference.calls.size()) + " != expected " +
              std::to_string(*c.tool_calls) + " (" + describe(reference) + ")");
+    }
+    if (c.cut_calls_dropped && reference.diagnostics.cut_calls_dropped != *c.cut_calls_dropped) {
+        fail("cut calls dropped " + std::to_string(reference.diagnostics.cut_calls_dropped) +
+             " != expected " + std::to_string(*c.cut_calls_dropped));
     }
     for (std::size_t i = 0; i < c.call_arguments.size() && i < reference.calls.size(); ++i) {
         if (reference.calls[i].second != c.call_arguments[i]) {
