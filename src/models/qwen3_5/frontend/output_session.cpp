@@ -754,6 +754,9 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
             if (!impl_->policy.publish_stop_token) {
                 impl_->preview_state  = std::move(before_state);
                 impl_->preview_output = std::move(before_output);
+                // The engine keeps the stop token in its output (and its log probability): inside
+                // reasoning it is the reasoning's.
+                span.after(impl_->preview_state);
             }
             terminalize(impl_->preview_state, impl_->policy, conventions, impl_->preview_output,
                         count);

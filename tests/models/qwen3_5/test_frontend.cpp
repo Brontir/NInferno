@@ -2607,8 +2607,7 @@ int test_special_token_reasoning_markers() {
     // two markers lead the output and are not the answer's tokens.
     auto empty = frontend.make_output_session(prompt, {});
     const std::vector<ninferno::TokenId> empty_tokens =
-        tokenizer.encode("<|channel>thought
-<channel|>answer");
+        tokenizer.encode("<|channel>thought\n<channel|>answer");
     (void)empty.preview_model(empty_tokens, static_cast<std::uint32_t>(empty_tokens.size() + 1U),
                               ninferno::FinishReason::OutputLimit);
     const auto empty_output = empty.commit_preview();
