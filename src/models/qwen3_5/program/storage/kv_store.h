@@ -1498,7 +1498,13 @@ public:
                 throw std::logic_error("KV truncate would partially release a protected page");
             }
         }
-        if (target != 0) {
+        // A tail kept at its committed coverage is not rewritten: only the pages
+        // past it are released, so a full tail shared with a prefix may stay.
+        const bool tail_changes =
+            target != 0 &&
+            frontier - (target - 1U) * static_cast<std::uint32_t>(kPagedKVPageSize) !=
+                pages_->committed_columns(membership(address, target - 1U));
+        if (tail_changes) {
             const std::uint32_t columns =
                 frontier - (target - 1U) * static_cast<std::uint32_t>(kPagedKVPageSize);
             if (!pages_->can_destructive_truncate(membership(address, target - 1U), columns)) {
@@ -1512,7 +1518,7 @@ public:
             pages_->release_active_reference(page);
             pages_->dematerialize(page, address.reservation);
         }
-        if (target != 0) {
+        if (tail_changes) {
             const std::uint32_t columns =
                 frontier - (target - 1U) * static_cast<std::uint32_t>(kPagedKVPageSize);
             pages_->destructive_truncate(membership(address, target - 1U), columns);

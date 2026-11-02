@@ -388,6 +388,33 @@ void test_kv_store(ninferno::DeviceContext& device) {
                pages.occupied() == 0,
            "active KV snapshot references close with both address spaces");
 
+    // #314: a trim to the committed frontier keeps a full tail shared with a prefix and
+    // releases only the speculative pages past it.
+    const auto aligned_source      = addresses.create_active(3, 0, device.stream);
+    const auto aligned_destination = addresses.create_inactive();
+    expect(aligned_source && aligned_destination, "aligned KV snapshot endpoints allocate");
+    addresses.ensure_mapped_to_tokens(*aligned_source, 64, device.stream);
+    addresses.commit_frontier(*aligned_source, 64);
+    const auto aligned_full = addresses.logical_page(*aligned_source, 0);
+    addresses.commit_active_snapshot(
+        addresses.prepare_active_snapshot(*aligned_source, *aligned_destination, 64),
+        device.stream);
+    addresses.ensure_mapped_to_tokens(*aligned_destination, 71, device.stream);
+    expect(addresses.mapped_pages(*aligned_destination) == 2 &&
+               addresses.logical_page(*aligned_destination, 0) == aligned_full &&
+               pages.address_references(aligned_full) == 2,
+           "aligned KV snapshot shares its full tail page");
+    addresses.destructive_truncate(*aligned_destination, 64);
+    expect(addresses.mapped_pages(*aligned_destination) == 1 &&
+               addresses.committed_frontier(*aligned_destination) == 64 &&
+               pages.address_references(aligned_full) == 2 &&
+               pages.committed_columns(aligned_full) == 64,
+           "trim to the committed frontier keeps a shared full tail");
+    addresses.deactivate(*aligned_destination);
+    expect(addresses.release(*aligned_destination) && addresses.release(*aligned_source) &&
+               pages.occupied() == 0,
+           "aligned KV snapshot closes with both address spaces");
+
     const auto alternating = addresses.create_active(4, 0, device.stream);
     expect(alternating.has_value(), "alternating Host release address allocation");
     addresses.ensure_mapped_to_tokens(*alternating, 193, device.stream);
