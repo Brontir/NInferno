@@ -3,6 +3,7 @@
 
 #include "ninferno/ops/linear.h"
 #include "ops/common/tensor_checks.h"
+#include "ops/linear/linear_registry.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
 #include <array>
@@ -11,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ninferno::ops {
 namespace {
@@ -89,6 +91,40 @@ void require_same_logical_shape(const Weight& first_weight, const Weight& second
 }
 
 } // namespace
+
+namespace detail {
+
+std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, const Weight& second,
+                                                        std::int32_t tokens) {
+    using Status = LinearCandidate::Status;
+    if (tokens <= 0) { throw std::invalid_argument("linear_pair candidates: T must be positive"); }
+    // As linear_pair runs the call: the fused kernel where it applies, else the two calls, which
+    // need one shape (linear_pair refuses another).
+    const bool fused = fused_pair(first, second);
+    const bool same  = first.n > 0 && first.k > 0 && first.n == second.n && first.k == second.k;
+    LinearPairCandidate kernel{"fused:q8_pair", fused ? Status::Selected : Status::Unavailable, "", {}};
+    if (!fused) {
+        kernel.why = !q8_pair_registered(first.n, first.k)
+                         ? "no fused kernel for this [N,K]"
+                         : "the weights are not the fused kernel's RowSplit Q8_G32 layout with FP16 "
+                           "scales";
+    }
+    LinearPairCandidate separate{"separate", Status::Unavailable, "", {}};
+    if (!same) {
+        separate.why = "the two weights must share one [N,K] shape";
+    } else {
+        separate.status = fused ? Status::Inadmissible : Status::Selected;
+        separate.why    = fused ? "fused" : "";
+        for (const Weight* w : {&first, &second}) {
+            for (LinearCandidate& c : linear_candidates(*w, LinearPolicy::A16Only, tokens)) {
+                separate.parts.push_back(std::move(c));
+            }
+        }
+    }
+    return {std::move(kernel), std::move(separate)};
+}
+
+} // namespace detail
 
 std::size_t linear_pair_workspace_capacity_bytes(const Weight& first_weight,
                                                  const Weight& second_weight,
