@@ -80,9 +80,9 @@ struct PlanArgs {
 
 // The SIMT router (moe_router_simt.cu): warps per CTA, the widest call, and its dynamic shared
 // memory: x staged as BF16 (read from global memory when it does not fit). The widest call is
-// the R8 route's (kR8Tokens): an A8 verify of up to eight tokens routes as decode does, so its
-// tokens' bytes are those of a decode call (with the register-MMA router from T = 5 they were
-// not: other logits, other weights).
+// the R8 route's (kR8Tokens): an A8 verify of up to eight tokens routes as decode does (with the
+// register-MMA router from T = 5 it did not: other logits, other weights), so where both expert
+// stages keep R8 to eight tokens (r8_token_limit(bank)) its tokens' bytes are a decode call's.
 inline constexpr int kRouterSimtWarps     = 4;
 inline constexpr int kRouterSimtMaxTokens = 8;
 
@@ -220,8 +220,8 @@ inline constexpr std::int32_t kR8NarrowTokens = 4;
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
 // IQ4_NL, IQ4_XS).
 [[nodiscard]] bool r8_expert_format(QType format);
-// Whether an R8 stage may take `bank` at `tokens` (the policy, the format, T <= kR8Tokens and the
-// quantized activation within a CTA's shared memory).
+// Whether an R8 stage may take `bank` at `tokens` (the policy, the format, T <=
+// r8_token_limit(bank) and the quantized activation within a CTA's shared memory).
 [[nodiscard]] bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens);
 [[nodiscard]] bool r8_expert_supports(const Weight& w);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
@@ -263,8 +263,8 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 [[nodiscard]] bool plan_compiled(const MoeWeights& weights, const MoePlan& plan);
 // Whether a grouped stage over `bank` (weights.gate_up or weights.down) may take the R8 kernel at
 // T tokens: an A8 expert policy, a codebook format with 16-byte aligned planes, T <=
-// r8_token_limit() and an
-// activation that fits a CTA; moe_with_plan refuses an R8 stage that is not.
+// r8_token_limit(bank) and an activation that fits a CTA; moe_with_plan refuses an R8 stage that
+// is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
 
 // The current GPU class's default A8 route (moe.cpp's per-class table, kFallbackA8Route for a class

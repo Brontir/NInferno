@@ -628,8 +628,8 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
     // wide: the gate/up bank's limit (the default route's R8 stage); both: R8 on both stages.
     const std::int32_t wide = moe::r8_token_limit(l.weights.gate_up);
     const std::int32_t both = std::min(wide, moe::r8_token_limit(l.weights.down));
-    const auto x =
-        random_bf16(static_cast<std::size_t>(wide + 1) * c.hidden, seed + 21, -1.0, 1.0);
+    const auto x = random_bf16(static_cast<std::size_t>(moe::kR8Tokens + 1) * c.hidden, seed + 21,
+                               -1.0, 1.0);
     const auto residual = random_bf16(x.size(), seed + 22, -2.0, 2.0);
     int failures        = 0;
     // The default plan at T with the given R8 stages.
@@ -656,7 +656,11 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
         }
     };
     for (const std::int32_t t : widths) {
-        if (t > both) continue;
+        if (t > both) {
+            std::cerr << c.label << ": width " << t << " past the R8 limit " << both << '\n';
+            ++failures;
+            continue;
+        }
         const std::int32_t offset = both - t;
         for (int s = 0; s < moe::r8_schedule_count(); ++s) {
             for (const auto& [gu, dn] : {std::pair{s, s}, std::pair{s, -1}, std::pair{-1, s}}) {
@@ -681,6 +685,31 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
                 }
                 failures += compare_run(c, l, x, residual, offset, t, run, a8_stages(c, p), label);
             }
+        }
+    }
+    // Banks of different limits: each stage alone at its own limit above `both` against the
+    // oracle, and one token past it refused.
+    for (const bool gate_up_stage : {true, false}) {
+        const std::int32_t own =
+            moe::r8_token_limit(gate_up_stage ? l.weights.gate_up : l.weights.down);
+        if (own <= both) continue;
+        const auto at = [&](std::int32_t t) {
+            return forced(t, gate_up_stage ? 0 : -1, gate_up_stage ? -1 : 0);
+        };
+        const auto p           = at(own);
+        const Run run          = run_op(c, l, x, 0, own, residual, &p);
+        failures += compare_run(c, l, x, residual, 0, own, run, a8_stages(c, p),
+                                c.label + " A8 T=" + std::to_string(own) + " (" +
+                                    moe::plan_name(p) + ", the stage's own limit)");
+        const auto past = at(own + 1);
+        bool refused    = false;
+        try {
+            (void)run_op(c, l, x, 0, own + 1, residual, &past);
+        } catch (const std::invalid_argument&) { refused = true; }
+        if (!refused) {
+            std::cerr << c.label << ": an R8 " << (gate_up_stage ? "gate/up" : "down")
+                      << " ran a call of " << own + 1 << " tokens\n";
+            ++failures;
         }
     }
     // The shipped default route: the class's A8 route (A16 without one) at every T up to the
@@ -1788,6 +1817,21 @@ int main(int argc, char** argv) {
                         failures +=
                             check_case(a8, 99U + static_cast<std::uint32_t>(index), {1, 4, 16, 64});
                     }
+                }
+                // Stages of different R8 limits from Ada on: IQ3_XXS takes eight tokens, MXFP4
+                // four.
+                for (const bool fp4_down : {true, false}) {
+                    Case m;
+                    m.experts = 24; m.top_k = 4; m.hidden = 256; m.inter = 512;
+                    m.shared_inter = 0;
+                    m.gate_up = fp4_down ? QType::GGML_IQ3_XXS : QType::MXFP4;
+                    m.down    = fp4_down ? QType::MXFP4 : QType::GGML_IQ3_XXS;
+                    m.config.top_k = 4;
+                    m.router_bias = false; m.selection_bias = false; m.expert_scale = false;
+                    m.expert_bias = false; m.shared_gate = false;
+                    m.epilogue = ops::MoeEpilogue::Store;
+                    m.label = std::string(qname(m.gate_up)) + "/" + qname(m.down) + " E24 k4";
+                    failures += check_r8(m, 151U + (fp4_down ? 0U : 1U), {1, 3});
                 }
                 Case c;
                 c.label          = "qwen3.6-35b-a3b-like ud-iq3_xxs (iq2s/iq3xxs) E256 k8";
