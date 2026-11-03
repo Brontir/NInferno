@@ -970,7 +970,11 @@ void chooses_the_chunk(const json& fixture) {
             ++chunks;
         }
         if (a.axis == ch::Axis::Chunk && a.value == "1024") {
-            check(a.why_code == "lower_worth", "chunk 1024: slower");
+            // Slower only: a loss outright where it is slower by more than the resolution, else
+            // indistinguishable within it (#301).
+            const double slower = std::log(a.scored->decision_seconds / chosen(ada).decision_seconds);
+            check(a.why_code == (slower > ada.resolution ? "lower_worth" : "within_resolution"),
+                  "chunk 1024: slower");
             ++chunks;
         }
     }
@@ -1718,13 +1722,9 @@ void axis_order_does_not_decide(const json& fixture) {
     }
 }
 
-// #304: a choice made on the generation's reference card reads none of the board's continuous
-// facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
-// shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
-// the MoE 35B with two measured drafters (its chunk by speed and the drafter by worth open).
 // The worth's resolution (#301): where the worth decides it is the reference generation's decode
-// error, and an alternative is within_resolution exactly when it loses by no more than that on a
-// different speed; a loss of accuracy alone at the same speed, or a larger gap, stays lower_worth.
+// error, and an alternative is within_resolution exactly when it loses by more than a tie and no
+// more than the smaller of that and the two's speed difference; a larger gap stays lower_worth.
 void resolution_labels(const json& fixture) {
     int within = 0, lower = 0;
     for (const auto& [name, unused] : fixture.at("cards").items()) {
@@ -1745,10 +1745,10 @@ void resolution_labels(const json& fixture) {
                     continue;
                 }
                 const double gap   = best.worth - a.scored->worth;
-                const bool speeds  = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds)) > 1e-9;
-                const bool inside  = c.resolution > 0 && gap <= c.resolution && speeds;
+                const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
+                const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart);
                 check(inside == (a.why_code == "within_resolution"),
-                      name + " " + a.value + ": within_resolution exactly inside the band on another speed");
+                      name + " " + a.value + ": within_resolution exactly inside the band");
                 (inside ? within : lower) += 1;
             }
         }
@@ -1757,6 +1757,10 @@ void resolution_labels(const json& fixture) {
     check(lower > 0, "some alternatives lose outright");
 }
 
+// #304: a choice made on the generation's reference card reads none of the board's continuous
+// facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
+// shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
+// the MoE 35B with two measured drafters (its chunk by speed and the drafter by worth open).
 void board_facts_do_not_decide(const json& fixture) {
     std::vector<std::pair<std::string, Bench>> benches;
     for (const auto& [name, unused] : fixture.at("cards").items()) {

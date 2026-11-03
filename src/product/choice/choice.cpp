@@ -1750,12 +1750,15 @@ std::vector<Alternative> explain(const Choice& choice) {
                                    : axis == Axis::Drafter
                                          ? "the same in every respect for this request: the drafters' label order"
                                          : "the same in every respect for this request: the listing's order";
-            } else if (choice.resolution > 0 && chosen.worth - s.worth <= choice.resolution &&
-                       s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
-                       std::abs(std::log(s.decision_seconds / chosen.decision_seconds)) > kWorthTie) {
-                // It loses by less than the speed estimate's own error, on a different speed: the
-                // two are indistinguishable within the estimate (a gap of accuracy alone, at the
-                // same speed, is measured and stays a loss).
+            } else if (s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
+                       chosen.worth - s.worth <=
+                           std::min(choice.resolution,
+                                    std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) &&
+                       chosen.worth - s.worth > kWorthTie) {
+                // It loses by less than the estimate's uncertainty about the two's speeds: the
+                // generation's decode error, and no more than their speeds differ (configurations
+                // that run nearly the same kernels err alike). Indistinguishable within the
+                // estimate; a gap of accuracy beyond their speeds' difference stays a loss.
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
                                " against the chosen, inside the speed estimate's resolution (" +
