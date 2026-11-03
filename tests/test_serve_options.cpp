@@ -113,7 +113,7 @@ int main() {
                               "\"private_endpoint\",\"reused_prompt_tokens\":35279,"
                               "\"computed_prompt_tokens\":17,\"queue_wait_seconds\":0.011,"
                               "\"prefill_seconds\":0.0664}}\n\n",
-                          "the report frame: " + router_report_frame(report));
+                          ("the report frame: " + router_report_frame(report)).c_str());
         const auto headers = router_report_headers(report);
         failures += check(headers.size() == 6 && headers[0].second == "serve-7-1" &&
                               headers[2] == std::pair<std::string, std::string>{"x-ninfer-reused-tokens", "35279"} &&
