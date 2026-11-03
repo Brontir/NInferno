@@ -1616,6 +1616,41 @@ void drafter_order_does_not_decide(const json& fixture) {
           "the tied drafter that wins does not follow the manifest's order");
 }
 
+// #304: a choice made on the generation's reference card reads none of the board's continuous
+// facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
+// shown, never what is chosen. Every fixture card, a short and a long context.
+void board_facts_do_not_decide(const json& fixture) {
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        const Bench b = nine_b(fixture, name);
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (const std::uint32_t context : {4096U, 131072U}) {
+            ch::Task task;
+            task.contexts = {context};
+            const auto decided = [&](const ch::CardFacts& card) {
+                const ch::Choice c = ch::choose(b.model, card, b.quants[0], allowed, {}, task,
+                                                oracle(b, 20e9), ch::Gates{true, true});
+                if (!c.chosen) { return std::string("none"); }
+                const ch::Candidate& k = chosen(c).candidate;
+                return std::string(kv_cache_storage_name(k.kv)) + "/" +
+                       std::to_string(static_cast<int>(k.activations)) + "/" + std::to_string(k.chunk) +
+                       "/" + std::to_string(k.drafter) + (c.by_worth ? "/worth" : "/defaults");
+            };
+            const std::string base = decided(b.card);
+            bool same = true;
+            for (const double f : {0.7, 1.3}) {
+                ch::CardFacts clock = b.card, dram = b.card, sms = b.card, l2 = b.card;
+                clock.clock_hz *= f;
+                dram.dram_bytes_per_s *= f;
+                sms.sms = static_cast<int>(sms.sms * f);
+                l2.l2_bytes = (l2.l2_bytes > 0 ? l2.l2_bytes : 32e6) * f;
+                for (const ch::CardFacts& other : {clock, dram, sms, l2}) { same = same && decided(other) == base; }
+            }
+            check(same, name + ", " + std::to_string(context) + " tokens: the board's own rates do not decide");
+        }
+    }
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -1649,6 +1684,7 @@ int main() {
     prices_attention_tiles();
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
+    board_facts_do_not_decide(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
