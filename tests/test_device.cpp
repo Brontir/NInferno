@@ -1,5 +1,6 @@
 #include "core/device.h"
 #include "core/generation.h"
+#include "core/measured_boards.h"
 #include "ninferno/option_enums.h"
 #include "support/cuda.h"
 
@@ -174,6 +175,49 @@ int check_feature_table() {
         failures += expect(std::isfinite(ninferno::board_memory_distance(a30, a10)) &&
                                ninferno::board_memory_distance(a100, a100) == 0.0,
                            "board memory distance ignores the HMMA rate");
+    }
+    // The MMQ prefill gate's answer with what it rests on (#373): the donor, the distance, the
+    // quantities it could not compare, and the evidence's disposition; the answer unchanged.
+    {
+        namespace m = ninferno::measured;
+        using D     = m::GateAnswer::Disposition;
+        const ninferno::Board ti5070{12, 0, 70, 48, 896}, ti4070{8, 9, 60, 48, 504};
+        const auto own = m::mmq_prefill_gate(m::kRtx5090);
+        failures += expect(own.donor != nullptr && own.donor->board.sms == 170 && own.distance == 0 &&
+                               own.disposition == D::Measured && own.pays,
+                           "a measured board answers for itself");
+        const auto b5080 = m::mmq_prefill_gate(m::kRtx5080);
+        failures += expect(b5080.donor != nullptr && b5080.donor->board.sms == 170 &&
+                               std::abs(b5080.distance - 2.210019) < 1e-5 &&
+                               b5080.disposition == D::Transferred && b5080.pays,
+                           "the RTX 5080 takes the 5090's answer from 2.21 away: transferred");
+        const auto b5070 = m::mmq_prefill_gate(ti5070);
+        failures += expect(b5070.donor != nullptr && b5070.donor->board.sms == 36 &&
+                               std::abs(b5070.distance - 2.251839) < 1e-5 &&
+                               b5070.disposition == D::Transferred && !b5070.pays,
+                           "the RTX 5070 Ti takes the 5060 Ti's answer: transferred");
+        const auto b4070 = m::mmq_prefill_gate(ti4070);
+        failures += expect(b4070.donor != nullptr && b4070.donor->board.sms == 58 &&
+                               std::abs(b4070.distance - 0.797371) < 1e-5 &&
+                               b4070.disposition == D::Carried && b4070.pays,
+                           "the RTX 4070 Ti carries the L4's answer");
+        // Withdrawing a known fact does not make the evidence nearer and authoritative: the
+        // distance drops the unknown quantity, the disposition says so.
+        const ninferno::Board known{12, 0, 170, 8, 1792}, no_l2{12, 0, 170, 0, 1792};
+        const auto k = m::mmq_prefill_gate(known), u = m::mmq_prefill_gate(no_l2);
+        failures += expect(std::abs(k.distance - 1.792481) < 1e-5 && k.disposition == D::Transferred &&
+                               u.distance == 0 && u.unknown.l2 && !u.unknown.dram &&
+                               u.disposition == D::Incomplete,
+                           "an unknown L2 is said, not taken for a match");
+        // No donor of the instruction set: the unmeasured default.
+        const auto volta = m::mmq_prefill_gate(m::kV100Sxm2);
+        failures += expect(volta.donor == nullptr && volta.disposition == D::None && !volta.pays,
+                           "Volta: no donor, no MMQ");
+        for (const ninferno::Board& b : {m::kRtx5090, m::kRtx5080, m::kRtx4090, m::kA100Sxm40, ti5070,
+                                         ti4070, m::kV100Sxm2}) {
+            failures += expect(m::mmq_prefill_pays(b) == m::mmq_prefill_gate(b).pays,
+                               "mmq_prefill_pays is the query's answer");
+        }
     }
     failures += expect(ninferno::gpu_chip(0, 12, 0, 170) == "gb202" &&
                            ninferno::gpu_chip(0, 12, 0, 84) == "gb203" &&

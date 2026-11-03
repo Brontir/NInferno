@@ -181,6 +181,15 @@ struct Board {
 // instruction sets.
 [[nodiscard]] double board_memory_distance(const Board& a, const Board& b) noexcept;
 
+// The quantities board_distance could not compare between two boards because either side does
+// not know them (#373): a distance without them is not evidence of nearness in them.
+struct BoardUnknowns {
+    bool l2   = false;
+    bool dram = false;
+    [[nodiscard]] bool any() const noexcept { return l2 || dram; }
+};
+[[nodiscard]] BoardUnknowns board_unknowns(const Board& a, const Board& b) noexcept;
+
 // The entry of `measured` (anything with a `board`) nearest `board`, ties to the earlier; null
 // when none is within `max_distance` (by default: any board of the same instruction set).
 template <class Measured, std::size_t Extent>
