@@ -368,6 +368,31 @@ enum class Evidence { Measured, Proxy, Interpolated, StandIn, Reference };
     return "stand-in";
 }
 
+// Whether a quantization's accuracy term may decide between quantizations (#368), apart from what
+// it shows (Evidence). Direct: these files were measured at these bits (Evidence::Measured; the
+// curve's own Q8_0 file too: every term is a KLD against it, so between quantizations its 0 is
+// exact, though not an error of 0 against the original weights).
+// Transfer: a validated rule carries another quantization's measurement to them (none is
+// registered: a same label at the same bits, a family's curve or a Q8_0 reference alone is not
+// one). Estimate: a value to show (Proxy, Interpolated, StandIn, Reference). Unknown: no place on
+// the curve (unknown bits). plan_quants trades accuracy for speed only between Direct rows, and
+// only where the rule's own pick is one; elsewhere the rule's largest stands.
+enum class QualityAuthority { Direct, Transfer, Estimate, Unknown };
+[[nodiscard]] constexpr std::string_view quality_authority_name(QualityAuthority a) noexcept {
+    switch (a) {
+    case QualityAuthority::Direct:
+        return "direct";
+    case QualityAuthority::Transfer:
+        return "transfer";
+    case QualityAuthority::Estimate:
+        return "estimate";
+    case QualityAuthority::Unknown:
+        return "unknown";
+    }
+    return "unknown";
+}
+[[nodiscard]] QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& quant);
+
 struct Term {
     Axis axis;
     std::string value;

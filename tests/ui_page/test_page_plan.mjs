@@ -258,6 +258,12 @@ eq(H.ruleText(doc, aCtx, EN), "Q4_K_M, the largest that fits this 24 GB card at 
 eq(H.ruleText(doc, aCtx, RU), "Q4_K_M — самый большой квант, который влезает на эту карту на 24 ГБ при авто-контексте (≈ 48K) × 4: у каждого запроса свои 48K",
    "RU rule");
 ok(!H.ruleText(doc, aCtx, RU).includes("GiB class"), "RU rule: not the C++ text");
+{ // #368: the rule's pick without measured accuracy for its files: the page says no trade was weighed.
+  const withheld = {...doc, rule_params: {...doc.rule_params, quality_withheld: true, quality_estimates: ["Q4_K_M"]}};
+  ok(H.ruleText(withheld, aCtx, EN).endsWith("; its accuracy was not measured on these files, so speed is not traded for it"), "EN rule: quality withheld");
+  ok(H.ruleText(withheld, aCtx, RU).endsWith("; его точность не измерена на этих файлах, поэтому скорость на неё не меняется"), "RU rule: quality withheld");
+  eq(H.ruleText(doc, aCtx, EN).includes("not measured"), false, "EN rule: nothing said where nothing was withheld");
+}
 eq(H.ruleText({...doc, rule_code: "brand_new"}, aCtx, RU), doc.rule, "an unknown rule code: the server's text");
 eq(H.ruleText(null, aCtx, EN), "", "no document");
 

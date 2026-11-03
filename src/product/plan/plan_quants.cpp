@@ -714,11 +714,29 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
     const bool bits_known = std::all_of(out.rows.begin(), out.rows.end(), [](const QuantRow& row) {
         return !row.candidate.supported || row.candidate.bits_per_weight > 0; // what the choice reads
     });
-    if (out.pick && bits_known &&
-        choice::weighs_quantizations(choice_model_of(shape), choice_card_of(inputs.gpu)) &&
-        (out.pick->tier == runtime::QuantPickTier::Own ||
-         out.pick->tier == runtime::QuantPickTier::OwnStepped ||
-         out.pick->tier == runtime::QuantPickTier::OwnBelowFloor)) {
+    // Only a measurement of a row's own files decides on its accuracy (#368,
+    // choice::quant_authority): the trade weighs the rows that have one, against the rule's pick
+    // only where it has one too; an estimate is shown, never decisive.
+    const choice::ModelFacts quality_model = choice_model_of(shape);
+    const auto authorized = [&](const QuantRow& row) {
+        return choice::quant_authority(quality_model,
+                                       quant_option_of(row_facts(shape, row), row.listing.quant)) ==
+               choice::QualityAuthority::Direct;
+    };
+    const bool weighs = out.pick && bits_known &&
+                        choice::weighs_quantizations(quality_model, choice_card_of(inputs.gpu)) &&
+                        (out.pick->tier == runtime::QuantPickTier::Own ||
+                         out.pick->tier == runtime::QuantPickTier::OwnStepped ||
+                         out.pick->tier == runtime::QuantPickTier::OwnBelowFloor);
+    if (weighs) {
+        for (const QuantRow& row : out.rows) {
+            if (row.candidate.supported && !authorized(row)) {
+                out.quality_estimates.push_back(row.listing.quant);
+            }
+        }
+        out.quality_withheld = !authorized(out.rows[out.pick->index]);
+    }
+    if (weighs && !out.quality_withheld) {
         const ChoicePins& pins = inputs.pins;
         // Every supported row on the tier's side of the floor, scored at its own choice: a narrower
         // KV codec may bring a row the rule's resolved options left short to the target. Rows go in
@@ -733,7 +751,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                           quant_option_of(row_facts(shape, row), row.listing.quant).weights);
         };
         const bool any_measured = std::any_of(out.rows.begin(), out.rows.end(), [&](const QuantRow& row) {
-            return row.candidate.supported && measured(row) &&
+            return row.candidate.supported && measured(row) && authorized(row) &&
                    out.pick->below_floor == runtime::below_quality_floor(row.candidate);
         });
         // Two rows' worths within the generation's measured decode error are a tie: the lower KLD
@@ -744,7 +762,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
             const QuantRow& row = out.rows[i];
             if (!row.candidate.supported ||
                 out.pick->below_floor != runtime::below_quality_floor(row.candidate) ||
-                (any_measured && !measured(row))) {
+                (any_measured && !measured(row)) || !authorized(row)) {
                 continue;
             }
             const auto bound = choose_at_weights(row_facts(shape, row),
@@ -916,6 +934,10 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
                 params["accuracy_weight"] = choice::kAccuracyWeight;
             }
         }
+        if (!plan.quality_estimates.empty() || plan.quality_withheld) {
+            params["quality_estimates"] = plan.quality_estimates;
+            params["quality_withheld"]  = plan.quality_withheld;
+        }
         params["tier"]              = std::string(runtime::quant_pick_tier_name(k.tier));
         params["planned_context"]   = context;
         params["below_floor"]       = k.below_floor;
@@ -954,6 +976,9 @@ std::string quant_rule_line(QuantPlan& plan, const DryRunInputs& inputs) {
             line += "; below 3 bits per weight: the answers lose quality";
         } else if (k.below_floor) {
             line += "; below 3.5 bits per weight: nothing larger fits";
+        }
+        if (plan.quality_withheld) {
+            line += "; its accuracy was not measured on these files, so speed is not traded for it";
         }
         return line;
     }
