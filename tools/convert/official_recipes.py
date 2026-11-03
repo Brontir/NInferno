@@ -182,7 +182,7 @@ def qwen3_8_27b_nvfp4(model, recipe, sources):
                 scale = tensor.removesuffix(".weight") + ".weight_scale"
                 if store.has(scale):
                     info = store.describe(scale)
-                    if info.dtype != "BF16" or prod(info.shape) != parameter.shape[0]:
+                    if info.dtype != "BF16" or prod(info.shape) != store.describe(tensor).shape[0]:
                         raise ValueError(
                             f"{scale}: not row-BF16 FP8 scales (NVIDIA Model Optimizer's are one "
                             "FP32 scale a matrix); the Python converter reads row-BF16 FP8 only, "
