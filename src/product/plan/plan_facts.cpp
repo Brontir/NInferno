@@ -886,8 +886,11 @@ void split_linears_by_format(std::vector<runtime::PlanLinear>& linears, const Ro
     linears = std::move(out);
 }
 
-// The role of a trunk layer's parameter in an artifact (text/layers/<i>/<role>, as the Gemma 4
-// loader binds them, models/gemma4/load_target.cpp); the routed banks' are apart.
+// The role of a trunk layer's parameter in an artifact (text/layers/<i>/<role>, as the loaders bind
+// them: models/gemma4/load_target.cpp, models/qwen3_5/load/text.cpp), as gguf_role gives the
+// GGUF tensor it converts from: Qwen 3.5's gated attention's gate is the attention's input, its
+// GatedDeltaNet's projections the mixer's (its a/b projections, like the GGUF's ssm_alpha/beta,
+// none); the routed banks' are apart.
 runtime::LinearRole artifact_role(std::string_view name) {
     using R = runtime::LinearRole;
     constexpr std::string_view layers = "text/layers/";
@@ -895,9 +898,14 @@ runtime::LinearRole artifact_role(std::string_view name) {
     const auto slash = name.find('/', layers.size());
     if (slash == std::string_view::npos) { return R::Other; }
     const std::string_view rest = name.substr(slash + 1);
-    if (rest == "attention/query" || rest == "attention/key" || rest == "attention/value") {
+    if (rest == "attention/query" || rest == "attention/key" || rest == "attention/value" ||
+        rest == "attention/gate") {
         return R::AttentionIn;
     }
+    if (rest == "gdn/query" || rest == "gdn/key" || rest == "gdn/value" || rest == "gdn/z") {
+        return R::MixerIn;
+    }
+    if (rest == "gdn/output") { return R::MixerOut; }
     if (rest == "attention/output") { return R::AttentionOut; }
     if (rest == "mlp/gate" || rest == "mlp/up" || rest == "mlp/gate_up") { return R::FfnUp; }
     if (rest == "mlp/down") { return R::FfnDown; }
@@ -923,7 +931,7 @@ ArtifactFormats artifact_formats(const artifact::Directory& dir) {
             if (name == "text/output_head") {
                 out.head_format = tensor->format;
                 out.head_elements += piece.end - piece.begin;
-            } else if (name.find("/moe/experts/") != std::string::npos) {
+            } else if (name.starts_with("text/") && name.find("/moe/experts/") != std::string::npos) {
                 (name.ends_with("/down") ? out.expert_down : out.expert_up).insert(tensor->format);
             } else if (const auto role = artifact_role(name); role != runtime::LinearRole::Other) {
                 out.roles[role][tensor->format] += elements;

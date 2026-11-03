@@ -501,21 +501,32 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             // conversion may store a projection in: the declared quantization's
             // (convert::drafter_quant_formats) and BF16, the published values it keeps for what it
             // does not quantize. A published encoding is kept as it is: not read here.
-            if (!out.assistant && assistant && config && !encoded &&
-                config->contains("text_config") && (*config)["text_config"].is_object()) {
-                const nlohmann::json& text = (*config)["text_config"];
-                runtime::PlanDrafterGeometry g;
-                g.hidden       = text.value("hidden_size", std::uint32_t{0});
-                g.intermediate = text.value("intermediate_size", std::uint32_t{0});
-                g.head_rows    = restricted ? static_cast<std::uint32_t>(d.proposal_rows)
-                                            : text.value("vocab_size", std::uint32_t{0});
-                std::set<std::string> formats{std::string(artifact::format_name(QType::BF16))};
-                for (const QType q : convert::drafter_quant_formats(d.quant)) {
-                    formats.insert(std::string(artifact::format_name(q)));
-                }
-                g.projection_formats.assign(formats.begin(), formats.end());
-                g.head_formats = g.projection_formats;
-                out.assistant  = std::move(g);
+            if (assistant && config && !encoded && config->contains("text_config") &&
+                (*config)["text_config"].is_object()) {
+                try {
+                    const nlohmann::json& text = (*config)["text_config"];
+                    runtime::PlanDrafterGeometry g;
+                    g.hidden       = text.value("hidden_size", std::uint32_t{0});
+                    g.intermediate = text.value("intermediate_size", std::uint32_t{0});
+                    g.head_rows    = restricted ? static_cast<std::uint32_t>(d.proposal_rows)
+                                                : text.value("vocab_size", std::uint32_t{0});
+                    // The recipe's own Q8 (gemma4_assistant_q8) quantizes without --drafter-quant.
+                    std::set<std::string> formats{std::string(artifact::format_name(QType::BF16))};
+                    std::vector<QType> written = convert::drafter_quant_formats(d.quant);
+                    if (d.recipe == "gemma4_assistant_q8") { written.push_back(QType::Q8_G32_FP16); }
+                    for (const QType q : written) { formats.insert(std::string(artifact::format_name(q))); }
+                    // Several declared assistants: the widest of each dimension, every format.
+                    if (out.assistant) {
+                        g.hidden       = std::max(g.hidden, out.assistant->hidden);
+                        g.intermediate = std::max(g.intermediate, out.assistant->intermediate);
+                        g.head_rows    = std::max(g.head_rows, out.assistant->head_rows);
+                        formats.insert(out.assistant->projection_formats.begin(),
+                                       out.assistant->projection_formats.end());
+                    }
+                    g.projection_formats.assign(formats.begin(), formats.end());
+                    g.head_formats = g.projection_formats;
+                    out.assistant  = std::move(g);
+                } catch (const std::exception&) {} // a field of another type: not read
             }
         }
         out.bytes = std::max(out.bytes, bytes);
