@@ -38,7 +38,8 @@ namespace ninferno::ops::detail::generic {
                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
                                                bool prefill = false, std::int32_t parent_rows = 0);
 
-// The route such a call selects and the one it runs on (#298): route_query's choice resolved as
+// The route such a call selects and the one it runs on (#298): route_query's choice as run() hands
+// it on (workspace_free_route: no workspace, no quantized family that needs one), resolved as
 // run_route resolves it for a call of `layout` (its alignment, stride, segments and the workspace
 // free to it; its tokens, rows and epilogue are the query's own). The default layout is the
 // engine's contiguous, aligned call with `workspace_free` bytes free (nullopt: no workspace).

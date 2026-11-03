@@ -64,7 +64,10 @@ resolved_route_query(const DeviceClass& device, QType qtype, LinearPolicy policy
     describe_weight(described, qtype, epilogue, n, k, parent_rows);
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
-    const Route asked = select_route(problem, described.weight, tokens, prefill);
+    // As run() hands it on: a call without workspace takes A16 where its family needs some.
+    const Route asked = workspace_free_route(select_route(problem, described.weight, tokens, prefill),
+                                             problem, described.weight, tokens, prefill,
+                                             workspace_free.has_value());
     return resolve_route(asked, described.weight,
                          CallLayout{.x_aligned16    = x_aligned16,
                                     .ldx            = ldx != 0 ? ldx : k,

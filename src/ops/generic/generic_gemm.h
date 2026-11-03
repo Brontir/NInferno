@@ -758,6 +758,11 @@ struct ResolvedRoute {
     Demotion reason      = Demotion::None;
 };
 [[nodiscard]] ResolvedRoute resolve_route(Route asked, const Weight& weight, const CallLayout& call);
+// The route run() hands run_route for a call `selected` for: a quantized family that needs
+// workspace (W4A4, W4A8, I8) takes the A16 heuristic's route on a call without one.
+[[nodiscard]] Route workspace_free_route(Route selected, const Problem& problem,
+                                         const Weight& weight, std::int32_t tokens, bool prefill,
+                                         bool workspace);
 
 // Runs one call on an explicit route (the tuner and tests), or on select_route's choice.
 // released (when given): whether the launch lets the next kernel start early (Call::release_next

@@ -3836,6 +3836,18 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     return "none";
 }
 
+Route workspace_free_route(Route selected, const Problem& problem, const Weight& weight,
+                           std::int32_t tokens, bool prefill, bool workspace) {
+    if ((selected.family == Family::W4a4Mma || selected.family == Family::W4a8Mma ||
+         selected.family == Family::I8Mma) &&
+        !workspace) {
+        return heuristic_route(
+            Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
+            weight, tokens, prefill);
+    }
+    return selected;
+}
+
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
     ResolvedRoute out{.asked = asked, .executed = asked};
     Route& route      = out.executed;
@@ -3882,9 +3894,13 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
     // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
     // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
     // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
+    // Its planes in the workspace free to the call: a workspace short of them takes the CTA's own
+    // quantization where the tokens fit it, else A16 (said as a demotion), not an allocation
+    // failure at the launch.
     out.r8_prequantized = route.family == Family::R8Mma && call.tokens >= 2 &&
                           call.tokens <= kR8VerifyTokens && call.workspace_free.has_value() &&
-                          r8_verify_compiled(w.qtype);
+                          r8_verify_compiled(w.qtype) &&
+                          *call.workspace_free >= route_workspace_bytes(route, w.k, call.tokens);
     if (route.family == Family::R8Mma &&
         (!staged || !(out.r8_prequantized || r8_fits(w.qtype, w.k, call.tokens)))) {
         demote(a16(), staged ? Demotion::R8Fit : Demotion::Alignment);
@@ -4340,14 +4356,10 @@ void run(const Call& call, LinearPolicy policy, WorkspaceArena* workspace, cudaS
     const Problem problem{call.weight->qtype, policy, call.rows, call.weight->k, call.epilogue};
     record_problem(problem);
     tune_dense(problem, call, stream);
-    Route route = select_route(problem, *call.weight, call.x->ne[1], prefill_routes_active());
-    if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
-         route.family == Family::I8Mma) &&
-        workspace == nullptr) {
-        route = heuristic_route(
-            Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
-            *call.weight, call.x->ne[1], prefill_routes_active());
-    }
+    const Route route =
+        workspace_free_route(select_route(problem, *call.weight, call.x->ne[1], prefill_routes_active()),
+                             problem, *call.weight, call.x->ne[1], prefill_routes_active(),
+                             workspace != nullptr);
     run_route(route, call, workspace, stream, released);
 }
 
