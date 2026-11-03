@@ -12,6 +12,7 @@
 // it is counted and not compared.
 #include "core/arena.h"
 #include "core/device.h"
+#include "core/device_class.h"
 #include "core/sha256.h"
 #include "core/ggml_frag.h"
 #include "core/weight.h"
@@ -610,7 +611,7 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 
 // The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
 // moe::r8_token_limit(bank): 8 on Ada and consumer Blackwell, 4 elsewhere and for FP4 elements or
-// most frag banks): every R8 schedule on both stages and on each stage alone against the oracle of
+// some frag banks): every R8 schedule on both stages and on each stage alone against the oracle of
 // the quantized activations; a slot's bytes depend on its own activation only, so every call with
 // R8 on both stages gives a token the bytes of the widest one whatever its schedule, T or position.
 // The default route is the GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS
@@ -917,6 +918,66 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
 // The default A8 route's gate/up rule on every class: w4r1 (schedule 0) on every bank but a published
 // 2-bit codebook one (IQ2_XXS, IQ2_XS, IQ2_S), which takes the class's column; a frag IQ2_S bank
 // takes w4r1 too.
+// The R8 token limit of a bank on each measured board (host only: synthetic classes with the
+// reference table's facts): eight from Ada on, four for the FP4 elements and a frag Q4_0 bank, a
+// frag IQ3_XXS / IQ2_S bank at eight below kRmmaLatencySwiGluBytes DRAM bytes per SM cycle (RTX
+// 4090, 4060 Ti, 5090) and four at or above it (RTX 5070 Ti) or without a roofline, frag Q4_K at
+// eight; Turing four throughout.
+int check_r8_bank_limits() {
+    namespace moe = ops::detail::moe;
+    struct Board {
+        const char* name;
+        std::uint32_t pci;
+        int major, minor, sms;
+        bool roofline;
+        int frag_iq; // the limit of a frag IQ3_XXS / IQ2_S bank
+        int wide;    // r8_token_limit()
+    } boards[] = {{"RTX 4090", 0x2684, 8, 9, 128, true, 8, 8},
+                  {"RTX 4060 Ti", 0x2803, 8, 9, 34, true, 8, 8},
+                  {"RTX 5090", 0x2B85, 12, 0, 170, true, 8, 8},
+                  {"RTX 5070 Ti", 0x2C05, 12, 0, 70, true, 4, 8},
+                  {"sm_89 without a roofline", 0, 8, 9, 64, false, 4, 8},
+                  {"RTX 2080 Ti", 0x1E07, 7, 5, 68, true, 4, 4}};
+    const auto bank = [](QType q, QuantLayout layout) {
+        Weight w;
+        w.qtype  = q;
+        w.layout = layout;
+        return w;
+    };
+    int failures = 0;
+    for (const Board& b : boards) {
+        DeviceClass d = synthetic_device_class(b.pci, b.major, b.minor, b.sms, 64U << 20,
+                                               std::size_t{16} << 30);
+        if (b.roofline) {
+            d.facts = machine_facts_of(d);
+        } else {
+            d.facts = MachineFacts{};
+        }
+        const ScopedDeviceClass scoped(d);
+        const struct {
+            QType q;
+            QuantLayout layout;
+            int expected;
+        } cases[] = {{QType::GGML_IQ3_XXS, QuantLayout::GgmlFrag, b.frag_iq},
+                     {QType::GGML_IQ2_S, QuantLayout::GgmlFrag, b.frag_iq},
+                     {QType::GGML_Q4_0, QuantLayout::GgmlFrag, std::min(4, b.wide)},
+                     {QType::GGML_Q4_K, QuantLayout::GgmlFrag, b.wide},
+                     {QType::GGML_IQ3_XXS, QuantLayout::GgmlBlocks, b.wide},
+                     {QType::MXFP4, QuantLayout::GgmlBlocks, std::min(4, b.wide)}};
+        for (const auto& c : cases) {
+            const int got = moe::r8_token_limit(bank(c.q, c.layout));
+            if (got != c.expected) {
+                std::cerr << "R8 limit " << b.name << ' ' << qname(c.q)
+                          << (c.layout == QuantLayout::GgmlFrag ? " frag" : "") << ": " << got
+                          << ", " << c.expected << " expected\n";
+                ++failures;
+            }
+        }
+    }
+    if (failures == 0) std::cout << "R8 bank limits: the measured boards' rule\n";
+    return failures;
+}
+
 int check_a8_route_rule() {
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
@@ -1874,6 +1935,7 @@ int main(int argc, char** argv) {
                 if (!ops::detail::kNativeNvfp4) failures += check_r8(qwen3_like(), 95U, {1, 4});
                 failures += check_r8_table();
                 failures += check_a8_route_rule();
+                failures += check_r8_bank_limits();
                 failures += check_r8_k_limit();
                 failures += check_expert_policy();
             }
