@@ -79,7 +79,10 @@ int main() {
                                     (family == F::RegisterMma || (family == F::R8Mma && !pre)) && !old_join &&
                                     tokens <= g::kPdlPrefetchMaxTokens && pdl;
                                 const std::string at = "family " + std::to_string(static_cast<int>(family)) +
-                                                       (pre ? " pre" : "") + " T " + std::to_string(tokens);
+                                                       (pre ? " pre" : "") + " epilogue " +
+                                                       std::to_string(static_cast<int>(epilogue)) + " T " +
+                                                       std::to_string(tokens) + (join ? " join" : "") +
+                                                       (release ? " release" : "") + (pdl ? " pdl" : "");
                                 check(o.joins() == old_join, at + ": join as before");
                                 check(o.releases() == old_released, at + ": released as before");
                                 check(o.prefetches() == old_prefetch, at + ": prefetch as before");

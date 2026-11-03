@@ -3883,7 +3883,7 @@ LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, i
     out.join = joinable(join_asked);
     // The pre-quantized R8 form does not release: the next call's quantizer could take the
     // workspace it still reads (its kernel ignores the flag too, generic_r8.cuh kPre). Without
-    // PDL there is nothing to release.
+    // PDL nothing starts early (run_route keeps the kernel's flag, a no-op there).
     out.release = joinable(release_asked);
     if (out.release == OverlapRefusal::None) {
         out.release = r8_pre ? OverlapRefusal::PrequantizedR8 : !pdl ? OverlapRefusal::NoPdl
