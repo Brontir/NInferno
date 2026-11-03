@@ -96,23 +96,56 @@ const Component& Directory::component(std::string_view name) const {
     return found->second;
 }
 
-Json parse_json(std::string_view text, std::string_view label) {
-    std::vector<std::unordered_set<std::string>> member_stack;
-    const auto callback = [&](int, Json::parse_event_t event, Json& parsed) {
-        if (event == Json::parse_event_t::object_start) {
-            member_stack.emplace_back();
-        } else if (event == Json::parse_event_t::key) {
-            const auto& key = parsed.get_ref<const std::string&>();
-            if (!member_stack.back().insert(key).second) {
-                throw ArtifactError(std::string(label) + ": duplicate JSON member " + key);
-            }
-        } else if (event == Json::parse_event_t::object_end) {
-            member_stack.pop_back();
+namespace {
+
+// Refuses a duplicate member of any object, nested ones included; the same key in different objects
+// is fine. A separate SAX pass and not a callback to Json::parse: a callback selects nlohmann's
+// callback parser, whose end_object() scans all of the parent's members each time an object
+// closes, so a directory's objects, bindings and uses each cost O(N^2) in their entry count
+// (minutes of CPU at every start on a MoE artifact, #341). A syntax error ends the pass quietly,
+// and the Json::parse that follows reports it.
+class DuplicateMemberCheck final : public nlohmann::json_sax<Json> {
+public:
+    explicit DuplicateMemberCheck(std::string_view label) : label_(label) {}
+    bool null() override { return true; }
+    bool boolean(bool) override { return true; }
+    bool number_integer(number_integer_t) override { return true; }
+    bool number_unsigned(number_unsigned_t) override { return true; }
+    bool number_float(number_float_t, const string_t&) override { return true; }
+    bool string(string_t&) override { return true; }
+    bool binary(binary_t&) override { return true; }
+    bool start_object(std::size_t) override {
+        members_.emplace_back();
+        return true;
+    }
+    bool key(string_t& key) override {
+        if (!members_.back().insert(key).second) {
+            throw ArtifactError(std::string(label_) + ": duplicate JSON member " + key);
         }
         return true;
-    };
+    }
+    bool end_object() override {
+        members_.pop_back();
+        return true;
+    }
+    bool start_array(std::size_t) override { return true; }
+    bool end_array() override { return true; }
+    bool parse_error(std::size_t, const std::string&, const nlohmann::detail::exception&) override {
+        return false;
+    }
+
+private:
+    std::string_view label_;
+    std::vector<std::unordered_set<std::string>> members_;
+};
+
+} // namespace
+
+Json parse_json(std::string_view text, std::string_view label) {
     try {
-        return Json::parse(text.begin(), text.end(), callback);
+        DuplicateMemberCheck check(label);
+        Json::sax_parse(text.begin(), text.end(), &check);
+        return Json::parse(text.begin(), text.end());
     } catch (const Json::exception& error) {
         throw ArtifactError(std::string(label) + ": " + error.what());
     }
