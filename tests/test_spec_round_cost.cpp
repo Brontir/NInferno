@@ -237,6 +237,28 @@ int main() {
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
+        // A joint verify of C streams (#303): one stream is the round above; C streams cost more
+        // a round than C plain steps by more than one stream's does (the verify's rows are C x
+        // (k + 1)), so the gain falls; beyond kPricedVerifyRows rows it is not priced.
+        for (const auto& g : golden) {
+            const auto& p     = full_head_pair(g.repo, g.gpu);
+            const auto config = sp::SpecConfig::parse(g.config);
+            const auto one    = sp::load_gain(*p.round_facts, config, k4070, 2.0, 1);
+            expect(one && near(*one, 2.0, 1e-12),
+                   std::string("one stream's load gain is its own, ") + g.repo + " " + g.config);
+            for (std::int32_t streams = 2; streams <= 8; ++streams) {
+                const auto gain = sp::load_gain(*p.round_facts, config, k4070, 2.0, streams);
+                const bool priced = streams * (config.k + 1) <= sp::kPricedVerifyRows;
+                expect(gain.has_value() == priced && (!gain || (*gain < 2.0 && *gain > 0)),
+                       std::string("the load gain at ") + std::to_string(streams) +
+                           " streams falls and is priced within the measured rows, " + g.repo +
+                           " " + g.config);
+                if (gain) {
+                    std::printf("load gain %s %s C=%d: %.4f of 2\n", g.repo, g.config, streams,
+                                *gain);
+                }
+            }
+        }
     }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
