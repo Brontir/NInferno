@@ -4,6 +4,7 @@
 
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_workspace.h"
 #include "runtime/engine/prompt_tail.h"
 #include "product/plan/plan_quants.h"
 #include "product/plan/plan_speculation.h"
@@ -237,6 +238,8 @@ int main(int argc, char** argv) {
     ninferno::product::set_prompt_tail_calls_source([](const std::filesystem::path& artifact) {
         return ninferno::runtime::prompt_tail_calls_or_warn(artifact, {}, false);
     });
+    // The plan without the weights sizes a family's workspace as a start does (#302).
+    ninferno::runtime::register_plan_workspace_queries();
     if (ninferno::version_requested(argc, argv)) {
         std::cout << "NInferno " << NINFERNO_VERSION_STRING << '\n';
         return 0;

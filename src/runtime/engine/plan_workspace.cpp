@@ -1,0 +1,134 @@
+#include "runtime/engine/plan_workspace.h"
+
+#include "artifact/formats.h"
+#include "models/gemma4/config.h"
+#include "models/gemma4/workspace.h"
+#include "models/qwen3_5/program/planning/sequence_plan.h"
+#include "ninferno/ops/prefill_routes.h"
+#include "ninferno/ops/sampling.h"
+#include "ninferno/ops/speculative_round.h"
+#include "runtime/engine/plan_dry_run.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <optional>
+#include <vector>
+
+namespace ninferno::runtime {
+namespace {
+
+namespace gemma4 = models::gemma4;
+namespace detail = models::qwen3_5::detail;
+
+// The drafter's own pass beside the target's (gemma4::DrafterPass::workspace_bytes: its fixed
+// 16 MiB reserve and the round's 1 KiB of ids): its rows are a few small layers the facts do not
+// describe, under 1 MiB at the widths it runs.
+constexpr std::uint64_t kGemmaDrafterPass = (std::uint64_t(17) << 20) + 1024;
+
+// The policy a start's projection carries for a stored format (the converter's: BF16 and FP32
+// keep A16, NVFP4 allows four-bit activations, every other quantized format eight).
+ops::LinearPolicy policy_of(QType qtype) {
+    if (qtype == QType::BF16 || qtype == QType::FP32) { return ops::LinearPolicy::A16Only; }
+    if (qtype == QType::NVFP4) { return ops::LinearPolicy::AllowA4; }
+    return ops::LinearPolicy::AllowA8;
+}
+
+// Gemma 4's arena (models/gemma4/program_family.cpp workspace_plan) from the facts: the text
+// prefill, the ordinary round and, under MTP, its prefill and round; nullopt where the facts lack
+// the geometry or a projection's format.
+std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const PlanRung& rung,
+                                              const EngineOptions& options,
+                                              std::uint32_t concurrency,
+                                              const detail::SequencePlanImpl* plan) {
+    if (m.model_type != "gemma4_text") { return std::nullopt; }
+    if (m.hidden == 0 || m.vocab == 0 || m.layers == 0 || m.query_heads == 0 || !m.ple_known ||
+        m.full_layers == 0 || m.full_key_dim == 0 || m.full_kv_heads_total % m.full_layers != 0 ||
+        (m.sliding_layers != 0 && (m.sliding_key_dim == 0 ||
+                                   m.sliding_kv_heads_total % m.sliding_layers != 0)) ||
+        m.linears.empty()) {
+        return std::nullopt;
+    }
+    gemma4::Config c;
+    c.hidden_size       = static_cast<std::int32_t>(m.hidden);
+    c.vocab_size        = static_cast<std::int32_t>(m.vocab);
+    c.layers            = static_cast<std::int32_t>(m.layers);
+    c.query_heads       = static_cast<std::int32_t>(m.query_heads);
+    c.sliding_window    = static_cast<std::int32_t>(m.window);
+    c.intermediate_size = static_cast<std::int32_t>(m.dense_ffn);
+    c.experts           = static_cast<std::int32_t>(m.experts);
+    c.ple_width         = static_cast<std::int32_t>(m.ple_width);
+    c.full.head_dim     = static_cast<std::int32_t>(m.full_key_dim);
+    c.full.kv_heads     = static_cast<std::int32_t>(m.full_kv_heads_total / m.full_layers);
+    c.sliding           = c.full;
+    if (m.sliding_layers != 0) {
+        c.sliding.head_dim = static_cast<std::int32_t>(m.sliding_key_dim);
+        c.sliding.kv_heads = static_cast<std::int32_t>(m.sliding_kv_heads_total / m.sliding_layers);
+    }
+    // The trunk's projections (an expert bank runs in the MoE kernel, sized apart).
+    std::vector<gemma4::WorkspaceLinear> linears;
+    for (const PlanLinear& l : m.linears) {
+        if (l.expert) { continue; }
+        if (l.format.empty()) { return std::nullopt; }
+        QType qtype{};
+        try {
+            qtype = artifact::parse_format(l.format);
+        } catch (const std::exception&) { return std::nullopt; }
+        // A gated feed-forward's fused GeGLU is queried too: a start does wherever its layout
+        // takes it, so its capacity is the larger side.
+        linears.push_back({qtype, static_cast<std::int32_t>(l.n), static_cast<std::int32_t>(l.k),
+                           policy_of(qtype), l.role == LinearRole::FfnUp && l.gated});
+    }
+    // The head (the token table it is tied to): its format is not in the facts; at the few
+    // columns a round runs, BF16's capacity stands for it.
+    const gemma4::WorkspaceLinear head{QType::BF16, c.vocab_size, c.hidden_size,
+                                       ops::LinearPolicy::A16Only};
+    const auto chunk   = static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context));
+    const auto batch   = static_cast<std::int32_t>(concurrency);
+    const auto context = static_cast<std::int32_t>(rung.max_context);
+    const auto target  = [&](std::int32_t columns, std::int32_t head_columns) -> std::uint64_t {
+        return gemma4::target_activation_bytes(c, columns, head_columns) +
+               gemma4::target_op_bytes(c, linears, head, context, columns, head_columns, 0) +
+               gemma4::kTargetWorkspaceReserve;
+    };
+    const ops::ScopedInvariantRoutes routes(options.activations == ActivationMode::Exact);
+    std::uint64_t text_prefill = 0;
+    {
+        const ops::ScopedPrefillRoutes prefill(true);
+        text_prefill = target(chunk, 1) + ops::sampling_workspace_capacity_bytes(c.vocab_size, 1, 1);
+    }
+    const std::uint64_t ordinary =
+        target(batch, batch) + ops::sampling_workspace_capacity_bytes(c.vocab_size, 1, batch);
+    std::uint64_t general = std::max(text_prefill, ordinary);
+    if (plan != nullptr && plan->speculative_backend == SpeculativeBackend::Mtp &&
+        plan->draft_window != 0) {
+        const auto width   = static_cast<std::int32_t>(plan->draft_window) + 1;
+        const auto rows    = static_cast<std::int32_t>(detail::speculative_round_batches(*plan));
+        const auto columns = static_cast<std::int32_t>(detail::speculative_round_columns(*plan));
+        general            = std::max(general, text_prefill + kGemmaDrafterPass);
+        if (columns > 0) {
+            general = std::max(general,
+                               target(columns, columns) +
+                                   ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
+                                       c.vocab_size, 1, width - 1, 1, rows) +
+                                   kGemmaDrafterPass);
+        }
+    }
+    return general;
+}
+
+} // namespace
+
+void register_plan_workspace_queries() {
+    set_plan_workspace_query([](const PlanModelFacts& model, const PlanRung& rung,
+                                const EngineOptions& options, std::uint32_t concurrency,
+                                const detail::SequencePlanImpl* plan) -> std::optional<std::uint64_t> {
+        try {
+            return gemma4_workspace(model, rung, options, concurrency, plan);
+        } catch (const std::exception&) {
+            // A geometry an Op's query refuses: the formula stands, as for a family without one.
+            return std::nullopt;
+        }
+    });
+}
+
+} // namespace ninferno::runtime

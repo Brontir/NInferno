@@ -124,6 +124,10 @@ struct Geometry {
     std::vector<double> attention_queries; // each qkv call's query width (heads x key)
     bool dense_beside_experts = false; // Gemma 4 MoE: every layer runs its MLP and its experts
     bool tied = false, mtp = false;
+    // The first attention layer's query heads, and the per-layer input width (Gemma 4 PLE;
+    // ple_known: the source says whether it has one).
+    double query_heads = 0, ple_width = 0;
+    bool ple_known = false;
 };
 
 // One attention layer: its projections (queries and output at heads x key and heads x value; keys
@@ -255,6 +259,12 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     m.recurrent_layers       = g.recurrent_layers;
     m.hidden                 = g.hidden;
     m.vocab                  = g.vocab;
+    m.layers                 = g.layers;
+    m.query_heads            = u32(g.query_heads);
+    m.dense_ffn              = u32(g.ffn);
+    m.experts                = u32(g.experts);
+    m.ple_width              = u32(g.ple_width);
+    m.ple_known              = g.ple_known;
     m.weight_bytes           = weight_bytes;
     m.weight_basis           = basis;
     m.offline_reason         = state_of(g, m.state);
@@ -398,6 +408,11 @@ Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::st
         heads[i] = at_layer(md, p + "attention.head_count", i);
         kv[i]    = has_kv ? at_layer(md, p + "attention.head_count_kv", i) : heads[i];
         if (first_heads == 0) { first_heads = heads[i]; }
+    }
+    g.query_heads          = first_heads;
+    if (arch == "gemma4") {
+        g.ple_width = number(md, p + "embedding_length_per_layer_input");
+        g.ple_known = true;
     }
     const double head_dim  = first_heads > 0 && g.hidden > 0 ? g.hidden / first_heads : 128.0;
     const double key       = number(md, p + "attention.key_length", head_dim);
@@ -547,6 +562,11 @@ Geometry geometry_of_config(const json& config) {
     const std::string type = c.value("model_type", config.value("model_type", std::string()));
     const double heads     = number(c, "num_attention_heads");
     const double kv_heads  = number(c, "num_key_value_heads", heads);
+    g.query_heads          = heads;
+    if (g.model_type == "gemma4_text") {
+        g.ple_width = number(c, "hidden_size_per_layer_input");
+        g.ple_known = true;
+    }
     g.hidden               = u32(number(c, "hidden_size"));
     const double head_dim = number(c, "head_dim", heads > 0 && g.hidden > 0 ? g.hidden / heads : 0);
     g.context             = u32(number(c, "max_position_embeddings"));

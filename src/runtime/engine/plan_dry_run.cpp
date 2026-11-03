@@ -335,8 +335,21 @@ PlanRungBytes plan_rung_estimate(const PlanModelFacts& model, const PlanRung& ru
     return out;
 }
 
+namespace {
+PlanWorkspaceQuery& workspace_query() {
+    static PlanWorkspaceQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
+
 std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
-                                      const EngineOptions& options, std::uint32_t concurrency) {
+                                      const EngineOptions& options, std::uint32_t concurrency,
+                                      const models::qwen3_5::detail::SequencePlanImpl* plan) {
+    if (const PlanWorkspaceQuery& query = workspace_query(); query) {
+        if (const auto bytes = query(model, rung, options, concurrency, plan)) { return *bytes; }
+    }
     const std::uint64_t chunk = std::min(rung.prefill_chunk, rung.max_context);
     const std::uint64_t round = workspace_round_columns(options.speculative);
     if (model.hidden == 0) { return std::uint64_t{256} << 20; }
@@ -402,7 +415,7 @@ PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
     out.fixed            = layout.bytes - held;
     out.graphs           = plan->graph_allowance_bytes;
     // The workspace's round logits over the resolved window's columns, as the start's are.
-    out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency);
+    out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency, plan.get());
     out.host_state_image = images.host.image_bytes;
     return out;
 }

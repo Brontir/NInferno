@@ -40,6 +40,10 @@
 #include <string_view>
 #include <vector>
 
+namespace ninferno::models::qwen3_5::detail {
+struct SequencePlanImpl;
+} // namespace ninferno::models::qwen3_5::detail
+
 namespace ninferno::runtime {
 
 // ---- The seams a start and the dry run share (construct_or_plan reads them too).
@@ -213,6 +217,15 @@ struct PlanModelFacts {
     std::uint32_t hidden     = 0;
     std::uint32_t ffn_active = 0;
     std::uint32_t vocab      = 0;
+    // What a family's workspace query reads beside them (set_plan_workspace_query; 0: unknown):
+    // the trunk's layers, the first attention layer's query heads, the widest dense MLP, the
+    // routed experts, and the per-layer input width (Gemma 4 PLE; ple_known false: not read).
+    std::uint32_t layers      = 0;
+    std::uint32_t query_heads = 0;
+    std::uint32_t dense_ffn   = 0;
+    std::uint32_t experts     = 0;
+    std::uint32_t ple_width   = 0;
+    bool ple_known            = false;
     double params            = 0; // every weight (0: unknown)
     // The weights' elements as a whole GGUF tensor table counts them (0: unknown): the
     // denominator of bits_per_weight, exact where the geometry's parameter count above is an
@@ -346,13 +359,24 @@ struct PlanRungBytes {
                                                const EngineOptions& options,
                                                std::uint32_t concurrency);
 
-// The workspace of a rung (both bases: a start sizes it over the bound weights' routes): about
-// twelve hidden-wide BF16 rows a prefill token and three of the widest feed-forward it runs, and
-// FP32 logits of every decode column.
-[[nodiscard]] std::uint64_t plan_workspace_estimate(const PlanModelFacts& model,
-                                                    const PlanRung& rung,
-                                                    const EngineOptions& options,
-                                                    std::uint32_t concurrency);
+// The workspace of a rung (both bases: a start sizes it over the bound weights' routes): the
+// family's own query where one is registered and answers (set_plan_workspace_query: the same Op
+// capacity queries a start sizes its arena with, over the facts), else about twelve hidden-wide
+// BF16 rows a prefill token and three of the widest feed-forward it runs, and FP32 logits of every
+// decode column.
+// `plan`: the sequence plan the rung lays out (plan_rung_bytes'; nullptr on the approximate path).
+[[nodiscard]] std::uint64_t plan_workspace_estimate(
+    const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
+    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr);
+
+// A family's workspace from its facts (#302): the arena a start would size for the rung's context,
+// chunk and `concurrency` under `options`, or nullopt where the facts do not carry what it needs
+// (plan_workspace_estimate's formula then stands). The engine registers it (it links the Ops this
+// library does not: register_plan_workspace_queries); unset, the formula stands everywhere.
+using PlanWorkspaceQuery = std::function<std::optional<std::uint64_t>(
+    const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
+    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
+void set_plan_workspace_query(PlanWorkspaceQuery query);
 
 // A rung's bytes by the family planner's byte functions (model.offline_bytes): the persistent
 // layout and the CUDA graph allowance a start plans for `options` (normalized) at the rung's
