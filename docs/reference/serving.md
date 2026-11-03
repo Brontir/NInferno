@@ -2342,7 +2342,7 @@ PLAN:
 | `rung`, `rungs` | the selected rung (1 is the top; 0 when none) and the ladder's length |
 | `reserve`, `reserve_kept` | how the rung was admitted (`kept`, `soft`, `warm_up`) |
 | `context`, `pool_contexts`, `private_contexts` | the rung's context, the whole contexts its pool holds, and whether every stream has one of its own (`false`: the streams share one pool) |
-| `chosen` | the rung: `context`, `kv_tokens`, `cached_states`, `prefill_chunk`, `step`, `survival`, `bytes` (`kv`, `states`, `rings`, `workspace`, `graphs`, `fixed`, `total`), `needed_bytes` |
+| `chosen` | the rung: `context`, `kv_tokens`, `cached_states`, `prefill_chunk`, `step`, `survival`, `bytes` (`kv`, `states`, `rings`, `workspace`, `graphs`, `fixed`, `total`, `workspace_basis`: `start` where the family sizes it with a start's own capacity functions over the facts (Gemma 4, #302), else `formula` with why the query did not answer), `needed_bytes` |
 | `description` | the rung in words |
 | `kv_dtype`, `state_dtype` | the codecs the plan resolved (`auto` resolved for the family and the card) |
 | `weights_bytes`, `free_bytes`, `free_after_weights_bytes`, `class_reserve_bytes`, `base_margin_bytes`, `allowance_bytes`, `context_ceiling` | the selection's inputs |

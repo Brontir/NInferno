@@ -996,7 +996,7 @@ Json plan_json(const runtime::DryRunPlan& plan, bool ladder) {
         return Json{{"kv", b.kv},         {"states", b.states},
                     {"rings", b.rings},   {"workspace", b.workspace},
                     {"graphs", b.graphs}, {"fixed", b.fixed},
-                    {"total", b.total()}};
+                    {"total", b.total()}, {"workspace_basis", b.workspace_basis}};
     };
     const auto rung_json = [&](const runtime::DryRunRung& r) {
         return Json{{"context", r.rung.max_context},

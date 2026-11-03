@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string>
 #include <vector>
 
 namespace ninferno::runtime {
@@ -56,13 +57,14 @@ struct DescribedWeight {
 // this Op for experts the fused NVFP4 kernel does not read; where it does, gemma4_moe's capacity
 // (target_op_bytes) is the larger, so counting both bounds either.
 std::optional<std::size_t> generic_moe_bytes(const PlanModelFacts& m, const models::gemma4::Config& c,
-                                             std::int32_t columns) {
+                                             std::int32_t columns, std::string& why) {
     // A bank whose layers differ in format is one linear a format (PlanLinear): every pair's.
     std::vector<const PlanLinear*> gate_ups, downs;
     for (const PlanLinear& l : m.linears) {
         if (l.expert) { (l.gated ? gate_ups : downs).push_back(&l); }
     }
     if (gate_ups.empty() || downs.empty() || m.experts == 0 || m.experts_used == 0) {
+        why = "the facts list no expert banks or counts";
         return std::nullopt;
     }
     const auto experts = static_cast<std::uint64_t>(m.experts);
@@ -76,7 +78,10 @@ std::optional<std::size_t> generic_moe_bytes(const PlanModelFacts& m, const mode
     std::size_t widest = 0;
     for (const PlanLinear* g : gate_ups) {
         for (const PlanLinear* d : downs) {
-            if (g->format.empty() || d->format.empty()) { return std::nullopt; }
+            if (g->format.empty() || d->format.empty()) {
+                why = "an expert bank's format is not in the facts";
+                return std::nullopt;
+            }
             const auto inter = static_cast<std::uint64_t>(d->k);
             const auto up    = std::make_unique<DescribedWeight>(artifact::parse_format(g->format),
                                                                  experts * 2 * inter, hidden);
@@ -103,17 +108,16 @@ ops::LinearPolicy policy_of(QType qtype) {
 // Gemma 4's arena (models/gemma4/program_family.cpp workspace_plan) from the facts: the text
 // prefill, the ordinary round and, under MTP, its prefill and round; nullopt where the facts lack
 // the geometry or a projection's format.
-std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const PlanRung& rung,
-                                              const EngineOptions& options,
-                                              std::uint32_t concurrency,
-                                              const detail::SequencePlanImpl* plan) {
-    if (m.model_type != "gemma4_text") { return std::nullopt; }
+PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& rung,
+                                     const EngineOptions& options, std::uint32_t concurrency,
+                                     const detail::SequencePlanImpl* plan) {
+    if (m.model_type != "gemma4_text") { return {}; }
     if (m.hidden == 0 || m.vocab == 0 || m.layers == 0 || m.query_heads == 0 || !m.ple_known ||
         m.full_layers == 0 || m.full_key_dim == 0 || m.full_kv_heads_total % m.full_layers != 0 ||
         (m.sliding_layers != 0 && (m.sliding_key_dim == 0 ||
                                    m.sliding_kv_heads_total % m.sliding_layers != 0)) ||
         m.linears.empty()) {
-        return std::nullopt;
+        return {std::nullopt, "the facts lack Gemma 4's geometry"};
     }
     gemma4::Config c;
     c.hidden_size       = static_cast<std::int32_t>(m.hidden);
@@ -135,11 +139,13 @@ std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const Pla
     std::vector<gemma4::WorkspaceLinear> linears;
     for (const PlanLinear& l : m.linears) {
         if (l.expert) { continue; }
-        if (l.format.empty()) { return std::nullopt; }
+        if (l.format.empty()) { return {std::nullopt, "a projection's format is not in the facts"}; }
         QType qtype{};
         try {
             qtype = artifact::parse_format(l.format);
-        } catch (const std::exception&) { return std::nullopt; }
+        } catch (const std::exception&) {
+            return {std::nullopt, "a projection's format " + l.format + " is not one a start reads"};
+        }
         // A gated feed-forward's fused GeGLU is queried too: a start does wherever its layout
         // takes it, so its capacity is the larger side.
         linears.push_back({qtype, static_cast<std::int32_t>(l.n), static_cast<std::int32_t>(l.k),
@@ -156,9 +162,11 @@ std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const Pla
     // sizes it once; unknown expert formats leave the formula to stand.
     std::size_t routed = 0;
     if (c.experts > 0) {
-        const auto bytes = generic_moe_bytes(m, c, std::max<std::int32_t>(
-                                                       static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context)), 1));
-        if (!bytes) { return std::nullopt; }
+        std::string why;
+        const auto bytes = generic_moe_bytes(
+            m, c, std::max<std::int32_t>(static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context)), 1),
+            why);
+        if (!bytes) { return {std::nullopt, why}; }
         routed = *bytes;
     }
     const auto target  = [&](std::int32_t columns, std::int32_t head_columns) -> std::uint64_t {
@@ -189,7 +197,7 @@ std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const Pla
                                    kGemmaDrafterPass);
         }
     }
-    return general;
+    return {general, ""};
 }
 
 } // namespace
@@ -197,12 +205,13 @@ std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const Pla
 void register_plan_workspace_queries() {
     set_plan_workspace_query([](const PlanModelFacts& model, const PlanRung& rung,
                                 const EngineOptions& options, std::uint32_t concurrency,
-                                const detail::SequencePlanImpl* plan) -> std::optional<std::uint64_t> {
+                                const detail::SequencePlanImpl* plan) -> PlanWorkspaceAnswer {
         try {
             return gemma4_workspace(model, rung, options, concurrency, plan);
-        } catch (const std::exception&) {
-            // A geometry an Op's query refuses: the formula stands, as for a family without one.
-            return std::nullopt;
+        } catch (const std::exception& error) {
+            // A geometry an Op's query refuses: the formula stands, as for a family without one,
+            // and the plan says why.
+            return {std::nullopt, std::string("an Op's capacity query refused the facts: ") + error.what()};
         }
     });
 }

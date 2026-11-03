@@ -331,6 +331,9 @@ struct PlanRungBytes {
     std::uint64_t states    = 0; // recurrent states of the active lanes and the cached states
     std::uint64_t rings     = 0; // sliding rings of the same sequences (a drafter's among them)
     std::uint64_t workspace = 0; // the prefill chunk's activations, the decode logits (estimated)
+    // How the workspace was sized: "start" (the family's query: a start's own capacity functions
+    // over the facts), else "formula" with why the query did not answer (#302).
+    std::string workspace_basis;
     std::uint64_t graphs    = 0; // the CUDA graph allowance
     // The rest of the persistent layout: page tables, replay records, the drafter's features, the
     // Program's round and sampling buffers, alignment (the approximate estimate: a declared share).
@@ -366,15 +369,22 @@ struct PlanRungBytes {
 // BF16 rows a prefill token and three of the widest feed-forward it runs, and FP32 logits of every
 // decode column.
 // `plan`: the sequence plan the rung lays out (plan_rung_bytes'; nullptr on the approximate path).
+// `basis` (when given): PlanRungBytes::workspace_basis.
 [[nodiscard]] std::uint64_t plan_workspace_estimate(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
-    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr);
+    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr,
+    std::string* basis = nullptr);
 
 // A family's workspace from its facts (#302): the arena a start would size for the rung's context,
-// chunk and `concurrency` under `options`, or nullopt where the facts do not carry what it needs
-// (plan_workspace_estimate's formula then stands). The engine registers it (it links the Ops this
-// library does not: register_plan_workspace_queries); unset, the formula stands everywhere.
-using PlanWorkspaceQuery = std::function<std::optional<std::uint64_t>(
+// chunk and `concurrency` under `options`, or no bytes where the facts do not carry what it needs,
+// with why (plan_workspace_estimate's formula then stands; "" where the family has no query). The
+// engine registers it (it links the Ops this library does not: register_plan_workspace_queries);
+// unset, the formula stands everywhere.
+struct PlanWorkspaceAnswer {
+    std::optional<std::uint64_t> bytes;
+    std::string why;
+};
+using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
     const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
     std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
 void set_plan_workspace_query(PlanWorkspaceQuery query);
