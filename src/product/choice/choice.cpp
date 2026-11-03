@@ -842,7 +842,9 @@ double gemma_attention_tiled_seconds(const ModelFacts& model, const CardFacts& c
     if (transferred != nullptr && cost->cards < 2) { *transferred = true; }
     bool share_transferred = false;
     const double share     = attention_eta(gen, share_transferred) * peak(card, Route::Bf16);
-    const bool chains      = generation_row(card.major, card.minor).attention_chain;
+    // As the device launches it (ops/softmax_attention/gemma4 chain_pays): a lent row does not
+    // carry the measured preference (#300).
+    const bool chains      = attention_chain_measured(card.major, card.minor);
     const double window    = model.window;
     double seconds         = 0;
     const auto layer_type = [&](bool sliding) {
