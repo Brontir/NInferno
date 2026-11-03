@@ -4,6 +4,7 @@
 #include "core/weight_view.h"
 #include "models/gemma4/config.h"
 #include "models/gemma4/workspace.h"
+#include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/prefill_routes.h"
