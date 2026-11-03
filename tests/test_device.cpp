@@ -175,7 +175,24 @@ int check_feature_table() {
         failures += expect(std::isfinite(ninferno::board_memory_distance(a30, a10)) &&
                                ninferno::board_memory_distance(a100, a100) == 0.0,
                            "board memory distance ignores the HMMA rate");
+        // A generation the table does not know has no kind of its own (#300): two of its boards
+        // are one kind, and its boards are apart from every other compute capability's.
+        const ninferno::Board n1{13, 0, 100, 64, 1200}, n2{13, 0, 120, 64, 1400};
+        failures += expect(ninferno::board_distance(n1, n1) == 0 &&
+                               std::isfinite(ninferno::board_distance(n1, n2)) &&
+                               !std::isfinite(ninferno::board_distance(n1, b5090)),
+                           "board distance on a generation the table does not know");
     }
+    // What a lent row carries (#300): its rates, so that the code runs; not its kind, its fitted
+    // route-cost scales or its measured preferences.
+    failures += expect(ninferno::fp32acc_full_rate_of(8, 0) == true &&
+                           ninferno::fp32acc_full_rate_of(8, 9) == false &&
+                           !ninferno::fp32acc_full_rate_of(13, 0) &&
+                           ninferno::fitted_route_scales(8, 0)->w4a8_eff == 0.46 &&
+                           ninferno::fitted_route_scales(12, 0)->a16_cost == 1.11 &&
+                           !ninferno::fitted_route_scales(13, 0) &&
+                           ninferno::generation_row(13, 0).s8 == ninferno::generation_row(12, 0).s8,
+                       "a lent row's kind and fitted scales are not carried, its rates are");
     // The MMQ prefill gate's answer with what it rests on (#373): the donor, the distance, the
     // quantities it could not compare, and the evidence's disposition; the answer unchanged.
     {

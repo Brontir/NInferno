@@ -267,8 +267,9 @@ bool generic_i8_replaces() {
     return replaces.get([](int) {
         try {
             const auto& d = device_class();
-            return d.features.mma_bf16_native &&
-                   !generation_row(d.major, d.minor).fp32acc_full_rate;
+            // A generation without a row of its own has no measured kind: not carried (#300).
+            const auto full_rate = fp32acc_full_rate_of(d.major, d.minor);
+            return d.features.mma_bf16_native && full_rate && !*full_rate;
         } catch (const std::exception&) { return false; }
     });
 }

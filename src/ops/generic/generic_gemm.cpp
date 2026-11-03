@@ -2065,8 +2065,9 @@ bool qx_prefill_a8_pays() {
     try {
         const auto& d = device_class();
         // Not on a chip whose mma.sync is emulated (mma_slow: TU116 / TU117), as for ggml's mmq.
-        return d.features.mma_tensor && !d.features.mma_slow &&
-               !generation_row(d.major, d.minor).fp32acc_full_rate;
+        // A generation without a row of its own has no measured kind: A16 (#300).
+        const auto full_rate = fp32acc_full_rate_of(d.major, d.minor);
+        return d.features.mma_tensor && !d.features.mma_slow && full_rate && !*full_rate;
     } catch (const std::exception&) {
         return false;
     }
@@ -2652,6 +2653,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     // width) has none here: the A16 routes stand alone. The clock and the bandwidth are the
     // board's reference facts (DeviceClass::facts, B2), never the driver's clocks.
     if (d.sms <= 0 || !d.facts.has_roofline()) return;
+    // The A8 routes' cost rests on the generation's fitted W4A8 efficiency and A16 factor; a lent
+    // row carries neither (#300), so a generation the table does not know keeps the A16 routes.
+    const auto fitted = fitted_route_scales(d.major, d.minor);
+    if (!fitted) return;
     const GenerationRow& g = generation_row(d.major, d.minor);
     const double clk     = d.facts.reference_clock_hz();
     const double bw      = d.facts.dram_bytes_per_s();
@@ -2660,7 +2665,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double sets    = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
     const double peak_sm = g.s8 * clk;
-    const double scale   = g.w4a8_eff_scale;
+    const double scale   = fitted->w4a8_eff;
     const double bw_sm   = bw / sms;
     const double max_thr = std::max(d.max_threads_per_sm, 1);
     const double max_cta = std::max(d.max_blocks_per_sm, 1);
@@ -2807,8 +2812,10 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
     double best_time = 0;
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
-    // the order of the A16 tiles as it was.
-    const double kA16Scale = g.a16_cost_scale;
+    // the order of the A16 tiles as it was. 1 on a lent row, where no A8 candidate is offered
+    // (a8_candidates).
+    const double kA16Scale =
+        fitted_route_scales(d.major, d.minor).value_or(FittedRouteScales{}).a16_cost;
     const auto offer = [&](Route r, double time) {
         if (!route_admits(r, weight, problem.policy)) return;
         if (r.family == Family::RegisterMma || r.family == Family::TiledMma ||

@@ -522,7 +522,8 @@ double tiles_eta(const CardFacts& card, double hidden, bool& transferred) noexce
     const std::string_view generation = generation_of(card);
     for (const TilesEta& row : kPrefillTilesEta) {
         if (row.generation != generation) { continue; }
-        transferred = transferred || row.cards < 2; // one card: its boards' estimate only
+        // One card: its boards' estimate only; a lent row: another generation's (#300).
+        transferred = transferred || row.cards < 2 || !generation_known(card.major, card.minor);
         const double s8 = generation_row(card.major, card.minor).s8;
         if (row.c1 > 0 && hidden > 0 && s8 > 0) {
             return 2.0 * 64 * 64 / ((row.c0 / hidden + row.c1) * s8);

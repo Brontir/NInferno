@@ -32,7 +32,26 @@
 //                   tile runs 25-35 % slower even in whole waves (RTX 4090, 4080 SUPER); the other
 //                   generations are unmeasured and keep the plain launch
 
+//
+// What a lent row carries (#300): generation_row answers every compute capability, lending the
+// newest (or the oldest) row to one the table does not know, so that the code runs there. Beside
+// the device's capability, which is not in this table, its fields are of four kinds, and only the
+// rates are lent:
+//   capability   what the device can execute: not in this table (DeviceFeatures, the query)
+//   rate         bf16, s8: the analytic tensor rate a cost model ranks routes with (lent: an
+//                assumed rate, the ranking said to rest on it)
+//   kind         fp32acc_full_rate: which measured kind of tensor core the generation is; a lent row
+//                has none (fp32acc_full_rate_of: nullopt), and what rests on the kind (int8
+//                prefill pays, i8 replaces the q4a8 kernels, board distances) is not carried
+//   fitted       w4a8_eff_scale, a16_cost_scale: route_tune fits of the boards above; not carried
+//                (fitted_route_scales: nullopt), the comparisons they price not made
+//   preference   mmq_candidate, attention_chain: a measured A/B; not carried
+//                (mmq_candidate_measured, attention_chain_measured)
+// A generation newer than the table therefore runs the routes every board runs (A16 prefill, the
+// plain attention launch) until a row of its own is added.
+
 #include <iterator>
+#include <optional>
 
 namespace ninferno {
 
@@ -81,6 +100,25 @@ inline constexpr GenerationRow kGenerations[] = {
     return major > kGenerations[std::size(kGenerations) - 1].major
                ? kGenerations[std::size(kGenerations) - 1]
                : kGenerations[0];
+}
+
+// The generation's measured tensor-core kind (FP32-accumulate HMMA at full rate or not), nullopt
+// on a lent row (#300): the kind is the generation's, the kinds' measurements its boards'.
+[[nodiscard]] constexpr std::optional<bool> fp32acc_full_rate_of(int major, int minor) noexcept {
+    if (!generation_known(major, minor)) return std::nullopt;
+    return generation_row(major, minor).fp32acc_full_rate;
+}
+
+// The fitted route-cost scales of the generation's own row, nullopt on a lent row (#300).
+struct FittedRouteScales {
+    double w4a8_eff = 1.0;
+    double a16_cost = 1.0;
+};
+[[nodiscard]] constexpr std::optional<FittedRouteScales> fitted_route_scales(int major,
+                                                                             int minor) noexcept {
+    if (!generation_known(major, minor)) return std::nullopt;
+    const GenerationRow& row = generation_row(major, minor);
+    return FittedRouteScales{row.w4a8_eff_scale, row.a16_cost_scale};
 }
 
 // Whether the Gemma 4 chained prefill attention tile is the measured preference on compute

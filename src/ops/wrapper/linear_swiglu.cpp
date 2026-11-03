@@ -160,7 +160,7 @@ bool dedicated_q4a8_swiglu(bool prefill_a8) {
     const bool full_rate = [] {
         try {
             const auto& d = device_class();
-            return generation_row(d.major, d.minor).fp32acc_full_rate;
+            return fp32acc_full_rate_of(d.major, d.minor).value_or(false); // lent: not carried
         } catch (const std::exception&) { return false; }
     }();
     return prefill_a8 || (full_rate && prefill_routes_active());

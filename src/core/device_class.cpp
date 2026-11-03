@@ -424,10 +424,13 @@ namespace {
 double board_distance_of(const Board& a, const Board& b, bool hmma_rate) noexcept {
     const DeviceFeatures fa = device_features_for(a.major, a.minor);
     const DeviceFeatures fb = device_features_for(b.major, b.minor);
+    // One compute capability is one kind; across two, a generation the table does not know has
+    // no kind to compare (#300).
+    const bool same_cc = a.major == b.major && a.minor == b.minor;
+    const auto kind_a  = fp32acc_full_rate_of(a.major, a.minor);
     if (!has_features(fa, fb) || !has_features(fb, fa) || a.mma_slow != b.mma_slow || a.sms <= 0 ||
         b.sms <= 0 ||
-        (hmma_rate && generation_row(a.major, a.minor).fp32acc_full_rate !=
-                          generation_row(b.major, b.minor).fp32acc_full_rate)) {
+        (hmma_rate && !same_cc && (!kind_a || kind_a != fp32acc_full_rate_of(b.major, b.minor)))) {
         return std::numeric_limits<double>::infinity();
     }
     const auto apart = [](double x, double y) {
