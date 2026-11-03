@@ -742,6 +742,7 @@ enum class Demotion : std::uint8_t {
     R8Fit,         // R8 neither fits the tokens in a CTA nor has its pre-quantized form here
     GgmlLayout,    // ggml's kernels: rows off the matrix kernel's multiple, or too many segments
     GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
+    Workspace,     // W4A4, W4A8 or I8 given less workspace than their activation planes take
 };
 [[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
 

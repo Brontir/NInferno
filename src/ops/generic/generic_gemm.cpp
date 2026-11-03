@@ -3832,6 +3832,7 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     case Demotion::R8Fit: return "r8_fit";
     case Demotion::GgmlLayout: return "ggml_layout";
     case Demotion::GgmlWorkspace: return "ggml_workspace";
+    case Demotion::Workspace: return "workspace";
     }
     return "none";
 }
@@ -3906,6 +3907,14 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
         demote(a16(), staged ? Demotion::R8Fit : Demotion::Alignment);
     }
     if (route.family != Family::R8Mma) out.r8_prequantized = false;
+    // The quantized-activation families take their planes from the workspace: given less than
+    // they need, the call runs A16 (said as a demotion) instead of failing to allocate at the
+    // launch. Without any workspace run() already took A16 (workspace_free_route).
+    if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
+         route.family == Family::I8Mma) &&
+        call.workspace_free && *call.workspace_free < route_workspace_bytes(route, w.k, call.tokens)) {
+        demote(a16(), Demotion::Workspace);
+    }
     // ggml's matrix kernel needs its planes in the workspace and x in 8-byte words; a call it
     // cannot take runs A16 (the same route the heuristic gives without the band).
     const int plane_rows = call.epilogue == Epilogue::SwiGlu ? 2 * call.rows : call.rows;
