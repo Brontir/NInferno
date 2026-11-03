@@ -1616,6 +1616,42 @@ void drafter_order_does_not_decide(const json& fixture) {
           "the tied drafter that wins does not follow the manifest's order");
 }
 
+// #301: the order a caller lists an axis's values in never changes the choice (the enumeration
+// order breaks exact ties: choose() enumerates each axis in one canonical order). Every ordering of
+// the KV codecs and activations, on every fixture card, at a long and a short context.
+void axis_order_does_not_decide(const json& fixture) {
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        const Bench b = nine_b(fixture, name);
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (const std::uint32_t context : {4096U, 131072U}) {
+            ch::Task task;
+            task.contexts = {context};
+            const auto describe = [](const ch::Choice& c) {
+                if (!c.chosen) { return std::string("none"); }
+                const ch::Candidate& k = c.scored[*c.chosen].candidate;
+                return std::string(kv_cache_storage_name(k.kv)) + "/" + std::to_string(static_cast<int>(k.activations)) +
+                       "/" + std::to_string(k.chunk) + "/" + std::to_string(k.drafter) + "|" + c.why;
+            };
+            const std::string first =
+                describe(ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 20e9), ch::Gates{true, true}));
+            ch::Allowed shuffled = allowed;
+            std::sort(shuffled.kv.begin(), shuffled.kv.end());
+            bool same = true;
+            int orders = 0;
+            do {
+                std::sort(shuffled.activations.begin(), shuffled.activations.end());
+                do {
+                    ++orders;
+                    same = same && describe(ch::choose(b.model, b.card, b.quants[0], shuffled, {}, task,
+                                                       oracle(b, 20e9), ch::Gates{true, true})) == first;
+                } while (std::next_permutation(shuffled.activations.begin(), shuffled.activations.end()));
+            } while (std::next_permutation(shuffled.kv.begin(), shuffled.kv.end()));
+            check(same && orders == 720, name + ", " + std::to_string(context) + " tokens: no axis order changes the choice");
+        }
+    }
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -1649,6 +1685,7 @@ int main() {
     prices_attention_tiles();
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
+    axis_order_does_not_decide(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

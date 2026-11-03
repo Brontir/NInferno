@@ -431,6 +431,23 @@ std::string activation_name(ActivationMode mode) {
     return mode == ActivationMode::Exact ? "exact" : mode == ActivationMode::Int8 ? "int8" : "fast";
 }
 
+// The canonical enumeration of each axis (the order allowed_axes lists them in): a value not in
+// it goes last in its own order; a value listed twice once.
+constexpr KvCacheStorage kKvTieOrder[] = {KvCacheStorage::BFloat16, KvCacheStorage::Int8Group64,
+                                          KvCacheStorage::Fp8E4M3Row256, KvCacheStorage::Fp8KeyNvfp4Value,
+                                          KvCacheStorage::Nvfp4Group16};
+constexpr ActivationMode kActivationTieOrder[] = {ActivationMode::Fast, ActivationMode::Exact,
+                                                  ActivationMode::Int8};
+
+template <typename T, std::size_t N>
+void canonical(std::vector<T>& values, const T (&order)[N]) {
+    const auto rank = [&](T v) {
+        return static_cast<std::size_t>(std::find(std::begin(order), std::end(order), v) - std::begin(order));
+    };
+    std::stable_sort(values.begin(), values.end(), [&](T a, T b) { return rank(a) < rank(b); });
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+}
+
 // The order among candidates: the larger worth, then the longer own context, then the
 // enumeration order.
 bool better(const Scored& a, std::size_t ia, const Scored& b, std::size_t ib) {
@@ -1476,10 +1493,13 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
-    const std::vector<KvCacheStorage> kvs =
-        pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
-    const std::vector<ActivationMode> modes =
+    // The enumeration order breaks exact ties (better()): one canonical order of each axis's
+    // values (allowed_axes'), never the order a caller listed them in (#301).
+    std::vector<KvCacheStorage> kvs = pins.kv ? std::vector<KvCacheStorage>{*pins.kv} : allowed.kv;
+    std::vector<ActivationMode> modes =
         pins.activations ? std::vector<ActivationMode>{*pins.activations} : allowed.activations;
+    canonical(kvs, kKvTieOrder);
+    canonical(modes, kActivationTieOrder);
     // The chunk: pinned, else an MoE's measured widths (only the default eligible unless the
     // shares decide), else the default.
     std::vector<std::uint32_t> chunks;
