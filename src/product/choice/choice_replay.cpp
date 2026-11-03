@@ -1,6 +1,7 @@
 #include "product/choice/choice_replay.h"
 
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <limits>
 #include <type_traits>
@@ -103,11 +104,23 @@ json storage_table(const Fn& fn, const Storages& storages) {
     return out;
 }
 
+// A storage table's key: a storage code as table_json writes it (decimal, no sign, no leading
+// zero), else the record is malformed (std::stoi would read "0junk" as 0).
+int storage_key(const std::string& key) {
+    const bool canonical = !key.empty() && key.size() <= 3 &&
+                           std::all_of(key.begin(), key.end(),
+                                       [](char c) { return c >= '0' && c <= '9'; }) &&
+                           (key.size() == 1 || key.front() != '0');
+    if (!canonical) { throw std::invalid_argument("a storage key that is no storage code: " + key); }
+    return std::stoi(key);
+}
+
 template <class E>
 std::function<std::uint64_t(E)> table_fn(const json& table, const char* what) {
     if (table.is_null()) { return {}; }
+    if (!table.is_object()) { throw std::invalid_argument(std::string("a ") + what + " table that is no object"); }
     auto values = std::make_shared<std::map<int, std::uint64_t>>();
-    for (const auto& [k, v] : table.items()) { (*values)[std::stoi(k)] = unsigned_of<std::uint64_t>(v); }
+    for (const auto& [k, v] : table.items()) { (*values)[storage_key(k)] = unsigned_of<std::uint64_t>(v); }
     return [values, what](E e) -> std::uint64_t {
         const auto it = values->find(code(e));
         if (it == values->end()) {
