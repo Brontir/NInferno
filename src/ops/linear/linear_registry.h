@@ -4,6 +4,7 @@
 #include "ninferno/ops/linear.h" // LinearPolicy
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -61,6 +62,12 @@ struct LinearCandidate {
     Status status = Status::Unavailable;
     std::string why;
 };
+// The launch a shape-owned table selects for [n,k] at width t (#306): the shape and the launch's
+// number in the order the widths 1..t first select its launches ("n1024_k2048.launch2"). The
+// Q8_G32, Q4/Q5/Q6_G64 and BF16 tables; nullopt for a format whose dispatch chooses inside itself
+// (NVFP4, FP8). The shape must be registered.
+[[nodiscard]] std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n,
+                                                         std::int32_t k, std::int32_t t);
 [[nodiscard]] std::vector<LinearCandidate> linear_candidates(const Weight& weight,
                                                              LinearPolicy policy,
                                                              std::int32_t tokens);
