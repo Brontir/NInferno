@@ -4,18 +4,15 @@
 #include "core/device.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
+#include "ops/generic/generic_schedules.h"
 
 #include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
 namespace {
 
-// Keep in the order of kW4a4Schedules in generic_gemm.cpp.
-#define NINFERNO_GENERIC_W4A4_SCHEDULES(X)                                                         \
-    X(0, 32, 64, 2, 2, 4)                                                                          \
-    X(1, 32, 128, 2, 4, 4)                                                                         \
-    X(2, 64, 128, 4, 2, 4)                                                                         \
-    X(3, 128, 128, 4, 2, 3)
+// NINFERNO_GENERIC_W4A4_SCHEDULES: ops/generic/generic_schedules.h (one list for the
+// instantiations here and the host table in generic_gemm.cpp).
 
 template <class S, Epilogue E>
 void launch_schedule(const GemmArgs& args, W4a4Activation act, cudaStream_t stream) {

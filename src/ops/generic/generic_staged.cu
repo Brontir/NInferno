@@ -5,29 +5,18 @@
 #include "core/device.h"
 #include "ops/common/arch_limits.h"
 #include "ops/generic/generic_gemm_internal.h"
+#include "ops/generic/generic_schedules.h"
 
 #include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
 namespace {
 
-// Keep in the order of kStagedSchedules in generic_gemm.cpp: rows (weight rows staged, SwiGLU gate
+// The schedules: rows (weight rows staged, SwiGLU gate
 // and up together), tokens, warps_m, warps_n, stages. 9 (64 KiB) runs two CTAs per SM where an SM
 // holds 128 KiB; 10-12 (144-160 KiB) exist only where one block holds them (GA100 and Orin).
-#define NINFERNO_GENERIC_STAGED_SCHEDULES(X)                                                       \
-    X(0, 128, 128, 2, 4, 3)                                                                        \
-    X(1, 128, 64, 2, 2, 4)                                                                         \
-    X(2, 64, 128, 1, 4, 4)                                                                         \
-    X(3, 128, 128, 2, 2, 3)                                                                        \
-    X(4, 256, 128, 4, 2, 2)                                                                        \
-    X(5, 64, 64, 2, 2, 4)                                                                          \
-    X(6, 128, 64, 2, 2, 2)                                                                         \
-    X(7, 64, 128, 1, 4, 2)                                                                         \
-    X(8, 64, 64, 2, 2, 3)                                                                          \
-    X(9, 128, 128, 2, 4, 2)                                                                        \
-    X(10, 128, 128, 2, 4, 5)                                                                       \
-    X(11, 256, 128, 4, 2, 3)                                                                       \
-    X(12, 128, 256, 2, 4, 3)
+// NINFERNO_GENERIC_STAGED_SCHEDULES: ops/generic/generic_schedules.h (one list for the
+// instantiations here and the host table in generic_gemm.cpp).
 
 template <class S, Epilogue E>
 void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
