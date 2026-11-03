@@ -2,8 +2,11 @@
 #include "ops/linear/q8/q8_shapes.h"
 #include "ops/common/shape_routes.h"
 
+#include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <string>
+#include <vector>
 
 namespace ninferno::ops::detail {
 namespace {
@@ -65,6 +68,20 @@ Q8Launch select_q8_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t) {
 Q8Launch select_q8_launch(std::int32_t n, std::int32_t k, std::int32_t t, LinearPolicy policy) {
     if (!valid_linear_policy(policy)) throw std::invalid_argument("q8 linear: unsupported policy");
     return select_q8_a16_launch(n, k, t);
+}
+
+std::string q8_launch_id(std::int32_t n, std::int32_t k, std::int32_t t) {
+    const Q8Launch at = select_q8_a16_launch(n, k, t);
+    // Most launches are template instances inside each shape's translation unit, with no name
+    // here: the shape's launches are numbered in the order the widths first select them.
+    std::vector<Q8Launch> seen;
+    for (std::int32_t width = 1; width <= t; ++width) {
+        const Q8Launch launch = select_q8_a16_launch(n, k, width);
+        if (std::find(seen.begin(), seen.end(), launch) == seen.end()) { seen.push_back(launch); }
+        if (launch == at) { break; }
+    }
+    const auto index = std::find(seen.begin(), seen.end(), at) - seen.begin();
+    return "n" + std::to_string(n) + "_k" + std::to_string(k) + ".launch" + std::to_string(index);
 }
 
 void q8_dispatch(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy policy,

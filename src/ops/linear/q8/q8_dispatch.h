@@ -5,6 +5,7 @@
 #include "ops/linear/q8/q8_launch.h"
 
 #include <cstdint>
+#include <string>
 
 namespace ninferno::ops::detail {
 
@@ -12,6 +13,10 @@ namespace ninferno::ops::detail {
 bool q8_linear_registered(std::int32_t n, std::int32_t k);
 Q8Launch select_q8_a16_launch(std::int32_t n, std::int32_t k, std::int32_t t);
 Q8Launch select_q8_launch(std::int32_t n, std::int32_t k, std::int32_t t, LinearPolicy policy);
+// The launch a registered shape's table selects at `t` (A16, the table's only compute), as
+// "n<N>_k<K>.launch<i>": its i-th distinct launch in the order the widths 1, 2, ... first select
+// them, so the identity changes exactly where the table's launch does (linear_candidates).
+[[nodiscard]] std::string q8_launch_id(std::int32_t n, std::int32_t k, std::int32_t t);
 
 void q8_dispatch(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy policy,
                  cudaStream_t stream);
