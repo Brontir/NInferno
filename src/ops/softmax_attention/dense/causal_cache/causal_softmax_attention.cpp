@@ -27,7 +27,7 @@ namespace ninferno::ops {
 
 namespace {
 
-constexpr std::int32_t kHeadDim             = 256;
+constexpr std::int32_t kHeadDim             = detail::kCausalHeadDim;
 constexpr float kExpectedScale              = 0.0625f;
 constexpr std::int32_t kMaximumVerifyTokens = 16;
 constexpr std::int32_t kMaximumBatchSize    = 8;
@@ -35,7 +35,18 @@ constexpr std::int32_t kMaximumBatchSize    = 8;
 void require_causal_geometry(AttentionHeadGeometry geometry, const char* op) {
     if (!valid_attention_head_geometry(geometry) || geometry.head_dim != kHeadDim ||
         !detail::causal_geometry_supported(geometry.query_heads, geometry.kv_heads)) {
-        throw std::invalid_argument(std::string(op) + ": unsupported head geometry");
+        // Which geometries are, said before any launch (the one list, causal_geometry.h).
+        std::string listed;
+        for (const detail::CausalHeadPair pair : detail::kCausalHeadPairs) {
+            listed += (listed.empty() ? "" : ", ") + std::to_string(pair.query_heads) + "/" +
+                      std::to_string(pair.kv_heads);
+        }
+        throw std::invalid_argument(std::string(op) + ": unsupported head geometry " +
+                                    std::to_string(geometry.query_heads) + "/" +
+                                    std::to_string(geometry.kv_heads) + " x " +
+                                    std::to_string(geometry.head_dim) + " (query/KV heads x width; " +
+                                    "supported: " + listed + " x " +
+                                    std::to_string(detail::kCausalHeadDim) + ")");
     }
 }
 
