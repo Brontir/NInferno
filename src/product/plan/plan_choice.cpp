@@ -735,13 +735,14 @@ Json choice_json(const ServedChoice& served) {
             if (g.streams > streams) { break; }
             in_force = &g;
         }
-        if (in_force != nullptr && in_force->bounded) {
+        const bool plain = d.plain_from_streams != 0 && streams >= d.plain_from_streams;
+        if (plain) {
+            gain["plain_from_streams"] = d.plain_from_streams;
+        } else if (in_force != nullptr && in_force->bounded) {
             gain["bounded_depth"]  = in_force->depth;
             gain["depth_measured"] = in_force->measured;
         }
-        if (d.plain_from_streams != 0 && streams >= d.plain_from_streams) {
-            gain["plain_from_streams"] = d.plain_from_streams;
-        } else if (streams > 1) {
+        if (!plain && streams > 1) {
             gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the verify "
                            "of the streams' rows together is not priced";
         }
