@@ -172,8 +172,9 @@ struct Board {
 // the bandwidth ratio, plus half |log2| of the L2 ratio (a quantity either side does not know is
 // not compared). Infinite between instruction sets (device_features_for rows that differ either
 // way: routes and schedules are kernels of one) and between FP32-accumulate HMMA rates
-// (GenerationRow::fp32acc_full_rate: an A30 is the A100's kind, not the A10's). Symmetric; 0 for the
-// same board.
+// (GenerationRow::fp32acc_full_rate: an A30 is the A100's kind, not the A10's; a generation the
+// table does not know has no kind, apart from every other compute capability). Symmetric; 0 for
+// the same board.
 [[nodiscard]] double board_distance(const Board& a, const Board& b) noexcept;
 
 // board_distance without the FP32-accumulate HMMA rate: how far a memory-bound choice carries (a

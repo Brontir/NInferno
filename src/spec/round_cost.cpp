@@ -109,7 +109,9 @@ CardRates rates(int major, int minor, int sms, double clock_hz, double dram_byte
     const double per_sm_clock = row.s8 > 0 ? row.s8 : kDp4aOpsPerSmClock;
     out.dram_bytes_per_s      = dram_bytes_per_s;
     out.int8_ops_per_s        = per_sm_clock * double(sms) * clock_hz;
-    out.generation            = row.name;
+    // A lent row's measured small-T efficiency and launch time are another generation's: none here
+    // (#300), the round's cost then without them.
+    out.generation            = generation_known(major, minor) ? row.name : "";
     for (const auto& e : kSmallTEta) {
         if (e.generation == out.generation) {
             out.eta       = e.eta;
