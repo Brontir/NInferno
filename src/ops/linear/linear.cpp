@@ -24,6 +24,7 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 namespace ninferno::ops {
@@ -160,8 +161,9 @@ namespace {
 // template instances in each shape's translation unit, with no name here).
 template <class Select>
 std::string table_launch_id(Select select, std::int32_t n, std::int32_t k, std::int32_t t) {
-    const auto at = select(n, k, t);
-    std::vector<decltype(at)> seen;
+    const auto at = select(n, k, t); // a function pointer
+    using Launch  = std::remove_cv_t<decltype(at)>;
+    std::vector<Launch> seen;
     for (std::int32_t width = 1; width <= t; ++width) {
         const auto launch = select(n, k, width);
         if (std::find(seen.begin(), seen.end(), launch) == seen.end()) { seen.push_back(launch); }
