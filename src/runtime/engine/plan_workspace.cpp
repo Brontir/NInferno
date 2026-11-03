@@ -1,16 +1,20 @@
 #include "runtime/engine/plan_workspace.h"
 
 #include "artifact/formats.h"
+#include "core/weight_view.h"
 #include "models/gemma4/config.h"
 #include "models/gemma4/workspace.h"
 #include "models/qwen3_5/program/planning/sequence_plan.h"
+#include "ninferno/ops/moe.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/sampling.h"
 #include "ninferno/ops/speculative_round.h"
 #include "runtime/engine/plan_dry_run.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
@@ -24,6 +28,69 @@ namespace detail = models::qwen3_5::detail;
 // 16 MiB reserve and the round's 1 KiB of ids): its rows are a few small layers the facts do not
 // describe, under 1 MiB at the widths it runs.
 constexpr std::uint64_t kGemmaDrafterPass = (std::uint64_t(17) << 20) + 1024;
+
+// A weight described by its format and shape alone, in the layout the converter stores it in (an
+// aligned address stands in, its bytes never read; ops/generic/route_query.cpp's description). Held
+// whole: its view and weight point into its parent.
+struct DescribedWeight {
+    WeightParent parent;
+    WeightView view;
+    Weight weight;
+
+    DescribedWeight(QType qtype, std::uint64_t n, std::uint64_t k) {
+        parent.data = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
+        const std::uint64_t shape[2] = {n, k};
+        parent.geometry = weight_geometry(qtype, default_weight_layout(qtype), shape);
+        view.shape      = {n, k};
+        view.parts      = {WeightRegion{&parent, 0, n * k}};
+        weight          = native_weight(view, 0.0F);
+    }
+    DescribedWeight(const DescribedWeight&)            = delete;
+    DescribedWeight& operator=(const DescribedWeight&) = delete;
+};
+
+// A generic MoE layer's capacity over a call of up to `columns` tokens, as the start sizes it
+// (models/gemma4/target.cu: ops::moe_workspace_bytes over the layer's banks and the load's config,
+// gemma4/load_target.cpp): the router [E, H] in BF16, the stacked gate/up [E 2F, H] and down
+// [E H, F] in the facts' expert formats. nullopt where a bank's format is unknown. The start takes
+// this Op for experts the fused NVFP4 kernel does not read; where it does, gemma4_moe's capacity
+// (target_op_bytes) is the larger, so counting both bounds either.
+std::optional<std::size_t> generic_moe_bytes(const PlanModelFacts& m, const models::gemma4::Config& c,
+                                             std::int32_t columns) {
+    // A bank whose layers differ in format is one linear a format (PlanLinear): every pair's.
+    std::vector<const PlanLinear*> gate_ups, downs;
+    for (const PlanLinear& l : m.linears) {
+        if (l.expert) { (l.gated ? gate_ups : downs).push_back(&l); }
+    }
+    if (gate_ups.empty() || downs.empty() || m.experts == 0 || m.experts_used == 0) {
+        return std::nullopt;
+    }
+    const auto experts = static_cast<std::uint64_t>(m.experts);
+    const auto hidden  = static_cast<std::uint64_t>(c.hidden_size);
+    const auto router  = std::make_unique<DescribedWeight>(QType::BF16, experts, hidden);
+    ops::MoeConfig config;
+    config.top_k          = static_cast<std::int32_t>(m.experts_used);
+    config.scoring        = ops::MoeScoring::Softmax;
+    config.activation     = ops::MoeActivation::GeGluTanh;
+    config.gate_up_layout = ops::MoeGateUpLayout::Concatenated;
+    std::size_t widest = 0;
+    for (const PlanLinear* g : gate_ups) {
+        for (const PlanLinear* d : downs) {
+            if (g->format.empty() || d->format.empty()) { return std::nullopt; }
+            const auto inter = static_cast<std::uint64_t>(d->k);
+            const auto up    = std::make_unique<DescribedWeight>(artifact::parse_format(g->format),
+                                                                 experts * 2 * inter, hidden);
+            const auto dn    = std::make_unique<DescribedWeight>(artifact::parse_format(d->format),
+                                                                 experts * hidden, inter);
+            ops::MoeWeights weights;
+            weights.router  = router->weight;
+            weights.gate_up = up->weight;
+            weights.down    = dn->weight;
+            widest = std::max(widest, ops::moe_workspace_bytes(weights, config, 1, columns));
+        }
+    }
+    return widest;
+}
 
 // The policy a start's projection carries for a stored format (the converter's: BF16 and FP32
 // keep A16, NVFP4 allows four-bit activations, every other quantized format eight).
@@ -85,9 +152,18 @@ std::optional<std::uint64_t> gemma4_workspace(const PlanModelFacts& m, const Pla
     const auto chunk   = static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context));
     const auto batch   = static_cast<std::int32_t>(concurrency);
     const auto context = static_cast<std::int32_t>(rung.max_context);
+    // A MoE's generic layer, at the start's widest call (its chunk) for every pass, as the start
+    // sizes it once; unknown expert formats leave the formula to stand.
+    std::size_t routed = 0;
+    if (c.experts > 0) {
+        const auto bytes = generic_moe_bytes(m, c, std::max<std::int32_t>(
+                                                       static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context)), 1));
+        if (!bytes) { return std::nullopt; }
+        routed = *bytes;
+    }
     const auto target  = [&](std::int32_t columns, std::int32_t head_columns) -> std::uint64_t {
         return gemma4::target_activation_bytes(c, columns, head_columns) +
-               gemma4::target_op_bytes(c, linears, head, context, columns, head_columns, 0) +
+               gemma4::target_op_bytes(c, linears, head, context, columns, head_columns, routed) +
                gemma4::kTargetWorkspaceReserve;
     };
     const ops::ScopedInvariantRoutes routes(options.activations == ActivationMode::Exact);

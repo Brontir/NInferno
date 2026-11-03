@@ -263,6 +263,7 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     m.query_heads            = u32(g.query_heads);
     m.dense_ffn              = u32(g.ffn);
     m.experts                = u32(g.experts);
+    m.experts_used           = u32(g.experts_used);
     m.ple_width              = u32(g.ple_width);
     m.ple_known              = g.ple_known;
     m.weight_bytes           = weight_bytes;

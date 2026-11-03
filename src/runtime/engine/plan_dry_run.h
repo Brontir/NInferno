@@ -224,6 +224,7 @@ struct PlanModelFacts {
     std::uint32_t query_heads = 0;
     std::uint32_t dense_ffn   = 0;
     std::uint32_t experts     = 0;
+    std::uint32_t experts_used = 0; // the experts a token routes to
     std::uint32_t ple_width   = 0;
     bool ple_known            = false;
     double params            = 0; // every weight (0: unknown)
