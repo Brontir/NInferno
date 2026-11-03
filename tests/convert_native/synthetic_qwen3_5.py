@@ -422,12 +422,10 @@ def main() -> int:
             if not ok:
                 errors.append(f"nvidia layout: {sorted(set(formats.values()))}")
         else:
-            errors.append(f"nvidia layout: native failed
-{result.stderr[-2000:]}")
+            errors.append(f"nvidia layout: native failed\n{result.stderr[-2000:]}")
         if refused.returncode == 0 or "ninferno-convert" not in refused.stderr:
             ok = False
-            errors.append(f"nvidia layout: Python did not refuse it
-{refused.stderr[-1000:]}")
+            errors.append(f"nvidia layout: Python did not refuse it\n{refused.stderr[-1000:]}")
         print(f"nvidia layout: {'ok' if ok else 'FAILED'}", flush=True)
         # --drafter-quant on a target quantizes its companion drafter only (native only: the
         # Python converter has no such option). The text keeps the recipe's methods.
