@@ -151,6 +151,12 @@ private:
     void run_supervisor();
     void stop_supervisor();
     [[nodiscard]] bool reject_while_draining(const httplib::Request& req, httplib::Response& res);
+    // The cache hints a request runs with: `base` (the endpoint's own) with a trusted router's
+    // x-ninferno-cache-hint applied, and x-ninferno-hint-applied on the response when the request
+    // carried one (serve/cache_hint.h).
+    [[nodiscard]] ContextCacheHints request_cache_hints(const httplib::Request& req,
+                                                        httplib::Response& res,
+                                                        ContextCacheHints base = {}) const;
     // The server-side limits every request parser applies, from the serve options.
     [[nodiscard]] RequestLimits request_limits() const noexcept;
 

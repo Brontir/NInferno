@@ -1,4 +1,5 @@
 #include "serve/http_server.h"
+#include "serve/cache_hint.h"
 
 #include "serve/anthropic_messages.h"
 #include "serve/http_transport.h"
@@ -800,6 +801,15 @@ void HttpServer::stop() { server_.stop(); }
 
 void HttpServer::request_drain() noexcept {
     if (drain_requested_.exchange(true)) { stop_requested_.store(true); }
+}
+
+ContextCacheHints HttpServer::request_cache_hints(const httplib::Request& req, httplib::Response& res,
+                                                 ContextCacheHints base) const {
+    if (!req.has_header(std::string(kCacheHintHeader).c_str())) { return base; }
+    const std::string header = req.get_header_value(std::string(kCacheHintHeader).c_str());
+    const std::string_view applied = apply_cache_hint(&header, options_.trust_cache_hints, base);
+    res.set_header(std::string(kCacheHintAppliedHeader).c_str(), std::string(applied));
+    return base;
 }
 
 RequestLimits HttpServer::request_limits() const noexcept {

@@ -132,6 +132,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--default-thinking-budget N` | unset | cap on thinking tokens, where the chat template can end thinking (Qwen, Gemma 4; not gpt-oss) |
 | `--no-answer-room` | room kept | without a budget, thinking may take the whole output limit (by default it closes at three quarters, leaving the rest for the answer) |
 | `--no-prefix-reuse` | reuse on | disable prefix caching |
+| `--trust-cache-hints` | off | read a router's `x-ninferno-cache-hint` header (below); only behind a router you trust |
 | `--cors` | off | permissive browser CORS headers |
 | `--request-log-jsonl FILE` | off | machine-readable request log |
 | `--log-level LEVEL` | `info` | stderr verbosity (`trace` ... `off`) |
@@ -392,3 +393,20 @@ curl http://127.0.0.1:8080/v1/models -H 'Authorization: Bearer local-secret'
 
 Related: [CLI guide](cli.md), [performance](performance/README.md),
 [weight conversion](weight-conversion.md).
+
+## Cache hints from a router
+
+With `--trust-cache-hints`, a router in front of the engine may say what it expects of a thread in
+a request header (#338):
+
+```text
+x-ninferno-cache-hint: session=<hex>; retain=drop; ttl-ms=120000; next=0.93; turns=12.4; gap-ms=8000; gap-p90-ms=32000
+```
+
+`retain=drop` makes the request's cached state the first to go; `retain=normal` changes nothing.
+`retain=keep` is read but granted as `normal` for now: a kept thread needs an expiry (`ttl-ms`) and
+a cap on the bytes held as kept, which the cache does not have yet. The other fields are read and
+not yet weighed; unknown fields are ignored. A malformed hint is none, never an error. The response
+says what was granted in `x-ninferno-hint-applied` (`keep`, `normal`, `drop`, or `none` when hints
+are off or the hint is malformed), only for a request that carried the header. Without the flag the
+header is ignored: on an engine any client reaches directly, it would let a client pin its own state.
