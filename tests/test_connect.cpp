@@ -712,9 +712,9 @@ void test_refused_key_stops_every_slot() {
     (void)send_all(fd, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
     ::close(fd);
     // The live tunnel drains (GOAWAY) and closes while the router keeps answering it.
-    const bool ended = live->pump(5s, [&] {
-        return worker.rc.wait_for(0s) == std::future_status::ready;
-    });
+    // (The worker closes the link before its run returns: the pump ends there, the run follows.)
+    (void)live->pump(5s, [&] { return worker.rc.wait_for(0s) == std::future_status::ready; });
+    const bool ended = worker.rc.wait_for(3s) == std::future_status::ready;
     expect(ended && worker.rc.get() == 3, "a refused key ends every slot of the router, the run with 3");
 }
 
