@@ -736,6 +736,13 @@ void test_rule() {
             const std::string what = "ctx " + std::to_string(context);
             const pr::QuantPlan ada = planned(89, context, false);
             check(ada.pick.has_value(), what + ": Ada picks");
+            // The listing's files carry no identity (#368): every row's accuracy is the curve's
+            // estimate, so none decides and the rule's largest stands, said.
+            check(ada.pick && !ada.by_worth && ada.quality_withheld &&
+                      !ada.quality_estimates.empty() &&
+                      ada.rule_params.value("quality_withheld", false) &&
+                      ada.rule.find("not measured on these files") != std::string::npos,
+                  what + ": estimated accuracy trades no speed: " + ada.rule);
             if (ada.pick && ada.by_worth) {
                 ++weighed;
                 const pr::QuantRow& pick    = ada.rows[ada.pick->index];

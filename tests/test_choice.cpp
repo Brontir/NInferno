@@ -871,6 +871,28 @@ void weighs_the_quantizations(const json& fixture) {
     q.files = measured_q4;
     q.label   = "renamed"; // the files measured under another label: still their measurement
     check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "the files decide, not the label");
+    // #368: only the files' own measurement may decide between quantizations; a proxy of the same
+    // value, another family and unknown bits are estimates to show.
+    {
+        using A = ch::QualityAuthority;
+        ch::QuantOption a = b.quants[0];
+        a.label           = "Q4_K_M";
+        a.files           = measured_q4;
+        check(ch::quant_authority(b.model, a) == A::Direct, "the files measured: direct");
+        a.files.clear();
+        check(ch::quant_authority(b.model, a) == A::Estimate, "files unknown: an estimate");
+        a.files = std::string(64, 'a');
+        check(ch::quant_authority(b.model, a) == A::Estimate, "other files, the same value: an estimate");
+        a.files = measured_q4;
+        a.bits_per_weight += 0.3;
+        check(ch::quant_authority(b.model, a) == A::Estimate, "the files at other bits: an estimate");
+        a.bits_per_weight = 0;
+        check(ch::quant_authority(b.model, a) == A::Unknown, "unknown bits: unknown");
+        a.bits_per_weight = b.quants[0].bits_per_weight;
+        ch::ModelFacts other = b.model;
+        other.family         = "gemma4_text";
+        check(ch::quant_authority(other, a) == A::Estimate, "another family's curve: an estimate");
+    }
     q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before
     check(!quant_term(q).measured && quant_term(q).evidence == ch::Evidence::Interpolated &&
               quant_term(q).kld < 0.01925 && quant_term(q).kld > 0.01828,

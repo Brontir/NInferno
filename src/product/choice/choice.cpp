@@ -1396,6 +1396,16 @@ bool weighs_quantizations(const ModelFacts& model, const CardFacts& card, const 
            (gates.accuracy ? *gates.accuracy : kQuantKldCards >= 2);
 }
 
+QualityAuthority quant_authority(const ModelFacts& model, const QuantOption& quant) {
+    if (quant.bits_per_weight <= 0) { return QualityAuthority::Unknown; }
+    // The curve's points are the default family's measurements (kQuantKldFamily): on another
+    // family every term is the curve's estimate. No transfer rule is registered.
+    const bool own_curve = model.family == kQuantKldFamily;
+    const QuantKld q     = quant_kld(quant.bits_per_weight, quant.label, quant.files, own_curve);
+    return own_curve && q.evidence == Evidence::Measured ? QualityAuthority::Direct
+                                                         : QualityAuthority::Estimate;
+}
+
 Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Candidate& candidate,
                      const CardFacts& card) {
     Accuracy out;
