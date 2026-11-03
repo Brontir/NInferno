@@ -63,7 +63,7 @@ struct Rows {
     Rows(const Rows& other, std::uint64_t first) : parent(other.parent) { bind(first, other.view.shape[1]); }
     void bind(std::uint64_t first, std::uint64_t k) {
         view.shape  = {1024, k};
-        view.parts  = {ninferno::WeightRegion{parent.get(), first * k, 1024 * k}};
+        view.parts  = {ninferno::WeightRegion{parent.get(), first * k, (first + 1024) * k}};
         weight      = ninferno::native_weight(view, 0.0F);
     }
 };
