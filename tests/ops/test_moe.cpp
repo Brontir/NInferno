@@ -823,9 +823,10 @@ const char* qname(QType q);
 
 // The A8 route under a route table: a band of register-MMA stages keeps its measured schedules
 // (the down schedule is not rewritten to the class's) and takes the class's A8 gate/up on top at
-// T <= 4, A16 from T = 5; a band marked A16 ("|a16") stays A16 at every T; a band that names an R8
-// stage (the loader keeps those within T = 1..4) runs it there, and the heuristic streaming
-// register MMA takes T = 5 on. Each executed plan matches the oracle.
+// T <= r8_token_limit(), A16 above it; a band marked A16 ("|a16") stays A16 at every T; a band that
+// names an R8 stage (the loader keeps those within T = 1..kR8Tokens) runs it to r8_token_limit(),
+// and the heuristic streaming register MMA takes the wider calls. Each executed plan matches the
+// oracle.
 // The grouped W4A8 (MoePlan::w4a8): the prefill plan with both expert stages on the int8 tile,
 // against the oracle with both stages' activations quantized per 32 values, and each token's bytes
 // those of the widest call at any T and position (no K split; a slot's sums do not depend on its

@@ -441,8 +441,9 @@ int main(int argc, char** argv) {
                     "hidden": 2880, "inter": 2880, "prefill": "rmma.m1.n1.w1x8|rmma.m1.n8.w4x1"})")));
         } catch (const std::runtime_error&) { refused_moe = true; }
         failures += check(refused_moe, "a moe prefill plan that splits K is refused");
-        // R8 bands: only on a format the R8 kernel reads and only up to T = 4 (the A8 decode
-        // widths).
+        // R8 bands: only on a format the R8 kernel reads and only up to kR8Tokens = 8 (its widest
+        // instance; a device or bank of a narrower r8_token_limit takes the register MMA for the
+        // band's wider calls, r8_stages_admitted).
         const auto r8_entry = [](const char* format, int t_max) {
             return std::string(R"({"format": ")") + format +
                    R"(", "experts": 32, "top_k": 4, "hidden": 2816, "inter": 512, "bands": [[1, )" +
@@ -456,8 +457,10 @@ int main(int argc, char** argv) {
         };
         failures +=
             check(loads("moe_r8_ok", r8_entry("iq2s", 4)), "an iq2s R8 band to T = 4 loads");
-        failures += check(!loads("moe_r8_wide", r8_entry("iq2s", 8)),
-                          "an R8 band beyond T = 4 is refused");
+        failures += check(loads("moe_r8_eight", r8_entry("iq2s", 8)),
+                          "an iq2s R8 band to T = 8 loads");
+        failures += check(!loads("moe_r8_wide", r8_entry("iq2s", 9)),
+                          "an R8 band beyond T = 8 is refused");
         failures += check(!loads("moe_r8_fp8", r8_entry("fp8", 4)),
                           "an R8 band on a format without the R8 kernel is refused");
         (void)ninferno::ops::load_route_table(write_file("good", good));
