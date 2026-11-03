@@ -8,8 +8,14 @@
 #include "artifact/reader.h"
 #include "ninferno/types.h"
 
+#include <cuda_runtime_api.h>
+
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <set>
+#include <system_error>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -102,6 +108,28 @@ inline ProposalHead proposal_head(const char* path, ProposalHead wanted,
                   "the artifact's proposal head does not serve it; the full head drafts");
     }
     return ProposalHead::Full;
+}
+
+// A case whose engine the plan refuses (CapacityError) on a card of at most 24 GB is skipped, said
+// once per case: a 35B artifact leaves an RTX 4060 Ti's 16 GiB too little for three lanes of 4K
+// beside 14.9 GiB of weights, and an RTX 4090's 1.9 GiB beside 21.3 GiB too little for eight. On a
+// larger card the refusal is a failure (a planner regression must not pass as a skip). A 24 GB
+// card reports 23.99 GiB, below the 25 GiB line. True: skipped.
+inline constexpr std::size_t kSmallCardBytes = std::size_t{25} << 30;
+inline bool small_card_skips(const CapacityError& error, std::string_view what) {
+    std::size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess || total_bytes >= kSmallCardBytes) {
+        return false;
+    }
+    // And only an artifact that is most of the card: a 9B refused on a 24 GB card is a planner
+    // regression, not a small card.
+    const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
+    std::error_code size_error;
+    const std::uintmax_t artifact_bytes =
+        artifact != nullptr ? std::filesystem::file_size(artifact, size_error) : 0;
+    if (size_error || artifact_bytes * 2 < total_bytes) { return false; }
+    skip_case(what, std::string("does not fit this card: ") + error.what());
+    return true;
 }
 
 // Vision as requested when the artifact has it; a text-only artifact runs without it, said once.

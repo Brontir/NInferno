@@ -662,7 +662,7 @@ int main() {
     }
     if (!ninferno::test::real_artifact(artifact).mtp) {
         ninferno::test::skip_case("MTP", "the artifact has no MTP component");
-    } else {
+    } else try {
         for (const std::uint32_t k : {1U, 3U, 5U}) {
             if (exercise_backend(artifact, ninferno::SpeculativeBackend::Mtp, k, "MTP") != 0) {
                 return 1;
@@ -678,6 +678,8 @@ int main() {
                                   plain_reference) != 0) {
             return 1;
         }
+    } catch (const ninferno::CapacityError& error) {
+        if (!ninferno::test::small_card_skips(error, "MTP's remaining cases")) { throw; }
     }
     // Masked-draft backends are optional artifact components; absent ones are skipped.
     const std::pair<ninferno::SpeculativeBackend, const char*> masked[] = {
@@ -701,6 +703,11 @@ int main() {
                      exercise_shared_trips(artifact, backend, k, name, plain_reference) != 0)) {
                     return 1;
                 }
+            } catch (const ninferno::CapacityError& error) {
+                if (!ninferno::test::small_card_skips(error, std::string(name) + "'s remaining cases")) {
+                    throw;
+                }
+                break;
             } catch (const std::exception& error) {
                 const std::string what = error.what();
                 if (what.find("DFlash") == std::string::npos &&

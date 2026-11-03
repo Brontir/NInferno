@@ -70,6 +70,7 @@
 // it apart, e.g. Gemma 4's MTP assistant); NINFERNO_DET_POISON (a byte 1..255: each generation
 // Engine runs with MaintainerOptions::debug_poison, --debug-poison, set to it).
 #include "ninferno/engine.h"
+#include "real_artifact.h"
 
 #include <cuda_runtime_api.h>
 #include <nlohmann/json.hpp>
@@ -280,17 +281,36 @@ ninferno::EngineOptions generation_options(const std::string& artifact, std::uin
         }
         options.maintainer.debug_poison = static_cast<std::uint8_t>(byte);
     }
+    // Unnamed, the drafter is the artifact's own (MTP first); an artifact without one runs the
+    // probe plainly, said once. A named drafter the artifact lacks still fails: it was asked for.
+    // A drafter shipped apart (NINFERNO_DET_DRAFTER: Gemma 4's MTP assistant) drafts as MTP.
+    std::string spec = env_string("NINFERNO_DET_SPEC");
+    if (speculate && spec.empty() && !env_string("NINFERNO_DET_DRAFTER").empty()) { spec = "mtp"; }
+    if (speculate && spec.empty()) {
+        const auto& parts = ninferno::test::real_artifact(artifact.c_str());
+        spec = parts.mtp ? "mtp" : parts.dflash ? "dflash" : parts.dflash2 ? "dflash2" : "";
+        if (spec.empty()) {
+            static const bool said = [] {
+                ninferno::test::skip_case("speculation", "the artifact has no drafter; the probe runs plainly");
+                return true;
+            }();
+            (void)said;
+            speculate = false;
+        }
+    }
     if (speculate) {
-        const std::string spec            = env_string("NINFERNO_DET_SPEC");
         options.speculative.backend       = spec == "dflash" ? ninferno::SpeculativeBackend::DFlash
                                             : spec == "dflash2" ? ninferno::SpeculativeBackend::DFlash2
                                                                 : ninferno::SpeculativeBackend::Mtp;
         options.speculative.draft_tokens =
-            env_u32("NINFERNO_DET_K", spec.empty() || spec == "mtp" ? 3 : 7);
+            env_u32("NINFERNO_DET_K", spec == "mtp" ? 3 : 7);
         // NINFERNO_DET_HEAD full: artifacts without the optimized (LM-head) proposal head.
-        options.speculative.proposal_head = env_string("NINFERNO_DET_HEAD") == "full"
-                                                ? ninferno::ProposalHead::Full
-                                                : ninferno::ProposalHead::Optimized;
+        // Unset: the optimized head where the artifact's serves this drafter, else the full one.
+        options.speculative.proposal_head =
+            env_string("NINFERNO_DET_HEAD") == "full"
+                ? ninferno::ProposalHead::Full
+                : ninferno::test::proposal_head(artifact.c_str(), ninferno::ProposalHead::Optimized,
+                                                options.speculative.backend);
         // NINFERNO_DET_DRAFTER: a drafter shipped apart from the target (Gemma 4's MTP assistant).
         options.speculative.drafter = env_string("NINFERNO_DET_DRAFTER");
     }
@@ -1763,6 +1783,8 @@ int main() {
         std::cout << "skip: NINFERNO_TEST_ARTIFACT is not set\n";
         return 77;
     }
+    // Before the phases: a capacity refusal after a phase found a bug keeps the bug a failure.
+    Report report;
     try {
         Probe probe;
         probe.artifact = artifact;
@@ -1772,7 +1794,6 @@ int main() {
         for (std::string phase; std::getline(phases, phase, ',');) {
             if (!phase.empty()) { probe.phases.insert(phase); }
         }
-        Report report;
         {
             ninferno::Engine engine(generation_options(artifact, 1, false));
             const auto available = static_cast<std::uint32_t>(user_prompts().size());
@@ -1813,6 +1834,15 @@ int main() {
         std::cout << "determinism: bugs=" << report.bugs
                   << " divergences_scored=" << report.pending.size() << '\n';
         return report.bugs == 0 ? 0 : 1;
+    } catch (const ninferno::CapacityError& error) {
+        // Its lanes at NINFERNO_DET_CONTEXT beside the weights do not fit a small card (a 35B
+        // artifact on 16 GiB): skipped there, a failure on a larger card.
+        if (report.bugs == 0 && ninferno::test::small_card_skips(error, "the determinism probe")) {
+            return 77;
+        }
+        std::cerr << "determinism probe error (bugs before it: " << report.bugs
+                  << "): " << error.what() << '\n';
+        return 1;
     } catch (const std::exception& error) {
         std::cerr << "determinism probe error: " << error.what() << '\n';
         return 1;

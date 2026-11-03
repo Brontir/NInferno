@@ -3,6 +3,7 @@
 #include "models/qwen3_5/execution/parameters.h"
 #include "models/qwen3_5/program/program.h"
 #include "models/qwen3_5/program/model_family.h"
+#include "real_artifact.h"
 #include <cstdlib>
 
 #include "models/qwen3_5/frontend/prepared_prompt.h"
@@ -17,6 +18,12 @@ int main() {
     namespace qwen       = ninferno::models::qwen3_5;
     const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
     if (!artifact || !*artifact) { return 77; }
+    // The route is sized beside MTP: a text-only artifact, or one without the head, has neither.
+    if (const auto& parts = ninferno::test::real_artifact(artifact); !parts.vision || !parts.mtp) {
+        std::cout << "skip: the artifact has no " << (parts.vision ? "MTP" : "vision")
+                  << " component\n";
+        return 77;
+    }
     static_assert(ninferno::models::qwen3_5::kMaximumVisionItemTokens == 16384);
     // The current Vision route fits below 827 MiB, including arena alignment and empty-scratch
     // backing. The context growth check below protects the single-item lifetime bound.
@@ -33,7 +40,10 @@ int main() {
         ninferno::models::LoadOptions selected;
         selected.vision        = true;
         selected.speculative   = ninferno::SpeculativeBackend::Mtp;
-        selected.proposal_head = ninferno::ProposalHead::Optimized;
+        // The optimized head where the artifact's serves MTP (one converted --no-proposal has none).
+        const ninferno::ProposalHead head = ninferno::test::proposal_head(
+            artifact, ninferno::ProposalHead::Optimized, ninferno::SpeculativeBackend::Mtp);
+        selected.proposal_head = head;
         auto model             = qwen::load_model(artifact, selected, device);
         const qwen::execution::Parameters parameters(*model);
         const auto execution = qwen::detail::make_qwen3_5_execution(parameters);
@@ -45,7 +55,7 @@ int main() {
             options.kv_cache            = ninferno::KvCacheStorage::Fp8E4M3Row256;
             options.speculative.backend = ninferno::SpeculativeBackend::Mtp;
             options.speculative.draft_tokens         = 3;
-            options.speculative.proposal_head        = ninferno::ProposalHead::Optimized;
+            options.speculative.proposal_head        = head;
             options.enable_vision                    = true;
             options.use_cuda_graph                   = false;
             options.context_cache.device_state_slots = 1;

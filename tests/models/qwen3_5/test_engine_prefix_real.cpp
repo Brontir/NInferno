@@ -2502,7 +2502,7 @@ int exercise_attention_integration(const char* artifact) {
     return 0;
 }
 
-int main() {
+int run_scenarios() {
     const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
     if (!artifact || !*artifact) {
         std::cout << "skip: NINFERNO_TEST_ARTIFACT is not set\n";
@@ -2519,6 +2519,8 @@ int main() {
     if (scenario == "attention") {
         try {
             result = exercise_attention_integration(artifact);
+        } catch (const ninferno::CapacityError&) {
+            throw; // main's small-card rule decides
         } catch (const std::exception& error) {
             std::cerr << "attention integration failed: " << error.what() << '\n';
             return 1;
@@ -2578,4 +2580,15 @@ int main() {
     }
     if (result == 0) { std::cout << "ok\n"; }
     return result;
+}
+
+int main() {
+    try {
+        return run_scenarios();
+    } catch (const ninferno::CapacityError& error) {
+        // The cases' lanes beside the weights do not fit a small card (a 35B artifact on an RTX
+        // 4090): skipped there, a failure on a larger card.
+        if (ninferno::test::small_card_skips(error, "the prefix cases")) { return 77; }
+        throw;
+    }
 }
