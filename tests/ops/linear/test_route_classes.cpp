@@ -5,7 +5,11 @@
 // need no feature the board lacks (route_requires); a route whose kernels this build lacks
 // (W4A4 and the NVFP4 tiled routes outside 120a) is never chosen, whatever the board; and the
 // route table in effect is the nearest measured board's of its instruction set (board_distance,
-// route_table.cpp), the board's own where routes/ has it.
+// route_table.cpp), the board's own where routes/ has it. The register-MMA family's coverage
+// (#307): route_admits takes a schedule exactly where rmma_refusal names no reason, a cluster
+// schedule is not compiled outside the full build and needs clusters on the board, the 32-value
+// decoders' large tiles are not compiled, and the family's own pick, where it does not run, says
+// why (counted, not failed: the selection then takes another tile).
 //
 // The route table and several heuristics cache what they read of the device on first use, so one
 // process runs one board: without arguments the test runs itself once per board.
@@ -23,6 +27,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <map>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -91,6 +96,8 @@ int run_board(const TestBoard& b) {
         b.pci_device_id, b.major, b.minor, b.sms, b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB));
     const DeviceClass& d = device_class();
     int failures = 0, checked = 0;
+    int coverage_checked = 0;
+    std::map<std::string, int> heuristic_refused; // the family's pick, refused: why, how often
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -105,6 +112,49 @@ int run_board(const TestBoard& b) {
                 quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
             const Weight w = host.device_weight(payload);
             if (!generic::supports(w)) continue;
+            {
+                const generic::Problem problem{qtype, LinearPolicy::A16Only, shape.n, shape.k,
+                                               generic::Epilogue::Store};
+                const auto c = generic::rmma_coverage(problem, w, 1, false);
+                const std::string where = std::string(generic::qtype_name(qtype)) + " " +
+                                          std::to_string(shape.n) + "x" + std::to_string(shape.k);
+                int compiled = 0, legal = 0;
+                for (const auto& s : c.schedules) {
+                    const auto info = generic::rmma_schedule_info(s.schedule);
+                    const generic::Route r{generic::Family::RegisterMma,
+                                           static_cast<std::uint8_t>(s.schedule)};
+                    const std::string at = where + " " + generic::route_name(r) + ": " +
+                                           std::string(generic::schedule_refusal_name(s.refusal));
+                    if (generic::route_admits(r, w, LinearPolicy::AllowA8) !=
+                        (s.refusal == generic::ScheduleRefusal::None)) {
+                        fail(at + ", which route_admits decides otherwise");
+                    }
+                    if (info.cluster > 1 && !ops::detail::kNativeNvfp4 &&
+                        s.refusal != generic::ScheduleRefusal::NotCompiled) {
+                        fail(at + ", a cluster schedule this build does not compile");
+                    }
+                    if (info.cluster > 1 && ops::detail::kNativeNvfp4 && !d.features.clusters &&
+                        s.refusal != generic::ScheduleRefusal::Instruction) {
+                        fail(at + ", a cluster schedule on a board without clusters");
+                    }
+                    const bool quad = qtype == QType::GGML_Q4_K || qtype == QType::GGML_Q6_K;
+                    if (quad && info.cluster == 1 && info.m_tiles * info.n_tiles >= 16 &&
+                        s.refusal != generic::ScheduleRefusal::CodecTile) {
+                        fail(at + ", a large tile the ggml decoder is not compiled for");
+                    }
+                    compiled += s.refusal != generic::ScheduleRefusal::NotCompiled &&
+                                s.refusal != generic::ScheduleRefusal::CodecTile;
+                    legal += s.refusal == generic::ScheduleRefusal::None;
+                }
+                if (c.declared != generic::rmma_schedule_count() ||
+                    static_cast<int>(c.schedules.size()) != c.declared || c.compiled != compiled ||
+                    c.legal != legal || c.legal > c.compiled || c.compiled > c.declared) {
+                    fail(where + ": coverage counts declared " + std::to_string(c.declared) +
+                         ", compiled " + std::to_string(c.compiled) + ", legal " +
+                         std::to_string(c.legal));
+                }
+                ++coverage_checked;
+            }
             for (const LinearPolicy policy :
                  {LinearPolicy::A16Only, LinearPolicy::AllowA8, LinearPolicy::AllowA4}) {
                 if (policy == LinearPolicy::AllowA4 && qtype != QType::NVFP4) continue;
@@ -132,6 +182,16 @@ int run_board(const TestBoard& b) {
                             }
                             ++checked;
                             const std::string name = generic::route_name(route);
+                            const auto coverage =
+                                generic::rmma_coverage(problem, w, t, prefill);
+                            if (coverage.heuristic_refusal ==
+                                generic::ScheduleRefusal::NotDeclared) {
+                                fail(where + ": the register-MMA pick is no declared schedule");
+                            } else if (coverage.heuristic_refusal !=
+                                       generic::ScheduleRefusal::None) {
+                                ++heuristic_refused[std::string(generic::schedule_refusal_name(
+                                    coverage.heuristic_refusal))];
+                            }
                             if (!generic::route_admits(route, w, policy)) {
                                 fail(where + ": chose " + name + ", which route_admits refuses");
                             }
@@ -161,7 +221,10 @@ int run_board(const TestBoard& b) {
     }
     if (checked < 1000) fail("only " + std::to_string(checked) + " choices checked");
     std::cout << b.name << " (" << d.id() << ", " << d.arch() << "): " << checked
-              << " route choices, " << failures << " failures\n";
+              << " route choices, " << coverage_checked << " register-MMA coverages, "
+              << failures << " failures; the register-MMA pick refused:";
+    for (const auto& [why, count] : heuristic_refused) std::cout << " " << why << " " << count;
+    std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }
 
