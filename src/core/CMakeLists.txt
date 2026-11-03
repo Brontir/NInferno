@@ -10,6 +10,7 @@ add_library(ninferno_core STATIC
   device_class.cpp
   device_traits.cpp
   machine_facts.cpp
+  gate_atlas.cpp
   device_image_probe.cu
   tune_timer.cu
   dtype.cpp
