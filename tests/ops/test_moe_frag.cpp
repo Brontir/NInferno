@@ -260,7 +260,7 @@ int check_a8(const Case& c, std::uint32_t seed) {
     int failures = 0, compared = 0;
     // The default route takes w4r1 on the frag bank at every T (A16 without a route).
     const auto route = dmoe::a8_default_route();
-    for (std::int32_t t = 1; t <= dmoe::r8_token_limit(); ++t, ++compared) {
+    for (std::int32_t t = 1; t <= dmoe::r8_token_limit(l.frag.gate_up); ++t, ++compared) {
         const int expected = route ? route->gate_up_at(t, l.frag.gate_up) : -1;
         const auto p       = dmoe::select_plan(l.frag, l.config, t, false);
         if (p.gate_up_r8 != expected) {
@@ -272,7 +272,10 @@ int check_a8(const Case& c, std::uint32_t seed) {
                             run(c, l, l.published, x, t), run(c, l, l.frag, x, t));
     }
     for (int s = 0; s < dmoe::r8_schedule_count(); ++s) {
-        for (const std::int32_t t : {1, 3, dmoe::r8_token_limit()}) {
+        const std::int32_t both =
+            std::min(dmoe::r8_token_limit(l.frag.gate_up),
+                     down_r8 ? dmoe::r8_token_limit(l.frag.down) : dmoe::kR8Tokens);
+        for (const std::int32_t t : {1, 3, both}) {
             auto p       = dmoe::select_plan(l.published, l.config, t, false);
             p.gate_up_r8 = s;
             p.down_r8    = down_r8 ? s : -1;
