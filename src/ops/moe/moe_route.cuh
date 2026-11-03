@@ -77,6 +77,23 @@ __device__ __forceinline__ unsigned warp_max(unsigned v) {
 #endif
 }
 
+// The warp's largest 64-bit value: on sm_80 on, two 32-bit reductions (the high half, then the low
+// half among the lanes that hold it); before, five shuffle steps.
+__device__ __forceinline__ unsigned long long warp_max64(unsigned long long v) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
+    const unsigned hi = __reduce_max_sync(0xffffffffU, static_cast<unsigned>(v >> 32));
+    const unsigned lo = __reduce_max_sync(
+        0xffffffffU, static_cast<unsigned>(v >> 32) == hi ? static_cast<unsigned>(v) : 0U);
+    return (static_cast<unsigned long long>(hi) << 32) | lo;
+#else
+    for (int o = 16; o > 0; o >>= 1) {
+        const unsigned long long w = __shfl_xor_sync(0xffffffffU, v, o);
+        v                          = w > v ? w : v;
+    }
+    return v;
+#endif
+}
+
 // One warp per token; lane l holds experts l, l + 32, ... (PerLane of them at most). The k picks
 // are k arg-max reductions over the experts not yet taken, by (rank, then the lower id): rank =
 // score + selection bias, NaN ranked last. A pick is two warp max reductions, over the key and
@@ -128,47 +145,100 @@ __device__ __forceinline__ void select_token_lanes(const SelectArgs& a, int toke
 
     // Lane k keeps pick k (no per-thread arrays of picks: under the 512-thread plan CTA they
     // spilled to local memory), and writes it.
-    unsigned taken   = 0;
     float my_score   = 0.0F;
     float my_scale   = 1.0F;
     int my_id        = 0;
     float picked_sum = 0.0F;
-    for (int k = 0; k < a.top_k; ++k) {
-        // The lane's best untaken expert: the highest key, the lowest id among equal ones.
-        unsigned best = 0U;
-        int best_i    = -1;
+    if constexpr (PerLane <= 8) {
+        // Each lane sorts its candidates once, best first, as one 64-bit value each: the key, then
+        // ~id (the lower id first among equal keys), 0 for an absent expert. A pick is then one
+        // warp max over the lanes' heads, and its lane pops its head: the scan of every candidate
+        // and the second reduction a pick took were a dependent chain of one warp (GV100,
+        // 256 experts, top 8: 13.5k cycles a selection). The picks, their order and every sum
+        // are the scan's.
+        unsigned long long c[PerLane];
 #pragma unroll
         for (int i = 0; i < PerLane; ++i) {
-            if (!((taken >> i) & 1U) && key[i] != 0U && (best_i < 0 || key[i] > best)) {
-                best   = key[i];
-                best_i = i;
+            c[i] = key[i] == 0U ? 0ULL
+                                : (static_cast<unsigned long long>(key[i]) << 32) |
+                                      static_cast<unsigned>(~(lane + 32 * i));
+        }
+#pragma unroll
+        for (int i = 0; i < PerLane; ++i) {
+#pragma unroll
+            for (int j = PerLane - 1; j > i; --j) {
+                const unsigned long long hi = c[j - 1] > c[j] ? c[j - 1] : c[j];
+                const unsigned long long lo = c[j - 1] > c[j] ? c[j] : c[j - 1];
+                c[j - 1]                    = hi;
+                c[j]                        = lo;
             }
         }
-        const unsigned id  = best_i < 0 ? 0xffffffffU : static_cast<unsigned>(lane + 32 * best_i);
-        const unsigned top = warp_max(best);
-        const int best_id  = static_cast<int>(~warp_max(best == top && best_i >= 0 ? ~id : 0U));
-        // The winner's own score (not its selection rank) and expert scale.
-        float s = 0.0F, sc = 1.0F;
-        if ((best_id & 31) == lane) {
-            const int i = best_id >> 5;
-            taken |= 1U << i;
+        for (int k = 0; k < a.top_k; ++k) {
+            const unsigned long long top = warp_max64(c[0]);
+            if (c[0] == top) {
 #pragma unroll
-            for (int j = 0; j < PerLane; ++j) {
-                if (j == i) {
-                    s  = score[j];
-                    sc = escale[j];
+                for (int i = 0; i + 1 < PerLane; ++i) c[i] = c[i + 1];
+                c[PerLane - 1] = 0ULL;
+            }
+            if (lane == k) my_id = static_cast<int>(~static_cast<unsigned>(top));
+        }
+        // Lane k's pick's score and expert scale from the lane that holds it, then the sum in
+        // pick order (lane 0's first), as the scan added them.
+        const int owner = my_id & 31, at = my_id >> 5;
+        float s = 0.0F, sc = 1.0F;
+#pragma unroll
+        for (int i = 0; i < PerLane; ++i) {
+            const float si  = __shfl_sync(0xffffffffU, score[i], owner);
+            const float sci = __shfl_sync(0xffffffffU, escale[i], owner);
+            if (i == at) {
+                s  = si;
+                sc = sci;
+            }
+        }
+        if (!a.sigmoid) s /= z;
+        my_score = s;
+        my_scale = sc;
+        for (int k = 0; k < a.top_k; ++k) picked_sum += __shfl_sync(0xffffffffU, my_score, k);
+    } else {
+        unsigned taken = 0;
+        for (int k = 0; k < a.top_k; ++k) {
+            // The lane's best untaken expert: the highest key, the lowest id among equal ones.
+            unsigned best = 0U;
+            int best_i    = -1;
+#pragma unroll
+            for (int i = 0; i < PerLane; ++i) {
+                if (!((taken >> i) & 1U) && key[i] != 0U && (best_i < 0 || key[i] > best)) {
+                    best   = key[i];
+                    best_i = i;
                 }
             }
+            const unsigned id =
+                best_i < 0 ? 0xffffffffU : static_cast<unsigned>(lane + 32 * best_i);
+            const unsigned top = warp_max(best);
+            const int best_id  = static_cast<int>(~warp_max(best == top && best_i >= 0 ? ~id : 0U));
+            // The winner's own score (not its selection rank) and expert scale.
+            float s = 0.0F, sc = 1.0F;
+            if ((best_id & 31) == lane) {
+                const int i = best_id >> 5;
+                taken |= 1U << i;
+#pragma unroll
+                for (int j = 0; j < PerLane; ++j) {
+                    if (j == i) {
+                        s  = score[j];
+                        sc = escale[j];
+                    }
+                }
+            }
+            s  = __shfl_sync(0xffffffffU, s, best_id & 31);
+            sc = __shfl_sync(0xffffffffU, sc, best_id & 31);
+            if (!a.sigmoid) s /= z;
+            if (lane == k) {
+                my_score = s;
+                my_scale = sc;
+                my_id    = best_id;
+            }
+            picked_sum += s;
         }
-        s  = __shfl_sync(0xffffffffU, s, best_id & 31);
-        sc = __shfl_sync(0xffffffffU, sc, best_id & 31);
-        if (!a.sigmoid) s /= z;
-        if (lane == k) {
-            my_score = s;
-            my_scale = sc;
-            my_id    = best_id;
-        }
-        picked_sum += s;
     }
     if (lane < a.top_k) {
         float w = a.renormalize ? my_score / picked_sum : my_score;
