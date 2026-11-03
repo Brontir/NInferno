@@ -107,7 +107,7 @@ select kernels. Recipes are Python functions in
 | Qwen3.6-35B-A3B | `qwen3_6_35b_a3b` | Q4 experts, Q5/Q6 expert down, Q8 shared/projection | MTP, DFlash |
 | Qwen3.6-35B-A3B NVFP4 | `qwen3_6_35b_a3b_nvfp4` | Imported NVFP4 routed and shared experts, Q8 projections, Q8/Q6 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.6-27B NVFP4 | `qwen3_6_27b_nvfp4` | Imported NVFP4, selected BF16 projections, Q8 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
-| Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8, FP8 embedding generated from BF16; needs `--source quantized=PATH` | MTP, DFlash2 |
+| Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8 as the checkpoint publishes each projection, FP8 embedding generated from BF16 (and the head, where the checkpoint has it in NVFP4); needs `--source quantized=PATH` (`unsloth/Qwen3.8-27B-NVFP4` or `nvidia/Qwen3.8-27B-NVFP4`) | MTP, DFlash2 |
 | Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 (a DFlash drafter Q8 in both) | MTP, DFlash |
 | Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing but the DFlash drafter (Q8) | MTP, DFlash |
 | Gemma 4 text | `gemma4_published` (default) | NVFP4 and FP8 projections kept, rest BF16 | Gemma 4 assistant |
@@ -139,6 +139,12 @@ python3 -m tools.convert \
   --name qwen3.8-27b \
   --out models/qwen3_8_27b_nvfp4.ninferno
 ```
+
+Either published quantized source works. `unsloth/Qwen3.8-27B-NVFP4` holds the MLP of layers
+0..55 in NVFP4 and every other projection, lm_head included, in FP8. `nvidia/Qwen3.8-27B-NVFP4`
+holds every MLP and lm_head in NVFP4. The recipe keeps each projection's published format and
+generates the FP8 head from the BF16 model when the source's head is NVFP4, so the head and the
+draft head are the same with either source.
 
 ## Options
 

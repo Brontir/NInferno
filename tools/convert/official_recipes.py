@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .methods import cast_direct, fp8_row_maxabs, grouped_absmax, import_encoded
-from .sources.compressed_tensors import compressed_matrix_source
+from .sources.compressed_tensors import compressed_matrix_source, nvfp4_layout
 
 Q4 = "q4_g64_fp16"
 Q5 = "q5_g64_fp16"
@@ -164,8 +164,15 @@ def qwen3_8_27b_nvfp4(model, recipe, sources):
         ):
             recipe.assign(name, source=source)
             continue
-        layer = int(name.split("/")[2]) if name.startswith("text/layers/") else -1
-        format = "nvfp4" if "/mlp/" in name and layer < 56 else FP8
+        # Each projection keeps the format the checkpoint published it in (unsloth: the MLP of
+        # layers 0..55 in NVFP4, the rest in row FP8; NVIDIA: every MLP and lm_head in NVFP4).
+        # An NVFP4 lm_head takes row FP8 from the BF16 model, as the native recipe does.
+        nvfp4 = any(nvfp4_layout(store, tensor.removesuffix(".weight")) is not None
+                    for store, tensor in source.origin)
+        if nvfp4 and name == "text/output_head":
+            recipe.assign(name, format=FP8, method=fp8_row_maxabs)
+            continue
+        format = "nvfp4" if nvfp4 else FP8
         recipe.assign(
             name,
             format=format,

@@ -1155,10 +1155,17 @@ void qwen3_8_27b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) {
             recipe.assign_source(i, std::move(source));
             continue;
         }
-        const auto layer = name.starts_with("text/layers/")
-                               ? static_cast<std::int64_t>(layer_of(name))
-                               : std::int64_t{-1};
-        const bool nvfp4 = has_part(name, "/mlp/") && layer < 56;
+        // Each projection keeps the format the checkpoint published it in: unsloth's
+        // Qwen3.8-27B-NVFP4 holds the MLP of layers 0..55 in NVFP4 and every other projection,
+        // lm_head included, in row FP8; NVIDIA's (Model Optimizer) holds every layer's MLP and
+        // lm_head in NVFP4 (#342). An NVFP4 lm_head is quantized to row FP8 from the BF16 model
+        // instead, so the head, and the draft head the proposal reads from it, are the same
+        // whichever checkpoint the text comes from.
+        const bool nvfp4 = source->is_nvfp4();
+        if (nvfp4 && name == "text/output_head") {
+            recipe.assign(i, kFp8, Method::Fp8RowMaxabs);
+            continue;
+        }
         recipe.assign(i, nvfp4 ? QType::NVFP4 : kFp8, Method::ImportEncoded,
                       parameter.encoded_source(quantized,
                                                nvfp4 ? MatrixFormat::Nvfp4 : MatrixFormat::Fp8Row));

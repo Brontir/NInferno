@@ -94,6 +94,8 @@ class Q(Writer):
             self.bf16(prefix + ".weight", (rows, k))
         elif kind == "fp8":
             self.fp8(prefix, rows, k)
+        elif kind == "modelopt":
+            self.nvfp4(prefix, rows, k, divisor, input_divisor, layout="modelopt")
         else:
             self.nvfp4(prefix, rows, k, divisor, input_divisor)
 
@@ -202,12 +204,18 @@ def base_checkpoint(root: Path, *, moe_model: bool, nested: bool, tied: bool, vi
     (root / "ranking.i64").write_bytes(counts.to(torch.int64).numpy().tobytes())
 
 
-def quantized_dense(root: Path, *, fp8: bool, seed: int) -> None:
-    """Text-only names (model.layers.*): every site the NVFP4 recipes read, encoded."""
+def quantized_dense(root: Path, *, fp8: bool, seed: int, modelopt: bool = False) -> None:
+    """Text-only names (model.layers.*): every site the NVFP4 recipes read, encoded.
+
+    modelopt: NVIDIA's Qwen3.8-27B-NVFP4 layout (#342): FP8 attention, every MLP and lm_head in
+    Model Optimizer NVFP4 (weight / weight_scale_2 multipliers).
+    """
     w = Q(seed)
     w.bf16("model.embed_tokens.weight", (VOCAB, H))
     other = "fp8" if fp8 else "nvfp4"
-    if fp8:
+    if modelopt:
+        w.nvfp4("lm_head", VOCAB, H, 0.45, 0.7, layout="modelopt")
+    elif fp8:
         w.fp8("lm_head", VOCAB, H)
     else:
         w.bf16("lm_head.weight", (VOCAB, H))
@@ -220,7 +228,7 @@ def quantized_dense(root: Path, *, fp8: bool, seed: int) -> None:
             attention(w, p, other, layer)
         else:
             gdn(w, p, other, layer)
-        mlp(w, p, "nvfp4", layer)
+        mlp(w, p, "modelopt" if modelopt else "nvfp4", layer)
     w.save(root)
     (root / "config.json").write_text(json.dumps(config(False, nested=False)), encoding="utf-8")
 
@@ -301,6 +309,7 @@ def main() -> int:
         (yarn_dir / "config.json").write_text(json.dumps(yarn_config), encoding="utf-8")
         quantized_dense(work / "q-nvfp4", fp8=False, seed=23)
         quantized_dense(work / "q-fp8", fp8=True, seed=24)
+        quantized_dense(work / "q-fp8-modelopt", fp8=True, seed=28, modelopt=True)
         quantized_moe(work / "q-moe", seed=25)
         drafter(work / "dflash", "dflash", 26)
         drafter(work / "dflash2", "dflash2", 27)
@@ -316,6 +325,11 @@ def main() -> int:
             "dense-fp8": [f"--model={dense}", "--recipe=qwen3_8_27b_nvfp4", "--components=text,mtp",
                           f"--source=quantized={work / 'q-fp8'}", "--proposal", "--proposal-rows=64",
                           f"--ranking={dense / 'ranking.i64'}"],
+            # NVIDIA's layout: the NVFP4 lm_head takes row FP8 from the BF16 model (#342).
+            "dense-fp8-modelopt": [f"--model={dense}", "--recipe=qwen3_8_27b_nvfp4",
+                                   "--components=text,mtp",
+                                   f"--source=quantized={work / 'q-fp8-modelopt'}", "--proposal",
+                                   "--proposal-rows=64", f"--ranking={dense / 'ranking.i64'}"],
             "dense-yarn": [f"--model={yarn_dir}", "--recipe=qwen3_8_27b", "--components=text"],
             "moe": [f"--model={moe_dir}", "--recipe=qwen3_6_35b_a3b", "--components=text,mtp",
                     "--proposal", "--proposal-rows=100", f"--ranking={moe_dir / 'ranking.i64'}"],
@@ -331,6 +345,8 @@ def main() -> int:
             "dense-nvfp4": ({"nvfp4", "q8_g32_fp16"}, {"import_encoded"}, True),
             "dense-fp8": ({"nvfp4", "fp8_e4m3fn_row_bf16", "int32"},
                           {"import_encoded", "fp8_row_maxabs"}, False),
+            "dense-fp8-modelopt": ({"nvfp4", "fp8_e4m3fn_row_bf16", "int32"},
+                                   {"import_encoded", "fp8_row_maxabs"}, False),
             "dense-yarn": ({"q4_g64_fp16", "q5_g64_fp16", "q8_g32_fp16"}, {"grouped_absmax"}, False),
             "moe": ({"q4_g64_fp16", "q5_g64_fp16", "q6_g64_fp16", "q8_g32_fp16"}, {"grouped_absmax"}, False),
             "moe-nvfp4": ({"nvfp4"}, {"import_encoded"}, False),
@@ -360,6 +376,13 @@ def main() -> int:
                           and "dflash/layers/0/attention/context_key" not in bound)
                 if missing or shared != aliases:
                     found.append(f"{name}: expected {sorted(missing)} and aliases={aliases}")
+                # The head: imported from unsloth's row FP8, quantized from BF16 against NVIDIA's
+                # NVFP4 one.
+                want = {"dense-fp8": "import_encoded", "dense-fp8-modelopt": "fp8_row_maxabs"}.get(name)
+                head = {p: (m["method"], m["format"]) for m in report["methods"]
+                        for p in m["parameters"]}.get("text/output_head")
+                if want and head != (want, "fp8_e4m3fn_row_bf16"):
+                    found.append(f"{name}: text/output_head {head}, {want} row FP8 expected")
             errors += found
             print(f"{name}: {'ok' if not failed and not found else 'FAILED'}", flush=True)
         # --drafter-quant on a target quantizes its companion drafter only (native only: the
