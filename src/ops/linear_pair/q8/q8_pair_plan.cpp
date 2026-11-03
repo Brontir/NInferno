@@ -265,6 +265,15 @@ void require_pair_weights(const Weight& first_weight, const Weight& second_weigh
 }
 
 void require_dflash_row_views(const Weight& first_weight, const Weight& second_weight) {
+    if (!q8_pair_row_views(first_weight, second_weight)) {
+        throw std::invalid_argument(
+            "q8 pair: [1024,2048] weights must be exact adjacent parent K/V row views");
+    }
+}
+
+} // namespace
+
+bool q8_pair_row_views(const Weight& first_weight, const Weight& second_weight) noexcept {
     constexpr std::int32_t kParentRows     = 6144;
     constexpr std::int32_t kHidden         = 2048;
     constexpr std::int32_t kFirstRow       = 4096;
@@ -275,18 +284,17 @@ void require_dflash_row_views(const Weight& first_weight, const Weight& second_w
         kCodeBytes + static_cast<std::uint64_t>(kParentRows) * kScaleRowBytes;
 
     const auto* payload = static_cast<const std::byte*>(first_weight.payload);
-    if (payload == nullptr || second_weight.payload != first_weight.payload ||
-        first_weight.payload_bytes < kPayloadBytes || second_weight.payload_bytes < kPayloadBytes ||
-        first_weight.qdata != payload + static_cast<std::uint64_t>(kFirstRow) * kHidden ||
-        second_weight.qdata != payload + static_cast<std::uint64_t>(kSecondRow) * kHidden ||
-        first_weight.scales !=
-            payload + kCodeBytes + static_cast<std::uint64_t>(kFirstRow) * kScaleRowBytes ||
-        second_weight.scales !=
-            payload + kCodeBytes + static_cast<std::uint64_t>(kSecondRow) * kScaleRowBytes) {
-        throw std::invalid_argument(
-            "q8 pair: [1024,2048] weights must be exact adjacent parent K/V row views");
-    }
+    return !(payload == nullptr || second_weight.payload != first_weight.payload ||
+             first_weight.payload_bytes < kPayloadBytes || second_weight.payload_bytes < kPayloadBytes ||
+             first_weight.qdata != payload + static_cast<std::uint64_t>(kFirstRow) * kHidden ||
+             second_weight.qdata != payload + static_cast<std::uint64_t>(kSecondRow) * kHidden ||
+             first_weight.scales !=
+                 payload + kCodeBytes + static_cast<std::uint64_t>(kFirstRow) * kScaleRowBytes ||
+             second_weight.scales !=
+                 payload + kCodeBytes + static_cast<std::uint64_t>(kSecondRow) * kScaleRowBytes);
 }
+
+namespace {
 
 void require_pair_operands(const Tensor& x, const Weight& first_weight, const Weight& second_weight,
                            const Tensor& first_out, const Tensor& second_out,

@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,28 @@ struct Described {
     }
     Described(const Described&)            = delete;
     Described& operator=(const Described&) = delete;
+};
+
+// 1024 rows of a Q8_G32 row-split parent from row `first` (the DFlash drafter's K or V view of its
+// fused QKV plane), as the loader binds them; a second view shares the first's parent.
+struct Rows {
+    std::shared_ptr<ninferno::WeightParent> parent;
+    ninferno::WeightView view;
+    Weight weight;
+    Rows(std::uint64_t rows, std::uint64_t k, std::uint64_t first, std::uintptr_t at)
+        : parent(std::make_shared<ninferno::WeightParent>()) {
+        parent->data = reinterpret_cast<const std::byte*>(at);
+        const std::uint64_t shape[2] = {rows, k};
+        parent->geometry = ninferno::weight_geometry(
+            QType::Q8_G32_FP16, ninferno::default_weight_layout(QType::Q8_G32_FP16), shape);
+        bind(first, k);
+    }
+    Rows(const Rows& other, std::uint64_t first) : parent(other.parent) { bind(first, other.view.shape[1]); }
+    void bind(std::uint64_t first, std::uint64_t k) {
+        view.shape  = {1024, k};
+        view.parts  = {ninferno::WeightRegion{parent.get(), first * k, 1024 * k}};
+        weight      = ninferno::native_weight(view, 0.0F);
+    }
 };
 
 std::string describe(const std::vector<ops::detail::LinearPairCandidate>& c) {
@@ -96,12 +119,21 @@ int main() {
                       c[0].why.find("layout") != std::string::npos && c[1].status == Status::Selected,
                   "1024x5120 BF16:" + describe(c) + at);
         }
-        // The fused kernel's K/V geometry (1024 x 2048).
+        // The fused kernel's K/V geometry (1024 x 2048): only the drafter's adjacent K/V row
+        // views of one 6144-row parent (rows 4096 and 5120); two weights of their own run apart.
         {
             const Described f(QType::Q8_G32_FP16, 1024, 2048, a), s(QType::Q8_G32_FP16, 1024, 2048, b);
             const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
+            check(c.size() == 2 && c[0].status == Status::Unavailable &&
+                      c[0].why.find("row views") != std::string::npos &&
+                      c[1].status == Status::Selected,
+                  "1024x2048 Q8, two parents:" + describe(c) + at);
+        }
+        {
+            const Rows f(6144, 2048, 4096, a), s(f, 5120);
+            const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
             check(c.size() == 2 && c[0].status == Status::Selected && c[1].status == Status::Inadmissible,
-                  "1024x2048 Q8:" + describe(c) + at);
+                  "1024x2048 Q8, K/V row views:" + describe(c) + at);
         }
         // A fragment-order pair: linear() refuses each weight, so neither path runs.
         {

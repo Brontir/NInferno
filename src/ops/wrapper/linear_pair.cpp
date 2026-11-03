@@ -70,10 +70,8 @@ void require_nonoverlap(const Tensor& x, const Weight& first_weight, const Weigh
     require_disjoint(ranges, "linear_pair");
 }
 
-// The paired Q8 kernel's domain: the Q8 G32 row-split problems its plan registers (the two Qwen
-// drafter geometries). Every other pair runs as two linear() calls with the same numerics contract.
-bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
-    if (!detail::q8_pair_registered(first_weight.n, first_weight.k)) { return false; }
+// Whether the weights are the paired kernel's row-split Q8 G32 layout with FP16 scales.
+bool fused_layout(const Weight& first_weight, const Weight& second_weight) {
     try {
         require_weight(first_weight, first_weight.k, "first weight");
         require_weight(second_weight, first_weight.k, "second weight");
@@ -81,6 +79,16 @@ bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
         return false;
     }
     return true;
+}
+
+// The paired Q8 kernel's domain: the Q8 G32 row-split problems its plan registers (the two Qwen
+// drafter geometries), the K = 2048 one only on the drafter's adjacent K/V row views of one parent
+// (q8_pair_row_views, which its dispatch requires). Every other pair runs as two linear() calls
+// with the same numerics contract.
+bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
+    return detail::q8_pair_registered(first_weight.n, first_weight.k) &&
+           fused_layout(first_weight, second_weight) &&
+           (first_weight.k != 2048 || detail::q8_pair_row_views(first_weight, second_weight));
 }
 
 void require_same_logical_shape(const Weight& first_weight, const Weight& second_weight) {
@@ -105,10 +113,11 @@ std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, con
     LinearPairCandidate kernel{"fused:q8_pair", fused ? Status::Selected : Status::Unavailable, "", {}};
     if (!fused) {
         kernel.why = !same ? "the two weights must share one [N,K] shape"
-                     : !q8_pair_registered(first.n, first.k)
-                         ? "no fused kernel for this [N,K]"
-                         : "the weights are not the fused kernel's RowSplit Q8_G32 layout with FP16 "
-                           "scales";
+                     : !q8_pair_registered(first.n, first.k) ? "no fused kernel for this [N,K]"
+                     : !fused_layout(first, second)
+                         ? "the weights are not the fused kernel's RowSplit Q8_G32 layout with FP16 "
+                           "scales"
+                         : "the weights are not adjacent K/V row views of one 6144-row parent";
     }
     LinearPairCandidate separate{"separate", Status::Unavailable, "", {}};
     if (!same) {
