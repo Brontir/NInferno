@@ -5,6 +5,7 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -86,8 +87,10 @@ struct Stream {
     std::string out;
     std::size_t out_off   = 0;
     bool upstream_done    = false;
+    bool upstream_failed  = false; // the engine's answer broke off after its head
     bool cancelled        = false;
-    httplib::Client* client = nullptr;
+    std::atomic<bool> cancel_flag{false}; // `cancelled`, read where the mutex is not held
+    std::shared_ptr<httplib::Client> client;
 
     // Session-thread state.
     bool head_submitted = false;
@@ -113,12 +116,17 @@ void local_answer(Stream& s, int status, std::string_view message) {
 
 void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
              const std::size_t buffer_cap, const std::shared_ptr<Waker>& waker) {
-    httplib::Client client(engine.host, engine.port);
-    client.set_connection_timeout(std::chrono::seconds(10));
-    client.set_read_timeout(std::chrono::hours(24)); // a prefill of a long prompt is not a stall
-    client.set_write_timeout(std::chrono::minutes(5));
-    client.set_decompress(false); // the engine's bytes as they are
-    client.set_keep_alive(false);
+    auto client = std::make_shared<httplib::Client>(engine.host, engine.port);
+    client->set_connection_timeout(std::chrono::seconds(3)); // the engine is on this machine
+    client->set_read_timeout(std::chrono::hours(24)); // a prefill of a long prompt is not a stall
+    client->set_write_timeout(std::chrono::minutes(5));
+    client->set_decompress(false); // the engine's bytes as they are
+    client->set_keep_alive(false);
+    // A reset that comes before the engine's socket exists finds nothing to stop: the socket is
+    // shut as it is made instead, so the request fails at once.
+    client->set_socket_options([s](httplib::socket_t sock) {
+        if (s->cancel_flag.load()) { ::shutdown(sock, SHUT_RDWR); }
+    });
     {
         std::lock_guard lock(s->mu);
         if (s->cancelled) {
@@ -127,7 +135,7 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
             waker->wake();
             return;
         }
-        s->client = &client;
+        s->client = client;
     }
     httplib::Request request;
     request.method  = s->method;
@@ -155,7 +163,7 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
         waker->wake();
         return true;
     };
-    const httplib::Result result = client.send(request);
+    const httplib::Result result = client->send(request);
     bool answered = false;
     {
         std::lock_guard lock(s->mu);
@@ -167,7 +175,10 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
                      "the engine did not answer: " + httplib::to_string(result.error()));
     } else {
         std::lock_guard lock(s->mu);
-        s->upstream_done = true;
+        // An answer cut off after its head (the engine killed, a read error) is no whole answer:
+        // its stream is reset once the bytes it had are out, never ended as if complete.
+        s->upstream_failed = !s->cancelled && result.error() != httplib::Error::Success;
+        s->upstream_done   = true;
     }
     s->worker_finished.store(true);
     waker->wake();
@@ -245,11 +256,15 @@ public:
             }
             const auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(next_ping - now);
             pollfd fds[2] = {{link_.fd(), POLLIN, 0}, {waker_->fd(), POLLIN, 0}};
-            if (!out_.empty() || link_.wants_writable()) { fds[0].events |= POLLOUT; }
-            const int timeout = static_cast<int>(std::clamp<long long>(wait.count(), 1, 250));
+            const bool read_wants_write = link_.wants_writable();
+            if (!out_.empty() || read_wants_write) { fds[0].events |= POLLOUT; }
+            // Bytes the link holds already are read without waiting for the socket.
+            const bool held   = link_.pending();
+            const int timeout = held ? 0 : static_cast<int>(std::clamp<long long>(wait.count(), 1, 250));
             if (::poll(fds, 2, timeout) < 0 && errno != EINTR) { return TunnelEnd::Closed; }
             if (fds[1].revents & POLLIN) { waker_->drain(); }
-            if (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+            if (held || (fds[0].revents & (POLLIN | POLLHUP | POLLERR)) ||
+                (read_wants_write && (fds[0].revents & POLLOUT))) {
                 for (;;) {
                     const long n = link_.read(buffer.data(), buffer.size());
                     if (n < 0) { return TunnelEnd::Closed; }
@@ -342,6 +357,7 @@ private:
         std::lock_guard lock(s.mu);
         const std::size_t available = s.buffered();
         if (available == 0) {
+            if (s.upstream_done && s.upstream_failed) { return NGHTTP2_ERR_TEMPORAL_CALLBACK_FAILURE; }
             if (s.upstream_done) {
                 *flags |= NGHTTP2_DATA_FLAG_EOF;
                 return 0;
@@ -355,7 +371,7 @@ private:
         if (s.out_off == s.out.size()) {
             s.out.clear();
             s.out_off = 0;
-            if (s.upstream_done) { *flags |= NGHTTP2_DATA_FLAG_EOF; }
+            if (s.upstream_done && !s.upstream_failed) { *flags |= NGHTTP2_DATA_FLAG_EOF; }
         }
         s.room.notify_all();
         return static_cast<nghttp2_ssize>(n);
@@ -375,11 +391,18 @@ private:
         s->worker = std::thread(forward, s, options_.engine, options_.stream_buffer_bytes, waker_);
     }
 
+    // Cancels a stream's request: its engine connection is closed by a thread of its own, since
+    // httplib's stop() can wait for a connect in progress, and the session must not wait.
     static void cancel(Stream& s) {
-        std::lock_guard lock(s.mu);
-        s.cancelled = true;
-        if (s.client) { s.client->stop(); }
-        s.room.notify_all();
+        std::shared_ptr<httplib::Client> client;
+        {
+            std::lock_guard lock(s.mu);
+            s.cancelled = true;
+            s.cancel_flag.store(true);
+            client = s.client;
+            s.room.notify_all();
+        }
+        if (client) { std::thread([client] { client->stop(); }).detach(); }
     }
     static void join(Stream& s) {
         if (s.worker.joinable()) { s.worker.join(); }

@@ -56,6 +56,9 @@ public:
     [[nodiscard]] virtual bool wants_writable() const noexcept = 0;
     // Switches the socket to non-blocking (after the blocking handshake).
     virtual void set_nonblocking() = 0;
+    // Bytes the link holds already read from the socket (TLS: a record's rest): read them without
+    // waiting for the socket.
+    [[nodiscard]] virtual bool pending() const noexcept = 0;
 };
 
 // A TCP connection (and the TLS handshake for https) within timeout_ms; nullptr with *why.

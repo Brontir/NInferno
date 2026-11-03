@@ -78,6 +78,7 @@ public:
     }
     bool wants_writable() const noexcept override { return false; }
     void set_nonblocking() override { make_nonblocking(fd_); }
+    bool pending() const noexcept override { return false; }
 
 private:
     int fd_;
@@ -112,6 +113,7 @@ public:
     }
     bool wants_writable() const noexcept override { return wants_writable_; }
     void set_nonblocking() override { make_nonblocking(fd_); }
+    bool pending() const noexcept override { return SSL_pending(ssl_) > 0; }
 
 private:
     long settle(int n) {
@@ -172,6 +174,12 @@ bool read_head(Link& link, std::string* head, std::string* rest) {
         if (const auto end = buffer.find("\r\n\r\n"); end != std::string::npos) {
             *head = buffer.substr(0, end + 2);
             *rest = buffer.substr(end + 4);
+            // What the link read already past the head (a TLS record's rest) goes with it.
+            while (link.pending()) {
+                const long more = link.read(chunk, sizeof chunk);
+                if (more <= 0) { break; }
+                rest->append(reinterpret_cast<const char*>(chunk), static_cast<std::size_t>(more));
+            }
             return true;
         }
     }
@@ -270,6 +278,9 @@ std::unique_ptr<Link> dial(const RouterUrl& url, const TlsOptions& tls, int time
         return nullptr;
     }
     (void)SSL_CTX_set_min_proto_version(ctx, TLS1_2_VERSION);
+    // A write retried after WANT_WRITE comes from the session's output buffer, which may have grown
+    // (moved) since; and a write may take part of what it is given.
+    SSL_CTX_set_mode(ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER | SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER, nullptr);
     const bool trusted = tls.ca_file.empty()
                              ? SSL_CTX_set_default_verify_paths(ctx) == 1

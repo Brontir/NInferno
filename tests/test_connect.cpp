@@ -9,8 +9,9 @@
 // - Unanswered PINGs end the session, and the worker dials again.
 // - After a GOAWAY a new connection comes while the old one finishes its answer.
 // - A refused key stops the worker.
-// - Over TLS: a router the worker trusts serves; an untrusted certificate, or one for another
-//   name, is refused before anything is sent.
+// - An answer the engine breaks off is reset, not ended as whole.
+// - Over TLS: a router the worker trusts serves, 8 MiB whole to a router that reads late; an
+//   untrusted certificate, or one for another name, is refused before anything is sent.
 #include "connect/connector.h"
 #include "connect/link.h"
 
@@ -46,6 +47,8 @@ namespace {
 namespace nc = ninferno::connect;
 using namespace std::chrono_literals;
 using Clock = std::chrono::steady_clock;
+
+constexpr std::size_t kBigBytes = 8u << 20;
 
 int failures = 0;
 void expect(bool ok, const std::string& what) {
@@ -106,6 +109,31 @@ struct Engine {
                 std::this_thread::sleep_for(50ms);
                 const std::string chunk = "c" + std::to_string((*sent)++);
                 return sink.write(chunk.data(), chunk.size());
+            });
+        });
+        // 8 MiB in 64 KiB chunks, each byte its offset mod 251.
+        server.Get("/big", [](const httplib::Request&, httplib::Response& res) {
+            auto sent = std::make_shared<std::size_t>(0);
+            res.set_chunked_content_provider("application/octet-stream", [sent](std::size_t,
+                                                                                httplib::DataSink& sink) {
+                if (*sent == kBigBytes) {
+                    sink.done();
+                    return true;
+                }
+                std::string chunk(64 * 1024, '\0');
+                for (std::size_t i = 0; i < chunk.size(); ++i) {
+                    chunk[i] = static_cast<char>((*sent + i) % 251);
+                }
+                *sent += chunk.size();
+                return sink.write(chunk.data(), chunk.size());
+            });
+        });
+        // Two chunks, then the engine "dies": the provider fails, the answer is cut off.
+        server.Get("/die", [](const httplib::Request&, httplib::Response& res) {
+            auto sent = std::make_shared<int>(0);
+            res.set_chunked_content_provider("text/plain", [sent](std::size_t, httplib::DataSink& sink) {
+                if ((*sent)++ == 2) { return false; }
+                return sink.write("part", 4);
             });
         });
         // A "prefill": nothing is answered for up to 5 s, the connection watched meanwhile.
@@ -232,7 +260,8 @@ bool switch_protocols(Conn conn) {
 struct H2Stream {
     int status = 0;
     std::string data;
-    bool closed = false;
+    bool closed         = false;
+    std::uint32_t error = 0; // the code it closed with (0: ended)
 };
 
 // The router's HTTP/2 client on a switched connection.
@@ -336,8 +365,9 @@ private:
         self(user).streams_[id].data.append(reinterpret_cast<const char*>(data), len);
         return 0;
     }
-    static int on_close(nghttp2_session*, std::int32_t id, std::uint32_t, void* user) {
+    static int on_close(nghttp2_session*, std::int32_t id, std::uint32_t error, void* user) {
         self(user).streams_[id].closed = true;
+        self(user).streams_[id].error  = error;
         return 0;
     }
 
@@ -376,7 +406,10 @@ struct Worker {
     }
     ~Worker() {
         stop.store(true);
-        if (rc.valid()) { (void)rc.wait_for(10s); }
+        if (rc.valid() && rc.wait_for(10s) != std::future_status::ready) {
+            std::fprintf(stderr, "FAIL: the worker did not stop within 10 s\n");
+            std::_Exit(1); // the future's destructor would wait for it forever
+        }
     }
 };
 
@@ -471,6 +504,18 @@ void test_tls() {
             const auto e = c.request("POST", "/echo", "over tls");
             expect(c.pump(5s, [&] { return c.stream(e).closed; }) && c.stream(e).data == "over tls",
                    "a request over the TLS tunnel");
+            const auto big = c.request("GET", "/big");
+            (void)c.pump(50ms);
+            std::this_thread::sleep_for(500ms); // the router stops reading: the socket fills
+            const bool whole = c.pump(20s, [&] { return c.stream(big).closed; });
+            const std::string& got = c.stream(big).data;
+            bool pattern = got.size() == kBigBytes;
+            for (std::size_t i = 0; pattern && i < got.size(); i += 4093) {
+                pattern = static_cast<unsigned char>(got[i]) == i % 251;
+            }
+            expect(whole && c.stream(big).error == 0 && pattern,
+                   "8 MiB over TLS to a router that reads late, whole (" +
+                       std::to_string(got.size()) + " bytes)");
         } else if (fd >= 0) {
             Conn{fd, ssl}.close();
         }
@@ -546,6 +591,11 @@ void test_registration_and_streams() {
     expect(c->stream(e).status == 200 && c->stream(e).data == "hello", "a POST body forwarded");
     expect(c->stream(big).status == 413, "a body past the limit: 413, got " +
                                              std::to_string(c->stream(big).status));
+    const auto cut = c->request("GET", "/die");
+    expect(c->pump(5s, [&] { return c->stream(cut).closed; }) && c->stream(cut).error != 0 &&
+               c->stream(cut).data == "partpart",
+           "an answer the engine broke off is reset, not ended as whole (error " +
+               std::to_string(c->stream(cut).error) + ", " + c->stream(cut).data + ")");
 }
 
 void test_reset_closes_the_engine_connection() {

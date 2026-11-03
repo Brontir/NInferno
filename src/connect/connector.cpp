@@ -16,6 +16,8 @@ namespace ninferno::connect {
 namespace {
 
 using Clock = std::chrono::steady_clock;
+// How long a session lives before its end no longer counts as a failed dial.
+constexpr std::chrono::seconds kSettled{10};
 
 // Sleeps up to `duration`, waking early on stop. False when stopped.
 bool sleep_unless_stopped(std::chrono::milliseconds duration, const std::atomic<bool>& stop) {
@@ -114,8 +116,8 @@ SlotEnd run_slot(const ConnectorOptions& options, const RouterUrl& router, int i
             if (!sleep_unless_stopped(wait, stop)) { break; }
             continue;
         }
-        backoff = options.min_backoff;
         say("connected");
+        const auto connected_at = Clock::now();
         auto signal = std::make_shared<SessionSignal>();
         std::thread session([&options, &stop, signal, link = std::move(link),
                              leftover = std::move(hs.leftover)]() mutable {
@@ -141,6 +143,7 @@ SlotEnd run_slot(const ConnectorOptions& options, const RouterUrl& router, int i
             end    = signal->end;
         }
         if (goaway) {
+            backoff = options.min_backoff;
             // The old session drains in its thread; the replacement comes after a jitter.
             draining.emplace_back(std::move(session), signal);
             const auto wait = jittered(std::chrono::milliseconds(0), options.reconnect_jitter, rng);
@@ -150,7 +153,16 @@ SlotEnd run_slot(const ConnectorOptions& options, const RouterUrl& router, int i
         }
         session.join();
         if (stop.load()) { break; }
-        const auto wait = jittered(std::chrono::milliseconds(0), options.reconnect_jitter / 5, rng);
+        // A session that lived (kSettled) dials again at once, with jitter; one that died young (a
+        // router that switches and then closes, or breaks HTTP/2) backs off as a refused dial does.
+        std::chrono::milliseconds wait{0};
+        if (Clock::now() - connected_at >= kSettled) {
+            backoff = options.min_backoff;
+            wait    = jittered(std::chrono::milliseconds(0), options.reconnect_jitter / 5, rng);
+        } else {
+            wait    = jittered(backoff, backoff / 2, rng);
+            backoff = std::min(options.max_backoff, backoff * 2);
+        }
         say(std::string("session ended: ") + tunnel_end_name(end) + "; again in " +
             std::to_string(wait.count()) + " ms");
         if (!sleep_unless_stopped(wait, stop)) { break; }
