@@ -95,8 +95,24 @@ bool side_by_side_admits(const Weight& weight, LinearPolicy policy, std::int32_t
     }
     const generic::Problem problem{weight.qtype, policy, weight.n, weight.k,
                                    generic::Epilogue::Store};
-    const generic::Family family =
-        generic::select_route(problem, weight, tokens, prefill_routes_active()).family;
+    const generic::Route selected =
+        generic::select_route(problem, weight, tokens, prefill_routes_active());
+    // What the launch runs and whether it joins (#309): run_route's own resolution and overlap
+    // rule, so the admission and the launch cannot disagree. x is the pass's contiguous
+    // activation, and the projection sizes its workspace for the slices it joins.
+    const generic::CallLayout layout{.x_aligned16    = true,
+                                     .ldx            = weight.k,
+                                     .tokens         = tokens,
+                                     .rows           = weight.n,
+                                     .segments       = 1,
+                                     .epilogue       = generic::Epilogue::Store,
+                                     .workspace_free = std::numeric_limits<std::size_t>::max()};
+    const generic::ResolvedRoute resolved = generic::resolve_route(selected, weight, layout);
+    if (!generic::launch_overlap(resolved, generic::Epilogue::Store, tokens, true, false, true)
+             .joins()) {
+        return false;
+    }
+    const generic::Family family = resolved.executed.family;
     // The R8 decode kernel joins in every format it reads (a GGUF layer's q/k/v and gate).
     if (family == generic::Family::R8Mma) { return true; }
     const generic::WeightCodec codec = generic::codec_of(weight);
