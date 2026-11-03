@@ -222,6 +222,27 @@ inline constexpr std::int32_t kR8NarrowTokens = 4;
 // IQ4_NL, IQ4_XS).
 [[nodiscard]] bool r8_expert_format(QType format);
 [[nodiscard]] bool r8_expert_supports(const Weight& w);
+// Why one bank of experts (weights.gate_up or weights.down) takes a stage's route or not (#311):
+// per bank and stage, so a layer whose banks differ says which bank keeps it on the register MMA.
+// The first check that fails names it, in the order the functions test them.
+enum class BankRefusal {
+    None,        // admitted
+    Policy,      // the expert policy allows no int8 activations (exact, A16)
+    Format,      // no kernel of the stage reads the format
+    NativeBuild, // the build runs the format on its native kernels instead (NVFP4 on sm_120a)
+    FragCodec,   // fragment order (ggml_frag_v1) without a fragment-order codec for the format
+    KOrder,      // a permuted K the stage does not read
+    KGroup,      // K not in whole groups of the stage's loads (R8) or 32-value blocks (W4A8)
+    Alignment,   // the bank does not start on a 16-byte boundary
+    Nvfp4A4,     // NVFP4 under an A4 policy where the build has the W4A4 kernels
+};
+[[nodiscard]] const char* bank_refusal_name(BankRefusal why);
+// R8 (T <= r8_token_limit): r8_expert_supports is r8_bank_refusal == None; r8_admits adds the
+// token limit and the quantized activation's shared memory.
+[[nodiscard]] BankRefusal r8_bank_refusal(const Weight& w);
+// The grouped W4A8 prefill: it takes a layer whose both banks are admitted (MoePlan::w4a8 covers
+// both stages).
+[[nodiscard]] BankRefusal w4a8_bank_refusal(const MoeWeights& weights, const Weight& bank);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.
 [[nodiscard]] int r8_lanes(const Weight& w);

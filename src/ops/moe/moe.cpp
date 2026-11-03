@@ -89,22 +89,42 @@ bool r8_expert_format(QType format) {
     }
 }
 
-bool r8_expert_supports(const Weight& w) {
-    if (!r8_expert_format(w.qtype)) { return false; }
+const char* bank_refusal_name(BankRefusal why) {
+    switch (why) {
+    case BankRefusal::None: return "admitted";
+    case BankRefusal::Policy: return "policy";
+    case BankRefusal::Format: return "format";
+    case BankRefusal::NativeBuild: return "native_build";
+    case BankRefusal::FragCodec: return "frag_codec";
+    case BankRefusal::KOrder: return "k_order";
+    case BankRefusal::KGroup: return "k_group";
+    case BankRefusal::Alignment: return "alignment";
+    case BankRefusal::Nvfp4A4: return "nvfp4_a4";
+    }
+    return "unknown";
+}
+
+BankRefusal r8_bank_refusal(const Weight& w) {
+    // NVFP4 experts run the build's native NVFP4 kernels where it has them (r8_expert_format).
+    if (w.qtype == QType::NVFP4 && kNativeNvfp4) { return BankRefusal::NativeBuild; }
+    if (!r8_expert_format(w.qtype) || !generic::r8_supports(w.qtype)) { return BankRefusal::Format; }
     // The codecs load vectors of up to 16 bytes, aligned within a bank that starts on a 16-byte
     // boundary. A ggml_frag_v1 bank has fragment-order codecs for IQ2_S, IQ3_XXS, Q4_K and Q4_0
     // (moe_r8.cuh) and stays on A16 otherwise.
     if (w.layout == QuantLayout::GgmlFrag && w.qtype != QType::GGML_IQ2_S &&
         w.qtype != QType::GGML_IQ3_XXS && w.qtype != QType::GGML_Q4_K &&
         w.qtype != QType::GGML_Q4_0) {
-        return false;
+        return BankRefusal::FragCodec;
     }
+    if (w.k_order != nullptr) { return BankRefusal::KOrder; }
     // K in whole load groups, as generic R8 (Gemma 4 26B's Q4_0 down K 704, NemotronH's 1856; a
     // ggml_frag_v1 Q4_0 row's last K/32 % 4 blocks stay natural).
-    return w.k_order == nullptr && generic::r8_supports(w.qtype) &&
-           w.k % generic::r8_k_values(w.qtype) == 0 &&
-           reinterpret_cast<std::uintptr_t>(w.qdata) % 16 == 0;
+    if (w.k % generic::r8_k_values(w.qtype) != 0) { return BankRefusal::KGroup; }
+    if (reinterpret_cast<std::uintptr_t>(w.qdata) % 16 != 0) { return BankRefusal::Alignment; }
+    return BankRefusal::None;
 }
+
+bool r8_expert_supports(const Weight& w) { return r8_bank_refusal(w) == BankRefusal::None; }
 
 // The blocks an R8 lane of this bank loads together (GemmArgs::x_group, xq_group).
 int r8_x_group(const Weight& w) { return generic::r8_k_values(w.qtype) / 32; }
@@ -555,13 +575,8 @@ bool w4a8_frag_admits(QType qtype) { return ggml_frag_w4a8(qtype); }
 // checkpoint under --activations int8 prefills its experts on int8 activations as on the builds
 // without those kernels.
 bool w4a8_banks_admit(const MoeWeights& w) {
-    const auto bank = [&w](const Weight& b) {
-        return generic::w4a8_supports(b.qtype) && b.k % 32 == 0 &&
-               (b.qtype != QType::NVFP4 ||
-                generic::nvfp4_prefill_a8_policy(b.qtype, w.expert_policy)) &&
-               (!is_frag(b) || (ggml_frag_format(b.qtype) && w4a8_frag_admits(b.qtype)));
-    };
-    return allows_a8(w.expert_policy) && bank(w.gate_up) && bank(w.down);
+    return w4a8_bank_refusal(w, w.gate_up) == BankRefusal::None &&
+           w4a8_bank_refusal(w, w.down) == BankRefusal::None;
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
@@ -673,6 +688,19 @@ std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& conf
 }
 
 namespace detail::moe {
+
+BankRefusal w4a8_bank_refusal(const MoeWeights& w, const Weight& b) {
+    if (!allows_a8(w.expert_policy)) { return BankRefusal::Policy; }
+    if (!generic::w4a8_supports(b.qtype)) { return BankRefusal::Format; }
+    if (b.k % 32 != 0) { return BankRefusal::KGroup; }
+    if (b.qtype == QType::NVFP4 && !generic::nvfp4_prefill_a8_policy(b.qtype, w.expert_policy)) {
+        return BankRefusal::Nvfp4A4;
+    }
+    if (is_frag(b) && !(ggml_frag_format(b.qtype) && w4a8_frag_admits(b.qtype))) {
+        return BankRefusal::FragCodec;
+    }
+    return BankRefusal::None;
+}
 
 bool plan_compiled(const MoeWeights& w, const MoePlan& plan) {
     const auto compiled = [](const Weight& weight, int schedule) {
