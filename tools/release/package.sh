@@ -74,7 +74,7 @@ for arch in $ARCHS; do
     targets="ninferno-ui ninferno-serve ninferno-convert ninferno-dispatch ${NINFERNO_PACKAGE_TARGETS:-}"
     # ninferno-connect where the tree has it (libnghttp2 and OpenSSL found): its install rule
     # expects it built.
-    if cmake --build "$build" --target help 2>/dev/null | grep -q '^ninferno-connect:'; then
+    if grep -q '^NINFERNO_HAS_CONNECT:INTERNAL=ON$' "$build/CMakeCache.txt"; then
       targets="$targets ninferno-connect"
     fi
   else

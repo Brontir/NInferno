@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cerrno>
 #include <condition_variable>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 #include <memory>
@@ -359,10 +360,17 @@ private:
         static const std::string kStatus = ":status";
         nva.push_back(nv(kStatus, status));
         for (const auto& [name, value] : headers) { nva.push_back(nv(name, value)); }
+        s.head_submitted = true;
+        // A HEAD answer, a 1xx, 204 or 304 has no body: it ends on its HEADERS frame (RFC 9113
+        // 8.1), with no DATA frame after it.
+        const int code = std::atoi(status.c_str());
+        if (s.method == "HEAD" || (code >= 100 && code < 200) || code == 204 || code == 304) {
+            nghttp2_submit_response2(session_, s.id, nva.data(), nva.size(), nullptr);
+            return;
+        }
         nghttp2_data_provider2 provider{};
         provider.source.ptr     = &s;
         provider.read_callback  = &Session::read_body;
-        s.head_submitted        = true;
         nghttp2_submit_response2(session_, s.id, nva.data(), nva.size(), &provider);
     }
 

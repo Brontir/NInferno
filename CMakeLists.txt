@@ -186,6 +186,12 @@ if(NINFERNO_BUILD_APPS)
   if(TARGET ninferno-connect)
     install(TARGETS ninferno-connect RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
   endif()
+  # Whether this tree builds ninferno-connect, for tools/release/package.sh (any generator).
+  if(TARGET ninferno-connect)
+    set(NINFERNO_HAS_CONNECT ON CACHE INTERNAL "this tree builds ninferno-connect")
+  else()
+    set(NINFERNO_HAS_CONNECT OFF CACHE INTERNAL "this tree builds ninferno-connect")
+  endif()
   install(DIRECTORY routes/ DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/routes)
   install(DIRECTORY tools/spec/rankings/ DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/rankings
           FILES_MATCHING PATTERN "*.i64")
