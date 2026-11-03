@@ -566,10 +566,10 @@ void HttpServer::register_routes() {
         server_.set_default_headers(
             {{"Access-Control-Allow-Origin", "*"},
              {"Access-Control-Expose-Headers",
-              "x-request-id, request-id, x-ninferno-sampling-defaults"},
+              "x-request-id, request-id, x-ninferno-sampling-defaults, x-ninferno-hint-applied"},
              {"Access-Control-Allow-Headers",
               "Authorization, Content-Type, X-API-Key, anthropic-version, anthropic-beta, "
-              "anthropic-user-profile-id"},
+              "anthropic-user-profile-id, x-ninferno-cache-hint"},
              {"Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS"}});
         // CORS preflight: browsers send OPTIONS with no credentials before the real
         // request; answer it without auth so the actual GET/POST can carry the key.
