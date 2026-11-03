@@ -70,6 +70,44 @@ struct DrafterOption {
     // the drafter axis is not weighed and the profile's choice stands (never plain decode for a
     // gain of 1 nobody measured).
     bool measured = true;
+    // Where the load table bounds the configuration's depth (#303): from `streams` streams on, the
+    // gain one request measured at the bounded depth (1 where that depth was not measured: a gain
+    // no measurement gives is not counted). A ceiling: the verify of the streams' rows together
+    // costs more than one request's, and that is not priced. Ascending by streams; empty: `speedup`
+    // wherever it speculates.
+    struct LoadGain {
+        std::uint32_t streams = 0;
+        double speedup        = 1;
+        std::uint32_t depth   = 0;    // the depth drafted from `streams` on
+        bool bounded          = false; // below the configuration's
+        bool measured         = true;
+    };
+    std::vector<LoadGain> load;
+
+    // The gain at `streams` streams: plain decode's 1 from plain_from_streams on, else the load
+    // table's at its last bound below, else `speedup`.
+    [[nodiscard]] double speedup_at(std::uint32_t streams) const noexcept {
+        if (plain_from_streams != 0 && streams >= plain_from_streams) { return 1; }
+        double gain = speedup;
+        for (const LoadGain& g : load) {
+            if (g.streams > streams) { break; }
+            gain = g.speedup;
+        }
+        return gain;
+    }
+    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
+    // bound in force there measured at its depth (a published profile lists no depths but its
+    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
+    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
+        if (!measured) { return false; }
+        if (plain_from_streams != 0 && streams >= plain_from_streams) { return true; }
+        bool known = true;
+        for (const LoadGain& g : load) {
+            if (g.streams > streams) { break; }
+            known = g.measured;
+        }
+        return known;
+    }
 };
 
 // A trunk linear by shape (runtime::PlanLinear): N outputs x K inputs, run per_token times a token

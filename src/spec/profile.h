@@ -266,6 +266,14 @@ void write_json_file(const std::filesystem::path& path, const nlohmann::json& do
 // with it lose 16 % there.
 [[nodiscard]] double per_request_gain(const Profile& profile, bool thinking_default);
 
+// The gain of `config` over plain decode on the profile's measurements of the sections a request
+// of `thinking` runs (the thinking section, or math, code and prose: as select groups them), each
+// weighted by its share of the mix: plain decode's cost over the configuration's, one request at a
+// time, over the sections plain decode measured. nullopt when the configuration is not measured on
+// one of them, or none is.
+[[nodiscard]] std::optional<double> measured_gain(const Profile& profile, const SpecConfig& config,
+                                                  bool thinking);
+
 // ---------------------------------------------------------------------------------------------
 // Published profiles: the "profiles" list of a registry model entry or a bundle declaration, one
 // object per (GPU class, applicable repositories), as the maintainer's spec-tune produced them:

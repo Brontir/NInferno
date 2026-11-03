@@ -171,7 +171,12 @@ speculation profile chose (the lab's measured pair for these weights on this car
 pair group's, or a published profile: `src/spec/`). Its memory, the drafter's weights and a DFlash
 drafter's state, enters the plan (`product::attached_drafter_memory`), and its measured gain
 multiplies the decode speed while its load table lets the asked streams speculate
-(`DrafterOption::plain_from_streams`). It changes no output (greedy verification), so it has no
+(`DrafterOption::plain_from_streams`). Where the load table bounds the depth below the
+configuration's at the asked streams, the gain is the bounded depth's, one request measured
+(`DrafterOption::load`, `spec::measured_gain`; #303); a depth the profile did not measure (a
+published profile lists only its choice's) counts none, and at such a load the drafter is not
+weighed (`DrafterOption::measured_at`), as for a gain published without its speeds. Under load the gain is a ceiling: the verify of the streams' rows together costs more than
+one request's, and that is not priced yet (the plan's `chosen.drafter_gain` says so). It changes no output (greedy verification), so it has no
 accuracy term: between plain decode and a drafter the worth weighs the drafter's speed against the
 context its memory takes. The drafter is weighed (`Choice::drafter_by_worth`) only where the worth
 decides and every drafter's gain is measured (`DrafterOption::measured`); a profile published

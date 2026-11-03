@@ -107,11 +107,26 @@ DrafterAxis drafter_axis(const SpeculationSubject& subject, const SpeculationAsk
         option.speedup = std::max(1.0, c.speedup());
         option.measured = !split && c.tok_s > 0 && c.plain_tok_s > 0;
         option.basis   = one.resolved->basis;
+        const bool thinking = split ? !ask.thinking : ask.thinking;
         for (const spec::LoadBound& bound : p.load) {
             if (bound.depth == 0) {
                 option.plain_from_streams = static_cast<std::uint32_t>(bound.lanes);
                 break;
             }
+            // A bound below the configuration's depth runs that depth (#303): its own measured
+            // gain, not the configuration's; a bound at or above it, the configuration's.
+            const std::int32_t depth = std::min(bound.depth, c.config.k);
+            spec::SpecConfig at      = c.config;
+            at.k                     = depth;
+            const auto gain          = depth == c.config.k ? std::optional<double>(option.speedup)
+                                                           : spec::measured_gain(p, at, thinking);
+            // A DFlash bound's draft width is not a configuration of its own: the depth's gain at
+            // one request's width stands for it (a ceiling, as the load's verify is).
+            option.load.push_back({.streams  = static_cast<std::uint32_t>(bound.lanes),
+                                   .speedup  = gain ? std::max(1.0, *gain) : 1.0,
+                                   .depth    = static_cast<std::uint32_t>(depth),
+                                   .bounded  = depth < c.config.k,
+                                   .measured = gain.has_value()});
         }
         out.options.push_back(std::move(option));
         out.served.push_back(*served);
@@ -705,7 +720,34 @@ Json choice_json(const ServedChoice& served) {
     // Whether the decode estimates count the drafter's gain (a measured one).
     chosen["drafter_counted"] = s.candidate.drafter > 0 &&
                                 s.candidate.drafter <= served.drafter_options.size() &&
-                                served.drafter_options[s.candidate.drafter - 1].measured;
+                                served.drafter_options[s.candidate.drafter - 1].measured_at(
+                                    served.task.concurrency);
+    // The drafter's gain one request measured and the gain counted at the task's concurrency (the
+    // depth its load table bounds there; #303). A ceiling under load: the verify of the streams'
+    // rows together is not priced.
+    if (s.candidate.drafter > 0 && s.candidate.drafter <= served.drafter_options.size()) {
+        const choice::DrafterOption& d = served.drafter_options[s.candidate.drafter - 1];
+        const std::uint32_t streams    = served.task.concurrency;
+        Json gain = {{"one_request", round_to(d.speedup, 3)},
+                     {"at_concurrency", round_to(d.speedup_at(streams), 3)}};
+        const choice::DrafterOption::LoadGain* in_force = nullptr;
+        for (const choice::DrafterOption::LoadGain& g : d.load) {
+            if (g.streams > streams) { break; }
+            in_force = &g;
+        }
+        const bool plain = d.plain_from_streams != 0 && streams >= d.plain_from_streams;
+        if (plain) {
+            gain["plain_from_streams"] = d.plain_from_streams;
+        } else if (in_force != nullptr && in_force->bounded) {
+            gain["bounded_depth"]  = in_force->depth;
+            gain["depth_measured"] = in_force->measured;
+        }
+        if (!plain && streams > 1) {
+            gain["note"] = "a ceiling: one request's gain at the depth this load drafts; the verify "
+                           "of the streams' rows together is not priced";
+        }
+        chosen["drafter_gain"] = gain;
+    }
     chosen["depth"]         = served.depth;
     chosen["decode_tok_s_at_depth"] = round_to(served.decode_at_depth, 1);
     chosen.update(estimates_json(s));

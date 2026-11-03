@@ -407,6 +407,15 @@ int main() {
         sp::select(same);
         expect(sp::per_request_gain(same, true) == 1.0 && sp::per_request_gain(same, false) == 1.0,
                "one configuration for both flags: nothing to gain");
+        // The gain of a depth on the measurements (#303: the depth a load table bounds a
+        // configuration to): the choice's own is its speedup; a depth never measured has none.
+        const auto own = sp::measured_gain(p, p.non_thinking.config, false);
+        expect(own && std::abs(*own / p.non_thinking.speedup() - 1) < 1e-9,
+               "the choice's depth: its own gain");
+        sp::SpecConfig deep = p.non_thinking.config;
+        deep.k              = 99;
+        expect(!sp::measured_gain(p, deep, false), "a depth never measured: no gain");
+        expect(!sp::measured_gain(p, sp::SpecConfig{}, false), "plain decode: no gain");
     }
     // A record of an older engine version never pools with the current one, in either order.
     {
