@@ -2719,7 +2719,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                       chain);
         }
     }
-    if (g.mmq_candidate && ggml_mmq_format(problem.qtype) &&
+    if (mmq_candidate_measured(d.major, d.minor) && ggml_mmq_format(problem.qtype) &&
         problem.n % ggml_mmq::kRowMultiple == 0 && problem.k % ggml_mmq::kKMultiple == 0) {
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);

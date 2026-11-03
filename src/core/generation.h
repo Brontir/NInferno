@@ -91,4 +91,11 @@ inline constexpr GenerationRow kGenerations[] = {
     return generation_known(major, minor) && generation_row(major, minor).attention_chain;
 }
 
+// Whether ggml's matrix kernel is a cost-model candidate on compute capability major.minor
+// (mmq_candidate, a measured preference: the full-rate row's 24K prefill A/B lost): only on a
+// generation of the table's own; a lent row does not carry it (#300).
+[[nodiscard]] constexpr bool mmq_candidate_measured(int major, int minor) noexcept {
+    return generation_known(major, minor) && generation_row(major, minor).mmq_candidate;
+}
+
 } // namespace ninferno

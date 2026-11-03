@@ -148,6 +148,12 @@ int check_feature_table() {
                            ninferno::generation_row(13, 0).attention_chain &&
                            !ninferno::attention_chain_measured(13, 0),
                        "the attention chain only where its generation measured it");
+    failures += expect(ninferno::mmq_candidate_measured(12, 0) &&
+                           ninferno::mmq_candidate_measured(8, 9) &&
+                           !ninferno::mmq_candidate_measured(8, 0) &&
+                           ninferno::generation_row(13, 0).mmq_candidate &&
+                           !ninferno::mmq_candidate_measured(13, 0),
+                       "ggml's matrix kernel a cost candidate only on a generation of the table's own");
     // Measured data carries by board, not chip: the RTX 5070 Ti (70 SMs, 48 MiB L2, 896 GB/s) is
     // nearest the RTX 5080 of the measured sm_120 boards, and no board of another instruction set
     // is near at all.
