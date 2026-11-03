@@ -1165,7 +1165,8 @@ Json quant_plan_json(const QuantPlan& plan) {
                                 {"request_seconds", round_to(row.request_seconds, 0.001)},
                                 {"prompt", choice::kRequestPrompt},
                                 {"answer", choice::kRequestAnswer},
-                                {"transferred", row.estimate->transferred}};
+                                {"transferred", row.estimate->transferred},
+                                {"speed_basis", std::string(choice::speed_basis_name(row.estimate->basis))}};
         } else {
             item["estimate"] = nullptr;
         }
