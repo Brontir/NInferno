@@ -269,6 +269,12 @@ include("${CMAKE_CURRENT_LIST_DIR}/linear_add/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_pair/tests.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/linear_swiglu/tests.cmake")
 
+# The causal cache attention's one admitted domain (#312): each refusal named with its kind, the
+# plans and the workspace query agreeing at the boundaries for every KV storage. No GPU.
+ninferno_add_op_test(ninferno_causal_admission_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/softmax_attention/test_causal_admission.cpp"
+  LIBRARIES ninferno_ops)
+
 # The position-aligned KV splits of the invariant route profile (CausalKvPartition): a host replica
 # of the aligned grouped kernel's split walk gives every token its decode's partials under any
 # prompt chunking; prints the split plan per SM count. No GPU.

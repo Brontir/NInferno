@@ -7,20 +7,76 @@
 #include "ninferno/ops/softmax_attention.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
 namespace ninferno::ops::detail {
 
-// Every causal KV plan admits the same inputs: an admitted geometry, 1-8 rows (16 tokens each
-// past one row) and a non-empty envelope within the maximum visible keys.
+// The causal KV plans' shared execution contract: at most kCausalMaxBatch rows a call, and past
+// one row at most kCausalMaxBatchedWidth columns each (the speculative verify widths).
+inline constexpr int kCausalMaxBatch        = 8;
+inline constexpr int kCausalMaxBatchedWidth = 16;
+
+// What kind of restriction refuses a causal call (#312): Semantic, no call at all (no row or
+// column, an empty or inverted envelope of visible keys); Contract, the plans' shared execution
+// contract (the row and width bounds above, the visible keys within
+// kCausalAttentionMaximumVisibleKeys, the partition's capacity); Coverage, what is compiled (a
+// head pair not instantiated: causal_geometry.h).
+enum class CausalRestriction : std::uint8_t { Semantic, Contract, Coverage };
+[[nodiscard]] constexpr const char* causal_restriction_name(CausalRestriction kind) noexcept {
+    switch (kind) {
+    case CausalRestriction::Semantic: return "not a call";
+    case CausalRestriction::Contract: return "the execution contract";
+    case CausalRestriction::Coverage: return "not compiled";
+    }
+    return "";
+}
+struct CausalRefusal {
+    CausalRestriction kind;
+    const char* why;
+};
+
+// The one domain every causal path admits (#312): the plans (one width), the workspace query and
+// the batched launch (a width interval) ask it, so they cannot disagree. nullopt: admitted.
+[[nodiscard]] constexpr std::optional<CausalRefusal>
+causal_domain_refusal(int heads, int kv_heads, int batch, int min_width, int max_width,
+                      CausalAttentionExecutionEnvelope envelope) noexcept {
+    using K = CausalRestriction;
+    if (batch < 1 || min_width < 1 || max_width < min_width) {
+        return CausalRefusal{K::Semantic, "a call needs a row and a column (and widths in order)"};
+    }
+    if (envelope.min_visible_keys == 0 || envelope.min_visible_keys > envelope.max_visible_keys) {
+        return CausalRefusal{K::Semantic, "an empty or inverted envelope of visible keys"};
+    }
+    if (batch > kCausalMaxBatch) { return CausalRefusal{K::Contract, "more than 8 rows a call"}; }
+    if (batch > 1 && max_width > kCausalMaxBatchedWidth) {
+        return CausalRefusal{K::Contract, "more than 16 columns a row in a call of several rows"};
+    }
+    if (envelope.max_visible_keys > kCausalAttentionMaximumVisibleKeys) {
+        return CausalRefusal{K::Contract, "more visible keys than the partition holds"};
+    }
+    if (!causal_geometry_supported(heads, kv_heads)) {
+        return CausalRefusal{K::Coverage, "a head pair no kernel is instantiated for"};
+    }
+    return std::nullopt;
+}
+
+// "<op>: <why> (<kind>)", the refusal said before any launch.
+[[nodiscard]] inline std::string causal_refusal_message(const char* op, CausalRefusal refusal) {
+    return std::string(op) + ": " + refusal.why + " (" + causal_restriction_name(refusal.kind) +
+           ")";
+}
+
+// Every causal KV plan admits the same inputs (causal_domain_refusal at one width).
 inline void require_causal_plan_inputs(const char* dtype, int heads, int kv_heads, int width,
                                        int batch, CausalAttentionExecutionEnvelope envelope) {
-    if (!causal_geometry_supported(heads, kv_heads) || width < 1 || batch < 1 || batch > 8 ||
-        (batch > 1 && width > 16) || envelope.min_visible_keys == 0 ||
-        envelope.min_visible_keys > envelope.max_visible_keys ||
-        envelope.max_visible_keys > kCausalAttentionMaximumVisibleKeys)
-        throw std::invalid_argument(std::string(dtype) + " attention: invalid plan inputs");
+    if (const auto refusal =
+            causal_domain_refusal(heads, kv_heads, batch, width, width, envelope)) {
+        throw std::invalid_argument(
+            causal_refusal_message((std::string(dtype) + " attention").c_str(), *refusal));
+    }
 }
 
 static_assert(CausalKvPartition::kAlignedSplits <= CausalKvPartition::kMaxSplits);
