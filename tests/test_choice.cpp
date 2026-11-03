@@ -1949,6 +1949,11 @@ void choices_replay(const json& fixture) {
                                     return r;
                                 }(),
                                 [&] {
+                                    auto r = record.inputs;
+                                    r["model"]["state_bytes"]["99"] = 1;
+                                    return r;
+                                }(),
+                                [&] {
                                     auto r                       = record.inputs;
                                     r["allowed"]["automatic_kv"] = 4294967296LL;
                                     return r;

@@ -115,12 +115,20 @@ int storage_key(const std::string& key) {
     return std::stoi(key);
 }
 
-template <class E>
-std::function<std::uint64_t(E)> table_fn(const json& table, const char* what) {
+// Its keys are the codes of `storages`, the ones storage_table writes: any other is malformed.
+template <class E, std::size_t N>
+std::function<std::uint64_t(E)> table_fn(const json& table, const char* what,
+                                         const std::array<E, N>& storages) {
     if (table.is_null()) { return {}; }
     if (!table.is_object()) { throw std::invalid_argument(std::string("a ") + what + " table that is no object"); }
     auto values = std::make_shared<std::map<int, std::uint64_t>>();
-    for (const auto& [k, v] : table.items()) { (*values)[storage_key(k)] = unsigned_of<std::uint64_t>(v); }
+    for (const auto& [k, v] : table.items()) {
+        const int key = storage_key(k);
+        if (std::none_of(storages.begin(), storages.end(), [&](E s) { return code(s) == key; })) {
+            throw std::invalid_argument(std::string("a ") + what + " table key of no storage: " + k);
+        }
+        (*values)[key] = unsigned_of<std::uint64_t>(v);
+    }
     return [values, what](E e) -> std::uint64_t {
         const auto it = values->find(code(e));
         if (it == values->end()) {
@@ -196,9 +204,9 @@ ModelFacts model_of(const json& j) {
     read(m.layers, j.at("layers"));
     read(m.hidden, j.at("hidden"));
     read(m.prompt_tail_calls, j.at("prompt_tail_calls"));
-    m.kv_bytes_per_token       = table_fn<KvCacheStorage>(j.at("kv_bytes_per_token"), "KV bytes");
-    m.ring_bytes_per_token     = table_fn<KvCacheStorage>(j.at("ring_bytes_per_token"), "ring bytes");
-    m.state_bytes              = table_fn<RecurrentStateStorage>(j.at("state_bytes"), "state bytes");
+    m.kv_bytes_per_token       = table_fn(j.at("kv_bytes_per_token"), "KV bytes", kKvStorages);
+    m.ring_bytes_per_token     = table_fn(j.at("ring_bytes_per_token"), "ring bytes", kKvStorages);
+    m.state_bytes              = table_fn(j.at("state_bytes"), "state bytes", kStateStorages);
     read(m.window, j.at("window"));
     read(m.full_attention_width, j.at("full_attention_width"));
     read(m.sliding_attention_width, j.at("sliding_attention_width"));
