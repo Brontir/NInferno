@@ -70,7 +70,8 @@ struct LinearCandidate {
 // linear() calls ("separate", A16 as linear_pair's contract has it), each with the candidates of
 // its two calls (`parts`: linear_candidates of each weight, the first then the second). Selected:
 // the one linear_pair runs; the fused kernel is Unavailable with what lacks where it does not
-// apply; the separate calls are Inadmissible ("fused") where the fused kernel takes the pair.
+// apply; the separate calls are Inadmissible ("fused") where the fused kernel takes the pair,
+// Unavailable where the shapes differ or linear() runs nothing for a weight.
 struct LinearPairCandidate {
     std::string id;
     LinearCandidate::Status status = LinearCandidate::Status::Unavailable;

@@ -104,7 +104,8 @@ std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, con
     const bool same  = first.n > 0 && first.k > 0 && first.n == second.n && first.k == second.k;
     LinearPairCandidate kernel{"fused:q8_pair", fused ? Status::Selected : Status::Unavailable, "", {}};
     if (!fused) {
-        kernel.why = !q8_pair_registered(first.n, first.k)
+        kernel.why = !same ? "the two weights must share one [N,K] shape"
+                     : !q8_pair_registered(first.n, first.k)
                          ? "no fused kernel for this [N,K]"
                          : "the weights are not the fused kernel's RowSplit Q8_G32 layout with FP16 "
                            "scales";
@@ -113,15 +114,29 @@ std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, con
     if (!same) {
         separate.why = "the two weights must share one [N,K] shape";
     } else {
-        separate.status = fused ? Status::Inadmissible : Status::Selected;
-        separate.why    = fused ? "fused" : "";
+        // Each call runs only where linear() selects an implementation for it (a ggml_frag_v1
+        // weight, or the invariant profile on a format only the shape's kernels read, has none).
+        bool both_run = true;
         for (const Weight* w : {&first, &second}) {
+            bool runs = false;
             for (LinearCandidate& c : linear_candidates(*w, LinearPolicy::A16Only, tokens)) {
+                runs = runs || c.status == Status::Selected;
                 separate.parts.push_back(std::move(c));
             }
+            both_run = both_run && runs;
+        }
+        if (!both_run) {
+            separate.why = "linear() runs no implementation for a weight (its parts say why)";
+        } else {
+            separate.status = fused ? Status::Inadmissible : Status::Selected;
+            separate.why    = fused ? "fused" : "";
         }
     }
-    return {std::move(kernel), std::move(separate)};
+    std::vector<LinearPairCandidate> out;
+    out.reserve(2);
+    out.push_back(std::move(kernel));
+    out.push_back(std::move(separate));
+    return out;
 }
 
 } // namespace detail

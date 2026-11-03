@@ -96,6 +96,22 @@ int main() {
                       c[0].why.find("layout") != std::string::npos && c[1].status == Status::Selected,
                   "1024x5120 BF16:" + describe(c) + at);
         }
+        // The fused kernel's K/V geometry (1024 x 2048).
+        {
+            const Described f(QType::Q8_G32_FP16, 1024, 2048, a), s(QType::Q8_G32_FP16, 1024, 2048, b);
+            const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
+            check(c.size() == 2 && c[0].status == Status::Selected && c[1].status == Status::Inadmissible,
+                  "1024x2048 Q8:" + describe(c) + at);
+        }
+        // A fragment-order pair: linear() refuses each weight, so neither path runs.
+        {
+            Described f(QType::Q8_G32_FP16, 1024, 4096, a), s(QType::Q8_G32_FP16, 1024, 4096, b);
+            f.weight.layout = ninferno::QuantLayout::GgmlFrag;
+            s.weight.layout = ninferno::QuantLayout::GgmlFrag;
+            const auto c = ops::detail::linear_pair_candidates(f.weight, s.weight, t);
+            check(c.size() == 2 && c[0].status != Status::Selected && c[1].status == Status::Unavailable,
+                  "ggml_frag_v1 pair:" + describe(c) + at);
+        }
         // Two shapes: linear_pair refuses them; nothing is selected.
         {
             const Described f(QType::Q8_G32_FP16, 1024, 4096, a), s(QType::Q8_G32_FP16, 2048, 4096, b);
