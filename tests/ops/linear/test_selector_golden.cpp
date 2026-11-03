@@ -186,6 +186,38 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                                     what += q ? " query=" + generic::route_name(*q)
                                               : std::string(" query=none");
                                 }
+                                // The engine's call (contiguous, aligned) in the workspace the
+                                // plan reserves for it (workspace_capacity_bytes) runs what was
+                                // selected (#298): the planned scratch is what the launch needs,
+                                // and nothing demotes it but a W4A8 tile the weight is not
+                                // admitted to (the same bytes). The resolved query resolves as the
+                                // launch does. Either difference shows in the dump.
+                                const std::size_t own =
+                                    generic::workspace_capacity_bytes(problem, &w, t, t);
+                                const generic::ResolvedRoute ran = generic::resolve_route(
+                                    r, w,
+                                    generic::CallLayout{.ldx            = shape.k,
+                                                        .tokens         = t,
+                                                        .rows           = rows,
+                                                        .epilogue       = epilogue,
+                                                        .workspace_free = own});
+                                // The pre-quantized R8 form reads its planes from that workspace.
+                                if (ran.r8_prequantized &&
+                                    generic::route_workspace_bytes(ran.executed, shape.k, t) > own) {
+                                    what += " r8_planes_unplanned";
+                                }
+                                if (ran.reason != generic::Demotion::None &&
+                                    ran.reason != generic::Demotion::W4a8Admission) {
+                                    what += " runs=" + generic::route_name(ran.executed) + " (" +
+                                            std::string(generic::demotion_name(ran.reason)) + ")";
+                                }
+                                const auto rq = generic::resolved_route_query(
+                                    d, qtype, policy, epilogue, rows, shape.k, t, own, prefill);
+                                if (!rq || !(rq->executed == ran.executed) ||
+                                    rq->r8_prequantized != ran.r8_prequantized) {
+                                    what += rq ? " resolved_query=" + generic::route_name(rq->executed)
+                                               : std::string(" resolved_query=none");
+                                }
                             } catch (const std::exception& error) {
                                 what = std::string("threw: ") + error.what();
                             }

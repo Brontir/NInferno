@@ -717,14 +717,17 @@ std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::in
     return layout.peak_bytes(1);
 }
 
-// Whether mmq_workspace_bytes' layout fits the rest of the arena. Its blocks are 256-aligned, so
-// from the arena's next 256-byte address they land exactly as the layout counted them: an arena
-// the planner sized to the route holds it with nothing to spare.
-bool mmq_fits(const DeviceArena& workspace, std::size_t bytes) {
-    const auto base = reinterpret_cast<std::uintptr_t>(workspace.base());
+// The bytes free in the rest of the arena from its next 256-byte address (nullopt: no arena; 0
+// where that address is already past its end: no route's planes are empty), against
+// which mmq_workspace_bytes' layout is held (resolve_route). Its blocks are 256-aligned, so from
+// there they land exactly as the layout counted them: an arena the planner sized to the route
+// holds it with nothing to spare.
+std::optional<std::size_t> workspace_free(const DeviceArena* workspace) {
+    if (workspace == nullptr) return std::nullopt;
+    const auto base = reinterpret_cast<std::uintptr_t>(workspace->base());
     const auto start =
-        ((base + workspace.used() + 255U) & ~static_cast<std::uintptr_t>(255U)) - base;
-    return start <= workspace.capacity() && bytes <= workspace.capacity() - start;
+        ((base + workspace->used() + 255U) & ~static_cast<std::uintptr_t>(255U)) - base;
+    return start <= workspace->capacity() ? workspace->capacity() - start : 0;
 }
 
 std::atomic<std::uint64_t> mmq_fallbacks{0};
@@ -3838,6 +3841,126 @@ int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArg
 }
 } // namespace
 
+std::string_view demotion_name(Demotion demotion) noexcept {
+    switch (demotion) {
+    case Demotion::None: return "none";
+    case Demotion::Alignment: return "alignment";
+    case Demotion::W4a8Admission: return "w4a8_admission";
+    case Demotion::R8Fit: return "r8_fit";
+    case Demotion::GgmlLayout: return "ggml_layout";
+    case Demotion::GgmlWorkspace: return "ggml_workspace";
+    case Demotion::Workspace: return "workspace";
+    }
+    return "none";
+}
+
+Route workspace_free_route(Route selected, const Problem& problem, const Weight& weight,
+                           std::int32_t tokens, bool prefill, bool workspace) {
+    if ((selected.family == Family::W4a4Mma || selected.family == Family::W4a8Mma ||
+         selected.family == Family::I8Mma) &&
+        !workspace) {
+        return heuristic_route(
+            Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
+            weight, tokens, prefill);
+    }
+    return selected;
+}
+
+ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
+    ResolvedRoute out{.asked = asked, .executed = asked};
+    Route& route      = out.executed;
+    const bool x16    = call.x_aligned16;
+    const bool staged = x16 && (call.ldx % 8) == 0; // each token in 16-byte copies
+    const auto demote = [&](Route to, Demotion why) {
+        if (to.family != route.family || to.schedule != route.schedule) out.reason = why;
+        route = to;
+    };
+    if (!x16 && route.family == Family::RegisterMma) demote(Route{Family::Scalar, 0}, Demotion::Alignment);
+    if (route.family == Family::TiledMma && !staged) demote(Route{Family::Scalar, 0}, Demotion::Alignment);
+    // The NVFP4 tiled route stages activations in 16-byte copies; otherwise the register MMA of
+    // the same order takes the call (or the scalar route where that cannot read x either).
+    if (route.family == Family::Nvfp4TiledMma && !staged) {
+        const int classes = nvfp4_tiled_schedule_info(route.schedule).classes;
+        demote(x16 ? Route{Family::RegisterMma,
+                           static_cast<std::uint8_t>(classes == 1 ? rmma_index(4, 1, 1, 8)
+                                                                  : rmma_index(1, classes, 1, 4))}
+                   : Route{Family::Scalar, 0},
+               Demotion::Alignment);
+    }
+    // The W4A8 quantizer reads 32 BF16 values of a token as four 16-byte words, the I8 one 64.
+    if ((route.family == Family::W4a8Mma || route.family == Family::I8Mma) && !staged) {
+        demote(Route{Family::Scalar, 0}, Demotion::Alignment);
+    }
+    // A producer-warp W4A8 tile the weight is not admitted to (another format, an IQ3_XXS sign
+    // plane off 8 bytes) runs the classic tile of its shape: the same bytes.
+    demote(w4a8_executed_route(route, w), Demotion::W4a8Admission);
+    if (route.family == Family::StagedMma && !staged) {
+        // The register MMA with WarpsK == 1 gives the same bytes; the scalar kernel where even it
+        // cannot read x, as for the register MMA.
+        demote(x16 ? Route{Family::RegisterMma, static_cast<std::uint8_t>(rmma_index(4, 1, 1, 8))}
+                   : Route{Family::Scalar, 0},
+               Demotion::Alignment);
+    }
+    // The A16 route a call the quantized families cannot take runs.
+    const auto a16 = [&] {
+        const Problem problem{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
+        Route r{Family::RegisterMma,
+                static_cast<std::uint8_t>(heuristic_rmma(problem, call.tokens, false))};
+        if (!x16 || (w.k % k_multiple(codec_of(w))) != 0) r = Route{Family::Scalar, 0};
+        return r;
+    };
+    // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
+    // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
+    // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
+    // Its planes in the workspace free to the call: a workspace short of them takes the CTA's own
+    // quantization where the tokens fit it, else A16 (said as a demotion), not an allocation
+    // failure at the launch.
+    out.r8_prequantized = route.family == Family::R8Mma && call.tokens >= 2 &&
+                          call.tokens <= kR8VerifyTokens && call.workspace_free.has_value() &&
+                          r8_verify_compiled(w.qtype) &&
+                          *call.workspace_free >= route_workspace_bytes(route, w.k, call.tokens);
+    if (route.family == Family::R8Mma &&
+        (!staged || !(out.r8_prequantized || r8_fits(w.qtype, w.k, call.tokens)))) {
+        demote(a16(), staged ? Demotion::R8Fit : Demotion::Alignment);
+    }
+    if (route.family != Family::R8Mma) out.r8_prequantized = false;
+    // The quantized-activation families take their planes from the workspace: given less than
+    // they need, the call runs A16 (said as a demotion) instead of failing to allocate at the
+    // launch. Without any workspace run() already took A16 (workspace_free_route).
+    if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
+         route.family == Family::I8Mma) &&
+        call.workspace_free && *call.workspace_free < route_workspace_bytes(route, w.k, call.tokens)) {
+        demote(a16(), Demotion::Workspace);
+    }
+    // ggml's matrix kernel needs its planes in the workspace and x in 8-byte words; a call it
+    // cannot take runs A16 (the same route the heuristic gives without the band).
+    const int plane_rows = call.epilogue == Epilogue::SwiGlu ? 2 * call.rows : call.rows;
+    const auto free_for  = [&](std::size_t bytes) {
+        return call.workspace_free.has_value() && bytes <= *call.workspace_free;
+    };
+    if (route.family == Family::GgmlMmq) {
+        if (!call.workspace_free) {
+            demote(a16(), Demotion::GgmlWorkspace);
+        } else if (!x16 || (call.ldx % 4) != 0) {
+            demote(a16(), Demotion::Alignment);
+        } else if ((call.rows % ggml_mmq::kRowMultiple) != 0) {
+            demote(a16(), Demotion::GgmlLayout);
+        } else if (!free_for(mmq_workspace_bytes(w.k, plane_rows,
+                                                 std::min(call.tokens, kMmqPrefillSlice)))) {
+            demote(a16(), Demotion::GgmlWorkspace);
+        }
+        out.ggml_fallback = route.family != Family::GgmlMmq;
+    } else if (route.family == Family::GgmlVec) {
+        if (call.segments > ggml_mmq::kVecMaxSegments) {
+            demote(a16(), Demotion::GgmlLayout);
+        } else if (!free_for(vec_workspace_bytes(w.k, std::min(call.tokens, ggml_mmq::kVecMaxColumns)))) {
+            demote(a16(), Demotion::GgmlWorkspace);
+        }
+        out.ggml_fallback = route.family != Family::GgmlVec;
+    }
+    return out;
+}
+
 void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cudaStream_t stream,
                bool* released) {
     if (released != nullptr) *released = false;
@@ -3868,75 +3991,22 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     }
     GemmArgs args     = make_args(call);
     const Route asked = route;
-    if (!aligned_to(args.x, 16) && route.family == Family::RegisterMma) {
-        route = Route{Family::Scalar, 0};
-    }
-    if (route.family == Family::TiledMma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0)) {
-        route = Route{Family::Scalar, 0};
-    }
-    // The NVFP4 tiled route stages activations in 16-byte copies; otherwise the register MMA of
-    // the same order takes the call (or the scalar route where that cannot read x either).
-    if (route.family == Family::Nvfp4TiledMma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0)) {
-        const int classes = nvfp4_tiled_schedule_info(route.schedule).classes;
-        route             = aligned_to(args.x, 16)
-                                ? Route{Family::RegisterMma,
-                            static_cast<std::uint8_t>(classes == 1 ? rmma_index(4, 1, 1, 8)
-                                                                               : rmma_index(1, classes, 1, 4))}
-                                : Route{Family::Scalar, 0};
-    }
-    // The W4A8 quantizer reads 32 BF16 values of a token as four 16-byte words, the I8 one 64.
-    if ((route.family == Family::W4a8Mma || route.family == Family::I8Mma) &&
-        (!aligned_to(args.x, 16) || (args.ldx % 8) != 0)) {
-        route = Route{Family::Scalar, 0};
-    }
-    // A producer-warp W4A8 tile the weight is not admitted to (another format, an IQ3_XXS sign
-    // plane off 8 bytes) runs the classic tile of its shape: the same bytes.
-    route = w4a8_executed_route(route, w);
-    if (route.family == Family::StagedMma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0)) {
-        // The register MMA with WarpsK == 1 gives the same bytes; the scalar kernel where even it
-        // cannot read x, as for the register MMA.
-        route = aligned_to(args.x, 16)
-                    ? Route{Family::RegisterMma, static_cast<std::uint8_t>(rmma_index(4, 1, 1, 8))}
-                    : Route{Family::Scalar, 0};
-    }
-    // R8 quantizes 32 BF16 values of a token as four 16-byte words, and holds the call's tokens in
-    // shared memory; a call it cannot take (a route table or a probe naming it) runs A16.
-    // At verify widths a format with the pre-quantized form needs the workspace instead of the fit.
-    const bool r8_pre = route.family == Family::R8Mma && args.tokens >= 2 &&
-                        args.tokens <= kR8VerifyTokens && workspace != nullptr &&
-                        r8_verify_compiled(w.qtype);
-    if (route.family == Family::R8Mma && (!aligned_to(args.x, 16) || (args.ldx % 8) != 0 ||
-                                          !(r8_pre || r8_fits(w.qtype, args.k, args.tokens)))) {
-        const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
-        route = Route{Family::RegisterMma,
-                      static_cast<std::uint8_t>(heuristic_rmma(a16, args.tokens, false))};
-        if (!aligned_to(args.x, 16) || (w.k % k_multiple(codec_of(w))) != 0) {
-            route = Route{Family::Scalar, 0};
-        }
-    }
-    // ggml's matrix kernel needs its planes in the workspace and x in 8-byte words; a call it
-    // cannot take runs A16 (the same route the heuristic gives without the band).
+    const ResolvedRoute resolved =
+        resolve_route(route, w,
+                      CallLayout{.x_aligned16    = aligned_to(args.x, 16),
+                                 .ldx            = args.ldx,
+                                 .tokens         = args.tokens,
+                                 .rows           = call.rows,
+                                 .segments       = args.segments,
+                                 .epilogue       = call.epilogue,
+                                 .workspace_free = workspace_free(workspace)});
+    route             = resolved.executed;
+    const bool r8_pre = resolved.r8_prequantized;
+    // A caller that sized its workspace short of ggml's route (said below, with every other
+    // demotion) is counted too (ggml_mmq_fallback_count).
+    if (resolved.ggml_fallback) mmq_fallbacks.fetch_add(1, std::memory_order_relaxed);
     const bool gated     = call.epilogue == Epilogue::SwiGlu;
     const int plane_rows = gated ? 2 * call.rows : call.rows;
-    if ((route.family == Family::GgmlMmq &&
-         (workspace == nullptr || !aligned_to(args.x, 16) || (args.ldx % 4) != 0 ||
-          (call.rows % ggml_mmq::kRowMultiple) != 0 ||
-          !mmq_fits(*workspace, mmq_workspace_bytes(w.k, plane_rows,
-                                                    std::min(args.tokens, kMmqPrefillSlice))))) ||
-        (route.family == Family::GgmlVec &&
-         (workspace == nullptr || args.segments > ggml_mmq::kVecMaxSegments ||
-          !mmq_fits(*workspace,
-                    vec_workspace_bytes(w.k, std::min(args.tokens, ggml_mmq::kVecMaxColumns)))))) {
-        // A caller that sized its workspace short of the route (said below, with every other
-        // demotion) is counted here too (ggml_mmq_fallback_count).
-        mmq_fallbacks.fetch_add(1, std::memory_order_relaxed);
-        const Problem a16{w.qtype, LinearPolicy::A16Only, call.rows, w.k, call.epilogue};
-        route = Route{Family::RegisterMma,
-                      static_cast<std::uint8_t>(heuristic_rmma(a16, args.tokens, false))};
-        if (!aligned_to(args.x, 16) || (w.k % k_multiple(codec_of(w))) != 0) {
-            route = Route{Family::Scalar, 0};
-        }
-    }
     if (route.family != asked.family && !same_bytes(asked, route)) {
         note_demotion(asked, route, call.rows, args.tokens, w.k, aligned_to(args.x, 16), args.ldx,
                       workspace != nullptr ? workspace->capacity() : 0);
@@ -4318,14 +4388,10 @@ void run(const Call& call, LinearPolicy policy, WorkspaceArena* workspace, cudaS
     const Problem problem{call.weight->qtype, policy, call.rows, call.weight->k, call.epilogue};
     record_problem(problem);
     tune_dense(problem, call, stream);
-    Route route = select_route(problem, *call.weight, call.x->ne[1], prefill_routes_active());
-    if ((route.family == Family::W4a4Mma || route.family == Family::W4a8Mma ||
-         route.family == Family::I8Mma) &&
-        workspace == nullptr) {
-        route = heuristic_route(
-            Problem{problem.qtype, LinearPolicy::A16Only, problem.n, problem.k, problem.epilogue},
-            *call.weight, call.x->ne[1], prefill_routes_active());
-    }
+    const Route route =
+        workspace_free_route(select_route(problem, *call.weight, call.x->ne[1], prefill_routes_active()),
+                             problem, *call.weight, call.x->ne[1], prefill_routes_active(),
+                             workspace != nullptr);
     run_route(route, call, workspace, stream, released);
 }
 
