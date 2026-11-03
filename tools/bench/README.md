@@ -51,7 +51,8 @@ Input is one `ninferno-selection-regret/1` JSON document, with a frozen `selecto
 `build_id` identifying the kernels/compiler/options/route tables, `holdout` (`board`, `model` or
 `both`), explicit `fit_boards` and `fit_models` arrays, and `cases`. Each case supplies:
 
-- `id`, `board`, `model`: stable case and board/checkpoint identities. Group all shapes and quant
+- `id`, `board`, `model`: stable case and board/checkpoint identities (a case `id` unique in the
+  document; no outer whitespace in any identity). Group all shapes and quant
   variants of one checkpoint under the same model identity; aliases must be normalized upstream.
 - `workload`: an unambiguous workload/protocol key including geometry, input/corpus, quant/layout,
   T, context/concurrency, numerical policy, memory budget and eager/graph/cache mode as applicable.
@@ -94,7 +95,8 @@ Summaries report equal-case-weight geometric mean slowdown, median, nearest-rank
 regret, plus separate board/model summaries. They are descriptive, not confidence intervals or
 uncertainty estimates. Keep raw pass timings; collect interleaved matched runs with the same
 workload and report variation before drawing performance conclusions. Single-pass inputs are
-accepted and visibly reported as such, not treated as evidence of repeatability.
+accepted and reported as such (`passes` per case, `single_pass_cases` in each summary), not
+treated as evidence of repeatability.
 
 Any missing admitted alternative makes the case `incomplete`, an unqualified selected candidate
 is `invalid_selection`, and fewer than two qualified measured candidates gives `no_comparison`.

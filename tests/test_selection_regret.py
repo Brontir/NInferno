@@ -154,6 +154,40 @@ class SelectionRegretTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "same measurement passes"):
             regret.evaluate(data)
 
+    def test_mismatched_passes_are_invalid_whatever_the_status(self):
+        data = document()
+        data["cases"][0]["candidates"][1]["samples_ms"] = {"x": 10}
+        data["cases"][0]["candidates"].append(
+            {"id": "missing", "status": "unmeasured", "reason": "benchmark crashed"})
+        with self.assertRaisesRegex(ValueError, "same measurement passes"):
+            regret.evaluate(data)
+
+    def test_whitespace_identities_rejected(self):
+        for field in ("board", "model", "id", "selected"):
+            data = document()
+            data["cases"][0][field] = data["cases"][0][field] + " "
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "whitespace"):
+                regret.evaluate(data)
+        data = document()
+        data["fit_boards"] = ["held-board "]
+        with self.assertRaisesRegex(ValueError, "whitespace"):
+            regret.evaluate(data)
+
+    def test_case_ids_unique_across_boards(self):
+        data = document()
+        other = copy.deepcopy(data["cases"][0])
+        other["board"] = "held-board-2"
+        data["cases"].append(other)
+        with self.assertRaisesRegex(ValueError, "duplicate case identity"):
+            regret.evaluate(data)
+
+    def test_single_pass_cases_are_counted(self):
+        data = document()
+        for row in data["cases"][0]["candidates"]:
+            row["samples_ms"] = {"a": row["samples_ms"]["a"]}
+        self.assertEqual(regret.evaluate(data)["summary"]["single_pass_cases"], 1)
+        self.assertEqual(regret.evaluate(document())["summary"]["single_pass_cases"], 0)
+
     def test_bad_measurements_rejected(self):
         for value in (0, -1, True, "10", None, float("nan"), float("inf")):
             with self.subTest(value=value):
@@ -205,6 +239,9 @@ class SelectionRegretTest(unittest.TestCase):
                 if expected != 2:
                     self.assertEqual(len(json.loads(out.getvalue())["input_sha256"]), 64)
             path.write_text('{"cases": [], "cases": []}', encoding="utf-8")
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(regret.main([str(path)]), 2)
+            path.write_text("[" * 100000 + "]" * 100000, encoding="utf-8")
             with contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(regret.main([str(path)]), 2)
 

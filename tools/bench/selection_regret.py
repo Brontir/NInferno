@@ -20,6 +20,8 @@ def require(condition, message):
 
 def name(value, where):
     require(isinstance(value, str) and bool(value.strip()), f"{where}: expected nonempty string")
+    # An identity with outer whitespace would compare unequal to the same name (a holdout leak).
+    require(value == value.strip(), f"{where}: leading or trailing whitespace")
     return value
 
 
@@ -51,6 +53,7 @@ def summarize(rows):
         "cases": len(rows),
         "statuses": dict(sorted(Counter(r["status"] for r in rows).items())),
         "scored_cases": len(complete),
+        "single_pass_cases": sum(1 for r in complete if r["passes"] == 1),
         "geomean_slowdown": math.exp(math.fsum(math.log1p(x) for x in values) / len(values))
         if values else None,
         "median_regret": statistics.median(values) if values else None,
@@ -85,6 +88,9 @@ def score_case(case):
         require(isinstance(samples, dict) and samples, f"{key}: no measurements")
         timings[key] = {name(p, "pass"): positive(t, f"{key}/{p}")
                         for p, t in samples.items()}
+    # Matched passes are part of the input's validity, whatever status the case ends with.
+    pass_sets = {frozenset(t) for t in timings.values()}
+    require(len(pass_sets) <= 1, f"{result['id']}: candidates must have the same measurement passes")
     selected = result["selected"]
     require(selected in seen, f"{result['id']}: selected candidate is absent from inventory")
     result["candidate_count"] = len(seen)
@@ -101,8 +107,6 @@ def score_case(case):
         result["status"] = "no_comparison"
         return result
     passes = set(timings[selected])
-    require(all(set(t) == passes for t in timings.values()),
-            f"{result['id']}: candidates must have the same measurement passes")
     medians = {k: statistics.median(t[p] for p in sorted(passes)) for k, t in timings.items()}
     for key, median in medians.items():
         positive(median, f"{key}: median")
@@ -134,9 +138,8 @@ def evaluate(document, max_regret=None):
     rows, seen = [], set()
     for case in cases:
         row = score_case(case)
-        key = (row["board"], row["model"], row["id"])
-        require(key not in seen, f"duplicate case identity: {key}")
-        seen.add(key)
+        require(row["id"] not in seen, f"duplicate case identity: {row['id']}")
+        seen.add(row["id"])
         require(holdout not in ("board", "both") or row["board"] not in fit_boards,
                 f"{row['id']}: held-out board is in fit_boards")
         require(holdout not in ("model", "both") or row["model"] not in fit_models,
@@ -169,7 +172,7 @@ def main(argv=None):
         raw = args.input.read_bytes()
         report = evaluate(json.loads(raw, object_pairs_hook=unique_object), args.max_regret)
         report["input_sha256"] = hashlib.sha256(raw).hexdigest()
-    except (OSError, UnicodeError, ValueError, OverflowError) as error:
+    except (OSError, UnicodeError, ValueError, OverflowError, RecursionError) as error:
         print(f"selection_regret: {error}", file=sys.stderr)
         return 2
     print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
