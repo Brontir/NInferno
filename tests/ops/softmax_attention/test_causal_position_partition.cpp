@@ -11,13 +11,17 @@
 //     step, per SM) at 4K..32K keys on 108/82/170/84/80/46 SMs, printed. The partition follows
 //     the position only, so it is the same on every card; the CTAs per SM show the fill.
 
+#include "ops/softmax_attention/common/causal_geometry.h"
 #include "ops/softmax_attention/common/causal_partition.h"
 #include "ops/softmax_attention/dense/causal_cache/bf16/split_policy.h"
 
 #include <algorithm>
 #include <cstdio>
 #include <random>
+#include <set>
+#include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -146,10 +150,53 @@ Partials replay_prompt(int length, const std::vector<int>& cuts, int group) {
     return out;
 }
 
+// The geometry list is the one source (#312): the supported predicate and the dispatch agree on
+// every head pair, and the dispatched geometry is the pair asked for at the head width.
+void check_geometry_registry() {
+    using ninferno::ops::detail::causal_geometry_supported;
+    using ninferno::ops::detail::with_causal_geometry;
+    int dispatched = 0;
+    for (int heads = 1; heads <= 64; ++heads) {
+        for (int kv_heads = 1; kv_heads <= 16; ++kv_heads) {
+            bool ran = false, right = false;
+            try {
+                with_causal_geometry(heads, kv_heads, [&]<class G>() {
+                    ran   = true;
+                    right = G::QHeads == heads && G::KVHeads == kv_heads &&
+                            G::kHeadDim == ninferno::ops::detail::kCausalHeadDim;
+                });
+            } catch (const std::invalid_argument&) {
+            }
+            const std::string pair = std::to_string(heads) + "/" + std::to_string(kv_heads);
+            expect(ran == causal_geometry_supported(heads, kv_heads),
+                   "geometry " + pair + ": supported as dispatched");
+            expect(!ran || right, "geometry " + pair + ": dispatched as asked");
+            dispatched += ran ? 1 : 0;
+        }
+    }
+    expect(dispatched == static_cast<int>(std::size(ninferno::ops::detail::kCausalHeadPairs)),
+           "every listed geometry dispatches, nothing else");
+    // The supported models' geometries, written here apart from the list (Qwen 3.5/3.6 dense and
+    // MoE, their MTP layers): a pair dropped from it, or one added, fails here until this is
+    // changed with it.
+    constexpr std::pair<int, int> kExpected[] = {{24, 4}, {16, 2}, {8, 2}, {16, 4}};
+    for (const auto [heads, kv_heads] : kExpected) {
+        expect(causal_geometry_supported(heads, kv_heads),
+               "geometry " + std::to_string(heads) + "/" + std::to_string(kv_heads) + " is supported");
+    }
+    expect(std::size(kExpected) == std::size(ninferno::ops::detail::kCausalHeadPairs),
+           "the list holds exactly the expected geometries");
+}
+
 void check_chunkings() {
     constexpr int length = 70000; // past the 32768- and 65536-key shift boundaries
     std::mt19937 rng(20261021u);
-    for (const int group : {4, 6, 8}) { // 16/4 and 8/2, 24/4, 16/2
+    // The query-head group of every causal geometry (kCausalHeadPairs), each once.
+    std::set<int> groups;
+    for (const auto pair : ninferno::ops::detail::kCausalHeadPairs) {
+        groups.insert(pair.query_heads / pair.kv_heads);
+    }
+    for (const int group : groups) {
         const std::string g = "group " + std::to_string(group) + " ";
         check_against_decode(replay_prompt(length, {}, group), length, g + "one call");
         for (int trial = 0; trial < 3; ++trial) {
@@ -228,6 +275,7 @@ int main() {
                CausalKvPartition::aligned_capacity(512) == 1 &&
                CausalKvPartition::aligned_capacity(513) == 2,
            "capacity: ceil(keys / 512), at most 64");
+    check_geometry_registry();
     check_chunkings();
     print_plan();
     if (failures)
