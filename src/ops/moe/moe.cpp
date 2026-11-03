@@ -842,7 +842,8 @@ struct ClassA8Route {
 // T = 1..8 with the R8 route to eight tokens (2026-11-03, master dd137f47, gate/up with the
 // register-MMA down, published layout, the schedule against w4r1):
 //   gb202: IQ2_XXS w4r2 -4.2 / -3.2 / -3.0 / -5.7 / -5.3 % at T = 4..8 (w4r1 best at 1..3);
-//          IQ2_XS w4r1 best to T = 7, w4r2 -2.6 % at 8; IQ2_S w4r1 best but T = 5 (w2r1 -3.1 %).
+//          IQ2_XS w4r1 best to T = 7, w4r2 -2.6 % at 8; IQ2_S w4r1 best but T = 5 (w2r1 -3.1 %,
+//          one width alone: w4r1 kept).
 //   gb203: IQ2_XXS w4r2 -6.1 / -2.6 / -6.9 / -8.2 / -8.8 / -9.3 % at T = 3..8; IQ2_XS w4r2
 //          -3.2 / -2.9 / -2.4 / -3.6 / -6.5 / -5.8 / -6.6 % at T = 2..8; IQ2_S w4r1 best to T =
 //          3, w2r1 -2.3 / -1.4 / -1.5 / -1.4 % at T = 4..7, w4r1 at 8.
