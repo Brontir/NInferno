@@ -304,9 +304,16 @@ private:
             out_.append(reinterpret_cast<const char*>(data), static_cast<std::size_t>(n));
         }
         while (!out_.empty()) {
-            const long n = link_.write(reinterpret_cast<const std::uint8_t*>(out_.data()), out_.size());
+            // A write that waited (TLS: WANT_WRITE) is retried with the same length: OpenSSL takes
+            // a moved buffer but not other bytes; what was appended since goes in the next write.
+            const std::size_t length = retry_length_ != 0 ? retry_length_ : out_.size();
+            const long n = link_.write(reinterpret_cast<const std::uint8_t*>(out_.data()), length);
             if (n < 0) { return false; }
-            if (n == 0) { break; }
+            if (n == 0) {
+                retry_length_ = length;
+                break;
+            }
+            retry_length_ = 0;
             out_.erase(0, static_cast<std::size_t>(n));
         }
         return true;
@@ -521,6 +528,7 @@ private:
     std::map<std::int32_t, std::shared_ptr<Stream>> streams_;
     std::vector<std::shared_ptr<Stream>> retiring_;
     std::string out_;
+    std::size_t retry_length_ = 0; // the length of a write that waited, retried as it was
     bool ping_outstanding_ = false;
     bool goaway_received_  = false;
     bool protocol_error_   = false;
