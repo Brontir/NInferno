@@ -1644,7 +1644,7 @@ int check_bank_refusals() {
         }
     }
 
-    MoeWeights layer;
+    ops::MoeWeights layer;
     layer.expert_policy = ops::LinearPolicy::AllowA8;
     is("Q4_K W4A8", moe::w4a8_bank_refusal(layer, q4k), R::None);
     is("BF16 W4A8", moe::w4a8_bank_refusal(layer, bank(QType::BF16, 2048, QuantLayout::RowSplit)),
