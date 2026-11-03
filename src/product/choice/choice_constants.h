@@ -784,10 +784,13 @@ struct QuantKldPoint {
     double kld;
     std::string_view label;
     int cards; // lab cards the point is measured on; below kQuantKldCards it informs, never decides
+    // The file measured: its SHA-256 (the hub's LFS digest, spec::weights_identity of one file).
+    // Only those bytes are the point's measurement; another file of the label is a proxy (#299).
+    std::string_view file;
 };
 
 inline constexpr std::string_view kQuantKldSource =
-    "Qwen3.5-9B GGUF against Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean; "
+    "unsloth/Qwen3.5-9B-GGUF (revision 3885219b) against its Q8_0, RTX 5070 Ti (2026-10-23) and RTX 4070 Ti (2026-10-24), the mean; "
     "UD-Q5_K_XL, Q5_K_S, UD-Q4_K_XL, Q4_K_S and IQ4_NL on the RTX 4060 Ti and RTX 4070 Ti (2026-10-29)";
 inline constexpr int kQuantKldCards = 2;
 // Bits per weight as the plan counts them: the weight bytes over the GGUF tensor table's
@@ -798,20 +801,34 @@ inline constexpr int kQuantKldCards = 2;
 // and top-1 agreement beside (perplexity alone misorders: Q3_K_M 5.029 below IQ4_XS 5.073, KLD
 // 0.068 above 0.028).
 inline constexpr QuantKldPoint kQuantKld[] = {
-    {8.516, 0.00000, "Q8_0", 2},       // ppl 4.9651, the reference
-    {6.665, 0.00629, "Q6_K", 2},       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
-    {6.016, 0.00940, "UD-Q5_K_XL", 2}, // 0.009399 on both (29.10); the curve gives 0.00985 at its bits
-    {5.878, 0.01061, "Q5_K_M", 2},     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
-    {5.674, 0.01103, "Q5_K_S", 2},     // 0.011029 on both (29.10), top-1 0.9670
-    {5.321, 0.01828, "UD-Q4_K_XL", 2}, // 0.018277 on both (29.10), top-1 0.9559
-    {5.080, 0.01925, "Q4_K_M", 2},     // 0.01930 / 0.01920 (0.019188 on both, 29.10), ppl 4.9997, top-1 0.9512
-    {4.810, 0.02248, "Q4_K_S", 2},     // 0.022480 on both (29.10), top-1 0.9462
-    {4.789, 0.02867, "IQ4_NL", 2},     // 0.028670 on both (29.10), top-1 0.9408
-    {4.617, 0.02845, "IQ4_XS", 2},     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
-    {4.174, 0.06812, "Q3_K_M", 2},     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
-    {3.584, 0.10710, "UD-IQ3_XXS", 2}, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
-    {3.259, 0.16145, "UD-IQ2_M", 2},   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
-    {2.855, 0.33460, "UD-IQ2_XXS", 2}, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
+    {8.516, 0.00000, "Q8_0", 2,       // ppl 4.9651, the reference
+     "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4"},
+    {6.665, 0.00629, "Q6_K", 2,       // 0.00623 / 0.00635, ppl 4.9714, top-1 0.9765
+     "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59"},
+    {6.016, 0.00940, "UD-Q5_K_XL", 2, // 0.009399 on both (29.10); the curve gives 0.00985 at its bits
+     "96cf42ddb97f9572410a72b9ed6f2299b1e887ee08da4c2a6c01e897cfa9f673"},
+    {5.878, 0.01061, "Q5_K_M", 2,     // 0.01058 / 0.01063, ppl 4.9665, top-1 0.9686
+     "dc2a39aef291f91a9116ad214058da0d86eb648743a124bd8c333787c4b9c91c"},
+    {5.674, 0.01103, "Q5_K_S", 2,     // 0.011029 on both (29.10), top-1 0.9670
+     "be88613a50ba792bd5a2bc07b74bcd97c9ed9dbac028d27a44c6888e712323c3"},
+    {5.321, 0.01828, "UD-Q4_K_XL", 2, // 0.018277 on both (29.10), top-1 0.9559
+     "6f5d30666c2d8ae16a306e616d95341dcf3cc46810df84d7e6f5a7d1e4c1b293"},
+    {5.080, 0.01925, "Q4_K_M", 2,     // 0.01930 / 0.01920 (0.019188 on both, 29.10), ppl 4.9997, top-1 0.9512
+     "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"},
+    {4.810, 0.02248, "Q4_K_S", 2,     // 0.022480 on both (29.10), top-1 0.9462
+     "023713a5240bf58a84d2890a30deb2e0485abb5b9b9c33ba67596e9248b35f80"},
+    {4.789, 0.02867, "IQ4_NL", 2,     // 0.028670 on both (29.10), top-1 0.9408
+     "12fd6b43e298ae4c8d374e64e8c2406c252d109ead47dffb46e75be3566ed0e5"},
+    {4.617, 0.02845, "IQ4_XS", 2,     // 0.02831 / 0.02859, ppl 5.0727, top-1 0.9407
+     "7e918aeca06c52bcb528ea6b04b4ec957e75ee8c0a73138854c0dfcf371ea429"},
+    {4.174, 0.06812, "Q3_K_M", 2,     // 0.06796 / 0.06827, ppl 5.0292, top-1 0.9040
+     "8fed90306e4f019e2bf35f3766470b7bc59ea1a9dae00f5ceb20b43cb5514393"},
+    {3.584, 0.10710, "UD-IQ3_XXS", 2, // 0.10682 / 0.10737, ppl 5.2870, top-1 0.8733
+     "40d0f32cd3030b04f0784139a589fb63e876cfbf8667d56311b79783c74fd149"},
+    {3.259, 0.16145, "UD-IQ2_M", 2,   // 0.16138 / 0.16153, ppl 5.5968, top-1 0.8420
+     "a31b6b4c603ddd66b5496ee065c9dd13b2b6de77dce9e5d59609aef8d39868e7"},
+    {2.855, 0.33460, "UD-IQ2_XXS", 2, // 0.33445 / 0.33475, ppl 6.4693, top-1 0.7684
+     "570ce2bbc92545cffbcb01df43cba59d86093dadc34c25da9f554d256bc70b91"},
 };
 
 // ---- The trade.

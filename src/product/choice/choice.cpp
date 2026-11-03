@@ -377,13 +377,19 @@ double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
     return kMoeChunkShare[n - 1].share;
 }
 
-// The interpolated quantization term at `bits` (choice_constants.h kQuantKld), and the measured
-// point when `label` is one. log KLD is linear in bits between the two measured points around
-// `bits`; below the measured range, the lowest pair's slope; above it, a straight line to 0 at the
-// reference's bits; at or above them, 0. The reference's own label is 0 on any model (the curve is
-// against it).
-double quant_kld(double bits, std::string_view label, bool same_family, bool& measured) {
-    measured = false;
+// The quantization term at `bits` (choice_constants.h kQuantKld) and what it rests on. A point is
+// these weights' measurement only when `files` are the very file measured at its bits (#299: a label and its
+// bits also match another repository's quantization, or files of unknown identity); the same
+// family's point of the label at the same bits is then a proxy for them, its value the same.
+// Otherwise log KLD is linear in bits between the two measured points around `bits`; below the
+// measured range, the lowest pair's slope; above it, a straight line to 0 at the reference's bits;
+// at or above them, 0. The reference's own label is 0 on any model (the curve is against it).
+struct QuantKld {
+    double kld        = 0;
+    Evidence evidence = Evidence::Interpolated;
+};
+
+QuantKld quant_kld(double bits, std::string_view label, std::string_view files, bool same_family) {
     double reference_bits = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
@@ -391,36 +397,36 @@ double quant_kld(double bits, std::string_view label, bool same_family, bool& me
         // point: an output-affecting choice rests on two cards (AGENTS.md). The reference is 0 by
         // definition.
         if (p.kld > 0 && p.cards < kQuantKldCards) { continue; }
+        // A point stands for its bits alone: the same file counted at other bits (an artifact's
+        // tensors apart from a drafter's) takes the interpolation, as before (#299 changes no value).
+        const bool same_bits  = std::abs(p.bits_per_weight - bits) < 0.05;
+        const bool same_file  = !files.empty() && files == p.file && same_bits;
+        // A label's point stands for the same family at the same bits (another model's Q4_K_M has
+        // other bits per weight and takes the interpolation).
+        const bool same_label = same_family && !label.empty() && p.label == label && same_bits;
         if (p.kld <= 0 && p.label == label) {
-            measured = same_family && std::abs(p.bits_per_weight - bits) < 0.05;
-            return 0;
+            return {0, same_file ? Evidence::Measured : Evidence::Reference};
         }
-        // A label's point is the measured file's: the same family at the same bits (another model's
-        // Q4_K_M has other bits per weight and takes the interpolation).
-        if (same_family && !label.empty() && p.label == label &&
-            std::abs(p.bits_per_weight - bits) < 0.05) {
-            measured = true;
-            return p.kld;
-        }
+        if (same_file || same_label) { return {p.kld, same_file ? Evidence::Measured : Evidence::Proxy}; }
         if (p.kld <= 0) {
             reference_bits = std::max(reference_bits, p.bits_per_weight);
         } else {
             points.push_back(&p);
         }
     }
-    if (bits >= reference_bits || points.empty()) { return 0; }
-    if (points.size() == 1) { return points.front()->kld; }
+    if (bits >= reference_bits || points.empty()) { return {}; }
+    if (points.size() == 1) { return {points.front()->kld}; }
     std::sort(points.begin(), points.end(),
               [](const QuantKldPoint* a, const QuantKldPoint* b) { return a->bits_per_weight < b->bits_per_weight; });
     if (const QuantKldPoint& top = *points.back(); bits > top.bits_per_weight) {
-        return top.kld * (reference_bits - bits) / (reference_bits - top.bits_per_weight);
+        return {top.kld * (reference_bits - bits) / (reference_bits - top.bits_per_weight)};
     }
     std::size_t i = 0;
     while (i + 2 < points.size() && points[i + 1]->bits_per_weight <= bits) { ++i; }
     const QuantKldPoint& lo = *points[i];
     const QuantKldPoint& hi = *points[i + 1];
     const double t = (bits - lo.bits_per_weight) / (hi.bits_per_weight - lo.bits_per_weight);
-    return std::exp(std::log(lo.kld) + t * (std::log(hi.kld) - std::log(lo.kld)));
+    return {std::exp(std::log(lo.kld) + t * (std::log(hi.kld) - std::log(lo.kld)))};
 }
 
 bool qwen_family(const ModelFacts& model) noexcept {
@@ -1385,21 +1391,35 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     const std::string_view gen = generation_of(card);
     // A family without terms of its own borrows the default family's (an estimate to show only).
     const std::string_view family = other_family ? kKldDefaultFamily : std::string_view(model.family);
-    const auto add = [&](Axis axis, std::string value, double kld, bool measured, std::string source) {
+    // A switch's term is measured or a stand-in; the quantization's says which of four it is.
+    const auto add = [&](Axis axis, std::string value, double kld, bool measured, std::string source,
+                         std::optional<Evidence> evidence = std::nullopt) {
         const bool transferred = (axis == Axis::Quant ? other_curve : other_family) && kld > 0;
-        out.terms.push_back({axis, std::move(value), kld, measured, transferred, std::move(source)});
+        const Evidence e = evidence.value_or(measured ? Evidence::Measured : Evidence::StandIn);
+        out.terms.push_back(
+            {axis, std::move(value), kld, e == Evidence::Measured, transferred, std::move(source), e});
     };
     // The quantization: the measured curve (choice_constants.h).
     // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
     // (plan_quants weighs the quantizations only where every row's bits are known).
-    bool measured  = false;
-    const double q = quant.bits_per_weight > 0
-                         ? quant_kld(quant.bits_per_weight, quant.label, !other_curve, measured)
-                         : 0.0;
-    add(Axis::Quant, quant.label, q, measured,
-        quant.bits_per_weight <= 0 ? std::string("unknown bits per weight: not weighed")
-        : measured ? std::string(kQuantKldSource)
-                   : "interpolated by bits per weight on " + std::string(kQuantKldSource));
+    const QuantKld q = quant.bits_per_weight > 0
+                           ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve)
+                           : QuantKld{.evidence = Evidence::StandIn};
+    const std::string curve(kQuantKldSource);
+    std::string quant_source = "interpolated by bits per weight on " + curve;
+    if (quant.bits_per_weight <= 0) {
+        quant_source = "unknown bits per weight: not weighed";
+    } else if (q.evidence == Evidence::Measured) {
+        quant_source = curve;
+    } else if (q.evidence == Evidence::Reference) {
+        quant_source = "the reference: a Q8_0 is 0 against itself (the curve is against Q8_0)";
+    } else if (q.evidence == Evidence::Proxy) {
+        quant_source = std::string("the label's measurement on other files (") +
+                       (quant.files.empty() ? "these files' identity is unknown" : "not these files") +
+                       "): " + curve;
+    }
+    add(Axis::Quant, quant.label, q.kld, q.evidence == Evidence::Measured, std::move(quant_source),
+        q.evidence);
 
     const std::string kv{kv_cache_storage_name(candidate.kv)};
     if (candidate.kv == KvCacheStorage::BFloat16) {

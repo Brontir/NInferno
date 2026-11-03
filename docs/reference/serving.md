@@ -2367,8 +2367,11 @@ CHOICE:
 
 ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
 measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
-measured, transferred, source}]`: `measured` false for a stand-in, `transferred` for a term measured
-on another family), `worth`.
+measured, transferred, source, evidence}]`: `measured` true only for `evidence` `measured`,
+`transferred` for a term measured on another family; `evidence` what the term rests on: `measured` (a
+quantization's own files, or the family's switch), `proxy` (the same quantization label measured on
+other or unknown files), `interpolated` (the curve by bits per weight), `stand-in` (the axis's worst,
+or another codec's term), `reference` (a Q8_0: 0 against itself)), `worth`.
 
 SPEC:
 

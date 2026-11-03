@@ -852,9 +852,36 @@ void weighs_the_quantizations(const json& fixture) {
     };
     ch::QuantOption q = b.quants[0];
     q.label           = "Q4_K_M";
-    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "Q4_K_M: its measured point");
+    // #299: the measured point is the files measured; the same label at the same bits on files of
+    // another (or unknown) identity takes the same value as a proxy, never as measured.
+    const std::string measured_q4 = "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8";
+    q.files = measured_q4;
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured &&
+              quant_term(q).evidence == ch::Evidence::Measured,
+          "Q4_K_M, the files measured: its measured point");
+    q.files.clear();
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && !quant_term(q).measured &&
+              quant_term(q).evidence == ch::Evidence::Proxy &&
+              quant_term(q).source.find("identity is unknown") != std::string::npos,
+          "Q4_K_M, files unknown: the same value, a proxy");
+    q.files = std::string(64, 'a'); // another repository's Q4_K_M at the same bits
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).evidence == ch::Evidence::Proxy &&
+              quant_term(q).source.find("not these files") != std::string::npos,
+          "Q4_K_M, other files: the same value, a proxy");
+    q.files = measured_q4;
+    q.label   = "renamed"; // the files measured under another label: still their measurement
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "the files decide, not the label");
+    q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before
+    check(!quant_term(q).measured && quant_term(q).evidence == ch::Evidence::Interpolated &&
+              quant_term(q).kld < 0.01925 && quant_term(q).kld > 0.01828,
+          "the measured files at other bits: interpolated");
+    q.bits_per_weight = b.quants[0].bits_per_weight;
+    q.label = "Q4_K_M";
+    q.files.clear();
     q.bits_per_weight = 4.9; // another model's Q4_K_M: interpolated, not the 9B's point
-    check(!quant_term(q).measured && quant_term(q).kld > 0.01925, "a label at other bits: interpolated");
+    check(!quant_term(q).measured && quant_term(q).kld > 0.01925 &&
+              quant_term(q).evidence == ch::Evidence::Interpolated,
+          "a label at other bits: interpolated");
     q.label           = "custom";
     q.bits_per_weight = 5.5;
     const double mid  = std::exp(std::log(0.01828) + (5.5 - 5.321) / (5.674 - 5.321) * (std::log(0.01103) - std::log(0.01828)));
@@ -866,6 +893,15 @@ void weighs_the_quantizations(const json& fixture) {
     q.label           = "Q8_0";
     q.bits_per_weight = 8.3; // another model's Q8_0 (other bits): its own reference
     check(quant_term(q).kld == 0 && !quant_term(q).measured, "any model's Q8_0: the reference");
+    q.bits_per_weight = 8.516;
+    q.files         = "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4";
+    check(quant_term(q).kld == 0 && quant_term(q).measured, "the reference's own files: measured (0 against itself)");
+    q.files.clear();
+    check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference, "another Q8_0 at its bits: the reference");
+    q.bits_per_weight = 8.3;
+    check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference &&
+              quant_term(q).source.find("the reference") == 0,
+          "another model's Q8_0: the reference, and its source says so");
     ch::Task task;
     const ch::Gates open{true, true};
     const ch::Choice choice = ch::choose(b.model, b.card, b.quants[0],
