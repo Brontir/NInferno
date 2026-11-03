@@ -47,8 +47,9 @@ struct LinearDecision {
 [[nodiscard]] const char* linear_claim_name(LinearClaim claim);
 
 // Every implementation ops::linear has for one call, and which one it runs (#306): the shape-owned
-// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32: the launch its table selects at the width,
-// q8_launch_id; another format "owned:<format>") and the generic route ("generic:<route>", the
+// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32, "owned:<format>.n<N>_k<K>.launch<i>" for
+// Q4/Q5/Q6_G64 and BF16: the launch its table selects at the width, owned_launch_id; NVFP4 and
+// FP8 "owned:<format>") and the generic route ("generic:<route>", the
 // route select_route asks for; the call's layout and workspace may still resolve it lower,
 // generic::resolve_route).
 // Selected: the one dispatch_linear runs (none where it refuses the call; `why` of the generic
