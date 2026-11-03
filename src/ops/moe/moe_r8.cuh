@@ -430,6 +430,7 @@ void launch_moe_r8_schedule(int tokens, const GemmArgs& args, dim3 grid, cudaStr
     if (tokens <= 1) return launch_moe_r8_tokens<C, S, 1, St>(args, grid, stream);
     if (tokens <= 2) return launch_moe_r8_tokens<C, S, 2, St>(args, grid, stream);
     if (tokens <= 4) return launch_moe_r8_tokens<C, S, 4, St>(args, grid, stream);
+    if (tokens <= 8) return launch_moe_r8_tokens<C, S, 8, St>(args, grid, stream);
     throw std::invalid_argument("moe R8: more than kR8Tokens tokens");
 }
 

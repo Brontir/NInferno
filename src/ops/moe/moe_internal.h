@@ -201,7 +201,7 @@ struct R8ScheduleInfo {
 // calls of at most kR8Tokens tokens (the dense R8's decode scope): one R8 CTA covers a whole job,
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
 // (r8_admits). Wider calls (speculative verify, prefill) compute A16.
-inline constexpr std::int32_t kR8Tokens = 4;
+inline constexpr std::int32_t kR8Tokens = 8;
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
 // IQ4_NL, IQ4_XS).
