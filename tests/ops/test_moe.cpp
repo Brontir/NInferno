@@ -608,23 +608,28 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
     return failures;
 }
 
-// The grouped R8 route of codebook experts under an A8 expert policy (decode, T <= 4): every R8
-// schedule on both stages and on each stage alone against the oracle of the quantized activations;
-// a slot's bytes depend on its own activation only, so every call with R8 on both stages gives a
-// token the bytes of the widest one whatever its schedule, T or position. The default route is the
-// GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS down of width 512..1023
-// on the class's down schedule; w4r1 on gate/up for a class without an entry); its bytes, too, do not depend on T or
-// position. Two exceptions keep A16: a call of T >= 5 (verify, prefill: refused for a forced R8
-// plan), and a bank whose K is too wide for a CTA's quantized activation (above 10922 at T = 3 or
-// 4). Any R8 plan under A16Only is refused, and the default route there stays on the register MMA.
+// The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
+// moe::r8_token_limit(bank): 8 on Ada and consumer Blackwell, 4 elsewhere and for FP4 elements or
+// most frag banks): every R8 schedule on both stages and on each stage alone against the oracle of
+// the quantized activations; a slot's bytes depend on its own activation only, so every call with
+// R8 on both stages gives a token the bytes of the widest one whatever its schedule, T or position.
+// The default route is the GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS
+// down of width 512..1023 on the class's down schedule; w4r1 on gate/up for a class without an
+// entry); its bytes, too, do not depend on T or position (the heuristic route: a measured table's
+// bands may change the down stage between widths). Two exceptions keep A16: a call past the limit
+// (prefill: refused for a forced R8 plan), and a bank whose K is too wide for a CTA's quantized
+// activation (above 10922 at T = 3 or 4, 5461 at T = 5..8). Any R8 plan under A16Only is refused,
+// and the default route there stays on the register MMA.
 int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
     namespace moe = ops::detail::moe;
     Case c         = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
     const Layer l  = make_layer(c, seed);
-    const std::int32_t wide = moe::kR8Tokens;
-    const auto x =
-        random_bf16(static_cast<std::size_t>(wide + 1) * c.hidden, seed + 21, -1.0, 1.0);
+    // wide: the gate/up bank's limit (the default route's R8 stage); both: R8 on both stages.
+    const std::int32_t wide = moe::r8_token_limit(l.weights.gate_up);
+    const std::int32_t both = std::min(wide, moe::r8_token_limit(l.weights.down));
+    const auto x = random_bf16(static_cast<std::size_t>(moe::kR8Tokens + 1) * c.hidden, seed + 21,
+                               -1.0, 1.0);
     const auto residual = random_bf16(x.size(), seed + 22, -2.0, 2.0);
     int failures        = 0;
     // The default plan at T with the given R8 stages.
@@ -634,22 +639,29 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
         p.down_r8    = down_r8;
         return p;
     };
-    const auto reference_plan = forced(wide, 0, 0);
-    const Run reference       = run_op(c, l, x, 0, wide, residual, &reference_plan);
-    failures += compare_run(c, l, x, residual, 0, wide, reference, {true, true},
-                            c.label + " A8 T=" + std::to_string(wide) + " (" +
+    const auto reference_plan = forced(both, 0, 0);
+    const Run reference       = run_op(c, l, x, 0, both, residual, &reference_plan);
+    failures += compare_run(c, l, x, residual, 0, both, reference, {true, true},
+                            c.label + " A8 T=" + std::to_string(both) + " (" +
                                 moe::plan_name(reference_plan) + ")");
-    const auto same_bytes = [&](const Run& run, const Run& wide_run, std::int32_t offset,
-                                const std::string& label) {
+    const auto same_bytes = [&](const Run& run, const Run& wide_run, std::int32_t width,
+                                std::int32_t offset, const std::string& label) {
         if (std::memcmp(run.out.data(),
                         wide_run.out.data() + static_cast<std::size_t>(offset) * c.hidden,
                         run.out.size() * 2) != 0) {
-            std::cerr << label << ": bytes differ from the T=" << wide << " call\n";
+            std::cerr << label << ": bytes differ from the T=" << width << " call ("
+                      << moe::plan_name(moe::select_plan(l.weights, c.config, width, false))
+                      << " by default)\n";
             ++failures;
         }
     };
     for (const std::int32_t t : widths) {
-        const std::int32_t offset = wide - t;
+        if (t > both) {
+            std::cerr << c.label << ": width " << t << " past the R8 limit " << both << '\n';
+            ++failures;
+            continue;
+        }
+        const std::int32_t offset = both - t;
         for (int s = 0; s < moe::r8_schedule_count(); ++s) {
             for (const auto& [gu, dn] : {std::pair{s, s}, std::pair{s, -1}, std::pair{-1, s}}) {
                 const auto p            = forced(t, gu, dn);
@@ -668,15 +680,40 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
                     }
                 }
                 if (gu >= 0 && dn >= 0) {
-                    same_bytes(run, reference, offset, label);
+                    same_bytes(run, reference, both, offset, label);
                     if (t != widths.front()) continue; // the oracle once per schedule
                 }
                 failures += compare_run(c, l, x, residual, offset, t, run, a8_stages(c, p), label);
             }
         }
     }
-    // The shipped default route: the class's A8 route (A16 without one) at every T <= 4, each
-    // token's bytes those of the widest call at any T and position.
+    // Banks of different limits: each stage alone at its own limit above `both` against the
+    // oracle, and one token past it refused.
+    for (const bool gate_up_stage : {true, false}) {
+        const std::int32_t own =
+            moe::r8_token_limit(gate_up_stage ? l.weights.gate_up : l.weights.down);
+        if (own <= both) continue;
+        const auto at = [&](std::int32_t t) {
+            return forced(t, gate_up_stage ? 0 : -1, gate_up_stage ? -1 : 0);
+        };
+        const auto p           = at(own);
+        const Run run          = run_op(c, l, x, 0, own, residual, &p);
+        failures += compare_run(c, l, x, residual, 0, own, run, a8_stages(c, p),
+                                c.label + " A8 T=" + std::to_string(own) + " (" +
+                                    moe::plan_name(p) + ", the stage's own limit)");
+        const auto past = at(own + 1);
+        bool refused    = false;
+        try {
+            (void)run_op(c, l, x, 0, own + 1, residual, &past);
+        } catch (const std::invalid_argument&) { refused = true; }
+        if (!refused) {
+            std::cerr << c.label << ": an R8 " << (gate_up_stage ? "gate/up" : "down")
+                      << " ran a call of " << own + 1 << " tokens\n";
+            ++failures;
+        }
+    }
+    // The shipped default route: the class's A8 route (A16 without one) at every T up to the
+    // limit, each token's bytes those of the widest call at any T and position.
     {
         // The heuristic route, not a measured table's plans: the class's shipped table may
         // carry this shape (ad106's does); it comes back afterwards.
@@ -702,14 +739,14 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
             }
             for (std::int32_t offset = 0; offset + t <= wide; offset += std::max(1, wide - t)) {
                 const Run run = run_op(c, l, x, offset, t, residual);
-                same_bytes(run, wide_run, offset, label + " +" + std::to_string(offset));
+                same_bytes(run, wide_run, wide, offset, label + " +" + std::to_string(offset));
                 if (t == 1 && offset == 0) {
                     failures +=
                         compare_run(c, l, x, residual, offset, t, run, a8_stages(c, p), label);
                 }
             }
         }
-        // T = 5: A16 by default, a forced R8 stage refused.
+        // One token past the limit: A16 by default, a forced R8 stage refused.
         const auto p5 = moe::select_plan(l.weights, c.config, wide + 1, false);
         if (p5.gate_up_r8 >= 0 || p5.down_r8 >= 0) {
             std::cerr << c.label << ": T=" << wide + 1 << " took " << moe::plan_name(p5) << '\n';
@@ -731,11 +768,10 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
     {
         auto wide_bank = l.weights.gate_up;
         wide_bank.k    = 12288;
-        const bool fits[] = {true, true, false, false};
         for (std::int32_t t = 1; t <= wide; ++t) {
-            if (moe::r8_admits(l.weights, wide_bank, t) != fits[t - 1]) {
-                std::cerr << c.label << ": K=12288 at T=" << t << " admitted "
-                          << !fits[t - 1] << '\n';
+            const bool fits = t <= 2; // 384 blocks x 36 bytes x 1 or 2 slots; 4 slots 55 KiB
+            if (moe::r8_admits(l.weights, wide_bank, t) != fits) {
+                std::cerr << c.label << ": K=12288 at T=" << t << " admitted " << !fits << '\n';
                 ++failures;
             }
         }
@@ -887,7 +923,7 @@ int check_a8_route_rule() {
         return 1;
     }
     int failures = 0;
-    for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+    for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
         for (const QType q : {QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS, QType::GGML_IQ2_S,
                               QType::GGML_IQ3_XXS, QType::GGML_IQ3_S, QType::GGML_Q3_K,
                               QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q6_K,
@@ -935,7 +971,7 @@ int check_r8_table() {
         f << R"({"schema": "ninferno-route-table/1", "gpu": {"class": ")" << ops::route_gpu_class()
           << R"("}, "entries": [], "moe": [)" << entry("iq3xxs", tuned) << ", "
           << entry("iq2s", tuned + "|a16") << ", "
-          << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::kR8Tokens) << "]}";
+          << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::r8_token_limit()) << "]}";
     }
     const auto status = ops::load_route_table(path);
     if (!status.loaded) {
@@ -960,7 +996,7 @@ int check_r8_table() {
         for (std::int32_t t = 1; t <= 16; ++t) {
             const auto p = moe::select_plan(l.weights, c.config, t, false);
             const std::string name = moe::plan_name(p);
-            const bool decode      = t <= moe::kR8Tokens;
+            const bool decode      = t <= moe::r8_token_limit();
             std::string expected;
             if (q == QType::GGML_IQ3_XXS) {
                 // The measured down (1 x 4, which the heuristic route would take to the class's
@@ -997,8 +1033,8 @@ int check_r8_table() {
 }
 
 // The K limit of the A8 route through select_plan: a layer of hidden 12288 (a CTA's quantized
-// activation fits 2 slots, not 4) takes the class's A8 gate/up at T = 1 and 2 and A16 at T = 3
-// and 4; both widths match the oracle.
+// activation fits 2 slots, not 4) takes the class's A8 gate/up at T = 1 and 2 and A16 from T = 3
+// to the limit; T = 2 and 3 match the oracle.
 int check_r8_k_limit() {
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
@@ -1016,7 +1052,7 @@ int check_r8_k_limit() {
     const auto x = random_bf16(static_cast<std::size_t>(4) * c.hidden, 142U, -1.0, 1.0);
     const std::vector<std::uint16_t> residual(x.size(), 0);
     int failures = 0;
-    for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+    for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
         const auto p = moe::select_plan(l.weights, c.config, t, false);
         const bool a8 = route && t <= 2 && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
@@ -1096,7 +1132,7 @@ int check_expert_policy() {
                       << (a8 ? "AllowA8" : "A16Only") << '\n';
             ++failures;
         }
-        for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+        for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p = moe::select_plan(w, config, t, false);
             const int expected = a8 && route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 >= 0) {
@@ -1118,10 +1154,14 @@ int check_expert_policy() {
         w.down           = native_weight(rows(dn, 0, E * H, F));
         w.gate_up.layout = w.down.layout = QuantLayout::GgmlFrag;
         w.expert_policy  = ops::LinearPolicy::AllowA8;
-        for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+        // Each to its bank's limit (frag Q4_0: four; frag Q4_K: the class's).
+        const std::int32_t limit = moe::r8_token_limit(w.gate_up);
+        for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p       = moe::select_plan(w, config, t, false);
-            const int expected = route ? route->gate_up_at(t, w.gate_up) : -1;
-            if (p.gate_up_r8 != expected || p.down_r8 != -1 || !moe::r8_admits(w, w.gate_up, t)) {
+            const bool admits  = t <= limit;
+            const int expected = route && admits ? route->gate_up_at(t, w.gate_up) : -1;
+            if (p.gate_up_r8 != expected || p.down_r8 != -1 ||
+                moe::r8_admits(w, w.gate_up, t) != admits) {
                 std::cerr << "frag " << qname(q) << " T=" << t << ": took " << moe::plan_name(p)
                           << '\n';
                 ++failures;
@@ -1777,6 +1817,21 @@ int main(int argc, char** argv) {
                         failures +=
                             check_case(a8, 99U + static_cast<std::uint32_t>(index), {1, 4, 16, 64});
                     }
+                }
+                // Stages of different R8 limits from Ada on: IQ3_XXS takes eight tokens, MXFP4
+                // four.
+                for (const bool fp4_down : {true, false}) {
+                    Case m;
+                    m.experts = 24; m.top_k = 4; m.hidden = 256; m.inter = 512;
+                    m.shared_inter = 0;
+                    m.gate_up = fp4_down ? QType::GGML_IQ3_XXS : QType::MXFP4;
+                    m.down    = fp4_down ? QType::MXFP4 : QType::GGML_IQ3_XXS;
+                    m.config.top_k = 4;
+                    m.router_bias = false; m.selection_bias = false; m.expert_scale = false;
+                    m.expert_bias = false; m.shared_gate = false;
+                    m.epilogue = ops::MoeEpilogue::Store;
+                    m.label = std::string(qname(m.gate_up)) + "/" + qname(m.down) + " E24 k4";
+                    failures += check_r8(m, 151U + (fp4_down ? 0U : 1U), {1, 3});
                 }
                 Case c;
                 c.label          = "qwen3.6-35b-a3b-like ud-iq3_xxs (iq2s/iq3xxs) E256 k8";

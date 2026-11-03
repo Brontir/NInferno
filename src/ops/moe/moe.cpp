@@ -697,15 +697,56 @@ bool plan_is_token_invariant(const MoePlan& plan) {
            schedule_info(plan.down_schedule).warps_k == 1;
 }
 
+std::int32_t r8_token_limit() {
+    // The measured families by name, not a compute-capability inequality (core/device_class.h):
+    // Ada (sm_89) and consumer Blackwell (sm_120, sm_121). Hopper and datacenter Blackwell are not
+    // measured and keep four.
+    const auto& d = device_class();
+    return (d.major == 8 && d.minor == 9) || d.major == 12 ? kR8Tokens : kR8NarrowTokens;
+}
+
+namespace {
+
+// The FP4-element formats (MXFP4, NVFP4) keep four tokens: above four the register MMA beats R8
+// on MXFP4 on both Blackwell boards in gpt-oss's shape (moe_bench, H 2880, F 2880, E 32, k 4, auto
+// plans, R8 against the register MMA at T = 5 / 6 / 8: RTX 5070 Ti +11.5 / +12.3 / +13.9 %, RTX
+// 5090 +4.9 / +5.6 / +11.2 %; end to end gpt-oss-20b MXFP4 C8 on the RTX 5070 Ti 109.4 -> 97.1
+// tok/s, RTX 4060 Ti 39.5 -> 38.7), and NVFP4 decodes the same elements. The other 4-bit formats of
+// one scale per block take eight: R8 ahead on three of the four board and shape pairs (Q4_0,
+// IQ4_NL: RTX 5090 -2..-8 % in both shapes, RTX 5070 Ti -1..-5 % in gpt-oss's, +2..+10 % in
+// Qwen3.6-35B's: H 2048, F 512, E 256, k 8), every K-quant, Q4_1, Q5_0, Q5_1 and IQ3_XXS ahead on
+// both boards (-1..-19 %).
+bool r8_fp4_elements(QType q) { return q == QType::MXFP4 || q == QType::NVFP4; }
+
+// A ggml_frag_v1 bank is laid out for the register MMA's fragments: its decode costs that kernel
+// little, and above four tokens R8 keeps an edge only on Q4_K's super-block (RTX 5070 Ti, Qwen3.6-
+// 35B's shape, frag against published layout, R8 against the register MMA at T = 5 / 8: IQ3_XXS
+// -4.4 / -1.1 % against -8.6 / -6.5 %, IQ2_S -5.7 / -1.1 % against -9.9 / -6.4 %, Q4_0 +11.1 /
+// +12.0 %, Q4_K -12.5 / -10.8 %). The random routing of moe_bench spreads the slots over more
+// experts than a model's: R8's cost follows the slots, the register MMA's the jobs, and in
+// Qwen3.6-35B UD-Q3_K_S (frag IQ3_XXS gate/up) at C8 the R8 gate/up took 85.9 us a call against
+// the register MMA's 83.9 (nsys), the model 104.9 -> 102.8 tok/s.
+bool r8_frag_narrow(const Weight& bank) {
+    return bank.layout == QuantLayout::GgmlFrag && bank.qtype != QType::GGML_Q4_K;
+}
+
+} // namespace
+
+std::int32_t r8_token_limit(const Weight& bank) {
+    const std::int32_t limit = r8_token_limit();
+    return r8_fp4_elements(bank.qtype) || r8_frag_narrow(bank) ? std::min(limit, kR8NarrowTokens)
+                                                                : limit;
+}
+
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
-    if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > kR8Tokens ||
+    if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > r8_token_limit(bank) ||
         !r8_expert_supports(bank)) {
         return false;
     }
-    // The kernel's quantized activation for its widest job (1, 2 or 4 slots: a job has at most T;
-    // 36 bytes per 32 values and slot, 40 for a codec with a min, which keeps each block's sum)
-    // within the default 48 KiB: K <= 43690 at T = 1, 21845 at T = 2, 10922 at T = 3 or 4 (with a
-    // min 39321, 19660, 9830).
+    // The kernel's quantized activation for its widest job (1, 2, 4 or 8 slots: a job has at most
+    // T; 36 bytes per 32 values and slot, 40 for a codec with a min, which keeps each block's sum)
+    // within the default 48 KiB: K <= 43690 at T = 1, 21845 at T = 2, 10922 at T = 3 or 4, 5461
+    // at T = 5..8 (with a min 39321, 19660, 9830, 4915).
     std::int64_t slots = 1;
     while (slots < tokens) { slots *= 2; }
     const auto q    = bank.qtype;
@@ -1046,8 +1087,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
              "activation in 16-byte words");
     }
     if (!r8_stages_admitted(w, p, t)) {
-        fail("an R8 stage needs an A8 expert policy, a codebook format, at most 4 tokens and an "
-             "activation that fits a CTA");
+        fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
+             "tokens (8 on Ada and consumer Blackwell but for FP4 elements and most frag banks, 4 "
+             "otherwise) and an activation that fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {
@@ -1148,13 +1190,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         plan.job_count    = static_cast<int*>(ws.job_count.data);
         plan.job_total    = static_cast<int*>(ws.job_total.data);
     }
-    // The SIMT router: a BF16 router at decode widths outside the invariant profile (whose router
-    // streams with the K split of every width) and outside a token-invariant plan (the prefill
-    // schedule), x within the default shared memory.
+    // The SIMT router: a BF16 router at decode and verify widths outside the invariant profile
+    // (whose router streams with the K split of every width) and outside a token-invariant plan
+    // (the prefill schedule). The choice does not depend on the hidden size: a token's logits are
+    // the same at every T <= kRouterSimtMaxTokens.
     const bool router_simt = t <= kRouterSimtMaxTokens &&
                              generic::codec_of(w.router) == generic::WeightCodec::Bf16 &&
-                             !invariant_routes_active() && p.router_schedule != kPrefillSchedule &&
-                             router_simt_smem_bytes(t, g.hidden) <= kStaticSharedBytesPerBlock;
+                             !invariant_routes_active() && p.router_schedule != kPrefillSchedule;
     // Programmatic dependent launches (decode chain): each kernel below waits for the previous one
     // before its first load; a copy or a quantizer between two stages keeps the plain launch.
     const bool pdl = device_class().features.pdl && c.pdl;
@@ -1369,15 +1411,16 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
          const Tensor* router_input) {
     const std::int32_t t = x.ne[1];
     // Without tensor mma.sync (Volta's build) the register-MMA stages run on FP32 FMAs, and R8
-    // stops at kR8Tokens: a verify step of 5..16 tokens runs as calls of at most four, each on its
-    // own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4 214 us
-    // against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T, so a
-    // column's bytes are those of plain decode.
-    if (!build_features().mma_tensor && t > detail::moe::kR8Tokens && t <= 16 &&
-        !prefill_routes_active() && !invariant_routes_active() &&
-        detail::moe::select_plan(w, c, detail::moe::kR8Tokens, false).gate_up_r8 >= 0) {
-        for (std::int32_t begin = 0; begin < t; begin += detail::moe::kR8Tokens) {
-            const std::int32_t n = std::min(detail::moe::kR8Tokens, t - begin);
+    // stops at r8_token_limit(): a verify step of 5..16 tokens runs as calls of at most four, each
+    // on its own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4
+    // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
+    // so a column's bytes are those of plain decode.
+    const std::int32_t r8_tokens = detail::moe::r8_token_limit(w.gate_up);
+    if (!build_features().mma_tensor && t > r8_tokens && t <= 16 && !prefill_routes_active() &&
+        !invariant_routes_active() &&
+        detail::moe::select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0) {
+        for (std::int32_t begin = 0; begin < t; begin += r8_tokens) {
+            const std::int32_t n = std::min(r8_tokens, t - begin);
             const Tensor xs      = x.slice(1, begin, n);
             Tensor outs          = out.slice(1, begin, n);
             const Tensor routes  = router_input != nullptr ? router_input->slice(1, begin, n) : xs;

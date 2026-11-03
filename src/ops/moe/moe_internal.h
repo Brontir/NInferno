@@ -79,9 +79,12 @@ struct PlanArgs {
 };
 
 // The SIMT router (moe_router_simt.cu): warps per CTA, the widest call, and its dynamic shared
-// memory: x staged as BF16.
+// memory: x staged as BF16 (read from global memory when it does not fit). The widest call is
+// the R8 route's (kR8Tokens): an A8 verify of up to eight tokens routes as decode does (with the
+// register-MMA router from T = 5 it did not: other logits, other weights), so where both expert
+// stages keep R8 to eight tokens (r8_token_limit(bank)) its tokens' bytes are a decode call's.
 inline constexpr int kRouterSimtWarps     = 4;
-inline constexpr int kRouterSimtMaxTokens = 4;
+inline constexpr int kRouterSimtMaxTokens = 8;
 
 [[nodiscard]] constexpr std::size_t router_simt_smem_bytes(int tokens, int k) {
     return static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k) * 2;
@@ -200,14 +203,26 @@ struct R8ScheduleInfo {
 // whose register-MMA decode is the costly part of a decode call, under an A8 expert policy, for
 // calls of at most kR8Tokens tokens (the dense R8's decode scope): one R8 CTA covers a whole job,
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
-// (r8_admits). Wider calls (speculative verify, prefill) compute A16.
-inline constexpr std::int32_t kR8Tokens = 4;
+// (r8_admits). Wider calls compute A16.
+inline constexpr std::int32_t kR8Tokens = 8;
+// The widest R8 call on this GPU (r8_admits): kR8Tokens on Ada (sm_89) and consumer Blackwell
+// (sm_12x), four elsewhere (Hopper and datacenter Blackwell unmeasured). moe_bench
+// (H 2048, F 512, E 128, k 8, published layout), R8 against the register MMA at T = 5..8: RTX 5090
+// / 5070 Ti -5..-15 % on every K-quant and IQ3_XXS, RTX 4090 -3..-7 % (Q6_K level), RTX 4060 Ti
+// -0.4..-6 %; RTX 2080 Ti Q6_K +38..+45 %, Q3_K +15..+19 % (Q4_K, Q5_K, IQ3_XXS ahead). Ampere
+// is not measured and keeps four; Volta splits a wider call into calls of four (moe()).
+inline constexpr std::int32_t kR8NarrowTokens = 4;
+[[nodiscard]] std::int32_t r8_token_limit();
+// The widest R8 call over `bank`: r8_token_limit(), but four for the FP4-element formats (MXFP4,
+// NVFP4) and a ggml_frag_v1 bank other than Q4_K, where the register MMA wins above four tokens
+// (moe.cpp).
+[[nodiscard]] std::int32_t r8_token_limit(const Weight& bank);
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
 // IQ4_NL, IQ4_XS).
 [[nodiscard]] bool r8_expert_format(QType format);
-// Whether an R8 stage may take `bank` at `tokens` (the policy, the format, T <= kR8Tokens and the
-// quantized activation within a CTA's shared memory).
+// Whether an R8 stage may take `bank` at `tokens` (the policy, the format, T <=
+// r8_token_limit(bank) and the quantized activation within a CTA's shared memory).
 [[nodiscard]] bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens);
 [[nodiscard]] bool r8_expert_supports(const Weight& w);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
@@ -248,8 +263,9 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // not, for the formats that read 32-value blocks); moe_with_plan refuses a plan that is not.
 [[nodiscard]] bool plan_compiled(const MoeWeights& weights, const MoePlan& plan);
 // Whether a grouped stage over `bank` (weights.gate_up or weights.down) may take the R8 kernel at
-// T tokens: an A8 expert policy, a codebook format with 16-byte aligned planes, T <= 4 and an
-// activation that fits a CTA; moe_with_plan refuses an R8 stage that is not.
+// T tokens: an A8 expert policy, a codebook format with 16-byte aligned planes, T <=
+// r8_token_limit(bank) and an activation that fits a CTA; moe_with_plan refuses an R8 stage that
+// is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
 
 // The current GPU class's default A8 route (moe.cpp's per-class table, kFallbackA8Route for a class
