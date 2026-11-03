@@ -1617,8 +1617,9 @@ void drafter_order_does_not_decide(const json& fixture) {
 }
 
 // #300: a compute capability the generation table has no row of (a newer major) estimates on the
-// nearest row, says so, and decides nothing (the family's defaults, with the reason); its known
-// neighbour keeps its own evidence and its decisions.
+// nearest row (gb20x), says so, and its reference decides nothing, whatever reference cards the
+// lent generation gains later; a known generation keeps its own evidence. Today no lent row has a
+// reference card, so the decision is blocked twice; the reason names the missing row.
 void lent_generation_does_not_decide(const json& fixture) {
     const Bench known = nine_b(fixture, "RTX 5090");
     Bench lent        = known;
@@ -1632,16 +1633,22 @@ void lent_generation_does_not_decide(const json& fixture) {
     check(own.basis != ch::SpeedBasis::LentGeneration, "the RTX 5090: its own generation's rows");
     check(other.basis == ch::SpeedBasis::LentGeneration && other.transferred &&
               std::abs(other.decode_per_stream - own.decode_per_stream) < 1e-9 * own.decode_per_stream,
-          "compute capability 13.0: gb20x's estimate, marked lent");
-    ch::Task task;
+          "compute capability 13.0: gb20x's decode estimate, marked lent");
     const ch::Gates open{true, true};
-    const auto allowed      = ch::allowed_axes(known.model, KvCacheStorage::Int8Group64);
-    const ch::Choice mine   = ch::choose(known.model, known.card, known.quants[0], allowed, {}, task, oracle(known, 20e9), open);
+    const auto ref = ch::reference_of(lent.card, open);
+    check(ref && !ref->decides && !ref->chunk_decides &&
+              ref->why.find("no generation row of its own") != std::string::npos,
+          "compute capability 13.0: a reference that never decides, and why");
+    ch::Task task;
+    const auto allowed      = ch::allowed_axes(lent.model, KvCacheStorage::Int8Group64);
     const ch::Choice theirs = ch::choose(lent.model, lent.card, lent.quants[0], allowed, {}, task, oracle(lent, 20e9), open);
-    check(mine.by_worth, "the RTX 5090: the switches by worth");
     check(!theirs.by_worth && theirs.chosen && theirs.why.find("no generation row of its own") != std::string::npos,
           "compute capability 13.0: the family's defaults, and why");
     check(!ch::weighs_quantizations(lent.model, lent.card, open), "compute capability 13.0: the quantizations by the rule");
+    // A known generation with a reference card still decides (the RTX 4090: Ada).
+    const Bench ada = nine_b(fixture, "RTX 4090");
+    check(ch::choose(ada.model, ada.card, ada.quants[0], allowed, {}, task, oracle(ada, 20e9), open).by_worth,
+          "the RTX 4090: the switches by worth");
 }
 
 int main() {
