@@ -6,6 +6,7 @@
 #include "models/gemma4/workspace.h"
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/sequence_plan.h"
+#include "ninferno/ops/gemma4_attention.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/sampling.h"
@@ -27,9 +28,19 @@ namespace gemma4 = models::gemma4;
 namespace detail = models::qwen3_5::detail;
 
 // The drafter's own pass beside the target's (gemma4::DrafterPass::workspace_bytes: its fixed
-// 16 MiB reserve and the round's 1 KiB of ids): its rows are a few small layers the facts do not
-// describe, under 1 MiB at the widths it runs.
-constexpr std::uint64_t kGemmaDrafterPass = (std::uint64_t(17) << 20) + 1024;
+// 16 MiB reserve, the round's 1 KiB of ids, its attention over the target's caches at the whole
+// context): its rows are a few small layers the facts do not describe, under 1 MiB at the widths
+// it runs; its attention reads the target's head geometry (the load pairs them,
+// gemma4/load_mtp.cpp), at the target's query heads.
+std::uint64_t gemma_drafter_pass(const models::gemma4::Config& c, std::int32_t context) {
+    std::size_t attention = 0;
+    const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(context), 1};
+    for (const auto* g : {&c.sliding, &c.full}) {
+        attention = std::max(attention, ops::gemma4_attention_workspace_bytes(
+                                            g->head_dim, c.query_heads, g->kv_heads, envelope));
+    }
+    return (std::uint64_t(17) << 20) + 1024 + attention;
+}
 
 // A weight described by its format and shape alone, in the layout the converter stores it in (an
 // aligned address stands in, its bytes never read; ops/generic/route_query.cpp's description). Held
@@ -50,6 +61,14 @@ struct DescribedWeight {
     DescribedWeight(const DescribedWeight&)            = delete;
     DescribedWeight& operator=(const DescribedWeight&) = delete;
 };
+
+// The policy a start's projection carries for a stored format (the converter's: BF16 and FP32
+// keep A16, NVFP4 allows four-bit activations, every other quantized format eight).
+ops::LinearPolicy policy_of(QType qtype) {
+    if (qtype == QType::BF16 || qtype == QType::FP32) { return ops::LinearPolicy::A16Only; }
+    if (qtype == QType::NVFP4) { return ops::LinearPolicy::AllowA4; }
+    return ops::LinearPolicy::AllowA8;
+}
 
 // A generic MoE layer's capacity over a call of up to `columns` tokens, as the start sizes it
 // (models/gemma4/target.cu: ops::moe_workspace_bytes over the layer's banks and the load's config,
@@ -94,18 +113,14 @@ std::optional<std::size_t> generic_moe_bytes(const PlanModelFacts& m, const mode
             weights.router  = router->weight;
             weights.gate_up = up->weight;
             weights.down    = dn->weight;
+            // The banks' policy as a load sets it (models::loading::expert_policy): under A8 a
+            // prefill quantizes its activations into the workspace (the grouped W4A8).
+            weights.expert_policy =
+                ops::moe_policy(policy_of(up->weight.qtype), policy_of(dn->weight.qtype));
             widest = std::max(widest, ops::moe_workspace_bytes(weights, config, 1, columns));
         }
     }
     return widest;
-}
-
-// The policy a start's projection carries for a stored format (the converter's: BF16 and FP32
-// keep A16, NVFP4 allows four-bit activations, every other quantized format eight).
-ops::LinearPolicy policy_of(QType qtype) {
-    if (qtype == QType::BF16 || qtype == QType::FP32) { return ops::LinearPolicy::A16Only; }
-    if (qtype == QType::NVFP4) { return ops::LinearPolicy::AllowA4; }
-    return ops::LinearPolicy::AllowA8;
 }
 
 // Gemma 4's arena (models/gemma4/program_family.cpp workspace_plan) from the facts: the text
@@ -161,18 +176,17 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
     const auto chunk   = static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context));
     const auto batch   = static_cast<std::int32_t>(concurrency);
     const auto context = static_cast<std::int32_t>(rung.max_context);
-    // A MoE's generic layer, at the start's widest call (its chunk) for every pass, as the start
-    // sizes it once; unknown expert formats leave the formula to stand.
-    std::size_t routed = 0;
+    // A MoE's generic layer at each pass's own columns, as the start sizes it
+    // (gemma4::Target::workspace_bytes); unknown expert formats leave the formula to stand.
     if (c.experts > 0) {
         std::string why;
-        const auto bytes = generic_moe_bytes(
-            m, c, std::max<std::int32_t>(static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context)), 1),
-            why);
-        if (!bytes) { return {std::nullopt, why}; }
-        routed = *bytes;
+        if (!generic_moe_bytes(m, c, std::max<std::int32_t>(chunk, 1), why)) {
+            return {std::nullopt, why};
+        }
     }
-    const auto target  = [&](std::int32_t columns, std::int32_t head_columns) -> std::uint64_t {
+    const auto target = [&](std::int32_t columns, std::int32_t head_columns) -> std::uint64_t {
+        std::string why;
+        const std::size_t routed = c.experts > 0 ? generic_moe_bytes(m, c, columns, why).value_or(0) : 0;
         return gemma4::target_activation_bytes(c, columns, head_columns) +
                gemma4::target_op_bytes(c, linears, head, context, columns, head_columns, routed) +
                gemma4::kTargetWorkspaceReserve;
@@ -216,13 +230,14 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
         const auto width   = static_cast<std::int32_t>(plan->draft_window) + 1;
         const auto rows    = static_cast<std::int32_t>(detail::speculative_round_batches(*plan));
         const auto columns = static_cast<std::int32_t>(detail::speculative_round_columns(*plan));
-        general            = std::max(general, text_prefill + kGemmaDrafterPass);
+        const std::uint64_t drafter = gemma_drafter_pass(c, context);
+        general = std::max(general, text_prefill + drafter);
         if (columns > 0) {
             general = std::max(general,
                                target(columns, columns) +
                                    ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
                                        c.vocab_size, 1, width - 1, 1, rows) +
-                                   kGemmaDrafterPass);
+                                   drafter);
         }
     }
     return {general, sized};
