@@ -399,7 +399,9 @@ the refusal says `frag_codec`, #311):
 | `ggml_iq2_s` | yes | yes | no |
 
 The grouped W4A8 takes a layer only when both of its banks are admitted (`MoePlan::w4a8` covers
-both stages), so a layer with one IQ bank in fragment order prefills both stages on A16.
+both stages), so a layer with one IQ bank in fragment order prefills both stages on A16. A frag bank's R8
+limit is four tokens for Q4_0, and for the IQ formats on a board of many DRAM bytes per SM cycle
+(`r8_token_limit`).
 
 ## 8. Decode boundary
 

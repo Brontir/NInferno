@@ -1589,9 +1589,6 @@ int check_warp_plan() {
     return failures;
 }
 
-// --part random0|random1|random2|layers runs one share of the cases, no argument all of them:
-// ctest runs the four shares apart (tests/ops/tests.cmake), 125 s in one process on the RTX 5090.
-// Every random case is still drawn in each share, so the generator's sequence never moves.
 // Each bank's refusal per stage (#311), from facts of the format alone: no weights are read, so
 // the banks are descriptions at an aligned stand-in address.
 int check_bank_refusals() {
@@ -1662,6 +1659,9 @@ int check_bank_refusals() {
     return failures;
 }
 
+// --part random0|random1|random2|layers runs one share of the cases, no argument all of them:
+// ctest runs the four shares apart (tests/ops/tests.cmake), 125 s in one process on the RTX 5090.
+// Every random case is still drawn in each share, so the generator's sequence never moves.
 int main(int argc, char** argv) {
     const std::string part = argc == 3 && std::string_view(argv[1]) == "--part" ? argv[2] : "";
     if (argc != 1 && part != "random0" && part != "random1" && part != "random2" &&
