@@ -213,7 +213,8 @@ inline constexpr std::int32_t kR8Tokens = 8;
 inline constexpr std::int32_t kR8NarrowTokens = 4;
 [[nodiscard]] std::int32_t r8_token_limit();
 // The widest R8 call over `bank`: r8_token_limit(), but four for the FP4-element formats (MXFP4,
-// NVFP4), where the register MMA wins above four tokens (moe.cpp).
+// NVFP4) and a ggml_frag_v1 bank other than Q4_K, where the register MMA wins above four tokens
+// (moe.cpp).
 [[nodiscard]] std::int32_t r8_token_limit(const Weight& bank);
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,

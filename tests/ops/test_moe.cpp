@@ -609,18 +609,17 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 }
 
 // The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
-// moe::r8_token_limit(bank): 8 from Ada on, 4 before and for FP4 elements): every R8 schedule on
-// both stages and on each
-// stage alone against the oracle of the quantized activations; a slot's bytes depend on its own
-// activation only, so every call with R8 on both stages gives a token the bytes of the widest one
-// whatever its schedule, T or position. The default route is the GPU class's A8 route
-// (moe::a8_default_route: R8 on gate/up, an IQ3_XXS down of width 512..1023 on the class's down
-// schedule; w4r1 on gate/up for a class without an entry); its bytes, too, do not depend on T or
-// position (the heuristic route: a measured table's bands may change the down stage between
-// widths). Two exceptions keep A16: a call past the limit (prefill: refused for a forced R8 plan),
-// and a bank whose K is too wide for a CTA's quantized activation (above 10922 at T = 3 or 4, 5461
-// at T = 5..8). Any R8 plan under A16Only is refused, and the default route there stays on the
-// register MMA.
+// moe::r8_token_limit(bank): 8 from Ada on, 4 before and for FP4 elements or most frag banks):
+// every R8 schedule on both stages and on each stage alone against the oracle of the quantized
+// activations; a slot's bytes depend on its own activation only, so every call with R8 on both
+// stages gives a token the bytes of the widest one whatever its schedule, T or position. The
+// default route is the GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS down
+// of width 512..1023 on the class's down schedule; w4r1 on gate/up for a class without an entry);
+// its bytes, too, do not depend on T or position (the heuristic route: a measured table's bands may
+// change the down stage between widths). Two exceptions keep A16: a call past the limit (prefill:
+// refused for a forced R8 plan), and a bank whose K is too wide for a CTA's quantized activation
+// (above 10922 at T = 3 or 4, 5461 at T = 5..8). Any R8 plan under A16Only is refused, and the
+// default route there stays on the register MMA.
 int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
     namespace moe = ops::detail::moe;
     Case c         = base;
@@ -1126,7 +1125,7 @@ int check_expert_policy() {
         w.down           = native_weight(rows(dn, 0, E * H, F));
         w.gate_up.layout = w.down.layout = QuantLayout::GgmlFrag;
         w.expert_policy  = ops::LinearPolicy::AllowA8;
-        // Each to its bank's limit (both to the class's: neither has FP4 elements).
+        // Each to its bank's limit (frag Q4_0: four; frag Q4_K: the class's).
         const std::int32_t limit = moe::r8_token_limit(w.gate_up);
         for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p       = moe::select_plan(w, config, t, false);

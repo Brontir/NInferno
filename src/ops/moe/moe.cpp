@@ -714,11 +714,24 @@ namespace {
 // both boards (-1..-19 %).
 bool r8_fp4_elements(QType q) { return q == QType::MXFP4 || q == QType::NVFP4; }
 
+// A ggml_frag_v1 bank is laid out for the register MMA's fragments: its decode costs that kernel
+// little, and above four tokens R8 keeps an edge only on Q4_K's super-block (RTX 5070 Ti, Qwen3.6-
+// 35B's shape, frag against published layout, R8 against the register MMA at T = 5 / 8: IQ3_XXS
+// -4.4 / -1.1 % against -8.6 / -6.5 %, IQ2_S -5.7 / -1.1 % against -9.9 / -6.4 %, Q4_0 +11.1 /
+// +12.0 %, Q4_K -12.5 / -10.8 %). The random routing of moe_bench spreads the slots over more
+// experts than a model's: R8's cost follows the slots, the register MMA's the jobs, and in
+// Qwen3.6-35B UD-Q3_K_S (frag IQ3_XXS gate/up) at C8 the R8 gate/up took 85.9 us a call against
+// the register MMA's 83.9 (nsys), the model 104.9 -> 102.8 tok/s.
+bool r8_frag_narrow(const Weight& bank) {
+    return bank.layout == QuantLayout::GgmlFrag && bank.qtype != QType::GGML_Q4_K;
+}
+
 } // namespace
 
 std::int32_t r8_token_limit(const Weight& bank) {
     const std::int32_t limit = r8_token_limit();
-    return r8_fp4_elements(bank.qtype) ? std::min(limit, kR8NarrowTokens) : limit;
+    return r8_fp4_elements(bank.qtype) || r8_frag_narrow(bank) ? std::min(limit, kR8NarrowTokens)
+                                                                : limit;
 }
 
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
@@ -1071,8 +1084,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     if (!r8_stages_admitted(w, p, t)) {
         fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
-             "tokens (8 from Ada on but for FP4 elements, 4 otherwise) and an activation that "
-             "fits a CTA");
+             "tokens (8 from Ada on but for FP4 elements and most frag banks, 4 otherwise) and an "
+             "activation that fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {
