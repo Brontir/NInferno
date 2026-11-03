@@ -46,13 +46,14 @@ struct LinearDecision {
 [[nodiscard]] const char* linear_claim_name(LinearClaim claim);
 
 // Every implementation ops::linear has for one call, and which one it runs (#306): the shape-owned
-// kernel ("owned:q8.<launch>" for Q8_G32, whose table names each width's launch; another format
-// "owned:<format>") and the generic route ("generic:<route>", the route select_route asks for; the
+// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32: the launch its table selects at the width,
+// q8_launch_id; another format "owned:<format>") and the generic route ("generic:<route>", the route select_route asks for; the
 // call's layout and workspace may still resolve it lower, generic::resolve_route).
 // Selected: the one dispatch_linear runs (none where it refuses the call; `why` of the generic
 // route: the claim that handed it the call). Inadmissible: available, not taken (`why`: the claim
 // that took the call from the shape's kernels, or "owned" for a route the shape's kernels win
-// over). Unavailable: no such implementation for the weight (`why`: what lacks).
+// over). Unavailable: no such implementation for the weight (`why`: what lacks; a ggml_frag_v1
+// weight, which ops::linear refuses, has neither). T must be positive.
 struct LinearCandidate {
     enum class Status { Selected, Inadmissible, Unavailable };
     std::string id;

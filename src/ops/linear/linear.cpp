@@ -154,7 +154,15 @@ const char* linear_claim_name(LinearClaim claim) {
 
 std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy policy,
                                                std::int32_t tokens) {
-    using Status                  = LinearCandidate::Status;
+    using Status = LinearCandidate::Status;
+    if (tokens <= 0) { throw std::invalid_argument("linear candidates: T must be positive"); }
+    // dispatch_linear refuses a fragment-order weight before it decides (generic::refuse_frag):
+    // nothing runs it.
+    if (w.layout == QuantLayout::GgmlFrag) {
+        const std::string why = "ggml_frag_v1 is the grouped MoE kernel's layout only";
+        return {{"owned:" + generic::format_label(w.qtype), Status::Unavailable, why},
+                {"generic", Status::Unavailable, why}};
+    }
     const LinearDecision decision = linear_decision(w, policy, tokens);
     const bool generic_reads      = generic::supports(w);
     const bool registered         = linear_shape_registered(w.qtype, w.n, w.k);
@@ -172,8 +180,7 @@ std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy pol
         owned.why = "no shape-owned kernel for this [N,K]";
     } else {
         if (w.qtype == QType::Q8_G32_FP16) {
-            owned.id += std::string(".") +
-                        q8_launch_name(select_q8_launch(w.n, w.k, tokens, decision.policy));
+            owned.id += "." + q8_launch_id(w.n, w.k, tokens);
         }
         owned.status = runs_owned ? Status::Selected : Status::Inadmissible;
         if (!runs_owned) { owned.why = linear_claim_name(decision.claim); }

@@ -1,5 +1,5 @@
 // ops::linear's candidates for one call (#306, ops/linear/linear_registry.h linear_candidates): the
-// shape-owned Q8_G32 kernel with the launch its table names at each width, and the generic route;
+// shape-owned Q8_G32 kernel with the launch its table selects at each width, and the generic route;
 // the one dispatch_linear runs is Selected, and it is the one linear_decision names.
 #include "core/weight_view.h"
 #include "ninferno/ops/prefill_routes.h"
@@ -83,10 +83,16 @@ void call(std::int32_t n, std::int32_t k, std::int32_t t, ops::LinearPolicy poli
     check((c[1].status == Candidate::Status::Selected) == !owned_claims,
           at + ": the generic route selected exactly where a rule claims the call");
     if (registered) {
-        const std::string launch = ops::detail::q8_launch_name(
-            ops::detail::select_q8_launch(n, k, t, decision.policy));
-        check(launch != "unnamed", at + ": every launch the table selects has a name");
-        check(c[0].id == "owned:q8." + launch, at + ": the owned candidate names its launch");
+        check(c[0].id == "owned:q8." + ops::detail::q8_launch_id(n, k, t),
+              at + ": the owned candidate names its launch");
+        // The identity changes from the width before exactly where the table's launch does.
+        if (t > 1) {
+            const bool same_launch = ops::detail::select_q8_launch(n, k, t, decision.policy) ==
+                                     ops::detail::select_q8_launch(n, k, t - 1, decision.policy);
+            check(same_launch == (ops::detail::q8_launch_id(n, k, t) ==
+                                  ops::detail::q8_launch_id(n, k, t - 1)),
+                  at + ": the launch identity follows the table's launch");
+        }
         check(c[0].status != Candidate::Status::Unavailable, at + ": a registered shape's kernel");
     } else {
         check(c[0].status == Candidate::Status::Unavailable &&
@@ -129,6 +135,19 @@ int main() {
         check(c.size() == 2 && c[0].status == Candidate::Status::Inadmissible &&
                   c[0].why == "invariant" && c[1].status == Candidate::Status::Selected,
               "invariant profile:" + describe(c));
+    }
+    // Every width 1..512 of a shape whose table changes launch often: the identity follows it.
+    for (std::int32_t t = 1; t <= 512; ++t) {
+        call(5120, 25600, t, ops::LinearPolicy::A16Only, "q8 5120x25600 sweep");
+    }
+    // A fragment-order weight: dispatch_linear refuses it, so nothing is selected.
+    {
+        Described d(1024, 2048);
+        d.weight.layout = ninferno::QuantLayout::GgmlFrag;
+        const auto c = ops::detail::linear_candidates(d.weight, ops::LinearPolicy::A16Only, 1);
+        check(c.size() == 2 && c[0].status == Candidate::Status::Unavailable &&
+                  c[1].status == Candidate::Status::Unavailable,
+              "ggml_frag_v1:" + describe(c));
     }
     if (failures != 0) {
         std::cerr << "linear candidates: " << failures << " failure(s)\n";
