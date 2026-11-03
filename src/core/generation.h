@@ -34,8 +34,9 @@
 
 //
 // What a lent row carries (#300): generation_row answers every compute capability, lending the
-// newest (or the oldest) row to one the table does not know, so that the code runs there. Its
-// fields are of four kinds, and only the first two are lent:
+// newest (or the oldest) row to one the table does not know, so that the code runs there. Beside
+// the device's capability, which is not in this table, its fields are of four kinds, and only the
+// rates are lent:
 //   capability   what the device can execute: not in this table (DeviceFeatures, the query)
 //   rate         bf16, s8: the analytic tensor rate a cost model ranks routes with (lent: an
 //                assumed rate, the ranking said to rest on it)
