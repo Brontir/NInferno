@@ -54,6 +54,10 @@ public:
     // Whether the last 0 from read() or write() waits for the socket to become writable (TLS can
     // need to write to read): the loop then polls for POLLOUT too.
     [[nodiscard]] virtual bool wants_writable() const noexcept = 0;
+    // Whether a write that took nothing waits for the socket to become readable (TLS: SSL_write
+    // wanting to read): the loop then does not poll for POLLOUT for it, which would return at
+    // once while the socket is writable.
+    [[nodiscard]] virtual bool write_waits_readable() const noexcept = 0;
     // Switches the socket to non-blocking (after the blocking handshake).
     virtual void set_nonblocking() = 0;
     // Bytes the link holds already read from the socket (TLS: a record's rest): read them without

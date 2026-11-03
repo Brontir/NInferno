@@ -77,6 +77,7 @@ public:
         return -1;
     }
     bool wants_writable() const noexcept override { return false; }
+    bool write_waits_readable() const noexcept override { return false; }
     void set_nonblocking() override { make_nonblocking(fd_); }
     bool pending() const noexcept override { return false; }
 
@@ -99,27 +100,51 @@ public:
     TlsLink& operator=(const TlsLink&) = delete;
 
     int fd() const noexcept override { return fd_; }
+    // An operation that waits for the other direction (SSL_read wanting to write, as a TLS 1.3
+    // KeyUpdate's answer does; SSL_write wanting to read) is retried before the other operation is
+    // issued: until then the other reports nothing to do, and the loop's next pass retries it.
     long read(std::uint8_t* data, std::size_t size) override {
+        if (blocked_ == Blocked::WriteWantsRead) { return 0; }
         wants_writable_ = false;
         const int n     = SSL_read(ssl_, data, static_cast<int>(std::min<std::size_t>(size, 1 << 30)));
-        if (n > 0) { return n; }
-        return settle(n);
+        if (n > 0) {
+            blocked_ = Blocked::None;
+            return n;
+        }
+        return settle(n, false);
     }
     long write(const std::uint8_t* data, std::size_t size) override {
+        if (blocked_ == Blocked::ReadWantsWrite) {
+            wants_writable_ = true;
+            return 0;
+        }
         wants_writable_ = false;
         const int n = SSL_write(ssl_, data, static_cast<int>(std::min<std::size_t>(size, 1 << 30)));
-        if (n > 0) { return n; }
-        return settle(n);
+        if (n > 0) {
+            blocked_ = Blocked::None;
+            return n;
+        }
+        return settle(n, true);
     }
     bool wants_writable() const noexcept override { return wants_writable_; }
+    bool write_waits_readable() const noexcept override {
+        return blocked_ == Blocked::WriteWantsRead;
+    }
     void set_nonblocking() override { make_nonblocking(fd_); }
     bool pending() const noexcept override { return SSL_pending(ssl_) > 0; }
 
 private:
-    long settle(int n) {
+    enum class Blocked { None, ReadWantsWrite, WriteWantsRead };
+
+    long settle(int n, bool writing) {
         switch (SSL_get_error(ssl_, n)) {
-        case SSL_ERROR_WANT_READ: return 0;
-        case SSL_ERROR_WANT_WRITE: wants_writable_ = true; return 0;
+        case SSL_ERROR_WANT_READ:
+            blocked_ = writing ? Blocked::WriteWantsRead : Blocked::None;
+            return 0;
+        case SSL_ERROR_WANT_WRITE:
+            blocked_        = writing ? Blocked::None : Blocked::ReadWantsWrite;
+            wants_writable_ = true;
+            return 0;
         default: ERR_clear_error(); return -1;
         }
     }
@@ -128,6 +153,7 @@ private:
     SSL_CTX* ctx_;
     SSL* ssl_;
     bool wants_writable_ = false;
+    Blocked blocked_     = Blocked::None;
 };
 
 int tcp_connect(const RouterUrl& url, int timeout_ms, std::string* why) {

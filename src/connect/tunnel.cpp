@@ -264,7 +264,9 @@ public:
             const auto wait = std::chrono::duration_cast<std::chrono::milliseconds>(next_ping - now);
             pollfd fds[2] = {{link_.fd(), POLLIN, 0}, {waker_->fd(), POLLIN, 0}};
             const bool read_wants_write = link_.wants_writable();
-            if (!out_.empty() || read_wants_write) { fds[0].events |= POLLOUT; }
+            if ((!out_.empty() && !link_.write_waits_readable()) || read_wants_write) {
+                fds[0].events |= POLLOUT;
+            }
             // Bytes the link holds already are read without waiting for the socket.
             const bool held   = link_.pending();
             const int timeout = held ? 0 : static_cast<int>(std::clamp<long long>(wait.count(), 1, 250));
