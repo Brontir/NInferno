@@ -698,7 +698,11 @@ bool plan_is_token_invariant(const MoePlan& plan) {
 }
 
 std::int32_t r8_token_limit() {
-    return device_class().compute_capability() >= 89 ? kR8Tokens : kR8NarrowTokens;
+    // The measured families by name, not a compute-capability inequality (core/device_class.h):
+    // Ada (sm_89) and consumer Blackwell (sm_120, sm_121). Hopper and datacenter Blackwell are not
+    // measured and keep four.
+    const auto& d = device_class();
+    return (d.major == 8 && d.minor == 9) || d.major == 12 ? kR8Tokens : kR8NarrowTokens;
 }
 
 namespace {
@@ -1084,8 +1088,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     if (!r8_stages_admitted(w, p, t)) {
         fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
-             "tokens (8 from Ada on but for FP4 elements and most frag banks, 4 otherwise) and an "
-             "activation that fits a CTA");
+             "tokens (8 on Ada and consumer Blackwell but for FP4 elements and most frag banks, 4 "
+             "otherwise) and an activation that fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {
