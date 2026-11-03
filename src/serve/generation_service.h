@@ -236,8 +236,9 @@ public:
     [[nodiscard]] bool is_available() const { return engine_->is_available(); }
 
     // A router's keep of `session` ended (serve/cache_hint.h KeptSessions).
-    bool release_kept_session(std::string_view session) {
-        return engine_ != nullptr && engine_->release_kept_session(session);
+    ninferno::KeptSessionRelease release_kept_session(std::string_view session) {
+        return engine_ != nullptr ? engine_->release_kept_session(session)
+                                  : ninferno::KeptSessionRelease::None;
     }
 
     // Cancels every request in preparation or generation, and every one prepared later, as a

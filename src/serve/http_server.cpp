@@ -839,8 +839,12 @@ void HttpServer::run_supervisor() {
         const ninferno::RuntimeStats stats = service_->runtime_stats();
         const bool stalled               = monitor.update(stats, now);
         // A kept thread silent past its ttl-ms falls to the private weight (cache_hint.h).
-        for (const std::string& session : kept_sessions_.expired(now)) {
-            (void)service_->release_kept_session(session);
+        // A turn still running under the keep publishes its entry kept: asked again after a ttl.
+        for (const KeptGrant& grant : kept_sessions_.expired(now)) {
+            if (service_->release_kept_session(grant.session_key) ==
+                ninferno::KeptSessionRelease::InFlight) {
+                kept_sessions_.keep(grant, now);
+            }
         }
         if (stalled != stalled_.exchange(stalled)) { operational_log_.executor_stall(stalled); }
         // Checked while draining too: a device that fails then still ends the process with 1.

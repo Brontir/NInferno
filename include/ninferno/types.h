@@ -1016,6 +1016,11 @@ enum class CacheRetentionHint : std::uint8_t {
     Kept,
 };
 
+// What Engine::release_kept_session did: the session's kept entry fell to the private weight; a
+// turn of the session is still running under its keep (its entry is published when it ends, so
+// the release is to be asked again); or the session holds nothing kept.
+enum class KeptSessionRelease : std::uint8_t { Released, InFlight, None };
+
 enum class PromptCacheMarkerKind : std::uint8_t {
     SharedStablePrefix,
     PrivateLongAnchor,

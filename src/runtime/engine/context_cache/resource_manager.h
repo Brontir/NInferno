@@ -464,19 +464,26 @@ public:
     }
 
     // A router's keep of `session` ends (its ttl passed, #338): the entry the session names falls
-    // to the private weight, its session kept for the thread's next turn. Returns whether a kept
-    // entry fell.
-    bool release_kept_session(const CacheSessionKey& session) noexcept {
+    // to the private weight, its session kept for the thread's next turn. InFlight: a turn of the
+    // session runs under its keep (its index cell is consumed while it runs; the entry it
+    // publishes is kept), so the release is to be asked again after it.
+    KeptSessionRelease release_kept_session(const CacheSessionKey& session) noexcept {
+        for (std::uint32_t lane = 0; lane < lane_count_; ++lane) {
+            const ActiveEntry& active = active_[lane];
+            if (active.occupied && active.kept && active.session && *active.session == session) {
+                return KeptSessionRelease::InFlight;
+            }
+        }
         const auto cell = find_session_cell(session);
-        if (!cell) { return false; }
+        if (!cell) { return KeptSessionRelease::None; }
         const SessionIndexEntry& index = session_index_[*cell];
-        if (index.slot >= catalog_count_) { return false; }
+        if (index.slot >= catalog_count_) { return KeptSessionRelease::None; }
         CatalogEntry& entry = catalog_[index.slot];
         if (entry.state != CatalogState::Catalogued || entry.id != index.owner_id || !entry.kept) {
-            return false;
+            return KeptSessionRelease::None;
         }
         demote_to_private(entry);
-        return true;
+        return KeptSessionRelease::Released;
     }
 
     [[nodiscard]] std::optional<ContextTransactionKind> context_transaction_kind() const noexcept {
@@ -1176,7 +1183,9 @@ public:
         result.continuation.reset();
         publication.session   = active.session;
         publication.retention = active.retention;
-        publication.kept      = active.kept && active.retention == RetentionClass::LiveSession;
+        // Kept only where the session index names it: a release finds it there.
+        publication.kept = active.kept && active.retention == RetentionClass::LiveSession &&
+                           publication.session && active.update_session_index;
         migrate_observations(publication, result.summary, active.retention, &active.inherited);
         advance_revision(publication.revision);
         if (publication.session && active.update_session_index) {

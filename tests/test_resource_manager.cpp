@@ -2947,14 +2947,31 @@ void test_kept_sessions_budget_and_release() {
                 manager.catalog_retention(first_slot.front()) == RetentionClass::RecentPrivate,
             "past the budget the oldest kept session did not fall to the private weight");
     require(live_slots() == 3, "the budget touched a LiveSession that was not kept");
-    require(manager.release_kept_session(FakeCacheSessionKey{2}) && kept_slots().size() == 1,
+    using ninferno::KeptSessionRelease;
+    require(manager.release_kept_session(FakeCacheSessionKey{2}) == KeptSessionRelease::Released &&
+                kept_slots().size() == 1,
             "a released keep did not fall");
-    require(!manager.release_kept_session(FakeCacheSessionKey{2}) &&
-                !manager.release_kept_session(FakeCacheSessionKey{9}) &&
-                !manager.release_kept_session(FakeCacheSessionKey{77}),
+    require(manager.release_kept_session(FakeCacheSessionKey{2}) == KeptSessionRelease::None &&
+                manager.release_kept_session(FakeCacheSessionKey{9}) == KeptSessionRelease::None &&
+                manager.release_kept_session(FakeCacheSessionKey{77}) == KeptSessionRelease::None,
             "a release fell an entry that was not kept");
+    // A turn of a kept session still running: the release is to be asked again after it, and the
+    // entry it publishes is kept.
+    const ActiveRequest running = start_active(manager, program, 3, kept_base(3, 3), 5);
+    require(manager.release_kept_session(FakeCacheSessionKey{3}) == KeptSessionRelease::InFlight,
+            "a release during the session's running turn did not say so");
+    (void)finish_active(manager, program, running, 20);
+    require(manager.release_kept_session(FakeCacheSessionKey{3}) == KeptSessionRelease::Released,
+            "the running turn's published entry was not kept");
+    // A kept request that does not advance the session index publishes nothing kept.
+    FakeRequestBasePlan unindexed = kept_base(4, 4);
+    unindexed.cache.update_session_index = false;
+    const ActiveRequest quiet = start_active(manager, program, 4, unindexed, 6);
+    (void)finish_active(manager, program, quiet, 8);
+    require(manager.release_kept_session(FakeCacheSessionKey{4}) == KeptSessionRelease::None,
+            "an entry the session index does not name was kept");
     // The session stays bound: its next turn still reuses the endpoint.
-    auto next = manager.inspect(program, FakePreparedPrompt{2}, kept_base(2, 2), 5);
+    auto next = manager.inspect(program, FakePreparedPrompt{2}, kept_base(2, 2), 7);
     require(next.choice && next.choice->summary().reusable_prompt_tokens == 16,
             "a released session lost its binding");
     manager.set_kept_tokens(0);

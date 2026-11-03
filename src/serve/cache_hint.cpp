@@ -92,15 +92,16 @@ std::string_view apply_cache_hint(const std::string* header, bool trusted, std::
         hints.retention = CacheRetentionHint::Disposable;
         return "drop";
     case CacheHintRetain::Keep: {
-        // The request's own session (a stored Response's) where it has one, else the router's.
-        const std::string key = hints.session_key ? *hints.session_key
-                                : hint->session
-                                    ? std::string(kKeptSessionPrefix) + *hint->session
-                                    : std::string();
+        // Only a request that names no session of its own (a stored Response already has the
+        // live-session weight, which a keep's end must not lower), advances the session index (a
+        // release finds the entry there) and is not disposable; under the router's key.
+        const std::string key =
+            hint->session ? std::string(kKeptSessionPrefix) + *hint->session : std::string();
         // An hour at most, so a deadline in milliseconds cannot overflow the clock.
         constexpr double kLongestTtlMs = 3.6e6;
         if (kept_tokens == 0 || key.empty() || key.size() > 256 || !hint->ttl_ms ||
-            !(*hint->ttl_ms > 0)) {
+            !(*hint->ttl_ms > 0) || hints.session_key || !hints.update_session_index ||
+            hints.retention == CacheRetentionHint::Disposable) {
             return "normal";
         }
         hints.session_key = key;
@@ -120,15 +121,15 @@ std::string_view apply_cache_hint(const std::string* header, bool trusted, std::
 
 void KeptSessions::keep(const KeptGrant& grant, Clock::time_point now) {
     std::lock_guard lock(mutex_);
-    until_[grant.session_key] = now + grant.ttl;
+    until_[grant.session_key] = {now + grant.ttl, grant.ttl};
 }
 
-std::vector<std::string> KeptSessions::expired(Clock::time_point now) {
-    std::vector<std::string> out;
+std::vector<KeptGrant> KeptSessions::expired(Clock::time_point now) {
+    std::vector<KeptGrant> out;
     std::lock_guard lock(mutex_);
     for (auto it = until_.begin(); it != until_.end();) {
-        if (it->second <= now) {
-            out.push_back(it->first);
+        if (it->second.until <= now) {
+            out.push_back({it->first, it->second.ttl});
             it = until_.erase(it);
         } else {
             ++it;

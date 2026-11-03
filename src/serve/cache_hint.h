@@ -65,16 +65,21 @@ inline constexpr std::string_view kKeptSessionPrefix = "router:";
 }
 
 // The kept threads' deadlines: a grant sets (or moves) its session's, `expired` hands back each
-// session whose deadline passed, once.
+// session whose deadline passed, once, with its ttl (a release the cache answers InFlight is kept
+// again for another ttl).
 class KeptSessions {
 public:
     using Clock = std::chrono::steady_clock;
     void keep(const KeptGrant& grant, Clock::time_point now);
-    [[nodiscard]] std::vector<std::string> expired(Clock::time_point now);
+    [[nodiscard]] std::vector<KeptGrant> expired(Clock::time_point now);
 
 private:
+    struct Deadline {
+        Clock::time_point until;
+        std::chrono::milliseconds ttl;
+    };
     std::mutex mutex_;
-    std::map<std::string, Clock::time_point> until_;
+    std::map<std::string, Deadline> until_;
 };
 
 } // namespace ninferno::serve

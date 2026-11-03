@@ -411,8 +411,9 @@ their last turn's end), and past that the oldest kept falls to the private weigh
 thread that sends no new turn within its `ttl-ms` (at most an hour) falls to the private weight
 too, its session still found by a later turn; each turn moves the deadline. The server keeps that
 clock; the cache's own decisions read none. Without the budget, a session or a ttl, `keep` is
-granted as `normal`. A request with its own session (a stored Response) is kept under it; the
-other fields are read and
+granted as `normal`, and so on a request with a session of its own (a stored Response already
+has the live-session weight) or one that does not advance its thread (`store: false`). A deadline
+that passes while the thread's turn still runs is moved by another ttl. The other fields are read and
 not yet weighed; unknown fields are ignored. A malformed hint is none, never an error. The response
 says what was granted in `x-ninferno-hint-applied` (`keep`, `normal`, `drop`, or `none` when hints
 are off or the hint is malformed: a bad value of a known field, a field without a name, a field

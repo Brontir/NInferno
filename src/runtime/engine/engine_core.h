@@ -316,10 +316,10 @@ public:
 
     // Engine::release_kept_session: between rounds, under the execution lock every resource
     // decision takes.
-    bool release_kept_session(std::string_view session) {
+    KeptSessionRelease release_kept_session(std::string_view session) {
         using Key = typename ModelContract::CacheSessionKey;
         Key key;
-        if (session.empty() || session.size() > key.bytes.size()) { return false; }
+        if (session.empty() || session.size() > key.bytes.size()) { return KeptSessionRelease::None; }
         key.size = static_cast<decltype(key.size)>(session.size());
         std::copy(session.begin(), session.end(), key.bytes.begin());
         std::scoped_lock lock(execution_mutex_);

@@ -83,9 +83,20 @@ int main() {
         ninferno::ContextCacheHints stored;
         stored.session_key = "resp_1";
         grant.reset();
-        failures += check(apply_cache_hint(&kept, true, 4096, stored, &grant) == "keep" && grant &&
-                              grant->session_key == "resp_1" && stored.session_key == "resp_1",
-                          "keep on a request with its own session: its own key");
+        failures += check(apply_cache_hint(&kept, true, 4096, stored, &grant) == "normal" && !grant &&
+                              stored.session_key == "resp_1" &&
+                              stored.retention == ninferno::CacheRetentionHint::Default,
+                          "keep on a request with its own session (a stored Response): normal");
+        ninferno::ContextCacheHints unstored;
+        unstored.update_session_index = false;
+        failures += check(apply_cache_hint(&kept, true, 4096, unstored, &grant) == "normal" && !grant &&
+                              !unstored.session_key,
+                          "keep on a request that does not advance its thread: normal");
+        ninferno::ContextCacheHints disposable;
+        disposable.retention = ninferno::CacheRetentionHint::Disposable;
+        failures += check(apply_cache_hint(&kept, true, 4096, disposable, &grant) == "normal" && !grant &&
+                              disposable.retention == ninferno::CacheRetentionHint::Disposable,
+                          "keep on a disposable request: normal");
         ninferno::ContextCacheHints untrusted;
         grant.reset();
         failures += check(apply_cache_hint(&kept, false, 4096, untrusted, &grant) == "none" &&
@@ -103,9 +114,10 @@ int main() {
         failures += check(sessions.expired(t0 + std::chrono::milliseconds(200)).empty(),
                           "a new turn moves its session's deadline");
         const auto due = sessions.expired(t0 + std::chrono::milliseconds(300));
-        failures += check(due == std::vector<std::string>{"a", "b"} &&
+        failures += check(due.size() == 2 && due[0].session_key == "a" && due[1].session_key == "b" &&
+                              due[1].ttl == std::chrono::milliseconds(300) &&
                               sessions.expired(t0 + std::chrono::milliseconds(900)).empty(),
-                          "each expired session is handed back once");
+                          "each expired session is handed back once, with its ttl");
         failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
                               h.retention == ninferno::CacheRetentionHint::Disposable,
                           "drop: disposable");

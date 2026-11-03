@@ -150,8 +150,8 @@ public:
 
     // A router's keep of `session` (ContextCacheHints::session_key under CacheRetentionHint::Kept)
     // ends: its cached context falls to the private weight, still found by the session's next
-    // turn. Returns whether a kept entry fell (none: the session holds none, or not as kept).
-    bool release_kept_session(std::string_view session);
+    // turn. InFlight: a turn of the session still runs under its keep; ask again after it.
+    KeptSessionRelease release_kept_session(std::string_view session);
 
 private:
     class Impl;
