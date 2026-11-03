@@ -237,26 +237,43 @@ int main() {
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
-        // A joint verify of C streams (#303): one stream is the round above; C streams cost more
-        // a round than C plain steps by more than one stream's does (the verify's rows are C x
-        // (k + 1)), so the gain falls; beyond kPricedVerifyRows rows it is not priced.
+        // A joint verify of C streams (#303): one stream is the round above; beyond
+        // kPricedVerifyRows rows a round is not priced. A dense target's gain falls with C: its
+        // weights are read once a pass whatever the rows, so the verify's C x (k + 1) rows add
+        // only operations, and the plain step of C rows gains as much from sharing that read.
+        // An MoE's may rise: its plain step of C rows already reads more experts, and the
+        // verify's read saturates (moe_read_fraction).
         for (const auto& g : golden) {
             const auto& p     = full_head_pair(g.repo, g.gpu);
             const auto config = sp::SpecConfig::parse(g.config);
             const auto one    = sp::load_gain(*p.round_facts, config, k4070, 2.0, 1);
             expect(one && near(*one, 2.0, 1e-12),
                    std::string("one stream's load gain is its own, ") + g.repo + " " + g.config);
+            const bool dense = p.round_facts->target.experts == 0;
             for (std::int32_t streams = 2; streams <= 8; ++streams) {
                 const auto gain = sp::load_gain(*p.round_facts, config, k4070, 2.0, streams);
                 const bool priced = streams * (config.k + 1) <= sp::kPricedVerifyRows;
-                expect(gain.has_value() == priced && (!gain || (*gain < 2.0 && *gain > 0)),
+                expect(gain.has_value() == priced && (!gain || (*gain > 0 && (!dense || *gain < 2.0))),
                        std::string("the load gain at ") + std::to_string(streams) +
-                           " streams falls and is priced within the measured rows, " + g.repo +
-                           " " + g.config);
+                           " streams is priced within the measured rows (a dense target's falls), " +
+                           g.repo + " " + g.config);
                 if (gain) {
                     std::printf("load gain %s %s C=%d: %.4f of 2\n", g.repo, g.config, streams,
                                 *gain);
                 }
+            }
+        }
+        // Against a measurement (reported, not held: the load cells ran another engine build
+        // and corpus than the pair's one-request rounds): Gemma 4 26B A4B QAT UD-Q4_K_XL with its
+        // MTP on the RTX 5080, C = 2 over plain at C = 2, bound 2 610.0 / 388.0 and bound 3
+        // 645.7 / 388.0 (drafter_registry.json, load_measured_on, 2026-09-28).
+        {
+            const auto& p     = pair_of("unsloth/gemma-4-26B-A4B-it-qat-GGUF", "gb203:70sm");
+            const double k5080 = sp::card_rates_of_board(0x2C02).kappa();
+            for (const char* label : {"mtp:2", "mtp:3"}) {
+                const auto config = sp::SpecConfig::parse(label);
+                const auto ratio  = sp::load_gain(*p.round_facts, config, k5080, 1.0, 2);
+                std::printf("Gemma 26B QAT RTX 5080 %s: R_1 / R_2 %.4f\n", label, ratio ? *ratio : 0.0);
             }
         }
     }
