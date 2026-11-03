@@ -96,12 +96,11 @@ inline ProposalHead proposal_head(const char* path, ProposalHead wanted,
         real_artifact(path).head_drafters.contains(drafter)) {
         return wanted;
     }
-    static const bool said = [drafter] {
+    static std::set<std::string> said; // once per drafter
+    if (said.insert(drafter).second) {
         skip_case(std::string("optimized proposal head for ") + drafter,
                   "the artifact's proposal head does not serve it; the full head drafts");
-        return true;
-    }();
-    (void)said;
+    }
     return ProposalHead::Full;
 }
 
