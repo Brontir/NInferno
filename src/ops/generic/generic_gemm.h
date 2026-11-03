@@ -814,7 +814,11 @@ struct PreparedRule {
 // Whether the bytes one rule prepares are the bytes the other's call would make itself from the
 // same x (its source, stride and extent are each call's: prepared_serves): the same
 // representation, row length and variant, neither bound to its weight. The same nominal activation
-// dtype is no such match: W4A8's, I8's and ggml's int8 forms group, scale and sum apart.
+// dtype is no such match: W4A8's, I8's and ggml's int8 forms group, scale and sum apart. A match
+// is of the rule only; a consumer that shares bytes also needs prepared_serves (K, T, stride and
+// source) and a buffer that holds the whole call: MMQ quantizes kMmqPrefillSlice tokens at a time
+// into one reused buffer, ggml's vector kernel 8 at a time into scoped ones, and I8 lays its
+// scales out by the padded token count.
 [[nodiscard]] bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept;
 // The route run() hands run_route for a call `selected` for: a quantized family that needs
 // workspace (W4A4, W4A8, I8) takes the A16 heuristic's route on a call without one.
