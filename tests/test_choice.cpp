@@ -1688,6 +1688,52 @@ void axis_order_does_not_decide(const json& fixture) {
     }
 }
 
+// #304: a choice made on the generation's reference card reads none of the board's continuous
+// facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
+// shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
+// the MoE 35B with two measured drafters (its chunk by speed and the drafter by worth open).
+void board_facts_do_not_decide(const json& fixture) {
+    std::vector<std::pair<std::string, Bench>> benches;
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        benches.emplace_back(name + ", Qwen3.5-9B", nine_b(fixture, name));
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{model_of(m35), card_of(fixture.at("cards").at(name)), {}};
+        moe.quants.push_back(quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS")));
+        moe.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"}, {"mtp:4", "mtp", 1.9, 2, "measured"}};
+        moe.model.default_drafter = 2;
+        benches.emplace_back(name + ", Qwen3.6-35B-A3B", moe);
+    }
+    for (const auto& [label, b] : benches) {
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (const std::uint32_t context : {4096U, 131072U}) {
+            ch::Task task;
+            task.contexts = {context};
+            const auto decided = [&](const ch::CardFacts& card) {
+                const ch::Choice c = ch::choose(b.model, card, b.quants[0], allowed, {}, task,
+                                                oracle(b, 40e9), ch::Gates{true, true});
+                if (!c.chosen) { return std::string("none"); }
+                const ch::Candidate& k = chosen(c).candidate;
+                return std::string(kv_cache_storage_name(k.kv)) + "/" +
+                       std::to_string(static_cast<int>(k.activations)) + "/" + std::to_string(k.chunk) +
+                       "/" + std::to_string(k.drafter) + (c.by_worth ? "/worth" : "/defaults") +
+                       (c.chunk_by_speed ? "/chunk" : "") + (c.drafter_by_worth ? "/drafter" : "");
+            };
+            const std::string base = decided(b.card);
+            bool same = true;
+            for (const double f : {0.7, 1.3}) {
+                ch::CardFacts clock = b.card, dram = b.card, sms = b.card, l2 = b.card;
+                clock.clock_hz *= f;
+                dram.dram_bytes_per_s *= f;
+                sms.sms = static_cast<int>(sms.sms * f);
+                l2.l2_bytes = (l2.l2_bytes > 0 ? l2.l2_bytes : 32e6) * f;
+                for (const ch::CardFacts& other : {clock, dram, sms, l2}) { same = same && decided(other) == base; }
+            }
+            check(same, label + ", " + std::to_string(context) + " tokens: the board's own rates do not decide (" + base + ")");
+        }
+    }
+}
+
 // #300: a compute capability the generation table has no row of (a newer major) estimates on the
 // nearest row (gb20x), says so, and its reference decides nothing, whatever reference cards the
 // lent generation gains later; a known generation keeps its own evidence. Today no lent row has a
@@ -1758,6 +1804,7 @@ int main() {
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
     axis_order_does_not_decide(fixture);
+    board_facts_do_not_decide(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;
