@@ -536,15 +536,12 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
     if (type != "qwen3_5_text" && type != "qwen3_5_moe_text") { return out; }
     const bool mtp    = model.components.contains("mtp");
     const bool dflash = model.components.contains("dflash");
-    // DFlash2 reads the head as DFlash does, once a round after its block (#343: a 27B artifact
-    // with MTP and DFlash2 got a head for MTP alone, which DFlash2 could not use).
-    const bool dflash2 = model.components.contains("dflash2");
-    if ((!mtp && !dflash && !dflash2) || !model.index.contains("text/output_head")) { return out; }
+    if ((!mtp && !dflash) || !model.index.contains("text/output_head")) { return out; }
     // A round as spec/round_cost.h prices it: the target's verify pass over depth + 1 rows (its
     // routed experts at that width), the drafters' passes, the draft head (MTP: once a draft,
     // with its layer; DFlash: once a round, after its block).
     spec::PassFacts target, mtp_pass;
-    double dflash_bytes = 0, dflash2_bytes = 0;
+    double dflash_bytes = 0;
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const Parameter& p = model.parameters[i];
         // A parameter bound to another's objects is read once (a tied head is the head's read).
@@ -552,8 +549,6 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
         const double bytes = stored_bytes(model, recipe, i);
         if (p.residency == "dflash") {
             dflash_bytes += bytes;
-        } else if (p.residency == "dflash2") {
-            dflash2_bytes += bytes;
         } else if (p.residency == "mtp" || (p.residency == "text" && p.name != "text/token_embedding")) {
             // Routed experts apart (an MoE target's and its MTP layer's bank): a pass reads
             // the share its rows route to.
@@ -605,10 +600,6 @@ DefaultProposal default_proposal_of(const Model& model, const Recipe& recipe,
     if (dflash) {
         const std::int32_t k = spec::kDraftHeadDepth;
         choose("dflash", k, head / (verify(k) + dflash_bytes + head));
-    }
-    if (dflash2) {
-        const std::int32_t k = spec::kDraftHeadDepth;
-        choose("dflash2", k, head / (verify(k) + dflash2_bytes + head));
     }
     // One head serves them: the rows the most demanding drafter's bound asks for; a drafter that
     // asks fewer reads its own rows, a prefix of the same head (add_official_proposal nests them).
