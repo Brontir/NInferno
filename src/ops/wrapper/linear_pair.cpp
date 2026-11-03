@@ -3,6 +3,7 @@
 
 #include "ninferno/ops/linear.h"
 #include "ops/common/tensor_checks.h"
+#include "ops/linear/linear_registry.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
 #include <array>
@@ -11,6 +12,7 @@
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace ninferno::ops {
 namespace {
@@ -68,10 +70,8 @@ void require_nonoverlap(const Tensor& x, const Weight& first_weight, const Weigh
     require_disjoint(ranges, "linear_pair");
 }
 
-// The paired Q8 kernel's domain: the Q8 G32 row-split problems its plan registers (the two Qwen
-// drafter geometries). Every other pair runs as two linear() calls with the same numerics contract.
-bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
-    if (!detail::q8_pair_registered(first_weight.n, first_weight.k)) { return false; }
+// Whether the weights are the paired kernel's row-split Q8 G32 layout with FP16 scales.
+bool fused_layout(const Weight& first_weight, const Weight& second_weight) {
     try {
         require_weight(first_weight, first_weight.k, "first weight");
         require_weight(second_weight, first_weight.k, "second weight");
@@ -79,6 +79,16 @@ bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
         return false;
     }
     return true;
+}
+
+// The paired Q8 kernel's domain: the Q8 G32 row-split problems its plan registers (the two Qwen
+// drafter geometries), the K = 2048 one only on the drafter's adjacent K/V row views of one parent
+// (q8_pair_row_views, which its dispatch requires). Every other pair runs as two linear() calls
+// with the same numerics contract.
+bool fused_pair(const Weight& first_weight, const Weight& second_weight) {
+    return detail::q8_pair_registered(first_weight.n, first_weight.k) &&
+           fused_layout(first_weight, second_weight) &&
+           (first_weight.k != 2048 || detail::q8_pair_row_views(first_weight, second_weight));
 }
 
 void require_same_logical_shape(const Weight& first_weight, const Weight& second_weight) {
@@ -89,6 +99,56 @@ void require_same_logical_shape(const Weight& first_weight, const Weight& second
 }
 
 } // namespace
+
+namespace detail {
+
+std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, const Weight& second,
+                                                        std::int32_t tokens) {
+    using Status = LinearCandidate::Status;
+    if (tokens <= 0) { throw std::invalid_argument("linear_pair candidates: T must be positive"); }
+    // As linear_pair runs the call: the fused kernel where it applies, else the two calls, which
+    // need one shape (linear_pair refuses another).
+    const bool fused = fused_pair(first, second);
+    const bool same  = first.n > 0 && first.k > 0 && first.n == second.n && first.k == second.k;
+    LinearPairCandidate kernel{"fused:q8_pair", fused ? Status::Selected : Status::Unavailable, "", {}};
+    if (!fused) {
+        kernel.why = !same ? "the two weights must share one [N,K] shape"
+                     : !q8_pair_registered(first.n, first.k) ? "no fused kernel for this [N,K]"
+                     : !fused_layout(first, second)
+                         ? "the weights are not the fused kernel's RowSplit Q8_G32 layout with FP16 "
+                           "scales"
+                         : "the weights are not adjacent K/V row views of one 6144-row parent";
+    }
+    LinearPairCandidate separate{"separate", Status::Unavailable, "", {}};
+    if (!same) {
+        separate.why = "the two weights must share one [N,K] shape";
+    } else {
+        // Each call runs only where linear() selects an implementation for it (a ggml_frag_v1
+        // weight, or the invariant profile on a format only the shape's kernels read, has none).
+        bool both_run = true;
+        for (const Weight* w : {&first, &second}) {
+            bool runs = false;
+            for (LinearCandidate& c : linear_candidates(*w, LinearPolicy::A16Only, tokens)) {
+                runs = runs || c.status == Status::Selected;
+                separate.parts.push_back(std::move(c));
+            }
+            both_run = both_run && runs;
+        }
+        if (!both_run) {
+            separate.why = "linear() runs no implementation for a weight (its parts say why)";
+        } else {
+            separate.status = fused ? Status::Inadmissible : Status::Selected;
+            separate.why    = fused ? "fused" : "";
+        }
+    }
+    std::vector<LinearPairCandidate> out;
+    out.reserve(2);
+    out.push_back(std::move(kernel));
+    out.push_back(std::move(separate));
+    return out;
+}
+
+} // namespace detail
 
 std::size_t linear_pair_workspace_capacity_bytes(const Weight& first_weight,
                                                  const Weight& second_weight,

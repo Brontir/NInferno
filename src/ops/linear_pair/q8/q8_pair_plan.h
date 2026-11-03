@@ -75,6 +75,9 @@ Q8PairProblem q8_pair_problem(const Tensor& x, const Weight& first_weight,
                               const Tensor& first_out) noexcept;
 // The (rows, k) problems the paired kernel registers; ops/wrapper/linear_pair.cpp asks it.
 bool q8_pair_registered(std::int32_t rows, std::int32_t k) noexcept;
+// The [1024,2048] geometry's weights: the DFlash drafter's K and V, adjacent row views (rows 4096
+// and 5120) of one 6144-row Q8_G32 parent, which the paired kernel reads as one plane.
+bool q8_pair_row_views(const Weight& first_weight, const Weight& second_weight) noexcept;
 bool q8_pair_admits(const Q8PairProblem& problem) noexcept;
 Q8PairPlan q8_pair_resolve_plan(const Q8PairProblem& problem);
 
