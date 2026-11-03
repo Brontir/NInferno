@@ -131,6 +131,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             set_owned_json_content(
                 res, make_anthropic_messages_response(identity, outcome, request.thinking_display),
                 prepared.lifetime);
+            set_router_report_headers(res, outcome);
         } catch (const ApiException& exception) {
             const ApiError error = normalize_anthropic_error(exception.error());
             lifecycle->response_failure(
@@ -241,6 +242,12 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                 }
                 try {
                     transport.write(terminal);
+                    // The client has its whole answer: one gone by now loses only the report.
+                    if (const std::string frame = router_report_frame(outcome); !frame.empty()) {
+                        try {
+                            transport.write(frame);
+                        } catch (const ClientDisconnected&) {}
+                    }
                     sink.done();
                     return true;
                 } catch (const ClientDisconnected&) {

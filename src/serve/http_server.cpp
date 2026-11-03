@@ -566,7 +566,9 @@ void HttpServer::register_routes() {
         server_.set_default_headers(
             {{"Access-Control-Allow-Origin", "*"},
              {"Access-Control-Expose-Headers",
-              "x-request-id, request-id, x-ninferno-sampling-defaults, x-ninferno-hint-applied"},
+              "x-request-id, request-id, x-ninferno-sampling-defaults, x-ninferno-hint-applied, "
+              "x-ninfer-instance, x-ninfer-reuse-path, x-ninfer-reused-tokens, "
+              "x-ninfer-computed-tokens, x-ninfer-queue-wait-ms, x-ninfer-prefill-ms"},
              {"Access-Control-Allow-Headers",
               "Authorization, Content-Type, X-API-Key, anthropic-version, anthropic-beta, "
               "anthropic-user-profile-id, x-ninferno-cache-hint"},
@@ -816,6 +818,33 @@ ContextCacheHints HttpServer::request_cache_hints(const httplib::Request& req, h
     if (kept) { *kept_turn = kept_sessions_.begin_turn(*kept, std::chrono::steady_clock::now()); }
     res.set_header(std::string(kCacheHintAppliedHeader).c_str(), std::string(applied));
     return base;
+}
+
+std::optional<RouterReport> HttpServer::router_report(const GenerationOutcome& outcome) const {
+    if (!options_.trust_cache_hints) { return std::nullopt; }
+    const auto reused = static_cast<std::int64_t>(outcome.metrics.prefix_cache_hit_tokens);
+    return RouterReport{
+        .instance               = request_jsonl_.server_instance_id(),
+        .reuse_path             = prefix_reuse_path_name(outcome.metrics.prefix_reuse_path),
+        .reused_prompt_tokens   = reused,
+        .computed_prompt_tokens = std::max<std::int64_t>(0, outcome.prompt_tokens - reused),
+        .queue_wait_seconds     = std::max(0.0, outcome.metrics.engine_timing.queue_wait_seconds),
+        .prefill_seconds        = std::max(0.0, outcome.metrics.prefill_seconds),
+    };
+}
+
+void HttpServer::set_router_report_headers(httplib::Response& res,
+                                           const GenerationOutcome& outcome) const {
+    if (const auto report = router_report(outcome)) {
+        for (const auto& [name, value] : router_report_headers(*report)) {
+            res.set_header(name.c_str(), value);
+        }
+    }
+}
+
+std::string HttpServer::router_report_frame(const GenerationOutcome& outcome) const {
+    const auto report = router_report(outcome);
+    return report ? serve::router_report_frame(*report) : std::string();
 }
 
 RequestLimits HttpServer::request_limits() const noexcept {

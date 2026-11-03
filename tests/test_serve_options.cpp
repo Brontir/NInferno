@@ -106,6 +106,19 @@ int main() {
                                   .context_cache.kept_tokens == 8192 &&
                               parse({"ninferno-serve", "m.ninferno"}).context_cache.kept_tokens == 0,
                           "--cache-keep-tokens: the kept budget, 0 unless given");
+        // The router's report of a turn: a stream's last comment frame, a rendered answer's headers.
+        const RouterReport report{"serve-7-1", "private_endpoint", 35279, 17, 0.011, 0.0664};
+        failures += check(router_report_frame(report) ==
+                              ": ninfer {\"placement\":{\"instance\":\"serve-7-1\",\"reuse_path\":"
+                              "\"private_endpoint\",\"reused_prompt_tokens\":35279,"
+                              "\"computed_prompt_tokens\":17,\"queue_wait_seconds\":0.011,"
+                              "\"prefill_seconds\":0.0664}}\n\n",
+                          ("the report frame: " + router_report_frame(report)).c_str());
+        const auto headers = router_report_headers(report);
+        failures += check(headers.size() == 6 && headers[0].second == "serve-7-1" &&
+                              headers[2] == std::pair<std::string, std::string>{"x-ninfer-reused-tokens", "35279"} &&
+                              headers[4].second == "11" && headers[5].second == "66",
+                          "the report headers");
         KeptSessions sessions;
         const auto t0 = KeptSessions::Clock::time_point{};
         sessions.keep({"a", std::chrono::milliseconds(100)}, t0);

@@ -125,23 +125,6 @@ const char* proposal_head_name(ninferno::ProposalHead proposal) {
     return proposal == ninferno::ProposalHead::Optimized ? "optimized" : "full";
 }
 
-const char* prefix_reuse_path_name(ninferno::PrefixReusePath path) {
-    switch (path) {
-    case ninferno::PrefixReusePath::Root:
-        return "root";
-    case ninferno::PrefixReusePath::PrivateEndpoint:
-        return "private_endpoint";
-    case ninferno::PrefixReusePath::PrivateTurnClosure:
-        return "private_turn_closure";
-    case ninferno::PrefixReusePath::PrivateResponseReplay:
-        return "private_response_replay";
-    case ninferno::PrefixReusePath::PrivateLongAnchor:
-        return "private_long_anchor";
-    case ninferno::PrefixReusePath::SharedStablePrefix:
-        return "shared_stable_prefix";
-    }
-    return "unknown";
-}
 
 Json event_base(const std::string& server_instance_id, std::uint64_t timestamp, const char* event) {
     return Json{{"artifact_type", kRequestLogArtifactType},
@@ -440,6 +423,24 @@ Json microseconds_per(std::uint64_t nanoseconds, std::uint64_t count) {
 }
 
 } // namespace
+
+const char* prefix_reuse_path_name(ninferno::PrefixReusePath path) {
+    switch (path) {
+    case ninferno::PrefixReusePath::Root:
+        return "root";
+    case ninferno::PrefixReusePath::PrivateEndpoint:
+        return "private_endpoint";
+    case ninferno::PrefixReusePath::PrivateTurnClosure:
+        return "private_turn_closure";
+    case ninferno::PrefixReusePath::PrivateResponseReplay:
+        return "private_response_replay";
+    case ninferno::PrefixReusePath::PrivateLongAnchor:
+        return "private_long_anchor";
+    case ninferno::PrefixReusePath::SharedStablePrefix:
+        return "shared_stable_prefix";
+    }
+    return "unknown";
+}
 
 std::string format_server_start_json(
     const std::string& server_instance_id, std::uint64_t timestamp, const ServeOptions& options,
@@ -903,13 +904,12 @@ ServerLogEnvironment query_server_log_environment(int device) {
 JsonlRequestLog::JsonlRequestLog(const std::string& path,
                                  const std::string& protected_artifact_path,
                                  std::shared_ptr<spdlog::logger> logger)
-    : path_(path), logger_(std::move(logger)) {
+    : path_(path), server_instance_id_(new_server_instance_id()), logger_(std::move(logger)) {
     if (path_.empty()) { return; }
     if (!protected_artifact_path.empty() &&
         normalized_absolute_path(path_) == normalized_absolute_path(protected_artifact_path)) {
         throw std::invalid_argument("request JSONL log must not overwrite the model artifact");
     }
-    server_instance_id_ = new_server_instance_id();
     output_.open(path_, std::ios::out | std::ios::app);
     if (!output_) {
         throw std::runtime_error("failed to open request JSONL log for append: " + path_);

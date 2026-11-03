@@ -155,6 +155,12 @@ private:
     void run_supervisor();
     void stop_supervisor();
     [[nodiscard]] bool reject_while_draining(const httplib::Request& req, httplib::Response& res);
+    // The router's report of a finished turn (cache_hint.h RouterReport), under
+    // --trust-cache-hints only: its headers on a rendered answer, its frame ("" when off) at a
+    // stream's end.
+    [[nodiscard]] std::optional<RouterReport> router_report(const GenerationOutcome& outcome) const;
+    void set_router_report_headers(httplib::Response& res, const GenerationOutcome& outcome) const;
+    [[nodiscard]] std::string router_report_frame(const GenerationOutcome& outcome) const;
     // The cache hints a request runs with: `base` (the endpoint's own) with a trusted router's
     // x-ninferno-cache-hint applied, and x-ninferno-hint-applied on the response when the request
     // carried one (serve/cache_hint.h). A kept grant's turn is counted until *kept_turn is dropped
