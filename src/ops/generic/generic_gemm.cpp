@@ -3469,7 +3469,7 @@ bool ggml_vec_takes_tuned(const Tensor& x, const Weight& weight, LinearPolicy po
 
 bool ggml_vec_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& up,
                          std::int32_t rows, bool gelu, Tensor& out, WorkspaceArena& workspace,
-                         const void* q8, cudaStream_t stream) {
+                         const PreparedActivation* prepared, cudaStream_t stream) {
     const std::int32_t tokens = x.ne[1];
     const std::int32_t k      = gate.weight->k;
     // The output is written at a stride of out.ne[0]: a contiguous [>= rows, T].
@@ -3487,10 +3487,14 @@ bool ggml_vec_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& 
         return false;
     }
     auto scope             = workspace.scope();
-    const void* activation = q8;
-    if (activation == nullptr) {
+    const void* activation = nullptr;
+    if (prepared_serves(prepared, PreparedRepresentation::GgmlQ8_1, x.data,
+                        static_cast<std::int32_t>(x.nb[1] / static_cast<std::int64_t>(sizeof(__nv_bfloat16))),
+                        k, tokens)) {
+        activation = prepared->data;
+    } else {
         void* own = workspace.alloc_bytes(ggml_mmq::vec_activation_bytes(k, tokens)).data;
-        ggml_vec_quantize(x, own, stream);
+        (void)ggml_vec_quantize(x, own, stream);
         activation = own;
     }
     const auto rows_at = [](const PairHalf& h) {
@@ -3535,11 +3539,24 @@ std::size_t ggml_vec_gated_pair_bytes(std::int32_t k, std::int32_t rows, std::in
     return layout.peak_bytes(1) + kGgmlArenaSlack;
 }
 
-void ggml_vec_quantize(const Tensor& x, void* out, cudaStream_t stream) {
-    ggml_mmq::vec_quantize_activation(
-        static_cast<const __nv_bfloat16*>(x.data),
-        static_cast<int>(x.nb[1] / static_cast<std::int64_t>(sizeof(__nv_bfloat16))), x.ne[0],
-        x.ne[1], out, stream);
+bool prepared_serves(const PreparedActivation* prepared, PreparedRepresentation representation,
+                     const void* source, std::int32_t ldx, std::int32_t k,
+                     std::int32_t tokens) noexcept {
+    return prepared != nullptr && prepared->data != nullptr &&
+           prepared->representation == representation && prepared->source == source &&
+           prepared->ldx == ldx && prepared->k == k && prepared->tokens == tokens;
+}
+
+PreparedActivation ggml_vec_quantize(const Tensor& x, void* out, cudaStream_t stream) {
+    const auto ldx = static_cast<std::int32_t>(x.nb[1] / static_cast<std::int64_t>(sizeof(__nv_bfloat16)));
+    ggml_mmq::vec_quantize_activation(static_cast<const __nv_bfloat16*>(x.data), ldx, x.ne[0],
+                                      x.ne[1], out, stream);
+    return PreparedActivation{.representation = PreparedRepresentation::GgmlQ8_1,
+                              .data           = out,
+                              .source         = x.data,
+                              .ldx            = ldx,
+                              .k              = static_cast<std::int32_t>(x.ne[0]),
+                              .tokens         = static_cast<std::int32_t>(x.ne[1])};
 }
 
 std::uint64_t ggml_mmq_fallback_count() noexcept {
@@ -4023,7 +4040,13 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         const auto type  = *mmq_type(w);
         const int tokens = args.tokens;
         const int bpr    = w.k / static_cast<int>(ggml_block_values(w.qtype));
-        const void* activation = call.vec_activation;
+        // The shared q8_1 where it was made from the x this call reads (after any column gather),
+        // at its stride and extent; else this call's own.
+        const void* activation =
+            prepared_serves(call.prepared, PreparedRepresentation::GgmlQ8_1, args.x, args.ldx, w.k,
+                            tokens)
+                ? call.prepared->data
+                : nullptr;
         if (activation == nullptr) {
             void* own = workspace->alloc_bytes(ggml_mmq::vec_activation_bytes(w.k, tokens)).data;
             ggml_mmq::vec_quantize_activation(static_cast<const __nv_bfloat16*>(args.x), args.ldx,
