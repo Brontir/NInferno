@@ -83,4 +83,12 @@ inline constexpr GenerationRow kGenerations[] = {
                : kGenerations[0];
 }
 
+// Whether the Gemma 4 chained prefill attention tile is the measured preference on compute
+// capability major.minor (#300): its generation's own row says so. A lent row runs the code but
+// does not carry this measured preference: a generation newer than the table keeps the plain
+// launch, which every board runs, until it is measured.
+[[nodiscard]] constexpr bool attention_chain_measured(int major, int minor) noexcept {
+    return generation_known(major, minor) && generation_row(major, minor).attention_chain;
+}
+
 } // namespace ninferno

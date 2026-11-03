@@ -1,4 +1,5 @@
 #include "core/device.h"
+#include "core/generation.h"
 #include "ninferno/option_enums.h"
 #include "support/cuda.h"
 
@@ -139,6 +140,14 @@ int check_feature_table() {
     // inside GB202's block.
     failures += expect(ninferno::gpu_chip(0x2B00, 11, 0, 20) == "sm110",
                        "a PCI id block of another architecture names no chip");
+    // The chained Gemma 4 prefill attention is a measured preference of its own generation only
+    // (#300): consumer Blackwell measured it, Ada measured against it, and a newer major whose
+    // lent row is gb20x's keeps the plain launch.
+    failures += expect(ninferno::attention_chain_measured(12, 0) &&
+                           !ninferno::attention_chain_measured(8, 9) &&
+                           ninferno::generation_row(13, 0).attention_chain &&
+                           !ninferno::attention_chain_measured(13, 0),
+                       "the attention chain only where its generation measured it");
     // Measured data carries by board, not chip: the RTX 5070 Ti (70 SMs, 48 MiB L2, 896 GB/s) is
     // nearest the RTX 5080 of the measured sm_120 boards, and no board of another instruction set
     // is near at all.

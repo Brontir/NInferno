@@ -477,12 +477,13 @@ int chain_resident() {
 // T=1024 at 16K keys +5.5 %). On Ada the chained wide tile runs 25-35 % slower even in whole
 // waves (RTX 4090: 26B 96 -> 72 TFLOP/s at 16K-60K keys, same registers and no spills as the
 // plain tile), so the tail it fills never pays (RTX 4080 SUPER: Gemma 4 26B 16K prefill 6566 ->
-// 6455 t/s). Every other generation keeps the plain launch (Ada measured, the rest unmeasured);
-// one newer than the table takes its newest row's value, as every generation-row property does.
+// 6455 t/s). Every other generation keeps the plain launch (Ada measured, the rest unmeasured),
+// and so does one newer than the table: its lent row's measured preference is not its own
+// (attention_chain_measured, #300).
 bool chain_measured_fast() {
     try {
         const DeviceClass& d = device_class();
-        return generation_row(d.major, d.minor).attention_chain;
+        return attention_chain_measured(d.major, d.minor);
     } catch (const std::exception&) { return false; }
 }
 
