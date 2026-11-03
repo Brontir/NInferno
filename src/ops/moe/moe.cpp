@@ -706,10 +706,14 @@ bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
         !r8_expert_supports(bank)) {
         return false;
     }
-    // The kernel's quantized activation for its widest job (1, 2, 4 or 8 slots: a job has at most
-    // T; 36 bytes per 32 values and slot, 40 for a codec with a min, which keeps each block's sum)
-    // within the default 48 KiB: K <= 43690 at T = 1, 21845 at T = 2, 10922 at T = 3 or 4, 5461
-    // at T = 5..8 (with a min 39321, 19660, 9830, 4915).
+    // The layer's own gate/up of an unpadded x: the router's CTAs quantize x into the workspace
+    // (router_quantizes_x) and the kernel reads its codes from there, no shared memory, at any K.
+    if (&bank == &w.gate_up && bank.k == w.router.k) { return true; }
+    // Otherwise (the down stage, a padded gate/up) the kernel's quantized activation for its
+    // widest job (1, 2, 4 or 8 slots: a job has at most T; 36 bytes per 32 values and slot, 40 for
+    // a codec with a min, which keeps each block's sum) within the default 48 KiB: K <= 43690 at
+    // T = 1, 21845 at T = 2, 10922 at T = 3 or 4, 5461 at T = 5..8 (with a min 39321, 19660, 9830,
+    // 4915).
     std::int64_t slots = 1;
     while (slots < tokens) { slots *= 2; }
     const auto q    = bank.qtype;
