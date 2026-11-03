@@ -193,6 +193,11 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
         m.linears.empty()) {
         return {std::nullopt, "the facts lack Gemma 4's geometry"};
     }
+    // A start queries the per-layer input's projection and every layer's PLE gate and output too
+    // (gemma4::Target::workspace_bytes); the facts do not carry their formats, so the formula stands.
+    if (m.ple_width != 0) {
+        return {std::nullopt, "the per-layer input projections' formats are not in the facts"};
+    }
     gemma4::Config c;
     c.hidden_size       = static_cast<std::int32_t>(m.hidden);
     c.vocab_size        = static_cast<std::int32_t>(m.vocab);
