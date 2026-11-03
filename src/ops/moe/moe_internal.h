@@ -202,6 +202,13 @@ struct R8ScheduleInfo {
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
 // (r8_admits). Wider calls (speculative verify, prefill) compute A16.
 inline constexpr std::int32_t kR8Tokens = 8;
+// The widest R8 call on this GPU (r8_admits): kR8Tokens from Ada (sm_89) on, four before. moe_bench
+// (H 2048, F 512, E 128, k 8, published layout), R8 against the register MMA at T = 5..8: RTX 5090
+// / 5070 Ti -5..-15 % on every K-quant and IQ3_XXS, RTX 4090 -3..-7 % (Q6_K level), RTX 4060 Ti
+// -0.4..-6 %; RTX 2080 Ti Q6_K +38..+45 %, Q3_K +15..+19 % (Q4_K, Q5_K, IQ3_XXS ahead). Ampere
+// is not measured and keeps four; Volta splits a wider call into calls of four (moe()).
+inline constexpr std::int32_t kR8NarrowTokens = 4;
+[[nodiscard]] std::int32_t r8_token_limit();
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
 // IQ4_NL, IQ4_XS).
@@ -248,7 +255,8 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // not, for the formats that read 32-value blocks); moe_with_plan refuses a plan that is not.
 [[nodiscard]] bool plan_compiled(const MoeWeights& weights, const MoePlan& plan);
 // Whether a grouped stage over `bank` (weights.gate_up or weights.down) may take the R8 kernel at
-// T tokens: an A8 expert policy, a codebook format with 16-byte aligned planes, T <= 4 and an
+// T tokens: an A8 expert policy, a codebook format with 16-byte aligned planes, T <=
+// r8_token_limit() and an
 // activation that fits a CTA; moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
 

@@ -622,7 +622,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
     Case c         = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
     const Layer l  = make_layer(c, seed);
-    const std::int32_t wide = moe::kR8Tokens;
+    const std::int32_t wide = moe::r8_token_limit();
     const auto x =
         random_bf16(static_cast<std::size_t>(wide + 1) * c.hidden, seed + 21, -1.0, 1.0);
     const auto residual = random_bf16(x.size(), seed + 22, -2.0, 2.0);
@@ -886,7 +886,7 @@ int check_a8_route_rule() {
         return 1;
     }
     int failures = 0;
-    for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+    for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
         for (const QType q : {QType::GGML_IQ2_XXS, QType::GGML_IQ2_XS, QType::GGML_IQ2_S,
                               QType::GGML_IQ3_XXS, QType::GGML_IQ3_S, QType::GGML_Q3_K,
                               QType::GGML_Q4_K, QType::GGML_Q5_K, QType::GGML_Q6_K,
@@ -934,7 +934,7 @@ int check_r8_table() {
         f << R"({"schema": "ninferno-route-table/1", "gpu": {"class": ")" << ops::route_gpu_class()
           << R"("}, "entries": [], "moe": [)" << entry("iq3xxs", tuned) << ", "
           << entry("iq2s", tuned + "|a16") << ", "
-          << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::kR8Tokens) << "]}";
+          << entry("iq2xxs", "r8.w4r1|" + tuned_down, moe::r8_token_limit()) << "]}";
     }
     const auto status = ops::load_route_table(path);
     if (!status.loaded) {
@@ -959,7 +959,7 @@ int check_r8_table() {
         for (std::int32_t t = 1; t <= 16; ++t) {
             const auto p = moe::select_plan(l.weights, c.config, t, false);
             const std::string name = moe::plan_name(p);
-            const bool decode      = t <= moe::kR8Tokens;
+            const bool decode      = t <= moe::r8_token_limit();
             std::string expected;
             if (q == QType::GGML_IQ3_XXS) {
                 // The measured down (1 x 4, which the heuristic route would take to the class's
@@ -1015,7 +1015,7 @@ int check_r8_k_limit() {
     const auto x = random_bf16(static_cast<std::size_t>(4) * c.hidden, 142U, -1.0, 1.0);
     const std::vector<std::uint16_t> residual(x.size(), 0);
     int failures = 0;
-    for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+    for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
         const auto p = moe::select_plan(l.weights, c.config, t, false);
         const bool a8 = route && t <= 2 && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
@@ -1095,7 +1095,7 @@ int check_expert_policy() {
                       << (a8 ? "AllowA8" : "A16Only") << '\n';
             ++failures;
         }
-        for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+        for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p = moe::select_plan(w, config, t, false);
             const int expected = a8 && route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 >= 0) {
@@ -1117,7 +1117,7 @@ int check_expert_policy() {
         w.down           = native_weight(rows(dn, 0, E * H, F));
         w.gate_up.layout = w.down.layout = QuantLayout::GgmlFrag;
         w.expert_policy  = ops::LinearPolicy::AllowA8;
-        for (std::int32_t t = 1; t <= moe::kR8Tokens; ++t) {
+        for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p       = moe::select_plan(w, config, t, false);
             const int expected = route ? route->gate_up_at(t, w.gate_up) : -1;
             if (p.gate_up_r8 != expected || p.down_r8 != -1 || !moe::r8_admits(w, w.gate_up, t)) {

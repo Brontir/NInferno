@@ -697,8 +697,12 @@ bool plan_is_token_invariant(const MoePlan& plan) {
            schedule_info(plan.down_schedule).warps_k == 1;
 }
 
+std::int32_t r8_token_limit() {
+    return device_class().compute_capability() >= 89 ? kR8Tokens : kR8NarrowTokens;
+}
+
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
-    if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > kR8Tokens ||
+    if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > r8_token_limit() ||
         !r8_expert_supports(bank)) {
         return false;
     }
@@ -1373,11 +1377,12 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4 214 us
     // against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T, so a
     // column's bytes are those of plain decode.
-    if (!build_features().mma_tensor && t > detail::moe::kR8Tokens && t <= 16 &&
-        !prefill_routes_active() && !invariant_routes_active() &&
-        detail::moe::select_plan(w, c, detail::moe::kR8Tokens, false).gate_up_r8 >= 0) {
-        for (std::int32_t begin = 0; begin < t; begin += detail::moe::kR8Tokens) {
-            const std::int32_t n = std::min(detail::moe::kR8Tokens, t - begin);
+    const std::int32_t r8_tokens = detail::moe::r8_token_limit();
+    if (!build_features().mma_tensor && t > r8_tokens && t <= 16 && !prefill_routes_active() &&
+        !invariant_routes_active() &&
+        detail::moe::select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0) {
+        for (std::int32_t begin = 0; begin < t; begin += r8_tokens) {
+            const std::int32_t n = std::min(r8_tokens, t - begin);
             const Tensor xs      = x.slice(1, begin, n);
             Tensor outs          = out.slice(1, begin, n);
             const Tensor routes  = router_input != nullptr ? router_input->slice(1, begin, n) : xs;
