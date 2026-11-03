@@ -163,7 +163,9 @@ ninferno::PromptInput altered_history_after_boundary() {
 
 int verify_dflash_load(const ninferno::Engine& engine) {
     const ninferno::LoadSummary load = engine.load_summary();
-    if (load.architecture != "Qwen3_5MoeForCausalLM" || load.model_name.empty() ||
+    // A Qwen 3.5/3.6 target, dense or MoE (the 9B's DFlash drafter as much as the 35B's).
+    if ((load.architecture != "Qwen3_5MoeForCausalLM" && load.architecture != "Qwen3_5ForCausalLM") ||
+        load.model_name.empty() ||
         load.host_to_device_bytes == 0 || load.artifact_bytes_read < load.host_to_device_bytes) {
         std::cerr << "DFlash Engine materialized an invalid artifact payload: target="
                   << load.architecture << " weights=" << load.prefill_signature << '\n';

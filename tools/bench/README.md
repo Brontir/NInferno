@@ -31,7 +31,92 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `build_text_examples.py` | Build the long-context and long-decode CLI examples ([examples/cli](../../examples/cli/README.md)) from recent public-domain text and new problems. |
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
+| `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
+
+## Offline selection regret
+
+`selection_regret.py` evaluates **recorded production choices** against qualified alternatives on
+lab data. It does not choose a route, fit a model, run measurements or feed runtime decisions.
+Use it to evaluate a frozen selector on whole boards or model checkpoints withheld from fitting.
+It complements `choice_check.py` (prediction error of one selected configuration): a good speed
+prediction does not necessarily mean a good choice among alternatives.
+
+```bash
+python3 tools/bench/selection_regret.py profiles/bench/selection.json --max-regret 0.05 > profiles/bench/regret.json
+python3 -m unittest discover -s tests -p test_selection_regret.py
+```
+
+Input is one `ninferno-selection-regret/1` JSON document, with a frozen `selector_revision`, a
+`build_id` identifying the kernels/compiler/options/route tables, `holdout` (`board`, `model` or
+`both`), explicit `fit_boards` and `fit_models` arrays, and `cases`. Each case supplies:
+
+- `id`, `board`, `model`: stable case and board/checkpoint identities (a case `id` unique in the
+  document; no outer whitespace in any identity). Group all shapes and quant
+  variants of one checkpoint under the same model identity; aliases must be normalized upstream.
+- `workload`: an unambiguous workload/protocol key including geometry, input/corpus, quant/layout,
+  T, context/concurrency, numerical policy, memory budget and eager/graph/cache mode as applicable.
+- `numerical_contract`: the common qualification criterion for this case's candidates. Compare
+  alternatives satisfying the same required quality/state contract, not arbitrary precision modes.
+- `selected`: the implementation/configuration actually resolved by the frozen production path,
+  including any demotion. Record this before inspecting evaluation timings.
+- `candidates`: the predeclared inventory. Each has a unique `id` and `status`: `ok` (admitted and
+  passed independent correctness qualification), `oracle_failed` (wrong result), `ineligible`
+  (outside build/device/policy/resource domain), or `unmeasured` (admitted but timing missing,
+  interrupted or failed). Non-ok entries need a `reason` and must not supply `samples_ms`.
+  Ok entries supply positive finite `samples_ms`, keyed by matched pass IDs.
+
+For example, **synthetic arithmetic only**, not a GPU measurement:
+
+```json
+{
+  "schema": "ninferno-selection-regret/1",
+  "selector_revision": "synthetic-selector",
+  "build_id": "synthetic-build",
+  "holdout": "both",
+  "fit_boards": ["training-board"],
+  "fit_models": ["training-checkpoint"],
+  "cases": [{
+    "id": "case-1", "board": "held-out-board", "model": "held-out-checkpoint",
+    "workload": "synthetic fixed workload", "numerical_contract": "same-qualified-contract",
+    "selected": "a",
+    "candidates": [
+      {"id": "a", "status": "ok", "samples_ms": {"p1": 12, "p2": 12, "p3": 12}},
+      {"id": "b", "status": "ok", "samples_ms": {"p1": 10, "p2": 10, "p3": 10}}
+    ]
+  }]
+}
+```
+
+This reports regret 0.2: **20% extra time**, not 20% less throughput. Best observed means the
+qualified candidate with lowest median time across matched passes. Per-pass ranges compare the
+selected candidate with that one fixed winner, never a different hindsight winner each pass.
+Summaries report equal-case-weight geometric mean slowdown, median, nearest-rank p95 and worst
+regret, plus separate board/model summaries. They are descriptive, not confidence intervals or
+uncertainty estimates. Keep raw pass timings; collect interleaved matched runs with the same
+workload and report variation before drawing performance conclusions. Single-pass inputs are
+accepted and reported as such (`passes` per case, `single_pass_cases` in each summary), not
+treated as evidence of repeatability.
+
+Any missing admitted alternative makes the case `incomplete`, an unqualified selected candidate
+is `invalid_selection`, and fewer than two qualified measured candidates gives `no_comparison`.
+These cases remain in coverage counts, have no numeric regret and fail the report. Invalid input
+(including duplicate identities, NaN, mismatched pass sets or declared holdout leakage) exits 2;
+incomplete/invalid selections, no-comparison cases or regret above `--max-regret` exit 1; otherwise
+exit 0. Without a threshold, exit 0 means complete comparisons only, not acceptable performance.
+
+The tool verifies disjointness against the **declared** fit inventory, not the truth of its history.
+Include all boards/models used for fitting or manually choosing thresholds, including inherited
+evidence. Empty fit lists assert no such data, not an unknown history. After inspecting a holdout
+and tuning on it, it is no longer held out. Freeze the candidate inventory and threshold before
+evaluation. Missing candidates cannot be inferred by this consumer; never silently omit failed
+measurements. An oracle failure excludes an incorrect alternative, but must not be used to hide a
+timeout (which is `unmeasured`). Regret is relative to the supplied inventory, not a global optimum.
+
+There is intentionally no automatic import from route-sweep CSVs or product choice JSON yet:
+neither alone carries all qualification, fit-inventory and matched-run facts required here. A lab
+collector must combine them explicitly. The report preserves selector/build identity and a SHA-256
+of the exact input bytes. This is an offline evaluation aid for #301, not runtime autotuning.
 
 ## Published performance numbers
 
