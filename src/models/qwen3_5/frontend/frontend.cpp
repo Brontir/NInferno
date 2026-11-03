@@ -479,6 +479,11 @@ PreparedContextCache prepare_context_cache(
     case CacheRetentionHint::Disposable:
         out.retention = runtime::RetentionClass::Disposable;
         break;
+    case CacheRetentionHint::Kept:
+        if (!out.session_key) { throw std::invalid_argument("Kept retention requires a session_key"); }
+        out.retention = runtime::RetentionClass::LiveSession;
+        out.kept      = true;
+        break;
     default:
         throw std::invalid_argument("context cache retention hint is invalid");
     }

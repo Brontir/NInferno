@@ -194,6 +194,8 @@ int options_reach_their_section() {
          [](EngineOptions& o) { o.context_cache.max_shared_prefixes = 2; }},
         {"context_cache.max_long_anchors",
          [](EngineOptions& o) { o.context_cache.max_long_anchors_per_continuation = 2; }},
+        {"context_cache.kept_tokens",
+         [](EngineOptions& o) { o.context_cache.kept_tokens = 4096; }},
         {"speculative.backend",
          [](EngineOptions& o) { o.speculative.backend = ninferno::SpeculativeBackend::Mtp; }},
         {"speculative.draft_tokens", [](EngineOptions& o) { o.speculative.draft_tokens = 3; }},

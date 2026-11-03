@@ -162,6 +162,19 @@ public:
             core_);
     }
 
+    KeptSessionRelease release_kept_session(std::string_view session) override {
+        return std::visit(
+            [&](auto& core) {
+                if constexpr (requires { core->release_kept_session(session); }) {
+                    return core != nullptr ? core->release_kept_session(session)
+                                           : KeptSessionRelease::None;
+                } else {
+                    return KeptSessionRelease::None;
+                }
+            },
+            core_);
+    }
+
 private:
     struct TypedPrompt final : PromptBox {
         explicit TypedPrompt(FamilyPrompt prompt) : value(std::move(prompt)) {}

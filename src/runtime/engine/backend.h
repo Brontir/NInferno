@@ -88,6 +88,10 @@ public:
     [[nodiscard]] virtual RuntimeStats runtime_stats() const = 0;
     [[nodiscard]] virtual bool is_available() const = 0;
     virtual void reset_memory_peaks() noexcept = 0;
+    // Engine::release_kept_session; None where the backend keeps no sessions.
+    virtual KeptSessionRelease release_kept_session(std::string_view /*session*/) {
+        return KeptSessionRelease::None;
+    }
 };
 
 } // namespace ninferno::runtime

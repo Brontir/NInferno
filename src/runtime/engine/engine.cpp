@@ -728,4 +728,9 @@ void Engine::reset_memory_peaks() noexcept {
     impl_->backend->reset_memory_peaks();
 }
 
+KeptSessionRelease Engine::release_kept_session(std::string_view session) {
+    if (impl_ == nullptr || impl_->backend == nullptr) { return KeptSessionRelease::None; }
+    return impl_->backend->release_kept_session(session);
+}
+
 } // namespace ninferno

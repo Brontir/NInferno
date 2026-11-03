@@ -207,6 +207,7 @@ struct FakeContextCache {
     std::optional<FakeCacheSessionKey> session_key;
     RetentionClass retention  = RetentionClass::RecentPrivate;
     bool update_session_index = true;
+    bool kept                 = false;
     std::vector<Opportunity> opportunities;
 };
 
@@ -2900,6 +2901,83 @@ void test_retained_source_is_protected_until_terminal() {
             "released source did not participate in the sealed pressure plan");
 }
 
+// A router's keep (#338): the kept sessions together hold at most the kept-token budget at their
+// endpoints, the oldest kept falling to the private weight first; a release falls one, its session
+// still bound; a stored Response's LiveSession (not kept) is outside the budget.
+void test_kept_sessions_budget_and_release() {
+    FakeManager manager = make_manager(1, 6);
+    FakeProgram program;
+    manager.set_kept_tokens(40);
+    const auto kept_base = [](std::uint32_t digest, std::uint32_t session) {
+        FakeRequestBasePlan base =
+            make_base(digest, FakeCacheSessionKey{session}, RetentionClass::LiveSession);
+        base.cache.kept = true;
+        return base;
+    };
+    const auto kept_slots = [&] {
+        std::vector<std::uint32_t> out;
+        for (std::uint32_t slot = 0; slot < 6; ++slot) {
+            if (manager.catalog_kept(slot)) { out.push_back(slot); }
+        }
+        return out;
+    };
+    const auto live_slots = [&] {
+        std::uint32_t out = 0;
+        for (std::uint32_t slot = 0; slot < 6; ++slot) {
+            out += manager.catalog_state(slot) == FakeManager::CatalogState::Catalogued &&
+                   manager.catalog_retention(slot) == RetentionClass::LiveSession;
+        }
+        return out;
+    };
+    const ActiveRequest stored =
+        start_active(manager, program, 9, make_base(9, FakeCacheSessionKey{9}, RetentionClass::LiveSession), 1);
+    (void)finish_active(manager, program, stored, 30);
+    const ActiveRequest first = start_active(manager, program, 1, kept_base(1, 1), 2);
+    (void)finish_active(manager, program, first, 16);
+    const auto first_slot = kept_slots();
+    const ActiveRequest second = start_active(manager, program, 2, kept_base(2, 2), 3);
+    (void)finish_active(manager, program, second, 16);
+    require(kept_slots().size() == 2 && live_slots() == 3,
+            "two kept sessions within the budget (32 of 40 tokens) lost their weight");
+    const ActiveRequest third = start_active(manager, program, 3, kept_base(3, 3), 4);
+    (void)finish_active(manager, program, third, 16);
+    const auto after = kept_slots();
+    require(after.size() == 2 && first_slot.size() == 1 &&
+                std::find(after.begin(), after.end(), first_slot.front()) == after.end() &&
+                manager.catalog_retention(first_slot.front()) == RetentionClass::RecentPrivate,
+            "past the budget the oldest kept session did not fall to the private weight");
+    require(live_slots() == 3, "the budget touched a LiveSession that was not kept");
+    using ninferno::KeptSessionRelease;
+    require(manager.release_kept_session(FakeCacheSessionKey{2}) == KeptSessionRelease::Released &&
+                kept_slots().size() == 1,
+            "a released keep did not fall");
+    require(manager.release_kept_session(FakeCacheSessionKey{2}) == KeptSessionRelease::None &&
+                manager.release_kept_session(FakeCacheSessionKey{9}) == KeptSessionRelease::None &&
+                manager.release_kept_session(FakeCacheSessionKey{77}) == KeptSessionRelease::None,
+            "a release fell an entry that was not kept");
+    // A turn of a kept session still running: the release is to be asked again after it, and the
+    // entry it publishes is kept.
+    const ActiveRequest running = start_active(manager, program, 3, kept_base(3, 3), 5);
+    require(manager.release_kept_session(FakeCacheSessionKey{3}) == KeptSessionRelease::InFlight,
+            "a release during the session's running turn did not say so");
+    (void)finish_active(manager, program, running, 20);
+    require(manager.release_kept_session(FakeCacheSessionKey{3}) == KeptSessionRelease::Released,
+            "the running turn's published entry was not kept");
+    // A kept request that does not advance the session index publishes nothing kept.
+    FakeRequestBasePlan unindexed = kept_base(4, 4);
+    unindexed.cache.update_session_index = false;
+    const ActiveRequest quiet = start_active(manager, program, 4, unindexed, 6);
+    (void)finish_active(manager, program, quiet, 8);
+    require(manager.release_kept_session(FakeCacheSessionKey{4}) == KeptSessionRelease::None,
+            "an entry the session index does not name was kept");
+    // The session stays bound: its next turn still reuses the endpoint.
+    auto next = manager.inspect(program, FakePreparedPrompt{2}, kept_base(2, 2), 7);
+    require(next.choice && next.choice->summary().reusable_prompt_tokens == 16,
+            "a released session lost its binding");
+    manager.set_kept_tokens(0);
+    require(kept_slots().empty(), "a zero budget left a session kept");
+}
+
 void test_session_publication_order_controls_tied_source() {
     FakeManager manager = make_manager(2, 3);
     FakeProgram program;
@@ -4002,6 +4080,7 @@ void test_publication_only_pressure_constructs_adoptable_target() {
 
 int main() {
     run_test("state transfer payload statistics", test_state_transfer_statistics_use_payload_bytes);
+    run_test("kept sessions: budget and release", test_kept_sessions_budget_and_release);
     run_test("independent complete-target oracle",
              test_complete_search_against_small_exhaustive_oracle);
     run_test("publication-only construction",

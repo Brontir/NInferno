@@ -1,5 +1,6 @@
 #pragma once
 
+#include "serve/cache_hint.h"
 #include "serve/generation_service.h"
 #include "serve/operational_log.h"
 #include "serve/openai_responses_store.h"
@@ -92,6 +93,8 @@ private:
         void response_failure(const RequestFailure& failure);
         // The answer went out unstored: it alone is more than the response store's capacity.
         void response_not_stored(std::size_t store_capacity_bytes);
+        // Kept until the request ends (its stream's last write): a kept thread's turn.
+        void hold(std::shared_ptr<void> kept_turn) noexcept { kept_turn_ = std::move(kept_turn); }
 
         [[nodiscard]] std::uint64_t request_id() const noexcept { return context_.id; }
 
@@ -107,6 +110,7 @@ private:
         HttpServer* owner_ = nullptr;
         RequestLogContext context_;
         std::atomic<State> state_{State::Pending};
+        std::shared_ptr<void> kept_turn_;
     };
 
     // A generation's lifecycle, its log lines naming the response's request id.
@@ -153,9 +157,11 @@ private:
     [[nodiscard]] bool reject_while_draining(const httplib::Request& req, httplib::Response& res);
     // The cache hints a request runs with: `base` (the endpoint's own) with a trusted router's
     // x-ninferno-cache-hint applied, and x-ninferno-hint-applied on the response when the request
-    // carried one (serve/cache_hint.h).
+    // carried one (serve/cache_hint.h). A kept grant's turn is counted until *kept_turn is dropped
+    // (the handler hands it to its request's lifecycle, RequestLifecycle::hold).
     [[nodiscard]] ContextCacheHints request_cache_hints(const httplib::Request& req,
                                                         httplib::Response& res,
+                                                        std::shared_ptr<void>* kept_turn,
                                                         ContextCacheHints base = {}) const;
     // The server-side limits every request parser applies, from the serve options.
     [[nodiscard]] RequestLimits request_limits() const noexcept;
@@ -186,6 +192,8 @@ private:
     std::atomic<bool> engine_failed_{false};
     std::atomic<bool> supervisor_stopping_{false};
     std::thread supervisor_thread_;
+    // The kept threads' deadlines (--cache-keep-tokens): the supervisor releases the expired.
+    mutable KeptSessions kept_sessions_;
 };
 
 } // namespace ninferno::serve

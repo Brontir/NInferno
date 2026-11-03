@@ -804,10 +804,16 @@ void HttpServer::request_drain() noexcept {
 }
 
 ContextCacheHints HttpServer::request_cache_hints(const httplib::Request& req, httplib::Response& res,
+                                                 std::shared_ptr<void>* kept_turn,
                                                  ContextCacheHints base) const {
     if (!req.has_header(std::string(kCacheHintHeader).c_str())) { return base; }
     const std::string header = req.get_header_value(std::string(kCacheHintHeader).c_str());
-    const std::string_view applied = apply_cache_hint(&header, options_.trust_cache_hints, base);
+    std::optional<KeptGrant> kept;
+    const std::string_view applied =
+        apply_cache_hint(&header, options_.trust_cache_hints,
+                         options_.context_cache.enabled ? options_.context_cache.kept_tokens : 0,
+                         base, &kept);
+    if (kept) { *kept_turn = kept_sessions_.begin_turn(*kept, std::chrono::steady_clock::now()); }
     res.set_header(std::string(kCacheHintAppliedHeader).c_str(), std::string(applied));
     return base;
 }
@@ -833,6 +839,14 @@ void HttpServer::run_supervisor() {
         const Clock::time_point now      = Clock::now();
         const ninferno::RuntimeStats stats = service_->runtime_stats();
         const bool stalled               = monitor.update(stats, now);
+        // A kept thread silent past its ttl-ms falls to the private weight (cache_hint.h).
+        // A turn still running under the keep publishes its entry kept: asked again after a ttl.
+        for (const KeptGrant& grant : kept_sessions_.expired(now)) {
+            if (service_->release_kept_session(grant.session_key) ==
+                ninferno::KeptSessionRelease::InFlight) {
+                kept_sessions_.keep(grant, now);
+            }
+        }
         if (stalled != stalled_.exchange(stalled)) { operational_log_.executor_stall(stalled); }
         // Checked while draining too: a device that fails then still ends the process with 1.
         if (!service_->is_available() && !engine_failed_.exchange(true)) {

@@ -354,6 +354,7 @@ DecisionSection options_of(const EngineOptions& o, std::string_view source_ident
     out["context_cache.max_shared_prefixes"]       = optional_number(c.max_shared_prefixes);
     out["context_cache.max_long_anchors_per_continuation"] =
         optional_number(c.max_long_anchors_per_continuation);
+    out["context_cache.kept_tokens"] = number(c.kept_tokens);
     const SpeculativeOptions& s     = o.speculative;
     out["speculative.backend"]      = std::string(backend_name(s.backend));
     out["speculative.draft_tokens"] = number(s.draft_tokens);

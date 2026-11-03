@@ -66,7 +66,71 @@ int main() {
                           "malformed: none, nothing changes");
         failures += check(apply_cache_hint(&keep, true, h) == "normal" && !h.session_key &&
                               h.retention == ninferno::CacheRetentionHint::Default,
-                          "keep: granted as normal (no expiry or budget yet), no session key");
+                          "keep without a --cache-keep-tokens budget: normal, no session key");
+        // With a budget: keep needs a session and a ttl; the grant names the cache's key.
+        const std::string kept = "session=ab; retain=keep; ttl-ms=1500.5";
+        std::optional<KeptGrant> grant;
+        ninferno::ContextCacheHints k;
+        failures += check(apply_cache_hint(&keep, true, 4096, k, &grant) == "normal" && !grant &&
+                              !k.session_key,
+                          "keep without ttl-ms: normal");
+        failures += check(apply_cache_hint(&kept, true, 4096, k, &grant) == "keep" && grant &&
+                              grant->session_key == "router:ab" &&
+                              grant->ttl == std::chrono::milliseconds(1501) &&
+                              k.session_key == "router:ab" &&
+                              k.retention == ninferno::CacheRetentionHint::Kept,
+                          "keep with a session, a ttl and a budget: kept under the router's key");
+        ninferno::ContextCacheHints stored;
+        stored.session_key = "resp_1";
+        grant.reset();
+        failures += check(apply_cache_hint(&kept, true, 4096, stored, &grant) == "normal" && !grant &&
+                              stored.session_key == "resp_1" &&
+                              stored.retention == ninferno::CacheRetentionHint::Default,
+                          "keep on a request with its own session (a stored Response): normal");
+        ninferno::ContextCacheHints unstored;
+        unstored.update_session_index = false;
+        failures += check(apply_cache_hint(&kept, true, 4096, unstored, &grant) == "normal" && !grant &&
+                              !unstored.session_key,
+                          "keep on a request that does not advance its thread: normal");
+        ninferno::ContextCacheHints disposable;
+        disposable.retention = ninferno::CacheRetentionHint::Disposable;
+        failures += check(apply_cache_hint(&kept, true, 4096, disposable, &grant) == "normal" && !grant &&
+                              disposable.retention == ninferno::CacheRetentionHint::Disposable,
+                          "keep on a disposable request: normal");
+        ninferno::ContextCacheHints untrusted;
+        grant.reset();
+        failures += check(apply_cache_hint(&kept, false, 4096, untrusted, &grant) == "none" &&
+                              !grant && !untrusted.session_key,
+                          "untrusted keep: none");
+        failures += check(parse({"ninferno-serve", "m.ninferno", "--cache-keep-tokens", "8192"})
+                                  .context_cache.kept_tokens == 8192 &&
+                              parse({"ninferno-serve", "m.ninferno"}).context_cache.kept_tokens == 0,
+                          "--cache-keep-tokens: the kept budget, 0 unless given");
+        KeptSessions sessions;
+        const auto t0 = KeptSessions::Clock::time_point{};
+        sessions.keep({"a", std::chrono::milliseconds(100)}, t0);
+        sessions.keep({"b", std::chrono::milliseconds(300)}, t0);
+        sessions.keep({"a", std::chrono::milliseconds(100)}, t0 + std::chrono::milliseconds(150));
+        failures += check(sessions.expired(t0 + std::chrono::milliseconds(200)).empty(),
+                          "a new turn moves its session's deadline");
+        const auto due = sessions.expired(t0 + std::chrono::milliseconds(300));
+        failures += check(due.size() == 2 && due[0].session_key == "a" && due[1].session_key == "b" &&
+                              due[1].ttl == std::chrono::milliseconds(300) &&
+                              sessions.expired(t0 + std::chrono::milliseconds(900)).empty(),
+                          "each expired session is handed back once, with its ttl");
+        {
+            // A turn not yet seen by the cache (preparing, queued, materializing): its thread's
+            // deadline moves on while it runs, and its ttl runs from the turn's end.
+            auto turn = sessions.begin_turn({"c", std::chrono::milliseconds(100)}, t0);
+            failures += check(sessions.expired(t0 + std::chrono::milliseconds(500)).empty(),
+                              "a deadline passing while its thread's turn runs moves on");
+            turn.reset();
+            const auto end = KeptSessions::Clock::now();
+            const auto later = sessions.expired(end + std::chrono::milliseconds(200));
+            failures += check(sessions.expired(end - std::chrono::milliseconds(1)).empty() &&
+                                  later.size() == 1 && later[0].session_key == "c",
+                              "a kept thread's ttl runs from the end of its turn");
+        }
         failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
                               h.retention == ninferno::CacheRetentionHint::Disposable,
                           "drop: disposable");

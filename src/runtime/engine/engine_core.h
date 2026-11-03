@@ -37,6 +37,7 @@
 #include <span>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <utility>
 #include <variant>
@@ -98,6 +99,7 @@ public:
             throw std::invalid_argument("Engine core bounds are invalid");
         }
         scheduler_.allow_concurrent_prefill(options.concurrent_prefill);
+        resources_.set_kept_tokens(options.context_cache.kept_tokens);
         if (!options.context_cache.max_private_continuations ||
             !options.context_cache.max_shared_prefixes) {
             throw std::logic_error("target admission capacity does not match the Engine");
@@ -310,6 +312,18 @@ public:
             std::scoped_lock lock(execution_mutex_);
             instance_.program->reset_memory_peaks();
         } catch (...) {}
+    }
+
+    // Engine::release_kept_session: between rounds, under the execution lock every resource
+    // decision takes.
+    KeptSessionRelease release_kept_session(std::string_view session) {
+        using Key = typename ModelContract::CacheSessionKey;
+        Key key;
+        if (session.empty() || session.size() > key.bytes.size()) { return KeptSessionRelease::None; }
+        key.size = static_cast<decltype(key.size)>(session.size());
+        std::copy(session.begin(), session.end(), key.bytes.begin());
+        std::scoped_lock lock(execution_mutex_);
+        return resources_.release_kept_session(key);
     }
 
 private:

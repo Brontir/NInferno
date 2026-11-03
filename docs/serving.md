@@ -133,6 +133,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 | `--no-answer-room` | room kept | without a budget, thinking may take the whole output limit (by default it closes at three quarters, leaving the rest for the answer) |
 | `--no-prefix-reuse` | reuse on | disable prefix caching |
 | `--trust-cache-hints` | off | read a router's `x-ninferno-cache-hint` header (below); only behind a router you trust |
+| `--cache-keep-tokens N` | 0 (no keep) | grant such a router's `retain=keep`: its threads keep the live-session weight, N context tokens at most together (below) |
 | `--cors` | off | permissive browser CORS headers |
 | `--request-log-jsonl FILE` | off | machine-readable request log |
 | `--log-level LEVEL` | `info` | stderr verbosity (`trace` ... `off`) |
@@ -404,8 +405,15 @@ x-ninferno-cache-hint: session=<hex>; retain=drop; ttl-ms=120000; next=0.93; tur
 ```
 
 `retain=drop` makes the request's cached state the first to go; `retain=normal` changes nothing.
-`retain=keep` is read but granted as `normal` for now: a kept thread needs an expiry (`ttl-ms`) and
-a cap on the bytes held as kept, which the cache does not have yet. The other fields are read and
+`retain=keep` with a `session` and a `ttl-ms`, under `--cache-keep-tokens N`, gives the thread's
+cached state the live-session weight: the kept threads together hold at most N context tokens (at
+their last turn's end), and past that the oldest kept falls to the private weight first. A kept
+thread that sends no new turn within its `ttl-ms` (at most an hour) of its last turn's end falls
+to the private weight too, its session still found by a later turn; while a turn of the thread is
+prepared, queued or running, its deadline does not pass. The server keeps that
+clock; the cache's own decisions read none. Without the budget, a session or a ttl, `keep` is
+granted as `normal`, and so on a request with a session of its own (a stored Response already
+has the live-session weight) or one that does not advance its thread (`store: false`). The other fields are read and
 not yet weighed; unknown fields are ignored. A malformed hint is none, never an error. The response
 says what was granted in `x-ninferno-hint-applied` (`keep`, `normal`, `drop`, or `none` when hints
 are off or the hint is malformed: a bad value of a known field, a field without a name, a field
