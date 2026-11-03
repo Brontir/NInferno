@@ -468,7 +468,11 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // architectures nobody measured keep the tiles. The gate's table: measured::kMmqPrefillPays
 // (core/measured_boards.h), which the product's estimate reads too.
 bool mmq_prefill_device() {
-    return measured::measured_gate(measured::kMmqPrefillPays, std::numeric_limits<double>::max());
+    try {
+        return measured::mmq_prefill_gate(board_of(device_class())).pays;
+    } catch (...) {
+        return false; // no device: the unmeasured default, as measured_gate gives
+    }
 }
 
 bool mmq_prefill_wins(const Problem& p, const Weight& w) {
