@@ -15,6 +15,7 @@
 #include "ops/softmax_attention/dense/causal_cache/nvfp4/launch.h"
 #include "ops/softmax_attention/dense/causal_cache/k8v4/plan.h"
 #include "ops/softmax_attention/dense/causal_cache/k8v4/launch.h"
+#include "ops/softmax_attention/dense/causal_cache/plan_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -29,8 +30,6 @@ namespace {
 
 constexpr std::int32_t kHeadDim             = detail::kCausalHeadDim;
 constexpr float kExpectedScale              = 0.0625f;
-constexpr std::int32_t kMaximumVerifyTokens = 16;
-constexpr std::int32_t kMaximumBatchSize    = 8;
 
 void require_causal_geometry(AttentionHeadGeometry geometry, const char* op) {
     if (!valid_attention_head_geometry(geometry) || geometry.head_dim != kHeadDim ||
@@ -41,12 +40,17 @@ void require_causal_geometry(AttentionHeadGeometry geometry, const char* op) {
             listed += (listed.empty() ? "" : ", ") + std::to_string(pair.query_heads) + "/" +
                       std::to_string(pair.kv_heads);
         }
+        // Its kind (#312): a geometry no attention has is not a call; a valid one without a kernel
+        // is not compiled.
+        const auto kind = valid_attention_head_geometry(geometry) ? detail::CausalRestriction::Coverage
+                                                                  : detail::CausalRestriction::Semantic;
         throw std::invalid_argument(std::string(op) + ": unsupported head geometry " +
                                     std::to_string(geometry.query_heads) + "/" +
                                     std::to_string(geometry.kv_heads) + " x " +
                                     std::to_string(geometry.head_dim) + " (query/KV heads x head_dim; " +
                                     "supported: " + listed + " x " +
-                                    std::to_string(detail::kCausalHeadDim) + ")");
+                                    std::to_string(detail::kCausalHeadDim) + ") (" +
+                                    detail::causal_restriction_name(kind) + ")");
     }
 }
 
@@ -229,9 +233,9 @@ void validate_batched_attention_tensors(const Tensor& q, const Tensor& positions
     const std::int32_t kv_heads = geometry.kv_heads;
     const std::int32_t width    = q.ne[2];
     const std::int32_t batch    = q.ne[3];
-    if (width <= 0 || batch <= 0 || batch > kMaximumBatchSize ||
-        (batch > 1 && width > kMaximumVerifyTokens)) {
-        throw std::invalid_argument(std::string(op) + ": unsupported B/W domain");
+    if (const auto refusal =
+            detail::causal_domain_refusal(q_heads, kv_heads, batch, width, width, envelope)) {
+        throw std::invalid_argument(detail::causal_refusal_message(op, *refusal));
     }
     require_shape(q, kHeadDim, q_heads, width, batch, op, "q");
     require_shape(positions, width, batch, 1, 1, op, "positions");
@@ -265,17 +269,20 @@ std::size_t causal_softmax_attention_workspace_capacity_bytes(
     require_causal_geometry(geometry, "causal_softmax_attention workspace");
     const std::int32_t q_heads  = geometry.query_heads;
     const std::int32_t kv_heads = geometry.kv_heads;
-    bool supported_dtype        = true;
     try {
         (void)paged_kv_storage_layout(cache_storage, kHeadDim);
-    } catch (const std::invalid_argument&) { supported_dtype = false; }
-    if (execution.multiprocessor_count <= 0 || !supported_dtype || batch_size <= 0 ||
-        batch_size > kMaximumBatchSize || min_width <= 0 || max_width < min_width ||
-        (batch_size > 1 && max_width > kMaximumVerifyTokens) || envelope.min_visible_keys == 0 ||
-        envelope.min_visible_keys > envelope.max_visible_keys ||
-        envelope.max_visible_keys > kCausalAttentionMaximumVisibleKeys) {
+    } catch (const std::invalid_argument&) {
         throw std::invalid_argument(
-            "causal_softmax_attention workspace: invalid profile or interval");
+            "causal_softmax_attention workspace: a KV storage the kernels do not read at this head "
+            "size (not compiled)");
+    }
+    if (execution.multiprocessor_count <= 0) {
+        throw std::invalid_argument("causal_softmax_attention workspace: no multiprocessors");
+    }
+    if (const auto refusal = detail::causal_domain_refusal(q_heads, kv_heads, batch_size, min_width,
+                                                           max_width, envelope)) {
+        throw std::invalid_argument(
+            detail::causal_refusal_message("causal_softmax_attention workspace", *refusal));
     }
 
     if (cache_storage == KvCacheStorage::BFloat16)
