@@ -154,6 +154,9 @@ struct ServeOptions {
     bool concurrent_prefill = false; // --concurrent-prefill
     // OpenAI requests: a shared-prefix candidate at the end of the leading system/developer run.
     bool auto_system_shared_prefix = true;
+    // --trust-cache-hints: read a router's x-ninferno-cache-hint (serve/cache_hint.h). Off: any
+    // client could pin its own state on an engine it reaches directly.
+    bool trust_cache_hints = false;
     std::optional<bool> enable_thinking;
     std::optional<bool> preserve_thinking;
     std::optional<std::uint32_t> default_thinking_budget;

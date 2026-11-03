@@ -1,4 +1,5 @@
 #include "product/speculative_options.h"
+#include "serve/cache_hint.h"
 #include "serve/generation_service.h"
 #include "serve/serve_options.h"
 #include "serve/translate.h"
@@ -34,6 +35,42 @@ ServeOptions parse(std::vector<std::string> arguments) {
 
 int main() {
     int failures = 0;
+
+    // #338: a trusted router's cache hint. Off by default; a malformed hint is none.
+    failures += check(!parse({"ninferno-serve", "m.ninferno"}).trust_cache_hints &&
+                          parse({"ninferno-serve", "m.ninferno", "--trust-cache-hints"}).trust_cache_hints,
+                      "--trust-cache-hints: off unless given");
+    {
+        const auto full = parse_cache_hint(
+            "session=0a1b2c; retain=keep; ttl-ms=120000; next=0.93; turns=12.4; gap-ms=8000; "
+            "gap-p90-ms=32000; later-field=x");
+        failures += check(full && full->session == "0a1b2c" && full->retain == CacheHintRetain::Keep &&
+                              full->ttl_ms == 120000 && full->next == 0.93 && full->gap_p90_ms == 32000,
+                          "a full hint parses; an unknown field is ignored");
+        failures += check(parse_cache_hint("session=6f1c2a3e-7b9d-4e1f-a2b3-c4d5e6f70812; retain=drop") &&
+                              parse_cache_hint("session=6f1c2a3e-7b9d-4e1f-a2b3-c4d5e6f70812; retain=drop")->retain ==
+                                  CacheHintRetain::Drop,
+                          "a UUID session name is a name");
+        for (const char* bad : {"", "retain=forever", "session=a b", "session=x/y", "next=1.5", "ttl-ms=-1",
+                                "retain", "turns=12abc", "gap-ms=nan", "=drop", "retain=drop; retain=keep"}) {
+            failures += check(!parse_cache_hint(bad), "a malformed hint is none");
+        }
+        const std::string drop = "retain=drop", keep = "session=ab; retain=keep", junk = "retain=x";
+        ninferno::ContextCacheHints h;
+        failures += check(apply_cache_hint(&drop, false, h) == "none" &&
+                              h.retention == ninferno::CacheRetentionHint::Default,
+                          "untrusted: nothing granted");
+        failures += check(apply_cache_hint(nullptr, true, h) == "none", "no header: none");
+        failures += check(apply_cache_hint(&junk, true, h) == "none" &&
+                              h.retention == ninferno::CacheRetentionHint::Default,
+                          "malformed: none, nothing changes");
+        failures += check(apply_cache_hint(&keep, true, h) == "normal" && !h.session_key &&
+                              h.retention == ninferno::CacheRetentionHint::Default,
+                          "keep: granted as normal (no expiry or budget yet), no session key");
+        failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
+                              h.retention == ninferno::CacheRetentionHint::Disposable,
+                          "drop: disposable");
+    }
 
     const ServeOptions version = parse({"ninferno-serve", "--version"});
     failures += check(version.version_requested && !version.help_requested &&
