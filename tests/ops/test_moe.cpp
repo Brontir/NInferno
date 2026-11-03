@@ -1653,6 +1653,37 @@ int check_bank_refusals() {
        R::KGroup);
     layer.expert_policy = ops::LinearPolicy::A16Only;
     is("Q4_K W4A8 under A16Only", moe::w4a8_bank_refusal(layer, q4k), R::Policy);
+
+    // Stage routes (#311): what each stage of a plan runs and why not the others. A layer whose
+    // gate/up bank is admitted to W4A8 and whose down bank is not keeps both off it; the gate/up
+    // stage says the partner is why.
+    ops::MoeWeights mixed;
+    mixed.expert_policy = ops::LinearPolicy::AllowA8;
+    mixed.gate_up       = q4k;
+    mixed.down          = bank(QType::BF16, 2048, QuantLayout::RowSplit);
+    moe::MoePlan rmma;
+    const auto routes = moe::stage_routes(mixed, rmma);
+    const bool described =
+        routes.gate_up.kernel == moe::MoeStageKernel::RegisterMma &&
+        routes.gate_up.name.starts_with("rmma.") && routes.gate_up.w4a8 == R::None &&
+        routes.gate_up.w4a8_partner && routes.down.w4a8 == R::Format && !routes.down.w4a8_partner &&
+        routes.down.r8 == R::Format && routes.gate_up.r8 == R::None;
+    moe::MoePlan r8 = rmma;
+    r8.gate_up_r8   = 0;
+    const auto r8_routes = moe::stage_routes(mixed, r8);
+    moe::MoePlan tier = rmma;
+    tier.w4a8         = true;
+    const auto tier_routes = moe::stage_routes(mixed, tier);
+    if (!described || r8_routes.gate_up.kernel != moe::MoeStageKernel::R8 ||
+        !r8_routes.gate_up.name.starts_with("r8.") ||
+        r8_routes.down.kernel != moe::MoeStageKernel::RegisterMma ||
+        tier_routes.gate_up.kernel != moe::MoeStageKernel::W4a8 ||
+        tier_routes.down.kernel != moe::MoeStageKernel::W4a8) {
+        std::cerr << "stage routes: " << routes.gate_up.name << " / " << routes.down.name << ", "
+                  << r8_routes.gate_up.name << ", " << tier_routes.gate_up.name << '
+';
+        ++failures;
+    }
     if (failures == 0) {
         std::cout << "bank refusals: each bank names the first check that keeps it off R8 or W4A8\n";
     }

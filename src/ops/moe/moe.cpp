@@ -953,6 +953,42 @@ std::string plan_name(const MoePlan& plan) {
            "|" + down + (plan.a16 ? "|a16" : "") + (plan.w4a8 ? "|w4a8" : "");
 }
 
+const char* moe_stage_kernel_name(MoeStageKernel kernel) noexcept {
+    switch (kernel) {
+    case MoeStageKernel::R8: return "r8";
+    case MoeStageKernel::W4a8: return "w4a8";
+    case MoeStageKernel::RegisterMma: return "rmma";
+    }
+    return "";
+}
+
+MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan) {
+    const BankRefusal gate_up_w4a8 = w4a8_bank_refusal(weights, weights.gate_up);
+    const BankRefusal down_w4a8    = w4a8_bank_refusal(weights, weights.down);
+    const auto stage = [&](const Weight& bank, int r8_schedule, int rmma_schedule, BankRefusal w4a8,
+                           BankRefusal other_w4a8) {
+        MoeStageRoute s;
+        s.r8           = r8_bank_refusal(bank);
+        s.w4a8         = w4a8;
+        s.w4a8_partner = w4a8 == BankRefusal::None && other_w4a8 != BankRefusal::None;
+        if (plan.w4a8) {
+            s.kernel = MoeStageKernel::W4a8;
+            s.name   = "w4a8";
+        } else if (r8_schedule >= 0) {
+            s.kernel   = MoeStageKernel::R8;
+            s.schedule = r8_schedule;
+            s.name     = r8_schedule_name(r8_schedule);
+        } else {
+            s.kernel   = MoeStageKernel::RegisterMma;
+            s.schedule = rmma_schedule;
+            s.name     = schedule_name(rmma_schedule);
+        }
+        return s;
+    };
+    return {stage(weights.gate_up, plan.gate_up_r8, plan.gate_up_schedule, gate_up_w4a8, down_w4a8),
+            stage(weights.down, plan.down_r8, plan.down_schedule, down_w4a8, gate_up_w4a8)};
+}
+
 std::optional<MoePlan> parse_plan(std::string_view name, std::int32_t hidden) {
     // "|a16": a band measured on A16 (register-MMA stages only).
     constexpr std::string_view kA16 = "|a16";

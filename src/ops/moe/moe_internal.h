@@ -325,6 +325,29 @@ struct A8Route {
 // ("r8.w4r1"), and "|a16" after a plan of register-MMA stages marked A16. The router keeps its own
 // heuristic schedule and the job width is the wider of the two grouped schedules.
 [[nodiscard]] std::string plan_name(const MoePlan& plan);
+
+// What each grouped stage of a plan runs, and why the others do not (#311): the stage routes a
+// plan describes, without changing any. kernel: R8 (int8 activations, one CTA a job), W4a8 (the
+// int8 tier: the plan takes it for both stages or neither) or RegisterMma (BF16 activations);
+// schedule: the R8 or register-MMA schedule (-1 under W4A8); r8 and w4a8: the bank's refusal of
+// each (None where the bank is admitted, whether or not the plan took it); w4a8_partner: the bank is
+// admitted to W4A8 but the other is not, so the all-bank rule keeps both off it (the case a mixed
+// plan would serve).
+enum class MoeStageKernel { R8, W4a8, RegisterMma };
+[[nodiscard]] const char* moe_stage_kernel_name(MoeStageKernel kernel) noexcept;
+struct MoeStageRoute {
+    MoeStageKernel kernel = MoeStageKernel::RegisterMma;
+    int schedule          = -1;
+    std::string name;                  // "r8.w..", "rmma.m..", "w4a8"
+    BankRefusal r8   = BankRefusal::None;
+    BankRefusal w4a8 = BankRefusal::None;
+    bool w4a8_partner = false;
+};
+struct MoeStageRoutes {
+    MoeStageRoute gate_up;
+    MoeStageRoute down;
+};
+[[nodiscard]] MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan);
 [[nodiscard]] std::optional<MoePlan> parse_plan(std::string_view name, std::int32_t hidden);
 
 // The per-GPU-class route table's MoE entries (routes/<class>.json, "moe"): per exact layer
