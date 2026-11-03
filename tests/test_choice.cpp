@@ -1876,6 +1876,8 @@ void choices_replay(const json& fixture) {
         moe.quants.push_back(quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS")));
         moe.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"}, {"mtp:4", "mtp", 1.9, 2, "measured"}};
         moe.model.default_drafter = 2;
+        // A load table too: its bounds go through the record.
+        moe.model.drafters[0].load = {{4, 1.6, 3, true, true}, {16, 1.2, 1, true, false}};
         benches.emplace_back(name + ", Qwen3.6-35B-A3B", moe);
     }
     int replays = 0;
@@ -1886,7 +1888,10 @@ void choices_replay(const json& fixture) {
                 ch::Task task;
                 task.contexts = {context, context / 2};
                 ch::Pins pins;
-                if (pinned) { pins.kv = KvCacheStorage::BFloat16; }
+                if (pinned) {
+                    pins.kv          = KvCacheStorage::BFloat16;
+                    pins.activations = ActivationMode::Fast;
+                }
                 const ch::ChoiceRecord record = ch::record_choice(
                     b.model, b.card, b.quants[0], allowed, pins, task, oracle(b, 40e9), ch::Gates{true, true});
                 const ch::Choice direct = ch::choose(b.model, b.card, b.quants[0], allowed, pins, task,

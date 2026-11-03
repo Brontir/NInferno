@@ -22,6 +22,16 @@ int code(E e) {
     return static_cast<int>(e);
 }
 
+// An enumeration's value from a record: one of its `count` values, else the record is malformed.
+template <class E>
+E enum_of(const json& j, int count) {
+    const int v = j.get<int>();
+    if (v < 0 || v >= count) {
+        throw std::invalid_argument("an enumeration value out of range: " + std::to_string(v));
+    }
+    return static_cast<E>(v);
+}
+
 // A candidate's key in the own-context table: its axes in a fixed order.
 std::string candidate_key(const Candidate& c) {
     return std::to_string(code(c.kv)) + "," + std::to_string(code(c.ring)) + "," +
@@ -204,9 +214,9 @@ QuantOption quant_of(const json& j) {
     q.supported           = j.at("supported");
     q.int8_route          = j.at("int8_route");
     q.nvfp4               = j.at("nvfp4");
-    q.weights             = static_cast<WeightClass>(j.at("weights").get<int>());
-    q.expert_banks        = static_cast<ExpertBanks>(j.at("expert_banks").get<int>());
-    q.rest_weights        = static_cast<WeightClass>(j.at("rest_weights").get<int>());
+    q.weights             = enum_of<WeightClass>(j.at("weights"), 4);
+    q.expert_banks        = enum_of<ExpertBanks>(j.at("expert_banks"), 4);
+    q.rest_weights        = enum_of<WeightClass>(j.at("rest_weights"), 4);
     return q;
 }
 
@@ -223,8 +233,12 @@ json optional_json(const std::optional<T>& v) {
 template <class T>
 std::optional<T> optional_of(const json& j) {
     if (j.is_null()) { return std::nullopt; }
-    if constexpr (std::is_enum_v<T>) {
-        return static_cast<T>(j.get<int>());
+    if constexpr (std::is_same_v<T, KvCacheStorage>) {
+        return enum_of<T>(j, static_cast<int>(kKvStorages.size()));
+    } else if constexpr (std::is_same_v<T, RecurrentStateStorage>) {
+        return enum_of<T>(j, static_cast<int>(kStateStorages.size()));
+    } else if constexpr (std::is_enum_v<T>) {
+        return enum_of<T>(j, 3); // ActivationMode
     } else {
         return j.get<T>();
     }
@@ -260,11 +274,11 @@ json allowed_json(const Allowed& a) {
 
 Allowed allowed_of(const json& j) {
     Allowed a;
-    for (const auto& s : j.at("kv")) { a.kv.push_back(static_cast<KvCacheStorage>(s.get<int>())); }
+    for (const auto& s : j.at("kv")) { a.kv.push_back(enum_of<KvCacheStorage>(s, static_cast<int>(kKvStorages.size()))); }
     for (const auto& s : j.at("activations")) {
-        a.activations.push_back(static_cast<ActivationMode>(s.get<int>()));
+        a.activations.push_back(enum_of<ActivationMode>(s, 3));
     }
-    a.automatic_kv = static_cast<KvCacheStorage>(j.at("automatic_kv").get<int>());
+    a.automatic_kv = enum_of<KvCacheStorage>(j.at("automatic_kv"), static_cast<int>(kKvStorages.size()));
     return a;
 }
 
@@ -345,6 +359,8 @@ Choice replay_choice(const json& inputs) {
                       allowed_of(inputs.at("allowed")), pins_of(inputs.at("pins")),
                       task_of(inputs.at("task")), own_context, gates_of(inputs.at("gates")));
     } catch (const nlohmann::json::exception& e) {
+        throw std::invalid_argument(std::string("a malformed choice replay record: ") + e.what());
+    } catch (const std::out_of_range& e) {
         throw std::invalid_argument(std::string("a malformed choice replay record: ") + e.what());
     }
 }
