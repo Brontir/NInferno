@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <limits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -20,6 +21,21 @@ constexpr std::array kStateStorages = {RecurrentStateStorage::FP32, RecurrentSta
 template <class E>
 int code(E e) {
     return static_cast<int>(e);
+}
+
+// An unsigned count from a record: a non-negative integer within T, else the record is malformed
+// (nlohmann would wrap -1 to T's maximum).
+template <class T>
+T unsigned_of(const json& j) {
+    if (!j.is_number_integer() || (j.is_number_integer() && !j.is_number_unsigned() &&
+                                   j.get<std::int64_t>() < 0)) {
+        throw std::invalid_argument("a non-negative integer was expected: " + j.dump());
+    }
+    const std::uint64_t v = j.get<std::uint64_t>();
+    if (v > std::numeric_limits<T>::max()) {
+        throw std::invalid_argument("an integer out of range: " + j.dump());
+    }
+    return static_cast<T>(v);
 }
 
 // An enumeration's value from a record: one of its `count` values, else the record is malformed.
@@ -56,7 +72,7 @@ template <class E>
 std::function<std::uint64_t(E)> table_fn(const json& table, const char* what) {
     if (table.is_null()) { return {}; }
     auto values = std::make_shared<std::map<int, std::uint64_t>>();
-    for (const auto& [k, v] : table.items()) { (*values)[std::stoi(k)] = v.get<std::uint64_t>(); }
+    for (const auto& [k, v] : table.items()) { (*values)[std::stoi(k)] = unsigned_of<std::uint64_t>(v); }
     return [values, what](E e) -> std::uint64_t {
         const auto it = values->find(code(e));
         if (it == values->end()) {
@@ -292,10 +308,11 @@ json task_json(const Task& t) {
 
 Task task_of(const json& j) {
     Task t;
-    t.contexts        = j.at("contexts").get<std::vector<std::uint32_t>>();
-    t.concurrency     = j.at("concurrency");
-    t.prompt          = j.at("prompt");
-    t.answer          = j.at("answer");
+    t.contexts.clear();
+    for (const auto& c : j.at("contexts")) { t.contexts.push_back(unsigned_of<std::uint32_t>(c)); }
+    t.concurrency     = unsigned_of<std::uint32_t>(j.at("concurrency"));
+    t.prompt          = unsigned_of<std::uint32_t>(j.at("prompt"));
+    t.answer          = unsigned_of<std::uint32_t>(j.at("answer"));
     t.accuracy_weight = j.at("accuracy_weight");
     return t;
 }
@@ -337,7 +354,9 @@ ChoiceRecord record_choice(const ModelFacts& model, const CardFacts& card, const
 }
 
 Choice replay_choice(const json& inputs) {
-    if (!inputs.is_object() || inputs.value("schema", std::string()) != kChoiceReplaySchema) {
+    const auto schema = inputs.is_object() ? inputs.find("schema") : inputs.end();
+    if (!inputs.is_object() || schema == inputs.end() || !schema->is_string() ||
+        schema->get<std::string>() != kChoiceReplaySchema) {
         throw std::invalid_argument("a choice replay record of schema " +
                                     std::string(kChoiceReplaySchema) + " was expected");
     }
@@ -345,7 +364,7 @@ Choice replay_choice(const json& inputs) {
         const ModelFacts model = model_of(inputs.at("model"));
         auto own = std::make_shared<std::map<std::string, std::uint32_t>>();
         for (const auto& [k, v] : inputs.at("own_context").items()) {
-            (*own)[k] = v.get<std::uint32_t>();
+            (*own)[k] = unsigned_of<std::uint32_t>(v);
         }
         const OwnContextFn own_context = [own](const Candidate& c) -> std::uint32_t {
             const auto it = own->find(candidate_key(c));

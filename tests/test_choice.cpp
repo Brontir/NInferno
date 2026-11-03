@@ -1926,6 +1926,24 @@ void choices_replay(const json& fixture) {
         (void)ch::replay_choice(other);
     } catch (const std::invalid_argument&) { refused = true; }
     check(refused, "a record of another schema is refused");
+    // Malformed, not wrapped or thrown past the contract: a negative own context, a schema that
+    // is no string.
+    for (const auto& corrupt : {[&] {
+                                    auto r = record.inputs;
+                                    r["own_context"].begin().value() = -1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r      = record.inputs;
+                                    r["schema"] = 1;
+                                    return r;
+                                }()}) {
+        bool malformed = false;
+        try {
+            (void)ch::replay_choice(corrupt);
+        } catch (const std::invalid_argument&) { malformed = true; }
+        check(malformed, "a malformed record is refused as invalid_argument");
+    }
 }
 
 int main() {
