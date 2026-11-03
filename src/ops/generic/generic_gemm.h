@@ -576,16 +576,41 @@ inline constexpr std::int32_t kGgmlVecMaxTokens = 8;
 // The widest call ggml's matrix kernel takes (its 5..16-token band).
 inline constexpr std::int32_t kGgmlMmqMaxTokens = 16;
 // Whether a call of `problem` on `weight` of T tokens takes ggml's vector kernel, the bytes of its
-// q8_1 activation of a [K, T] x (Call::vec_activation), and that quantization of x.
+// q8_1 activation of a [K, T] x (Call::prepared), and that quantization of x.
 [[nodiscard]] bool ggml_vec_takes(const Problem& problem, const Weight& weight,
                                   std::int32_t tokens);
 [[nodiscard]] std::size_t ggml_vec_activation_bytes(std::int32_t k, std::int32_t tokens);
-void ggml_vec_quantize(const Tensor& x, void* out, cudaStream_t stream);
+
+// An activation prepared once for several calls that read one x (#308): what it was made from and
+// by which rule, so a call takes it only where its own preparation would give the same bytes. The
+// representation is the rule: a nominal "int8 activation" is no contract (W4A8's codes, I8's and
+// ggml's q8_1 group, scale and sum differently). Non-owning; valid while its source and storage are
+// (the Op call that made it), never cached by address across calls.
+enum class PreparedRepresentation : std::uint8_t {
+    GgmlQ8_1, // ggml's block_q8_1 of 32 values (vec_quantize_activation: per-block absmax scale,
+              // rounded to nearest, the block's sum), [K, T] token-major
+};
+struct PreparedActivation {
+    PreparedRepresentation representation = PreparedRepresentation::GgmlQ8_1;
+    const void* data   = nullptr; // the prepared bytes
+    const void* source = nullptr; // the BF16 x they were made from
+    std::int32_t ldx    = 0;      // its stride, BF16 values from one token to the next
+    std::int32_t k      = 0;
+    std::int32_t tokens = 0;
+};
+// Whether `prepared` is what a call of `representation` would make itself from x at `source`
+// (stride `ldx`, `k` x `tokens`): the same rule, the same source region and extent. A permuted
+// input (a weight stored in another column order reads x gathered) is another source.
+[[nodiscard]] bool prepared_serves(const PreparedActivation* prepared,
+                                   PreparedRepresentation representation, const void* source,
+                                   std::int32_t ldx, std::int32_t k, std::int32_t tokens) noexcept;
+// ggml's q8_1 of x into `out` (ggml_vec_activation_bytes of it), described.
+PreparedActivation ggml_vec_quantize(const Tensor& x, void* out, cudaStream_t stream);
 
 // The SwiGLU (GeGLU: gelu) of a gate and an up weight on one x: out[r] = act(gate row r . x) *
 // (up row r . x) for `rows` rows from each half's `row`, out BF16 [>= rows, T]. Where both halves
 // take ggml's vector kernel at this T (the dense tuner's or the heuristic's route, as a call of
-// that half alone would), x is quantized once (or `q8` carries it, ggml_vec_quantize): a pair of
+// that half alone would), x is quantized once (or `prepared` carries it where it serves): a pair of
 // one format runs as one gated launch over both weights, a pair of two formats as the gate's
 // product into an FP32 plane and the up product multiplying it in its epilogue (no separate
 // activation kernel, the gate never rounded to BF16). False, with nothing launched, otherwise.
@@ -607,8 +632,8 @@ struct PairHalf {
 
 [[nodiscard]] bool ggml_vec_gated_pair(const Tensor& x, const PairHalf& gate, const PairHalf& up,
                                        std::int32_t rows, bool gelu, Tensor& out,
-                                       WorkspaceArena& workspace, const void* q8,
-                                       cudaStream_t stream);
+                                       WorkspaceArena& workspace,
+                                       const PreparedActivation* prepared, cudaStream_t stream);
 // Its workspace at T tokens: the q8_1 activation, the FP32 gate plane and the arena's alignment.
 [[nodiscard]] std::size_t ggml_vec_gated_pair_bytes(std::int32_t k, std::int32_t rows,
                                                     std::int32_t tokens);
@@ -686,8 +711,9 @@ struct Call {
     // before it is written.
     bool release_next = false;
     // ggml's vector kernel's q8_1 activation of x (ggml_vec_quantize), quantized once for the
-    // calls that read one x (segmented_projection); null: a vector call quantizes x itself.
-    const void* vec_activation = nullptr;
+    // calls that read one x (segmented_projection); a vector call takes it where it serves the x it
+    // reads (prepared_serves), else (null included) quantizes x itself.
+    const PreparedActivation* prepared = nullptr;
 };
 
 // The dense tuner (generic_tune.cpp). tune_dense times the problem of `call` on its own weight at

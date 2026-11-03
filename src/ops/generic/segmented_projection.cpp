@@ -67,8 +67,8 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
     // take it (a GGUF layer's q/k/v/z or gate/up of mixed formats), x is quantized once for all.
     // A call whose route turns out otherwise ignores the activation; one that takes the kernel
     // without it quantizes x itself.
-    const void* vec_activation = nullptr;
-    std::size_t parent_groups  = 1;
+    std::optional<generic::PreparedActivation> prepared;
+    std::size_t parent_groups = 1;
     for (std::size_t g = 1; g < w.slices.size(); ++g) {
         if (!same_parent(w.slices[g - 1], w.slices[g])) ++parent_groups;
     }
@@ -93,8 +93,7 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
             void* q8 =
                 workspace.alloc_bytes(generic::ggml_vec_activation_bytes(x_matrix.ne[0], tokens))
                     .data;
-            generic::ggml_vec_quantize(x_matrix, q8, stream);
-            vec_activation = q8;
+            prepared = generic::ggml_vec_quantize(x_matrix, q8, stream);
         }
     }
 
@@ -126,7 +125,7 @@ void project(const Tensor& x_matrix, const SegmentedProjectionWeights& w,
             call.row_begin = first.row_begin + done;
             call.epilogue  = generic::Epilogue::Store;
             call.segments  = 0;
-            call.vec_activation  = vec_activation;
+            call.prepared        = prepared ? &*prepared : nullptr;
             std::int32_t o_begin = 0;
             std::int32_t taken   = 0;
             for (const auto& o : outputs) {

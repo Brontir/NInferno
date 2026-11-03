@@ -1621,6 +1621,34 @@ int main() {
     int failures = 0;
     std::mt19937 rng(20260924U);
 
+    // A prepared activation serves a call only made by its rule from the very x the call reads, at
+    // its stride and extent (#308): another source (a column-gathered x), stride, K or T is not it.
+    {
+        namespace g = ops::detail::generic;
+        int x_storage = 0, gathered = 0, bytes = 0;
+        const g::PreparedActivation p{.representation = g::PreparedRepresentation::GgmlQ8_1,
+                                      .data           = &bytes,
+                                      .source         = &x_storage,
+                                      .ldx            = 4096,
+                                      .k              = 4096,
+                                      .tokens         = 3};
+        const auto serves = [&](const g::PreparedActivation* q, const void* x, int ldx, int k, int t) {
+            return g::prepared_serves(q, g::PreparedRepresentation::GgmlQ8_1, x, ldx, k, t);
+        };
+        g::PreparedActivation no_data = p;
+        no_data.data                  = nullptr;
+        const bool ok = serves(&p, &x_storage, 4096, 4096, 3) && !serves(nullptr, &x_storage, 4096, 4096, 3) &&
+                        !serves(&no_data, &x_storage, 4096, 4096, 3) &&
+                        !serves(&p, &gathered, 4096, 4096, 3) && !serves(&p, &x_storage, 4104, 4096, 3) &&
+                        !serves(&p, &x_storage, 4096, 2048, 3) && !serves(&p, &x_storage, 4096, 4096, 2) &&
+                        !serves(&p, &x_storage, 4096, 4096, 4);
+        if (!ok) {
+            std::cerr << "generic linear: a prepared activation serves a call it was not made for
+";
+            ++failures;
+        }
+    }
+
     // 0. The wide-load Q6_K's choice (rmma_wide_rule) on the boards' facts: DRAM bytes per SM
     // cycle and compute capability; as many CTAs and as much local memory as the plain kernel.
     {
