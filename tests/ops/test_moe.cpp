@@ -617,9 +617,10 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 // down of width 512..1023 on the class's down schedule; w4r1 on gate/up for a class without an
 // entry); its bytes, too, do not depend on T or position (the heuristic route: a measured table's
 // bands may change the down stage between widths). Two exceptions keep A16: a call past the limit
-// (prefill: refused for a forced R8 plan), and a bank whose K is too wide for a CTA's quantized
-// activation (above 10922 at T = 3 or 4, 5461 at T = 5..8). Any R8 plan under A16Only is refused,
-// and the default route there stays on the register MMA.
+// (prefill: refused for a forced R8 plan), and a bank the kernel quantizes itself (the down stage,
+// a padded gate/up) whose K is too wide for a CTA's shared memory (above 10922 at T = 3 or 4, 5461
+// at T = 5..8). Any R8 plan under A16Only is refused, and the default route there stays on the
+// register MMA.
 int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
     namespace moe = ops::detail::moe;
     Case c         = base;
@@ -763,8 +764,9 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
         }
         if (shipped.loaded) { (void)ops::load_route_table(shipped.path); }
     }
-    // A bank too wide for a CTA's quantized activation keeps A16 at the widths it does not fit
-    // (36 bytes per 32 values and slot, 48 KiB; slots: T rounded up to a power of two).
+    // A bank the kernel quantizes itself (here a copy of gate/up: not the layer's own bank) too
+    // wide for a CTA's quantized activation keeps A16 at the widths it does not fit (36 bytes per
+    // 32 values and slot, 48 KiB; slots: T rounded up to a power of two).
     {
         auto wide_bank = l.weights.gate_up;
         wide_bank.k    = 12288;
@@ -1032,14 +1034,15 @@ int check_r8_table() {
     return failures;
 }
 
-// The K limit of the A8 route through select_plan: a layer of hidden 12288 (a CTA's quantized
-// activation fits 2 slots, not 4) takes the class's A8 gate/up at T = 1 and 2 and A16 from T = 3
-// to the limit; T = 2 and 3 match the oracle.
+// No K limit on the gate/up whose x the router quantizes: a layer of hidden 12288 (a CTA's
+// quantized activation would fit 2 slots, not 4) takes the class's A8 gate/up at every T up to the
+// limit; T = 2, 3 and the limit match the oracle, and a token's bytes are the same at T = 1 and at
+// the limit.
 int check_r8_k_limit() {
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
     Case c;
-    c.label = "iq2s/iq3xxs E4 k2 H12288 F256 (A8 K limit)";
+    c.label = "iq2s/iq3xxs E4 k2 H12288 F256 (A8, router-quantized x)";
     c.experts = 4; c.top_k = 2; c.hidden = 12288; c.inter = 256; c.shared_inter = 0;
     c.gate_up = QType::GGML_IQ2_S;
     c.down    = QType::GGML_IQ3_XXS;
@@ -1049,12 +1052,13 @@ int check_r8_k_limit() {
     c.expert_bias = false; c.shared_gate = false;
     c.epilogue = ops::MoeEpilogue::Store;
     const Layer l = make_layer(c, 141U);
-    const auto x = random_bf16(static_cast<std::size_t>(4) * c.hidden, 142U, -1.0, 1.0);
+    const auto x =
+        random_bf16(static_cast<std::size_t>(moe::kR8Tokens) * c.hidden, 142U, -1.0, 1.0);
     const std::vector<std::uint16_t> residual(x.size(), 0);
     int failures = 0;
     for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
         const auto p = moe::select_plan(l.weights, c.config, t, false);
-        const bool a8 = route && t <= 2 && route->gate_up_at(t, l.weights.gate_up) >= 0;
+        const bool a8 = route && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
             c.label + " T=" + std::to_string(t) + " (" + moe::plan_name(p) + ")";
         if ((p.gate_up_r8 >= 0) != a8 || p.down_r8 >= 0) {
@@ -1062,12 +1066,21 @@ int check_r8_k_limit() {
             ++failures;
             continue;
         }
-        if (t == 2 || t == 3) {
+        if (t == 2 || t == 3 || t == moe::r8_token_limit()) {
             const Run run = run_op(c, l, x, 0, t, residual);
             failures += compare_run(c, l, x, residual, 0, t, run, a8_stages(c, p), label);
         }
     }
-    if (failures == 0) std::cout << c.label << ": A8 where the activation fits, A16 above\n";
+    {
+        const Run one  = run_op(c, l, x, 0, 1, residual);
+        const Run wide = run_op(c, l, x, 0, moe::r8_token_limit(), residual);
+        if (std::memcmp(one.out.data(), wide.out.data(), one.out.size() * 2) != 0) {
+            std::cerr << c.label << ": token 0's bytes differ between T=1 and T="
+                      << moe::r8_token_limit() << '\n';
+            ++failures;
+        }
+    }
+    if (failures == 0) std::cout << c.label << ": A8 at every width, no K limit on gate/up\n";
     return failures;
 }
 

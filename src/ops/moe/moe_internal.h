@@ -203,7 +203,7 @@ struct R8ScheduleInfo {
 // whose register-MMA decode is the costly part of a decode call, under an A8 expert policy, for
 // calls of at most kR8Tokens tokens (the dense R8's decode scope): one R8 CTA covers a whole job,
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
-// (r8_admits). Wider calls compute A16.
+// unless the router quantized it (r8_admits). Wider calls compute A16.
 inline constexpr std::int32_t kR8Tokens = 8;
 // The widest R8 call on this GPU (r8_admits): kR8Tokens on Ada (sm_89) and consumer Blackwell
 // (sm_12x), four elsewhere (Hopper and datacenter Blackwell unmeasured). moe_bench
@@ -221,9 +221,6 @@ inline constexpr std::int32_t kR8NarrowTokens = 4;
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
 // IQ4_NL, IQ4_XS).
 [[nodiscard]] bool r8_expert_format(QType format);
-// Whether an R8 stage may take `bank` at `tokens` (the policy, the format, T <=
-// r8_token_limit(bank) and the quantized activation within a CTA's shared memory).
-[[nodiscard]] bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens);
 [[nodiscard]] bool r8_expert_supports(const Weight& w);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.
@@ -262,10 +259,11 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // Whether every stage's schedule is compiled for its weight's format (a 2 x 8 register-MMA tile is
 // not, for the formats that read 32-value blocks); moe_with_plan refuses a plan that is not.
 [[nodiscard]] bool plan_compiled(const MoeWeights& weights, const MoePlan& plan);
-// Whether a grouped stage over `bank` (weights.gate_up or weights.down) may take the R8 kernel at
-// T tokens: an A8 expert policy, a codebook format with 16-byte aligned planes, T <=
-// r8_token_limit(bank) and an activation that fits a CTA; moe_with_plan refuses an R8 stage that
-// is not.
+// Whether a grouped stage over `bank` (weights.gate_up or weights.down: the bank itself, which
+// tells the two apart) may take the R8 kernel at T tokens: an A8 expert policy, a codebook format
+// with 16-byte aligned planes, T <= r8_token_limit(bank) and, unless the router quantizes the
+// activation (gate/up of an unpadded x), an activation that fits a CTA's shared memory;
+// moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
 
 // The current GPU class's default A8 route (moe.cpp's per-class table, kFallbackA8Route for a class
