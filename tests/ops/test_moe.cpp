@@ -609,7 +609,7 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 }
 
 // The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
-// moe::r8_token_limit(bank): 8 from Ada on, 4 before and for a light decode): every R8 schedule on
+// moe::r8_token_limit(bank): 8 from Ada on, 4 before and for FP4 elements): every R8 schedule on
 // both stages and on each
 // stage alone against the oracle of the quantized activations; a slot's bytes depend on its own
 // activation only, so every call with R8 on both stages gives a token the bytes of the widest one
@@ -1126,7 +1126,7 @@ int check_expert_policy() {
         w.down           = native_weight(rows(dn, 0, E * H, F));
         w.gate_up.layout = w.down.layout = QuantLayout::GgmlFrag;
         w.expert_policy  = ops::LinearPolicy::AllowA8;
-        // Q4_0 (a light decode) to four tokens, Q4_K to the class's limit.
+        // Each to its bank's limit (both to the class's: neither has FP4 elements).
         const std::int32_t limit = moe::r8_token_limit(w.gate_up);
         for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p       = moe::select_plan(w, config, t, false);

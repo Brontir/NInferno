@@ -703,34 +703,22 @@ std::int32_t r8_token_limit() {
 
 namespace {
 
-// A format whose decode is one table or shift per nibble (or none) under one scale per block: the
-// register MMA's cost per extra token is its tensor-core step, R8's a dp4a pair and an activation
-// load per block, so above four tokens the register MMA wins (RTX 5070 Ti, moe_bench, H 2048, F
-// 512, E 256, k 8, auto plans, T = 5 / 6 / 8, R8 against the register MMA: MXFP4 +7.6 / +9.8 /
-// +14.3 %, IQ4_NL +5.3 / +7.5 / +10.3 %, Q4_0 +1.8 / +3.2 / +5.4 %, IQ4_XS 0 / 0 / +2.4 %;
-// gpt-oss-20b's shape, H 2880, F 2880, E 32, k 4: MXFP4 +11.5 / +12.3 / +13.9 %; end to end
-// gpt-oss-20b MXFP4 C8 109.4 -> 97.1 tok/s). A min, a high-bit plane, a K-quant super-block or a
-// codebook costs the decode R8 shares among the slots: Q4_1 -1..-5 %, Q5_0 -5..-8 %, Q5_1
-// -9..-15 %, Q4_K -11..-13 %, Q5_K -7..-9 %, Q6_K -5..-9 %, IQ3_XXS -10..-12 % on the same runs.
-bool r8_light_decode(QType q) {
-    switch (q) {
-    case QType::GGML_Q4_0:
-    case QType::GGML_IQ4_NL:
-    case QType::GGML_IQ4_XS:
-    case QType::MXFP4:
-    case QType::NVFP4:
-    case QType::Q4_G64_FP16:
-    case QType::Q8_G32_FP16:
-        return true;
-    default: return false;
-    }
-}
+// The FP4-element formats (MXFP4, NVFP4) keep four tokens: above four the register MMA beats R8
+// on MXFP4 on both Blackwell boards in gpt-oss's shape (moe_bench, H 2880, F 2880, E 32, k 4, auto
+// plans, R8 against the register MMA at T = 5 / 6 / 8: RTX 5070 Ti +11.5 / +12.3 / +13.9 %, RTX
+// 5090 +4.9 / +5.6 / +11.2 %; end to end gpt-oss-20b MXFP4 C8 on the RTX 5070 Ti 109.4 -> 97.1
+// tok/s, RTX 4060 Ti 39.5 -> 38.7), and NVFP4 decodes the same elements. The other 4-bit formats of
+// one scale per block take eight: R8 ahead on three of the four board and shape pairs (Q4_0,
+// IQ4_NL: RTX 5090 -2..-8 % in both shapes, RTX 5070 Ti -1..-5 % in gpt-oss's, +2..+10 % in
+// Qwen3.6-35B's: H 2048, F 512, E 256, k 8), every K-quant, Q4_1, Q5_0, Q5_1 and IQ3_XXS ahead on
+// both boards (-1..-19 %).
+bool r8_fp4_elements(QType q) { return q == QType::MXFP4 || q == QType::NVFP4; }
 
 } // namespace
 
 std::int32_t r8_token_limit(const Weight& bank) {
     const std::int32_t limit = r8_token_limit();
-    return r8_light_decode(bank.qtype) ? std::min(limit, kR8NarrowTokens) : limit;
+    return r8_fp4_elements(bank.qtype) ? std::min(limit, kR8NarrowTokens) : limit;
 }
 
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
@@ -1083,8 +1071,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     if (!r8_stages_admitted(w, p, t)) {
         fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
-             "tokens (8 from Ada on for a costly decode, 4 otherwise) and an activation that fits "
-             "a CTA");
+             "tokens (8 from Ada on but for FP4 elements, 4 otherwise) and an activation that "
+             "fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {
