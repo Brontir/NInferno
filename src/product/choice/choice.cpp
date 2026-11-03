@@ -405,7 +405,7 @@ QuantKld quant_kld(double bits, std::string_view label, std::string_view files, 
         // other bits per weight and takes the interpolation).
         const bool same_label = same_family && !label.empty() && p.label == label && same_bits;
         if (p.kld <= 0 && p.label == label) {
-            return {0, same_file ? Evidence::Measured : same_label ? Evidence::Proxy : Evidence::Interpolated};
+            return {0, same_file ? Evidence::Measured : Evidence::Reference};
         }
         if (same_file || same_label) { return {p.kld, same_file ? Evidence::Measured : Evidence::Proxy}; }
         if (p.kld <= 0) {

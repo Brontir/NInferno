@@ -137,7 +137,7 @@ any model's Q8_0 is its own reference (0). A point is the measurement of one fil
 digests, an artifact's recorded base inputs or a fetched GGUF's); the same family's label at the same
 bits on other or unknown files takes the same value as a `proxy` (#299: another repository's
 Q4_K_M is another quantization). The value, and so every decision, is the same either way; the term's
-`evidence` (`measured`, `proxy`, `interpolated`, `stand-in`) says what it rests on. Where the worth decides, the plan weighs the quantizations
+`evidence` (`measured`, `proxy`, `interpolated`, `stand-in`, `reference`: any Q8_0 is 0 against itself) says what it rests on. Where the worth decides, the plan weighs the quantizations
 of the quant rule's tier (`runtime/engine/quant_rule.h`: the own context per stream it reached, the
 same side of the 3.5-bit floor, `below_quality_floor`) by the worth of each one's own choice, a tie
 to the rule's order (more bits, then more bytes, then the smaller label), and the rule line says

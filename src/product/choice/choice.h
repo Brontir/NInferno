@@ -301,8 +301,10 @@ struct Reference {
 // What a term's KLD rests on (#299). Measured: these weights' files (a quantization) or the
 // family's own switch; Proxy: the same label's measurement on other files (another repository's
 // quantization, or files whose identity is unknown); Interpolated: the curve between measured
-// files by bits per weight; StandIn: the axis's worst measured term, or another codec's.
-enum class Evidence { Measured, Proxy, Interpolated, StandIn };
+// files by bits per weight; StandIn: the axis's worst measured term, or another codec's;
+// Reference: 0 by definition (a quantization's Q8_0 against itself: the curve is against Q8_0, not
+// against the original weights).
+enum class Evidence { Measured, Proxy, Interpolated, StandIn, Reference };
 [[nodiscard]] constexpr std::string_view evidence_name(Evidence evidence) noexcept {
     switch (evidence) {
     case Evidence::Measured:
@@ -313,6 +315,8 @@ enum class Evidence { Measured, Proxy, Interpolated, StandIn };
         return "interpolated";
     case Evidence::StandIn:
         return "stand-in";
+    case Evidence::Reference:
+        return "reference";
     }
     return "stand-in";
 }
