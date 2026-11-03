@@ -3987,10 +3987,19 @@ FamilyCoverage rmma_coverage(const Problem& problem, const Weight& w, std::int32
                              bool prefill_band) {
     FamilyCoverage c;
     c.declared = rmma_schedule_count();
+    // Compiled is the build's for the weight's codec, whatever else refuses the weight (a
+    // malformed layout refuses every schedule as Format): none where the format has no codec.
+    std::optional<WeightCodec> codec;
+    try {
+        codec = codec_of(w);
+    } catch (const std::exception&) {
+    }
     for (int i = 0; i < c.declared; ++i) {
         const ScheduleRefusal why = rmma_refusal(i, w);
         c.schedules.push_back({i, why});
-        c.compiled += why != ScheduleRefusal::NotCompiled && why != ScheduleRefusal::CodecTile;
+        const auto s = rmma_schedule_info(i);
+        c.compiled += rmma_schedule_launchable(i) && codec.has_value() &&
+                      rmma_tile_compiled(*codec, s.m_tiles, s.n_tiles, w.k);
         c.legal += why == ScheduleRefusal::None;
     }
     c.heuristic         = heuristic_rmma(problem, tokens, prefill_band);

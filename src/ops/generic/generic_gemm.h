@@ -480,7 +480,8 @@ enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, 
 
 // The register-MMA family's coverage of a call (the pilot family of #307): every declared schedule
 // with its refusal, and the counts apart. declared: the schedule list; compiled: the schedules
-// this build holds for the weight's codec (neither NotCompiled nor CodecTile); legal: those the
+// this build holds for the weight's codec, whatever else refuses the weight (0 where the format
+// has no codec); legal: those the
 // weight and device take (None). The family has no policy gate, so admitted equals legal here.
 // heuristic: the family's own pick for the call (heuristic_rmma), the tile a selection that
 // reaches the register MMA tries first; heuristic_refusal: why it does not run where it is not

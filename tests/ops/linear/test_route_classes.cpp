@@ -24,6 +24,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -179,6 +180,25 @@ int run_board(const TestBoard& b) {
                         if (!want || generic::route_admits(r, off, LinearPolicy::AllowA8)) {
                             fail(where + " qhigh +4 " + generic::route_name(r) + ": " +
                                  std::string(generic::schedule_refusal_name(refused)));
+                        }
+                    }
+                }
+                // A weight of the same codec in a layout the generic path does not read: every
+                // schedule refuses its format, and the compiled count stays the codec's.
+                {
+                    Weight bad = w;
+                    bad.layout = w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit
+                                                                     : QuantLayout::GgmlPlanes;
+                    if (!generic::supports(bad)) {
+                        const auto b = generic::rmma_coverage(problem, bad, 1, false);
+                        const bool all_format = std::all_of(
+                            b.schedules.begin(), b.schedules.end(), [](const auto& s) {
+                                return s.refusal == generic::ScheduleRefusal::Format ||
+                                       s.refusal == generic::ScheduleRefusal::NotCompiled;
+                            });
+                        if (!all_format || b.legal != 0 || b.compiled != c.compiled) {
+                            fail(where + " wrong layout: compiled " + std::to_string(b.compiled) +
+                                 " against " + std::to_string(c.compiled));
                         }
                     }
                 }
