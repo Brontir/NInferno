@@ -82,7 +82,8 @@ std::optional<CacheHint> parse_cache_hint(std::string_view header) {
     return hint;
 }
 
-std::string_view apply_cache_hint(const std::string* header, bool trusted, ContextCacheHints& hints) {
+std::string_view apply_cache_hint(const std::string* header, bool trusted, std::uint32_t kept_tokens,
+                                  ContextCacheHints& hints, std::optional<KeptGrant>* kept) {
     if (header == nullptr || !trusted) { return "none"; }
     const auto hint = parse_cache_hint(*header);
     if (!hint) { return "none"; }
@@ -90,11 +91,50 @@ std::string_view apply_cache_hint(const std::string* header, bool trusted, Conte
     case CacheHintRetain::Drop:
         hints.retention = CacheRetentionHint::Disposable;
         return "drop";
-    case CacheHintRetain::Keep:   // granted as normal (cache_hint.h): no expiry, no budget yet
+    case CacheHintRetain::Keep: {
+        // The request's own session (a stored Response's) where it has one, else the router's.
+        const std::string key = hints.session_key ? *hints.session_key
+                                : hint->session
+                                    ? std::string(kKeptSessionPrefix) + *hint->session
+                                    : std::string();
+        // An hour at most, so a deadline in milliseconds cannot overflow the clock.
+        constexpr double kLongestTtlMs = 3.6e6;
+        if (kept_tokens == 0 || key.empty() || key.size() > 256 || !hint->ttl_ms ||
+            !(*hint->ttl_ms > 0)) {
+            return "normal";
+        }
+        hints.session_key = key;
+        hints.retention   = CacheRetentionHint::Kept;
+        if (kept != nullptr) {
+            kept->emplace(KeptGrant{
+                key, std::chrono::milliseconds(static_cast<std::int64_t>(
+                         std::ceil(std::min(*hint->ttl_ms, kLongestTtlMs))))});
+        }
+        return "keep";
+    }
     case CacheHintRetain::Normal: // a session_key would raise Default to LiveSession: not set
         return "normal";
     }
     return "none";
+}
+
+void KeptSessions::keep(const KeptGrant& grant, Clock::time_point now) {
+    std::lock_guard lock(mutex_);
+    until_[grant.session_key] = now + grant.ttl;
+}
+
+std::vector<std::string> KeptSessions::expired(Clock::time_point now) {
+    std::vector<std::string> out;
+    std::lock_guard lock(mutex_);
+    for (auto it = until_.begin(); it != until_.end();) {
+        if (it->second <= now) {
+            out.push_back(it->first);
+            it = until_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    return out;
 }
 
 } // namespace ninferno::serve

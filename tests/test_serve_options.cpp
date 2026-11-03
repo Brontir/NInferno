@@ -66,7 +66,46 @@ int main() {
                           "malformed: none, nothing changes");
         failures += check(apply_cache_hint(&keep, true, h) == "normal" && !h.session_key &&
                               h.retention == ninferno::CacheRetentionHint::Default,
-                          "keep: granted as normal (no expiry or budget yet), no session key");
+                          "keep without a --cache-keep-tokens budget: normal, no session key");
+        // With a budget: keep needs a session and a ttl; the grant names the cache's key.
+        const std::string kept = "session=ab; retain=keep; ttl-ms=1500.5";
+        std::optional<KeptGrant> grant;
+        ninferno::ContextCacheHints k;
+        failures += check(apply_cache_hint(&keep, true, 4096, k, &grant) == "normal" && !grant &&
+                              !k.session_key,
+                          "keep without ttl-ms: normal");
+        failures += check(apply_cache_hint(&kept, true, 4096, k, &grant) == "keep" && grant &&
+                              grant->session_key == "router:ab" &&
+                              grant->ttl == std::chrono::milliseconds(1501) &&
+                              k.session_key == "router:ab" &&
+                              k.retention == ninferno::CacheRetentionHint::Kept,
+                          "keep with a session, a ttl and a budget: kept under the router's key");
+        ninferno::ContextCacheHints stored;
+        stored.session_key = "resp_1";
+        grant.reset();
+        failures += check(apply_cache_hint(&kept, true, 4096, stored, &grant) == "keep" && grant &&
+                              grant->session_key == "resp_1" && stored.session_key == "resp_1",
+                          "keep on a request with its own session: its own key");
+        ninferno::ContextCacheHints untrusted;
+        grant.reset();
+        failures += check(apply_cache_hint(&kept, false, 4096, untrusted, &grant) == "none" &&
+                              !grant && !untrusted.session_key,
+                          "untrusted keep: none");
+        failures += check(parse({"ninferno-serve", "m.ninferno", "--cache-keep-tokens", "8192"})
+                                  .context_cache.kept_tokens == 8192 &&
+                              parse({"ninferno-serve", "m.ninferno"}).context_cache.kept_tokens == 0,
+                          "--cache-keep-tokens: the kept budget, 0 unless given");
+        KeptSessions sessions;
+        const auto t0 = KeptSessions::Clock::time_point{};
+        sessions.keep({"a", std::chrono::milliseconds(100)}, t0);
+        sessions.keep({"b", std::chrono::milliseconds(300)}, t0);
+        sessions.keep({"a", std::chrono::milliseconds(100)}, t0 + std::chrono::milliseconds(150));
+        failures += check(sessions.expired(t0 + std::chrono::milliseconds(200)).empty(),
+                          "a new turn moves its session's deadline");
+        const auto due = sessions.expired(t0 + std::chrono::milliseconds(300));
+        failures += check(due == std::vector<std::string>{"a", "b"} &&
+                              sessions.expired(t0 + std::chrono::milliseconds(900)).empty(),
+                          "each expired session is handed back once");
         failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
                               h.retention == ninferno::CacheRetentionHint::Disposable,
                           "drop: disposable");

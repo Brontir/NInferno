@@ -235,6 +235,11 @@ public:
 
     [[nodiscard]] bool is_available() const { return engine_->is_available(); }
 
+    // A router's keep of `session` ended (serve/cache_hint.h KeptSessions).
+    bool release_kept_session(std::string_view session) {
+        return engine_ != nullptr && engine_->release_kept_session(session);
+    }
+
     // Cancels every request in preparation or generation, and every one prepared later, as a
     // disconnected client's: the server's drain timeout or second signal (HttpServer).
     void abort_in_flight() noexcept { aborting_.store(true); }

@@ -66,7 +66,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--repetition-thinking stop|conclude] "
            "[--vision] [--no-cuda-graph] [--no-prefix-reuse] [--concurrent-prefill] "
            "[--chat-template FILE] [--lm-head-draft] [--no-thinking] [--preserve-thinking] "
-           "[--no-auto-system-shared-prefix] [--trust-cache-hints] [--cors] [--usage-chunk-choice] "
+           "[--no-auto-system-shared-prefix] [--trust-cache-hints] [--cache-keep-tokens N] [--cors] [--usage-chunk-choice] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
            "       [--log-level trace|debug|info|warning|error|critical|off]\n" +
@@ -168,6 +168,9 @@ std::string serve_usage_text(const char* argv0) {
            "       --no-prefix-reuse disables compatible-prefix caching (enabled by default)\n"
            "       --trust-cache-hints reads a router's x-ninferno-cache-hint (retain=drop: the\n"
            "         request's cached state is disposable); only behind a router you trust\n"
+           "       --cache-keep-tokens N grants such a router's retain=keep (with a session and\n"
+           "         ttl-ms): its threads keep the live-session weight, N context tokens at most\n"
+           "         together (the oldest falls first), until ttl-ms passes without a turn\n"
            "       --concurrent-prefill admits waiting requests while others prefill; the\n"
            "       prefilling requests take chunks in turn (a later request's first token\n"
            "       comes sooner, an earlier long prompt's later; output unchanged)\n"
@@ -529,6 +532,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.auto_system_shared_prefix = false;
         } else if (arg == "--trust-cache-hints") {
             options.trust_cache_hints = true;
+        } else if (arg == "--cache-keep-tokens") {
+            options.context_cache.kept_tokens = count("--cache-keep-tokens");
         } else if (arg == "--cors") {
             options.enable_cors = true;
         } else if (arg == "--usage-chunk-choice") {

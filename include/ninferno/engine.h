@@ -148,6 +148,11 @@ public:
     // Restarts the peak counters MemorySummary reports.
     void reset_memory_peaks() noexcept;
 
+    // A router's keep of `session` (ContextCacheHints::session_key under CacheRetentionHint::Kept)
+    // ends: its cached context falls to the private weight, still found by the session's next
+    // turn. Returns whether a kept entry fell (none: the session holds none, or not as kept).
+    bool release_kept_session(std::string_view session);
+
 private:
     class Impl;
     std::shared_ptr<Impl> impl_;

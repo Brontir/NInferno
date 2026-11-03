@@ -385,6 +385,9 @@ struct ContextCacheOptions {
     std::optional<std::uint32_t> max_private_continuations;
     std::optional<std::uint32_t> max_shared_prefixes;
     std::optional<std::uint32_t> max_long_anchors_per_continuation;
+    // The context tokens the kept sessions (CacheRetentionHint::Kept) may hold together, at their
+    // endpoints: past it the oldest kept falls to the private weight. 0: none is kept.
+    std::uint32_t kept_tokens = 0;
 
     // No cross-request context: nothing is retained and no Host memory is pinned for it (a
     // product that runs one request, or ninferno-serve --no-prefix-reuse).
@@ -1007,6 +1010,10 @@ enum class CacheRetentionHint : std::uint8_t {
     Default,
     LiveSession,
     Disposable,
+    // A trusted router's keep (x-ninferno-cache-hint retain=keep, #338): LiveSession while the
+    // kept sessions together hold no more than ContextCacheOptions::kept_tokens, and until
+    // Engine::release_kept_session. Requires a session_key.
+    Kept,
 };
 
 enum class PromptCacheMarkerKind : std::uint8_t {

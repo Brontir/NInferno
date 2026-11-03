@@ -122,6 +122,8 @@ struct PreparedContextCache {
     std::vector<PreparedCacheOpportunity> opportunities;
     // Controls replacement of a named SessionIndex entry, not anonymous source ownership.
     bool update_session_index = true;
+    // A router's keep (CacheRetentionHint::Kept): LiveSession within the kept-token budget.
+    bool kept = false;
 };
 
 struct PrepareStats {

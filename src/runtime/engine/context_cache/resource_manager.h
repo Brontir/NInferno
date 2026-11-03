@@ -184,6 +184,7 @@ public:
         std::optional<PolicyObservationKey> selected_observation_;
         std::optional<CacheSessionKey> session_;
         RetentionClass retention_        = RetentionClass::RecentPrivate;
+        bool kept_                       = false;
         bool update_session_index_       = true;
         std::uint64_t publication_order_ = 0;
         MaterializationDiagnostics diagnostics_;
@@ -454,6 +455,28 @@ public:
         }
         observe_planner_diagnostics(open.diagnostics);
         return MaterializationReserveResult::Reserved;
+    }
+
+    // The context tokens the kept sessions may hold together (ContextCacheOptions::kept_tokens).
+    void set_kept_tokens(std::uint32_t tokens) noexcept {
+        kept_tokens_ = tokens;
+        enforce_kept_budget();
+    }
+
+    // A router's keep of `session` ends (its ttl passed, #338): the entry the session names falls
+    // to the private weight, its session kept for the thread's next turn. Returns whether a kept
+    // entry fell.
+    bool release_kept_session(const CacheSessionKey& session) noexcept {
+        const auto cell = find_session_cell(session);
+        if (!cell) { return false; }
+        const SessionIndexEntry& index = session_index_[*cell];
+        if (index.slot >= catalog_count_) { return false; }
+        CatalogEntry& entry = catalog_[index.slot];
+        if (entry.state != CatalogState::Catalogued || entry.id != index.owner_id || !entry.kept) {
+            return false;
+        }
+        demote_to_private(entry);
+        return true;
     }
 
     [[nodiscard]] std::optional<ContextTransactionKind> context_transaction_kind() const noexcept {
@@ -1153,15 +1176,17 @@ public:
         result.continuation.reset();
         publication.session   = active.session;
         publication.retention = active.retention;
+        publication.kept      = active.kept && active.retention == RetentionClass::LiveSession;
         migrate_observations(publication, result.summary, active.retention, &active.inherited);
         advance_revision(publication.revision);
         if (publication.session && active.update_session_index) {
             if (!publish_session(*publication.session, active.publication_slot, publication.id,
                                  publication.revision, active.publication_order)) {
                 publication.session.reset();
-                publication.retention = RetentionClass::RecentPrivate;
+                demote_to_private(publication);
             }
         }
+        if (publication.kept) { enforce_kept_budget(); }
         reset_active_entry(active);
         lanes_[lane.value] = LogicalLaneState::Free;
         return result;
@@ -1292,6 +1317,14 @@ public:
         return slot < catalog_count_ ? catalog_[slot].state : CatalogState::Vacant;
     }
 
+    [[nodiscard]] RetentionClass catalog_retention(std::uint32_t slot) const noexcept {
+        return slot < catalog_count_ ? catalog_[slot].retention : RetentionClass::RecentPrivate;
+    }
+
+    [[nodiscard]] bool catalog_kept(std::uint32_t slot) const noexcept {
+        return slot < catalog_count_ && catalog_[slot].kept;
+    }
+
     [[nodiscard]] LogicalLaneState lane_state(LaneId lane) const noexcept {
         return lane.value < lane_count_ ? lanes_[lane.value] : LogicalLaneState::Free;
     }
@@ -1334,6 +1367,7 @@ private:
         std::optional<CacheSessionKey> session;
         std::vector<CheckpointObservation> observations;
         RetentionClass retention = RetentionClass::RecentPrivate;
+        bool kept                = false; // a router's keep, within kept_tokens_ (#338)
     };
 
     struct SharedCatalogEntry {
@@ -1379,6 +1413,7 @@ private:
         std::uint64_t continuation_id  = 0;
         std::optional<CacheSessionKey> session;
         RetentionClass retention        = RetentionClass::RecentPrivate;
+        bool kept                       = false;
         bool update_session_index       = true;
         std::uint64_t publication_order = 0;
         std::optional<ActiveOwnerEdge> retained_private_source;
@@ -1399,6 +1434,7 @@ private:
         std::optional<PolicyObservationKey> selected_observation;
         std::optional<CacheSessionKey> session;
         RetentionClass retention        = RetentionClass::RecentPrivate;
+        bool kept                       = false;
         bool update_session_index       = true;
         std::uint64_t publication_order = 0;
         MaterializationDiagnostics diagnostics;
@@ -1474,6 +1510,7 @@ private:
         active.continuation_id  = 0;
         active.session.reset();
         active.retention            = RetentionClass::RecentPrivate;
+        active.kept                 = false;
         active.update_session_index = true;
         active.publication_order    = 0;
         active.retained_private_source.reset();
@@ -1741,6 +1778,7 @@ private:
         entry.session.reset();
         entry.observations.clear();
         entry.retention = RetentionClass::RecentPrivate;
+        entry.kept      = false;
         advance_revision(entry.revision);
     }
 
@@ -2313,6 +2351,7 @@ private:
         Choice choice(destination, std::move(*planned->plan), catalog_count_,
                       base.context_cache().session_key, base.context_cache().retention,
                       base.context_cache().update_session_index, publication_order);
+        choice.kept_                           = base.context_cache().kept;
         choice.private_source_                 = candidate.private_source;
         choice.source_mode_                    = planned->source_mode;
         choice.shared_source_                  = candidate.shared_source;
@@ -2453,6 +2492,7 @@ private:
             .selected_observation = choice.selected_observation_,
             .session              = std::move(choice.session_),
             .retention            = choice.retention_,
+            .kept                 = choice.kept_,
             .update_session_index = choice.update_session_index_,
             .publication_order    = choice.publication_order_,
             .diagnostics          = choice.diagnostics_,
@@ -3130,6 +3170,7 @@ private:
         active.continuation_id      = publication.id;
         active.session              = record->session;
         active.retention            = record->retention;
+        active.kept                 = record->kept;
         active.update_session_index = record->update_session_index;
         active.publication_order    = record->publication_order;
         active.inherited            = inherited;
@@ -3493,9 +3534,46 @@ private:
             return;
         }
         prior.session.reset();
-        prior.retention = RetentionClass::RecentPrivate;
-        for (CheckpointObservation& observation : prior.observations) {
+        demote_to_private(prior);
+    }
+
+    // A private entry's retention falls to RecentPrivate (a replaced session, a released or
+    // over-budget keep), its checkpoints' observations with it.
+    static void demote_to_private(CatalogEntry& entry) noexcept {
+        entry.retention = RetentionClass::RecentPrivate;
+        entry.kept      = false;
+        for (CheckpointObservation& observation : entry.observations) {
             observation.observation.retention_class = RetentionClass::RecentPrivate;
+        }
+    }
+
+    // The context tokens a kept entry holds: its endpoint's frontier.
+    [[nodiscard]] static std::uint64_t kept_entry_tokens(const CatalogEntry& entry) noexcept {
+        return entry.summary.endpoint ? entry.summary.endpoint->ref.frontier : 0;
+    }
+
+    // The kept entries together hold at most kept_tokens_: past it the oldest kept (the lowest
+    // continuation id) falls to the private weight first, then the next.
+    void enforce_kept_budget() noexcept {
+        std::uint64_t held = 0;
+        for (std::uint32_t slot = 0; slot < catalog_count_; ++slot) {
+            const CatalogEntry& entry = catalog_[slot];
+            if (entry.state == CatalogState::Catalogued && entry.kept) {
+                held += kept_entry_tokens(entry);
+            }
+        }
+        while (held > kept_tokens_) {
+            CatalogEntry* oldest = nullptr;
+            for (std::uint32_t slot = 0; slot < catalog_count_; ++slot) {
+                CatalogEntry& entry = catalog_[slot];
+                if (entry.state == CatalogState::Catalogued && entry.kept &&
+                    (oldest == nullptr || entry.id < oldest->id)) {
+                    oldest = &entry;
+                }
+            }
+            if (oldest == nullptr) { return; }
+            held -= kept_entry_tokens(*oldest);
+            demote_to_private(*oldest);
         }
     }
 
@@ -3599,6 +3677,7 @@ private:
     std::vector<CheckpointObservation> observation_scratch_;
     std::vector<PrefixDemandRecord> demand_window_;
     std::uint32_t max_long_anchors_ = 0;
+    std::uint32_t kept_tokens_      = 0; // ContextCacheOptions::kept_tokens
     std::array<ActiveEntry, kMaximumConcurrency> active_{};
     using ContextTransaction =
         std::variant<std::monostate, MaterializationRecord, ActiveCaptureRecord>;

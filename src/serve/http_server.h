@@ -1,5 +1,6 @@
 #pragma once
 
+#include "serve/cache_hint.h"
 #include "serve/generation_service.h"
 #include "serve/operational_log.h"
 #include "serve/openai_responses_store.h"
@@ -186,6 +187,8 @@ private:
     std::atomic<bool> engine_failed_{false};
     std::atomic<bool> supervisor_stopping_{false};
     std::thread supervisor_thread_;
+    // The kept threads' deadlines (--cache-keep-tokens): the supervisor releases the expired.
+    mutable KeptSessions kept_sessions_;
 };
 
 } // namespace ninferno::serve
