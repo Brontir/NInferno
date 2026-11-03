@@ -1,4 +1,5 @@
 #include "models/gemma4/target.h"
+#include "models/gemma4/workspace.h"
 
 #include "core/debug_poison.h"
 #include "core/nvtx.h"
@@ -183,102 +184,40 @@ std::uint64_t Target::kv_bytes() const noexcept {
 
 std::size_t Target::workspace_bytes(const Model& model, std::int32_t max_context,
                                     std::int32_t prefill_chunk, std::int32_t head_columns) {
-    const auto& c        = model.config();
-    const std::int64_t t = prefill_chunk;
-    const std::int64_t h = c.hidden_size;
-    std::int64_t proj = 0, attn = 0;
-    for (const auto* g : {&c.sliding, &c.full}) {
-        proj = std::max<std::int64_t>(proj,
-                                      std::int64_t(c.query_heads + 2 * g->kv_heads) * g->head_dim);
-        attn = std::max<std::int64_t>(attn, std::int64_t(c.query_heads) * g->head_dim);
-    }
-    std::size_t bytes = 0;
-    const auto add    = [&](std::int64_t elements) { bytes += bf16_bytes(elements) + 256; };
-    add(h * t);                                     // x
-    add(h * t);                                     // normed input
-    add(proj * t);                                  // raw projection(s)
-    add(proj * t);                                  // prepared q/k/v
-    add(attn * t);                                  // attention context
-    add(h * t);                                     // branch output
-    add(2 * std::int64_t(c.intermediate_size) * t); // gate/up
-    add(std::int64_t(c.intermediate_size) * t);     // GeGLU product
-    add(h * t);                                     // dense branch
-    add(h * t);                                     // expert input
-    add(h * t);                                     // router input (generic MoE)
-    add(h * t);                                     // expert output
-    add(h * t);                                     // branch join
-    if (c.ple()) {
-        const std::int64_t rows = std::int64_t(c.layers) * c.ple_width;
-        add(rows * t);                 // per-layer inputs (the projection, combined in place)
-        add(rows * t);                 // gathered table rows
-        add(2 * std::int64_t(c.ple_width) * t); // gate, product
-    }
-    add(std::int64_t(c.vocab_size) * std::max<std::int64_t>(head_columns, 1));
-    std::size_t op = 0;
-    if (c.ple()) {
-        const auto& p = model.weights().ple_projection;
-        op            = std::max(op, ops::linear_workspace_capacity_bytes(p, 1, prefill_chunk));
-    }
+    const auto& c = model.config();
+    // Every projection a layer runs, as the plan without the weights lists them too
+    // (models/gemma4/workspace.h): one function sizes both.
+    std::vector<WorkspaceLinear> linears;
+    const auto add = [&](const Projection& p, bool geglu = false) {
+        if (p.weight.n == 0) { return; } // a sharing layer's key; k_eq_v's value
+        linears.push_back({p.weight.qtype, p.weight.n, p.weight.k, p.policy, geglu});
+    };
+    if (c.ple()) { add(model.weights().ple_projection); }
+    std::size_t routed = 0;
     for (const auto& layer : model.weights().layers) {
         if (c.ple()) {
-            for (const Projection* p : {&layer.ple_gate, &layer.ple_output}) {
-                op = std::max(op, ops::linear_workspace_capacity_bytes(
-                                      p->weight.qtype, p->weight.n, p->weight.k, p->policy, 1,
-                                      prefill_chunk));
-            }
+            add(layer.ple_gate);
+            add(layer.ple_output);
         }
-        for (const Projection* p : {&layer.output, &layer.gate_up, &layer.down}) {
-            op = std::max(op, ops::linear_workspace_capacity_bytes(p->weight.qtype, p->weight.n,
-                                                                   p->weight.k, p->policy, 1,
-                                                                   prefill_chunk));
-        }
-        if (layer.gate_up.weight.n > 0 && ops::linear_geglu_supports(layer.gate_up.weight)) {
-            for (const auto policy : {layer.gate_up.policy, ops::LinearPolicy::A16Only}) {
-                op = std::max(op, ops::linear_geglu_workspace_capacity_bytes(
-                                      layer.gate_up.weight.qtype, layer.gate_up.weight.n,
-                                      layer.gate_up.weight.k, policy, 1, prefill_chunk) +
-                                      256);
-            }
-        }
+        add(layer.output);
+        add(layer.gate_up, layer.gate_up.weight.n > 0 && ops::linear_geglu_supports(layer.gate_up.weight));
+        add(layer.down);
         if (layer.qkv) {
-            op = std::max(op, ops::linear_workspace_capacity_bytes(
-                                  layer.qkv->weight.qtype, layer.qkv->weight.n, layer.qkv->weight.k,
-                                  layer.qkv->policy, 1, prefill_chunk));
-            if (const Projection& v = layer.value; v.weight.n != 0) {
-                op = std::max(op, ops::linear_workspace_capacity_bytes(v, 1, prefill_chunk));
-            }
+            add(*layer.qkv);
+            add(layer.value);
         } else {
-            for (const Projection* p : {&layer.query, &layer.key, &layer.value}) {
-                if (p->weight.n == 0) { continue; } // a sharing layer's key; k_eq_v's value
-                op = std::max(op, ops::linear_workspace_capacity_bytes(p->weight.qtype, p->weight.n,
-                                                                       p->weight.k, p->policy, 1,
-                                                                       prefill_chunk));
-            }
+            for (const Projection* p : {&layer.query, &layer.key, &layer.value}) { add(*p); }
+        }
+        if (layer.generic_moe) {
+            routed = std::max(routed, ops::moe_workspace_bytes(*layer.generic_moe, layer.generic_moe_config,
+                                                               1, prefill_chunk));
         }
     }
-    for (const auto* g : {&c.sliding, &c.full}) {
-        const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(max_context),
-                                                    prefill_chunk};
-        const std::int32_t window = g == &c.sliding ? c.sliding_window : 0;
-        op = std::max(op, ops::gemma4_attention_workspace_bytes(g->head_dim, c.query_heads,
-                                                                g->kv_heads, envelope, window));
-    }
-    if (c.moe()) { op = std::max(op, ops::gemma4_moe_workspace_bytes(1, prefill_chunk)); }
-    for (const auto& layer : model.weights().layers) {
-        if (!layer.generic_moe) { continue; }
-        op = std::max(op, ops::moe_workspace_bytes(*layer.generic_moe, layer.generic_moe_config, 1,
-                                                   prefill_chunk));
-    }
-    // The output head runs on this arena too (TargetPass::head, uncapped_head on A16 for the exact
-    // logits), over up to head_columns columns; the dense and Nemotron targets count it as well.
     const Projection& head = model.weights().output_head;
-    for (const auto policy : {head.policy, ops::LinearPolicy::A16Only}) {
-        op = std::max(op, ops::linear_workspace_capacity_bytes(head.weight.qtype, head.weight.n,
-                                                               head.weight.k, policy, 1,
-                                                               std::max(head_columns, 1)));
-    }
-    op = std::max(op, ops::sampling_workspace_capacity_bytes(c.vocab_size, 1, 1));
-    return bytes + op + (std::size_t(64) << 20);
+    const WorkspaceLinear head_linear{head.weight.qtype, head.weight.n, head.weight.k, head.policy};
+    return target_activation_bytes(c, prefill_chunk, head_columns) +
+           target_op_bytes(c, linears, head_linear, max_context, prefill_chunk, head_columns, routed) +
+           kTargetWorkspaceReserve;
 }
 
 // One pass of every layer over the T columns of x whose absolute positions are in `pos`.

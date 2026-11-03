@@ -124,6 +124,10 @@ struct Geometry {
     std::vector<double> attention_queries; // each qkv call's query width (heads x key)
     bool dense_beside_experts = false; // Gemma 4 MoE: every layer runs its MLP and its experts
     bool tied = false, mtp = false;
+    // The first attention layer's query heads, and the per-layer input width (Gemma 4 PLE;
+    // ple_known: the source says whether it has one).
+    double query_heads = 0, ple_width = 0;
+    bool ple_known = false;
 };
 
 // One attention layer: its projections (queries and output at heads x key and heads x value; keys
@@ -255,6 +259,13 @@ PlanSourceFacts finish(const Geometry& g, std::uint64_t weight_bytes, runtime::W
     m.recurrent_layers       = g.recurrent_layers;
     m.hidden                 = g.hidden;
     m.vocab                  = g.vocab;
+    m.layers                 = g.layers;
+    m.query_heads            = u32(g.query_heads);
+    m.dense_ffn              = u32(g.ffn);
+    m.experts                = u32(g.experts);
+    m.experts_used           = u32(g.experts_used);
+    m.ple_width              = u32(g.ple_width);
+    m.ple_known              = g.ple_known;
     m.weight_bytes           = weight_bytes;
     m.weight_basis           = basis;
     m.offline_reason         = state_of(g, m.state);
@@ -398,6 +409,11 @@ Geometry geometry_of_gguf(const json& md, const std::function<bool(const std::st
         heads[i] = at_layer(md, p + "attention.head_count", i);
         kv[i]    = has_kv ? at_layer(md, p + "attention.head_count_kv", i) : heads[i];
         if (first_heads == 0) { first_heads = heads[i]; }
+    }
+    g.query_heads          = first_heads;
+    if (arch == "gemma4") {
+        g.ple_width = number(md, p + "embedding_length_per_layer_input");
+        g.ple_known = true;
     }
     const double head_dim  = first_heads > 0 && g.hidden > 0 ? g.hidden / first_heads : 128.0;
     const double key       = number(md, p + "attention.key_length", head_dim);
@@ -547,6 +563,11 @@ Geometry geometry_of_config(const json& config) {
     const std::string type = c.value("model_type", config.value("model_type", std::string()));
     const double heads     = number(c, "num_attention_heads");
     const double kv_heads  = number(c, "num_key_value_heads", heads);
+    g.query_heads          = heads;
+    if (g.model_type == "gemma4_text") {
+        g.ple_width = number(c, "hidden_size_per_layer_input");
+        g.ple_known = true;
+    }
     g.hidden               = u32(number(c, "hidden_size"));
     const double head_dim = number(c, "head_dim", heads > 0 && g.hidden > 0 ? g.hidden / heads : 0);
     g.context             = u32(number(c, "max_position_embeddings"));
@@ -865,6 +886,61 @@ void split_linears_by_format(std::vector<runtime::PlanLinear>& linears, const Ro
     linears = std::move(out);
 }
 
+// The role of a trunk layer's parameter in an artifact (text/layers/<i>/<role>, as the loaders bind
+// them: models/gemma4/load_target.cpp, models/qwen3_5/load/text.cpp), as gguf_role gives the
+// GGUF tensor it converts from: Qwen 3.5's gated attention's gate is the attention's input, its
+// GatedDeltaNet's projections the mixer's (its a/b projections, like the GGUF's ssm_alpha/beta,
+// none); the routed banks' are apart.
+runtime::LinearRole artifact_role(std::string_view name) {
+    using R = runtime::LinearRole;
+    constexpr std::string_view layers = "text/layers/";
+    if (!name.starts_with(layers)) { return R::Other; }
+    const auto slash = name.find('/', layers.size());
+    if (slash == std::string_view::npos) { return R::Other; }
+    const std::string_view rest = name.substr(slash + 1);
+    if (rest == "attention/query" || rest == "attention/key" || rest == "attention/value" ||
+        rest == "attention/gate") {
+        return R::AttentionIn;
+    }
+    if (rest == "gdn/query" || rest == "gdn/key" || rest == "gdn/value" || rest == "gdn/z") {
+        return R::MixerIn;
+    }
+    if (rest == "gdn/output") { return R::MixerOut; }
+    if (rest == "attention/output") { return R::AttentionOut; }
+    if (rest == "mlp/gate" || rest == "mlp/up" || rest == "mlp/gate_up") { return R::FfnUp; }
+    if (rest == "mlp/down") { return R::FfnDown; }
+    return R::Other;
+}
+
+// An artifact's bound storage formats: the trunk's linears' by role (their elements), the routed
+// banks' (gate/up, down), and the output head's with its elements.
+struct ArtifactFormats {
+    RoleFormats roles;
+    std::set<std::string> expert_up, expert_down;
+    std::string head_format;
+    std::uint64_t head_elements = 0;
+};
+ArtifactFormats artifact_formats(const artifact::Directory& dir) {
+    ArtifactFormats out;
+    for (const auto& [name, binding] : dir.bindings) {
+        for (const auto& piece : binding.parts) {
+            if (piece.object.index >= dir.objects.size()) { continue; }
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[piece.object.index]);
+            if (tensor == nullptr) { continue; }
+            const auto elements = static_cast<double>(piece.end - piece.begin);
+            if (name == "text/output_head") {
+                out.head_format = tensor->format;
+                out.head_elements += piece.end - piece.begin;
+            } else if (name.starts_with("text/") && name.find("/moe/experts/") != std::string::npos) {
+                (name.ends_with("/down") ? out.expert_down : out.expert_up).insert(tensor->format);
+            } else if (const auto role = artifact_role(name); role != runtime::LinearRole::Other) {
+                out.roles[role][tensor->format] += elements;
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
@@ -899,6 +975,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         if (block && t.name.find(".ssm_out.") != std::string::npos) { recurrent_blocks.insert(*block); }
     }
     RoleFormats role_formats;
+    std::set<std::string> expert_up, expert_down; // the routed banks' formats
+    std::string head_format;
+    std::uint64_t head_rows = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
@@ -914,8 +993,20 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             if (!mtp && !t.ne.empty()) {
                 expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0], t.bytes);
             }
+            // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
+            // FP32) is not one of them.
+            if (!mtp && t.name.ends_with("_exps.weight")) {
+                (t.name.find("ffn_down_exps.") != std::string::npos ? expert_down : expert_up)
+                    .insert(format_of_ggml(t.type));
+            }
         }
         has_output = has_output || t.name == "output.weight";
+        // The head: output.weight, else the token table a tied head reads (#302).
+        if ((t.name == "output.weight" || (t.name == "token_embd.weight" && head_format.empty())) &&
+            t.ne.size() >= 2) {
+            head_format = format_of_ggml(t.type);
+            head_rows   = t.ne[1];
+        }
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
         }
@@ -944,6 +1035,13 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
+    out.model.expert_up_formats   = std::vector<std::string>(expert_up.begin(), expert_up.end());
+    out.model.expert_down_formats = std::vector<std::string>(expert_down.begin(), expert_down.end());
+    // A split part may hold output.weight in a later file: the head only from a whole table.
+    if (whole) {
+        out.model.head_format = head_format;
+        out.model.head_rows   = head_rows;
+    }
     // A split part's head lists its own tensors only: no shares from it (the label stands).
     if (whole) { split_linears_by_format(out.model.linears, role_formats); }
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {
@@ -1132,6 +1230,14 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
+    // The bound formats, as a whole GGUF's tensor table gives them (#302): the trunk's linears by
+    // role, the routed banks', the head's with its rows.
+    const ArtifactFormats bound   = artifact_formats(dir);
+    out.model.expert_up_formats   = std::vector<std::string>(bound.expert_up.begin(), bound.expert_up.end());
+    out.model.expert_down_formats = std::vector<std::string>(bound.expert_down.begin(), bound.expert_down.end());
+    out.model.head_format         = bound.head_format;
+    if (out.model.hidden != 0) { out.model.head_rows = bound.head_elements / out.model.hidden; }
+    split_linears_by_format(out.model.linears, bound.roles);
     if (prompt_tail_calls_source()) {
         if (const auto calls = prompt_tail_calls_of(artifact)) {
             out.shape.prompt_tail_calls = *calls;

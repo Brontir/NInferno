@@ -47,6 +47,7 @@ add_library(ninferno_engine STATIC
   engine/gemma4_family.cpp
   engine/hf_text_frontend.cpp
   engine/prompt_tail.cpp
+  engine/plan_workspace.cpp
   engine/model_instance.cpp
   engine/warmup_widths.cpp
   contract/sampling.cpp

@@ -87,7 +87,8 @@ add_library(ninferno_gemma4 STATIC
   gemma4/vision.cpp
   gemma4/mtp_round.cu
   gemma4/session.cu
-  gemma4/target.cu)
+  gemma4/target.cu
+  gemma4/workspace.cpp)
 ninferno_internal_includes(ninferno_gemma4)
 ninferno_cuda_lineinfo(ninferno_gemma4)
 target_link_libraries(ninferno_gemma4 PUBLIC ninferno_artifact ninferno_ops ninferno_core

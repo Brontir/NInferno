@@ -40,6 +40,10 @@
 #include <string_view>
 #include <vector>
 
+namespace ninferno::models::qwen3_5::detail {
+struct SequencePlanImpl;
+} // namespace ninferno::models::qwen3_5::detail
+
 namespace ninferno::runtime {
 
 // ---- The seams a start and the dry run share (construct_or_plan reads them too).
@@ -184,6 +188,20 @@ struct PlanLinear {
     std::string format;
 };
 
+// A separate Gemma 4 assistant's facts its own pass is sized on (gemma4::DrafterPass::
+// workspace_bytes, #302): its width, its feed-forward, its head's rows, and the formats its head
+// and its projections are (a converted artifact's) or may be stored in (before the conversion:
+// convert::drafter_quant_formats and the published BF16), as artifact format names; empty: not
+// known. The backbone width, the query heads and the head geometry are the target's (the load
+// refuses another).
+struct PlanDrafterGeometry {
+    std::uint32_t hidden       = 0;
+    std::uint32_t intermediate = 0;
+    std::uint32_t head_rows    = 0;
+    std::vector<std::string> head_formats;
+    std::vector<std::string> projection_formats;
+};
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
@@ -213,6 +231,24 @@ struct PlanModelFacts {
     std::uint32_t hidden     = 0;
     std::uint32_t ffn_active = 0;
     std::uint32_t vocab      = 0;
+    // What a family's workspace query reads beside them (set_plan_workspace_query; 0: unknown):
+    // the trunk's layers, the first attention layer's query heads, the widest dense MLP, the
+    // routed experts, and the per-layer input width (Gemma 4 PLE; ple_known false: not read).
+    std::uint32_t layers      = 0;
+    std::uint32_t query_heads = 0;
+    std::uint32_t dense_ffn   = 0;
+    std::uint32_t experts     = 0;
+    std::uint32_t experts_used = 0; // the experts a token routes to
+    // The routed banks' storage formats as a GGUF's *_exps tensors name them (the gate/up side's
+    // and the down side's; empty: not read): linears keeps its expert entries unsplit.
+    std::vector<std::string> expert_up_formats;
+    std::vector<std::string> expert_down_formats;
+    // The output head's storage format and rows as a GGUF stores it (output.weight; tied: the
+    // token table it is tied to, token_embd.weight; empty: not read).
+    std::string head_format;
+    std::uint64_t head_rows   = 0;
+    std::uint32_t ple_width   = 0;
+    bool ple_known            = false;
     double params            = 0; // every weight (0: unknown)
     // The weights' elements as a whole GGUF tensor table counts them (0: unknown): the
     // denominator of bits_per_weight, exact where the geometry's parameter count above is an
@@ -228,6 +264,8 @@ struct PlanModelFacts {
     std::uint64_t weight_bytes  = 0;
     WeightBasis weight_basis    = WeightBasis::Unknown;
     std::uint64_t drafter_bytes = 0; // a separate drafter's weights, when one is planned
+    // A separate Gemma 4 assistant's geometry, when it is planned and its config was read.
+    std::optional<PlanDrafterGeometry> drafter_geometry;
     // The share of weight_bytes a start uploads only for its speculation: the MTP layers (a GGUF's
     // NextN blocks, an artifact's mtp component: loaded under MTP only) and the model's own DFlash
     // drafter (an artifact's dflash / dflash2 component: under DFlash only). 0: none or unknown.
@@ -317,6 +355,9 @@ struct PlanRungBytes {
     std::uint64_t states    = 0; // recurrent states of the active lanes and the cached states
     std::uint64_t rings     = 0; // sliding rings of the same sequences (a drafter's among them)
     std::uint64_t workspace = 0; // the prefill chunk's activations, the decode logits (estimated)
+    // How the workspace was sized: "start" (the family's query: a start's own capacity functions
+    // over the facts), else "formula" with why the query did not answer (#302).
+    std::string workspace_basis;
     std::uint64_t graphs    = 0; // the CUDA graph allowance
     // The rest of the persistent layout: page tables, replay records, the drafter's features, the
     // Program's round and sampling buffers, alignment (the approximate estimate: a declared share).
@@ -346,13 +387,32 @@ struct PlanRungBytes {
                                                const EngineOptions& options,
                                                std::uint32_t concurrency);
 
-// The workspace of a rung (both bases: a start sizes it over the bound weights' routes): about
-// twelve hidden-wide BF16 rows a prefill token and three of the widest feed-forward it runs, and
-// FP32 logits of every decode column.
-[[nodiscard]] std::uint64_t plan_workspace_estimate(const PlanModelFacts& model,
-                                                    const PlanRung& rung,
-                                                    const EngineOptions& options,
-                                                    std::uint32_t concurrency);
+// The workspace of a rung (both bases: a start sizes it over the bound weights' routes): the
+// family's own query where one is registered and answers (set_plan_workspace_query: the same Op
+// capacity queries a start sizes its arena with, over the facts), else about twelve hidden-wide
+// BF16 rows a prefill token and three of the widest feed-forward it runs, and FP32 logits of every
+// decode column.
+// `plan`: the sequence plan the rung lays out (plan_rung_bytes'; nullptr on the approximate path).
+// `basis` (when given): PlanRungBytes::workspace_basis.
+[[nodiscard]] std::uint64_t plan_workspace_estimate(
+    const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
+    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan = nullptr,
+    std::string* basis = nullptr);
+
+// A family's workspace from its facts (#302): the arena a start would size for the rung's context,
+// chunk and `concurrency` under `options`, or no bytes where the facts do not carry what it needs,
+// with why (plan_workspace_estimate's formula then stands; "" where the family has no query); with
+// bytes, `why` may say what they cover (PlanRungBytes::workspace_basis "start: ..."). The
+// engine registers it (it links the Ops this library does not: register_plan_workspace_queries);
+// unset, the formula stands everywhere.
+struct PlanWorkspaceAnswer {
+    std::optional<std::uint64_t> bytes;
+    std::string why;
+};
+using PlanWorkspaceQuery = std::function<PlanWorkspaceAnswer(
+    const PlanModelFacts& model, const PlanRung& rung, const EngineOptions& options,
+    std::uint32_t concurrency, const models::qwen3_5::detail::SequencePlanImpl* plan)>;
+void set_plan_workspace_query(PlanWorkspaceQuery query);
 
 // A rung's bytes by the family planner's byte functions (model.offline_bytes): the persistent
 // layout and the CUDA graph allowance a start plans for `options` (normalized) at the rung's

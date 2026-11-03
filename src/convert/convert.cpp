@@ -1349,6 +1349,17 @@ bool companion_parameter(const std::string& name) {
     return name.starts_with("dflash/") || name.starts_with("dflash2/");
 }
 
+} // namespace
+
+std::vector<QType> drafter_quant_formats(std::string_view mode) {
+    if (mode == "q8") { return {QType::Q8_G32_FP16}; }
+    if (mode == "q4") { return {QType::Q4_G64_FP16}; }
+    if (mode == "nvfp4") { return {QType::NVFP4, QType::Q8_G32_FP16}; }
+    return {};
+}
+
+namespace {
+
 // --drafter-quant: every projection of a drafter that the recipe left in its direct BF16 form
 // (of a target, only its companion drafters' projections, and also those the recipe gave its
 // companion Q8: companion_drafter_q8 / optional_components, a default --drafter-quant replaces),

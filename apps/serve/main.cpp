@@ -4,6 +4,7 @@
 #include "product/logging/startup_log.h"
 #include "product/plan/plan_choice.h"
 #include "product/plan/plan_facts.h"
+#include "runtime/engine/plan_workspace.h"
 #include "runtime/engine/prompt_tail.h"
 #include "product/update/update_check.h"
 #include "serve/generation_service.h"
@@ -171,6 +172,8 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (options.version_requested) { return print_version(); }
+    // The plan without the weights sizes a family's workspace as a start does (#302).
+    ninferno::runtime::register_plan_workspace_queries();
     // The prefill's tail calls come from the served frontend (DECISIONS 62).
     ninferno::product::set_prompt_tail_calls_source(
         [chat_template = options.chat_template_path,

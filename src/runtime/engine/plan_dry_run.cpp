@@ -315,7 +315,8 @@ PlanRungBytes plan_rung_estimate(const PlanModelFacts& model, const PlanRung& ru
             std::min<std::uint64_t>(model.window + chunk - 1, rung.max_context);
         out.rings = sequences * rows * plan_ring_bytes_per_token(model, options.sliding_kv_cache);
     }
-    out.workspace = plan_workspace_estimate(model, rung, options, concurrency);
+    out.workspace = plan_workspace_estimate(model, rung, options, concurrency, nullptr,
+                                            &out.workspace_basis);
     if (options.use_cuda_graph) {
         std::set<std::uint32_t> depths;
         if (options.speculative.backend != SpeculativeBackend::None) {
@@ -335,8 +336,29 @@ PlanRungBytes plan_rung_estimate(const PlanModelFacts& model, const PlanRung& ru
     return out;
 }
 
+namespace {
+PlanWorkspaceQuery& workspace_query() {
+    static PlanWorkspaceQuery query;
+    return query;
+}
+} // namespace
+
+void set_plan_workspace_query(PlanWorkspaceQuery query) { workspace_query() = std::move(query); }
+
 std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRung& rung,
-                                      const EngineOptions& options, std::uint32_t concurrency) {
+                                      const EngineOptions& options, std::uint32_t concurrency,
+                                      const models::qwen3_5::detail::SequencePlanImpl* plan,
+                                      std::string* basis) {
+    std::string why;
+    if (const PlanWorkspaceQuery& query = workspace_query(); query) {
+        PlanWorkspaceAnswer answer = query(model, rung, options, concurrency, plan);
+        if (answer.bytes) {
+            if (basis != nullptr) { *basis = answer.why.empty() ? "start" : "start: " + answer.why; }
+            return *answer.bytes;
+        }
+        why = std::move(answer.why);
+    }
+    if (basis != nullptr) { *basis = why.empty() ? "formula" : "formula: " + why; }
     const std::uint64_t chunk = std::min(rung.prefill_chunk, rung.max_context);
     const std::uint64_t round = workspace_round_columns(options.speculative);
     if (model.hidden == 0) { return std::uint64_t{256} << 20; }
@@ -402,7 +424,8 @@ PlanRungBytes plan_rung_bytes(const PlanModelFacts& model, const PlanRung& rung,
     out.fixed            = layout.bytes - held;
     out.graphs           = plan->graph_allowance_bytes;
     // The workspace's round logits over the resolved window's columns, as the start's are.
-    out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency);
+    out.workspace        = plan_workspace_estimate(model, rung, planned, concurrency, plan.get(),
+                                                   &out.workspace_basis);
     out.host_state_image = images.host.image_bytes;
     return out;
 }
