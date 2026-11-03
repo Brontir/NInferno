@@ -13,6 +13,7 @@ the [local page](ui.md) or serve one straight from its Hugging Face checkpoint.
 | [Methodology](performance/methodology.md) | how the performance numbers are measured and how to reproduce them |
 | [HTTP serving](serving.md) | start a server, the main options, endpoints and examples, speculation, memory, authentication |
 | [Serving reference](reference/serving.md) | every request field, compatibility rule, state, log line and error code |
+| [Serving a router from behind NAT](connect.md) | ninferno-connect: the worker dials the router, which sends its requests back over that connection |
 | [CLI](cli.md) | text, chat history, image and video input, sampling, speculative decoding, runtime options |
 | [Weight conversion](weight-conversion.md) | official recipes per architecture, custom formats and sources, drafters, artifact output |
 | [Perplexity](perplexity.md) | fixed-corpus and custom-text causal perplexity, comparison rules and reports |

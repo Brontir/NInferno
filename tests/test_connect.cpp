@@ -1,0 +1,510 @@
+// ninferno-connect (#339, docs/connect.md), no GPU: a stand-in router that the worker dials over
+// loopback (the Upgrade, then an HTTP/2 client on the switched connection) and a stand-in engine
+// (httplib on loopback).
+// - The registration carries the key and the engine's /props.
+// - Streams run at once.
+// - A body past the limit is answered 413.
+// - A reset closes the engine's connection, both while the answer streams and before its first
+//   byte.
+// - Unanswered PINGs end the session, and the worker dials again.
+// - After a GOAWAY a new connection comes while the old one finishes its answer.
+// - A refused key stops the worker.
+#include "connect/connector.h"
+#include "connect/link.h"
+
+#include <httplib.h>
+#include <nghttp2/nghttp2.h>
+#include <nlohmann/json.hpp>
+
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstring>
+#include <functional>
+#include <future>
+#include <map>
+#include <string>
+#include <thread>
+
+namespace {
+
+namespace nc = ninferno::connect;
+using namespace std::chrono_literals;
+using Clock = std::chrono::steady_clock;
+
+int failures = 0;
+void expect(bool ok, const std::string& what) {
+    if (!ok) {
+        ++failures;
+        std::fprintf(stderr, "FAIL: %s\n", what.c_str());
+    }
+}
+
+// --- The stand-in engine ---------------------------------------------------------------------
+
+struct Engine {
+    httplib::Server server;
+    int port = 0;
+    std::thread thread;
+    std::atomic<bool> b_arrived{false};
+    std::atomic<bool> stream_saw_close{false};
+    std::atomic<bool> hold_saw_close{false};
+
+    Engine() {
+        server.Get("/props", [](const httplib::Request&, httplib::Response& res) {
+            res.set_content(R"({"model":"m","max_context":4096})", "application/json");
+        });
+        server.Post("/echo", [](const httplib::Request& req, httplib::Response& res) {
+            res.set_content(req.body, "text/plain");
+        });
+        // /a answers only once /b arrived (or after 5 s): both must be in flight together.
+        server.Get("/a", [this](const httplib::Request&, httplib::Response& res) {
+            const auto until = Clock::now() + 5s;
+            while (!b_arrived.load() && Clock::now() < until) { std::this_thread::sleep_for(5ms); }
+            res.set_content(b_arrived.load() ? "a:together" : "a:alone", "text/plain");
+        });
+        server.Get("/b", [this](const httplib::Request&, httplib::Response& res) {
+            b_arrived.store(true);
+            res.set_content("b", "text/plain");
+        });
+        // A tick every 20 ms until the client goes away.
+        server.Get("/stream", [this](const httplib::Request&, httplib::Response& res) {
+            res.set_chunked_content_provider("text/event-stream", [this](std::size_t,
+                                                                         httplib::DataSink& sink) {
+                std::this_thread::sleep_for(20ms);
+                if (!sink.is_writable() || !sink.write("tick\n", 5)) {
+                    stream_saw_close.store(true);
+                    return false;
+                }
+                return true;
+            });
+        });
+        // Five chunks 50 ms apart, then the end.
+        server.Get("/finite", [](const httplib::Request&, httplib::Response& res) {
+            auto sent = std::make_shared<int>(0);
+            res.set_chunked_content_provider("text/plain", [sent](std::size_t,
+                                                                   httplib::DataSink& sink) {
+                if (*sent == 5) {
+                    sink.done();
+                    return true;
+                }
+                std::this_thread::sleep_for(50ms);
+                const std::string chunk = "c" + std::to_string((*sent)++);
+                return sink.write(chunk.data(), chunk.size());
+            });
+        });
+        // A "prefill": nothing is answered for up to 5 s, the connection watched meanwhile.
+        server.Get("/hold", [this](const httplib::Request& req, httplib::Response& res) {
+            const auto until = Clock::now() + 5s;
+            while (Clock::now() < until) {
+                if (req.is_connection_closed()) {
+                    hold_saw_close.store(true);
+                    return;
+                }
+                std::this_thread::sleep_for(10ms);
+            }
+            res.set_content("held", "text/plain");
+        });
+        port   = server.bind_to_any_port("127.0.0.1");
+        thread = std::thread([this] { server.listen_after_bind(); });
+        server.wait_until_ready();
+    }
+    ~Engine() {
+        server.stop();
+        thread.join();
+    }
+};
+
+// --- The stand-in router ---------------------------------------------------------------------
+
+struct Listener {
+    int fd   = -1;
+    int port = 0;
+    Listener() {
+        fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        const int one = 1;
+        (void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one);
+        sockaddr_in addr{};
+        addr.sin_family      = AF_INET;
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        (void)::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
+        (void)::listen(fd, 16);
+        socklen_t len = sizeof addr;
+        (void)getsockname(fd, reinterpret_cast<sockaddr*>(&addr), &len);
+        port = ntohs(addr.sin_port);
+    }
+    ~Listener() { ::close(fd); }
+    // A dialed connection within `timeout`, or -1.
+    [[nodiscard]] int accept(std::chrono::milliseconds timeout) const {
+        pollfd p{fd, POLLIN, 0};
+        if (::poll(&p, 1, static_cast<int>(timeout.count())) <= 0) { return -1; }
+        return ::accept(fd, nullptr, nullptr);
+    }
+};
+
+struct Upgrade {
+    std::string head; // lower-cased
+    std::string body;
+};
+
+// The worker's Upgrade request: its head (to the blank line) and its Content-Length body.
+bool read_upgrade(int fd, Upgrade* out) {
+    std::string buffer;
+    char chunk[4096];
+    std::size_t end = std::string::npos;
+    while ((end = buffer.find("\r\n\r\n")) == std::string::npos) {
+        pollfd p{fd, POLLIN, 0};
+        if (::poll(&p, 1, 3000) <= 0) { return false; }
+        const ssize_t n = ::recv(fd, chunk, sizeof chunk, 0);
+        if (n <= 0) { return false; }
+        buffer.append(chunk, static_cast<std::size_t>(n));
+    }
+    out->head = buffer.substr(0, end + 2);
+    for (char& c : out->head) { c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
+    std::size_t length = 0;
+    if (const auto at = out->head.find("content-length:"); at != std::string::npos) {
+        length = std::stoul(out->head.substr(at + 15));
+    }
+    out->body = buffer.substr(end + 4);
+    while (out->body.size() < length) {
+        pollfd p{fd, POLLIN, 0};
+        if (::poll(&p, 1, 3000) <= 0) { return false; }
+        const ssize_t n = ::recv(fd, chunk, sizeof chunk, 0);
+        if (n <= 0) { return false; }
+        out->body.append(chunk, static_cast<std::size_t>(n));
+    }
+    return true;
+}
+
+bool send_all(int fd, std::string_view data) {
+    while (!data.empty()) {
+        const ssize_t n = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
+        if (n <= 0) { return false; }
+        data.remove_prefix(static_cast<std::size_t>(n));
+    }
+    return true;
+}
+
+bool switch_protocols(int fd) {
+    return send_all(fd, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: "
+                        "ninfer-reverse-h2\r\n\r\n");
+}
+
+struct H2Stream {
+    int status = 0;
+    std::string data;
+    bool closed = false;
+};
+
+// The router's HTTP/2 client on a switched connection.
+class H2Client {
+public:
+    explicit H2Client(int fd) : fd_(fd) {
+        nghttp2_session_callbacks* cb = nullptr;
+        nghttp2_session_callbacks_new(&cb);
+        nghttp2_session_callbacks_set_on_header_callback(cb, &H2Client::on_header);
+        nghttp2_session_callbacks_set_on_data_chunk_recv_callback(cb, &H2Client::on_data);
+        nghttp2_session_callbacks_set_on_stream_close_callback(cb, &H2Client::on_close);
+        nghttp2_session_client_new(&session_, cb, this);
+        nghttp2_session_callbacks_del(cb);
+        nghttp2_submit_settings(session_, NGHTTP2_FLAG_NONE, nullptr, 0);
+    }
+    ~H2Client() {
+        nghttp2_session_del(session_);
+        ::close(fd_);
+    }
+    H2Client(const H2Client&)            = delete;
+    H2Client& operator=(const H2Client&) = delete;
+
+    std::int32_t request(const std::string& method, const std::string& path,
+                         const std::string& body = {}) {
+        const auto nv = [](const char* n, const std::string& v) {
+            return nghttp2_nv{reinterpret_cast<std::uint8_t*>(const_cast<char*>(n)),
+                              reinterpret_cast<std::uint8_t*>(const_cast<char*>(v.data())),
+                              std::strlen(n), v.size(), NGHTTP2_NV_FLAG_NONE};
+        };
+        static const std::string kScheme = "http", kAuthority = "worker";
+        const nghttp2_nv nva[] = {nv(":method", method), nv(":scheme", kScheme),
+                                  nv(":authority", kAuthority), nv(":path", path)};
+        if (body.empty()) {
+            const std::int32_t id = nghttp2_submit_request2(session_, nullptr, nva, 4, nullptr, nullptr);
+            streams_[id];
+            return id;
+        }
+        auto source = std::make_shared<std::pair<std::string, std::size_t>>(body, 0);
+        nghttp2_data_provider2 provider{};
+        provider.source.ptr    = source.get();
+        provider.read_callback = [](nghttp2_session*, std::int32_t, std::uint8_t* buf,
+                                    std::size_t length, std::uint32_t* flags,
+                                    nghttp2_data_source* src, void*) -> nghttp2_ssize {
+            auto& [text, off] = *static_cast<std::pair<std::string, std::size_t>*>(src->ptr);
+            const std::size_t n = std::min(length, text.size() - off);
+            std::memcpy(buf, text.data() + off, n);
+            off += n;
+            if (off == text.size()) { *flags |= NGHTTP2_DATA_FLAG_EOF; }
+            return static_cast<nghttp2_ssize>(n);
+        };
+        const std::int32_t id = nghttp2_submit_request2(session_, nullptr, nva, 4, &provider, nullptr);
+        bodies_[id] = source;
+        streams_[id];
+        return id;
+    }
+    void reset(std::int32_t id) { nghttp2_submit_rst_stream(session_, NGHTTP2_FLAG_NONE, id, NGHTTP2_CANCEL); }
+    void goaway() {
+        nghttp2_submit_goaway(session_, NGHTTP2_FLAG_NONE, 0, NGHTTP2_NO_ERROR, nullptr, 0);
+    }
+    // Exchanges frames until `done` or `timeout`; whether `done` holds.
+    bool pump(std::chrono::milliseconds timeout, const std::function<bool()>& done = [] { return false; }) {
+        const auto until = Clock::now() + timeout;
+        char buffer[16384];
+        for (;;) {
+            const std::uint8_t* data = nullptr;
+            nghttp2_ssize n          = 0;
+            while ((n = nghttp2_session_mem_send2(session_, &data)) > 0) {
+                if (!send_all(fd_, std::string_view(reinterpret_cast<const char*>(data),
+                                                     static_cast<std::size_t>(n)))) {
+                    return done();
+                }
+            }
+            if (done()) { return true; }
+            if (Clock::now() >= until) { return false; }
+            pollfd p{fd_, POLLIN, 0};
+            if (::poll(&p, 1, 10) > 0) {
+                const ssize_t got = ::recv(fd_, buffer, sizeof buffer, 0);
+                if (got <= 0) { return done(); }
+                if (nghttp2_session_mem_recv2(session_, reinterpret_cast<const std::uint8_t*>(buffer),
+                                              static_cast<std::size_t>(got)) < 0) {
+                    return done();
+                }
+            }
+        }
+    }
+    [[nodiscard]] const H2Stream& stream(std::int32_t id) { return streams_[id]; }
+
+private:
+    static H2Client& self(void* p) { return *static_cast<H2Client*>(p); }
+    static int on_header(nghttp2_session*, const nghttp2_frame* frame, const std::uint8_t* name,
+                         std::size_t namelen, const std::uint8_t* value, std::size_t valuelen,
+                         std::uint8_t, void* user) {
+        if (frame->hd.type == NGHTTP2_HEADERS &&
+            std::string_view(reinterpret_cast<const char*>(name), namelen) == ":status") {
+            self(user).streams_[frame->hd.stream_id].status =
+                std::stoi(std::string(reinterpret_cast<const char*>(value), valuelen));
+        }
+        return 0;
+    }
+    static int on_data(nghttp2_session*, std::uint8_t, std::int32_t id, const std::uint8_t* data,
+                       std::size_t len, void* user) {
+        self(user).streams_[id].data.append(reinterpret_cast<const char*>(data), len);
+        return 0;
+    }
+    static int on_close(nghttp2_session*, std::int32_t id, std::uint32_t, void* user) {
+        self(user).streams_[id].closed = true;
+        return 0;
+    }
+
+    int fd_;
+    nghttp2_session* session_ = nullptr;
+    std::map<std::int32_t, H2Stream> streams_;
+    std::map<std::int32_t, std::shared_ptr<std::pair<std::string, std::size_t>>> bodies_;
+};
+
+// --- The worker under test -------------------------------------------------------------------
+
+struct Worker {
+    std::atomic<bool> stop{false};
+    std::future<int> rc;
+    Worker(const Listener& router, const Engine& engine, std::chrono::milliseconds ping,
+           std::size_t max_request_bytes = 64u << 20) {
+        nc::ConnectorOptions o;
+        std::string why;
+        o.routers                   = {*nc::parse_router_url(
+            "http://127.0.0.1:" + std::to_string(router.port) + "/ninfer/connect", &why)};
+        o.key                       = "k-1";
+        o.name                      = "box-1";
+        o.connections               = 1;
+        o.tunnel.engine             = {"127.0.0.1", engine.port};
+        o.tunnel.ping_interval      = ping;
+        o.tunnel.max_request_bytes  = max_request_bytes;
+        o.min_backoff               = 50ms;
+        o.max_backoff               = 200ms;
+        o.reconnect_jitter          = 50ms;
+        rc = std::async(std::launch::async, [this, o] {
+            return nc::run_connector(o, "test", {}, stop);
+        });
+    }
+    ~Worker() {
+        stop.store(true);
+        if (rc.valid()) { (void)rc.wait_for(10s); }
+    }
+};
+
+// Accepts the worker's dial, checks nothing, switches: the router's side of one connection.
+std::unique_ptr<H2Client> accept_switched(const Listener& router, Upgrade* upgrade = nullptr) {
+    const int fd = router.accept(5s);
+    if (fd < 0) { return nullptr; }
+    Upgrade local;
+    if (!read_upgrade(fd, upgrade ? upgrade : &local) || !switch_protocols(fd)) {
+        ::close(fd);
+        return nullptr;
+    }
+    return std::make_unique<H2Client>(fd);
+}
+
+void test_urls() {
+    std::string why;
+    const auto a = nc::parse_router_url("https://router.example:7443/workers", &why);
+    expect(a && a->tls && a->host == "router.example" && a->port == 7443 && a->path == "/workers",
+           "https URL with port and path");
+    const auto b = nc::parse_router_url("http://[::1]", &why);
+    expect(b && !b->tls && b->host == "::1" && b->port == 80 && b->path == "/ninfer/connect",
+           "http URL, IPv6, defaults");
+    expect(!nc::parse_router_url("ftp://x", &why), "ftp refused");
+    expect(!nc::parse_router_url("https://x:0", &why), "port 0 refused");
+    expect(!nc::parse_router_url("https://:443", &why), "no host refused");
+    expect(nc::is_loopback_host("127.0.0.2") && nc::is_loopback_host("localhost") &&
+               !nc::is_loopback_host("10.0.0.1") && !nc::is_loopback_host("router.example"),
+           "loopback hosts");
+}
+
+void test_registration_and_streams() {
+    Engine engine;
+    Listener router;
+    Worker worker(router, engine, 1000ms, 1024);
+    Upgrade upgrade;
+    auto c = accept_switched(router, &upgrade);
+    expect(c != nullptr, "the worker dialed and was switched");
+    if (!c) { return; }
+    expect(upgrade.head.starts_with("post /ninfer/connect http/1.1"), "the Upgrade's request line");
+    expect(upgrade.head.find("authorization: bearer k-1") != std::string::npos, "the key");
+    expect(upgrade.head.find("upgrade: ninfer-reverse-h2") != std::string::npos, "the token");
+    const auto reg = nlohmann::json::parse(upgrade.body, nullptr, false);
+    expect(!reg.is_discarded() && reg["props"]["model"] == "m" && reg["version"] == "test" &&
+               reg["name"] == "box-1",
+           "the registration carries the engine's /props: " + upgrade.body);
+
+    const auto a = c->request("GET", "/a");
+    const auto b = c->request("GET", "/b");
+    const auto e = c->request("POST", "/echo", "hello");
+    const auto big = c->request("POST", "/echo", std::string(2048, 'x'));
+    const bool done = c->pump(8s, [&] {
+        return c->stream(a).closed && c->stream(b).closed && c->stream(e).closed &&
+               c->stream(big).closed;
+    });
+    expect(done, "four streams finished");
+    expect(c->stream(a).status == 200 && c->stream(a).data == "a:together",
+           "two requests in flight at once: " + c->stream(a).data);
+    expect(c->stream(e).status == 200 && c->stream(e).data == "hello", "a POST body forwarded");
+    expect(c->stream(big).status == 413, "a body past the limit: 413, got " +
+                                             std::to_string(c->stream(big).status));
+}
+
+void test_reset_closes_the_engine_connection() {
+    Engine engine;
+    Listener router;
+    Worker worker(router, engine, 1000ms);
+    auto c = accept_switched(router);
+    expect(c != nullptr, "dialed (reset)");
+    if (!c) { return; }
+    const auto s = c->request("GET", "/stream");
+    expect(c->pump(5s, [&] { return !c->stream(s).data.empty(); }), "the stream's first ticks");
+    c->reset(s);
+    expect(c->pump(3s, [&] { return engine.stream_saw_close.load(); }),
+           "a reset while the answer streams closes the engine's connection");
+    const auto h = c->request("GET", "/hold");
+    (void)c->pump(200ms);
+    c->reset(h);
+    expect(c->pump(3s, [&] { return engine.hold_saw_close.load(); }),
+           "a reset before the answer's first byte closes the engine's connection");
+}
+
+void test_ping_timeout_dials_again() {
+    Engine engine;
+    Listener router;
+    Worker worker(router, engine, 100ms);
+    auto c = accept_switched(router);
+    expect(c != nullptr, "dialed (ping)");
+    if (!c) { return; }
+    (void)c->pump(50ms); // settings exchanged; from now on nothing answers its PINGs
+    const auto start = Clock::now();
+    auto again       = accept_switched(router);
+    const auto took  = std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - start);
+    expect(again != nullptr && took < 3s,
+           "two unanswered PINGs end the session and the worker dials again (" +
+               std::to_string(took.count()) + " ms)");
+}
+
+void test_goaway_replacement_while_draining() {
+    Engine engine;
+    Listener router;
+    Worker worker(router, engine, 1000ms);
+    auto c = accept_switched(router);
+    expect(c != nullptr, "dialed (goaway)");
+    if (!c) { return; }
+    const auto s = c->request("GET", "/finite");
+    expect(c->pump(3s, [&] { return !c->stream(s).data.empty(); }), "the answer started");
+    c->goaway();
+    std::unique_ptr<H2Client> next;
+    const auto until = Clock::now() + 3s;
+    while (!next && Clock::now() < until) {
+        (void)c->pump(20ms);
+        const int fd = router.accept(10ms);
+        if (fd >= 0) {
+            Upgrade up;
+            if (read_upgrade(fd, &up) && switch_protocols(fd)) {
+                next = std::make_unique<H2Client>(fd);
+            } else {
+                ::close(fd);
+            }
+        }
+    }
+    expect(next != nullptr, "a new connection after the GOAWAY");
+    expect(c->pump(3s, [&] { return c->stream(s).closed; }) && c->stream(s).status == 200 &&
+               c->stream(s).data == "c0c1c2c3c4",
+           "the old connection's answer finished whole: " + c->stream(s).data);
+    if (next) {
+        const auto e = next->request("POST", "/echo", "again");
+        expect(next->pump(3s, [&] { return next->stream(e).closed; }) &&
+                   next->stream(e).data == "again",
+               "the new connection serves");
+    }
+}
+
+void test_refused_key_stops() {
+    Engine engine;
+    Listener router;
+    Worker worker(router, engine, 1000ms);
+    const int fd = router.accept(5s);
+    expect(fd >= 0, "dialed (refused key)");
+    if (fd < 0) { return; }
+    Upgrade up;
+    (void)read_upgrade(fd, &up);
+    (void)send_all(fd, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n");
+    ::close(fd);
+    expect(worker.rc.wait_for(3s) == std::future_status::ready && worker.rc.get() == 3,
+           "a refused key ends the run with 3");
+    expect(router.accept(300ms) < 0, "no dial after the refusal");
+}
+
+} // namespace
+
+int main() {
+    test_urls();
+    test_registration_and_streams();
+    test_reset_closes_the_engine_connection();
+    test_ping_timeout_dials_again();
+    test_goaway_replacement_while_draining();
+    test_refused_key_stops();
+    if (failures != 0) {
+        std::fprintf(stderr, "connect: %d failure(s)\n", failures);
+        return 1;
+    }
+    std::printf("connect: registration, streams, resets, ping, GOAWAY and a refused key\n");
+    return 0;
+}

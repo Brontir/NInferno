@@ -182,6 +182,9 @@ if(NINFERNO_BUILD_APPS)
   endforeach()
   install(TARGETS ninferno ninferno-serve ninferno-convert ninferno-perplexity ninferno-ui OPTIONAL
           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  if(TARGET ninferno-connect)
+    install(TARGETS ninferno-connect RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
   install(DIRECTORY routes/ DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/routes)
   install(DIRECTORY tools/spec/rankings/ DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/rankings
           FILES_MATCHING PATTERN "*.i64")
