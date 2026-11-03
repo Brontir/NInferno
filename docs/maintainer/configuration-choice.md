@@ -131,7 +131,13 @@ The quantization's own term is the measured curve `kQuantKld` (Qwen3.5-9B GGUF a
 Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_XXS 0.107, UD-IQ2_M
 0.161, UD-IQ2_XXS 0.334), interpolated in log KLD over bits per weight for other quantizations and
 models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
-any model's Q8_0 is its own reference (0). Where the worth decides, the plan weighs the quantizations
+any model's Q8_0 is its own reference (0). A point is the measurement of one file
+(`unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
+`measured` only on those files (`QuantOption::weights`, spec::weights_identity of a hub row's
+digests, an artifact's recorded base inputs or a fetched GGUF's); the same family's label at the same
+bits on other or unknown files takes the same value as a `proxy` (#299: another repository's
+Q4_K_M is another quantization). The value, and so every decision, is the same either way; the term's
+`evidence` (`measured`, `proxy`, `interpolated`, `stand-in`) says what it rests on. Where the worth decides, the plan weighs the quantizations
 of the quant rule's tier (`runtime/engine/quant_rule.h`: the own context per stream it reached, the
 same side of the 3.5-bit floor, `below_quality_floor`) by the worth of each one's own choice, a tie
 to the rule's order (more bits, then more bytes, then the smaller label), and the rule line says
