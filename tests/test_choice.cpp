@@ -1722,6 +1722,42 @@ void axis_order_does_not_decide(const json& fixture) {
 // facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
 // shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
 // the MoE 35B with two measured drafters (its chunk by speed and the drafter by worth open).
+// The worth's resolution (#301): where the worth decides it is the reference generation's decode
+// error, and an alternative is within_resolution exactly when it loses by no more than that on a
+// different speed; a loss of accuracy alone at the same speed, or a larger gap, stays lower_worth.
+void resolution_labels(const json& fixture) {
+    int within = 0, lower = 0;
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        Bench b = nine_b(fixture, name);
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (const std::uint32_t context : {4096U, 32768U, 131072U}) {
+            ch::Task task;
+            task.contexts = {context};
+            const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], allowed, {}, task,
+                                            oracle(b, 40e9), ch::Gates{true, true});
+            if (!c.chosen) { continue; }
+            check(c.by_worth ? c.resolution > 0 && c.resolution < 0.1 : true,
+                  name + ": a resolution where the worth decides");
+            const ch::Scored& best = chosen(c);
+            for (const ch::Alternative& a : ch::explain(c)) {
+                if (a.scored == nullptr || (a.why_code != "within_resolution" && a.why_code != "lower_worth")) {
+                    continue;
+                }
+                const double gap   = best.worth - a.scored->worth;
+                const bool speeds  = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds)) > 1e-9;
+                const bool inside  = c.resolution > 0 && gap <= c.resolution && speeds;
+                check(inside == (a.why_code == "within_resolution"),
+                      name + " " + a.value + ": within_resolution exactly inside the band on another speed");
+                (inside ? within : lower) += 1;
+            }
+        }
+    }
+    std::cout << "resolution labels: " << within << " within, " << lower << " lower
+";
+    check(lower > 0, "some alternatives lose outright");
+}
+
 void board_facts_do_not_decide(const json& fixture) {
     std::vector<std::pair<std::string, Bench>> benches;
     for (const auto& [name, unused] : fixture.at("cards").items()) {
@@ -1836,6 +1872,7 @@ int main() {
     load_bounds_the_gain(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
+    resolution_labels(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

@@ -206,6 +206,7 @@ own context, decode and prefill speed, KLD, worth, and why it lost:
 |---|---|
 | `no_fit` | it does not hold the asked context per stream |
 | `lower_worth` | it fits and its worth is lower |
+| `within_resolution` | it fits and loses, on a different speed, by less than the worth's resolution (`Choice::resolution`: the reference card's generation's decode error, `kDecodePredictionError`): indistinguishable within the estimate, the point estimate decides (#301); a gap of accuracy alone at the same speed stays `lower_worth` |
 | `tie_context` | the same worth; the chosen keeps more context per stream |
 | `tie_order` | the same in every respect; the listing's order |
 | `default` | a gate is closed: the family's default (or the default chunk, the profile's drafter) stands |

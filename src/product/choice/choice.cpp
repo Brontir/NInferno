@@ -1525,6 +1525,7 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     }
     const std::optional<Reference> ref = reference_of(card, gates);
     out.by_worth       = decides_switches(model, card, gates);
+    out.resolution     = ref ? worth_band(ref->card) : 0;
     out.chunk_by_speed = ref && ref->chunk_decides && model.moe() && !pins.chunk;
     // The enumeration order breaks exact ties (better()): one canonical order of each axis's
     // values (allowed_axes'), never the order a caller listed them in (#301).
@@ -1749,6 +1750,17 @@ std::vector<Alternative> explain(const Choice& choice) {
                                    : axis == Axis::Drafter
                                          ? "the same in every respect for this request: the drafters' label order"
                                          : "the same in every respect for this request: the listing's order";
+            } else if (choice.resolution > 0 && chosen.worth - s.worth <= choice.resolution &&
+                       s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
+                       std::abs(std::log(s.decision_seconds / chosen.decision_seconds)) > kWorthTie) {
+                // It loses by less than the speed estimate's own error, on a different speed: the
+                // two are indistinguishable within the estimate (a gap of accuracy alone, at the
+                // same speed, is measured and stays a loss).
+                alt.why_code = "within_resolution";
+                alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
+                               " against the chosen, inside the speed estimate's resolution (" +
+                               fixed(100 * choice.resolution, 1) +
+                               " % decode rms): the point estimate decides";
             } else {
                 alt.why_code = "lower_worth";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) + " against the chosen";
