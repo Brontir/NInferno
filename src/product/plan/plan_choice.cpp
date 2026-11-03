@@ -46,6 +46,7 @@ Json estimates_json(const choice::Scored& s) {
             {"decode_tok_s", round_to(s.speed.decode_per_stream, 1)},
             {"prefill_tok_s", round_to(s.speed.prefill, 0)},
             {"speed_transferred", s.speed.transferred},
+            {"speed_basis", std::string(choice::speed_basis_name(s.speed.basis))},
             {"request_seconds", round_to(s.seconds, 3)},
             {"kld", round_to(s.accuracy.kld, 5)},
             {"kld_terms", terms},

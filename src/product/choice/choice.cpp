@@ -1228,7 +1228,10 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
         out.prefill            = prompt / (prompt / out.prefill + attention +
                                 tail_calls_seconds(model, card, quant, candidate, prompt));
     }
-    out.transferred = transferred || prefill_transferred;
+    out.basis       = !generation_known(card.major, card.minor) ? SpeedBasis::LentGeneration
+                      : transferred || prefill_transferred        ? SpeedBasis::Transferred
+                                                                  : SpeedBasis::Own;
+    out.transferred = out.basis != SpeedBasis::Own;
     return out;
 }
 
@@ -1358,6 +1361,16 @@ bool accuracy_decides(std::string_view generation, std::string_view family, std:
 
 std::optional<Reference> reference_of(const CardFacts& card, const Gates& gates) {
     const std::string_view gen = generation_of(card);
+    // A generation the lab has no row of borrows the nearest one's rows to run and to estimate,
+    // never to decide (#300): its reference card is that generation's, not its own.
+    if (!generation_known(card.major, card.minor)) {
+        Reference out;
+        out.card = card;
+        out.why  = "compute capability " + std::to_string(card.major) + "." + std::to_string(card.minor) +
+                  " has no generation row of its own: " + std::string(gen) +
+                  "'s rates stand in for the estimate, not for a decision";
+        return out;
+    }
     for (const ReferenceCard& r : kReferenceCards) {
         if (r.generation != gen) { continue; }
         Reference out;

@@ -223,11 +223,20 @@ struct Candidate {
 [[nodiscard]] Route route_of(const QuantOption& quant, ActivationMode activations,
                              const CardFacts& card) noexcept;
 
+// What a speed estimate rests on (#300). Own: the card's generation's rows, each on two lab cards;
+// Transferred: a constant from another generation (kTransferGeneration) or one lab card of this
+// one; LentGeneration: the card's compute capability has no row of its own (core/generation.h
+// generation_known) and the nearest generation's rates, efficiencies and constants stand in.
+enum class SpeedBasis { Own, Transferred, LentGeneration };
+[[nodiscard]] constexpr std::string_view speed_basis_name(SpeedBasis basis) noexcept {
+    return basis == SpeedBasis::Own ? "own" : basis == SpeedBasis::Transferred ? "transferred" : "lent_generation";
+}
+
 struct Speed {
     double decode_per_stream = 0; // tokens a second each stream decodes at the context given
     double prefill           = 0; // prompt tokens a second
-    bool transferred         = false; // a constant came from another generation (kTransferGeneration),
-                                      // or rests on one lab card of this one
+    bool transferred         = false; // basis != Own
+    SpeedBasis basis         = SpeedBasis::Own;
 };
 
 // Decode at `context` tokens in the window with `concurrency` rows, and prefill of a `prompt`

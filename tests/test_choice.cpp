@@ -1734,6 +1734,41 @@ void board_facts_do_not_decide(const json& fixture) {
     }
 }
 
+// #300: a compute capability the generation table has no row of (a newer major) estimates on the
+// nearest row (gb20x), says so, and its reference decides nothing, whatever reference cards the
+// lent generation gains later; a known generation keeps its own evidence. Today no lent row has a
+// reference card, so the decision is blocked twice; the reason names the missing row.
+void lent_generation_does_not_decide(const json& fixture) {
+    const Bench known = nine_b(fixture, "RTX 5090");
+    Bench lent        = known;
+    lent.card.major   = 13;
+    lent.card.minor   = 0;
+    ch::Candidate c;
+    c.kv    = KvCacheStorage::Int8Group64;
+    c.state = RecurrentStateStorage::FP16;
+    const ch::Speed own   = ch::speed_of(known.model, known.card, known.quants[0], c, 1, 4096);
+    const ch::Speed other = ch::speed_of(lent.model, lent.card, lent.quants[0], c, 1, 4096);
+    check(own.basis != ch::SpeedBasis::LentGeneration, "the RTX 5090: its own generation's rows");
+    check(other.basis == ch::SpeedBasis::LentGeneration && other.transferred &&
+              std::abs(other.decode_per_stream - own.decode_per_stream) < 1e-9 * own.decode_per_stream,
+          "compute capability 13.0: gb20x's decode estimate, marked lent");
+    const ch::Gates open{true, true};
+    const auto ref = ch::reference_of(lent.card, open);
+    check(ref && !ref->decides && !ref->chunk_decides &&
+              ref->why.find("no generation row of its own") != std::string::npos,
+          "compute capability 13.0: a reference that never decides, and why");
+    ch::Task task;
+    const auto allowed      = ch::allowed_axes(lent.model, KvCacheStorage::Int8Group64);
+    const ch::Choice theirs = ch::choose(lent.model, lent.card, lent.quants[0], allowed, {}, task, oracle(lent, 20e9), open);
+    check(!theirs.by_worth && theirs.chosen && theirs.why.find("no generation row of its own") != std::string::npos,
+          "compute capability 13.0: the family's defaults, and why");
+    check(!ch::weighs_quantizations(lent.model, lent.card, open), "compute capability 13.0: the quantizations by the rule");
+    // A known generation with a reference card still decides (the RTX 4090: Ada).
+    const Bench ada = nine_b(fixture, "RTX 4090");
+    check(ch::choose(ada.model, ada.card, ada.quants[0], allowed, {}, task, oracle(ada, 20e9), open).by_worth,
+          "the RTX 4090: the switches by worth");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -1753,6 +1788,7 @@ int main() {
     prices_attention(fixture);
     chooses(fixture);
     decides_by_generation(fixture);
+    lent_generation_does_not_decide(fixture);
     steps_before_the_floor(fixture);
     weighs_the_quantizations(fixture);
     chooses_the_chunk(fixture);
