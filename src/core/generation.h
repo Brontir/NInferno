@@ -63,6 +63,15 @@ inline constexpr GenerationRow kGenerations[] = {
     {12, 0, 9, "gb20x", 512.0, 2048.0, false, 1.0, 1.11, true, true},
 };
 
+// Whether the table has a row of its own for compute capability major.minor (generation_row lends
+// one otherwise): a lent row runs the code, never carries its generation's evidence (#300).
+[[nodiscard]] constexpr bool generation_known(int major, int minor) noexcept {
+    for (const GenerationRow& row : kGenerations) {
+        if (row.major == major && minor >= row.minor_lo && minor <= row.minor_hi) return true;
+    }
+    return false;
+}
+
 // The row of compute capability major.minor: a later generation than the table knows takes its
 // last row (the newest consumer one), an earlier one its first.
 [[nodiscard]] constexpr const GenerationRow& generation_row(int major, int minor) noexcept {
