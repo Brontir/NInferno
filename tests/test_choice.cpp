@@ -1753,8 +1753,7 @@ void resolution_labels(const json& fixture) {
             }
         }
     }
-    std::cout << "resolution labels: " << within << " within, " << lower << " lower
-";
+    std::cout << "resolution labels: " << within << " within, " << lower << " lower\n";
     check(lower > 0, "some alternatives lose outright");
 }
 
