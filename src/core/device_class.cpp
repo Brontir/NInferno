@@ -446,6 +446,10 @@ double board_memory_distance(const Board& a, const Board& b) noexcept {
     return board_distance_of(a, b, false);
 }
 
+BoardUnknowns board_unknowns(const Board& a, const Board& b) noexcept {
+    return {.l2 = !(a.l2_mib > 0 && b.l2_mib > 0), .dram = !(a.dram_gbps > 0 && b.dram_gbps > 0)};
+}
+
 std::string gpu_chip_arch(std::string_view gpu_class) {
     const auto chip = gpu_class.substr(0, gpu_class.find(':'));
     if (chip.size() > 2 && chip.starts_with("sm") &&

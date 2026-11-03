@@ -8,6 +8,7 @@
 
 #include "core/device_class.h"
 
+#include <limits>
 #include <span>
 
 namespace ninferno::measured {
@@ -38,13 +39,54 @@ struct Gate {
     bool pays;
 };
 
-// The current device's answer from `gates`: the nearest measured board's within `max_distance`,
+// What a measured gate's answer for a board rests on (#373): the donor (the nearest measured board
+// within the gate's distance; null: none), how far it is, what the distance could not compare, the
+// answer, and how the evidence applies. Measured: the board itself (distance 0, every quantity
+// known: the board's facts are a measured board's). Carried: within kCarryDistance, every quantity compared. Transferred: farther, the
+// gate's own rule carrying it (the MMQ gate's: at any distance). Incomplete: a quantity unknown on
+// either side, so the distance can understate the difference. None: no donor (the unmeasured
+// default). The answer is the legacy rule's in every case: the disposition says what it rests on
+// and decides nothing yet.
+struct GateAnswer {
+    enum class Disposition { Measured, Carried, Transferred, Incomplete, None };
+    const Gate* donor = nullptr;
+    double distance   = 0;
+    BoardUnknowns unknown;
+    bool pays               = false;
+    Disposition disposition = Disposition::None;
+};
+[[nodiscard]] constexpr const char* gate_disposition_name(GateAnswer::Disposition d) noexcept {
+    switch (d) {
+    case GateAnswer::Disposition::Measured: return "measured";
+    case GateAnswer::Disposition::Carried: return "carried";
+    case GateAnswer::Disposition::Transferred: return "transferred";
+    case GateAnswer::Disposition::Incomplete: return "incomplete";
+    case GateAnswer::Disposition::None: return "none";
+    }
+    return "none";
+}
+[[nodiscard]] inline GateAnswer gate_answer(std::span<const Gate> gates, const Board& board,
+                                            double max_distance) noexcept {
+    using D = GateAnswer::Disposition;
+    GateAnswer out;
+    out.donor = nearest_measured(gates, board, max_distance);
+    if (out.donor == nullptr) { return out; }
+    out.distance    = board_distance(board, out.donor->board);
+    out.unknown     = board_unknowns(board, out.donor->board);
+    out.pays        = out.donor->pays;
+    out.disposition = out.unknown.any()                ? D::Incomplete
+                      : out.distance == 0              ? D::Measured
+                      : out.distance <= kCarryDistance ? D::Carried
+                                                       : D::Transferred;
+    return out;
+}
+
+// The current device's answer from `gates`: gate_answer's for the device within `max_distance`,
 // else false (the unmeasured default), as on no device.
 [[nodiscard]] inline bool measured_gate(std::span<const Gate> gates,
                                         double max_distance = kCarryDistance) noexcept {
     try {
-        const Gate* g = nearest_measured(gates, board_of(device_class()), max_distance);
-        return g != nullptr && g->pays;
+        return gate_answer(gates, board_of(device_class()), max_distance).pays;
     } catch (...) {
         return false;
     }
@@ -58,10 +100,24 @@ inline constexpr Gate kMmqPrefillPays[] = {
     {kL4, true},         {kRtx4060Ti, true},  {kA10, true},
     {kA100Sxm40, false}, {kRtx2080Ti, true}};
 
-// kMmqPrefillPays for `board` (the product's estimate of a board it is not running on).
+// kMmqPrefillPays for `board` by its rule (the nearest measured board of the instruction set, at
+// any distance), with what the answer rests on: one query for the device's gate (ops/generic
+// mmq_prefill_device) and the product's estimate of a board it is not running on.
+[[nodiscard]] inline GateAnswer mmq_prefill_gate(const Board& board) noexcept {
+    return gate_answer(std::span<const Gate>(kMmqPrefillPays), board,
+                       std::numeric_limits<double>::max());
+}
 [[nodiscard]] inline bool mmq_prefill_pays(const Board& board) noexcept {
-    const Gate* g = nearest_measured(std::span<const Gate>(kMmqPrefillPays), board);
-    return g != nullptr && g->pays;
+    return mmq_prefill_gate(board).pays;
+}
+// The current device's answer: mmq_prefill_gate of its board, else false (no device: the
+// unmeasured default, as measured_gate gives).
+[[nodiscard]] inline bool mmq_prefill_device_pays() noexcept {
+    try {
+        return mmq_prefill_gate(board_of(device_class())).pays;
+    } catch (...) {
+        return false;
+    }
 }
 
 } // namespace ninferno::measured
