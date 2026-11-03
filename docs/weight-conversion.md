@@ -107,7 +107,7 @@ select kernels. Recipes are Python functions in
 | Qwen3.6-35B-A3B | `qwen3_6_35b_a3b` | Q4 experts, Q5/Q6 expert down, Q8 shared/projection | MTP, DFlash |
 | Qwen3.6-35B-A3B NVFP4 | `qwen3_6_35b_a3b_nvfp4` | Imported NVFP4 routed and shared experts, Q8 projections, Q8/Q6 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
 | Qwen3.6-27B NVFP4 | `qwen3_6_27b_nvfp4` | Imported NVFP4, selected BF16 projections, Q8 vocabulary; needs `--source quantized=PATH` | MTP, DFlash |
-| Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8, FP8 embedding generated from BF16; needs `--source quantized=PATH` | MTP, DFlash2 |
+| Qwen3.8-27B NVFP4 | `qwen3_8_27b_nvfp4` | Imported NVFP4/FP8 as the checkpoint publishes each projection, FP8 embedding generated from BF16 (and the head, where the checkpoint has it in NVFP4); needs `--source quantized=PATH` (`unsloth/Qwen3.8-27B-NVFP4` or `nvidia/Qwen3.8-27B-NVFP4`) | MTP, DFlash2 |
 | Qwen3.5 Dense, any size | `qwen3_5_bf16`, `qwen3_5_q8` | BF16 / Q8 (a DFlash drafter Q8 in both) | MTP, DFlash |
 | Qwen3.5 Dense or MoE, any size | `qwen3_5_published` | Encoded projections and experts as published; quantizes nothing but the DFlash drafter (Q8) | MTP, DFlash |
 | Gemma 4 text | `gemma4_published` (default) | NVFP4 and FP8 projections kept, rest BF16 | Gemma 4 assistant |
@@ -140,11 +140,34 @@ python3 -m tools.convert \
   --out models/qwen3_8_27b_nvfp4.ninferno
 ```
 
+The recipe takes either published quantized source. `unsloth/Qwen3.8-27B-NVFP4` holds the MLP of
+layers 0..55 in NVFP4 and every other projection, lm_head included, in FP8 with one BF16 scale per
+row. `nvidia/Qwen3.8-27B-NVFP4` holds every MLP and lm_head in NVFP4 and its FP8 projections with
+one FP32 scale per matrix. The recipe keeps each projection's published format. When the source's
+head is NVFP4, it generates a row-FP8 head from the BF16 model, so the head and the draft head are
+row FP8 with either source.
+
+The Python converter above reads row-BF16 FP8 only, so it converts unsloth's checkpoint and
+refuses NVIDIA's. Convert NVIDIA's with `ninferno-convert`, which takes the same arguments:
+
+```bash
+ninferno-convert \
+  --model /path/to/Qwen3.8-27B \
+  --recipe qwen3_8_27b_nvfp4 \
+  --source quantized=/path/to/nvidia/Qwen3.8-27B-NVFP4 \
+  --source dflash2=/path/to/Qwen3.8-27B-DFlash2 \
+  --components text,vision,mtp,dflash2 \
+  --name qwen3.8-27b \
+  --out models/qwen3_8_27b_nvfp4.ninferno
+```
+
 ## Options
 
 These are `ninferno-convert`'s options. The Python converter (`python3 -m tools.convert`) takes
 `--model`, `--recipe`, `--source`, `--components`, `--resource`, `--proposal`, `--proposal-rows`,
-`--ranking`, `--name`, `--out`, `--device`, `--rows-per-chunk` and `--max-file-bytes`, plus the
+`--ranking`, `--name`, `--out`, `--device`, `--rows-per-chunk`, `--max-file-bytes` and
+`--maintainer-quantize` (recorded in the provenance; its arithmetic is the table as written either
+way), plus the
 ones marked (Python); it refuses every other.
 
 ### Input and output

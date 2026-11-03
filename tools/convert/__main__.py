@@ -193,6 +193,13 @@ def main(argv=None):
         action="store_true",
         help="include the existing indexed proposal head",
     )
+    parser.add_argument(
+        "--maintainer-quantize",
+        action="store_true",
+        help="run the recipe's table as written and record it in the provenance, as "
+        "ninferno-convert does (this converter keeps no published blocks, so its arithmetic "
+        "is the same either way)",
+    )
     parser.add_argument("--proposal-rows", type=int, default=131072)
     parser.add_argument("--ranking", type=Path, default=DEFAULT_RANKING)
     parser.add_argument("--name", help="public instance name saved in metadata")
@@ -259,6 +266,9 @@ def main(argv=None):
             provenance["ranking"] = str(args.ranking)
             # By content for the source identity, never the path.
             provenance["ranking_sha256"] = _content_sha256(Path(args.ranking))
+        # After the ranking, as ninferno-convert orders its provenance (the bytes are compared).
+        if args.maintainer_quantize:
+            provenance["maintainer_quantize"] = True
         published = published_activation_summary(model, recipe)
         if published is not None:
             provenance["published_activations"] = published

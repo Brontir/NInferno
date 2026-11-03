@@ -1155,11 +1155,26 @@ void qwen3_8_27b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) {
             recipe.assign_source(i, std::move(source));
             continue;
         }
-        const auto layer = name.starts_with("text/layers/")
-                               ? static_cast<std::int64_t>(layer_of(name))
-                               : std::int64_t{-1};
-        const bool nvfp4 = has_part(name, "/mlp/") && layer < 56;
-        recipe.assign(i, nvfp4 ? QType::NVFP4 : kFp8, Method::ImportEncoded,
+        // Each projection keeps the format the checkpoint published it in: unsloth's
+        // Qwen3.8-27B-NVFP4 holds the MLP of layers 0..55 in NVFP4 and every other projection,
+        // lm_head included, in row FP8; NVIDIA's (Model Optimizer) holds every layer's MLP and
+        // lm_head in NVFP4 (#342). An NVFP4 lm_head is quantized to row FP8 from the BF16 model
+        // instead, so the head, and the draft head the proposal reads from it, take one format
+        // whichever checkpoint the text comes from; it keeps BF16 activations (A16Only), as an
+        // FP8 head does under keep_encoded_head (dense.cpp).
+        const bool nvfp4 = source->is_nvfp4();
+        if (nvfp4 && name == "text/output_head") {
+            recipe.assign(i, kFp8, Method::Fp8RowMaxabs);
+            continue;
+        }
+        // An FP8 projection keeps its published scales: unsloth's one BF16 scale a row (row_bf16),
+        // NVIDIA's one FP32 scale a tensor (row_f32, or row_bf16 where that value is a BF16 one).
+        // Anything else (128x128 blocks, an integer code) asks for row_bf16 and is refused there.
+        const auto published = nvfp4 ? std::nullopt : source->encoded_format();
+        const QType format   = nvfp4 ? QType::NVFP4
+                               : published == QType::FP8_E4M3FN_ROW_F32 ? QType::FP8_E4M3FN_ROW_F32
+                                                                        : kFp8;
+        recipe.assign(i, format, Method::ImportEncoded,
                       parameter.encoded_source(quantized,
                                                nvfp4 ? MatrixFormat::Nvfp4 : MatrixFormat::Fp8Row));
         recipe.set_policy(i, nvfp4 ? ActivationPolicy::AllowA4 : ActivationPolicy::AllowA8);
