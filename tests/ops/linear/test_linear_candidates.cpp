@@ -5,7 +5,7 @@
 #include "core/weight_view.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/linear/linear_registry.h"
-#include "ops/generic/generic_gemm.h"
+#include "ops/generic/route_table.h"
 #include "ops/linear/bf16/bf16_dispatch.h"
 #include "ops/linear/q4/q4_dispatch.h"
 #include "ops/linear/q5/q5_dispatch.h"
