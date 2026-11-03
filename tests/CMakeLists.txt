@@ -25,13 +25,14 @@ if(NINFERNO_BUILD_APPS)
 endif()
 
 # ninferno-connect (#339): a stand-in router dialed over loopback (Upgrade, then HTTP/2 with the
-# roles reversed) and a stand-in engine; registration, concurrent streams, a reset that closes the
-# engine's connection (also before any byte of the answer), ping timeout, GOAWAY with a replacement
-# while the old session drains, a refused key. No GPU.
+# roles reversed; plain and TLS) and a stand-in engine; registration, concurrent streams, a reset
+# that closes the engine's connection (also before any byte of the answer), ping timeout, GOAWAY
+# with a replacement while the old session drains, a refused key, the router's certificate checked.
+# No GPU.
 if(TARGET ninferno_connect)
   ninferno_add_test(ninferno_connect_test
     SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_connect.cpp"
-    LIBRARIES ninferno_connect PkgConfig::NGHTTP2)
+    LIBRARIES ninferno_connect PkgConfig::NGHTTP2 OpenSSL::SSL OpenSSL::Crypto)
 endif()
 
 # Speculation support (registry, corpus, fingerprints, profiles, watchdog, manifests): no GPU.

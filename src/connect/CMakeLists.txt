@@ -10,6 +10,8 @@ if(NOT NGHTTP2_FOUND OR NOT OpenSSL_FOUND)
   message(STATUS "ninferno-connect: not built (it needs libnghttp2 >= 1.60 and OpenSSL 3)")
   return()
 endif()
+# Seen by the tests too (a stand-in router's TLS).
+set_target_properties(OpenSSL::SSL OpenSSL::Crypto PROPERTIES IMPORTED_GLOBAL TRUE)
 
 add_library(ninferno_connect STATIC
   link.cpp

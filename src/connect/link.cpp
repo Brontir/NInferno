@@ -282,12 +282,15 @@ std::unique_ptr<Link> dial(const RouterUrl& url, const TlsOptions& tls, int time
         return nullptr;
     }
     SSL* ssl = SSL_new(ctx);
-    // The name the certificate must carry, and the name the router is asked for (SNI: not for an
-    // address literal).
-    (void)SSL_set1_host(ssl, url.host.c_str());
+    // What the certificate must carry: the host's DNS name, or for an address literal that address
+    // (an IP name of its own); the name the router is asked for (SNI) only for a DNS name.
     in6_addr any{};
-    if (inet_pton(AF_INET, url.host.c_str(), &any) != 1 &&
-        inet_pton(AF_INET6, url.host.c_str(), &any) != 1) {
+    const bool literal = inet_pton(AF_INET, url.host.c_str(), &any) == 1 ||
+                         inet_pton(AF_INET6, url.host.c_str(), &any) == 1;
+    if (literal) {
+        (void)X509_VERIFY_PARAM_set1_ip_asc(SSL_get0_param(ssl), url.host.c_str());
+    } else {
+        (void)SSL_set1_host(ssl, url.host.c_str());
         (void)SSL_set_tlsext_host_name(ssl, url.host.c_str());
     }
     static constexpr unsigned char kAlpn[] = {8, 'h', 't', 't', 'p', '/', '1', '.', '1'};

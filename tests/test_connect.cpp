@@ -9,12 +9,18 @@
 // - Unanswered PINGs end the session, and the worker dials again.
 // - After a GOAWAY a new connection comes while the old one finishes its answer.
 // - A refused key stops the worker.
+// - Over TLS: a router the worker trusts serves; an untrusted certificate, or one for another
+//   name, is refused before anything is sent.
 #include "connect/connector.h"
 #include "connect/link.h"
 
 #include <httplib.h>
 #include <nghttp2/nghttp2.h>
 #include <nlohmann/json.hpp>
+#include <openssl/evp.h>
+#include <openssl/pem.h>
+#include <openssl/ssl.h>
+#include <openssl/x509v3.h>
 
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -25,12 +31,15 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <functional>
 #include <future>
 #include <map>
 #include <string>
 #include <thread>
+#include <tuple>
 
 namespace {
 
@@ -148,20 +157,45 @@ struct Listener {
     }
 };
 
+// The router's end of one dialed connection: plain TCP, or TLS over it.
+struct Conn {
+    int fd   = -1;
+    SSL* ssl = nullptr;
+    Conn(int f, SSL* s = nullptr) : fd(f), ssl(s) {} // NOLINT: a plain fd is a plain connection
+    [[nodiscard]] bool wait(int ms) const {
+        if (ssl && SSL_pending(ssl) > 0) { return true; }
+        pollfd p{fd, POLLIN, 0};
+        return ::poll(&p, 1, ms) > 0;
+    }
+    ssize_t recv(char* data, std::size_t size) const {
+        return ssl ? SSL_read(ssl, data, static_cast<int>(size)) : ::recv(fd, data, size, 0);
+    }
+    ssize_t send(const char* data, std::size_t size) const {
+        return ssl ? SSL_write(ssl, data, static_cast<int>(size))
+                   : ::send(fd, data, size, MSG_NOSIGNAL);
+    }
+    void close() const {
+        if (ssl) {
+            (void)SSL_shutdown(ssl);
+            SSL_free(ssl);
+        }
+        ::close(fd);
+    }
+};
+
 struct Upgrade {
     std::string head; // lower-cased
     std::string body;
 };
 
 // The worker's Upgrade request: its head (to the blank line) and its Content-Length body.
-bool read_upgrade(int fd, Upgrade* out) {
+bool read_upgrade(Conn conn, Upgrade* out) {
     std::string buffer;
     char chunk[4096];
     std::size_t end = std::string::npos;
     while ((end = buffer.find("\r\n\r\n")) == std::string::npos) {
-        pollfd p{fd, POLLIN, 0};
-        if (::poll(&p, 1, 3000) <= 0) { return false; }
-        const ssize_t n = ::recv(fd, chunk, sizeof chunk, 0);
+        if (!conn.wait(3000)) { return false; }
+        const ssize_t n = conn.recv(chunk, sizeof chunk);
         if (n <= 0) { return false; }
         buffer.append(chunk, static_cast<std::size_t>(n));
     }
@@ -173,26 +207,25 @@ bool read_upgrade(int fd, Upgrade* out) {
     }
     out->body = buffer.substr(end + 4);
     while (out->body.size() < length) {
-        pollfd p{fd, POLLIN, 0};
-        if (::poll(&p, 1, 3000) <= 0) { return false; }
-        const ssize_t n = ::recv(fd, chunk, sizeof chunk, 0);
+        if (!conn.wait(3000)) { return false; }
+        const ssize_t n = conn.recv(chunk, sizeof chunk);
         if (n <= 0) { return false; }
         out->body.append(chunk, static_cast<std::size_t>(n));
     }
     return true;
 }
 
-bool send_all(int fd, std::string_view data) {
+bool send_all(Conn conn, std::string_view data) {
     while (!data.empty()) {
-        const ssize_t n = ::send(fd, data.data(), data.size(), MSG_NOSIGNAL);
+        const ssize_t n = conn.send(data.data(), data.size());
         if (n <= 0) { return false; }
         data.remove_prefix(static_cast<std::size_t>(n));
     }
     return true;
 }
 
-bool switch_protocols(int fd) {
-    return send_all(fd, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: "
+bool switch_protocols(Conn conn) {
+    return send_all(conn, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: "
                         "ninfer-reverse-h2\r\n\r\n");
 }
 
@@ -205,7 +238,7 @@ struct H2Stream {
 // The router's HTTP/2 client on a switched connection.
 class H2Client {
 public:
-    explicit H2Client(int fd) : fd_(fd) {
+    explicit H2Client(Conn conn) : conn_(conn) {
         nghttp2_session_callbacks* cb = nullptr;
         nghttp2_session_callbacks_new(&cb);
         nghttp2_session_callbacks_set_on_header_callback(cb, &H2Client::on_header);
@@ -217,7 +250,7 @@ public:
     }
     ~H2Client() {
         nghttp2_session_del(session_);
-        ::close(fd_);
+        conn_.close();
     }
     H2Client(const H2Client&)            = delete;
     H2Client& operator=(const H2Client&) = delete;
@@ -267,16 +300,15 @@ public:
             const std::uint8_t* data = nullptr;
             nghttp2_ssize n          = 0;
             while ((n = nghttp2_session_mem_send2(session_, &data)) > 0) {
-                if (!send_all(fd_, std::string_view(reinterpret_cast<const char*>(data),
+                if (!send_all(conn_, std::string_view(reinterpret_cast<const char*>(data),
                                                      static_cast<std::size_t>(n)))) {
                     return done();
                 }
             }
             if (done()) { return true; }
             if (Clock::now() >= until) { return false; }
-            pollfd p{fd_, POLLIN, 0};
-            if (::poll(&p, 1, 10) > 0) {
-                const ssize_t got = ::recv(fd_, buffer, sizeof buffer, 0);
+            if (conn_.wait(10)) {
+                const ssize_t got = conn_.recv(buffer, sizeof buffer);
                 if (got <= 0) { return done(); }
                 if (nghttp2_session_mem_recv2(session_, reinterpret_cast<const std::uint8_t*>(buffer),
                                               static_cast<std::size_t>(got)) < 0) {
@@ -309,7 +341,7 @@ private:
         return 0;
     }
 
-    int fd_;
+    Conn conn_;
     nghttp2_session* session_ = nullptr;
     std::map<std::int32_t, H2Stream> streams_;
     std::map<std::int32_t, std::shared_ptr<std::pair<std::string, std::size_t>>> bodies_;
@@ -321,11 +353,14 @@ struct Worker {
     std::atomic<bool> stop{false};
     std::future<int> rc;
     Worker(const Listener& router, const Engine& engine, std::chrono::milliseconds ping,
-           std::size_t max_request_bytes = 64u << 20) {
+           std::size_t max_request_bytes = 64u << 20, const std::string& tls_ca_file = {}) {
         nc::ConnectorOptions o;
         std::string why;
-        o.routers                   = {*nc::parse_router_url(
-            "http://127.0.0.1:" + std::to_string(router.port) + "/ninfer/connect", &why)};
+        o.routers = {*nc::parse_router_url(
+            (tls_ca_file.empty() ? "http://127.0.0.1:" : "https://localhost:") +
+                std::to_string(router.port) + "/ninfer/connect",
+            &why)};
+        o.tls.ca_file               = tls_ca_file;
         o.key                       = "k-1";
         o.name                      = "box-1";
         o.connections               = 1;
@@ -355,6 +390,114 @@ std::unique_ptr<H2Client> accept_switched(const Listener& router, Upgrade* upgra
         return nullptr;
     }
     return std::make_unique<H2Client>(fd);
+}
+
+// A self-signed P-256 certificate for `name` (its subject and its one DNS name), PEM in two files
+// under the temporary directory; the certificate is also the worker's CA file.
+struct Certificate {
+    std::string cert_path;
+    std::string key_path;
+    explicit Certificate(const std::string& name) {
+        const std::string base = std::string(std::getenv("TMPDIR") ? std::getenv("TMPDIR") : "/tmp") +
+                                 "/ninferno_connect_test_" + std::to_string(::getpid()) + "_" + name;
+        cert_path = base + ".crt";
+        key_path  = base + ".key";
+        EVP_PKEY* key = EVP_EC_gen("P-256");
+        X509* x509    = X509_new();
+        ASN1_INTEGER_set(X509_get_serialNumber(x509), 1);
+        X509_gmtime_adj(X509_getm_notBefore(x509), -60);
+        X509_gmtime_adj(X509_getm_notAfter(x509), 3600);
+        X509_set_pubkey(x509, key);
+        X509_NAME* subject = X509_get_subject_name(x509);
+        X509_NAME_add_entry_by_txt(subject, "CN", MBSTRING_ASC,
+                                   reinterpret_cast<const unsigned char*>(name.c_str()), -1, -1, 0);
+        X509_set_issuer_name(x509, subject);
+        X509V3_CTX ctx;
+        X509V3_set_ctx_nodb(&ctx);
+        X509V3_set_ctx(&ctx, x509, x509, nullptr, nullptr, 0);
+        const std::string san = "DNS:" + name;
+        for (const auto& [nid, value] :
+             {std::pair{NID_subject_alt_name, san.c_str()}, std::pair{NID_basic_constraints, "critical,CA:TRUE"}}) {
+            X509_EXTENSION* ext = X509V3_EXT_conf_nid(nullptr, &ctx, nid, value);
+            X509_add_ext(x509, ext, -1);
+            X509_EXTENSION_free(ext);
+        }
+        X509_sign(x509, key, EVP_sha256());
+        FILE* c = std::fopen(cert_path.c_str(), "w");
+        PEM_write_X509(c, x509);
+        std::fclose(c);
+        FILE* k = std::fopen(key_path.c_str(), "w");
+        PEM_write_PrivateKey(k, key, nullptr, nullptr, 0, nullptr, nullptr);
+        std::fclose(k);
+        X509_free(x509);
+        EVP_PKEY_free(key);
+    }
+    ~Certificate() {
+        std::remove(cert_path.c_str());
+        std::remove(key_path.c_str());
+    }
+};
+
+// The router's TLS accept of one dial (nullptr when the worker refused its certificate).
+SSL* tls_accept(SSL_CTX* ctx, int fd) {
+    SSL* ssl = SSL_new(ctx);
+    SSL_set_fd(ssl, fd);
+    if (SSL_accept(ssl) != 1) {
+        SSL_free(ssl);
+        return nullptr;
+    }
+    return ssl;
+}
+
+void test_tls() {
+    const Certificate certificate("localhost");
+    SSL_CTX* server = SSL_CTX_new(TLS_server_method());
+    expect(SSL_CTX_use_certificate_file(server, certificate.cert_path.c_str(), SSL_FILETYPE_PEM) == 1 &&
+               SSL_CTX_use_PrivateKey_file(server, certificate.key_path.c_str(), SSL_FILETYPE_PEM) == 1,
+           "the stand-in router's certificate");
+    Engine engine;
+    {
+        // Trusted, named: the worker dials over TLS and serves.
+        Listener router;
+        Worker worker(router, engine, 1000ms, 64u << 20, certificate.cert_path);
+        const int fd = router.accept(5s);
+        SSL* ssl     = fd >= 0 ? tls_accept(server, fd) : nullptr;
+        expect(ssl != nullptr, "the worker's TLS handshake with a router it trusts");
+        Upgrade up;
+        if (ssl && read_upgrade(Conn{fd, ssl}, &up) && switch_protocols(Conn{fd, ssl})) {
+            expect(up.head.find("authorization: bearer k-1") != std::string::npos,
+                   "the key goes inside TLS");
+            H2Client c(Conn{fd, ssl});
+            const auto e = c.request("POST", "/echo", "over tls");
+            expect(c.pump(5s, [&] { return c.stream(e).closed; }) && c.stream(e).data == "over tls",
+                   "a request over the TLS tunnel");
+        } else if (fd >= 0) {
+            Conn{fd, ssl}.close();
+        }
+    }
+    // A router whose certificate the worker does not trust, or that names another host: no dial.
+    for (const auto& [host, ca, what] :
+         {std::tuple{std::string("localhost"), std::string(), "a certificate no trusted CA signed"},
+          std::tuple{std::string("127.0.0.1"), certificate.cert_path,
+                     "a certificate for another name"}}) {
+        Listener router;
+        auto accepted = std::async(std::launch::async, [&] {
+            const int fd = router.accept(5s);
+            if (fd < 0) { return false; }
+            SSL* ssl = tls_accept(server, fd);
+            const bool ok = ssl != nullptr;
+            Conn{fd, ssl}.close();
+            return ok;
+        });
+        std::string why;
+        auto url  = nc::parse_router_url("https://" + host + ":" + std::to_string(router.port), &why);
+        auto link = nc::dial(*url, {ca}, 3000, &why);
+        expect(link == nullptr && why.find("TLS handshake") != std::string::npos,
+               std::string(what) + ": refused (" + why + ")");
+        link.reset();
+        expect(!accepted.get(), std::string(what) + ": the router saw no handshake complete");
+    }
+    SSL_CTX_free(server);
 }
 
 void test_urls() {
@@ -501,10 +644,11 @@ int main() {
     test_ping_timeout_dials_again();
     test_goaway_replacement_while_draining();
     test_refused_key_stops();
+    test_tls();
     if (failures != 0) {
         std::fprintf(stderr, "connect: %d failure(s)\n", failures);
         return 1;
     }
-    std::printf("connect: registration, streams, resets, ping, GOAWAY and a refused key\n");
+    std::printf("connect: registration, streams, resets, ping, GOAWAY, a refused key and TLS\n");
     return 0;
 }
