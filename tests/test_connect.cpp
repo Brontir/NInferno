@@ -709,10 +709,7 @@ void test_refused_key_stops_every_slot() {
     if (!live || fd < 0) { return; }
     Upgrade up;
     (void)read_upgrade(fd, &up);
-    (void)send_all(fd, "HTTP/1.1 403 Forbidden
-Content-Length: 0
-
-");
+    (void)send_all(fd, "HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n");
     ::close(fd);
     // The live tunnel drains (GOAWAY) and closes while the router keeps answering it.
     const bool ended = live->pump(5s, [&] {
