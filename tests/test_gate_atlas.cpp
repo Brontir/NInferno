@@ -77,7 +77,7 @@ int main(int argc, char** argv) {
     };
     for (const Transfer t : {Transfer{"GeForce RTX 5080", "GeForce RTX 5090", 2.210019, true},
                              Transfer{"GeForce RTX 5070 Ti", "GeForce RTX 5060 Ti", 2.251839, false},
-                             Transfer{"GeForce RTX 4070 Ti", "NVIDIA L4", 0.797371, true}}) {
+                             Transfer{"GeForce RTX 4070 Ti", "L4", 0.797371, true}}) {
         const auto* r = row_named(atlas, t.target);
         expect(r != nullptr, std::string(t.target) + " is in the table");
         if (!r) { continue; }
