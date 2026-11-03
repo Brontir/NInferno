@@ -107,6 +107,94 @@ bool side_by_side_admits(const Weight& weight, LinearPolicy policy, std::int32_t
     return family == generic::Family::RegisterMma;
 }
 
+LinearDecision linear_decision(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+    LinearDecision d;
+    const LinearPolicy a8_policy = generic::prefill_a8_policy(w.qtype, policy);
+    const bool prefill_a8        = generic::q8_prefill_a8(w, a8_policy, tokens);
+    d.policy                     = prefill_a8 ? a8_policy : policy;
+    // A shape the tuned tables do not own takes the generic path (the tables win when they do);
+    // under the invariant route profile every shape the generic path reads does (prefill_routes.h),
+    // and so does an owned shape whose route-table entry claims this call (RouteEntry::claim: the
+    // generic route measured faster than the shape's own kernels at these widths), and, on a GPU
+    // without tensor mma.sync, a call the tiled tensor-core route takes (volta_tiled_route). An
+    // NVFP4 prefill call (T >= 17) whose policy allows A8 but not A4 takes the generic W4A8
+    // (owned_prefill_w4a8): the native NVFP4 shapes compute A16 and A4 only.
+    if (invariant_routes_active()) {
+        d.claim = LinearClaim::Invariant;
+    } else if (!linear_shape_registered(w.qtype, w.n, w.k)) {
+        d.claim = LinearClaim::Unregistered;
+    } else if (generic::owned_decode_r8(w, d.policy, tokens)) {
+        d.claim = LinearClaim::OwnedDecodeR8;
+    } else if (prefill_a8) {
+        d.claim = LinearClaim::PrefillA8;
+    } else if (generic::owned_prefill_w4a8(w, d.policy, tokens)) {
+        d.claim = LinearClaim::OwnedPrefillW4a8;
+    } else if (generic::volta_tiled_route(w, d.policy, tokens)) {
+        d.claim = LinearClaim::VoltaTiled;
+    } else if (generic::table_claims({w.qtype, d.policy, w.n, w.k, generic::Epilogue::Store},
+                                     tokens, prefill_routes_active())) {
+        d.claim = LinearClaim::RouteTable;
+    }
+    return d;
+}
+
+const char* linear_claim_name(LinearClaim claim) {
+    switch (claim) {
+    case LinearClaim::Owned: return "owned";
+    case LinearClaim::Invariant: return "invariant";
+    case LinearClaim::Unregistered: return "unregistered";
+    case LinearClaim::OwnedDecodeR8: return "owned_decode_r8";
+    case LinearClaim::PrefillA8: return "prefill_a8";
+    case LinearClaim::OwnedPrefillW4a8: return "owned_prefill_w4a8";
+    case LinearClaim::VoltaTiled: return "volta_tiled";
+    case LinearClaim::RouteTable: return "route_table";
+    }
+    return "unknown";
+}
+
+std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy policy,
+                                               std::int32_t tokens) {
+    using Status                  = LinearCandidate::Status;
+    const LinearDecision decision = linear_decision(w, policy, tokens);
+    const bool generic_reads      = generic::supports(w);
+    const bool registered         = linear_shape_registered(w.qtype, w.n, w.k);
+    // As dispatch_linear runs the call: the generic path where the decision hands it the call and
+    // it reads the weight, else the shape's own kernels where the table registers the shape (the
+    // invariant profile refuses instead).
+    const bool runs_generic = decision.claim != LinearClaim::Owned && generic_reads;
+    const bool runs_owned =
+        !runs_generic && registered && decision.claim != LinearClaim::Invariant;
+    std::vector<LinearCandidate> out;
+    LinearCandidate owned;
+    owned.id = w.qtype == QType::Q8_G32_FP16 ? "owned:q8"
+                                             : "owned:" + generic::format_label(w.qtype);
+    if (!registered) {
+        owned.why = "no shape-owned kernel for this [N,K]";
+    } else {
+        if (w.qtype == QType::Q8_G32_FP16) {
+            owned.id += std::string(".") +
+                        q8_launch_name(select_q8_launch(w.n, w.k, tokens, decision.policy));
+        }
+        owned.status = runs_owned ? Status::Selected : Status::Inadmissible;
+        if (!runs_owned) { owned.why = linear_claim_name(decision.claim); }
+    }
+    out.push_back(std::move(owned));
+    LinearCandidate route;
+    route.id = "generic";
+    if (!generic_reads) {
+        route.why = "the generic path does not read this format or layout";
+    } else {
+        const generic::Problem problem{w.qtype, decision.policy, w.n, w.k,
+                                       generic::Epilogue::Store};
+        route.id += ":" + generic::route_name(
+                              generic::select_route(problem, w, tokens, prefill_routes_active()));
+        route.status = runs_generic ? Status::Selected : Status::Inadmissible;
+        route.why    = runs_generic ? linear_claim_name(decision.claim) : "owned";
+    }
+    out.push_back(std::move(route));
+    return out;
+}
+
 } // namespace detail
 
 namespace {
@@ -174,28 +262,11 @@ void validate_linear_semantics(const Tensor& x, const Weight& w, const Tensor& o
 bool dispatch_linear(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy policy,
                      WorkspaceArena* workspace, cudaStream_t stream, bool release_next = false) {
     detail::generic::refuse_frag(w, "linear");
-    const LinearPolicy a8_policy = detail::generic::prefill_a8_policy(w.qtype, policy);
-    const bool prefill_a8        = detail::generic::q8_prefill_a8(w, a8_policy, x.ne[1]);
-    if (prefill_a8) { policy = a8_policy; }
-    // A shape the tuned tables do not own takes the generic path (the tables win when they do);
-    // under the invariant route profile every shape the generic path reads does (prefill_routes.h),
-    // and so does an owned shape whose route-table entry claims this call (RouteEntry::claim: the
-    // generic route measured faster than the shape's own kernels at these widths), and, on a GPU
-    // without tensor mma.sync, a call the tiled tensor-core route takes (volta_tiled_route). An
-    // NVFP4 prefill call (T >= 17) whose policy allows A8 but not A4 takes the generic W4A8
-    // (owned_prefill_w4a8): the native NVFP4 shapes compute A16 and A4 only.
-    const bool generic_claims = [&] {
-        if (invariant_routes_active() || !detail::linear_shape_registered(w.qtype, w.n, w.k) ||
-            detail::generic::owned_decode_r8(w, policy, x.ne[1]) || prefill_a8 ||
-            detail::generic::owned_prefill_w4a8(w, policy, x.ne[1]) ||
-            detail::generic::volta_tiled_route(w, policy, x.ne[1])) {
-            return true;
-        }
-        const detail::generic::Problem problem{w.qtype, policy, w.n, w.k,
-                                               detail::generic::Epilogue::Store};
-        return detail::generic::table_claims(problem, x.ne[1], prefill_routes_active());
-    }();
-    if (generic_claims && detail::generic::supports(w)) {
+    // The decision (linear_decision, #306): the generic path where a rule claims the call, the
+    // shape's own kernels otherwise.
+    const detail::LinearDecision decision = detail::linear_decision(w, policy, x.ne[1]);
+    policy                                = decision.policy;
+    if (decision.claim != detail::LinearClaim::Owned && detail::generic::supports(w)) {
         if (release_next) {
             return detail::generic::linear_release_next(x, w, out, policy, workspace, stream);
         }

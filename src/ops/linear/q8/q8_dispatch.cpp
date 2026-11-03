@@ -67,6 +67,33 @@ Q8Launch select_q8_launch(std::int32_t n, std::int32_t k, std::int32_t t, Linear
     return select_q8_a16_launch(n, k, t);
 }
 
+const char* q8_launch_name(Q8Launch launch) {
+#define NINFERNO_Q8_LAUNCH(name)                                                                   \
+    if (launch == launch_q8_a16_##name) return #name;
+    NINFERNO_Q8_LAUNCH(gemv_r4_w1_k16384)
+    NINFERNO_Q8_LAUNCH(simt_r8_t4)
+    NINFERNO_Q8_LAUNCH(simt_r8_t8)
+    NINFERNO_Q8_LAUNCH(mma_r32_t64)
+    NINFERNO_Q8_LAUNCH(mma_r32_t96)
+    NINFERNO_Q8_LAUNCH(mma_r32_t128)
+    NINFERNO_Q8_LAUNCH(mma_r48_t64)
+    NINFERNO_Q8_LAUNCH(mma_r64_t96)
+    NINFERNO_Q8_LAUNCH(mma_r64_t128)
+    NINFERNO_Q8_LAUNCH(mma_r96_t96)
+    NINFERNO_Q8_LAUNCH(mma_r128_t64)
+    NINFERNO_Q8_LAUNCH(mma_r128_t80)
+    NINFERNO_Q8_LAUNCH(mma_r64x16_t48_k128_a1)
+    NINFERNO_Q8_LAUNCH(mma_r64x32_t64_k128_a1)
+    NINFERNO_Q8_LAUNCH(mma_r64x32_t128)
+    NINFERNO_Q8_LAUNCH(mma_r128x64_t256)
+    NINFERNO_Q8_LAUNCH(simt_r4_t4_w2_g16_s2)
+    NINFERNO_Q8_LAUNCH(sliced_r16_t16_w8_s2)
+    NINFERNO_Q8_LAUNCH(sliced_r16_t16_w4_s2)
+    NINFERNO_Q8_LAUNCH(sliced_r16_t32_w4_s2)
+#undef NINFERNO_Q8_LAUNCH
+    return "unnamed";
+}
+
 void q8_dispatch(const Tensor& x, const Weight& w, Tensor& out, LinearPolicy policy,
                  cudaStream_t stream) {
     select_q8_launch(w.n, w.k, x.ne[1], policy)(x, w, out, stream);

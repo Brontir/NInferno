@@ -97,6 +97,12 @@ ninferno_add_op_test(ninferno_route_classes_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_classes.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
+# one selected as dispatch_linear runs.
+ninferno_add_op_test(ninferno_linear_candidates_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_linear_candidates.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # The generic path's choices on thirteen substituted boards against selector_golden/<board>.txt:
 # a selector change shows line by line; a refactor must leave every file as it was.
 ninferno_add_op_test(ninferno_selector_golden_test
