@@ -1167,7 +1167,11 @@ void qwen3_8_27b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) {
             recipe.assign(i, kFp8, Method::Fp8RowMaxabs);
             continue;
         }
-        recipe.assign(i, nvfp4 ? QType::NVFP4 : kFp8, Method::ImportEncoded,
+        // An FP8 projection keeps its published scales: unsloth's one BF16 scale a row (row_bf16),
+        // NVIDIA's one FP32 scale a tensor (row_f32, or row_bf16 where that value is a BF16 one).
+        const QType format =
+            nvfp4 ? QType::NVFP4 : source->encoded_format().value_or(kFp8);
+        recipe.assign(i, format, Method::ImportEncoded,
                       parameter.encoded_source(quantized,
                                                nvfp4 ? MatrixFormat::Nvfp4 : MatrixFormat::Fp8Row));
         recipe.set_policy(i, nvfp4 ? ActivationPolicy::AllowA4 : ActivationPolicy::AllowA8);

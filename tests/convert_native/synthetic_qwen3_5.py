@@ -89,8 +89,18 @@ class Q(Writer):
         self.raw(prefix + ".weight_scale", "BF16", (rows, 1),
                  scales.to(torch.bfloat16).view(torch.uint8).numpy().tobytes())
 
+    def fp8_tensor(self, prefix, rows, k):
+        """Model Optimizer's FP8: one FP32 scale (not a BF16 value) for the whole matrix."""
+        codes = torch.randint(0, 0x7F, (rows, k), generator=self.generator, dtype=torch.int64)
+        signs = torch.randint(0, 2, (rows, k), generator=self.generator, dtype=torch.int64) * 0x80
+        self.raw(prefix + ".weight", "F8_E4M3", (rows, k), (codes | signs).to(torch.uint8).numpy().tobytes())
+        self.f32(prefix + ".weight_scale", [], 0.0123456789)
+        self.f32(prefix + ".input_scale", [], 0.05)
+
     def matrix(self, kind, prefix, rows, k, divisor=0.5, input_divisor=0.8):
-        if kind == "bf16":
+        if kind == "fp8-tensor":
+            self.fp8_tensor(prefix, rows, k)
+        elif kind == "bf16":
             self.bf16(prefix + ".weight", (rows, k))
         elif kind == "fp8":
             self.fp8(prefix, rows, k)
@@ -204,15 +214,17 @@ def base_checkpoint(root: Path, *, moe_model: bool, nested: bool, tied: bool, vi
     (root / "ranking.i64").write_bytes(counts.to(torch.int64).numpy().tobytes())
 
 
-def quantized_dense(root: Path, *, fp8: bool, seed: int, modelopt: bool = False) -> None:
+def quantized_dense(root: Path, *, fp8: bool, seed: int, modelopt: bool = False,
+                    fp8_tensor: bool = False) -> None:
     """Text-only names (model.layers.*): every site the NVFP4 recipes read, encoded.
 
     modelopt: NVIDIA's Qwen3.8-27B-NVFP4 layout (#342): FP8 attention, every MLP and lm_head in
-    Model Optimizer NVFP4 (weight / weight_scale_2 multipliers).
+    Model Optimizer NVFP4 (weight / weight_scale_2 multipliers). fp8_tensor: its FP8 projections
+    with one FP32 scale a matrix, as NVIDIA publishes them (the native converter's only).
     """
     w = Q(seed)
     w.bf16("model.embed_tokens.weight", (VOCAB, H))
-    other = "fp8" if fp8 else "nvfp4"
+    other = "fp8-tensor" if fp8_tensor else "fp8" if fp8 else "nvfp4"
     if modelopt:
         w.nvfp4("lm_head", VOCAB, H, 0.45, 0.7, layout="modelopt")
     elif fp8:
@@ -310,6 +322,7 @@ def main() -> int:
         quantized_dense(work / "q-nvfp4", fp8=False, seed=23)
         quantized_dense(work / "q-fp8", fp8=True, seed=24)
         quantized_dense(work / "q-fp8-modelopt", fp8=True, seed=28, modelopt=True)
+        quantized_dense(work / "q-nvidia", fp8=True, seed=29, modelopt=True, fp8_tensor=True)
         quantized_moe(work / "q-moe", seed=25)
         drafter(work / "dflash", "dflash", 26)
         drafter(work / "dflash2", "dflash2", 27)
@@ -388,6 +401,34 @@ def main() -> int:
                     found.append(f"{name}: text/output_head {head}, {want} row FP8 expected")
             errors += found
             print(f"{name}: {'ok' if not failed and not found else 'FAILED'}", flush=True)
+        # NVIDIA's whole layout (#342): per-tensor FP32 FP8 projections kept as row_f32, Model
+        # Optimizer NVFP4 MLP, the NVFP4 lm_head made row-BF16 FP8 from the BF16 model. Native only:
+        # the Python converter refuses per-tensor FP8 with a message naming ninferno-convert.
+        args = [f"--model={dense}", "--recipe=qwen3_8_27b_nvfp4", "--components=text",
+                f"--source=quantized={work / 'q-nvidia'}"]
+        out = work / "native" / "nvidia.ninferno"
+        result = subprocess.run([str(native), *args, "--quiet", f"--out={out}"], cwd=repository,
+                                capture_output=True, text=True)
+        refused = subprocess.run([sys.executable, "-m", "tools.convert", *args, "--device=cpu",
+                                  f"--out={work / 'py' / 'nvidia.ninferno'}"], cwd=repository,
+                                 capture_output=True, text=True)
+        ok = result.returncode == 0
+        if ok:
+            report = json.loads(Path(str(out) + ".conversion.json").read_text(encoding="utf-8"))
+            formats = {p: (m["method"], m["format"]) for m in report["methods"] for p in m["parameters"]}
+            ok = (formats.get("text/output_head") == ("fp8_row_maxabs", "fp8_e4m3fn_row_bf16")
+                  and formats.get("text/layers/3/attention/query") == ("import_encoded", "fp8_e4m3fn_row_f32")
+                  and all(f == ("import_encoded", "nvfp4") for p, f in formats.items() if "/mlp/" in p))
+            if not ok:
+                errors.append(f"nvidia layout: {sorted(set(formats.values()))}")
+        else:
+            errors.append(f"nvidia layout: native failed
+{result.stderr[-2000:]}")
+        if refused.returncode == 0 or "ninferno-convert" not in refused.stderr:
+            ok = False
+            errors.append(f"nvidia layout: Python did not refuse it
+{refused.stderr[-1000:]}")
+        print(f"nvidia layout: {'ok' if ok else 'FAILED'}", flush=True)
         # --drafter-quant on a target quantizes its companion drafter only (native only: the
         # Python converter has no such option). The text keeps the recipe's methods.
         methods = {}

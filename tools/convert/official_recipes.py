@@ -172,6 +172,17 @@ def qwen3_8_27b_nvfp4(model, recipe, sources):
         if nvfp4 and name == "text/output_head":
             recipe.assign(name, format=FP8, method=fp8_row_maxabs)
             continue
+        if not nvfp4:
+            # This converter reads row-BF16 FP8 (one BF16 scale a row, unsloth's); NVIDIA's
+            # per-tensor FP32 scales are ninferno-convert's (it keeps them as row_f32).
+            for store, tensor in source.origin:
+                scale = tensor.removesuffix(".weight") + ".weight_scale"
+                if store.has(scale) and (store.describe(scale).dtype != "BF16"
+                                         or list(store.describe(scale).shape)[-1:] != [1]):
+                    raise ValueError(
+                        f"{scale}: per-tensor FP8 scales (NVIDIA Model Optimizer); the Python "
+                        "converter reads row-BF16 FP8 only, convert this checkpoint with "
+                        "ninferno-convert")
         format = "nvfp4" if nvfp4 else FP8
         recipe.assign(
             name,
