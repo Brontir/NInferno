@@ -124,7 +124,7 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
     client->set_keep_alive(false);
     // A reset that comes before the engine's socket exists finds nothing to stop: the socket is
     // shut as it is made instead, so the request fails at once.
-    client->set_socket_options([s](httplib::socket_t sock) {
+    client->set_socket_options([s](auto sock) {
         if (s->cancel_flag.load()) { ::shutdown(sock, SHUT_RDWR); }
     });
     {
