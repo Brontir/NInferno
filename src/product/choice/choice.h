@@ -141,7 +141,7 @@ struct QuantOption {
     std::string label;          // as --quant takes it
     // Its files (spec::weights_identity of their SHA-256 digests; "" unknown): a label's measured
     // accuracy point is those files' alone (choice_constants.h kQuantKld).
-    std::string weights;
+    std::string files;
     double bits_per_weight = 0;
     double weight_bytes    = 0; // what one decode step reads (product::quant_option_of)
     // Of them, an MoE's routed expert banks as stored (0: unknown, their parameters' share stands in);

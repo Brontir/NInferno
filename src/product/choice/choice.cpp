@@ -378,7 +378,7 @@ double chunk_share(const ModelFacts& model, std::uint32_t chunk) noexcept {
 }
 
 // The quantization term at `bits` (choice_constants.h kQuantKld) and what it rests on. A point is
-// these weights' measurement only when `weights` are the very file measured (#299: a label and its
+// these weights' measurement only when `files` are the very file measured at its bits (#299: a label and its
 // bits also match another repository's quantization, or files of unknown identity); the same
 // family's point of the label at the same bits is then a proxy for them, its value the same.
 // Otherwise log KLD is linear in bits between the two measured points around `bits`; below the
@@ -389,7 +389,7 @@ struct QuantKld {
     Evidence evidence = Evidence::Interpolated;
 };
 
-QuantKld quant_kld(double bits, std::string_view label, std::string_view weights, bool same_family) {
+QuantKld quant_kld(double bits, std::string_view label, std::string_view files, bool same_family) {
     double reference_bits = 0;
     std::vector<const QuantKldPoint*> points;
     for (const QuantKldPoint& p : kQuantKld) {
@@ -397,11 +397,13 @@ QuantKld quant_kld(double bits, std::string_view label, std::string_view weights
         // point: an output-affecting choice rests on two cards (AGENTS.md). The reference is 0 by
         // definition.
         if (p.kld > 0 && p.cards < kQuantKldCards) { continue; }
-        const bool same_file  = !weights.empty() && weights == p.file;
+        // A point stands for its bits alone: the same file counted at other bits (an artifact's
+        // tensors apart from a drafter's) takes the interpolation, as before (#299 changes no value).
+        const bool same_bits  = std::abs(p.bits_per_weight - bits) < 0.05;
+        const bool same_file  = !files.empty() && files == p.file && same_bits;
         // A label's point stands for the same family at the same bits (another model's Q4_K_M has
         // other bits per weight and takes the interpolation).
-        const bool same_label = same_family && !label.empty() && p.label == label &&
-                                std::abs(p.bits_per_weight - bits) < 0.05;
+        const bool same_label = same_family && !label.empty() && p.label == label && same_bits;
         if (p.kld <= 0 && p.label == label) {
             return {0, same_file ? Evidence::Measured : same_label ? Evidence::Proxy : Evidence::Interpolated};
         }
@@ -1384,7 +1386,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
     // Unknown bits (0) have no place on the curve: no term, and the quantization stays the rule's
     // (plan_quants weighs the quantizations only where every row's bits are known).
     const QuantKld q = quant.bits_per_weight > 0
-                           ? quant_kld(quant.bits_per_weight, quant.label, quant.weights, !other_curve)
+                           ? quant_kld(quant.bits_per_weight, quant.label, quant.files, !other_curve)
                            : QuantKld{.evidence = Evidence::StandIn};
     const std::string curve(kQuantKldSource);
     std::string quant_source = "interpolated by bits per weight on " + curve;
@@ -1394,7 +1396,7 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         quant_source = curve;
     } else if (q.evidence == Evidence::Proxy) {
         quant_source = std::string("the label's measurement on other files (") +
-                       (quant.weights.empty() ? "these files' identity is unknown" : "not these files") +
+                       (quant.files.empty() ? "these files' identity is unknown" : "not these files") +
                        "): " + curve;
     }
     add(Axis::Quant, quant.label, q.kld, q.evidence == Evidence::Measured, std::move(quant_source),

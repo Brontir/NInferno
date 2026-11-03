@@ -133,7 +133,7 @@ Q6_K 0.0063, Q5_K_M 0.0106, Q4_K_M 0.0193, IQ4_XS 0.0285, Q3_K_M 0.068, UD-IQ3_X
 models (marked as not measured); above Q6_K it falls on a straight line to 0 at Q8_0's bits, and
 any model's Q8_0 is its own reference (0). A point is the measurement of one file
 (`unsloth/Qwen3.5-9B-GGUF` revision 3885219b, each point's SHA-256): a quantization's term says
-`measured` only on those files (`QuantOption::weights`, spec::weights_identity of a hub row's
+`measured` only on those files at its bits (`QuantOption::files`, spec::weights_identity of a hub row's
 digests, an artifact's recorded base inputs or a fetched GGUF's); the same family's label at the same
 bits on other or unknown files takes the same value as a `proxy` (#299: another repository's
 Q4_K_M is another quantization). The value, and so every decision, is the same either way; the term's

@@ -558,7 +558,7 @@ void prefills_by_format(const json& fixture) {
     const ch::ModelFacts mf   = model_at(m, "Q8_0");
     const ch::QuantOption q8  = quant_of("Q8_0", m.at("quants").at("Q8_0"));
     ch::QuantOption kq        = q8;
-    kq.weights                = ch::WeightClass::KQuant;
+    kq.files                = ch::WeightClass::KQuant;
     ch::Candidate c;
     c.kv = KvCacheStorage::Int8Group64;
     const auto at = [&](const char* card, const ch::QuantOption& q, const ch::ModelFacts& model,
@@ -855,24 +855,29 @@ void weighs_the_quantizations(const json& fixture) {
     // #299: the measured point is the files measured; the same label at the same bits on files of
     // another (or unknown) identity takes the same value as a proxy, never as measured.
     const std::string measured_q4 = "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8";
-    q.weights = measured_q4;
+    q.files = measured_q4;
     check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured &&
               quant_term(q).evidence == ch::Evidence::Measured,
           "Q4_K_M, the files measured: its measured point");
-    q.weights.clear();
+    q.files.clear();
     check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && !quant_term(q).measured &&
               quant_term(q).evidence == ch::Evidence::Proxy &&
               quant_term(q).source.find("identity is unknown") != std::string::npos,
           "Q4_K_M, files unknown: the same value, a proxy");
-    q.weights = std::string(64, 'a'); // another repository's Q4_K_M at the same bits
+    q.files = std::string(64, 'a'); // another repository's Q4_K_M at the same bits
     check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).evidence == ch::Evidence::Proxy &&
               quant_term(q).source.find("not these files") != std::string::npos,
           "Q4_K_M, other files: the same value, a proxy");
-    q.weights = measured_q4;
+    q.files = measured_q4;
     q.label   = "renamed"; // the files measured under another label: still their measurement
     check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "the files decide, not the label");
+    q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before
+    check(!quant_term(q).measured && quant_term(q).evidence == ch::Evidence::Interpolated &&
+              quant_term(q).kld < 0.01925 && quant_term(q).kld > 0.01828,
+          "the measured files at other bits: interpolated");
+    q.bits_per_weight = b.quants[0].bits_per_weight;
     q.label = "Q4_K_M";
-    q.weights.clear();
+    q.files.clear();
     q.bits_per_weight = 4.9; // another model's Q4_K_M: interpolated, not the 9B's point
     check(!quant_term(q).measured && quant_term(q).kld > 0.01925 &&
               quant_term(q).evidence == ch::Evidence::Interpolated,
@@ -889,9 +894,9 @@ void weighs_the_quantizations(const json& fixture) {
     q.bits_per_weight = 8.3; // another model's Q8_0 (other bits): its own reference
     check(quant_term(q).kld == 0 && !quant_term(q).measured, "any model's Q8_0: the reference");
     q.bits_per_weight = 8.516;
-    q.weights         = "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4";
+    q.files         = "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4";
     check(quant_term(q).kld == 0 && quant_term(q).measured, "the reference's own files: measured (0 against itself)");
-    q.weights.clear();
+    q.files.clear();
     check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Proxy, "another Q8_0 at its bits: a proxy");
     ch::Task task;
     const ch::Gates open{true, true};
@@ -1111,7 +1116,7 @@ void prices_dense_prefill_tiles() {
     m.linears.push_back({24576, 4096, 32, false});
     m.linears.push_back({4096, 12288, 32, false});
     ch::QuantOption q;
-    q.weights = ch::WeightClass::Q8;
+    q.files = ch::WeightClass::Q8;
     struct Census {
         ch::CardFacts card;
         double ms;
@@ -1148,7 +1153,7 @@ void prices_dense_prefill_tiles() {
         lone_worst     = std::max(lone_worst, std::abs(t * 1e6 / l.us - 1));
     }
     check(lone_worst < 0.06, "an underfilled grid: a CTA alone on its SM, within 6 % on six cards");
-    q.weights = ch::WeightClass::KQuant;
+    q.files = ch::WeightClass::KQuant;
     check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "a K-quant without a K format in its label: unknown");
     // ggml's matrix kernel by its tiles (DECISIONS 69): Qwen3.5 9B Q6_K's 512-token calls on the RTX
     // 4060 Ti, 12288 x 4096 (a tile a CTA in 12 rounds of its 34 SMs: the census's 998.6 us) and

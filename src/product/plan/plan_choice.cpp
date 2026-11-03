@@ -205,7 +205,7 @@ choice::QuantOption quant_option_of(const PlanSourceFacts& facts, const std::str
     quant.label = label.empty() ? "the model's weights" : label;
     // The files the facts were read at (a hub row's own: row_facts): a label's accuracy point is
     // their measurement only if they are the files measured (#299).
-    quant.weights = facts.shape.weights;
+    quant.files = facts.shape.weights;
     // The target's weights: the model's own DFlash drafter (an artifact's dflash component) is
     // the drafter's, priced by its round, and the proposal head (proposal/*) the drafters' (read in
     // their place of the full head, never by a decode step); the bits over the elements the same
