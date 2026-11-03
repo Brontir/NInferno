@@ -27,7 +27,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
-#include <limits>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -467,9 +466,7 @@ bool mmq_admits(const Weight& w, LinearPolicy policy) {
 // 5060 Ti's: the 5070 Ti's route profile prefills on the tiles, DECISIONS 62); Volta and the
 // architectures nobody measured keep the tiles. The gate's table: measured::kMmqPrefillPays
 // (core/measured_boards.h), which the product's estimate reads too.
-bool mmq_prefill_device() {
-    return measured::measured_gate(measured::kMmqPrefillPays, std::numeric_limits<double>::max());
-}
+bool mmq_prefill_device() { return measured::mmq_prefill_device_pays(); }
 
 bool mmq_prefill_wins(const Problem& p, const Weight& w) {
     return mmq_prefill_device() && ggml_mmq_format(p.qtype) &&
