@@ -145,11 +145,18 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
     request.body    = std::move(s->body);
     if (!s->authority.empty()) { request.set_header("X-Forwarded-Host", s->authority); }
     // The answer's head (under s->mu).
+    // A bodyless answer's Content-Length (HEAD, 304) is the representation's size, an end-to-end
+    // field: it passes. Elsewhere HTTP/2's DATA frames carry the length.
+    const bool bodyless_length = s->method == "HEAD";
     const auto take_head = [&](const httplib::Response& response) {
         s->status = response.status;
         for (const auto& [name, value] : response.headers) {
             std::string key = lower(name);
-            if (!hop_by_hop(key)) { s->response_headers.emplace_back(std::move(key), value); }
+            const bool length_kept =
+                key == "content-length" && (bodyless_length || response.status == 304);
+            if (!hop_by_hop(key) || length_kept) {
+                s->response_headers.emplace_back(std::move(key), value);
+            }
         }
         s->head_ready = true;
     };
