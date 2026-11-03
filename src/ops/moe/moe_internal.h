@@ -79,9 +79,12 @@ struct PlanArgs {
 };
 
 // The SIMT router (moe_router_simt.cu): warps per CTA, the widest call, and its dynamic shared
-// memory: x staged as BF16.
+// memory: x staged as BF16 (read from global memory when it does not fit). The widest call is
+// the R8 route's (kR8Tokens): an A8 verify of up to eight tokens routes as decode does, so its
+// tokens' bytes are those of a decode call (with the register-MMA router from T = 5 they were
+// not: other logits, other weights).
 inline constexpr int kRouterSimtWarps     = 4;
-inline constexpr int kRouterSimtMaxTokens = 4;
+inline constexpr int kRouterSimtMaxTokens = 8;
 
 [[nodiscard]] constexpr std::size_t router_simt_smem_bytes(int tokens, int k) {
     return static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k) * 2;

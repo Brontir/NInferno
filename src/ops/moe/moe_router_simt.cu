@@ -1,16 +1,18 @@
-// The generic MoE's router at decode widths (moe.cpp router_simt_takes): a BF16 router of E rows
-// read by one warp per row, x staged in shared memory, FP32 dot products. The register-MMA router
-// takes 16 rows per CTA: 16 CTAs for 256 experts (8 for 128) on 170 SMs, each streaming 64 KB
-// alone, 4.1 us per layer in the Qwen3.6-35B decode census. Here E / 4 CTAs of four warps share
-// the read. A row's sum runs lane by lane over K in steps of 256 values and closes with one
-// butterfly: the order depends on K alone, so a token's logits are the same at every T (decode
-// and speculative verify agree), not those of the MMA router; the invariant profile keeps that one.
+// The generic MoE's router at decode and verify widths (T = 1..8): a BF16 router of E rows
+// read by one warp per row, x staged in shared memory (or read from global memory past it), FP32
+// dot products. The register-MMA router takes 16 rows per CTA: 16 CTAs for 256 experts (8 for 128)
+// on 170 SMs, each streaming 64 KB alone, 4.1 us per layer in the Qwen3.6-35B decode census.
+// Here E / 4 CTAs of four warps share the read. A row's sum runs lane by lane over K in steps of
+// 256 values and closes with one butterfly: the order depends on K alone, so a token's logits are
+// the same at every T (decode and speculative verify agree), not those of the MMA router; the
+// invariant profile keeps that one.
 //
 // Route (moe.cpp route_in_router): the CTA that finishes last (a ticket) then selects every token's
 // experts and plans the slots, select_plan_warp_kernel's arithmetic on the logits the grid just
 // wrote: one launch and one dependent round trip fewer per MoE layer.
 #include "core/device.h"
 #include "core/pdl.cuh"
+#include "ops/common/arch_limits.h"
 #include "ops/moe/moe_internal.h"
 #include "ops/moe/moe_route.cuh"
 
@@ -31,7 +33,7 @@ constexpr int kSimtSteps = 12;
 // MoE layer's calls are in stream order).
 __device__ int g_route_ticket;
 
-template <int T, bool Route>
+template <int T, bool Route, bool Staged>
 __global__ __launch_bounds__(kRouterSimtWarps *
                              32) void router_simt_kernel(GemmArgs a, SelectArgs s, PlanArgs p) {
     extern __shared__ __align__(16) unsigned char router_smem[];
@@ -62,14 +64,21 @@ __global__ __launch_bounds__(kRouterSimtWarps *
                             task, a.xq_codes, a.xq_scales, a.xq_sums, a.xq_lanes, a.xq_group);
         }
     }
+    // Staged: x in shared memory; otherwise (T x K past the default shared memory) each warp reads
+    // it from global memory, the same values in the same order.
     auto* xs      = reinterpret_cast<__nv_bfloat16*>(router_smem);
     const auto* x = static_cast<const __nv_bfloat16*>(a.x);
-    for (int i = static_cast<int>(threadIdx.x) * 8; i < T * k; i += kRouterSimtWarps * 32 * 8) {
-        const int t = i / k;
-        *reinterpret_cast<uint4*>(xs + i) =
-            *reinterpret_cast<const uint4*>(x + static_cast<std::int64_t>(t) * a.ldx + (i - t * k));
+    if constexpr (Staged) {
+        for (int i = static_cast<int>(threadIdx.x) * 8; i < T * k;
+             i += kRouterSimtWarps * 32 * 8) {
+            const int t = i / k;
+            *reinterpret_cast<uint4*>(xs + i) = *reinterpret_cast<const uint4*>(
+                x + static_cast<std::int64_t>(t) * a.ldx + (i - t * k));
+        }
+        __syncthreads();
     }
-    __syncthreads();
+    const __nv_bfloat16* xr = Staged ? xs : x;
+    const std::int64_t xld  = Staged ? k : a.ldx;
     float acc[T];
 #pragma unroll
     for (int t = 0; t < T; ++t) acc[t] = 0.0F;
@@ -89,7 +98,7 @@ __global__ __launch_bounds__(kRouterSimtWarps *
             const auto* wp = reinterpret_cast<const __nv_bfloat162*>(&wv[st]);
 #pragma unroll
             for (int t = 0; t < T; ++t) {
-                const uint4 xv = *reinterpret_cast<const uint4*>(xs + t * k + kk);
+                const uint4 xv = *reinterpret_cast<const uint4*>(xr + t * xld + kk);
                 const auto* xp = reinterpret_cast<const __nv_bfloat162*>(&xv);
 #pragma unroll
                 for (int j = 0; j < 4; ++j) {
@@ -135,14 +144,14 @@ __global__ __launch_bounds__(kRouterSimtWarps *
     }
 }
 
-template <int T, bool Route>
+template <int T, bool Route, bool Staged>
 void launch_route(const GemmArgs& args, const SelectArgs& select, const PlanArgs& plan,
                   cudaStream_t stream) {
     const dim3 grid(static_cast<unsigned>((args.rows + kRouterSimtWarps - 1) / kRouterSimtWarps));
     // The route's ids and job offsets reuse x's staging: 64 ints.
-    const std::size_t smem =
-        std::max<std::size_t>(router_simt_smem_bytes(T, args.w.k), Route ? 64 * sizeof(int) : 0);
-    const auto kernel = router_simt_kernel<T, Route>;
+    const std::size_t smem = std::max<std::size_t>(
+        Staged ? router_simt_smem_bytes(T, args.w.k) : 0, Route ? 64 * sizeof(int) : 0);
+    const auto kernel = router_simt_kernel<T, Route, Staged>;
     // Urgent: a decode layer's shared expert runs beside it on the branch stream (moe.cpp
     // shared_branch), and its pending CTAs otherwise go first.
     CUDA_CHECK(pdl::launch({grid, dim3(kRouterSimtWarps * 32), smem, stream}, args.pdl != 0, true,
@@ -152,10 +161,17 @@ void launch_route(const GemmArgs& args, const SelectArgs& select, const PlanArgs
 template <int T>
 void launch_t(const GemmArgs& args, const SelectArgs* select, const PlanArgs* plan,
               cudaStream_t stream) {
+    const bool staged = router_simt_smem_bytes(T, args.w.k) <= kStaticSharedBytesPerBlock;
     if (select != nullptr) {
-        launch_route<T, true>(args, *select, *plan, stream);
+        if (staged) {
+            launch_route<T, true, true>(args, *select, *plan, stream);
+        } else {
+            launch_route<T, true, false>(args, *select, *plan, stream);
+        }
+    } else if (staged) {
+        launch_route<T, false, true>(args, SelectArgs{}, PlanArgs{}, stream);
     } else {
-        launch_route<T, false>(args, SelectArgs{}, PlanArgs{}, stream);
+        launch_route<T, false, false>(args, SelectArgs{}, PlanArgs{}, stream);
     }
 }
 
@@ -180,8 +196,20 @@ void launch_router_simt(const GemmArgs& args, cudaStream_t stream, const SelectA
     case 4:
         launch_t<4>(args, select, plan, stream);
         return;
+    case 5:
+        launch_t<5>(args, select, plan, stream);
+        return;
+    case 6:
+        launch_t<6>(args, select, plan, stream);
+        return;
+    case 7:
+        launch_t<7>(args, select, plan, stream);
+        return;
+    case 8:
+        launch_t<8>(args, select, plan, stream);
+        return;
     default:
-        throw std::invalid_argument("moe: the SIMT router takes 1..4 tokens");
+        throw std::invalid_argument("moe: the SIMT router takes 1..8 tokens");
     }
 }
 

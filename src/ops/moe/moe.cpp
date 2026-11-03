@@ -1152,13 +1152,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         plan.job_count    = static_cast<int*>(ws.job_count.data);
         plan.job_total    = static_cast<int*>(ws.job_total.data);
     }
-    // The SIMT router: a BF16 router at decode widths outside the invariant profile (whose router
-    // streams with the K split of every width) and outside a token-invariant plan (the prefill
-    // schedule), x within the default shared memory.
+    // The SIMT router: a BF16 router at decode and verify widths outside the invariant profile
+    // (whose router streams with the K split of every width) and outside a token-invariant plan
+    // (the prefill schedule). The choice does not depend on the hidden size: a token's logits are
+    // the same at every T <= kRouterSimtMaxTokens.
     const bool router_simt = t <= kRouterSimtMaxTokens &&
                              generic::codec_of(w.router) == generic::WeightCodec::Bf16 &&
-                             !invariant_routes_active() && p.router_schedule != kPrefillSchedule &&
-                             router_simt_smem_bytes(t, g.hidden) <= kStaticSharedBytesPerBlock;
+                             !invariant_routes_active() && p.router_schedule != kPrefillSchedule;
     // Programmatic dependent launches (decode chain): each kernel below waits for the previous one
     // before its first load; a copy or a quantizer between two stages keeps the plain launch.
     const bool pdl = device_class().features.pdl && c.pdl;
