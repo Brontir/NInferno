@@ -357,7 +357,10 @@ def main() -> int:
             python_out, native_out = work / "py" / f"{name}.ninferno", work / "native" / f"{name}.ninferno"
             failed = False
             for command in (
-                [sys.executable, "-m", "tools.convert", *args, "--device=cpu", f"--out={python_out}"],
+                # Both record --maintainer-quantize in the provenance (the native converter
+                # since the source identity, #62; the Python one keeps no published blocks).
+                [sys.executable, "-m", "tools.convert", *args, "--maintainer-quantize", "--device=cpu",
+                 f"--out={python_out}"],
                 # The parity is the recipes' arithmetic; most quantize the BF16 checkpoint.
                 [str(native), *args, "--maintainer-quantize", "--quiet", f"--out={native_out}"],
             ):

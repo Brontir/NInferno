@@ -193,6 +193,13 @@ def main(argv=None):
         action="store_true",
         help="include the existing indexed proposal head",
     )
+    parser.add_argument(
+        "--maintainer-quantize",
+        action="store_true",
+        help="run the recipe's table as written and record it in the provenance, as "
+        "ninferno-convert does (this converter keeps no published blocks, so its arithmetic "
+        "is the same either way)",
+    )
     parser.add_argument("--proposal-rows", type=int, default=131072)
     parser.add_argument("--ranking", type=Path, default=DEFAULT_RANKING)
     parser.add_argument("--name", help="public instance name saved in metadata")
@@ -249,6 +256,8 @@ def main(argv=None):
             "sources": sources.provenance(),
             "inputs": source_inputs(sources),
         }
+        if args.maintainer_quantize:
+            provenance["maintainer_quantize"] = True
         if args.override:
             provenance["override"] = args.override
             # By content and function name, as the source identity takes it (never the path).
