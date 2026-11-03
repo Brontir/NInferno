@@ -432,7 +432,7 @@ eq(H.choiceRows(null), [], "no document");
 const atQ4 = {choice: {chosen: {quant: "Q4_K_M"}}};
 ok(H.choiceFor(atQ4, "Q4_K_M") && !H.choiceFor(atQ4, "Q8_0") && H.choiceFor(atQ4, ""), "a choice is for its quantization");
 ok(!H.choiceFor({choice: {chosen: null}}, "Q4_K_M") && !H.choiceFor(null, "Q4_K_M"), "no choice: for none");
-for (const lang of ["en", "ru"]) for (const k of ["choiceHead", "choiceLine", "choiceAlt", "estBasis", "why_no_fit", "why_lower_worth", "ax_kv", "ax_activations", "ax_drafter", "choiceDrafter", "why_default_drafter", "why_unmeasured"])
+for (const lang of ["en", "ru"]) for (const k of ["choiceHead", "choiceLine", "choiceAlt", "estBasis", "why_no_fit", "why_lower_worth", "why_within_resolution", "ax_kv", "ax_activations", "ax_drafter", "choiceDrafter", "why_default_drafter", "why_unmeasured"])
   ok(typeof T[lang][k] === "string" && T[lang][k].length > 0, `${lang}: ${k}`);
 
 // ---- activation precision (--activations): the selector from the plan's choice ----

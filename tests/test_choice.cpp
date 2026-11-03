@@ -970,7 +970,11 @@ void chooses_the_chunk(const json& fixture) {
             ++chunks;
         }
         if (a.axis == ch::Axis::Chunk && a.value == "1024") {
-            check(a.why_code == "lower_worth", "chunk 1024: slower");
+            // Slower only: a loss outright where it is slower by more than the resolution, else
+            // indistinguishable within it (#301).
+            const double slower = std::log(a.scored->decision_seconds / chosen(ada).decision_seconds);
+            check(a.why_code == (slower > ada.resolution ? "lower_worth" : "within_resolution"),
+                  "chunk 1024: slower");
             ++chunks;
         }
     }
@@ -1718,6 +1722,41 @@ void axis_order_does_not_decide(const json& fixture) {
     }
 }
 
+// The worth's resolution (#301): where the worth decides it is the reference generation's decode
+// error, and an alternative is within_resolution exactly when it loses by more than a tie and no
+// more than the smaller of that and the two's speed difference; a larger gap stays lower_worth.
+void resolution_labels(const json& fixture) {
+    int within = 0, lower = 0;
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        Bench b = nine_b(fixture, name);
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (const std::uint32_t context : {4096U, 32768U, 131072U}) {
+            ch::Task task;
+            task.contexts = {context};
+            const ch::Choice c = ch::choose(b.model, b.card, b.quants[0], allowed, {}, task,
+                                            oracle(b, 40e9), ch::Gates{true, true});
+            if (!c.chosen) { continue; }
+            check(c.by_worth ? c.resolution > 0 && c.resolution < 0.1 : true,
+                  name + ": a resolution where the worth decides");
+            const ch::Scored& best = chosen(c);
+            for (const ch::Alternative& a : ch::explain(c)) {
+                if (a.scored == nullptr || (a.why_code != "within_resolution" && a.why_code != "lower_worth")) {
+                    continue;
+                }
+                const double gap   = best.worth - a.scored->worth;
+                const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
+                const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart) + 1e-9;
+                check(inside == (a.why_code == "within_resolution"),
+                      name + " " + a.value + ": within_resolution exactly inside the band");
+                (inside ? within : lower) += 1;
+            }
+        }
+    }
+    std::cout << "resolution labels: " << within << " within, " << lower << " lower\n";
+    check(lower > 0, "some alternatives lose outright");
+}
+
 // #304: a choice made on the generation's reference card reads none of the board's continuous
 // facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
 // shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
@@ -1836,6 +1875,7 @@ int main() {
     load_bounds_the_gain(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
+    resolution_labels(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

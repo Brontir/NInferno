@@ -413,6 +413,12 @@ struct Choice {
     // The worth decided the drafter (else the profile's choice stood: no decision constants, or a
     // drafter whose gain no measurement gives).
     bool drafter_by_worth = false;
+    // The speed estimate's resolution wherever a reference exists (#301; the chunk axis needs it
+    // where the worth does not decide): the reference card's generation's measured decode error (worth_band), the speed term's uncertainty in worth (-ln seconds) units;
+    // 0 without one. An alternative that loses by no more than the smaller of it and the two's
+    // speed difference is indistinguishable (explain: within_resolution); the point estimate still
+    // decides, deterministically.
+    double resolution = 0;
     std::string why;                   // one line: what decided it
 };
 
@@ -438,7 +444,7 @@ struct Alternative {
     std::string value;
     const Scored* scored = nullptr;
     std::string why_not;  // "" for the chosen value
-    std::string why_code; // "" (chosen), no_fit, lower_worth, tie_context, tie_order, default, unmeasured, coupled
+    std::string why_code; // "" (chosen), no_fit, lower_worth, within_resolution, tie_context, tie_order, default, unmeasured, coupled
 };
 [[nodiscard]] std::vector<Alternative> explain(const Choice& choice);
 
