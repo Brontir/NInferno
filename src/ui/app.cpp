@@ -1179,6 +1179,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
         inputs.proposal_planned       = drafter.proposal_planned;
         inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
         inputs.drafter_state = drafter.state;
+        inputs.drafter_geometry = drafter.assistant;
     }
     // Each GGUF quantization's own output head where the default proposal head is priced (Codex on
     // #170: the plan reads them, the UI reused one file's), read beside the MTP reads below.

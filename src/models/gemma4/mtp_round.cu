@@ -1,5 +1,7 @@
 #include "models/gemma4/mtp_round.h"
 
+#include "models/gemma4/workspace.h"
+
 #include "ninferno/ops/argmax.h"
 #include "ninferno/ops/embedding.h"
 #include "ninferno/ops/gemma4_fused.h"
@@ -12,6 +14,7 @@
 
 #include <algorithm>
 #include <string>
+#include <vector>
 
 namespace ninferno::models::gemma4 {
 namespace {
@@ -47,44 +50,25 @@ DrafterPass::DrafterPass(const Drafter& drafter, const Model& target, DeviceCont
 
 std::size_t DrafterPass::workspace_bytes(const Drafter& drafter, std::int32_t max_context,
                                          std::int32_t batch) {
-    const auto& dc     = drafter.config();
-    const auto& dw     = drafter.weights();
-    const std::int64_t n = batch;
-    std::size_t bytes  = 0;
-    const auto add     = [&](std::int64_t elements) { bytes += bf16_bytes(elements) + 256; };
-    add(2 * std::int64_t(dc.backbone_size) * n); // input
-    add(std::int64_t(dc.backbone_size) * n);     // embedded
-    add(2 * std::int64_t(dc.hidden_size) * n);   // x, hn
-    std::int64_t layer = 0;
-    for (const auto* g : {&dc.sliding, &dc.full}) {
-        layer = std::max<std::int64_t>(layer, 3 * std::int64_t(dc.query_heads) * g->head_dim);
-    }
-    add(layer * n);                                        // q_raw, q, context
-    add(2 * std::int64_t(dc.hidden_size) * n);             // branch, ffn input
-    add(3 * std::int64_t(dc.intermediate_size) * n);       // gate/up, product
-    add(std::int64_t(dw.head.weight.n) * n);               // logits
-    std::size_t op = 0;
-    const auto linear = [&](const Projection& p) {
-        op = std::max(op, ops::linear_workspace_capacity_bytes(p, 1, batch));
+    const auto& dw = drafter.weights();
+    // Every projection the pass runs, as the plan without the weights lists them too
+    // (models/gemma4/workspace.h): one function sizes both.
+    std::vector<WorkspaceLinear> projections;
+    const auto add = [&](const Projection& p, bool geglu = false) {
+        projections.push_back({p.weight.qtype, p.weight.n, p.weight.k, p.policy, geglu});
     };
-    linear(dw.pre_projection);
-    linear(dw.post_projection);
-    linear(dw.head);
+    add(dw.pre_projection);
+    add(dw.post_projection);
     for (const auto& l : dw.layers) {
-        for (const Projection* p : {&l.query, &l.output, &l.gate_up, &l.down}) { linear(*p); }
-        if (ops::linear_geglu_supports(l.gate_up.weight)) {
-            op = std::max(op, ops::linear_geglu_workspace_capacity_bytes(
-                                  l.gate_up.weight.qtype, l.gate_up.weight.n, l.gate_up.weight.k,
-                                  l.gate_up.policy, 1, batch) +
-                                  256);
-        }
+        add(l.query);
+        add(l.output);
+        add(l.gate_up, ops::linear_geglu_supports(l.gate_up.weight));
+        add(l.down);
     }
-    const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(max_context), 1};
-    for (const auto* g : {&dc.sliding, &dc.full}) {
-        op = std::max(op, ops::gemma4_attention_workspace_bytes(g->head_dim, dc.query_heads,
-                                                                g->kv_heads, envelope));
-    }
-    return bytes + op + (std::size_t(16) << 20);
+    const Projection& head = dw.head;
+    return drafter_pass_bytes(drafter.config(), projections,
+                              {head.weight.qtype, head.weight.n, head.weight.k, head.policy},
+                              max_context, batch);
 }
 
 MtpRound::MtpRound(const Drafter& drafter, const Target& target, DeviceContext& device,

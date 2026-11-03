@@ -40,4 +40,13 @@ inline constexpr std::size_t kTargetWorkspaceReserve = std::size_t(64) << 20;
                                           std::int32_t columns, std::int32_t head_columns,
                                           std::size_t routed_experts);
 
+// A separate assistant's pass over `batch` rows beside the target (DrafterPass::workspace_bytes):
+// its activations, the widest of its projections (each with its fused GeGLU where `geglu`), its
+// head and its attention over the target's caches at `max_context`, and the pass's 16 MiB
+// reserve. The plan without the weights passes the same from the assistant's config (#302).
+[[nodiscard]] std::size_t drafter_pass_bytes(const DrafterConfig& dc,
+                                             std::span<const WorkspaceLinear> projections,
+                                             const WorkspaceLinear& head, std::int32_t max_context,
+                                             std::int32_t batch);
+
 } // namespace ninferno::models::gemma4

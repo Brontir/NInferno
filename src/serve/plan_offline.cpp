@@ -412,6 +412,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                 options.speculative.drafter, model.facts.model.hidden);
             out.inputs.drafter_bytes = drafter.bytes;
             out.inputs.drafter_state = drafter.state;
+            out.inputs.drafter_geometry = drafter.assistant;
         }
         return out;
     }
@@ -484,6 +485,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
                                                model.facts.model.hidden);
     out.inputs.drafter_bytes = drafter.bytes;
     out.inputs.drafter_state = drafter.state;
+    out.inputs.drafter_geometry = drafter.assistant;
     out.inputs.proposal_planned       = drafter.proposal_planned;
     out.inputs.proposal_drafter_bytes = drafter.proposal_drafter_bytes;
     // A repository's quantizations each have their weights, and the lab's pairs are of weights:

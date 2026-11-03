@@ -89,6 +89,10 @@ struct AttachedDrafterMemory {
     // quantization with the row's MTP layers (DryRunInputs::proposal_drafter_bytes).
     bool proposal_planned         = false;
     double proposal_drafter_bytes = 0;
+    // A Gemma 4 assistant's geometry and formats, what its pass's workspace is sized on: a
+    // converted artifact's bound ones (supplied_drafter_memory), an attached repository's from its
+    // config with the formats its conversion may store it in (none for a published encoding).
+    std::optional<runtime::PlanDrafterGeometry> assistant;
 };
 [[nodiscard]] AttachedDrafterMemory
 attached_drafter_memory(const SpeculationSubject& subject, const std::vector<QuantListing>& listing,
@@ -141,6 +145,8 @@ struct DryRunInputs {
     std::uint64_t proposal_row_head_bytes = 0;
     // A DFlash drafter's state read from its config before it is downloaded (nullopt: unknown).
     std::optional<models::DrafterStateShape> drafter_state;
+    // A separate Gemma 4 assistant's geometry (AttachedDrafterMemory::assistant; nullopt: unknown).
+    std::optional<runtime::PlanDrafterGeometry> drafter_geometry;
     ChoicePins pins;
 };
 

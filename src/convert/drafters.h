@@ -23,6 +23,7 @@
 
 #include "convert/convert.h"
 #include "convert/fetch.h"
+#include "ninferno/types.h"
 #include "spec/registry.h"
 
 #include <nlohmann/json.hpp>
@@ -192,6 +193,12 @@ resolve_ranking(const std::string& name, const std::filesystem::path& repository
                                                     std::string_view kind,
                                                     std::string_view declared_quant,
                                                     std::uint64_t published_bytes) noexcept;
+
+// The formats quantize_drafter (convert.cpp) may store a plain drafter projection in under a
+// declared quantization `mode`: q8 Q8_G32_FP16; q4 Q4_G64_FP16; nvfp4 NVFP4, or Q8_G32_FP16 for a
+// unit whose shapes miss its tiles. Empty for another mode. A projection it does not quantize (an
+// encoded source, an alias, a DFlash feature projection) keeps its published format.
+[[nodiscard]] std::vector<QType> drafter_quant_formats(std::string_view mode);
 
 // The base_model entries of a README's YAML front matter (a string or a "- item" list): a
 // checkpoint's lineage, as describe_checkpoint reads it.

@@ -188,6 +188,20 @@ struct PlanLinear {
     std::string format;
 };
 
+// A separate Gemma 4 assistant's facts its own pass is sized on (gemma4::DrafterPass::
+// workspace_bytes, #302): its width, its feed-forward, its head's rows, and the formats its head
+// and its projections are (a converted artifact's) or may be stored in (before the conversion:
+// convert::drafter_quant_formats and the published BF16), as artifact format names; empty: not
+// known. The backbone width, the query heads and the head geometry are the target's (the load
+// refuses another).
+struct PlanDrafterGeometry {
+    std::uint32_t hidden       = 0;
+    std::uint32_t intermediate = 0;
+    std::uint32_t head_rows    = 0;
+    std::vector<std::string> head_formats;
+    std::vector<std::string> projection_formats;
+};
+
 struct PlanModelFacts {
     std::string model_type;   // the family (qwen3_5_text, gemma4_text, dense_decoder, ...); ""
     std::string architecture; // as the source names it (GGUF general.architecture, HF class)
@@ -250,6 +264,8 @@ struct PlanModelFacts {
     std::uint64_t weight_bytes  = 0;
     WeightBasis weight_basis    = WeightBasis::Unknown;
     std::uint64_t drafter_bytes = 0; // a separate drafter's weights, when one is planned
+    // A separate Gemma 4 assistant's geometry, when it is planned and its config was read.
+    std::optional<PlanDrafterGeometry> drafter_geometry;
     // The share of weight_bytes a start uploads only for its speculation: the MTP layers (a GGUF's
     // NextN blocks, an artifact's mtp component: loaded under MTP only) and the model's own DFlash
     // drafter (an artifact's dflash / dflash2 component: under DFlash only). 0: none or unknown.

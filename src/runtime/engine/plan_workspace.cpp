@@ -8,6 +8,7 @@
 #include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "ninferno/ops/gemma4_attention.h"
 #include "ninferno/ops/linear.h"
+#include "ninferno/ops/linear_swiglu.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/sampling.h"
@@ -27,42 +28,6 @@ namespace {
 
 namespace gemma4 = models::gemma4;
 namespace detail = models::qwen3_5::detail;
-
-// The drafter's own pass over `rows` rows beside the target's, as
-// gemma4::DrafterPass::workspace_bytes sizes it (its fixed 16 MiB reserve and the round's 1 KiB
-// of ids): its activations, and the widest of its Ops, its attention over the target's caches at
-// the whole context and its head. The facts do not describe the drafter's own layers: its width
-// and feed-forward are bounded by the target's (the assistant is the smaller model), its head by
-// the target's format and rows (a full vocabulary; a shortlist is fewer); its attention reads the
-// target's head geometry and query heads (the load refuses a drafter that differs,
-// gemma4/load_mtp.cpp).
-std::uint64_t gemma_drafter_pass(const models::gemma4::Config& c,
-                                 const models::gemma4::WorkspaceLinear& head,
-                                 std::int32_t context, std::int32_t rows) {
-    const auto n          = static_cast<std::uint64_t>(std::max(rows, 1));
-    const auto hidden     = static_cast<std::uint64_t>(c.hidden_size);
-    std::uint64_t widest_head = 0;
-    for (const auto* g : {&c.sliding, &c.full}) {
-        widest_head = std::max<std::uint64_t>(widest_head, static_cast<std::uint64_t>(g->head_dim));
-    }
-    // DrafterPass::workspace_bytes' eight buffers a row, each with its 256 bytes of alignment.
-    const std::uint64_t elements = 2 * hidden + hidden + 2 * hidden +
-                                   3 * static_cast<std::uint64_t>(c.query_heads) * widest_head +
-                                   2 * hidden + 3 * static_cast<std::uint64_t>(c.intermediate_size) +
-                                   static_cast<std::uint64_t>(head.n);
-    const std::uint64_t activations = elements * 2 * n + 8 * 256;
-    std::size_t op = 0;
-    const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(context), 1};
-    for (const auto* g : {&c.sliding, &c.full}) {
-        op = std::max(op, ops::gemma4_attention_workspace_bytes(g->head_dim, c.query_heads,
-                                                                g->kv_heads, envelope));
-    }
-    for (const auto policy : {head.policy, ops::LinearPolicy::A16Only}) {
-        op = std::max(op, ops::linear_workspace_capacity_bytes(head.qtype, head.n, head.k, policy, 1,
-                                                               std::max(rows, 1)));
-    }
-    return activations + op + (std::uint64_t(16) << 20) + 1024;
-}
 
 // A weight described by its format and shape alone, in the layout the converter stores it in (an
 // aligned address stands in, its bytes never read; ops/generic/route_query.cpp's description). Held
@@ -90,6 +55,72 @@ ops::LinearPolicy policy_of(QType qtype) {
     if (qtype == QType::BF16 || qtype == QType::FP32) { return ops::LinearPolicy::A16Only; }
     if (qtype == QType::NVFP4) { return ops::LinearPolicy::AllowA4; }
     return ops::LinearPolicy::AllowA8;
+}
+
+// The assistant's own pass over `rows` rows beside the target's, as DrafterPass::workspace_bytes
+// sizes it (gemma4::drafter_pass_bytes) from its config's width, feed-forward and head rows,
+// every projection and the head in each format it is or may be stored in (the widest of them; a
+// start prepares them A16: ActivationProfile::A16, gemma4/load_mtp.cpp); its backbone width,
+// query heads and head geometry are the target's `c` (the load refuses another). Plus the round's
+// 1 KiB of ids.
+// nullopt with why where the facts lack the assistant.
+std::optional<std::uint64_t> gemma_drafter_pass(const gemma4::Config& c,
+                                                const std::optional<PlanDrafterGeometry>& d,
+                                                std::int32_t context, std::int32_t rows,
+                                                std::string& why) {
+    if (!d || d->hidden == 0 || d->intermediate == 0 || d->head_rows == 0) {
+        why = "the assistant's dimensions are not in the facts";
+        return std::nullopt;
+    }
+    if (d->projection_formats.empty() || d->head_formats.empty()) {
+        why = "the assistant's formats are not in the facts";
+        return std::nullopt;
+    }
+    const auto format = [&](const std::string& name) -> std::optional<QType> {
+        try {
+            return artifact::parse_format(name);
+        } catch (const std::exception&) {
+            why = "the assistant's format " + name + " is not one a start reads";
+            return std::nullopt;
+        }
+    };
+    gemma4::DrafterConfig dc;
+    dc.hidden_size       = static_cast<std::int32_t>(d->hidden);
+    dc.backbone_size     = c.hidden_size;
+    dc.query_heads       = c.query_heads;
+    dc.intermediate_size = static_cast<std::int32_t>(d->intermediate);
+    dc.sliding           = c.sliding;
+    dc.full              = c.full;
+    const auto h = static_cast<std::int32_t>(d->hidden), b = c.hidden_size,
+               ir = static_cast<std::int32_t>(d->intermediate);
+    std::vector<gemma4::WorkspaceLinear> projections;
+    for (const std::string& name : d->projection_formats) {
+        const auto qtype = format(name);
+        if (!qtype) { return std::nullopt; }
+        const auto a16 = ops::LinearPolicy::A16Only;
+        projections.push_back({*qtype, h, 2 * b, a16});
+        projections.push_back({*qtype, b, h, a16});
+        for (const auto* g : {&c.sliding, &c.full}) {
+            const std::int32_t q_rows = c.query_heads * g->head_dim;
+            projections.push_back({*qtype, q_rows, h, a16});
+            projections.push_back({*qtype, h, q_rows, a16});
+        }
+        const DescribedWeight gate_up(*qtype, 2 * static_cast<std::uint64_t>(ir), d->hidden);
+        projections.push_back({*qtype, 2 * ir, h, a16, ops::linear_geglu_supports(gate_up.weight)});
+        projections.push_back({*qtype, h, ir, a16});
+    }
+    // The pass's logits rows are the head's in any format: each head format as a projection, the
+    // first as the head.
+    std::optional<gemma4::WorkspaceLinear> head;
+    for (const std::string& name : d->head_formats) {
+        const auto qtype = format(name);
+        if (!qtype) { return std::nullopt; }
+        const gemma4::WorkspaceLinear linear{*qtype, static_cast<std::int32_t>(d->head_rows), h,
+                                             ops::LinearPolicy::A16Only};
+        if (!head) { head = linear; }
+        projections.push_back(linear);
+    }
+    return gemma4::drafter_pass_bytes(dc, projections, *head, context, std::max(rows, 1)) + 1024;
 }
 
 // A generic MoE layer's capacity over a call of up to `columns` tokens, as the start sizes it
@@ -266,13 +297,17 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
         const auto columns = static_cast<std::int32_t>(detail::speculative_round_columns(*plan));
         // The prefill drafts one row; a round drafts its rows (program_family.cpp mtp_prefill,
         // mtp_round).
-        general = std::max(general, text_prefill + gemma_drafter_pass(c, head, context, 1));
+        std::string why;
+        const auto one   = gemma_drafter_pass(c, m.drafter_geometry, context, 1, why);
+        const auto round = gemma_drafter_pass(c, m.drafter_geometry, context, rows, why);
+        if (!one || !round) { return {std::nullopt, why}; }
+        general = std::max(general, text_prefill + *one);
         if (columns > 0) {
             general = std::max(general,
                                target(columns, columns) +
                                    ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
                                        c.vocab_size, 1, width - 1, 1, rows) +
-                                   gemma_drafter_pass(c, head, context, rows));
+                                   *round);
         }
     }
     return {general, sized};

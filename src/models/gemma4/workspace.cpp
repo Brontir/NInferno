@@ -81,4 +81,40 @@ std::size_t target_op_bytes(const Config& c, std::span<const WorkspaceLinear> li
     return std::max(op, ops::sampling_workspace_capacity_bytes(c.vocab_size, 1, 1));
 }
 
+std::size_t drafter_pass_bytes(const DrafterConfig& dc, std::span<const WorkspaceLinear> projections,
+                               const WorkspaceLinear& head, std::int32_t max_context,
+                               std::int32_t batch) {
+    const std::int64_t n = batch;
+    std::size_t bytes    = 0;
+    const auto add       = [&](std::int64_t elements) { bytes += bf16_row_bytes(elements); };
+    add(2 * std::int64_t(dc.backbone_size) * n); // input
+    add(std::int64_t(dc.backbone_size) * n);     // embedded
+    add(2 * std::int64_t(dc.hidden_size) * n);   // x, hn
+    std::int64_t layer = 0;
+    for (const auto* g : {&dc.sliding, &dc.full}) {
+        layer = std::max<std::int64_t>(layer, 3 * std::int64_t(dc.query_heads) * g->head_dim);
+    }
+    add(layer * n);                                  // q_raw, q, context
+    add(2 * std::int64_t(dc.hidden_size) * n);       // branch, ffn input
+    add(3 * std::int64_t(dc.intermediate_size) * n); // gate/up, product
+    add(std::int64_t(head.n) * n);                   // logits
+    std::size_t op = 0;
+    for (const WorkspaceLinear& p : projections) {
+        op = std::max(op, ops::linear_workspace_capacity_bytes(p.qtype, p.n, p.k, p.policy, 1, batch));
+        if (p.geglu) {
+            op = std::max(op, ops::linear_geglu_workspace_capacity_bytes(p.qtype, p.n, p.k, p.policy,
+                                                                         1, batch) +
+                                  256);
+        }
+    }
+    op = std::max(op, ops::linear_workspace_capacity_bytes(head.qtype, head.n, head.k, head.policy, 1,
+                                                           batch));
+    const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(max_context), 1};
+    for (const auto* g : {&dc.sliding, &dc.full}) {
+        op = std::max(op, ops::gemma4_attention_workspace_bytes(g->head_dim, dc.query_heads,
+                                                                g->kv_heads, envelope));
+    }
+    return bytes + op + (std::size_t(16) << 20);
+}
+
 } // namespace ninferno::models::gemma4

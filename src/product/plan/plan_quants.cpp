@@ -2,12 +2,14 @@
 
 #include "product/plan/plan_choice.h"
 
+#include "artifact/formats.h"
 #include "artifact/reader.h"
 #include "convert/checks.h"
 #include "convert/drafters.h"
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
+#include "models/gemma4/config.h"
 #include "spec/round_cost.h"
 
 #include "product/activation_options.h"
@@ -306,6 +308,7 @@ PlannedSpeculation plan_model(const PlanSourceFacts& facts, const DryRunInputs& 
         at.model.proposal_serves_mtp    = proposal.mtp;
         at.model.proposal_serves_dflash = proposal.dflash;
     }
+    at.model.drafter_geometry = inputs.drafter_geometry;
     return plan_with_speculation(at, inputs.device, inputs.options, inputs.subject, inputs.ask,
                                  inputs.drafter_bytes, inputs.drafter_state);
 }
@@ -427,7 +430,8 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             } catch (const std::exception&) {}
             const bool dflash = d.kind == "dflash" || d.kind == "dflash2";
             std::optional<nlohmann::json> config;
-            if (dflash || d.proposal_rows || (d.component.empty() && !d.quant.empty())) {
+            const bool assistant = d.kind == "gemma4_assistant";
+            if (dflash || assistant || d.proposal_rows || (d.component.empty() && !d.quant.empty())) {
                 try {
                     config = convert::fetch_config(spec, *fetch);
                 } catch (const std::exception&) {}
@@ -443,6 +447,7 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             // Only when the conversion finds the ranking (resolve_ranking, as attach_drafters):
             // without it the full head is converted. The repository the start names is not known
             // here; the installed and built-in rankings are what a start finds without one.
+            bool restricted = false; // the head keeps proposal_rows rows
             if (d.proposal_rows && config && head_bits &&
                 convert::resolve_ranking(d.ranking, {})) {
                 // A restricted head (gemma4.cpp restrict_head) keeps proposal_rows rows of the
@@ -458,6 +463,7 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
                 if (vocab > d.proposal_rows) {
                     bytes -= std::min(bytes, vocab * hidden * head_bits / 8);
                     bytes += d.proposal_rows * hidden * 2;
+                    restricted = true;
                 }
             }
             if (!d.component.empty()) {
@@ -490,11 +496,81 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
             if (!out.state && dflash && config) {
                 out.state = plan_drafter_state_of_config(*config, target_hidden);
             }
+            // A Gemma 4 assistant's pass (#302): its published text_config's widths (the
+            // converter's assistant_config reads the same), its head's rows, and the formats its
+            // conversion may store a projection in: the declared quantization's
+            // (convert::drafter_quant_formats) and BF16, the published values it keeps for what it
+            // does not quantize. A published encoding is kept as it is: not read here.
+            if (!out.assistant && assistant && config && !encoded &&
+                config->contains("text_config") && (*config)["text_config"].is_object()) {
+                const nlohmann::json& text = (*config)["text_config"];
+                runtime::PlanDrafterGeometry g;
+                g.hidden       = text.value("hidden_size", std::uint32_t{0});
+                g.intermediate = text.value("intermediate_size", std::uint32_t{0});
+                g.head_rows    = restricted ? static_cast<std::uint32_t>(d.proposal_rows)
+                                            : text.value("vocab_size", std::uint32_t{0});
+                std::set<std::string> formats{std::string(artifact::format_name(QType::BF16))};
+                for (const QType q : convert::drafter_quant_formats(d.quant)) {
+                    formats.insert(std::string(artifact::format_name(q)));
+                }
+                g.projection_formats.assign(formats.begin(), formats.end());
+                g.head_formats = g.projection_formats;
+                out.assistant  = std::move(g);
+            }
         }
         out.bytes = std::max(out.bytes, bytes);
     }
     return out;
 }
+
+namespace {
+
+// A converted Gemma 4 assistant's geometry as its loader reads it (gemma4::parse_drafter_config of
+// its text component) and its bound formats: each projection the pass runs
+// (gemma4/load_mtp.cpp: the pre and post projections, a layer's query, output, gate, up and down)
+// and the head's. nullopt for another drafter, or a config the loader refuses.
+std::optional<runtime::PlanDrafterGeometry> assistant_geometry(const artifact::Directory& dir) {
+    const auto text = dir.components.find("text");
+    if (text == dir.components.end() ||
+        text->second.config.value("model_type", std::string()) != "gemma4_assistant") {
+        return std::nullopt;
+    }
+    models::gemma4::DrafterConfig c;
+    try {
+        c = models::gemma4::parse_drafter_config(text->second.config);
+    } catch (const std::exception&) {
+        return std::nullopt;
+    }
+    runtime::PlanDrafterGeometry out;
+    out.hidden       = static_cast<std::uint32_t>(c.hidden_size);
+    out.intermediate = static_cast<std::uint32_t>(c.intermediate_size);
+    out.head_rows    = static_cast<std::uint32_t>(c.head_rows);
+    std::set<std::string> projections, heads;
+    const auto projection = [](std::string_view name) {
+        if (name == "text/pre_projection" || name == "text/post_projection") { return true; }
+        if (!name.starts_with("text/layers/")) { return false; }
+        for (const std::string_view role :
+             {"/attention/query", "/attention/output", "/mlp/gate", "/mlp/up", "/mlp/down"}) {
+            if (name.ends_with(role)) { return true; }
+        }
+        return false;
+    };
+    for (const auto& [name, binding] : dir.bindings) {
+        const bool head = name == "text/output_head";
+        if (!head && !projection(name)) { continue; }
+        for (const auto& piece : binding.parts) {
+            if (piece.object.index >= dir.objects.size()) { continue; }
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[piece.object.index]);
+            if (tensor == nullptr) { continue; }
+            (head ? heads : projections).insert(tensor->format);
+        }
+    }
+    out.head_formats.assign(heads.begin(), heads.end());
+    out.projection_formats.assign(projections.begin(), projections.end());
+    return out;
+}
+
+} // namespace
 
 AttachedDrafterMemory supplied_drafter_memory(const std::filesystem::path& artifact,
                                               std::uint32_t target_hidden) {
@@ -509,6 +585,7 @@ AttachedDrafterMemory supplied_drafter_memory(const std::filesystem::path& artif
     for (const auto& [name, component] : dir.components) {
         if (!out.state) { out.state = plan_drafter_state_of_config(component.config, target_hidden); }
     }
+    out.assistant = assistant_geometry(dir);
     return out;
 }
 

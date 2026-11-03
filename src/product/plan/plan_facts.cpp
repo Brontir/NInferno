@@ -886,6 +886,53 @@ void split_linears_by_format(std::vector<runtime::PlanLinear>& linears, const Ro
     linears = std::move(out);
 }
 
+// The role of a trunk layer's parameter in an artifact (text/layers/<i>/<role>, as the Gemma 4
+// loader binds them, models/gemma4/load_target.cpp); the routed banks' are apart.
+runtime::LinearRole artifact_role(std::string_view name) {
+    using R = runtime::LinearRole;
+    constexpr std::string_view layers = "text/layers/";
+    if (!name.starts_with(layers)) { return R::Other; }
+    const auto slash = name.find('/', layers.size());
+    if (slash == std::string_view::npos) { return R::Other; }
+    const std::string_view rest = name.substr(slash + 1);
+    if (rest == "attention/query" || rest == "attention/key" || rest == "attention/value") {
+        return R::AttentionIn;
+    }
+    if (rest == "attention/output") { return R::AttentionOut; }
+    if (rest == "mlp/gate" || rest == "mlp/up" || rest == "mlp/gate_up") { return R::FfnUp; }
+    if (rest == "mlp/down") { return R::FfnDown; }
+    return R::Other;
+}
+
+// An artifact's bound storage formats: the trunk's linears' by role (their elements), the routed
+// banks' (gate/up, down), and the output head's with its elements.
+struct ArtifactFormats {
+    RoleFormats roles;
+    std::set<std::string> expert_up, expert_down;
+    std::string head_format;
+    std::uint64_t head_elements = 0;
+};
+ArtifactFormats artifact_formats(const artifact::Directory& dir) {
+    ArtifactFormats out;
+    for (const auto& [name, binding] : dir.bindings) {
+        for (const auto& piece : binding.parts) {
+            if (piece.object.index >= dir.objects.size()) { continue; }
+            const auto* tensor = std::get_if<artifact::TensorObject>(&dir.objects[piece.object.index]);
+            if (tensor == nullptr) { continue; }
+            const auto elements = static_cast<double>(piece.end - piece.begin);
+            if (name == "text/output_head") {
+                out.head_format = tensor->format;
+                out.head_elements += piece.end - piece.begin;
+            } else if (name.find("/moe/experts/") != std::string::npos) {
+                (name.ends_with("/down") ? out.expert_down : out.expert_up).insert(tensor->format);
+            } else if (const auto role = artifact_role(name); role != runtime::LinearRole::Other) {
+                out.roles[role][tensor->format] += elements;
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
@@ -1175,6 +1222,14 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
+    // The bound formats, as a whole GGUF's tensor table gives them (#302): the trunk's linears by
+    // role, the routed banks', the head's with its rows.
+    const ArtifactFormats bound   = artifact_formats(dir);
+    out.model.expert_up_formats   = std::vector<std::string>(bound.expert_up.begin(), bound.expert_up.end());
+    out.model.expert_down_formats = std::vector<std::string>(bound.expert_down.begin(), bound.expert_down.end());
+    out.model.head_format         = bound.head_format;
+    if (out.model.hidden != 0) { out.model.head_rows = bound.head_elements / out.model.hidden; }
+    split_linears_by_format(out.model.linears, bound.roles);
     if (prompt_tail_calls_source()) {
         if (const auto calls = prompt_tail_calls_of(artifact)) {
             out.shape.prompt_tail_calls = *calls;
