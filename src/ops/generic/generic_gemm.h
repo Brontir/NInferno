@@ -720,6 +720,45 @@ void clear_dense_tune();
 // is "<file name> sha256:<hex of its bytes>". Empty while the tuner is off.
 [[nodiscard]] std::map<std::string, std::string> dense_tune_sources();
 
+// What a call guarantees the route it runs on, beside its weight (#298): its activation's
+// alignment and stride, its tokens, rows, output segments and epilogue, and the workspace free to
+// it (from the arena's next 256-byte boundary; nullopt: no workspace). A plan describes the call
+// it will make (route_query's contiguous, aligned activation); run_route the call it is given.
+struct CallLayout {
+    bool x_aligned16  = true;
+    int ldx           = 0; // BF16 values from one token to the next (the call's k: contiguous)
+    int tokens        = 1;
+    int rows          = 0; // the call's output rows (SwiGLU: the gate's)
+    int segments      = 1;
+    Epilogue epilogue = Epilogue::Store;
+    std::optional<std::size_t> workspace_free;
+};
+
+// Why the route that runs is not the one asked for (the last step that changed it).
+enum class Demotion : std::uint8_t {
+    None,
+    Alignment,     // the activation is off the 16-byte words or the stride its staging reads
+    W4a8Admission, // a producer-warp W4A8 tile the weight is not admitted to: its classic tile
+    R8Fit,         // R8 neither fits the tokens in a CTA nor has its pre-quantized form here
+    GgmlLayout,    // ggml's kernels: rows off the matrix kernel's multiple, or too many segments
+    GgmlWorkspace, // ggml's kernels: no workspace, or less free than their planes take
+};
+[[nodiscard]] std::string_view demotion_name(Demotion demotion) noexcept;
+
+// The route a call runs on when `asked` is selected for it: run_route's own resolution (the same
+// function), with the R8 verify widths' pre-quantized form where it takes it. `executed` equals
+// `asked` where nothing demotes it. Not the explicit-route refusals (a route this build lacks, a
+// weight layout the generic path does not read), which run_route throws, nor the scalar route a
+// register-MMA launch the device refuses falls back to at the launch.
+struct ResolvedRoute {
+    Route asked;
+    Route executed;
+    bool r8_prequantized = false;
+    bool ggml_fallback   = false; // a ggml route the call could not take (ggml_mmq_fallback_count)
+    Demotion reason      = Demotion::None;
+};
+[[nodiscard]] ResolvedRoute resolve_route(Route asked, const Weight& weight, const CallLayout& call);
+
 // Runs one call on an explicit route (the tuner and tests), or on select_route's choice.
 // released (when given): whether the launch lets the next kernel start early (Call::release_next
 // honoured: a register-MMA or R8 Store launch without the pre-quantized R8 form, on a device with
