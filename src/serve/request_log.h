@@ -63,6 +63,9 @@ std::string format_throughput_json(const std::string& server_instance_id,
 
 ServerLogEnvironment query_server_log_environment(int device);
 
+// A prefix reuse path's name in the request log (and the router's report, cache_hint.h).
+[[nodiscard]] const char* prefix_reuse_path_name(ninferno::PrefixReusePath path);
+
 // Opens in append mode so one campaign file can contain multiple independently started MTP/model
 // blocks. Every line carries server_instance_id because request ids restart at one per process.
 class JsonlRequestLog {

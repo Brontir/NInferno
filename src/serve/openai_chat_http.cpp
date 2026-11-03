@@ -93,6 +93,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
             return;
         }
         lifecycle->done(outcome);
+        set_router_report_headers(res, outcome);
         // A client that went away cancelled the run: there is no connection left to answer (the
         // streamed path's rule).
         if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
@@ -242,6 +243,9 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                 }
                 try {
                     transport.write(terminal);
+                    if (const std::string frame = router_report_frame(outcome); !frame.empty()) {
+                        transport.write(frame);
+                    }
                     sink.done();
                     return true;
                 } catch (const ClientDisconnected&) {

@@ -24,6 +24,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace ninferno::serve {
@@ -63,6 +64,26 @@ inline constexpr std::string_view kKeptSessionPrefix = "router:";
                                                        ContextCacheHints& hints) {
     return apply_cache_hint(header, trusted, 0, hints);
 }
+
+// What a finished turn found, for the router (#338), under --trust-cache-hints: the server's
+// instance (the request log's server_instance_id: a restart empties every cache), how its prompt
+// was reused, the tokens reused and computed, its queue wait and prefill time.
+struct RouterReport {
+    std::string instance;
+    std::string reuse_path;
+    std::int64_t reused_prompt_tokens   = 0;
+    std::int64_t computed_prompt_tokens = 0;
+    double queue_wait_seconds           = 0;
+    double prefill_seconds              = 0;
+};
+// A stream's last frame, an SSE comment the clients ignore and the router parses:
+//   : ninfer {"placement":{"instance":..,"reuse_path":..,"reused_prompt_tokens":..,
+//             "computed_prompt_tokens":..,"queue_wait_seconds":..,"prefill_seconds":..}}
+[[nodiscard]] std::string router_report_frame(const RouterReport& report);
+// A rendered answer's headers: x-ninfer-instance, x-ninfer-reuse-path, x-ninfer-reused-tokens,
+// x-ninfer-computed-tokens, x-ninfer-queue-wait-ms, x-ninfer-prefill-ms.
+[[nodiscard]] std::vector<std::pair<std::string, std::string>>
+router_report_headers(const RouterReport& report);
 
 // The kept threads' deadlines: a grant sets (or moves) its session's, `expired` hands back each
 // session whose deadline passed, once, with its ttl (a release the cache answers InFlight is kept

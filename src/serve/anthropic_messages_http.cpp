@@ -108,6 +108,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             return;
         }
         lifecycle->done(outcome);
+        set_router_report_headers(res, outcome);
         // A client that went away cancelled the run: there is no connection left to answer, and a
         // cancelled generation has no Anthropic message form (the streamed path's rule).
         if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
@@ -239,6 +240,9 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                 }
                 try {
                     transport.write(terminal);
+                    if (const std::string frame = router_report_frame(outcome); !frame.empty()) {
+                        transport.write(frame);
+                    }
                     sink.done();
                     return true;
                 } catch (const ClientDisconnected&) {

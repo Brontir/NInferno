@@ -4,6 +4,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <nlohmann/json.hpp>
 #include <vector>
 
 namespace ninferno::serve {
@@ -117,6 +118,31 @@ std::string_view apply_cache_hint(const std::string* header, bool trusted, std::
         return "normal";
     }
     return "none";
+}
+
+std::string router_report_frame(const RouterReport& report) {
+    nlohmann::ordered_json placement;
+    placement["instance"]               = report.instance;
+    placement["reuse_path"]             = report.reuse_path;
+    placement["reused_prompt_tokens"]   = report.reused_prompt_tokens;
+    placement["computed_prompt_tokens"] = report.computed_prompt_tokens;
+    placement["queue_wait_seconds"]     = report.queue_wait_seconds;
+    placement["prefill_seconds"]        = report.prefill_seconds;
+    nlohmann::ordered_json body;
+    body["placement"] = std::move(placement);
+    return ": ninfer " + body.dump() + "\n\n";
+}
+
+std::vector<std::pair<std::string, std::string>> router_report_headers(const RouterReport& report) {
+    const auto ms = [](double seconds) {
+        return std::to_string(static_cast<std::int64_t>(std::llround(seconds * 1000.0)));
+    };
+    return {{"x-ninfer-instance", report.instance},
+            {"x-ninfer-reuse-path", report.reuse_path},
+            {"x-ninfer-reused-tokens", std::to_string(report.reused_prompt_tokens)},
+            {"x-ninfer-computed-tokens", std::to_string(report.computed_prompt_tokens)},
+            {"x-ninfer-queue-wait-ms", ms(report.queue_wait_seconds)},
+            {"x-ninfer-prefill-ms", ms(report.prefill_seconds)}};
 }
 
 void KeptSessions::keep(const KeptGrant& grant, Clock::time_point now) {

@@ -420,3 +420,15 @@ are off or the hint is malformed: a bad value of a known field, a field without 
 named twice), for a request that carried the header and reached the engine (a request refused while
 parsing has nothing granted). Without the flag the
 header is ignored: on an engine any client reaches directly, it would let a client pin its own state.
+
+Under the same flag every finished answer reports what its turn found, for the router to learn
+whether a hint helped: the server's instance (the request log's `server_instance_id`; a restart
+empties every cache), how the prompt was reused, the prompt tokens reused and computed, the queue
+wait and the prefill time. A rendered answer carries them in headers (`x-ninfer-instance`,
+`x-ninfer-reuse-path`, `x-ninfer-reused-tokens`, `x-ninfer-computed-tokens`,
+`x-ninfer-queue-wait-ms`, `x-ninfer-prefill-ms`); a stream ends with an SSE comment frame, which
+clients ignore:
+
+```text
+: ninfer {"placement":{"instance":"serve-4242-1762190000000000","reuse_path":"private_endpoint","reused_prompt_tokens":35279,"computed_prompt_tokens":17,"queue_wait_seconds":0.011,"prefill_seconds":0.066}}
+```
