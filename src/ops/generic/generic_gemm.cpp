@@ -3542,6 +3542,37 @@ std::size_t ggml_vec_gated_pair_bytes(std::int32_t k, std::int32_t rows, std::in
     return layout.peak_bytes(1) + kGgmlArenaSlack;
 }
 
+std::optional<PreparedRule> prepared_rule(const ResolvedRoute& route, const Weight& weight) {
+    using R = PreparedRepresentation;
+    switch (route.executed.family) {
+    case Family::GgmlVec:
+        return PreparedRule{R::GgmlQ8_1};
+    case Family::W4a8Mma:
+        return PreparedRule{R::W4a8Blocks, w4a8_ld(weight.k)};
+    case Family::R8Mma:
+        if (!route.r8_prequantized) { return std::nullopt; } // quantized inside the kernel
+        return PreparedRule{R::W4a8Blocks, weight.k};
+    case Family::I8Mma:
+        return PreparedRule{R::I8Blocks64};
+    case Family::GgmlMmq:
+        return PreparedRule{R::GgmlQ8_1Mmq, 0, static_cast<std::int32_t>(weight.qtype)};
+    case Family::W4a4Mma:
+        return PreparedRule{R::Nvfp4, 0, 0, true};
+    case Family::RegisterMma:
+    case Family::Scalar:
+    case Family::TiledMma:
+    case Family::StagedMma:
+    case Family::Nvfp4TiledMma:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
+bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept {
+    return !a.weight_bound && !b.weight_bound && a.representation == b.representation &&
+           a.ld == b.ld && a.variant == b.variant;
+}
+
 bool prepared_serves(const PreparedActivation* prepared, PreparedRepresentation representation,
                      const void* source, std::int32_t ldx, std::int32_t k,
                      std::int32_t tokens) noexcept {
