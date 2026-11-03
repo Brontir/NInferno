@@ -39,25 +39,19 @@ int main(int argc, char** argv) {
     }
     expect(!atlas.empty(), "the atlas has rows");
 
-    // Each measured board of the gate, as the table gives it, answers for itself.
+    // Each measured board of the gate is a row of the table, and answers for itself.
     for (const m::Gate& g : m::kMmqPrefillPays) {
         bool found = false;
         for (const auto& r : atlas) {
             if (r.answer.donor == &g && r.answer.distance == 0) {
                 found = true;
-                // Measured where the table has every fact the measured board has; where its row
-                // lacks one (the L4's and the A100's L2), incomplete, the fact named.
-                const bool complete = (r.board.l2_mib > 0) == (g.board.l2_mib > 0) &&
-                                      (r.board.dram_gbps > 0) == (g.board.dram_gbps > 0);
                 expect(r.answer.pays == g.pays &&
-                           (complete ? r.answer.disposition == m::GateAnswer::Disposition::Measured
-                                     : r.answer.disposition ==
-                                               m::GateAnswer::Disposition::Incomplete &&
-                                           r.answer.unknown.any()),
+                           r.answer.disposition == m::GateAnswer::Disposition::Measured,
                        r.name + ": a measured board answers for itself");
             }
         }
-        (void)found; // a measured board the table's facts do not reproduce has no row of its own
+        expect(found, "a measured board of the gate is a row of the table (sms " +
+                          std::to_string(g.board.sms) + ")");
     }
     for (const char* name : {"GeForce RTX 5090", "GeForce RTX 5060 Ti", "GeForce RTX 4090",
                              "GeForce RTX 4060 Ti", "GeForce RTX 2080 Ti"}) {
@@ -98,7 +92,9 @@ int main(int argc, char** argv) {
                "the RTX 5080's alternative donor: " + r->alternative_name);
     }
 
-    // Withdrawing a fact never raises the authority, and leaves the fact unknown.
+    // Withdrawing a fact never raises the authority, and leaves the fact unknown. (Whether a donor
+    // exists rests on the instruction set alone, so the authority falls to Incomplete by
+    // construction: the check keeps it so.)
     for (const auto& r : atlas) {
         const int authority = m::gate_authority(r.answer.disposition);
         expect(m::gate_authority(r.without_l2.disposition) <= authority &&
