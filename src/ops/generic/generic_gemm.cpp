@@ -3854,6 +3854,59 @@ std::string_view demotion_name(Demotion demotion) noexcept {
     return "none";
 }
 
+std::string_view overlap_refusal_name(OverlapRefusal why) noexcept {
+    switch (why) {
+    case OverlapRefusal::None: return "none";
+    case OverlapRefusal::NotAsked: return "not_asked";
+    case OverlapRefusal::Family: return "family";
+    case OverlapRefusal::Epilogue: return "epilogue";
+    case OverlapRefusal::PrequantizedR8: return "prequantized_r8";
+    case OverlapRefusal::NoPdl: return "no_pdl";
+    case OverlapRefusal::Wide: return "wide";
+    case OverlapRefusal::Joined: return "joined";
+    }
+    return "none";
+}
+
+LaunchOverlap launch_overlap(const ResolvedRoute& resolved, Epilogue epilogue, int tokens,
+                             bool join_asked, bool release_asked, bool pdl) {
+    const Family family = resolved.executed.family;
+    const bool r8_pre   = family == Family::R8Mma && resolved.r8_prequantized;
+    // Only a register-MMA or R8 Store launch joins or releases; every other route runs in stream
+    // order.
+    const auto joinable = [&](bool asked) {
+        if (!asked) return OverlapRefusal::NotAsked;
+        if (family != Family::RegisterMma && family != Family::R8Mma) return OverlapRefusal::Family;
+        return epilogue == Epilogue::Store ? OverlapRefusal::None : OverlapRefusal::Epilogue;
+    };
+    LaunchOverlap out;
+    out.join = joinable(join_asked);
+    // The pre-quantized R8 form does not release: the next call's quantizer could take the
+    // workspace it still reads (its kernel ignores the flag too, generic_r8.cuh kPre). Without
+    // PDL there is nothing to release.
+    out.release = joinable(release_asked);
+    if (out.release == OverlapRefusal::None) {
+        out.release = r8_pre ? OverlapRefusal::PrequantizedR8 : !pdl ? OverlapRefusal::NoPdl
+                                                                     : OverlapRefusal::None;
+    }
+    // A decode-width register-MMA call that does not join starts its weight stream under the
+    // previous kernel, where the device has programmatic dependent launch (sm_90 and up; Ada
+    // launches in stream order as before); R8 does the same where its activation is quantized in
+    // the kernel (not the pre-quantized form, whose quantizer runs before it).
+    if (r8_pre) {
+        out.prefetch = OverlapRefusal::PrequantizedR8;
+    } else if (family != Family::RegisterMma && family != Family::R8Mma) {
+        out.prefetch = OverlapRefusal::Family;
+    } else if (out.joins()) {
+        out.prefetch = OverlapRefusal::Joined;
+    } else if (tokens > kPdlPrefetchMaxTokens) {
+        out.prefetch = OverlapRefusal::Wide;
+    } else {
+        out.prefetch = pdl ? OverlapRefusal::None : OverlapRefusal::NoPdl;
+    }
+    return out;
+}
+
 Route workspace_free_route(Route selected, const Problem& problem, const Weight& weight,
                            std::int32_t tokens, bool prefill, bool workspace) {
     if ((selected.family == Family::W4a4Mma || selected.family == Family::W4a8Mma ||
@@ -4011,29 +4064,16 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
         note_demotion(asked, route, call.rows, args.tokens, w.k, aligned_to(args.x, 16), args.ldx,
                       workspace != nullptr ? workspace->capacity() : 0);
     }
-    // Only a register-MMA or R8 launch joins the call before it; every other route runs in stream
-    // order.
-    const bool joinable =
-        (route.family == Family::RegisterMma || route.family == Family::R8Mma) &&
-        call.epilogue == Epilogue::Store;
-    args.join_previous  = call.join_previous && joinable ? 1 : 0;
-    args.release_next   = call.release_next && joinable ? 1 : 0;
-    // The pre-quantized R8 form does not release (the next call's quantizer could take the
-    // workspace it still reads); without PDL the trigger is a no-op.
-    if (released != nullptr) {
-        *released =
-            args.release_next != 0 && !(route.family == Family::R8Mma && r8_pre) && pdl_device();
-    }
-    // A decode-width register-MMA call that does not join starts its weight stream under the
-    // previous kernel (GemmArgs::pdl_prefetch), where the device has programmatic dependent launch
-    // (sm_90 and up; Ada launches in stream order as before).
-    // R8 does the same where its activation is quantized in the kernel (not the pre-quantized
-    // form, whose quantizer runs before it).
-    args.pdl_prefetch =
-        (route.family == Family::RegisterMma || (route.family == Family::R8Mma && !r8_pre)) &&
-                args.join_previous == 0 && args.tokens <= kPdlPrefetchMaxTokens && pdl_device()
-            ? 1
-            : 0;
+    // The launch's overlap with its neighbours (launch_overlap, #309). A joinable launch keeps its
+    // release flag without PDL (the trigger is then a no-op), as before; the pre-quantized R8
+    // form's is cleared, which its kernel ignored (kPre).
+    const LaunchOverlap overlap = launch_overlap(resolved, call.epilogue, args.tokens,
+                                                 call.join_previous, call.release_next,
+                                                 pdl_device());
+    args.join_previous = overlap.joins() ? 1 : 0;
+    args.release_next  = overlap.releases() || overlap.release == OverlapRefusal::NoPdl ? 1 : 0;
+    if (released != nullptr) *released = overlap.releases();
+    args.pdl_prefetch = overlap.prefetches() ? 1 : 0;
     const WeightCodec codec = codec_of(w);
     args.spread_smem        = spread_smem(route, codec, call.epilogue, args);
     switch (route.family) {

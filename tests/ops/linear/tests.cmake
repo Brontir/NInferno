@@ -91,6 +91,12 @@ ninferno_add_op_test(ninferno_linear_generic_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_generic_linear.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# A generic launch's overlap with its neighbours (#309): join, release and prefetch with the
+# reason each is refused, as run_route applies them (host only).
+ninferno_add_op_test(ninferno_launch_overlap_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test
