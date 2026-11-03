@@ -140,17 +140,34 @@ python3 -m tools.convert \
   --out models/qwen3_8_27b_nvfp4.ninferno
 ```
 
-Either published quantized source works. `unsloth/Qwen3.8-27B-NVFP4` holds the MLP of layers
-0..55 in NVFP4 and every other projection, lm_head included, in FP8. `nvidia/Qwen3.8-27B-NVFP4`
-holds every MLP and lm_head in NVFP4. The recipe keeps each projection's published format. When
-the source's head is NVFP4, it generates a row-FP8 head from the BF16 model, so the head and the
-draft head are row FP8 with either source.
+The recipe takes either published quantized source. `unsloth/Qwen3.8-27B-NVFP4` holds the MLP of
+layers 0..55 in NVFP4 and every other projection, lm_head included, in FP8 with one BF16 scale per
+row. `nvidia/Qwen3.8-27B-NVFP4` holds every MLP and lm_head in NVFP4 and its FP8 projections with
+one FP32 scale per matrix. The recipe keeps each projection's published format. When the source's
+head is NVFP4, it generates a row-FP8 head from the BF16 model, so the head and the draft head are
+row FP8 with either source.
+
+The Python converter above reads row-BF16 FP8 only, so it converts unsloth's checkpoint and
+refuses NVIDIA's. Convert NVIDIA's with `ninferno-convert`, which takes the same arguments:
+
+```bash
+ninferno-convert \
+  --model /path/to/Qwen3.8-27B \
+  --recipe qwen3_8_27b_nvfp4 \
+  --source quantized=/path/to/nvidia/Qwen3.8-27B-NVFP4 \
+  --source dflash2=/path/to/Qwen3.8-27B-DFlash2 \
+  --components text,vision,mtp,dflash2 \
+  --name qwen3.8-27b \
+  --out models/qwen3_8_27b_nvfp4.ninferno
+```
 
 ## Options
 
 These are `ninferno-convert`'s options. The Python converter (`python3 -m tools.convert`) takes
 `--model`, `--recipe`, `--source`, `--components`, `--resource`, `--proposal`, `--proposal-rows`,
-`--ranking`, `--name`, `--out`, `--device`, `--rows-per-chunk` and `--max-file-bytes`, plus the
+`--ranking`, `--name`, `--out`, `--device`, `--rows-per-chunk`, `--max-file-bytes` and
+`--maintainer-quantize` (recorded in the provenance; its arithmetic is the table as written either
+way), plus the
 ones marked (Python); it refuses every other.
 
 ### Input and output
