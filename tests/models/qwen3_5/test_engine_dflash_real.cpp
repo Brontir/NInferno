@@ -32,7 +32,8 @@ ninferno::EngineOptions dflash_engine_options(const char* artifact, ninferno::Pr
     options.kv_capacity               = ninferno::KvCapacityPolicy::explicit_capacity(max_context);
     options.speculative.backend       = ninferno::SpeculativeBackend::DFlash;
     options.speculative.draft_tokens  = 3;
-    options.speculative.proposal_head = ninferno::test::proposal_head(artifact, proposal);
+    options.speculative.proposal_head =
+        ninferno::test::proposal_head(artifact, proposal, ninferno::SpeculativeBackend::DFlash);
     options.use_cuda_graph            = true;
     options.context_cache.device_state_slots = 2;
     return options;

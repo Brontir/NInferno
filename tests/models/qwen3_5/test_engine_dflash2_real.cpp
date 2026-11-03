@@ -95,7 +95,8 @@ int main(int argc, char** argv) {
         options.speculative.backend                  = ninferno::SpeculativeBackend::DFlash2;
         options.speculative.draft_tokens             = k;
         options.speculative.proposal_head = ninferno::test::proposal_head(
-            artifact, optimized ? ninferno::ProposalHead::Optimized : ninferno::ProposalHead::Full);
+            artifact, optimized ? ninferno::ProposalHead::Optimized : ninferno::ProposalHead::Full,
+            ninferno::SpeculativeBackend::DFlash2);
         ninferno::Engine engine(options);
         require(engine.memory_summary().kv_cache == options.kv_cache,
                 "Engine did not select the requested KV dtype");

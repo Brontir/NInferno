@@ -120,8 +120,13 @@ ninferno::EngineOptions engine_options(const char* artifact, ninferno::Speculati
     options.kv_cache                             = ninferno::KvCacheStorage::Int8Group64;
     options.speculative.backend                  = backend;
     options.speculative.draft_tokens             = draft_tokens;
+    // No copy rounds: these invariants bound every round by the drafter's window, and a copy
+    // round verifies up to kMtpDecodeMaximumDrafts prompt tokens by design (its drafted tokens
+    // pass rounds x window, and a request depth up to that window is admitted; #343).
+    // test_product_speculation covers copy rounds.
+    options.speculative.ngram_draft_tokens       = 0;
     options.speculative.proposal_head =
-        ninferno::test::proposal_head(artifact, ninferno::ProposalHead::Optimized);
+        ninferno::test::proposal_head(artifact, ninferno::ProposalHead::Optimized, backend);
     options.context_cache.enabled                = false;
     options.context_cache.host_state_slots       = 0;
     options.context_cache.host_kv_capacity_bytes = 0;

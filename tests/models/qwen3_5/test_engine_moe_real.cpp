@@ -1,9 +1,12 @@
 #include "ninferno/engine.h"
 #include "real_artifact.h"
 
+#include <cuda_runtime.h>
+
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -11,6 +14,9 @@
 
 namespace {
 
+// No check of cuda_graph_allowance_bytes: these engines fit their plan automatically (no
+// device_state_slots), so the warm-up probe holds the graph memory and the plan's allowance is
+// 0 (model_instance.cpp, plan_graphs_held; #343).
 ninferno::EngineOptions engine_options(const char* artifact) {
     ninferno::EngineOptions options;
     options.artifact_path             = artifact;
@@ -83,7 +89,7 @@ int verify_loaded_product(const ninferno::Engine& engine, bool with_vision) {
           vision->handoff_capacity_bytes >
               memory.workspace.capacity_bytes - vision->handoff_offset_bytes ||
           vision->handoff_active_bytes != 0 || vision->handoff_peak_bytes != 0)) ||
-        memory.workspace_logical_peak_bytes != 0 || memory.cuda_graph_allowance_bytes == 0) {
+        memory.workspace_logical_peak_bytes != 0) {
         std::cerr << "35B Engine construction has an invalid memory summary\n";
         return 1;
     }
@@ -202,7 +208,25 @@ int exercise_vision(ninferno::Engine& engine) {
 
 int exercise_maximum_configuration(const char* artifact) {
     const bool with_vision = ninferno::test::real_artifact(artifact).vision;
-    ninferno::Engine engine(maximum_engine_options(artifact));
+    // 262,144 tokens of context beside the weights: a card below kMaximumConfigurationBytes (an
+    // RTX 4060 Ti's 16 GiB under a 35B artifact) skips the case where the plan refuses it, said
+    // once, as an absent component does. On a larger card a refusal is a failure (a planner
+    // regression must not pass as a skip).
+    constexpr std::size_t kMaximumConfigurationBytes = std::size_t{24} << 30;
+    std::size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess) {
+        std::cerr << "cudaMemGetInfo failed\n";
+        return 1;
+    }
+    std::optional<ninferno::Engine> built;
+    try {
+        built.emplace(maximum_engine_options(artifact));
+    } catch (const ninferno::CapacityError& error) {
+        if (total_bytes >= kMaximumConfigurationBytes) { throw; }
+        ninferno::test::skip_case("35B maximum configuration", error.what());
+        return 0;
+    }
+    ninferno::Engine& engine             = *built;
     const ninferno::MemorySummary memory = engine.memory_summary();
     const auto* vision = memory.vision_workspace ? &*memory.vision_workspace : nullptr;
     if (memory.max_context != 262144 || memory.kv_cache != ninferno::KvCacheStorage::Int8Group64 ||
@@ -215,8 +239,7 @@ int exercise_maximum_configuration(const char* artifact) {
           vision->handoff_capacity_bytes == 0 ||
           vision->handoff_capacity_bytes >
               memory.workspace.capacity_bytes - vision->handoff_offset_bytes ||
-          vision->handoff_active_bytes != 0)) ||
-        memory.cuda_graph_allowance_bytes == 0) {
+          vision->handoff_active_bytes != 0))) {
         std::cerr << "35B maximum configuration does not match the planned 256K layout: context="
                   << memory.max_context << " kv_payload=" << memory.kv_payload_bytes
                   << " sequence=" << memory.sequence.capacity_bytes

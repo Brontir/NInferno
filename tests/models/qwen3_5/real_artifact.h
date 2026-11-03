@@ -9,6 +9,7 @@
 #include "ninferno/types.h"
 
 #include <iostream>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -22,6 +23,9 @@ struct RealArtifact {
     bool dflash2  = false;
     bool proposal = false;
     bool moe      = false;
+    // The drafters the proposal head serves (a proposal/head Use of their final_hidden): the
+    // converter's default head serves MTP and DFlash, never DFlash2.
+    std::set<std::string> head_drafters;
 
     [[nodiscard]] bool has(SpeculativeBackend backend) const noexcept {
         switch (backend) {
@@ -51,6 +55,12 @@ inline const RealArtifact& real_artifact(const char* path) {
         result.dflash2  = components.contains("dflash2");
         result.proposal = reader.directory().component("text").proposal.has_value();
         result.moe      = reader.directory().component("text").config.contains("num_experts");
+        for (const char* drafter : {"mtp", "dflash", "dflash2"}) {
+            if (reader.directory().uses.contains(
+                    {"proposal/head", std::string(drafter) + "/final_hidden"})) {
+                result.head_drafters.insert(drafter);
+            }
+        }
         return result;
     }();
     if (first != path) { throw std::logic_error("real tests inspect one artifact per process"); }
@@ -69,6 +79,28 @@ inline ProposalHead proposal_head(const char* path, ProposalHead wanted) {
         return true;
     }();
     (void)said;
+    return ProposalHead::Full;
+}
+
+// The optimized proposal head when the artifact's head serves `backend`'s drafter; otherwise the
+// full head, said once (#343: an MTP + DFlash2 artifact's default head serves MTP alone, and
+// DFlash2 under it has no proposal/head Use).
+inline ProposalHead proposal_head(const char* path, ProposalHead wanted,
+                                  SpeculativeBackend backend) {
+    wanted = proposal_head(path, wanted);
+    const char* drafter = backend == SpeculativeBackend::Mtp       ? "mtp"
+                          : backend == SpeculativeBackend::DFlash  ? "dflash"
+                          : backend == SpeculativeBackend::DFlash2 ? "dflash2"
+                                                                   : nullptr;
+    if (wanted != ProposalHead::Optimized || drafter == nullptr ||
+        real_artifact(path).head_drafters.contains(drafter)) {
+        return wanted;
+    }
+    static std::set<std::string> said; // once per drafter
+    if (said.insert(drafter).second) {
+        skip_case(std::string("optimized proposal head for ") + drafter,
+                  "the artifact's proposal head does not serve it; the full head drafts");
+    }
     return ProposalHead::Full;
 }
 
