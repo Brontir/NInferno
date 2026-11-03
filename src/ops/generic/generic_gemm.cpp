@@ -717,7 +717,8 @@ std::size_t mmq_workspace_bytes(std::int32_t k, std::int32_t plane_rows, std::in
     return layout.peak_bytes(1);
 }
 
-// The bytes free in the rest of the arena from its next 256-byte address (nullopt: none), against
+// The bytes free in the rest of the arena from its next 256-byte address (nullopt: no arena; 0
+// where that address is already past its end: no route's planes are empty), against
 // which mmq_workspace_bytes' layout is held (resolve_route). Its blocks are 256-aligned, so from
 // there they land exactly as the layout counted them: an arena the planner sized to the route
 // holds it with nothing to spare.

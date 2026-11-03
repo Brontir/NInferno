@@ -16,6 +16,10 @@ struct DescribedWeight {
     WeightParent parent;
     WeightView view;
     Weight weight;
+
+    DescribedWeight()                                  = default;
+    DescribedWeight(const DescribedWeight&)            = delete;
+    DescribedWeight& operator=(const DescribedWeight&) = delete;
 };
 
 void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t n,

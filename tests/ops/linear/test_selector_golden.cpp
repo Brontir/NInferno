@@ -201,6 +201,11 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                                                         .rows           = rows,
                                                         .epilogue       = epilogue,
                                                         .workspace_free = own});
+                                // The pre-quantized R8 form reads its planes from that workspace.
+                                if (ran.r8_prequantized &&
+                                    generic::route_workspace_bytes(ran.executed, shape.k, t) > own) {
+                                    what += " r8_planes_unplanned";
+                                }
                                 if (ran.reason != generic::Demotion::None &&
                                     ran.reason != generic::Demotion::W4a8Admission) {
                                     what += " runs=" + generic::route_name(ran.executed) + " (" +
