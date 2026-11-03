@@ -418,12 +418,14 @@ def main() -> int:
             formats = {p: (m["method"], m["format"]) for m in report["methods"] for p in m["parameters"]}
             ok = (formats.get("text/output_head") == ("fp8_row_maxabs", "fp8_e4m3fn_row_bf16")
                   and formats.get("text/layers/3/attention/query") == ("import_encoded", "fp8_e4m3fn_row_f32")
+                  and formats.get("text/layers/0/gdn/output") == ("import_encoded", "fp8_e4m3fn_row_f32")
+                  and any("/mlp/" in p for p in formats)
                   and all(f == ("import_encoded", "nvfp4") for p, f in formats.items() if "/mlp/" in p))
             if not ok:
                 errors.append(f"nvidia layout: {sorted(set(formats.values()))}")
         else:
             errors.append(f"nvidia layout: native failed\n{result.stderr[-2000:]}")
-        if refused.returncode == 0 or "ninferno-convert" not in refused.stderr:
+        if refused.returncode == 0 or "not row-BF16 FP8 scales" not in refused.stderr:
             ok = False
             errors.append(f"nvidia layout: Python did not refuse it\n{refused.stderr[-1000:]}")
         print(f"nvidia layout: {'ok' if ok else 'FAILED'}", flush=True)

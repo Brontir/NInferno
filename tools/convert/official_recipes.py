@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from math import prod
+
 from .methods import cast_direct, fp8_row_maxabs, grouped_absmax, import_encoded
 from .sources.compressed_tensors import compressed_matrix_source, nvfp4_layout
 
@@ -173,16 +175,18 @@ def qwen3_8_27b_nvfp4(model, recipe, sources):
             recipe.assign(name, format=FP8, method=fp8_row_maxabs)
             continue
         if not nvfp4:
-            # This converter reads row-BF16 FP8 (one BF16 scale a row, unsloth's); NVIDIA's
-            # per-tensor FP32 scales are ninferno-convert's (it keeps them as row_f32).
+            # This converter reads row-BF16 FP8 (one BF16 scale a row, unsloth's, as
+            # compressed_matrix_source checks); NVIDIA's per-tensor FP32 scales are
+            # ninferno-convert's (it keeps them as row_f32).
             for store, tensor in source.origin:
                 scale = tensor.removesuffix(".weight") + ".weight_scale"
-                if store.has(scale) and (store.describe(scale).dtype != "BF16"
-                                         or list(store.describe(scale).shape)[-1:] != [1]):
-                    raise ValueError(
-                        f"{scale}: per-tensor FP8 scales (NVIDIA Model Optimizer); the Python "
-                        "converter reads row-BF16 FP8 only, convert this checkpoint with "
-                        "ninferno-convert")
+                if store.has(scale):
+                    info = store.describe(scale)
+                    if info.dtype != "BF16" or prod(info.shape) != parameter.shape[0]:
+                        raise ValueError(
+                            f"{scale}: not row-BF16 FP8 scales (NVIDIA Model Optimizer's are one "
+                            "FP32 scale a matrix); the Python converter reads row-BF16 FP8 only, "
+                            "convert this checkpoint with ninferno-convert")
         format = "nvfp4" if nvfp4 else FP8
         recipe.assign(
             name,

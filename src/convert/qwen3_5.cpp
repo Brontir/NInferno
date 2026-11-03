@@ -1169,8 +1169,11 @@ void qwen3_8_27b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) {
         }
         // An FP8 projection keeps its published scales: unsloth's one BF16 scale a row (row_bf16),
         // NVIDIA's one FP32 scale a tensor (row_f32, or row_bf16 where that value is a BF16 one).
-        const QType format =
-            nvfp4 ? QType::NVFP4 : source->encoded_format().value_or(kFp8);
+        // Anything else (128x128 blocks, an integer code) asks for row_bf16 and is refused there.
+        const auto published = nvfp4 ? std::nullopt : source->encoded_format();
+        const QType format   = nvfp4 ? QType::NVFP4
+                               : published == QType::FP8_E4M3FN_ROW_F32 ? QType::FP8_E4M3FN_ROW_F32
+                                                                        : kFp8;
         recipe.assign(i, format, Method::ImportEncoded,
                       parameter.encoded_source(quantized,
                                                nvfp4 ? MatrixFormat::Nvfp4 : MatrixFormat::Fp8Row));
