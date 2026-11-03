@@ -105,6 +105,11 @@ ninferno_add_op_test(ninferno_route_classes_test
 
 # ops::linear's candidates per call (#306): the owned Q8 kernel's launch and the generic route,
 # one selected as dispatch_linear runs.
+# The activation each generic route prepares and which preparations serve one another (#308).
+ninferno_add_op_test(ninferno_prepared_rules_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_prepared_rules.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 ninferno_add_op_test(ninferno_linear_candidates_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_linear_candidates.cpp"
   LIBRARIES ninferno_linear_test_support)

@@ -589,6 +589,17 @@ inline constexpr std::int32_t kGgmlMmqMaxTokens = 16;
 enum class PreparedRepresentation : std::uint8_t {
     GgmlQ8_1, // ggml's block_q8_1 of 32 values (vec_quantize_activation: per-block absmax scale,
               // rounded to nearest, the block's sum), [K, T] token-major
+    // launch_w4a8_quantize: 32-value blocks, an FP32 amax/127 scale, rounded to nearest, the scale
+    // times the codes' sum; [T, ld] codes, [T, ld/32] scales and sums, the blocks past K zero (the
+    // W4A8 tiles at ld = w4a8_ld(K), K up to whole 128-value tiles; the R8 verify widths'
+    // pre-quantized form at ld = K).
+    W4a8Blocks,
+    // launch_i8: 64-value groups, the codes k-permuted, int sums, [padded T][K] (generic_i8.cu).
+    I8Blocks64,
+    // ggml MMQ's block_q8_1_mmq tiles (ggml_mmq.cu), whose scale/sum layout is the weight format's.
+    GgmlQ8_1Mmq,
+    // W4A4: NVFP4 codes [T, K/2] and FP8 scales [T, K/16] under the weight's input divisor.
+    Nvfp4,
 };
 struct PreparedActivation {
     PreparedRepresentation representation = PreparedRepresentation::GgmlQ8_1;
@@ -786,6 +797,29 @@ struct ResolvedRoute {
 };
 [[nodiscard]] ResolvedRoute resolve_route(Route asked, const Weight& weight, const CallLayout& call);
 
+// The activation a resolved route prepares for a call on `weight` (#308): the rule's
+// representation, its row length where it has one (W4a8Blocks), and its variant (GgmlQ8_1Mmq: the
+// weight's format, the scale/sum layout follows it; formats that share one are counted apart, so
+// no reuse is claimed between them). weight_bound: the bytes depend on the weight itself (W4A4's
+// input divisor) and serve no other weight. nullopt where the kernel reads x as BF16 (the A16
+// families) or quantizes it inside itself (R8 at decode).
+struct PreparedRule {
+    PreparedRepresentation representation = PreparedRepresentation::GgmlQ8_1;
+    std::int32_t ld      = 0;
+    std::int32_t variant = 0;
+    bool weight_bound    = false;
+};
+[[nodiscard]] std::optional<PreparedRule> prepared_rule(const ResolvedRoute& route,
+                                                        const Weight& weight);
+// Whether the bytes one rule prepares are the bytes the other's call would make itself from the
+// same x (its source, stride and extent are each call's: prepared_serves): the same
+// representation, row length and variant, neither bound to its weight. The same nominal activation
+// dtype is no such match: W4A8's, I8's and ggml's int8 forms group, scale and sum apart. A match
+// is of the rule only; a consumer that shares bytes also needs prepared_serves (K, T, stride and
+// source) and a buffer that holds the whole call: MMQ quantizes kMmqPrefillSlice tokens at a time
+// into one reused buffer, ggml's vector kernel 8 at a time into scoped ones, and I8 lays its
+// scales out by the padded token count.
+[[nodiscard]] bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept;
 // The overlap a launch allows its neighbours (#309), run_route's one rule. Three events apart:
 // join (this launch starts under the call before it, which it waits for before exiting:
 // Call::join_previous), release (the next launch may begin once every CTA of this one has triggered,
