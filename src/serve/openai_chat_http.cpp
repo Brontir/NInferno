@@ -41,6 +41,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                                       .stream                 = request.stream,
                                       .output_tokens_explicit = request.output_tokens_explicit};
     PreparedRequest prepared;
+    std::shared_ptr<void> kept_turn; // a kept thread's turn, counted until the request ends
     try {
         const ninferno::GenerationObservationOptions observation{
             .phase_timings   = true,
@@ -51,7 +52,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
                                      request.stream ? GenerationConsumerMode::Streaming
                                                     : GenerationConsumerMode::Aggregate,
                                      observation, [&req] { return client_disconnected(req); },
-                                     request_cache_hints(req, res));
+                                     request_cache_hints(req, res, &kept_turn));
     } catch (const ApiException& exception) {
         record_request_rejected(make_request_rejection_log_context(
             req_id, "openai_chat_completions", request.generation, metadata, exception.error()));
@@ -72,6 +73,7 @@ void HttpServer::handle_chat_completions(const httplib::Request& req, httplib::R
     auto lifecycle = begin_request(make_request_log_context(req_id, "openai_chat_completions",
                                                             request.generation, metadata, prepared),
                                    res);
+    lifecycle->hold(std::move(kept_turn));
     if (const std::string warning = notes_header_value(request.generation); !warning.empty()) {
         res.set_header("X-NInferno-Warning", warning);
     }

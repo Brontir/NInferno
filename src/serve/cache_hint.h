@@ -23,6 +23,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <memory>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -87,17 +88,23 @@ router_report_headers(const RouterReport& report);
 
 // The kept threads' deadlines: a grant sets (or moves) its session's, `expired` hands back each
 // session whose deadline passed, once, with its ttl (a release the cache answers InFlight is kept
-// again for another ttl).
+// again for another ttl). A thread's ttl runs from the end of its last turn: begin_turn counts a
+// turn from its grant (before it is prepared, queued or materialized, when the cache does not see
+// it yet) and its guard, dropped when the request ends, counts it off and moves the deadline to a
+// ttl after; a deadline that passes while a turn of its thread runs moves on another ttl.
 class KeptSessions {
 public:
     using Clock = std::chrono::steady_clock;
     void keep(const KeptGrant& grant, Clock::time_point now);
+    [[nodiscard]] std::shared_ptr<void> begin_turn(const KeptGrant& grant, Clock::time_point now);
     [[nodiscard]] std::vector<KeptGrant> expired(Clock::time_point now);
 
 private:
+    void end_turn(const std::string& session_key, Clock::time_point now);
     struct Deadline {
         Clock::time_point until;
         std::chrono::milliseconds ttl;
+        int turns = 0;
     };
     std::mutex mutex_;
     std::map<std::string, Deadline> until_;

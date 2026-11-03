@@ -60,12 +60,13 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                                       .stream                 = request.stream,
                                       .output_tokens_explicit = request.output_tokens_explicit};
     PreparedRequest prepared;
+    std::shared_ptr<void> kept_turn; // a kept thread's turn, counted until the request ends
     try {
         prepared = service_->prepare(request.generation,
                                      request.stream ? GenerationConsumerMode::Streaming
                                                     : GenerationConsumerMode::Aggregate,
                                      {}, [&req] { return client_disconnected(req); },
-                                     request_cache_hints(req, res));
+                                     request_cache_hints(req, res, &kept_turn));
     } catch (const ApiException& exception) {
         const ApiError error = normalize_anthropic_error(exception.error());
         record_request_rejected(make_request_rejection_log_context(
@@ -87,6 +88,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
     auto lifecycle = begin_request(make_request_log_context(req_id, "anthropic_messages",
                                                             request.generation, metadata, prepared),
                                    res);
+    lifecycle->hold(std::move(kept_turn));
     if (const std::string warning = notes_header_value(request.generation); !warning.empty()) {
         res.set_header("X-NInferno-Warning", warning);
     }
