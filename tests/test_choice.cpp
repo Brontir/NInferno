@@ -1625,6 +1625,31 @@ void weighs_the_drafters(const json& fixture) {
           "the worth not deciding: the profile's drafter");
 }
 
+// A load table that bounds the drafter's depth (#303): from its bound on, the gain counted is
+// the bounded depth's, one request measured; an unmeasured depth counts none, and from the plain
+// bound on there is none.
+void load_bounds_the_gain(const json& fixture) {
+    Bench b = nine_b(fixture, "RTX 4090");
+    ch::DrafterOption d{"mtp:4", "mtp", 2.0, 8, "measured"};
+    d.load = {{.streams = 2, .speedup = 1.5, .depth = 2},
+              {.streams = 4, .speedup = 1.0, .depth = 1, .measured = false}};
+    check(d.speedup_at(1) == 2.0 && d.speedup_at(2) == 1.5 && d.speedup_at(3) == 1.5 &&
+              d.speedup_at(4) == 1.0 && d.speedup_at(7) == 1.0 && d.speedup_at(8) == 1.0,
+          "the gain by streams: 2, then the bounds', then plain");
+    b.model.drafters        = {d};
+    b.model.default_drafter = 1;
+    const ch::Candidate at{KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
+                           RecurrentStateStorage::FP16, ActivationMode::Fast, ch::kDefaultChunk, 1};
+    ch::Candidate without = at;
+    without.drafter       = 0;
+    for (const auto& [streams, gain] : std::vector<std::pair<std::uint32_t, double>>{{1, 2.0}, {2, 1.5}, {3, 1.5}, {4, 1.0}}) {
+        const double with  = ch::speed_of(b.model, b.card, b.quants[0], at, streams, 4096).decode_per_stream;
+        const double plain = ch::speed_of(b.model, b.card, b.quants[0], without, streams, 4096).decode_per_stream;
+        check(plain > 0 && std::abs(with / plain - gain) < 1e-9,
+              "decode at " + std::to_string(streams) + " streams: x" + std::to_string(gain));
+    }
+}
+
 // The order a manifest lists its drafters in does not decide: two drafters of equal worth tie
 // and the same one wins whichever comes first (#304).
 void drafter_order_does_not_decide(const json& fixture) {
@@ -1803,6 +1828,7 @@ int main() {
     prices_attention_tiles();
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
+    load_bounds_the_gain(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
     if (failures != 0) {

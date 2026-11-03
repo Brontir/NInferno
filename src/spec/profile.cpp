@@ -575,6 +575,27 @@ double per_request_gain(const Profile& profile, bool thinking_default) {
     return at_fixed > 0 && at_own > 0 ? at_fixed / at_own : 1.0;
 }
 
+std::optional<double> measured_gain(const Profile& profile, const SpecConfig& config,
+                                    bool thinking) {
+    if (!config.enabled()) { return std::nullopt; }
+    const auto table = aggregate(profile.measurements);
+    const std::vector<std::string> sections =
+        thinking ? std::vector<std::string>{"thinking"}
+                 : std::vector<std::string>{"math", "code", "prose"};
+    double plain = 0, at = 0;
+    for (const auto& f : sections) {
+        const auto p = table.find({"plain", f});
+        const auto c = table.find({config.label(), f});
+        if (p == table.end() || c == table.end() || p->second.tokens == 0 || c->second.tokens == 0) {
+            return std::nullopt;
+        }
+        plain += weighted_cost(p->second);
+        at += weighted_cost(c->second);
+    }
+    if (plain <= 0 || at <= 0) { return std::nullopt; }
+    return plain / at;
+}
+
 bool memory_in_range(std::string_view range, std::uint64_t memory_bytes) {
     if (range.empty()) { return true; }
     if (memory_bytes == 0) { return false; }

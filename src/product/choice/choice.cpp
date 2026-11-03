@@ -1206,13 +1206,11 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double flops       = flops_rate > 0 ? rows * 2 * params / flops_rate : 0;
     const double step        = std::max(reads + launches + exact, flops);
     out.decode_per_stream = step > 0 && std::isfinite(step) ? 1 / step : 0;
-    // A drafter's measured gain over plain decode, while its load table lets these many streams
-    // speculate (a gain no measurement gives is not counted: DrafterOption::measured).
+    // A drafter's measured gain over plain decode at the depth its load table lets these many
+    // streams draft (a gain no measurement gives is not counted: DrafterOption::measured).
     if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
         const DrafterOption& d = model.drafters[candidate.drafter - 1];
-        if (d.measured && (d.plain_from_streams == 0 || rows < d.plain_from_streams)) {
-            out.decode_per_stream *= d.speedup;
-        }
+        if (d.measured) { out.decode_per_stream *= d.speedup_at(static_cast<std::uint32_t>(rows)); }
     }
 
     bool prefill_transferred = false;
