@@ -76,6 +76,8 @@ struct MeasuredPair {
 // A converted target's weights: its provenance's "base" input files (artifact/source_identity.h).
 // nullopt for an artifact converted before the converter recorded its inputs.
 [[nodiscard]] std::optional<std::string> artifact_weights(const std::filesystem::path& artifact);
+// The same from an artifact's provenance already read.
+[[nodiscard]] std::optional<std::string> provenance_weights(const nlohmann::json& provenance);
 
 // Whether the pair was measured by this build's speculation engine (its tune's key names
 // kSpecEngineVersion): a bump of the version invalidates every earlier measurement.

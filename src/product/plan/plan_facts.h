@@ -86,6 +86,10 @@ struct PlanTargetShape {
     // artifact's provenance "quant" (the GGUF file name's, as the converter records it); "" when
     // unknown. The configuration choice prices a quantization by it (its measured accuracy term).
     std::string quant_label;
+    // The files those weights are (spec::weights_identity of their SHA-256 digests: a hub
+    // listing's, an artifact's recorded base inputs); "" when unknown. A quantization's accuracy
+    // term is measured only on the very files the lab measured (#299); a label alone is a proxy.
+    std::string weights;
 };
 
 struct PlanSourceFacts {

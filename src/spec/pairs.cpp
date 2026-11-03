@@ -308,8 +308,11 @@ std::string weights_identity(std::vector<std::string> sha256s) {
 
 std::optional<std::string> artifact_weights(const std::filesystem::path& artifact) {
     const artifact::Reader reader(artifact);
-    const auto& provenance = reader.directory().provenance;
-    const auto inputs      = provenance.find("inputs");
+    return provenance_weights(reader.directory().provenance);
+}
+
+std::optional<std::string> provenance_weights(const Json& provenance) {
+    const auto inputs = provenance.find("inputs");
     if (inputs == provenance.end() || !inputs->is_array()) { return std::nullopt; }
     for (const auto& input : *inputs) {
         if (!input.is_object() || input.value("role", std::string()) != "base") { continue; }
