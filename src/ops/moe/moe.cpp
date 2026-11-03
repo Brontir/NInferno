@@ -953,15 +953,6 @@ std::string plan_name(const MoePlan& plan) {
            "|" + down + (plan.a16 ? "|a16" : "") + (plan.w4a8 ? "|w4a8" : "");
 }
 
-const char* moe_stage_kernel_name(MoeStageKernel kernel) noexcept {
-    switch (kernel) {
-    case MoeStageKernel::R8: return "r8";
-    case MoeStageKernel::W4a8: return "w4a8";
-    case MoeStageKernel::RegisterMma: return "rmma";
-    }
-    return "";
-}
-
 MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan) {
     const BankRefusal gate_up_w4a8 = w4a8_bank_refusal(weights, weights.gate_up);
     const BankRefusal down_w4a8    = w4a8_bank_refusal(weights, weights.down);
@@ -972,8 +963,10 @@ MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan) {
         s.w4a8         = w4a8;
         s.w4a8_partner = w4a8 == BankRefusal::None && other_w4a8 != BankRefusal::None;
         if (plan.w4a8) {
+            // Two plain MXFP4 banks on an sm_120a build run the block-scaled MMA with MXFP8
+            // activations (launch_moe_w4a8_mx) in the tier's place.
             s.kernel = MoeStageKernel::W4a8;
-            s.name   = "w4a8";
+            s.name   = mx8_banks(weights) ? "w4a8.mx8" : "w4a8";
         } else if (r8_schedule >= 0) {
             s.kernel   = MoeStageKernel::R8;
             s.schedule = r8_schedule;
