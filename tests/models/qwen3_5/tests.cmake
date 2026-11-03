@@ -119,7 +119,7 @@ set_tests_properties(
 
 ninferno_add_test(ninferno_qwen3_5_vision_workspace_real_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_vision_workspace.cpp"
-  LIBRARIES ninferno_model_runtime ninferno_engine)
+  LIBRARIES ninferno_model_runtime ninferno_engine ninferno_artifact)
 
 set_tests_properties(
   ninferno_qwen3_5_vision_workspace_real_test

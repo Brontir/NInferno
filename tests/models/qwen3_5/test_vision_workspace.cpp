@@ -3,6 +3,7 @@
 #include "models/qwen3_5/execution/parameters.h"
 #include "models/qwen3_5/program/program.h"
 #include "models/qwen3_5/program/model_family.h"
+#include "real_artifact.h"
 #include <cstdlib>
 
 #include "models/qwen3_5/frontend/prepared_prompt.h"
@@ -17,6 +18,13 @@ int main() {
     namespace qwen       = ninferno::models::qwen3_5;
     const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
     if (!artifact || !*artifact) { return 77; }
+    // The route is sized beside MTP: a text-only artifact, or one without the head, has neither.
+    if (const auto& parts = ninferno::test::real_artifact(artifact); !parts.vision || !parts.mtp) {
+        std::cout << "skip: the artifact has no " << (parts.vision ? "MTP" : "vision")
+                  << " component
+";
+        return 77;
+    }
     static_assert(ninferno::models::qwen3_5::kMaximumVisionItemTokens == 16384);
     // The current Vision route fits below 827 MiB, including arena alignment and empty-scratch
     // backing. The context growth check below protects the single-item lifetime bound.
