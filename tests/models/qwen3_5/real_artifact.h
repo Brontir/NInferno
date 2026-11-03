@@ -106,11 +106,12 @@ inline ProposalHead proposal_head(const char* path, ProposalHead wanted,
     return ProposalHead::Full;
 }
 
-// A case whose engine the plan refuses (CapacityError) on a card below kSmallCardBytes (an RTX 4060
-// Ti's 16 GiB under a 35B artifact: three lanes of 4K beside 14.9 GiB of weights) is skipped, said
-// once per case; on a larger card the refusal is a failure (a planner regression must not pass as
-// a skip). True: skipped.
-inline constexpr std::size_t kSmallCardBytes = std::size_t{24} << 30;
+// A case whose engine the plan refuses (CapacityError) on a card of at most 24 GB is skipped, said
+// once per case: a 35B artifact leaves an RTX 4060 Ti's 16 GiB too little for three lanes of 4K
+// beside 14.9 GiB of weights, and an RTX 4090's 1.9 GiB beside 21.3 GiB too little for eight. On a
+// larger card the refusal is a failure (a planner regression must not pass as a skip). A 24 GB
+// card reports 23.99 GiB, below the 25 GiB line. True: skipped.
+inline constexpr std::size_t kSmallCardBytes = std::size_t{25} << 30;
 inline bool small_card_skips(const CapacityError& error, std::string_view what) {
     std::size_t free_bytes = 0, total_bytes = 0;
     if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess || total_bytes >= kSmallCardBytes) {
