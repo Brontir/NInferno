@@ -143,14 +143,18 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
     request.headers = std::move(s->headers);
     request.body    = std::move(s->body);
     if (!s->authority.empty()) { request.set_header("X-Forwarded-Host", s->authority); }
-    request.response_handler = [&](const httplib::Response& response) {
-        std::lock_guard lock(s->mu);
+    // The answer's head (under s->mu).
+    const auto take_head = [&](const httplib::Response& response) {
         s->status = response.status;
         for (const auto& [name, value] : response.headers) {
             std::string key = lower(name);
             if (!hop_by_hop(key)) { s->response_headers.emplace_back(std::move(key), value); }
         }
         s->head_ready = true;
+    };
+    request.response_handler = [&](const httplib::Response& response) {
+        std::lock_guard lock(s->mu);
+        take_head(response);
         waker->wake();
         return !s->cancelled;
     };
@@ -168,7 +172,10 @@ void forward(const std::shared_ptr<Stream>& s, const EngineAddress engine,
     {
         std::lock_guard lock(s->mu);
         s->client = nullptr;
-        answered  = s->head_ready || s->cancelled;
+        // An answer with no body (204, a HEAD's, an OPTIONS preflight's) reaches no response
+        // handler: its head comes with the result.
+        if (!s->head_ready && !s->cancelled && result) { take_head(*result); }
+        answered = s->head_ready || s->cancelled;
     }
     if (!answered) {
         local_answer(*s, 502,

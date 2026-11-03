@@ -172,7 +172,8 @@ if(NINFERNO_BUILD_APPS)
   include(GNUInstallDirs)
   # An installed executable also looks in <prefix>/lib for the shared libraries a release archive
   # carries beside it (tools/release/package.sh), before the system's.
-  foreach(app ninferno ninferno-serve ninferno-convert ninferno-perplexity ninferno-ui ninferno-dispatch)
+  foreach(app ninferno ninferno-serve ninferno-convert ninferno-perplexity ninferno-ui ninferno-dispatch
+          ninferno-connect)
     if(TARGET ${app})
       set_target_properties(${app} PROPERTIES INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
       if(WIN32)

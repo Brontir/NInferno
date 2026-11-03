@@ -111,6 +111,11 @@ struct Engine {
                 return sink.write(chunk.data(), chunk.size());
             });
         });
+        // A CORS preflight: 204, no body.
+        server.Options("/pre", [](const httplib::Request&, httplib::Response& res) {
+            res.status = 204;
+            res.set_header("Access-Control-Allow-Origin", "*");
+        });
         // 8 MiB in 64 KiB chunks, each byte its offset mod 251.
         server.Get("/big", [](const httplib::Request&, httplib::Response& res) {
             auto sent = std::make_shared<std::size_t>(0);
@@ -383,7 +388,8 @@ struct Worker {
     std::atomic<bool> stop{false};
     std::future<int> rc;
     Worker(const Listener& router, const Engine& engine, std::chrono::milliseconds ping,
-           std::size_t max_request_bytes = 64u << 20, const std::string& tls_ca_file = {}) {
+           std::size_t max_request_bytes = 64u << 20, const std::string& tls_ca_file = {},
+           int connections = 1) {
         nc::ConnectorOptions o;
         std::string why;
         o.routers = {*nc::parse_router_url(
@@ -393,7 +399,7 @@ struct Worker {
         o.tls.ca_file               = tls_ca_file;
         o.key                       = "k-1";
         o.name                      = "box-1";
-        o.connections               = 1;
+        o.connections               = connections;
         o.tunnel.engine             = {"127.0.0.1", engine.port};
         o.tunnel.ping_interval      = ping;
         o.tunnel.max_request_bytes  = max_request_bytes;
@@ -591,6 +597,11 @@ void test_registration_and_streams() {
     expect(c->stream(e).status == 200 && c->stream(e).data == "hello", "a POST body forwarded");
     expect(c->stream(big).status == 413, "a body past the limit: 413, got " +
                                              std::to_string(c->stream(big).status));
+    const auto pre = c->request("OPTIONS", "/pre");
+    expect(c->pump(5s, [&] { return c->stream(pre).closed; }) && c->stream(pre).status == 204 &&
+               c->stream(pre).error == 0,
+           "a body-less answer (a 204 preflight) passes as it is, got " +
+               std::to_string(c->stream(pre).status));
     const auto cut = c->request("GET", "/die");
     expect(c->pump(5s, [&] { return c->stream(cut).closed; }) && c->stream(cut).error != 0 &&
                c->stream(cut).data == "partpart",
@@ -685,6 +696,31 @@ void test_refused_key_stops() {
     expect(router.accept(300ms) < 0, "no dial after the refusal");
 }
 
+// A revoked key stops every connection to that router: one slot's live tunnel too, not only the
+// slot the 401 reached.
+void test_refused_key_stops_every_slot() {
+    Engine engine;
+    Listener router;
+    Worker worker(router, engine, 1000ms, 64u << 20, {}, 2);
+    auto live = accept_switched(router);
+    expect(live != nullptr, "the first slot's tunnel");
+    const int fd = router.accept(5s);
+    expect(fd >= 0, "the second slot dialed");
+    if (!live || fd < 0) { return; }
+    Upgrade up;
+    (void)read_upgrade(fd, &up);
+    (void)send_all(fd, "HTTP/1.1 403 Forbidden
+Content-Length: 0
+
+");
+    ::close(fd);
+    // The live tunnel drains (GOAWAY) and closes while the router keeps answering it.
+    const bool ended = live->pump(5s, [&] {
+        return worker.rc.wait_for(0s) == std::future_status::ready;
+    });
+    expect(ended && worker.rc.get() == 3, "a refused key ends every slot of the router, the run with 3");
+}
+
 } // namespace
 
 int main() {
@@ -694,6 +730,7 @@ int main() {
     test_ping_timeout_dials_again();
     test_goaway_replacement_while_draining();
     test_refused_key_stops();
+    test_refused_key_stops_every_slot();
     test_tls();
     if (failures != 0) {
         std::fprintf(stderr, "connect: %d failure(s)\n", failures);

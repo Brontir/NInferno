@@ -60,7 +60,7 @@ enum class SlotEnd : std::uint8_t { Stopped, KeyRefused };
 
 SlotEnd run_slot(const ConnectorOptions& options, const RouterUrl& router, int index,
                  const std::string& version, const ConnectorLog& log,
-                 const std::atomic<bool>& stop) {
+                 std::atomic<bool>& stop) {
     const auto say = [&](const std::string& line) {
         if (log.line) { log.line(router.display() + " #" + std::to_string(index) + ": " + line); }
     };
@@ -106,8 +106,11 @@ SlotEnd run_slot(const ConnectorOptions& options, const RouterUrl& router, int i
         }
         if (!link || hs.result != HandshakeResult::Switched) {
             if (link && hs.result == HandshakeResult::KeyRefused) {
+                // The key was revoked: every connection to this router stops (its other slots, and
+                // their sessions drain), not only this one.
                 say("the router refused the key (" + why + "); not dialing it again");
                 result = SlotEnd::KeyRefused;
+                stop.store(true);
                 break;
             }
             const auto wait = jittered(backoff, backoff / 2, rng);
@@ -185,19 +188,33 @@ std::string registration_json(const std::string& props_json, const std::string& 
 
 int run_connector(const ConnectorOptions& options, const std::string& version,
                   const ConnectorLog& log, const std::atomic<bool>& stop) {
-    std::vector<std::thread> slots;
+    // Each router's own stop: the caller's, or a refusal of the key by that router.
+    std::vector<std::unique_ptr<std::atomic<bool>>> router_stop;
+    for (std::size_t r = 0; r < options.routers.size(); ++r) {
+        router_stop.push_back(std::make_unique<std::atomic<bool>>(false));
+    }
     std::vector<int> refused(options.routers.size(), 0);
     std::mutex mu;
+    std::atomic<std::size_t> running{0};
+    std::vector<std::thread> slots;
     for (std::size_t r = 0; r < options.routers.size(); ++r) {
         for (int i = 0; i < std::max(1, options.connections); ++i) {
+            ++running;
             slots.emplace_back([&, r, i] {
-                if (run_slot(options, options.routers[r], i, version, log, stop) ==
+                if (run_slot(options, options.routers[r], i, version, log, *router_stop[r]) ==
                     SlotEnd::KeyRefused) {
                     std::lock_guard lock(mu);
                     ++refused[r];
                 }
+                --running;
             });
         }
+    }
+    while (running.load() > 0) {
+        if (stop.load()) {
+            for (auto& s : router_stop) { s->store(true); }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
     for (auto& slot : slots) { slot.join(); }
     const bool all_refused =
