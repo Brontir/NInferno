@@ -751,7 +751,7 @@ QuantPlan plan_quants(const PlanSourceFacts& shape, const std::vector<QuantListi
                                           quant_option_of(row_facts(shape, row), row.listing.quant).weights);
         };
         const bool any_measured = std::any_of(out.rows.begin(), out.rows.end(), [&](const QuantRow& row) {
-            return row.candidate.supported && measured(row) &&
+            return row.candidate.supported && measured(row) && authorized(row) &&
                    out.pick->below_floor == runtime::below_quality_floor(row.candidate);
         });
         // Two rows' worths within the generation's measured decode error are a tie: the lower KLD

@@ -770,6 +770,85 @@ void test_rule() {
         }
         std::cout << "  Ada 27B: " << weighed << " of 3 contexts decided by worth\n";
     }
+    // Mixed evidence (#368): rows whose files are the curve's measured files at their bits (the
+    // digests and bits of choice_constants.h kQuantKld) are direct; rows without an identity are
+    // estimates. The trade weighs the direct rows alone, and only where the rule's pick is direct.
+    {
+        struct Row {
+            const char* label;
+            double bits;
+            const char* digest; // "" none
+        };
+        const auto listing_of = [](const std::vector<Row>& rows) {
+            std::vector<pr::QuantListing> out;
+            for (const Row& r : rows) {
+                pr::QuantListing l{.quant  = r.label,
+                                   .format = "gguf",
+                                   .bytes  = static_cast<std::uint64_t>(r.bits * 27e9 / 8),
+                                   .bits   = static_cast<int>(r.bits)};
+                l.weights = r.digest;
+                out.push_back(l);
+            }
+            return out;
+        };
+        const char* q6 = "91898433cf5ce0a8f45516a4cc3e9343b6e01d052d01f684309098c66a326c59";
+        const char* q5 = "dc2a39aef291f91a9116ad214058da0d86eb648743a124bd8c333787c4b9c91c";
+        const char* q4 = "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8";
+        const std::vector<Row> mixed = {{"Q8_0", 8.516, ""},     {"Q6_K", 6.665, q6},
+                                        {"Q5_K_M", 5.878, q5},   {"Q4_K_M", 5.080, q4},
+                                        {"Q4_K_S", 4.810, ""},   {"IQ4_XS", 4.617, ""}};
+        std::vector<Row> estimated_top = mixed;
+        estimated_top[1].digest        = ""; // the Q6_K row's files unknown
+        const auto planned = [&](const std::vector<Row>& rows, std::uint32_t context) {
+            pr::PlanSourceFacts facts = shape;
+            pr::DryRunInputs inputs;
+            inputs.device                 = card(24, 89);
+            inputs.gpu.compute_capability = 89;
+            const pr::LaunchPlanOptions o =
+                pr::launch_options({.max_context = context, .max_concurrency = 1, .spec = "none"});
+            inputs.options = o.options;
+            inputs.ask     = o.ask;
+            return pr::plan_quants(facts, listing_of(rows), inputs);
+        };
+        const auto has = [](const std::vector<std::string>& v, const std::string& s) {
+            return std::find(v.begin(), v.end(), s) != v.end();
+        };
+        int traded = 0;
+        for (const std::uint32_t context : {0U, 32768U, 131072U}) {
+            const std::string what = "mixed ctx " + std::to_string(context);
+            const pr::QuantPlan p  = planned(mixed, context);
+            if (!p.pick) {
+                check(false, what + ": a pick");
+                continue;
+            }
+            const std::string pick    = p.rows[p.pick->index].listing.quant;
+            const std::string largest = p.rows[p.largest_index.value_or(p.pick->index)].listing.quant;
+            const bool direct_largest = largest == "Q6_K" || largest == "Q5_K_M" || largest == "Q4_K_M";
+            if (!p.by_worth && !p.quality_withheld && p.quality_estimates.empty()) {
+                continue; // the worth does not weigh this tier
+            }
+            check(!has(p.quality_estimates, "Q6_K") && !has(p.quality_estimates, "Q5_K_M") &&
+                      !has(p.quality_estimates, "Q4_K_M") && has(p.quality_estimates, "Q4_K_S") &&
+                      has(p.quality_estimates, "IQ4_XS"),
+                  what + ": the rows without measured files are the estimates");
+            check(p.quality_withheld == !direct_largest,
+                  what + ": withheld exactly where the rule's pick (" + largest + ") is an estimate");
+            check(!p.by_worth || pick == "Q6_K" || pick == "Q5_K_M" || pick == "Q4_K_M",
+                  what + ": the worth picks only among the measured rows (" + pick + ")");
+            traded += p.by_worth ? 1 : 0;
+            std::cout << "  mixed 27B " << what << ": " << pick
+                      << (p.by_worth ? " (by worth over " + largest + ")" : " (the rule's largest)")
+                      << "\n";
+            // The same listing with the rule's pick's files unknown: no trade at all.
+            if (largest == "Q6_K") {
+                const pr::QuantPlan e = planned(estimated_top, context);
+                check(e.pick && !e.by_worth && e.quality_withheld &&
+                          e.rows[e.pick->index].listing.quant == "Q6_K",
+                      what + ": an estimated pick keeps the rule's largest");
+            }
+        }
+        std::cout << "  mixed 27B: " << traded << " of 3 contexts traded among measured rows\n";
+    }
     // A safetensors checkpoint: planned at its converted size, or not planned (never refused).
     {
         const nlohmann::json dense = {{"model_type", "qwen3_5_text"}};

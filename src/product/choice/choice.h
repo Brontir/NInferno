@@ -369,7 +369,9 @@ enum class Evidence { Measured, Proxy, Interpolated, StandIn, Reference };
 }
 
 // Whether a quantization's accuracy term may decide between quantizations (#368), apart from what
-// it shows (Evidence). Direct: these files were measured at these bits (Evidence::Measured).
+// it shows (Evidence). Direct: these files were measured at these bits (Evidence::Measured; the
+// curve's own Q8_0 file too: every term is a KLD against it, so between quantizations its 0 is
+// exact, though not an error of 0 against the original weights).
 // Transfer: a validated rule carries another quantization's measurement to them (none is
 // registered: a same label at the same bits, a family's curve or a Q8_0 reference alone is not
 // one). Estimate: a value to show (Proxy, Interpolated, StandIn, Reference). Unknown: no place on

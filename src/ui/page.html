@@ -1009,7 +1009,7 @@ Object.assign(T.en, {
   quantTip:"The weights' format as the repository publishes it; ★ is the server's pick for the chosen context × requests on this card: the largest that fits, or where the lab's measurements decide, the best balance of speed and accuracy among those that fit; ✓ is downloaded",
   cardGb:"{gb} GB",cardThisGb:"this {gb} card",cardThis:"this card",
   ruleAt:"{ctx} × {n}",ruleAtAuto:"auto context (≈ {ctx}) × {n}",ruleAtAutoBare:"auto context × {n}",
-  rule_largest_fits:"{quant}, the largest that fits {card} at {at}",rule_best_worth:"{quant}, the best balance of speed and accuracy {card} at {at} (the largest that fits is {largest})",rule_none_fits:"Nothing fits {card} at {at}",ruleSmallest:"(not even {quant})",
+  rule_largest_fits:"{quant}, the largest that fits {card} at {at}",ruleQualityWithheld:"; its accuracy was not measured on these files, so speed is not traded for it",rule_best_worth:"{quant}, the best balance of speed and accuracy {card} at {at} (the largest that fits is {largest})",rule_none_fits:"Nothing fits {card} at {at}",ruleSmallest:"(not even {quant})",
   rule_none_served:"The engine runs none of this repository's quantizations",
   tier_own:"each request has its own {ctx}",tier_own_stepped:"each request has its own {ctx}; {want} each fits no quantization",
   tier_shared:"{ctx} shared by {n}: no quantization gives each request its own {want}",
@@ -1055,7 +1055,7 @@ Object.assign(T.ru, {
   quantTip:"Формат весов, как его публикует репозиторий; ★ — выбор сервера для выбранных контекста × запросов на этой карте: самый большой из влезающих, а где решают замеры стендов — лучший баланс скорости и точности среди влезающих; ✓ — уже скачано",
   cardGb:"{gb} ГБ",cardThisGb:"эту карту на {gb}",cardThis:"эту карту",
   ruleAt:"{ctx} × {n}",ruleAtAuto:"авто-контексте (≈ {ctx}) × {n}",ruleAtAutoBare:"авто-контексте × {n}",
-  rule_largest_fits:"{quant} — самый большой квант, который влезает на {card} при {at}",rule_best_worth:"{quant} — лучший баланс скорости и точности на {card} при {at} (самый большой, что влезает, — {largest})",rule_none_fits:"Ничего не влезает на {card} при {at}",ruleSmallest:"(даже {quant})",
+  rule_largest_fits:"{quant} — самый большой квант, который влезает на {card} при {at}",ruleQualityWithheld:"; его точность не измерена на этих файлах, поэтому скорость на неё не меняется",rule_best_worth:"{quant} — лучший баланс скорости и точности на {card} при {at} (самый большой, что влезает, — {largest})",rule_none_fits:"Ничего не влезает на {card} при {at}",ruleSmallest:"(даже {quant})",
   rule_none_served:"Движок не запускает ни один квант этого репозитория",
   tier_own:"у каждого запроса свои {ctx}",tier_own_stepped:"у каждого запроса свои {ctx}; по {want} на каждый не влезает ни один квант",
   tier_shared:"{ctx} на всех {n}: ни один квант не даёт каждому запросу свои {want}",
@@ -1887,7 +1887,9 @@ function ruleText(doc, ask, tr) {
   const quant = v.quant || pick.quant || doc.chosen || "";
   const head = c === "best_worth" ? tr("rule_best_worth", {quant, largest: v.largest || "", card, at})
                                   : tr("rule_largest_fits", {quant, card, at});
-  return head + (words ? ": " + words : "") + (c === "best_worth" ? tradeText(v, tr) : "");
+  // #368: the rule's pick has no measured accuracy for its own files, so no trade was weighed.
+  const withheld = c === "largest_fits" && v.quality_withheld === true ? tr("ruleQualityWithheld") : "";
+  return head + (words ? ": " + words : "") + (c === "best_worth" ? tradeText(v, tr) : "") + withheld;
 }
 // The worth's trade against the rule's largest (rule_params time_ratio, kld_delta, accuracy_weight):
 // ". Q8_0: 26 % more time per request for 0.0030 less KLD; λ 25: 0.001 KLD is worth 2.5 % of a
