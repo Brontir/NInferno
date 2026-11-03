@@ -353,7 +353,7 @@ std::uint64_t plan_workspace_estimate(const PlanModelFacts& model, const PlanRun
     if (const PlanWorkspaceQuery& query = workspace_query(); query) {
         PlanWorkspaceAnswer answer = query(model, rung, options, concurrency, plan);
         if (answer.bytes) {
-            if (basis != nullptr) { *basis = "start"; }
+            if (basis != nullptr) { *basis = answer.why.empty() ? "start" : "start: " + answer.why; }
             return *answer.bytes;
         }
         why = std::move(answer.why);

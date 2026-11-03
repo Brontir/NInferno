@@ -207,8 +207,12 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
         own.speculative_backend     = in.speculative_backend;
         plan                        = &own;
     }
+    std::string sized = "no speculative round";
     if (plan != nullptr && plan->speculative_backend == SpeculativeBackend::Mtp &&
         plan->draft_window != 0) {
+        sized = "the MTP round at window " + std::to_string(plan->draft_window) + ", " +
+                std::to_string(detail::speculative_round_batches(*plan)) + " row(s)" +
+                (plan == &own ? " (the start's launch windows)" : "");
         const auto width   = static_cast<std::int32_t>(plan->draft_window) + 1;
         const auto rows    = static_cast<std::int32_t>(detail::speculative_round_batches(*plan));
         const auto columns = static_cast<std::int32_t>(detail::speculative_round_columns(*plan));
@@ -221,7 +225,7 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
                                    kGemmaDrafterPass);
         }
     }
-    return {general, ""};
+    return {general, sized};
 }
 
 } // namespace

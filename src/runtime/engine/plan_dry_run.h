@@ -381,7 +381,8 @@ struct PlanRungBytes {
 
 // A family's workspace from its facts (#302): the arena a start would size for the rung's context,
 // chunk and `concurrency` under `options`, or no bytes where the facts do not carry what it needs,
-// with why (plan_workspace_estimate's formula then stands; "" where the family has no query). The
+// with why (plan_workspace_estimate's formula then stands; "" where the family has no query); with
+// bytes, `why` may say what they cover (PlanRungBytes::workspace_basis "start: ..."). The
 // engine registers it (it links the Ops this library does not: register_plan_workspace_queries);
 // unset, the formula stands everywhere.
 struct PlanWorkspaceAnswer {
