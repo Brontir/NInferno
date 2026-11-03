@@ -2394,6 +2394,11 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if (index < 0 || index >= rmma_schedule_count()) return ScheduleRefusal::NotDeclared;
     if (!rmma_schedule_launchable(index)) return ScheduleRefusal::NotCompiled;
     if (!supports(w)) return ScheduleRefusal::Format;
+    // Whether the build holds the tile for the codec, ahead of the weight's own checks, so an
+    // alignment or extent refusal does not hide it (rmma_coverage counts compiled tiles by it).
+    const WeightCodec codec = codec_of(w);
+    const auto s            = rmma_schedule_info(index);
+    if (!rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k)) return ScheduleRefusal::CodecTile;
     const Route route{Family::RegisterMma, static_cast<std::uint8_t>(index)};
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
@@ -2402,10 +2407,7 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) {
         return ScheduleRefusal::Alignment;
     }
-    const WeightCodec codec = codec_of(w);
     if ((w.k % k_multiple(codec)) != 0) return ScheduleRefusal::Extent;
-    const auto s = rmma_schedule_info(index);
-    if (!rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k)) return ScheduleRefusal::CodecTile;
     if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
         codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
         codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||

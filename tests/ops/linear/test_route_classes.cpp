@@ -153,6 +153,35 @@ int run_board(const TestBoard& b) {
                          ", compiled " + std::to_string(c.compiled) + ", legal " +
                          std::to_string(c.legal));
                 }
+                // A ggml high plane 4 bytes off its 16-byte boundary (a view into a packed buffer):
+                // every schedule the build holds for the codec refuses it for alignment, and the
+                // tiles it does not hold still count as not compiled.
+                if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr) {
+                    Weight off = w;
+                    off.qhigh  = static_cast<const char*>(w.qhigh) + 4;
+                    const auto o = generic::rmma_coverage(problem, off, 1, false);
+                    if (o.legal != 0 || o.compiled != c.compiled) {
+                        fail(where + " qhigh +4: legal " + std::to_string(o.legal) + ", compiled " +
+                             std::to_string(o.compiled) + " against " +
+                             std::to_string(c.compiled));
+                    }
+                    for (std::size_t i = 0; i < o.schedules.size(); ++i) {
+                        const auto aligned = c.schedules[i].refusal;
+                        const auto refused = o.schedules[i].refusal;
+                        const bool want =
+                            aligned == generic::ScheduleRefusal::None
+                                ? refused == generic::ScheduleRefusal::Alignment
+                                : refused == aligned ||
+                                      (aligned == generic::ScheduleRefusal::Extent &&
+                                       refused == generic::ScheduleRefusal::Alignment);
+                        const generic::Route r{generic::Family::RegisterMma,
+                                               static_cast<std::uint8_t>(i)};
+                        if (!want || generic::route_admits(r, off, LinearPolicy::AllowA8)) {
+                            fail(where + " qhigh +4 " + generic::route_name(r) + ": " +
+                                 std::string(generic::schedule_refusal_name(refused)));
+                        }
+                    }
+                }
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :

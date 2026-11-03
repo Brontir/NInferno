@@ -467,11 +467,12 @@ struct Problem {
 // Why a schedule of a family is not a route for a weight on this build and device (#307), one
 // reason each: not declared (an index past the family's list), not compiled (this build omits
 // it: the thread-block cluster schedules outside the full sm_12x build), the weight's format or
-// layout (supports), an instruction the device lacks (route_requires), a plane off the alignment
-// its kernel reads, K not a whole number of the codec's runs, or the tile not compiled for the
-// codec (rmma_tile_compiled: the large tiles of the 32-value decoders).
-enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, Instruction, Alignment, Extent,
-                             CodecTile };
+// layout (supports), the tile not compiled for the codec (rmma_tile_compiled: the large tiles of
+// the 32-value decoders), an instruction the device lacks (route_requires), a plane off the
+// alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
+// in that order, so only Format hides whether a tile is compiled.
+enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
+                             Alignment, Extent };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
 // Register-MMA schedule `index` for `weight`: route_admits' own rule for the family (it decides
 // by this), so None exactly where route_admits takes the route.
