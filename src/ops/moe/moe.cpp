@@ -706,10 +706,10 @@ bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
         !r8_expert_supports(bank)) {
         return false;
     }
-    // The kernel's quantized activation for its widest job (1, 2 or 4 slots: a job has at most T;
-    // 36 bytes per 32 values and slot, 40 for a codec with a min, which keeps each block's sum)
-    // within the default 48 KiB: K <= 43690 at T = 1, 21845 at T = 2, 10922 at T = 3 or 4 (with a
-    // min 39321, 19660, 9830).
+    // The kernel's quantized activation for its widest job (1, 2, 4 or 8 slots: a job has at most
+    // T; 36 bytes per 32 values and slot, 40 for a codec with a min, which keeps each block's sum)
+    // within the default 48 KiB: K <= 43690 at T = 1, 21845 at T = 2, 10922 at T = 3 or 4, 5461
+    // at T = 5..8 (with a min 39321, 19660, 9830, 4915).
     std::int64_t slots = 1;
     while (slots < tokens) { slots *= 2; }
     const auto q    = bank.qtype;
@@ -1050,8 +1050,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
              "activation in 16-byte words");
     }
     if (!r8_stages_admitted(w, p, t)) {
-        fail("an R8 stage needs an A8 expert policy, a codebook format, at most 4 tokens and an "
-             "activation that fits a CTA");
+        fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
+             "tokens (8 from Ada on, 4 before) and an activation that fits a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {
@@ -1373,7 +1373,7 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
          const Tensor* router_input) {
     const std::int32_t t = x.ne[1];
     // Without tensor mma.sync (Volta's build) the register-MMA stages run on FP32 FMAs, and R8
-    // stops at kR8Tokens: a verify step of 5..16 tokens runs as calls of at most four, each on its
+    // stops at r8_token_limit(): a verify step of 5..16 tokens runs as calls of at most four, each on its
     // own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4 214 us
     // against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T, so a
     // column's bytes are those of plain decode.

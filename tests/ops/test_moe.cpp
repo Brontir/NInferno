@@ -608,15 +608,18 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
     return failures;
 }
 
-// The grouped R8 route of codebook experts under an A8 expert policy (decode, T <= 4): every R8
-// schedule on both stages and on each stage alone against the oracle of the quantized activations;
-// a slot's bytes depend on its own activation only, so every call with R8 on both stages gives a
-// token the bytes of the widest one whatever its schedule, T or position. The default route is the
-// GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS down of width 512..1023
-// on the class's down schedule; w4r1 on gate/up for a class without an entry); its bytes, too, do not depend on T or
-// position. Two exceptions keep A16: a call of T >= 5 (verify, prefill: refused for a forced R8
-// plan), and a bank whose K is too wide for a CTA's quantized activation (above 10922 at T = 3 or
-// 4). Any R8 plan under A16Only is refused, and the default route there stays on the register MMA.
+// The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
+// moe::r8_token_limit(): 8 from Ada on, 4 before): every R8 schedule on both stages and on each
+// stage alone against the oracle of the quantized activations; a slot's bytes depend on its own
+// activation only, so every call with R8 on both stages gives a token the bytes of the widest one
+// whatever its schedule, T or position. The default route is the GPU class's A8 route
+// (moe::a8_default_route: R8 on gate/up, an IQ3_XXS down of width 512..1023 on the class's down
+// schedule; w4r1 on gate/up for a class without an entry); its bytes, too, do not depend on T or
+// position (the heuristic route: a measured table's bands may change the down stage between
+// widths). Two exceptions keep A16: a call past the limit (prefill: refused for a forced R8 plan),
+// and a bank whose K is too wide for a CTA's quantized activation (above 10922 at T = 3 or 4, 5461
+// at T = 5..8). Any R8 plan under A16Only is refused, and the default route there stays on the
+// register MMA.
 int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_t>& widths) {
     namespace moe = ops::detail::moe;
     Case c         = base;
@@ -677,8 +680,8 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
             }
         }
     }
-    // The shipped default route: the class's A8 route (A16 without one) at every T <= 4, each
-    // token's bytes those of the widest call at any T and position.
+    // The shipped default route: the class's A8 route (A16 without one) at every T up to the
+    // limit, each token's bytes those of the widest call at any T and position.
     {
         // The heuristic route, not a measured table's plans: the class's shipped table may
         // carry this shape (ad106's does); it comes back afterwards.
@@ -711,7 +714,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
                 }
             }
         }
-        // T = 5: A16 by default, a forced R8 stage refused.
+        // One token past the limit: A16 by default, a forced R8 stage refused.
         const auto p5 = moe::select_plan(l.weights, c.config, wide + 1, false);
         if (p5.gate_up_r8 >= 0 || p5.down_r8 >= 0) {
             std::cerr << c.label << ": T=" << wide + 1 << " took " << moe::plan_name(p5) << '\n';
@@ -998,8 +1001,8 @@ int check_r8_table() {
 }
 
 // The K limit of the A8 route through select_plan: a layer of hidden 12288 (a CTA's quantized
-// activation fits 2 slots, not 4) takes the class's A8 gate/up at T = 1 and 2 and A16 at T = 3
-// and 4; both widths match the oracle.
+// activation fits 2 slots, not 4) takes the class's A8 gate/up at T = 1 and 2 and A16 from T = 3
+// to the limit; T = 2 and 3 match the oracle.
 int check_r8_k_limit() {
     namespace moe = ops::detail::moe;
     const auto route = moe::a8_default_route();
