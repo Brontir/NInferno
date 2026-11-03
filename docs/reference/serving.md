@@ -2366,7 +2366,10 @@ CHOICE:
 | `alternatives` | every other value of each axis with the others kept: `axis` (`kv`, `activations`, `drafter`, `chunk`, `state`, `ring`: the choice is made at one quantization, the quantization table's row), `value`, `why_code` (`no_fit`, `lower_worth`, `tie_context` (the same worth: the chosen keeps more context), `tie_order` (the same in every respect: the listing order), `default` (a gate is closed: the family's default, the default chunk or the speculation profile's drafter stands), `unmeasured` (a drafter's gain is not measured on this card: the profile's drafter stands), `coupled`: the ring and state follow the KV codec and the activations), `why_not` (English), `worth_delta`, and ESTIMATES |
 
 ESTIMATES: `own_context`, `fits`, `decode_tok_s`, `prefill_tok_s` (on this board: estimates, not
-measurements), `speed_transferred`, `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
+measurements), `speed_transferred` (true unless `speed_basis` is `own`), `speed_basis` (`own`: the
+card's generation's rows, each on two lab cards; `transferred`: a constant from another generation or
+one lab card; `lent_generation`: the card's compute capability has no generation row of its own and
+the nearest one's stand in, a rough estimate that decides nothing), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
 measured, transferred, source}]`: `measured` false for a stand-in, `transferred` for a term measured
 on another family), `worth`.
 
