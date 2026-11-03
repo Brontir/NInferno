@@ -558,7 +558,7 @@ void prefills_by_format(const json& fixture) {
     const ch::ModelFacts mf   = model_at(m, "Q8_0");
     const ch::QuantOption q8  = quant_of("Q8_0", m.at("quants").at("Q8_0"));
     ch::QuantOption kq        = q8;
-    kq.files                = ch::WeightClass::KQuant;
+    kq.weights                = ch::WeightClass::KQuant;
     ch::Candidate c;
     c.kv = KvCacheStorage::Int8Group64;
     const auto at = [&](const char* card, const ch::QuantOption& q, const ch::ModelFacts& model,
@@ -1116,7 +1116,7 @@ void prices_dense_prefill_tiles() {
     m.linears.push_back({24576, 4096, 32, false});
     m.linears.push_back({4096, 12288, 32, false});
     ch::QuantOption q;
-    q.files = ch::WeightClass::Q8;
+    q.weights = ch::WeightClass::Q8;
     struct Census {
         ch::CardFacts card;
         double ms;
@@ -1153,7 +1153,7 @@ void prices_dense_prefill_tiles() {
         lone_worst     = std::max(lone_worst, std::abs(t * 1e6 / l.us - 1));
     }
     check(lone_worst < 0.06, "an underfilled grid: a CTA alone on its SM, within 6 % on six cards");
-    q.files = ch::WeightClass::KQuant;
+    q.weights = ch::WeightClass::KQuant;
     check(ch::prefill_linears_seconds(m, rows[3].card, q, 1024) == 0, "a K-quant without a K format in its label: unknown");
     // ggml's matrix kernel by its tiles (DECISIONS 69): Qwen3.5 9B Q6_K's 512-token calls on the RTX
     // 4060 Ti, 12288 x 4096 (a tile a CTA in 12 rounds of its 34 SMs: the census's 998.6 us) and
