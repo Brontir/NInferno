@@ -852,9 +852,36 @@ void weighs_the_quantizations(const json& fixture) {
     };
     ch::QuantOption q = b.quants[0];
     q.label           = "Q4_K_M";
-    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "Q4_K_M: its measured point");
+    // #299: the measured point is the files measured; the same label at the same bits on files of
+    // another (or unknown) identity takes the same value as a proxy, never as measured.
+    const std::string measured_q4 = "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8";
+    q.files = measured_q4;
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured &&
+              quant_term(q).evidence == ch::Evidence::Measured,
+          "Q4_K_M, the files measured: its measured point");
+    q.files.clear();
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && !quant_term(q).measured &&
+              quant_term(q).evidence == ch::Evidence::Proxy &&
+              quant_term(q).source.find("identity is unknown") != std::string::npos,
+          "Q4_K_M, files unknown: the same value, a proxy");
+    q.files = std::string(64, 'a'); // another repository's Q4_K_M at the same bits
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).evidence == ch::Evidence::Proxy &&
+              quant_term(q).source.find("not these files") != std::string::npos,
+          "Q4_K_M, other files: the same value, a proxy");
+    q.files = measured_q4;
+    q.label   = "renamed"; // the files measured under another label: still their measurement
+    check(std::abs(quant_term(q).kld - 0.01925) < 1e-9 && quant_term(q).measured, "the files decide, not the label");
+    q.bits_per_weight = 5.2; // the same files counted at other bits: the curve at those bits, as before
+    check(!quant_term(q).measured && quant_term(q).evidence == ch::Evidence::Interpolated &&
+              quant_term(q).kld < 0.01925 && quant_term(q).kld > 0.01828,
+          "the measured files at other bits: interpolated");
+    q.bits_per_weight = b.quants[0].bits_per_weight;
+    q.label = "Q4_K_M";
+    q.files.clear();
     q.bits_per_weight = 4.9; // another model's Q4_K_M: interpolated, not the 9B's point
-    check(!quant_term(q).measured && quant_term(q).kld > 0.01925, "a label at other bits: interpolated");
+    check(!quant_term(q).measured && quant_term(q).kld > 0.01925 &&
+              quant_term(q).evidence == ch::Evidence::Interpolated,
+          "a label at other bits: interpolated");
     q.label           = "custom";
     q.bits_per_weight = 5.5;
     const double mid  = std::exp(std::log(0.01828) + (5.5 - 5.321) / (5.674 - 5.321) * (std::log(0.01103) - std::log(0.01828)));
@@ -866,6 +893,15 @@ void weighs_the_quantizations(const json& fixture) {
     q.label           = "Q8_0";
     q.bits_per_weight = 8.3; // another model's Q8_0 (other bits): its own reference
     check(quant_term(q).kld == 0 && !quant_term(q).measured, "any model's Q8_0: the reference");
+    q.bits_per_weight = 8.516;
+    q.files         = "809626574d0cb43d4becfa56169980da2bb448f2299270f7be443cb89d0a6ae4";
+    check(quant_term(q).kld == 0 && quant_term(q).measured, "the reference's own files: measured (0 against itself)");
+    q.files.clear();
+    check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference, "another Q8_0 at its bits: the reference");
+    q.bits_per_weight = 8.3;
+    check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference &&
+              quant_term(q).source.find("the reference") == 0,
+          "another model's Q8_0: the reference, and its source says so");
     ch::Task task;
     const ch::Gates open{true, true};
     const ch::Choice choice = ch::choose(b.model, b.card, b.quants[0],
@@ -1616,6 +1652,7 @@ void drafter_order_does_not_decide(const json& fixture) {
           "the tied drafter that wins does not follow the manifest's order");
 }
 
+<<<<<<< HEAD
 // #304: a choice made on the generation's reference card reads none of the board's continuous
 // facts: another clock, memory bandwidth, SM count or L2 of the same generation moves the speeds
 // shown, never what is chosen. Every fixture card, a short and a long context, the dense 9B and
@@ -1633,10 +1670,20 @@ void board_facts_do_not_decide(const json& fixture) {
         benches.emplace_back(name + ", Qwen3.6-35B-A3B", moe);
     }
     for (const auto& [label, b] : benches) {
+=======
+// #301: the order a caller lists an axis's values in never changes the choice (the enumeration
+// order breaks exact ties: choose() enumerates each axis in one canonical order). Every ordering of
+// the KV codecs and activations, on every fixture card, at a long and a short context.
+void axis_order_does_not_decide(const json& fixture) {
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        const Bench b = nine_b(fixture, name);
+>>>>>>> origin/master
         const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
         for (const std::uint32_t context : {4096U, 131072U}) {
             ch::Task task;
             task.contexts = {context};
+<<<<<<< HEAD
             const auto decided = [&](const ch::CardFacts& card) {
                 const ch::Choice c = ch::choose(b.model, card, b.quants[0], allowed, {}, task,
                                                 oracle(b, 40e9), ch::Gates{true, true});
@@ -1658,6 +1705,29 @@ void board_facts_do_not_decide(const json& fixture) {
                 for (const ch::CardFacts& other : {clock, dram, sms, l2}) { same = same && decided(other) == base; }
             }
             check(same, label + ", " + std::to_string(context) + " tokens: the board's own rates do not decide (" + base + ")");
+=======
+            const auto describe = [](const ch::Choice& c) {
+                if (!c.chosen) { return std::string("none"); }
+                const ch::Candidate& k = c.scored[*c.chosen].candidate;
+                return std::string(kv_cache_storage_name(k.kv)) + "/" + std::to_string(static_cast<int>(k.activations)) +
+                       "/" + std::to_string(k.chunk) + "/" + std::to_string(k.drafter) + "|" + c.why;
+            };
+            const std::string first =
+                describe(ch::choose(b.model, b.card, b.quants[0], allowed, {}, task, oracle(b, 20e9), ch::Gates{true, true}));
+            ch::Allowed shuffled = allowed;
+            std::sort(shuffled.kv.begin(), shuffled.kv.end());
+            bool same = true;
+            int orders = 0;
+            do {
+                std::sort(shuffled.activations.begin(), shuffled.activations.end());
+                do {
+                    ++orders;
+                    same = same && describe(ch::choose(b.model, b.card, b.quants[0], shuffled, {}, task,
+                                                       oracle(b, 20e9), ch::Gates{true, true})) == first;
+                } while (std::next_permutation(shuffled.activations.begin(), shuffled.activations.end()));
+            } while (std::next_permutation(shuffled.kv.begin(), shuffled.kv.end()));
+            check(same && orders == 720, name + ", " + std::to_string(context) + " tokens: no axis order changes the choice");
+>>>>>>> origin/master
         }
     }
 }
@@ -1695,7 +1765,11 @@ int main() {
     prices_attention_tiles();
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
+<<<<<<< HEAD
     board_facts_do_not_decide(fixture);
+=======
+    axis_order_does_not_decide(fixture);
+>>>>>>> origin/master
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";
         return 1;

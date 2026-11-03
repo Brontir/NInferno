@@ -1366,6 +1366,8 @@ std::optional<GgufTensorTable> gguf_tensor_table(const PlanSourceFacts& facts) {
 
 PlanSourceFacts row_facts(const PlanSourceFacts& shape, const QuantRow& row) {
     PlanSourceFacts out = with_weights(shape, row.weight_bytes, row.basis);
+    // Its own files (the shape's are another row's): their measurement, if any, is its own.
+    out.shape.weights = row.listing.weights;
     // Its linears' formats from its own table; the shape's are another file's (the label stands).
     if (row.listing.table && !row.listing.table->linears.empty()) {
         out.model.linears = row.listing.table->linears;
