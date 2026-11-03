@@ -1,3 +1,4 @@
+#include "real_artifact.h"
 #include "core/device.h"
 #include "models/qwen3_5/load.h"
 #include "models/qwen3_5/program/context.h"
@@ -265,8 +266,13 @@ int main(int argc, char** argv) {
     try {
         const std::string_view backend = argc > 1 ? argv[1] : "dflash2";
         require(backend == "dflash" || backend == "dflash2", "expected dflash or dflash2");
-        run(artifact,
-            backend == "dflash" ? SpeculativeBackend::DFlash : SpeculativeBackend::DFlash2);
+        const SpeculativeBackend which =
+            backend == "dflash" ? SpeculativeBackend::DFlash : SpeculativeBackend::DFlash2;
+        if (!ninferno::test::real_artifact(artifact).has(which)) {
+            std::cout << "skip: the artifact has no " << backend << " component\n";
+            return 77;
+        }
+        run(artifact, which);
         return 0;
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';

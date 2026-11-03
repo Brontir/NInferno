@@ -8,6 +8,8 @@
 #include "artifact/reader.h"
 #include "ninferno/types.h"
 
+#include <cuda_runtime_api.h>
+
 #include <iostream>
 #include <set>
 #include <stdexcept>
@@ -102,6 +104,20 @@ inline ProposalHead proposal_head(const char* path, ProposalHead wanted,
                   "the artifact's proposal head does not serve it; the full head drafts");
     }
     return ProposalHead::Full;
+}
+
+// A case whose engine the plan refuses (CapacityError) on a card below kSmallCardBytes (an RTX 4060
+// Ti's 16 GiB under a 35B artifact: three lanes of 4K beside 14.9 GiB of weights) is skipped, said
+// once per case; on a larger card the refusal is a failure (a planner regression must not pass as
+// a skip). True: skipped.
+inline constexpr std::size_t kSmallCardBytes = std::size_t{24} << 30;
+inline bool small_card_skips(const CapacityError& error, std::string_view what) {
+    std::size_t free_bytes = 0, total_bytes = 0;
+    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess || total_bytes >= kSmallCardBytes) {
+        return false;
+    }
+    skip_case(what, std::string("does not fit this card: ") + error.what());
+    return true;
 }
 
 // Vision as requested when the artifact has it; a text-only artifact runs without it, said once.

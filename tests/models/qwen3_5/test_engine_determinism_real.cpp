@@ -70,6 +70,7 @@
 // it apart, e.g. Gemma 4's MTP assistant); NINFERNO_DET_POISON (a byte 1..255: each generation
 // Engine runs with MaintainerOptions::debug_poison, --debug-poison, set to it).
 #include "ninferno/engine.h"
+#include "real_artifact.h"
 
 #include <cuda_runtime_api.h>
 #include <nlohmann/json.hpp>
@@ -280,13 +281,27 @@ ninferno::EngineOptions generation_options(const std::string& artifact, std::uin
         }
         options.maintainer.debug_poison = static_cast<std::uint8_t>(byte);
     }
+    // Unnamed, the drafter is the artifact's own (MTP first); an artifact without one runs the
+    // probe plainly, said once. A named drafter the artifact lacks still fails: it was asked for.
+    std::string spec = env_string("NINFERNO_DET_SPEC");
+    if (speculate && spec.empty()) {
+        const auto& parts = ninferno::test::real_artifact(artifact.c_str());
+        spec = parts.mtp ? "mtp" : parts.dflash ? "dflash" : parts.dflash2 ? "dflash2" : "";
+        if (spec.empty()) {
+            static const bool said = [] {
+                ninferno::test::skip_case("speculation", "the artifact has no drafter; the probe runs plainly");
+                return true;
+            }();
+            (void)said;
+            speculate = false;
+        }
+    }
     if (speculate) {
-        const std::string spec            = env_string("NINFERNO_DET_SPEC");
         options.speculative.backend       = spec == "dflash" ? ninferno::SpeculativeBackend::DFlash
                                             : spec == "dflash2" ? ninferno::SpeculativeBackend::DFlash2
                                                                 : ninferno::SpeculativeBackend::Mtp;
         options.speculative.draft_tokens =
-            env_u32("NINFERNO_DET_K", spec.empty() || spec == "mtp" ? 3 : 7);
+            env_u32("NINFERNO_DET_K", spec == "mtp" ? 3 : 7);
         // NINFERNO_DET_HEAD full: artifacts without the optimized (LM-head) proposal head.
         options.speculative.proposal_head = env_string("NINFERNO_DET_HEAD") == "full"
                                                 ? ninferno::ProposalHead::Full
@@ -1813,6 +1828,12 @@ int main() {
         std::cout << "determinism: bugs=" << report.bugs
                   << " divergences_scored=" << report.pending.size() << '\n';
         return report.bugs == 0 ? 0 : 1;
+    } catch (const ninferno::CapacityError& error) {
+        // Its lanes at NINFERNO_DET_CONTEXT beside the weights do not fit a small card (a 35B
+        // artifact on 16 GiB): skipped there, a failure on a larger card.
+        if (ninferno::test::small_card_skips(error, "the determinism probe")) { return 77; }
+        std::cerr << "determinism probe error: " << error.what() << '\n';
+        return 1;
     } catch (const std::exception& error) {
         std::cerr << "determinism probe error: " << error.what() << '\n';
         return 1;

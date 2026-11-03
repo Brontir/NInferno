@@ -193,7 +193,7 @@ target_link_libraries(ninferno_qwen3_5_prefix_probe PRIVATE ninferno_engine ninf
 # cache, process restarts) on NINFERNO_TEST_ARTIFACT; skipped without it.
 ninferno_add_test(ninferno_qwen3_5_determinism_real_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_engine_determinism_real.cpp"
-  LIBRARIES ninferno_engine ninferno::json ninferno::cudart)
+  LIBRARIES ninferno_engine ninferno_artifact ninferno::json ninferno::cudart)
 
 set_tests_properties(
   ninferno_qwen3_5_determinism_real_test
