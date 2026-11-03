@@ -21,6 +21,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -175,6 +176,16 @@ void check_geometry_registry() {
     }
     expect(dispatched == static_cast<int>(std::size(ninferno::ops::detail::kCausalHeadPairs)),
            "every listed geometry dispatches, nothing else");
+    // The supported models' geometries, written here apart from the list (Qwen 3.5/3.6 dense and
+    // MoE, their MTP layers): a pair dropped from it, or one added, fails here until this is
+    // changed with it.
+    constexpr std::pair<int, int> kExpected[] = {{24, 4}, {16, 2}, {8, 2}, {16, 4}};
+    for (const auto [heads, kv_heads] : kExpected) {
+        expect(causal_geometry_supported(heads, kv_heads),
+               "geometry " + std::to_string(heads) + "/" + std::to_string(kv_heads) + " is supported");
+    }
+    expect(std::size(kExpected) == std::size(ninferno::ops::detail::kCausalHeadPairs),
+           "the list holds exactly the expected geometries");
 }
 
 void check_chunkings() {
