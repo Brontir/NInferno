@@ -644,7 +644,9 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
         if (std::memcmp(run.out.data(),
                         wide_run.out.data() + static_cast<std::size_t>(offset) * c.hidden,
                         run.out.size() * 2) != 0) {
-            std::cerr << label << ": bytes differ from the T=" << wide << " call\n";
+            std::cerr << label << ": bytes differ from the T=" << wide << " call ("
+                      << moe::plan_name(moe::select_plan(l.weights, c.config, wide, false))
+                      << " by default)\n";
             ++failures;
         }
     };
