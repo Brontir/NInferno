@@ -18,6 +18,8 @@ namespace ninferno::ops::detail {
 // one row at most kCausalMaxBatchedWidth columns each (the speculative verify widths).
 inline constexpr int kCausalMaxBatch        = 8;
 inline constexpr int kCausalMaxBatchedWidth = 16;
+static_assert(kCausalMaxBatch == 8 && kCausalMaxBatchedWidth == 16,
+              "causal_domain_refusal's messages name these bounds");
 
 // What kind of restriction refuses a causal call (#312): Semantic, no call at all (no row or
 // column, an empty or inverted envelope of visible keys); Contract, the plans' shared execution
