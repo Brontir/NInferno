@@ -10,8 +10,12 @@
 
 #include <cuda_runtime_api.h>
 
+#include <cstdint>
+#include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <set>
+#include <system_error>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -117,6 +121,13 @@ inline bool small_card_skips(const CapacityError& error, std::string_view what) 
     if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess || total_bytes >= kSmallCardBytes) {
         return false;
     }
+    // And only an artifact that is most of the card: a 9B refused on a 24 GB card is a planner
+    // regression, not a small card.
+    const char* artifact = std::getenv("NINFERNO_TEST_ARTIFACT");
+    std::error_code size_error;
+    const std::uintmax_t artifact_bytes =
+        artifact != nullptr ? std::filesystem::file_size(artifact, size_error) : 0;
+    if (size_error || artifact_bytes * 2 < total_bytes) { return false; }
     skip_case(what, std::string("does not fit this card: ") + error.what());
     return true;
 }

@@ -21,8 +21,7 @@ int main() {
     // The route is sized beside MTP: a text-only artifact, or one without the head, has neither.
     if (const auto& parts = ninferno::test::real_artifact(artifact); !parts.vision || !parts.mtp) {
         std::cout << "skip: the artifact has no " << (parts.vision ? "MTP" : "vision")
-                  << " component
-";
+                  << " component\n";
         return 77;
     }
     static_assert(ninferno::models::qwen3_5::kMaximumVisionItemTokens == 16384);
