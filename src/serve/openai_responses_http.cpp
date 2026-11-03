@@ -310,7 +310,6 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
             return;
         }
         lifecycle->done(outcome);
-        set_router_report_headers(res, outcome);
         // A client that went away cancelled the run: nothing is left to answer, and a truncated
         // response is not stored (the other dialects' and the streamed path's rule).
         if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
@@ -374,6 +373,7 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
 
         try {
             set_owned_json_content(res, response->body.dump(), prepared.lifetime);
+            set_router_report_headers(res, outcome);
         } catch (const std::exception& exception) {
             lifecycle->response_failure(make_internal_request_failure(
                 RequestFailurePhase::ResponseRender, exception.what()));
@@ -528,8 +528,11 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
                 try {
                     transport.write(finished->events_before_terminal);
                     transport.write(terminal);
+                    // The client has its whole answer: one gone by now loses only the report.
                     if (const std::string frame = router_report_frame(outcome); !frame.empty()) {
-                        transport.write(frame);
+                        try {
+                            transport.write(frame);
+                        } catch (const ClientDisconnected&) {}
                     }
                     sink.done();
                     return true;

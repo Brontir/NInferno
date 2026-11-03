@@ -108,7 +108,6 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             return;
         }
         lifecycle->done(outcome);
-        set_router_report_headers(res, outcome);
         // A client that went away cancelled the run: there is no connection left to answer, and a
         // cancelled generation has no Anthropic message form (the streamed path's rule).
         if (outcome.finish_reason == ninferno::FinishReason::Cancelled &&
@@ -130,6 +129,7 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
             set_owned_json_content(
                 res, make_anthropic_messages_response(identity, outcome, request.thinking_display),
                 prepared.lifetime);
+            set_router_report_headers(res, outcome);
         } catch (const ApiException& exception) {
             const ApiError error = normalize_anthropic_error(exception.error());
             lifecycle->response_failure(
@@ -240,8 +240,11 @@ void HttpServer::handle_messages(const httplib::Request& req, httplib::Response&
                 }
                 try {
                     transport.write(terminal);
+                    // The client has its whole answer: one gone by now loses only the report.
                     if (const std::string frame = router_report_frame(outcome); !frame.empty()) {
-                        transport.write(frame);
+                        try {
+                            transport.write(frame);
+                        } catch (const ClientDisconnected&) {}
                     }
                     sink.done();
                     return true;
