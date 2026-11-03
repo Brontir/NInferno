@@ -899,7 +899,9 @@ void weighs_the_quantizations(const json& fixture) {
     q.files.clear();
     check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference, "another Q8_0 at its bits: the reference");
     q.bits_per_weight = 8.3;
-    check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference, "another model's Q8_0: the reference");
+    check(quant_term(q).kld == 0 && quant_term(q).evidence == ch::Evidence::Reference &&
+              quant_term(q).source.find("the reference") == 0,
+          "another model's Q8_0: the reference, and its source says so");
     ch::Task task;
     const ch::Gates open{true, true};
     const ch::Choice choice = ch::choose(b.model, b.card, b.quants[0],

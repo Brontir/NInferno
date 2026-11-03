@@ -1394,6 +1394,8 @@ Accuracy accuracy_of(const ModelFacts& model, const QuantOption& quant, const Ca
         quant_source = "unknown bits per weight: not weighed";
     } else if (q.evidence == Evidence::Measured) {
         quant_source = curve;
+    } else if (q.evidence == Evidence::Reference) {
+        quant_source = "the reference: a Q8_0 is 0 against itself (the curve is against Q8_0)";
     } else if (q.evidence == Evidence::Proxy) {
         quant_source = std::string("the label's measurement on other files (") +
                        (quant.files.empty() ? "these files' identity is unknown" : "not these files") +
