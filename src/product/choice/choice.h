@@ -139,6 +139,9 @@ enum class ExpertBanks : std::uint8_t { Unknown, Int8, A16, Mxfp4 };
 
 struct QuantOption {
     std::string label;          // as --quant takes it
+    // Its files (spec::weights_identity of their SHA-256 digests; "" unknown): a label's measured
+    // accuracy point is those files' alone (choice_constants.h kQuantKld).
+    std::string files;
     double bits_per_weight = 0;
     double weight_bytes    = 0; // what one decode step reads (product::quant_option_of)
     // Of them, an MoE's routed expert banks as stored (0: unknown, their parameters' share stands in);
@@ -304,13 +307,37 @@ struct Reference {
 [[nodiscard]] bool weighs_quantizations(const ModelFacts& model, const CardFacts& card,
                                         const Gates& gates = {});
 
+// What a term's KLD rests on (#299). Measured: these weights' files (a quantization) or the
+// family's own switch; Proxy: the same label's measurement on other files (another repository's
+// quantization, or files whose identity is unknown); Interpolated: the curve between measured
+// files by bits per weight; StandIn: the axis's worst measured term, or another codec's;
+// Reference: 0 by definition (a quantization's Q8_0 against itself: the curve is against Q8_0, not
+// against the original weights).
+enum class Evidence { Measured, Proxy, Interpolated, StandIn, Reference };
+[[nodiscard]] constexpr std::string_view evidence_name(Evidence evidence) noexcept {
+    switch (evidence) {
+    case Evidence::Measured:
+        return "measured";
+    case Evidence::Proxy:
+        return "proxy";
+    case Evidence::Interpolated:
+        return "interpolated";
+    case Evidence::StandIn:
+        return "stand-in";
+    case Evidence::Reference:
+        return "reference";
+    }
+    return "stand-in";
+}
+
 struct Term {
     Axis axis;
     std::string value;
     double kld = 0;
-    bool measured = true;    // false: a stand-in (the axis's worst measured term, or a proxy)
+    bool measured = true;    // evidence == Measured
     bool transferred = false; // measured on another family (kKldDefaultFamily, kQuantKldFamily)
     std::string source;
+    Evidence evidence = Evidence::Measured;
 };
 
 struct Accuracy {

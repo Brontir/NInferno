@@ -2370,8 +2370,11 @@ measurements), `speed_transferred` (true unless `speed_basis` is `own`), `speed_
 card's generation's rows, each on two lab cards; `transferred`: a constant from another generation or
 one lab card; `lent_generation`: the card's compute capability has no generation row of its own and
 the nearest one's stand in, a rough estimate that decides nothing), `request_seconds`, `kld`, `kld_terms` (`[{axis, value, kld,
-measured, transferred, source}]`: `measured` false for a stand-in, `transferred` for a term measured
-on another family), `worth`.
+measured, transferred, source, evidence}]`: `measured` true only for `evidence` `measured`,
+`transferred` for a term measured on another family; `evidence` what the term rests on: `measured` (a
+quantization's own files, or the family's switch), `proxy` (the same quantization label measured on
+other or unknown files), `interpolated` (the curve by bits per weight), `stand-in` (the axis's worst,
+or another codec's term), `reference` (a Q8_0: 0 against itself)), `worth`.
 
 SPEC:
 

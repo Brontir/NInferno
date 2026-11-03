@@ -12,6 +12,7 @@
 #include "core/device_class.h"
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
+#include "spec/pairs.h"
 
 #include <cuda_runtime.h>
 
@@ -1113,6 +1114,8 @@ PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {
         q != dir.provenance.end() && q->is_string() &&
         !(requantized != dir.provenance.end() && requantized->is_boolean() && requantized->get<bool>())) {
         out.shape.quant_label = q->get<std::string>();
+        // The files it was converted from, still their encodings: a measurement of them is its.
+        out.shape.weights = spec::provenance_weights(dir.provenance).value_or("");
     }
     out.model.proposal_bytes    = proposal_bytes;
     out.model.proposal_serves_mtp =
