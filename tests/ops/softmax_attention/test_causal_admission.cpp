@@ -7,8 +7,10 @@
 #include "ops/softmax_attention/dense/causal_cache/plan_rules.h"
 
 #include <cstdio>
+#include <cstring>
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 namespace {
 namespace detail = ninferno::ops::detail;
@@ -62,6 +64,23 @@ int main() {
         expect(what.find("BF16 attention: more than 16 columns") == 0 &&
                    what.find("(the execution contract)") != std::string::npos,
                "the plan's refusal: " + what);
+    }
+    // Through the public workspace query: an uncompiled pair and head size are not compiled, a
+    // geometry no attention has is not a call.
+    for (const auto& [geometry, kind] :
+         {std::pair{ninferno::ops::AttentionHeadGeometry{detail::kCausalHeadDim, 32, 4},
+                    "(not compiled)"},
+          std::pair{ninferno::ops::AttentionHeadGeometry{128, 24, 4}, "(not compiled)"},
+          std::pair{ninferno::ops::AttentionHeadGeometry{detail::kCausalHeadDim, 24, 5},
+                    "(not a call)"}}) {
+        std::string what = "admitted";
+        try {
+            (void)ninferno::ops::causal_softmax_attention_workspace_capacity_bytes(
+                geometry, ninferno::KvCacheStorage::BFloat16, ok, 1, 1, 1, {nullptr, 80});
+        } catch (const std::invalid_argument& error) { what = error.what(); }
+        expect(what.size() >= std::strlen(kind) &&
+                   what.compare(what.size() - std::strlen(kind), std::string::npos, kind) == 0,
+               "the workspace query's geometry refusal names its kind: " + what);
     }
     // The plans and the workspace query agree on every boundary, for every storage.
     for (const ninferno::KvCacheStorage storage :

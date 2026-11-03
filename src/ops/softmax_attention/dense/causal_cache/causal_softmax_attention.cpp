@@ -40,12 +40,17 @@ void require_causal_geometry(AttentionHeadGeometry geometry, const char* op) {
             listed += (listed.empty() ? "" : ", ") + std::to_string(pair.query_heads) + "/" +
                       std::to_string(pair.kv_heads);
         }
+        // Its kind (#312): a geometry no attention has is not a call; a valid one without a kernel
+        // is not compiled.
+        const auto kind = valid_attention_head_geometry(geometry) ? detail::CausalRestriction::Coverage
+                                                                  : detail::CausalRestriction::Semantic;
         throw std::invalid_argument(std::string(op) + ": unsupported head geometry " +
                                     std::to_string(geometry.query_heads) + "/" +
                                     std::to_string(geometry.kv_heads) + " x " +
                                     std::to_string(geometry.head_dim) + " (query/KV heads x head_dim; " +
                                     "supported: " + listed + " x " +
-                                    std::to_string(detail::kCausalHeadDim) + ")");
+                                    std::to_string(detail::kCausalHeadDim) + ") (" +
+                                    detail::causal_restriction_name(kind) + ")");
     }
 }
 
