@@ -78,7 +78,8 @@ struct DrafterOption {
     struct LoadGain {
         std::uint32_t streams = 0;
         double speedup        = 1;
-        std::uint32_t depth   = 0; // the bounded depth
+        std::uint32_t depth   = 0;    // the depth drafted from `streams` on
+        bool bounded          = false; // below the configuration's
         bool measured         = true;
     };
     std::vector<LoadGain> load;
@@ -93,6 +94,19 @@ struct DrafterOption {
             gain = g.speedup;
         }
         return gain;
+    }
+    // Whether a measurement gives the gain at `streams` streams: `measured`, and the load table's
+    // bound in force there measured at its depth (a published profile lists no depths but its
+    // choice's). Plain decode's from plain_from_streams on is no gain to measure.
+    [[nodiscard]] bool measured_at(std::uint32_t streams) const noexcept {
+        if (!measured) { return false; }
+        if (plain_from_streams != 0 && streams >= plain_from_streams) { return true; }
+        bool known = true;
+        for (const LoadGain& g : load) {
+            if (g.streams > streams) { break; }
+            known = g.measured;
+        }
+        return known;
     }
 };
 

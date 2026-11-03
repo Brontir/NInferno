@@ -1210,7 +1210,9 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     // streams draft (a gain no measurement gives is not counted: DrafterOption::measured).
     if (candidate.drafter > 0 && candidate.drafter <= model.drafters.size()) {
         const DrafterOption& d = model.drafters[candidate.drafter - 1];
-        if (d.measured) { out.decode_per_stream *= d.speedup_at(static_cast<std::uint32_t>(rows)); }
+        if (d.measured_at(static_cast<std::uint32_t>(rows))) {
+            out.decode_per_stream *= d.speedup_at(static_cast<std::uint32_t>(rows));
+        }
     }
 
     bool prefill_transferred = false;
@@ -1578,12 +1580,14 @@ Choice choose(const ModelFacts& model, const CardFacts& card, const QuantOption&
     // The chunk is free where its shares decide (it has no accuracy term: the worth among chunks is
     // their speed on the reference card), else the default.
     // Where the worth does not decide, the drafter is the server's resolved profile's.
-    // A drafter is weighed only where every option's gain is measured: one published without its
-    // speeds would weigh a gain of 1 and lose to plain decode for its memory alone.
+    // A drafter is weighed only where every option's gain is measured at the task's streams: one
+    // published without its speeds, or without the depth its load table bounds them to (#303),
+    // would weigh a gain of 1 and lose to plain decode for its memory alone.
     const std::size_t default_drafter = pins.drafter.value_or(model.default_drafter);
+    const std::uint32_t streams       = std::max<std::uint32_t>(task.concurrency, 1);
     out.drafter_by_worth = out.by_worth && !pins.drafter &&
                            std::all_of(model.drafters.begin(), model.drafters.end(),
-                                       [](const DrafterOption& d) { return d.measured; });
+                                       [&](const DrafterOption& d) { return d.measured_at(streams); });
     const auto eligible = [&](const Scored& s) {
         const bool chunk_ok   = out.chunk_by_speed || s.candidate.chunk == default_chunk;
         const bool drafter_ok = out.drafter_by_worth || s.candidate.drafter == default_drafter;

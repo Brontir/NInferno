@@ -582,13 +582,14 @@ std::optional<double> measured_gain(const Profile& profile, const SpecConfig& co
     const std::vector<std::string> sections =
         thinking ? std::vector<std::string>{"thinking"}
                  : std::vector<std::string>{"math", "code", "prose"};
+    // The sections plain decode measured, as select's groups take them; the configuration must
+    // be measured on each.
     double plain = 0, at = 0;
     for (const auto& f : sections) {
         const auto p = table.find({"plain", f});
+        if (p == table.end() || p->second.tokens == 0) { continue; }
         const auto c = table.find({config.label(), f});
-        if (p == table.end() || c == table.end() || p->second.tokens == 0 || c->second.tokens == 0) {
-            return std::nullopt;
-        }
+        if (c == table.end() || c->second.tokens == 0) { return std::nullopt; }
         plain += weighted_cost(p->second);
         at += weighted_cost(c->second);
     }

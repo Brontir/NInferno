@@ -269,7 +269,8 @@ void write_json_file(const std::filesystem::path& path, const nlohmann::json& do
 // The gain of `config` over plain decode on the profile's measurements of the sections a request
 // of `thinking` runs (the thinking section, or math, code and prose: as select groups them), each
 // weighted by its share of the mix: plain decode's cost over the configuration's, one request at a
-// time. nullopt when a section of them is not measured at both.
+// time, over the sections plain decode measured. nullopt when the configuration is not measured on
+// one of them, or none is.
 [[nodiscard]] std::optional<double> measured_gain(const Profile& profile, const SpecConfig& config,
                                                   bool thinking);
 

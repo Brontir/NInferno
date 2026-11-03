@@ -1631,11 +1631,16 @@ void weighs_the_drafters(const json& fixture) {
 void load_bounds_the_gain(const json& fixture) {
     Bench b = nine_b(fixture, "RTX 4090");
     ch::DrafterOption d{"mtp:4", "mtp", 2.0, 8, "measured"};
-    d.load = {{.streams = 2, .speedup = 1.5, .depth = 2},
-              {.streams = 4, .speedup = 1.0, .depth = 1, .measured = false}};
+    d.load = {{.streams = 2, .speedup = 1.5, .depth = 2, .bounded = true},
+              {.streams = 4, .speedup = 1.0, .depth = 1, .bounded = true, .measured = false}};
     check(d.speedup_at(1) == 2.0 && d.speedup_at(2) == 1.5 && d.speedup_at(3) == 1.5 &&
               d.speedup_at(4) == 1.0 && d.speedup_at(7) == 1.0 && d.speedup_at(8) == 1.0,
           "the gain by streams: 2, then the bounds', then plain");
+    // A bound whose depth was not measured (a published profile lists only its choice's): its
+    // gain is not measured there, so the drafter is not weighed at that load.
+    check(d.measured_at(1) && d.measured_at(3) && !d.measured_at(4) && !d.measured_at(7) &&
+              d.measured_at(8),
+          "measured by streams: the bound's own depth, plain decode's from its bound");
     b.model.drafters        = {d};
     b.model.default_drafter = 1;
     const ch::Candidate at{KvCacheStorage::Int8Group64, KvCacheStorage::BFloat16,
