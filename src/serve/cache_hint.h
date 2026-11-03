@@ -26,12 +26,13 @@ inline constexpr std::string_view kCacheHintAppliedHeader = "x-ninferno-hint-app
 enum class CacheHintRetain { Keep, Normal, Drop };
 
 struct CacheHint {
-    std::optional<std::string> session; // the thread's opaque name (hex)
+    std::optional<std::string> session; // the thread's opaque name (letters, digits, - _ . :)
     CacheHintRetain retain = CacheHintRetain::Normal;
     std::optional<double> ttl_ms, next, turns, gap_ms, gap_p90_ms; // read, not yet weighed
 };
 
-// nullopt: malformed (a known field with a bad value, a field without '=', an empty header).
+// nullopt: malformed (a known field with a bad value, a field without '=' or without a name, a
+// field named twice, an empty header).
 [[nodiscard]] std::optional<CacheHint> parse_cache_hint(std::string_view header);
 
 // Applies `header` (nullptr: the request carried none) to `hints` when `trusted`; returns what was

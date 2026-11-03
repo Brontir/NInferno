@@ -408,5 +408,7 @@ x-ninferno-cache-hint: session=<hex>; retain=drop; ttl-ms=120000; next=0.93; tur
 a cap on the bytes held as kept, which the cache does not have yet. The other fields are read and
 not yet weighed; unknown fields are ignored. A malformed hint is none, never an error. The response
 says what was granted in `x-ninferno-hint-applied` (`keep`, `normal`, `drop`, or `none` when hints
-are off or the hint is malformed), only for a request that carried the header. Without the flag the
+are off or the hint is malformed: a bad value of a known field, a field without a name, a field
+named twice), for a request that carried the header and reached the engine (a request refused while
+parsing has nothing granted). Without the flag the
 header is ignored: on an engine any client reaches directly, it would let a client pin its own state.

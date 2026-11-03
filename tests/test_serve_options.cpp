@@ -47,8 +47,12 @@ int main() {
         failures += check(full && full->session == "0a1b2c" && full->retain == CacheHintRetain::Keep &&
                               full->ttl_ms == 120000 && full->next == 0.93 && full->gap_p90_ms == 32000,
                           "a full hint parses; an unknown field is ignored");
-        for (const char* bad : {"", "retain=forever", "session=xyz", "next=1.5", "ttl-ms=-1",
-                                "retain", "turns=12abc", "gap-ms=nan"}) {
+        failures += check(parse_cache_hint("session=6f1c2a3e-7b9d-4e1f-a2b3-c4d5e6f70812; retain=drop") &&
+                              parse_cache_hint("session=6f1c2a3e-7b9d-4e1f-a2b3-c4d5e6f70812; retain=drop")->retain ==
+                                  CacheHintRetain::Drop,
+                          "a UUID session name is a name");
+        for (const char* bad : {"", "retain=forever", "session=a b", "session=x/y", "next=1.5", "ttl-ms=-1",
+                                "retain", "turns=12abc", "gap-ms=nan", "=drop", "retain=drop; retain=keep"}) {
             failures += check(!parse_cache_hint(bad), "a malformed hint is none");
         }
         const std::string drop = "retain=drop", keep = "session=ab; retain=keep", junk = "retain=x";

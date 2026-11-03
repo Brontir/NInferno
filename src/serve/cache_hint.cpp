@@ -4,6 +4,7 @@
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <vector>
 
 namespace ninferno::serve {
 namespace {
@@ -30,6 +31,7 @@ std::optional<double> number(std::string_view text) {
 std::optional<CacheHint> parse_cache_hint(std::string_view header) {
     CacheHint hint;
     bool any = false;
+    std::vector<std::string_view> seen;
     while (!header.empty()) {
         const std::size_t semi = header.find(';');
         const std::string_view field = trim(header.substr(0, semi));
@@ -39,12 +41,18 @@ std::optional<CacheHint> parse_cache_hint(std::string_view header) {
         if (eq == std::string_view::npos) { return std::nullopt; }
         const std::string_view key   = trim(field.substr(0, eq));
         const std::string_view value = trim(field.substr(eq + 1));
+        // A field without a name, or one named twice, makes the hint ambiguous: none.
+        if (key.empty() || std::find(seen.begin(), seen.end(), key) != seen.end()) { return std::nullopt; }
+        seen.push_back(key);
         any = true;
         if (key == "session") {
-            // An opaque hex name, as long as the cache's session keys may be (1..256 bytes).
+            // An opaque token (hex, a UUID, ...), as long as the cache's session keys may be
+            // (1..256 bytes).
             if (value.empty() || value.size() > 256 ||
-                !std::all_of(value.begin(), value.end(),
-                             [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; })) {
+                !std::all_of(value.begin(), value.end(), [](char c) {
+                    return std::isalnum(static_cast<unsigned char>(c)) != 0 || c == '-' || c == '_' ||
+                           c == '.' || c == ':';
+                })) {
                 return std::nullopt;
             }
             hint.session = std::string(value);
