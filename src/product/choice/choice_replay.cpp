@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 #include <map>
 #include <memory>
 #include <stdexcept>
@@ -39,13 +40,47 @@ T unsigned_of(const json& j) {
 }
 
 // An enumeration's value from a record: one of its `count` values, else the record is malformed.
+// (Checked before narrowing: nlohmann would turn 4294967296 into 0.)
 template <class E>
 E enum_of(const json& j, int count) {
-    const int v = j.get<int>();
-    if (v < 0 || v >= count) {
-        throw std::invalid_argument("an enumeration value out of range: " + std::to_string(v));
+    const auto v = unsigned_of<std::uint64_t>(j);
+    if (v >= static_cast<std::uint64_t>(count)) {
+        throw std::invalid_argument("an enumeration value out of range: " + j.dump());
     }
     return static_cast<E>(v);
+}
+
+// A field's value from a record, of the field's own type and within its range, else the record is
+// malformed: nlohmann converts a number to a bool and wraps or narrows integers unchecked.
+template <class T>
+T value_of(const json& j) {
+    if constexpr (std::is_same_v<T, bool>) {
+        if (!j.is_boolean()) { throw std::invalid_argument("a boolean was expected: " + j.dump()); }
+        return j.get<bool>();
+    } else if constexpr (std::is_integral_v<T> && std::is_unsigned_v<T>) {
+        return unsigned_of<T>(j);
+    } else if constexpr (std::is_integral_v<T>) {
+        if (!j.is_number_integer() ||
+            (j.is_number_unsigned() &&
+             j.get<std::uint64_t>() > static_cast<std::uint64_t>(std::numeric_limits<T>::max()))) {
+            throw std::invalid_argument("an integer was expected: " + j.dump());
+        }
+        const std::int64_t v = j.get<std::int64_t>();
+        if (v < std::numeric_limits<T>::min() || v > std::numeric_limits<T>::max()) {
+            throw std::invalid_argument("an integer out of range: " + j.dump());
+        }
+        return static_cast<T>(v);
+    } else if constexpr (std::is_floating_point_v<T>) {
+        if (!j.is_number()) { throw std::invalid_argument("a number was expected: " + j.dump()); }
+        return j.get<T>();
+    } else {
+        return j.get<T>();
+    }
+}
+
+template <class T>
+void read(T& field, const json& j) {
+    field = value_of<T>(j);
 }
 
 // A candidate's key in the own-context table: its axes in a fixed order.
@@ -137,53 +172,64 @@ json model_json(const ModelFacts& m) {
 
 ModelFacts model_of(const json& j) {
     ModelFacts m;
-    m.family                   = j.at("family").get<std::string>();
-    m.params                   = j.at("params");
-    m.active_params            = j.at("active_params");
-    m.experts                  = j.at("experts");
-    m.experts_per_token        = j.at("experts_per_token");
-    m.routed_expert_params     = j.at("routed_expert_params");
-    m.input_table_params       = j.at("input_table_params");
-    m.input_table_bytes        = j.at("input_table_bytes");
-    m.layers                   = j.at("layers");
-    m.hidden                   = j.at("hidden");
-    m.prompt_tail_calls        = j.at("prompt_tail_calls");
+    read(m.family, j.at("family"));
+    read(m.params, j.at("params"));
+    read(m.active_params, j.at("active_params"));
+    read(m.experts, j.at("experts"));
+    read(m.experts_per_token, j.at("experts_per_token"));
+    read(m.routed_expert_params, j.at("routed_expert_params"));
+    read(m.input_table_params, j.at("input_table_params"));
+    read(m.input_table_bytes, j.at("input_table_bytes"));
+    read(m.layers, j.at("layers"));
+    read(m.hidden, j.at("hidden"));
+    read(m.prompt_tail_calls, j.at("prompt_tail_calls"));
     m.kv_bytes_per_token       = table_fn<KvCacheStorage>(j.at("kv_bytes_per_token"), "KV bytes");
     m.ring_bytes_per_token     = table_fn<KvCacheStorage>(j.at("ring_bytes_per_token"), "ring bytes");
     m.state_bytes              = table_fn<RecurrentStateStorage>(j.at("state_bytes"), "state bytes");
-    m.window                   = j.at("window");
-    m.full_attention_width     = j.at("full_attention_width");
-    m.sliding_attention_width  = j.at("sliding_attention_width");
-    m.full_layers              = j.at("full_layers");
-    m.full_head_dim            = j.at("full_head_dim");
-    m.full_kv_heads            = j.at("full_kv_heads");
-    m.sliding_layers           = j.at("sliding_layers");
-    m.sliding_head_dim         = j.at("sliding_head_dim");
-    m.sliding_kv_heads         = j.at("sliding_kv_heads");
-    m.full_attending_layers    = j.at("full_attending_layers");
-    m.sliding_attending_layers = j.at("sliding_attending_layers");
-    m.recurrent                = j.at("recurrent");
-    m.fp8_ring                 = j.at("fp8_ring");
+    read(m.window, j.at("window"));
+    read(m.full_attention_width, j.at("full_attention_width"));
+    read(m.sliding_attention_width, j.at("sliding_attention_width"));
+    read(m.full_layers, j.at("full_layers"));
+    read(m.full_head_dim, j.at("full_head_dim"));
+    read(m.full_kv_heads, j.at("full_kv_heads"));
+    read(m.sliding_layers, j.at("sliding_layers"));
+    read(m.sliding_head_dim, j.at("sliding_head_dim"));
+    read(m.sliding_kv_heads, j.at("sliding_kv_heads"));
+    read(m.full_attending_layers, j.at("full_attending_layers"));
+    read(m.sliding_attending_layers, j.at("sliding_attending_layers"));
+    read(m.recurrent, j.at("recurrent"));
+    read(m.fp8_ring, j.at("fp8_ring"));
     for (const auto& l : j.at("linears")) {
-        m.linears.push_back({l.at("n"), l.at("k"), l.at("per_token"), l.at("expert"), l.at("gated"),
-                             l.at("format").get<std::string>()});
+        LinearShape shape;
+        read(shape.n, l.at("n"));
+        read(shape.k, l.at("k"));
+        read(shape.per_token, l.at("per_token"));
+        read(shape.expert, l.at("expert"));
+        read(shape.gated, l.at("gated"));
+        read(shape.format, l.at("format"));
+        m.linears.push_back(std::move(shape));
     }
-    m.recurrent_state_elements = j.at("recurrent_state_elements");
+    read(m.recurrent_state_elements, j.at("recurrent_state_elements"));
     for (const auto& d : j.at("drafters")) {
         DrafterOption o;
-        o.label              = d.at("label").get<std::string>();
-        o.drafter            = d.at("drafter").get<std::string>();
-        o.speedup            = d.at("speedup");
-        o.plain_from_streams = d.at("plain_from_streams");
-        o.basis              = d.at("basis").get<std::string>();
-        o.measured           = d.at("measured");
+        read(o.label, d.at("label"));
+        read(o.drafter, d.at("drafter"));
+        read(o.speedup, d.at("speedup"));
+        read(o.plain_from_streams, d.at("plain_from_streams"));
+        read(o.basis, d.at("basis"));
+        read(o.measured, d.at("measured"));
         for (const auto& g : d.at("load")) {
-            o.load.push_back({g.at("streams"), g.at("speedup"), g.at("depth"), g.at("bounded"),
-                              g.at("measured")});
+            DrafterOption::LoadGain gain;
+            read(gain.streams, g.at("streams"));
+            read(gain.speedup, g.at("speedup"));
+            read(gain.depth, g.at("depth"));
+            read(gain.bounded, g.at("bounded"));
+            read(gain.measured, g.at("measured"));
+            o.load.push_back(gain);
         }
         m.drafters.push_back(std::move(o));
     }
-    m.default_drafter = j.at("default_drafter");
+    read(m.default_drafter, j.at("default_drafter"));
     return m;
 }
 
@@ -196,13 +242,13 @@ json card_json(const CardFacts& c) {
 
 CardFacts card_of(const json& j) {
     CardFacts c;
-    c.major            = j.at("major");
-    c.minor            = j.at("minor");
-    c.sms              = j.at("sms");
-    c.clock_hz         = j.at("clock_hz");
-    c.dram_bytes_per_s = j.at("dram_bytes_per_s");
-    c.l2_bytes         = j.at("l2_bytes");
-    c.fp4              = j.at("fp4");
+    read(c.major, j.at("major"));
+    read(c.minor, j.at("minor"));
+    read(c.sms, j.at("sms"));
+    read(c.clock_hz, j.at("clock_hz"));
+    read(c.dram_bytes_per_s, j.at("dram_bytes_per_s"));
+    read(c.l2_bytes, j.at("l2_bytes"));
+    read(c.fp4, j.at("fp4"));
     return c;
 }
 
@@ -222,14 +268,14 @@ json quant_json(const QuantOption& q) {
 
 QuantOption quant_of(const json& j) {
     QuantOption q;
-    q.label               = j.at("label").get<std::string>();
-    q.files               = j.at("files").get<std::string>();
-    q.bits_per_weight     = j.at("bits_per_weight");
-    q.weight_bytes        = j.at("weight_bytes");
-    q.routed_expert_bytes = j.at("routed_expert_bytes");
-    q.supported           = j.at("supported");
-    q.int8_route          = j.at("int8_route");
-    q.nvfp4               = j.at("nvfp4");
+    read(q.label, j.at("label"));
+    read(q.files, j.at("files"));
+    read(q.bits_per_weight, j.at("bits_per_weight"));
+    read(q.weight_bytes, j.at("weight_bytes"));
+    read(q.routed_expert_bytes, j.at("routed_expert_bytes"));
+    read(q.supported, j.at("supported"));
+    read(q.int8_route, j.at("int8_route"));
+    read(q.nvfp4, j.at("nvfp4"));
     q.weights             = enum_of<WeightClass>(j.at("weights"), 4);
     q.expert_banks        = enum_of<ExpertBanks>(j.at("expert_banks"), 4);
     q.rest_weights        = enum_of<WeightClass>(j.at("rest_weights"), 4);
@@ -256,7 +302,7 @@ std::optional<T> optional_of(const json& j) {
     } else if constexpr (std::is_enum_v<T>) {
         return enum_of<T>(j, 3); // ActivationMode
     } else {
-        return j.get<T>();
+        return value_of<T>(j);
     }
 }
 
@@ -313,7 +359,7 @@ Task task_of(const json& j) {
     t.concurrency     = unsigned_of<std::uint32_t>(j.at("concurrency"));
     t.prompt          = unsigned_of<std::uint32_t>(j.at("prompt"));
     t.answer          = unsigned_of<std::uint32_t>(j.at("answer"));
-    t.accuracy_weight = j.at("accuracy_weight");
+    read(t.accuracy_weight, j.at("accuracy_weight"));
     return t;
 }
 
@@ -324,7 +370,7 @@ json gates_json(const Gates& g) {
 Gates gates_of(const json& j) {
     Gates g;
     g.accuracy  = optional_of<bool>(j.at("accuracy"));
-    g.moe_chunk = j.at("moe_chunk");
+    read(g.moe_chunk, j.at("moe_chunk"));
     return g;
 }
 

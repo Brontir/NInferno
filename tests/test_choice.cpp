@@ -1937,6 +1937,21 @@ void choices_replay(const json& fixture) {
                                     auto r      = record.inputs;
                                     r["schema"] = 1;
                                     return r;
+                                }(),
+                                [&] {
+                                    auto r                        = record.inputs;
+                                    r["model"]["default_drafter"] = -1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                       = record.inputs;
+                                    r["allowed"]["automatic_kv"] = 4294967296LL;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                = record.inputs;
+                                    r["card"]["fp4"]      = 1;
+                                    return r;
                                 }()}) {
         bool malformed = false;
         try {
