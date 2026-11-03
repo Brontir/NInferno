@@ -225,6 +225,10 @@ struct PlanModelFacts {
     std::uint32_t dense_ffn   = 0;
     std::uint32_t experts     = 0;
     std::uint32_t experts_used = 0; // the experts a token routes to
+    // The routed banks' storage formats as a GGUF's *_exps tensors name them (the gate/up side's
+    // and the down side's; empty: not read): linears keeps its expert entries unsplit.
+    std::vector<std::string> expert_up_formats;
+    std::vector<std::string> expert_down_formats;
     std::uint32_t ple_width   = 0;
     bool ple_known            = false;
     double params            = 0; // every weight (0: unknown)

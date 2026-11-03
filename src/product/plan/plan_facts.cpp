@@ -920,6 +920,7 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
         if (block && t.name.find(".ssm_out.") != std::string::npos) { recurrent_blocks.insert(*block); }
     }
     RoleFormats role_formats;
+    std::set<std::string> expert_up, expert_down; // the routed banks' formats
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
@@ -934,6 +935,10 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             (mtp ? mtp_routed : routed) += t.bytes;
             if (!mtp && !t.ne.empty()) {
                 expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0], t.bytes);
+            }
+            if (!mtp) {
+                (t.name.find("ffn_down_exps.") != std::string::npos ? expert_down : expert_up)
+                    .insert(format_of_ggml(t.type));
             }
         }
         has_output = has_output || t.name == "output.weight";
@@ -965,6 +970,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.weight_formats = std::vector<std::string>(formats.begin(), formats.end());
     out.shape.layer_formats  = std::vector<std::string>(layer_formats.begin(), layer_formats.end());
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
+    out.model.expert_up_formats   = std::vector<std::string>(expert_up.begin(), expert_up.end());
+    out.model.expert_down_formats = std::vector<std::string>(expert_down.begin(), expert_down.end());
     // A split part's head lists its own tensors only: no shares from it (the label stands).
     if (whole) { split_linears_by_format(out.model.linears, role_formats); }
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {

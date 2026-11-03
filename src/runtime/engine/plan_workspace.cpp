@@ -53,18 +53,24 @@ struct DescribedWeight {
 // A generic MoE layer's capacity over a call of up to `columns` tokens, as the start sizes it
 // (models/gemma4/target.cu: ops::moe_workspace_bytes over the layer's banks and the load's config,
 // gemma4/load_target.cpp): the router [E, H] in BF16, the stacked gate/up [E 2F, H] and down
-// [E H, F] in the facts' expert formats. nullopt where a bank's format is unknown. The start takes
+// [E H, F] in the tensors' expert formats (every pair). nullopt where they are unknown. The start takes
 // this Op for experts the fused NVFP4 kernel does not read; where it does, gemma4_moe's capacity
 // (target_op_bytes) is the larger, so counting both bounds either.
 std::optional<std::size_t> generic_moe_bytes(const PlanModelFacts& m, const models::gemma4::Config& c,
                                              std::int32_t columns, std::string& why) {
-    // A bank whose layers differ in format is one linear a format (PlanLinear): every pair's.
-    std::vector<const PlanLinear*> gate_ups, downs;
+    // The banks' shapes from the linears' expert entries, their formats from the tensors
+    // (expert_up_formats, expert_down_formats): every pair of them.
+    const PlanLinear* gate_up = nullptr;
+    const PlanLinear* down    = nullptr;
     for (const PlanLinear& l : m.linears) {
-        if (l.expert) { (l.gated ? gate_ups : downs).push_back(&l); }
+        if (l.expert) { (l.gated ? gate_up : down) = &l; }
     }
-    if (gate_ups.empty() || downs.empty() || m.experts == 0 || m.experts_used == 0) {
+    if (gate_up == nullptr || down == nullptr || m.experts == 0 || m.experts_used == 0) {
         why = "the facts list no expert banks or counts";
+        return std::nullopt;
+    }
+    if (m.expert_up_formats.empty() || m.expert_down_formats.empty()) {
+        why = "the expert banks' formats are not in the facts";
         return std::nullopt;
     }
     const auto experts = static_cast<std::uint64_t>(m.experts);
@@ -75,18 +81,14 @@ std::optional<std::size_t> generic_moe_bytes(const PlanModelFacts& m, const mode
     config.scoring        = ops::MoeScoring::Softmax;
     config.activation     = ops::MoeActivation::GeGluTanh;
     config.gate_up_layout = ops::MoeGateUpLayout::Concatenated;
+    const auto inter   = static_cast<std::uint64_t>(down->k);
     std::size_t widest = 0;
-    for (const PlanLinear* g : gate_ups) {
-        for (const PlanLinear* d : downs) {
-            if (g->format.empty() || d->format.empty()) {
-                why = "an expert bank's format is not in the facts";
-                return std::nullopt;
-            }
-            const auto inter = static_cast<std::uint64_t>(d->k);
-            const auto up    = std::make_unique<DescribedWeight>(artifact::parse_format(g->format),
-                                                                 experts * 2 * inter, hidden);
-            const auto dn    = std::make_unique<DescribedWeight>(artifact::parse_format(d->format),
-                                                                 experts * hidden, inter);
+    for (const std::string& up_format : m.expert_up_formats) {
+        for (const std::string& down_format : m.expert_down_formats) {
+            const auto up = std::make_unique<DescribedWeight>(artifact::parse_format(up_format),
+                                                              experts * 2 * inter, hidden);
+            const auto dn = std::make_unique<DescribedWeight>(artifact::parse_format(down_format),
+                                                              experts * hidden, inter);
             ops::MoeWeights weights;
             weights.router  = router->weight;
             weights.gate_up = up->weight;
