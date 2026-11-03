@@ -4,6 +4,7 @@
 #include "ninferno/ops/linear.h" // LinearPolicy
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -46,8 +47,9 @@ struct LinearDecision {
 [[nodiscard]] const char* linear_claim_name(LinearClaim claim);
 
 // Every implementation ops::linear has for one call, and which one it runs (#306): the shape-owned
-// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32: the launch its table selects at the width,
-// q8_launch_id; another format "owned:<format>") and the generic route ("generic:<route>", the
+// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32, "owned:<format>.n<N>_k<K>.launch<i>" for
+// Q4/Q5/Q6_G64 and BF16: the launch its table selects at the width, owned_launch_id; NVFP4 and
+// FP8 "owned:<format>") and the generic route ("generic:<route>", the
 // route select_route asks for; the call's layout and workspace may still resolve it lower,
 // generic::resolve_route).
 // Selected: the one dispatch_linear runs (none where it refuses the call; `why` of the generic
@@ -61,6 +63,12 @@ struct LinearCandidate {
     Status status = Status::Unavailable;
     std::string why;
 };
+// The launch a shape-owned table selects for [n,k] at width t (#306): the shape and the launch's
+// number in the order the widths 1..t first select its launches ("n1024_k2048.launch2"). The
+// Q8_G32, Q4/Q5/Q6_G64 and BF16 tables; nullopt for a format whose dispatch chooses inside itself
+// (NVFP4, FP8). The shape must be registered.
+[[nodiscard]] std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n,
+                                                         std::int32_t k, std::int32_t t);
 [[nodiscard]] std::vector<LinearCandidate> linear_candidates(const Weight& weight,
                                                              LinearPolicy policy,
                                                              std::int32_t tokens);
