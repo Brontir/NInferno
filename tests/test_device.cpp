@@ -1,4 +1,5 @@
 #include "core/device.h"
+#include "core/measured_boards.h"
 #include "ninferno/option_enums.h"
 #include "support/cuda.h"
 

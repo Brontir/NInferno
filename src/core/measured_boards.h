@@ -39,30 +39,10 @@ struct Gate {
     bool pays;
 };
 
-// The current device's answer from `gates`: the nearest measured board's within `max_distance`,
-// else false (the unmeasured default), as on no device.
-[[nodiscard]] inline bool measured_gate(std::span<const Gate> gates,
-                                        double max_distance = kCarryDistance) noexcept {
-    try {
-        const Gate* g = nearest_measured(gates, board_of(device_class()), max_distance);
-        return g != nullptr && g->pays;
-    } catch (...) {
-        return false;
-    }
-}
-
-// Whether ggml's matrix kernel takes a prefill of the ggml block formats from 17 tokens on
-// (ops/generic generic_gemm.cpp mmq_prefill_wins, where the measurements stand): the nearest
-// measured board's answer of its instruction set, at any distance.
-inline constexpr Gate kMmqPrefillPays[] = {
-    {kRtx5090, true},    {kRtx5060Ti, false}, {kRtx4090, true},
-    {kL4, true},         {kRtx4060Ti, true},  {kA10, true},
-    {kA100Sxm40, false}, {kRtx2080Ti, true}};
-
 // What a measured gate's answer for a board rests on (#373): the donor (the nearest measured board
 // within the gate's distance; null: none), how far it is, what the distance could not compare, the
 // answer, and how the evidence applies. Measured: the board itself (distance 0, every quantity
-// known). Carried: within kCarryDistance, every quantity compared. Transferred: farther, the
+// known: the board's facts are a measured board's). Carried: within kCarryDistance, every quantity compared. Transferred: farther, the
 // gate's own rule carrying it (the MMQ gate's: at any distance). Incomplete: a quantity unknown on
 // either side, so the distance can understate the difference. None: no donor (the unmeasured
 // default). The answer is the legacy rule's in every case: the disposition says what it rests on
@@ -100,6 +80,25 @@ struct GateAnswer {
                                                        : D::Transferred;
     return out;
 }
+
+// The current device's answer from `gates`: gate_answer's for the device within `max_distance`,
+// else false (the unmeasured default), as on no device.
+[[nodiscard]] inline bool measured_gate(std::span<const Gate> gates,
+                                        double max_distance = kCarryDistance) noexcept {
+    try {
+        return gate_answer(gates, board_of(device_class()), max_distance).pays;
+    } catch (...) {
+        return false;
+    }
+}
+
+// Whether ggml's matrix kernel takes a prefill of the ggml block formats from 17 tokens on
+// (ops/generic generic_gemm.cpp mmq_prefill_wins, where the measurements stand): the nearest
+// measured board's answer of its instruction set, at any distance.
+inline constexpr Gate kMmqPrefillPays[] = {
+    {kRtx5090, true},    {kRtx5060Ti, false}, {kRtx4090, true},
+    {kL4, true},         {kRtx4060Ti, true},  {kA10, true},
+    {kA100Sxm40, false}, {kRtx2080Ti, true}};
 
 // kMmqPrefillPays for `board` by its rule (the nearest measured board of the instruction set, at
 // any distance), with what the answer rests on: one query for the device's gate (ops/generic
