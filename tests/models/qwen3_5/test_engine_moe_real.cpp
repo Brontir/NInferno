@@ -208,22 +208,13 @@ int exercise_vision(ninferno::Engine& engine) {
 
 int exercise_maximum_configuration(const char* artifact) {
     const bool with_vision = ninferno::test::real_artifact(artifact).vision;
-    // 262,144 tokens of context beside the weights: a card below kMaximumConfigurationBytes (an
-    // RTX 4060 Ti's 16 GiB under a 35B artifact) skips the case where the plan refuses it, said
-    // once, as an absent component does. On a larger card a refusal is a failure (a planner
-    // regression must not pass as a skip).
-    constexpr std::size_t kMaximumConfigurationBytes = std::size_t{24} << 30;
-    std::size_t free_bytes = 0, total_bytes = 0;
-    if (cudaMemGetInfo(&free_bytes, &total_bytes) != cudaSuccess) {
-        std::cerr << "cudaMemGetInfo failed\n";
-        return 1;
-    }
+    // 262,144 tokens of context beside the weights: a card of at most 24 GB (an RTX 4060 Ti's
+    // 16 GiB under a 35B artifact) skips the case where the plan refuses it (small_card_skips).
     std::optional<ninferno::Engine> built;
     try {
         built.emplace(maximum_engine_options(artifact));
     } catch (const ninferno::CapacityError& error) {
-        if (total_bytes >= kMaximumConfigurationBytes) { throw; }
-        ninferno::test::skip_case("35B maximum configuration", error.what());
+        if (!ninferno::test::small_card_skips(error, "35B maximum configuration")) { throw; }
         return 0;
     }
     ninferno::Engine& engine             = *built;
