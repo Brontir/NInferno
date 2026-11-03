@@ -256,8 +256,6 @@ def main(argv=None):
             "sources": sources.provenance(),
             "inputs": source_inputs(sources),
         }
-        if args.maintainer_quantize:
-            provenance["maintainer_quantize"] = True
         if args.override:
             provenance["override"] = args.override
             # By content and function name, as the source identity takes it (never the path).
@@ -268,6 +266,9 @@ def main(argv=None):
             provenance["ranking"] = str(args.ranking)
             # By content for the source identity, never the path.
             provenance["ranking_sha256"] = _content_sha256(Path(args.ranking))
+        # After the ranking, as ninferno-convert orders its provenance (the bytes are compared).
+        if args.maintainer_quantize:
+            provenance["maintainer_quantize"] = True
         published = published_activation_summary(model, recipe)
         if published is not None:
             provenance["published_activations"] = published
