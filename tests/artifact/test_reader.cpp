@@ -443,6 +443,16 @@ void invalid_directories() {
     }
     rejects([] { (void)parse_json("{\"a\":{\"x\":1,\"x\":2}}", "duplicate"); },
             "duplicate JSON key accepted");
+    rejects([] { (void)parse_json("{\"x\":1,\"a\":[{\"y\":1}],\"x\":2}", "duplicate"); },
+            "duplicate JSON key after a nested object accepted");
+    rejects([] { (void)parse_json("[{\"a\":[{\"y\":1,\"y\":2}]}]", "duplicate"); },
+            "duplicate JSON key in an object of an array accepted");
+    rejects([] { (void)parse_json("{\"a\":1,}", "syntax"); }, "a syntax error accepted");
+    {
+        const Json same = parse_json("{\"a\":{\"x\":1},\"b\":{\"x\":2},\"x\":[{\"x\":3}]}", "same");
+        require(same["a"]["x"] == 1 && same["b"]["x"] == 2 && same["x"][0]["x"] == 3,
+                "the same key in different objects was not read");
+    }
     fixture.write();
     {
         std::fstream file(fixture.entry, std::ios::binary | std::ios::in | std::ios::out);
