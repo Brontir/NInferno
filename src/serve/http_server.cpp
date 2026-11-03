@@ -804,6 +804,7 @@ void HttpServer::request_drain() noexcept {
 }
 
 ContextCacheHints HttpServer::request_cache_hints(const httplib::Request& req, httplib::Response& res,
+                                                 std::shared_ptr<void>* kept_turn,
                                                  ContextCacheHints base) const {
     if (!req.has_header(std::string(kCacheHintHeader).c_str())) { return base; }
     const std::string header = req.get_header_value(std::string(kCacheHintHeader).c_str());
@@ -812,7 +813,7 @@ ContextCacheHints HttpServer::request_cache_hints(const httplib::Request& req, h
         apply_cache_hint(&header, options_.trust_cache_hints,
                          options_.context_cache.enabled ? options_.context_cache.kept_tokens : 0,
                          base, &kept);
-    if (kept) { kept_sessions_.keep(*kept, std::chrono::steady_clock::now()); }
+    if (kept) { *kept_turn = kept_sessions_.begin_turn(*kept, std::chrono::steady_clock::now()); }
     res.set_header(std::string(kCacheHintAppliedHeader).c_str(), std::string(applied));
     return base;
 }

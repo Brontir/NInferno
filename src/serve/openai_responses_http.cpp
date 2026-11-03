@@ -264,12 +264,13 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
         .preserve_thinking_semantic_change = resolved.preserve_thinking_semantic_change,
     };
     PreparedRequest prepared;
+    std::shared_ptr<void> kept_turn; // a kept thread's turn, counted until the request ends
     try {
         prepared = service_->prepare(
             resolved.generation,
             request.stream ? GenerationConsumerMode::Streaming : GenerationConsumerMode::Aggregate,
             {}, [&req] { return client_disconnected(req); },
-            request_cache_hints(req, res, std::move(resolved.cache_hints)));
+            request_cache_hints(req, res, &kept_turn, std::move(resolved.cache_hints)));
     } catch (const ApiException& exception) {
         const ApiError error = responses_error(exception.error());
         record_request_rejected(make_request_rejection_log_context(
@@ -289,6 +290,7 @@ void HttpServer::handle_responses(const httplib::Request& req, httplib::Response
         begin_request(make_request_log_context(req_id, "openai_responses", resolved.generation,
                                                metadata, prepared),
                       res);
+    lifecycle->hold(std::move(kept_turn));
     if (const std::string warning = notes_header_value(resolved.generation); !warning.empty()) {
         res.set_header("X-NInferno-Warning", warning);
     }

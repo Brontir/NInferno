@@ -408,12 +408,12 @@ x-ninferno-cache-hint: session=<hex>; retain=drop; ttl-ms=120000; next=0.93; tur
 `retain=keep` with a `session` and a `ttl-ms`, under `--cache-keep-tokens N`, gives the thread's
 cached state the live-session weight: the kept threads together hold at most N context tokens (at
 their last turn's end), and past that the oldest kept falls to the private weight first. A kept
-thread that sends no new turn within its `ttl-ms` (at most an hour) falls to the private weight
-too, its session still found by a later turn; each turn moves the deadline. The server keeps that
+thread that sends no new turn within its `ttl-ms` (at most an hour) of its last turn's end falls
+to the private weight too, its session still found by a later turn; while a turn of the thread is
+prepared, queued or running, its deadline does not pass. The server keeps that
 clock; the cache's own decisions read none. Without the budget, a session or a ttl, `keep` is
 granted as `normal`, and so on a request with a session of its own (a stored Response already
-has the live-session weight) or one that does not advance its thread (`store: false`). A deadline
-that passes while the thread's turn still runs is moved by another ttl. The other fields are read and
+has the live-session weight) or one that does not advance its thread (`store: false`). The other fields are read and
 not yet weighed; unknown fields are ignored. A malformed hint is none, never an error. The response
 says what was granted in `x-ninferno-hint-applied` (`keep`, `normal`, `drop`, or `none` when hints
 are off or the hint is malformed: a bad value of a known field, a field without a name, a field

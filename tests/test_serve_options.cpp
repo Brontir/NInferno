@@ -118,6 +118,19 @@ int main() {
                               due[1].ttl == std::chrono::milliseconds(300) &&
                               sessions.expired(t0 + std::chrono::milliseconds(900)).empty(),
                           "each expired session is handed back once, with its ttl");
+        {
+            // A turn not yet seen by the cache (preparing, queued, materializing): its thread's
+            // deadline moves on while it runs, and its ttl runs from the turn's end.
+            auto turn = sessions.begin_turn({"c", std::chrono::milliseconds(100)}, t0);
+            failures += check(sessions.expired(t0 + std::chrono::milliseconds(500)).empty(),
+                              "a deadline passing while its thread's turn runs moves on");
+            turn.reset();
+            const auto end = KeptSessions::Clock::now();
+            const auto later = sessions.expired(end + std::chrono::milliseconds(200));
+            failures += check(sessions.expired(end - std::chrono::milliseconds(1)).empty() &&
+                                  later.size() == 1 && later[0].session_key == "c",
+                              "a kept thread's ttl runs from the end of its turn");
+        }
         failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
                               h.retention == ninferno::CacheRetentionHint::Disposable,
                           "drop: disposable");

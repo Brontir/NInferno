@@ -121,14 +121,40 @@ std::string_view apply_cache_hint(const std::string* header, bool trusted, std::
 
 void KeptSessions::keep(const KeptGrant& grant, Clock::time_point now) {
     std::lock_guard lock(mutex_);
-    until_[grant.session_key] = {now + grant.ttl, grant.ttl};
+    Deadline& d = until_[grant.session_key];
+    d.until     = now + grant.ttl;
+    d.ttl       = grant.ttl;
+}
+
+std::shared_ptr<void> KeptSessions::begin_turn(const KeptGrant& grant, Clock::time_point now) {
+    {
+        std::lock_guard lock(mutex_);
+        Deadline& d = until_[grant.session_key];
+        d.until     = now + grant.ttl;
+        d.ttl       = grant.ttl;
+        ++d.turns;
+    }
+    return std::shared_ptr<void>(nullptr, [this, key = grant.session_key](void*) {
+        end_turn(key, Clock::now());
+    });
+}
+
+void KeptSessions::end_turn(const std::string& session_key, Clock::time_point now) {
+    std::lock_guard lock(mutex_);
+    const auto it = until_.find(session_key);
+    if (it == until_.end()) { return; }
+    if (it->second.turns > 0) { --it->second.turns; }
+    it->second.until = now + it->second.ttl;
 }
 
 std::vector<KeptGrant> KeptSessions::expired(Clock::time_point now) {
     std::vector<KeptGrant> out;
     std::lock_guard lock(mutex_);
     for (auto it = until_.begin(); it != until_.end();) {
-        if (it->second.until <= now) {
+        if (it->second.until <= now && it->second.turns > 0) {
+            it->second.until = now + it->second.ttl; // its thread's turn still runs
+            ++it;
+        } else if (it->second.until <= now) {
             out.push_back({it->first, it->second.ttl});
             it = until_.erase(it);
         } else {
