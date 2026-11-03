@@ -9,6 +9,7 @@
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
+#include "ops/generic/generic_schedules.h"
 
 #include <array>
 #include <cstdint>
@@ -16,29 +17,10 @@
 
 namespace ninferno::ops::detail::generic {
 
-// Keep in the order of kRmmaSchedules in generic_gemm.cpp: index, warps_m, warps_k, m_tiles,
+// The schedules: index, warps_m, warps_k, m_tiles,
 // n_tiles, cluster (K split over a thread-block cluster of that many CTAs, generic_gemm.cuh).
-#define NINFERNO_GENERIC_RMMA_SCHEDULES(X)                                                         \
-    X(0, 1, 4, 1, 1, 1)                                                                            \
-    X(1, 1, 8, 1, 1, 1)                                                                            \
-    X(2, 2, 2, 1, 1, 1)                                                                            \
-    X(3, 4, 1, 1, 1, 1)                                                                            \
-    X(4, 4, 1, 2, 1, 1)                                                                            \
-    X(5, 2, 2, 1, 2, 1)                                                                            \
-    X(6, 4, 1, 1, 2, 1)                                                                            \
-    X(7, 4, 1, 2, 2, 1)                                                                            \
-    X(8, 4, 1, 1, 4, 1)                                                                            \
-    X(9, 4, 1, 2, 4, 1)                                                                            \
-    X(10, 4, 1, 1, 8, 1)                                                                           \
-    X(11, 4, 1, 2, 8, 1)                                                                           \
-    X(12, 2, 1, 2, 8, 1)                                                                           \
-    X(13, 8, 1, 1, 8, 1)                                                                           \
-    X(14, 1, 8, 1, 4, 1)                                                                           \
-    X(15, 1, 4, 1, 4, 1)                                                                           \
-    X(16, 1, 8, 1, 1, 8)                                                                           \
-    X(17, 1, 4, 1, 2, 1)                                                                           \
-    X(18, 1, 8, 1, 1, 2)                                                                           \
-    X(19, 1, 16, 1, 1, 1)
+// NINFERNO_GENERIC_RMMA_SCHEDULES: ops/generic/generic_schedules.h (one list for the
+// instantiations here and the host table in generic_gemm.cpp).
 
 template <class Decoder, class Schedule, Epilogue E, bool Latency>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);

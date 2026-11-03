@@ -17,6 +17,7 @@
 
 #include "core/pdl.cuh"
 #include "ops/generic/generic_w4a8.cuh"
+#include "ops/generic/generic_schedules.h"
 
 #include <cuda_bf16.h>
 
@@ -333,14 +334,11 @@ __global__ __launch_bounds__(S::kThreads) void r8_kernel(GemmArgs a, W4a8Activat
 }
 
 // ---------------------------------------------------------------------------------------------
-// Launch. Keep the schedule list in the order of kR8Schedules in generic_gemm.cpp.
+// Launch.
 // ---------------------------------------------------------------------------------------------
 
-#define NINFERNO_GENERIC_R8_SCHEDULES(X)                                                           \
-    X(0, 4, 1)                                                                                     \
-    X(1, 4, 2)                                                                                     \
-    X(2, 8, 2)                                                                                     \
-    X(3, 8, 1)
+// NINFERNO_GENERIC_R8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
+// instantiations here and the host table in generic_gemm.cpp).
 
 template <class C, class S, int NT, Epilogue E, bool kPre = false>
 void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation act = {}) {

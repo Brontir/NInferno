@@ -6,18 +6,17 @@
 #include "core/device.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/common/arch_limits.h"
+#include "ops/generic/generic_schedules.h"
 
 #include <stdexcept>
 
 namespace ninferno::ops::detail::generic {
 namespace {
 
-// Keep in the order of kTiledSchedules in generic_gemm.cpp: block_m (tokens), block_n (rows),
+// The schedules: block_m (tokens), block_n (rows),
 // warps_m, warps_n, stages (lowered where a codec's tiles would not fit).
-#define NINFERNO_GENERIC_TILED_SCHEDULES(X)                                                        \
-    X(0, 128, 128, 2, 4, 3)                                                                        \
-    X(1, 64, 128, 2, 4, 3)                                                                         \
-    X(2, 128, 64, 2, 2, 3)
+// NINFERNO_GENERIC_TILED_SCHEDULES: ops/generic/generic_schedules.h (one list for the
+// instantiations here and the host table in generic_gemm.cpp).
 
 template <class S, class C, Epilogue E>
 void launch_schedule(const GemmArgs& args, cudaStream_t stream) {

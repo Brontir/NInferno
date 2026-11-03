@@ -25,6 +25,7 @@
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
 #include "ops/generic/generic_gemm.cuh"
+#include "ops/generic/generic_schedules.h"
 
 #include <cuda_bf16.h>
 
@@ -1886,20 +1887,14 @@ __global__ __launch_bounds__(S::kThreads + 32 * Producers) void w4a8_ws_kernel(G
 
 
 // ---------------------------------------------------------------------------------------------
-// Launch. Keep the schedule list in the order of kW4a8Schedules in generic_gemm.cpp. The last
-// field is the producer warps: 0 for w4a8_kernel, else w4a8_ws_kernel with that many producers
+// Launch. The schedules' last field is the producer warps: 0 for w4a8_kernel, else w4a8_ws_kernel with that many producers
 // and a ring of three stages in the 99 KiB of dynamic shared memory a block may have. The
 // producer-warp tile is compiled only for the codecs the picker gives it (w4a8_ws_compiled; route
 // admission refuses the others: w4a8_ws_supports, generic_gemm.cpp).
 // ---------------------------------------------------------------------------------------------
 
-#define NINFERNO_GENERIC_W4A8_SCHEDULES(X)                                                         \
-    X(0, 32, 128, 2, 4, 0)                                                                         \
-    X(1, 64, 128, 2, 4, 0)                                                                         \
-    X(2, 128, 128, 2, 4, 0)                                                                        \
-    X(3, 128, 64, 4, 2, 0)                                                                         \
-    X(4, 64, 64, 2, 2, 0)                                                                          \
-    X(5, 128, 64, 4, 2, 4)
+// NINFERNO_GENERIC_W4A8_SCHEDULES: ops/generic/generic_schedules.h (one list for the
+// instantiations here and the host table in generic_gemm.cpp).
 
 inline constexpr int kW4a8MaxDynamicSmem = 99 * 1024;
 
