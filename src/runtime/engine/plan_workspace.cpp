@@ -7,6 +7,7 @@
 #include "models/qwen3_5/program/planning/sequence_bytes.h"
 #include "models/qwen3_5/program/planning/sequence_plan.h"
 #include "ninferno/ops/gemma4_attention.h"
+#include "ninferno/ops/linear.h"
 #include "ninferno/ops/moe.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/sampling.h"
@@ -27,19 +28,40 @@ namespace {
 namespace gemma4 = models::gemma4;
 namespace detail = models::qwen3_5::detail;
 
-// The drafter's own pass beside the target's (gemma4::DrafterPass::workspace_bytes: its fixed
-// 16 MiB reserve, the round's 1 KiB of ids, its attention over the target's caches at the whole
-// context): its rows are a few small layers the facts do not describe, under 1 MiB at the widths
-// it runs; its attention reads the target's head geometry (the load pairs them,
-// gemma4/load_mtp.cpp), at the target's query heads.
-std::uint64_t gemma_drafter_pass(const models::gemma4::Config& c, std::int32_t context) {
-    std::size_t attention = 0;
+// The drafter's own pass over `rows` rows beside the target's, as
+// gemma4::DrafterPass::workspace_bytes sizes it (its fixed 16 MiB reserve and the round's 1 KiB
+// of ids): its activations, and the widest of its Ops, its attention over the target's caches at
+// the whole context and its head. The facts do not describe the drafter's own layers: its width
+// and feed-forward are bounded by the target's (the assistant is the smaller model), its head by
+// the target's format and rows (a full vocabulary; a shortlist is fewer); its attention reads the
+// target's head geometry and query heads (the load refuses a drafter that differs,
+// gemma4/load_mtp.cpp).
+std::uint64_t gemma_drafter_pass(const models::gemma4::Config& c,
+                                 const models::gemma4::WorkspaceLinear& head,
+                                 std::int32_t context, std::int32_t rows) {
+    const auto n          = static_cast<std::uint64_t>(std::max(rows, 1));
+    const auto hidden     = static_cast<std::uint64_t>(c.hidden_size);
+    std::uint64_t widest_head = 0;
+    for (const auto* g : {&c.sliding, &c.full}) {
+        widest_head = std::max<std::uint64_t>(widest_head, static_cast<std::uint64_t>(g->head_dim));
+    }
+    // DrafterPass::workspace_bytes' eight buffers a row, each with its 256 bytes of alignment.
+    const std::uint64_t elements = 2 * hidden + hidden + 2 * hidden +
+                                   3 * static_cast<std::uint64_t>(c.query_heads) * widest_head +
+                                   2 * hidden + 3 * static_cast<std::uint64_t>(c.intermediate_size) +
+                                   static_cast<std::uint64_t>(head.n);
+    const std::uint64_t activations = elements * 2 * n + 8 * 256;
+    std::size_t op = 0;
     const ops::Gemma4AttentionEnvelope envelope{static_cast<std::uint32_t>(context), 1};
     for (const auto* g : {&c.sliding, &c.full}) {
-        attention = std::max(attention, ops::gemma4_attention_workspace_bytes(
-                                            g->head_dim, c.query_heads, g->kv_heads, envelope));
+        op = std::max(op, ops::gemma4_attention_workspace_bytes(g->head_dim, c.query_heads,
+                                                                g->kv_heads, envelope));
     }
-    return (std::uint64_t(17) << 20) + 1024 + attention;
+    for (const auto policy : {head.policy, ops::LinearPolicy::A16Only}) {
+        op = std::max(op, ops::linear_workspace_capacity_bytes(head.qtype, head.n, head.k, policy, 1,
+                                                               std::max(rows, 1)));
+    }
+    return activations + op + (std::uint64_t(16) << 20) + 1024;
 }
 
 // A weight described by its format and shape alone, in the layout the converter stores it in (an
@@ -130,6 +152,9 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
                                      const EngineOptions& options, std::uint32_t concurrency,
                                      const detail::SequencePlanImpl* plan) {
     if (m.model_type != "gemma4_text") { return {}; }
+    // A vision start sizes the arena for the encoder and its handoff too (workspace_plan): the
+    // facts do not describe the tower, so the formula stands.
+    if (options.enable_vision) { return {std::nullopt, "vision: the encoder's arena is not in the facts"}; }
     if (m.hidden == 0 || m.vocab == 0 || m.layers == 0 || m.query_heads == 0 || !m.ple_known ||
         m.full_layers == 0 || m.full_key_dim == 0 || m.full_kv_heads_total % m.full_layers != 0 ||
         (m.sliding_layers != 0 && (m.sliding_key_dim == 0 ||
@@ -169,10 +194,19 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
         linears.push_back({qtype, static_cast<std::int32_t>(l.n), static_cast<std::int32_t>(l.k),
                            policy_of(qtype), l.role == LinearRole::FfnUp && l.gated});
     }
-    // The head (the token table it is tied to): its format is not in the facts; at the few
-    // columns a round runs, BF16's capacity stands for it.
-    const gemma4::WorkspaceLinear head{QType::BF16, c.vocab_size, c.hidden_size,
-                                       ops::LinearPolicy::A16Only};
+    // The head (or the token table it is tied to) in its own format: a quantized head's wide calls
+    // take a plane of its rows (target_op_bytes queries its policy and A16, as the start does).
+    if (m.head_format.empty()) { return {std::nullopt, "the output head's format is not in the facts"}; }
+    QType head_qtype{};
+    try {
+        head_qtype = artifact::parse_format(m.head_format);
+    } catch (const std::exception&) {
+        return {std::nullopt, "the output head's format " + m.head_format + " is not one a start reads"};
+    }
+    const gemma4::WorkspaceLinear head{
+        head_qtype,
+        static_cast<std::int32_t>(m.head_rows != 0 ? m.head_rows : m.vocab), c.hidden_size,
+        policy_of(head_qtype)};
     const auto chunk   = static_cast<std::int32_t>(std::min(rung.prefill_chunk, rung.max_context));
     const auto batch   = static_cast<std::int32_t>(concurrency);
     const auto context = static_cast<std::int32_t>(rung.max_context);
@@ -230,14 +264,15 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
         const auto width   = static_cast<std::int32_t>(plan->draft_window) + 1;
         const auto rows    = static_cast<std::int32_t>(detail::speculative_round_batches(*plan));
         const auto columns = static_cast<std::int32_t>(detail::speculative_round_columns(*plan));
-        const std::uint64_t drafter = gemma_drafter_pass(c, context);
-        general = std::max(general, text_prefill + drafter);
+        // The prefill drafts one row; a round drafts its rows (program_family.cpp mtp_prefill,
+        // mtp_round).
+        general = std::max(general, text_prefill + gemma_drafter_pass(c, head, context, 1));
         if (columns > 0) {
             general = std::max(general,
                                target(columns, columns) +
                                    ops::speculative_accept_greedy_drafts_workspace_capacity_bytes(
                                        c.vocab_size, 1, width - 1, 1, rows) +
-                                   drafter);
+                                   gemma_drafter_pass(c, head, context, rows));
         }
     }
     return {general, sized};

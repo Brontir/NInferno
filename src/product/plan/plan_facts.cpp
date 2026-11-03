@@ -921,6 +921,8 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     }
     RoleFormats role_formats;
     std::set<std::string> expert_up, expert_down; // the routed banks' formats
+    std::string head_format;
+    std::uint64_t head_rows = 0;
     for (const auto& t : head.tensors) {
         tensor_bytes += t.bytes;
         if (t.name == "output.weight") { output_bytes = t.bytes; }
@@ -944,6 +946,12 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             }
         }
         has_output = has_output || t.name == "output.weight";
+        // The head: output.weight, else the token table a tied head reads (#302).
+        if ((t.name == "output.weight" || (t.name == "token_embd.weight" && head_format.empty())) &&
+            t.ne.size() >= 2) {
+            head_format = format_of_ggml(t.type);
+            head_rows   = t.ne[1];
+        }
         if (t.name == "token_embd.weight" && g.vocab == 0 && t.ne.size() >= 2) {
             g.vocab = static_cast<std::uint32_t>(t.ne[1]);
         }
@@ -974,6 +982,11 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     out.shape.rest_layer_formats = std::vector<std::string>(rest_formats.begin(), rest_formats.end());
     out.model.expert_up_formats   = std::vector<std::string>(expert_up.begin(), expert_up.end());
     out.model.expert_down_formats = std::vector<std::string>(expert_down.begin(), expert_down.end());
+    // A split part may hold output.weight in a later file: the head only from a whole table.
+    if (whole) {
+        out.model.head_format = head_format;
+        out.model.head_rows   = head_rows;
+    }
     // A split part's head lists its own tensors only: no shares from it (the label stands).
     if (whole) { split_linears_by_format(out.model.linears, role_formats); }
     if (auto base = convert::gguf_metadata_base_repository(head.metadata)) {

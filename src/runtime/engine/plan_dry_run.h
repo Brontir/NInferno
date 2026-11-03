@@ -229,6 +229,10 @@ struct PlanModelFacts {
     // and the down side's; empty: not read): linears keeps its expert entries unsplit.
     std::vector<std::string> expert_up_formats;
     std::vector<std::string> expert_down_formats;
+    // The output head's storage format and rows as a GGUF stores it (output.weight; tied: the
+    // token table it is tied to, token_embd.weight; empty: not read).
+    std::string head_format;
+    std::uint64_t head_rows   = 0;
     std::uint32_t ple_width   = 0;
     bool ple_known            = false;
     double params            = 0; // every weight (0: unknown)
