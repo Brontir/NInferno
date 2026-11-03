@@ -37,9 +37,10 @@ target_link_libraries(ninferno_product_speculation PUBLIC ninferno_spec PRIVATE 
 # configuration from facts, and the one rule that picks among them. Pure.
 add_library(ninferno_product_choice STATIC
   choice/choice.cpp
+  choice/choice_replay.cpp
 )
 ninferno_internal_includes(ninferno_product_choice)
-target_link_libraries(ninferno_product_choice PUBLIC ninferno_core)
+target_link_libraries(ninferno_product_choice PUBLIC ninferno_core ninferno::json)
 
 # The plan without the weights (runtime/engine/plan_dry_run.h) from what a model says about itself
 # and what a device is, the speculation a start would serve with, and the largest quantization that
