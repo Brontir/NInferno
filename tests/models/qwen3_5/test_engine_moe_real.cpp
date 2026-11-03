@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -205,7 +206,16 @@ int exercise_vision(ninferno::Engine& engine) {
 
 int exercise_maximum_configuration(const char* artifact) {
     const bool with_vision = ninferno::test::real_artifact(artifact).vision;
-    ninferno::Engine engine(maximum_engine_options(artifact));
+    // 262,144 tokens of context beside the weights: a card that cannot hold them (an RTX 4060 Ti's
+    // 16 GiB under a 35B artifact) skips the case, said once, as an absent component does.
+    std::optional<ninferno::Engine> built;
+    try {
+        built.emplace(maximum_engine_options(artifact));
+    } catch (const ninferno::CapacityError& error) {
+        ninferno::test::skip_case("35B maximum configuration", error.what());
+        return 0;
+    }
+    ninferno::Engine& engine             = *built;
     const ninferno::MemorySummary memory = engine.memory_summary();
     const auto* vision = memory.vision_workspace ? &*memory.vision_workspace : nullptr;
     if (memory.max_context != 262144 || memory.kv_cache != ninferno::KvCacheStorage::Int8Group64 ||
