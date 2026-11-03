@@ -415,8 +415,9 @@ struct Choice {
     bool drafter_by_worth = false;
     // The worth's resolution where the worth decided (#301): the reference card's generation's
     // measured decode error (worth_band), the speed term's uncertainty in worth (-ln seconds) units;
-    // 0 without one. An alternative that loses by less on a different speed is indistinguishable
-    // within it (explain: within_resolution); the point estimate still decides, deterministically.
+    // 0 without one. An alternative that loses by no more than the smaller of it and the two's
+    // speed difference is indistinguishable (explain: within_resolution); the point estimate still
+    // decides, deterministically.
     double resolution = 0;
     std::string why;                   // one line: what decided it
 };
