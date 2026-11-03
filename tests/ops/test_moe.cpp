@@ -731,11 +731,10 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
     {
         auto wide_bank = l.weights.gate_up;
         wide_bank.k    = 12288;
-        const bool fits[] = {true, true, false, false};
         for (std::int32_t t = 1; t <= wide; ++t) {
-            if (moe::r8_admits(l.weights, wide_bank, t) != fits[t - 1]) {
-                std::cerr << c.label << ": K=12288 at T=" << t << " admitted "
-                          << !fits[t - 1] << '\n';
+            const bool fits = t <= 2; // 384 blocks x 36 bytes x 1 or 2 slots; 4 slots 55 KiB
+            if (moe::r8_admits(l.weights, wide_bank, t) != fits) {
+                std::cerr << c.label << ": K=12288 at T=" << t << " admitted " << !fits << '\n';
                 ++failures;
             }
         }
