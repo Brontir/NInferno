@@ -934,11 +934,15 @@ int check_a8_route_rule() {
                 Weight w;
                 w.qtype  = q;
                 w.layout = layout;
-                const bool two_bit = q == QType::GGML_IQ2_XXS || q == QType::GGML_IQ2_XS ||
-                                     q == QType::GGML_IQ2_S;
-                const int expected = two_bit && layout != QuantLayout::GgmlFrag
-                                         ? route->gate_up_2bit[static_cast<std::size_t>(t - 1)]
-                                         : 0;
+                int row = -1;
+                for (std::size_t i = 0; i < moe::A8Route::kTwoBitFormats.size(); ++i) {
+                    if (q == moe::A8Route::kTwoBitFormats[i]) row = static_cast<int>(i);
+                }
+                const int expected =
+                    row >= 0 && layout != QuantLayout::GgmlFrag
+                        ? route->gate_up_2bit[static_cast<std::size_t>(row)]
+                                             [static_cast<std::size_t>(t - 1)]
+                        : 0;
                 if (route->gate_up_at(t, w) != expected) {
                     std::cerr << "A8 route " << qname(q)
                               << (layout == QuantLayout::GgmlFrag ? " frag" : "") << " T=" << t

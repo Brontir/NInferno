@@ -807,7 +807,7 @@ std::optional<StageRoute> parse_stage(std::string_view name) {
 
 // The default A8 route per GPU class, measured where it is listed (bench/ops/moe_bench.cu --a8 1
 // --plans sweep [--frag 1], E 128, k 8, H 2048, F 512): the R8 schedule of a published 2-bit
-// codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S) at each T = 1..4, and the schedule an IQ3_XXS
+// codebook gate/up bank (IQ2_XXS, IQ2_XS, IQ2_S, a row each) at each T, and the schedule an IQ3_XXS
 // down of width 512..1023 then takes instead of the streaming 1 x 4 warps, the same at every T of
 // an A8 call so that a token's bytes do not depend on T (the A16 route keeps the streaming order).
 // Every other R8 gate/up bank takes w4r1 at every T (A8Route::gate_up_at). Two rows per warp
@@ -843,17 +843,29 @@ struct ClassA8Route {
     Board board;
     A8Route route;
 };
+// T = 1..8 with the R8 route to eight tokens (2026-11-03, master dd137f47, gate/up with the
+// register-MMA down, published layout, the schedule against w4r1):
+//   gb202: IQ2_XXS w4r2 -4.2 / -3.2 / -3.0 / -5.7 / -5.3 % at T = 4..8 (w4r1 best at 1..3);
+//          IQ2_XS w4r1 best to T = 7, w4r2 -2.6 % at 8; IQ2_S w4r1 best but T = 5 (w2r1 -3.1 %,
+//          one width alone: w4r1 kept).
+//   gb203: IQ2_XXS w4r2 -6.1 / -2.6 / -6.9 / -8.2 / -8.8 / -9.3 % at T = 3..8; IQ2_XS w4r2
+//          -3.2 / -2.9 / -2.4 / -3.6 / -6.5 / -5.8 / -6.6 % at T = 2..8; IQ2_S w4r1 best to T =
+//          3, w2r1 -2.3 / -1.4 / -1.5 / -1.4 % at T = 4..7, w4r1 at 8.
+//   ad106 (RTX 4060 Ti, no entry): every schedule within 1..3 % of w4r1.
+// Rows: IQ2_XXS, IQ2_XS, IQ2_S (A8Route::kTwoBitFormats).
 // R8 schedules (NINFERNO_MOE_R8_SCHEDULES): 0 w4r1, 1 w4r2, 2 w8r1, 3 w2r1.
 constexpr ClassA8Route kA8Routes[] = {
-    {measured::kRtx4090, {{0, 0, 0, 0}, 2}},
-    {measured::kRtx5090, {{0, 0, 0, 0}, -1}},
-    {measured::kRtx5080, {{0, 0, 1, 1}, 3}},
+    {measured::kRtx4090, {{}, 2}},
+    {measured::kRtx5090,
+     {{{{0, 0, 0, 1, 1, 1, 1, 1}, {0, 0, 0, 0, 0, 0, 0, 1}, {0, 0, 0, 0, 0, 0, 0, 0}}}, -1}},
+    {measured::kRtx5080,
+     {{{{0, 0, 1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 1, 1, 1}, {0, 0, 0, 3, 3, 3, 3, 0}}}, 3}},
 };
 // Every other class. The MoE tuner's choices of eight cards (A100, RTX 2080 Ti, 3090, 4060 Ti,
 // 5060 Ti, V100, and the 4090 and 5090 above) put an R8 schedule on gate/up at T = 1..4 for
 // nearly every A8 layer, mostly w4r1, where the register MMA lost by x1.15..1.36 per card (median
 // of the layers; V100 x3.5..4); ad102's route, w4r1 at every T and the streaming down.
-constexpr A8Route kFallbackA8Route{{0, 0, 0, 0}, -1};
+constexpr A8Route kFallbackA8Route{{}, -1};
 
 // The class's default A8 route on top of plan p: R8 on gate/up where the layer admits it and, on a
 // heuristic plan (not a route-table band's, whose down schedule was measured), the class's down.
