@@ -40,7 +40,10 @@ int main() {
         ninferno::models::LoadOptions selected;
         selected.vision        = true;
         selected.speculative   = ninferno::SpeculativeBackend::Mtp;
-        selected.proposal_head = ninferno::ProposalHead::Optimized;
+        // The optimized head where the artifact's serves MTP (one converted --no-proposal has none).
+        const ninferno::ProposalHead head = ninferno::test::proposal_head(
+            artifact, ninferno::ProposalHead::Optimized, ninferno::SpeculativeBackend::Mtp);
+        selected.proposal_head = head;
         auto model             = qwen::load_model(artifact, selected, device);
         const qwen::execution::Parameters parameters(*model);
         const auto execution = qwen::detail::make_qwen3_5_execution(parameters);
@@ -52,7 +55,7 @@ int main() {
             options.kv_cache            = ninferno::KvCacheStorage::Fp8E4M3Row256;
             options.speculative.backend = ninferno::SpeculativeBackend::Mtp;
             options.speculative.draft_tokens         = 3;
-            options.speculative.proposal_head        = ninferno::ProposalHead::Optimized;
+            options.speculative.proposal_head        = head;
             options.enable_vision                    = true;
             options.use_cuda_graph                   = false;
             options.context_cache.device_state_slots = 1;

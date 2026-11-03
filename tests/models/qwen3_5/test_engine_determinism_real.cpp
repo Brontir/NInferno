@@ -283,7 +283,9 @@ ninferno::EngineOptions generation_options(const std::string& artifact, std::uin
     }
     // Unnamed, the drafter is the artifact's own (MTP first); an artifact without one runs the
     // probe plainly, said once. A named drafter the artifact lacks still fails: it was asked for.
+    // A drafter shipped apart (NINFERNO_DET_DRAFTER: Gemma 4's MTP assistant) drafts as MTP.
     std::string spec = env_string("NINFERNO_DET_SPEC");
+    if (speculate && spec.empty() && !env_string("NINFERNO_DET_DRAFTER").empty()) { spec = "mtp"; }
     if (speculate && spec.empty()) {
         const auto& parts = ninferno::test::real_artifact(artifact.c_str());
         spec = parts.mtp ? "mtp" : parts.dflash ? "dflash" : parts.dflash2 ? "dflash2" : "";
