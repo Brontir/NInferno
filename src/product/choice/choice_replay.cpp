@@ -40,6 +40,19 @@ T unsigned_of(const json& j) {
     return static_cast<T>(v);
 }
 
+// A record's list or table: nlohmann iterates a null as empty and a scalar as itself, so a
+// corrupted field would replay as no entries, or one, instead of being refused.
+const json& array_at(const json& j, const char* key) {
+    const json& v = j.at(key);
+    if (!v.is_array()) { throw std::invalid_argument(std::string("a list was expected: ") + key); }
+    return v;
+}
+const json& object_at(const json& j, const char* key) {
+    const json& v = j.at(key);
+    if (!v.is_object()) { throw std::invalid_argument(std::string("a table was expected: ") + key); }
+    return v;
+}
+
 // An enumeration's value from a record: one of its `count` values, else the record is malformed.
 // (Checked before narrowing: nlohmann would turn 4294967296 into 0.)
 template <class E>
@@ -220,7 +233,7 @@ ModelFacts model_of(const json& j) {
     read(m.sliding_attending_layers, j.at("sliding_attending_layers"));
     read(m.recurrent, j.at("recurrent"));
     read(m.fp8_ring, j.at("fp8_ring"));
-    for (const auto& l : j.at("linears")) {
+    for (const auto& l : array_at(j, "linears")) {
         LinearShape shape;
         read(shape.n, l.at("n"));
         read(shape.k, l.at("k"));
@@ -231,7 +244,7 @@ ModelFacts model_of(const json& j) {
         m.linears.push_back(std::move(shape));
     }
     read(m.recurrent_state_elements, j.at("recurrent_state_elements"));
-    for (const auto& d : j.at("drafters")) {
+    for (const auto& d : array_at(j, "drafters")) {
         DrafterOption o;
         read(o.label, d.at("label"));
         read(o.drafter, d.at("drafter"));
@@ -239,7 +252,7 @@ ModelFacts model_of(const json& j) {
         read(o.plain_from_streams, d.at("plain_from_streams"));
         read(o.basis, d.at("basis"));
         read(o.measured, d.at("measured"));
-        for (const auto& g : d.at("load")) {
+        for (const auto& g : array_at(d, "load")) {
             DrafterOption::LoadGain gain;
             read(gain.streams, g.at("streams"));
             read(gain.speedup, g.at("speedup"));
@@ -357,8 +370,8 @@ json allowed_json(const Allowed& a) {
 
 Allowed allowed_of(const json& j) {
     Allowed a;
-    for (const auto& s : j.at("kv")) { a.kv.push_back(enum_of<KvCacheStorage>(s, static_cast<int>(kKvStorages.size()))); }
-    for (const auto& s : j.at("activations")) {
+    for (const auto& s : array_at(j, "kv")) { a.kv.push_back(enum_of<KvCacheStorage>(s, static_cast<int>(kKvStorages.size()))); }
+    for (const auto& s : array_at(j, "activations")) {
         a.activations.push_back(enum_of<ActivationMode>(s, 3));
     }
     a.automatic_kv = enum_of<KvCacheStorage>(j.at("automatic_kv"), static_cast<int>(kKvStorages.size()));
@@ -376,7 +389,7 @@ json task_json(const Task& t) {
 Task task_of(const json& j) {
     Task t;
     t.contexts.clear();
-    for (const auto& c : j.at("contexts")) { t.contexts.push_back(unsigned_of<std::uint32_t>(c)); }
+    for (const auto& c : array_at(j, "contexts")) { t.contexts.push_back(unsigned_of<std::uint32_t>(c)); }
     t.concurrency     = unsigned_of<std::uint32_t>(j.at("concurrency"));
     t.prompt          = unsigned_of<std::uint32_t>(j.at("prompt"));
     t.answer          = unsigned_of<std::uint32_t>(j.at("answer"));
@@ -430,7 +443,7 @@ Choice replay_choice(const json& inputs) {
     try {
         const ModelFacts model = model_of(inputs.at("model"));
         auto own = std::make_shared<std::map<std::string, std::uint32_t>>();
-        for (const auto& [k, v] : inputs.at("own_context").items()) {
+        for (const auto& [k, v] : object_at(inputs, "own_context").items()) {
             (*own)[k] = unsigned_of<std::uint32_t>(v);
         }
         const OwnContextFn own_context = [own](const Candidate& c) -> std::uint32_t {

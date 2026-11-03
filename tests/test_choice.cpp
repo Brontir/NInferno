@@ -1954,6 +1954,16 @@ void choices_replay(const json& fixture) {
                                     return r;
                                 }(),
                                 [&] {
+                                    auto r                   = record.inputs;
+                                    r["task"]["contexts"]    = nullptr;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                     = record.inputs;
+                                    r["model"]["linears"]      = 7;
+                                    return r;
+                                }(),
+                                [&] {
                                     auto r                       = record.inputs;
                                     r["allowed"]["automatic_kv"] = 4294967296LL;
                                     return r;
