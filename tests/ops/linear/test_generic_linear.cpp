@@ -1643,8 +1643,7 @@ int main() {
                         !serves(&p, &x_storage, 4096, 2048, 3) && !serves(&p, &x_storage, 4096, 4096, 2) &&
                         !serves(&p, &x_storage, 4096, 4096, 4);
         if (!ok) {
-            std::cerr << "generic linear: a prepared activation serves a call it was not made for
-";
+            std::cerr << "generic linear: a prepared activation serves a call it was not made for\n";
             ++failures;
         }
     }
