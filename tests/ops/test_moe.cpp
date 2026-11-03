@@ -1680,8 +1680,7 @@ int check_bank_refusals() {
         tier_routes.gate_up.kernel != moe::MoeStageKernel::W4a8 ||
         tier_routes.down.kernel != moe::MoeStageKernel::W4a8) {
         std::cerr << "stage routes: " << routes.gate_up.name << " / " << routes.down.name << ", "
-                  << r8_routes.gate_up.name << ", " << tier_routes.gate_up.name << '
-';
+                  << r8_routes.gate_up.name << ", " << tier_routes.gate_up.name << '\n';
         ++failures;
     }
     if (failures == 0) {
