@@ -936,7 +936,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
             if (!mtp && !t.ne.empty()) {
                 expert_routes.add(std::to_string(*block), format_of_ggml(t.type), "", t.ne[0], t.bytes);
             }
-            if (!mtp) {
+            // The banks' weights only: a bank's per-expert scale (Gemma 4's ffn_down_exps.scale,
+            // FP32) is not one of them.
+            if (!mtp && t.name.ends_with("_exps.weight")) {
                 (t.name.find("ffn_down_exps.") != std::string::npos ? expert_down : expert_up)
                     .insert(format_of_ggml(t.type));
             }
