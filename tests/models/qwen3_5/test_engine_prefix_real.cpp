@@ -2519,6 +2519,8 @@ int run_scenarios() {
     if (scenario == "attention") {
         try {
             result = exercise_attention_integration(artifact);
+        } catch (const ninferno::CapacityError&) {
+            throw; // main's small-card rule decides
         } catch (const std::exception& error) {
             std::cerr << "attention integration failed: " << error.what() << '\n';
             return 1;
