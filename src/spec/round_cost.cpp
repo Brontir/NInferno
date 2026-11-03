@@ -212,7 +212,14 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
 std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa,
                                 double speedup, std::int32_t streams, const ProposalRows& head_rows,
                                 double launch_bytes, const RoundLaunches& launches) {
-    if (streams < 1 || streams * (config.k + 1) > kPricedVerifyRows) { return std::nullopt; }
+    if (streams < 1 || speedup <= 0 || streams * (config.k + 1) > kPricedVerifyRows) {
+        return std::nullopt;
+    }
+    const auto d = facts.drafters.find(mode_name(config.mode));
+    if (d != facts.drafters.end() &&
+        streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {
+        return std::nullopt;
+    }
     const auto one   = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1);
     const auto joint = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams);
     if (!one || !joint || *one <= 0 || *joint <= 0) { return std::nullopt; }

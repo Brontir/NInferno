@@ -252,7 +252,10 @@ int main() {
             const bool dense = p.round_facts->target.experts == 0;
             for (std::int32_t streams = 2; streams <= 8; ++streams) {
                 const auto gain = sp::load_gain(*p.round_facts, config, k4070, 2.0, streams);
-                const bool priced = streams * (config.k + 1) <= sp::kPricedVerifyRows;
+                const std::int32_t draft_rows =
+                    p.round_facts->drafters.at(std::string(sp::mode_name(config.mode))).rows;
+                const bool priced = streams * (config.k + 1) <= sp::kPricedVerifyRows &&
+                                    streams * draft_rows <= std::max(sp::kPricedVerifyRows, draft_rows);
                 expect(gain.has_value() == priced && (!gain || (*gain > 0 && (!dense || *gain < 2.0))),
                        std::string("the load gain at ") + std::to_string(streams) +
                            " streams is priced within the measured rows (a dense target's falls), " +

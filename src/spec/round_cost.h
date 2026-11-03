@@ -223,7 +223,12 @@ inline constexpr std::int32_t kPricedVerifyRows = 8;
 // A drafter's gain over plain decode at `streams` streams, from its one-request gain (#303): the
 // tokens a round yields are the pair's at any load, so the gain scales by the one-stream round's
 // price over the joint one's, speedup x R_1(k) / R_C(k). nullopt where a joint verify exceeds
-// kPricedVerifyRows or either round is not priced.
+// kPricedVerifyRows, where the drafter's joint pass is wider than both that and its own one-stream
+// pass (DFlash's block of 16 rows at C >= 2: tiles change past ~12 rows), or either round is not
+// priced. Not priced either way: an MoE's routed share (kMoeRoutedShare) was fitted on one
+// stream's rows, which route alike; rows of different streams route more apart, so the C-row read
+// is likely under-counted in the verify and the plain step alike. The KV and attention bytes, which
+// grow with C in both, are left out as in R_1: at long context the gain is priced low.
 [[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
                                               double kappa, double speedup, std::int32_t streams,
                                               const ProposalRows& head_rows = {},
