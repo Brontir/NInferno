@@ -1373,10 +1373,10 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
          const Tensor* router_input) {
     const std::int32_t t = x.ne[1];
     // Without tensor mma.sync (Volta's build) the register-MMA stages run on FP32 FMAs, and R8
-    // stops at r8_token_limit(): a verify step of 5..16 tokens runs as calls of at most four, each on its
-    // own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4 214 us
-    // against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T, so a
-    // column's bytes are those of plain decode.
+    // stops at r8_token_limit(): a verify step of 5..16 tokens runs as calls of at most four, each
+    // on its own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4
+    // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
+    // so a column's bytes are those of plain decode.
     const std::int32_t r8_tokens = detail::moe::r8_token_limit();
     if (!build_features().mma_tensor && t > r8_tokens && t <= 16 && !prefill_routes_active() &&
         !invariant_routes_active() &&
