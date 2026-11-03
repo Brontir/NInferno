@@ -110,5 +110,14 @@ inline constexpr Gate kMmqPrefillPays[] = {
 [[nodiscard]] inline bool mmq_prefill_pays(const Board& board) noexcept {
     return mmq_prefill_gate(board).pays;
 }
+// The current device's answer: mmq_prefill_gate of its board, else false (no device: the
+// unmeasured default, as measured_gate gives).
+[[nodiscard]] inline bool mmq_prefill_device_pays() noexcept {
+    try {
+        return mmq_prefill_gate(board_of(device_class())).pays;
+    } catch (...) {
+        return false;
+    }
+}
 
 } // namespace ninferno::measured
