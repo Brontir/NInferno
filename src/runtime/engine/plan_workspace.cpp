@@ -186,6 +186,27 @@ PlanWorkspaceAnswer gemma4_workspace(const PlanModelFacts& m, const PlanRung& ru
     const std::uint64_t ordinary =
         target(batch, batch) + ops::sampling_workspace_capacity_bytes(c.vocab_size, 1, batch);
     std::uint64_t general = std::max(text_prefill, ordinary);
+    // The rung's launch windows as the start's planner lays them out (Gemma 4 plans without the
+    // family's sequence plan: its windows from the same inputs, the copy window resolved by the
+    // family's rule, as a start resolves it: an MTP start captures depth 15 for copy rounds).
+    detail::SequencePlanImpl own;
+    if (plan == nullptr && options.speculative.backend == SpeculativeBackend::Mtp) {
+        const bool copy_rounds  = detail::family_copy_rounds(models::StateFamily::Gemma4);
+        EngineOptions planned   = options;
+        planned.max_concurrency = concurrency;
+        planned.max_context     = rung.max_context;
+        planned.prefill_chunk   = rung.prefill_chunk;
+        planned.speculative     = detail::resolve_copy_window(planned.speculative, copy_rounds);
+        const detail::SequencePlanningInputs in =
+            detail::sequence_planning_inputs(planned, copy_rounds, 0, false);
+        own.max_concurrency         = in.max_concurrency;
+        own.draft_window            = in.draft_window;
+        own.launch_windows          = in.launch_windows;
+        own.launch_window_batches   = in.launch_window_batches;
+        own.speculative_batch_limit = in.speculative_batch_limit;
+        own.speculative_backend     = in.speculative_backend;
+        plan                        = &own;
+    }
     if (plan != nullptr && plan->speculative_backend == SpeculativeBackend::Mtp &&
         plan->draft_window != 0) {
         const auto width   = static_cast<std::int32_t>(plan->draft_window) + 1;
