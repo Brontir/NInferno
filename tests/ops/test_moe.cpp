@@ -1589,6 +1589,76 @@ int check_warp_plan() {
     return failures;
 }
 
+// Each bank's refusal per stage (#311), from facts of the format alone: no weights are read, so
+// the banks are descriptions at an aligned stand-in address.
+int check_bank_refusals() {
+    namespace moe = ops::detail::moe;
+    using R       = moe::BankRefusal;
+    alignas(16) static const std::uint8_t stand_in[32] = {};
+    const auto bank = [](QType q, std::int32_t k, QuantLayout layout) {
+        Weight w;
+        w.qtype  = q;
+        w.n      = 256;
+        w.k      = k;
+        w.layout = layout;
+        w.qdata  = stand_in;
+        return w;
+    };
+    int failures   = 0;
+    const auto is  = [&](const char* what, R got, R want) {
+        if (got != want) {
+            std::cerr << "bank refusals " << what << ": " << moe::bank_refusal_name(got)
+                      << ", expected " << moe::bank_refusal_name(want) << '\n';
+            ++failures;
+        }
+    };
+    const Weight q4k = bank(QType::GGML_Q4_K, 2048, QuantLayout::GgmlBlocks);
+    is("Q4_K R8", moe::r8_bank_refusal(q4k), R::None);
+    is("Q4_K frag R8", moe::r8_bank_refusal(bank(QType::GGML_Q4_K, 2048, QuantLayout::GgmlFrag)),
+       R::None);
+    is("Q6_K frag R8", moe::r8_bank_refusal(bank(QType::GGML_Q6_K, 2048, QuantLayout::GgmlFrag)),
+       R::FragCodec);
+    is("IQ3_S frag R8", moe::r8_bank_refusal(bank(QType::GGML_IQ3_S, 2048, QuantLayout::GgmlFrag)),
+       R::FragCodec);
+    is("BF16 R8", moe::r8_bank_refusal(bank(QType::BF16, 2048, QuantLayout::RowSplit)), R::Format);
+    Weight permuted = bank(QType::U4_G128_ZP_FP16, 2048, QuantLayout::RowGroupZp);
+    permuted.k_order = stand_in;
+    is("ordered U4 R8", moe::r8_bank_refusal(permuted), R::KOrder);
+    // Q4_K reads 64 values a load: K 2048 + 32 is not whole loads.
+    is("Q4_K K 2080 R8", moe::r8_bank_refusal(bank(QType::GGML_Q4_K, 2080, QuantLayout::GgmlBlocks)),
+       R::KGroup);
+    Weight shifted = q4k;
+    shifted.qdata  = stand_in + 8;
+    is("Q4_K at +8 bytes R8", moe::r8_bank_refusal(shifted), R::Alignment);
+    is("NVFP4 R8", moe::r8_bank_refusal(bank(QType::NVFP4, 2048, QuantLayout::RowSplit)),
+       ops::detail::kNativeNvfp4 ? R::NativeBuild : R::None);
+    // r8_expert_supports is the refusal's None, format by format.
+    for (const QType q : {QType::GGML_Q4_K, QType::GGML_Q6_K, QType::GGML_Q4_0, QType::GGML_IQ2_S,
+                          QType::MXFP4, QType::NVFP4, QType::BF16, QType::Q4_G64_FP16}) {
+        for (const QuantLayout at : {QuantLayout::RowSplit, QuantLayout::GgmlFrag}) {
+            const Weight w = bank(q, 4096, at);
+            if (moe::r8_expert_supports(w) != (moe::r8_bank_refusal(w) == R::None)) {
+                std::cerr << "bank refusals: r8_expert_supports disagrees on " << qname(q) << '\n';
+                ++failures;
+            }
+        }
+    }
+
+    ops::MoeWeights layer;
+    layer.expert_policy = ops::LinearPolicy::AllowA8;
+    is("Q4_K W4A8", moe::w4a8_bank_refusal(layer, q4k), R::None);
+    is("BF16 W4A8", moe::w4a8_bank_refusal(layer, bank(QType::BF16, 2048, QuantLayout::RowSplit)),
+       R::Format);
+    is("Q4_0 K 48 W4A8", moe::w4a8_bank_refusal(layer, bank(QType::GGML_Q4_0, 48, QuantLayout::GgmlPlanes)),
+       R::KGroup);
+    layer.expert_policy = ops::LinearPolicy::A16Only;
+    is("Q4_K W4A8 under A16Only", moe::w4a8_bank_refusal(layer, q4k), R::Policy);
+    if (failures == 0) {
+        std::cout << "bank refusals: each bank names the first check that keeps it off R8 or W4A8\n";
+    }
+    return failures;
+}
+
 // --part random0|random1|random2|layers runs one share of the cases, no argument all of them:
 // ctest runs the four shares apart (tests/ops/tests.cmake), 125 s in one process on the RTX 5090.
 // Every random case is still drawn in each share, so the generator's sequence never moves.
@@ -1939,6 +2009,7 @@ int main(int argc, char** argv) {
                 failures += check_r8_bank_limits();
                 failures += check_r8_k_limit();
                 failures += check_expert_policy();
+                failures += check_bank_refusals();
             }
             // 2d. The grouped W4A8 of a wide prefill call (MoePlan::w4a8), one layer per codec
             // family:

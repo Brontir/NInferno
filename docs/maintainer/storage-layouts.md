@@ -387,6 +387,22 @@ Q4_K, IQ3_XXS and IQ2_S at every K); `--layout published` keeps every bank publi
 the maps and round trips, and `ninferno_moe_frag_test` checks that the kernel's bytes on a frag
 bank equal its bytes on the published one.
 
+Which stage routes read a `ggml_frag_v1` bank, per format (ops/moe `r8_bank_refusal`,
+`w4a8_bank_refusal`; a bank a route does not read keeps the stage on the 16-bit register MMA, and
+the refusal says `frag_codec`, #311):
+
+| format | register MMA (A16) | R8 (decode, T <= the R8 limit) | grouped W4A8 (prefill) |
+|---|---|---|---|
+| `ggml_q4_0` | yes | yes | yes |
+| `ggml_q4_k` | yes | yes | yes |
+| `ggml_iq3_xxs` | yes | yes | no |
+| `ggml_iq2_s` | yes | yes | no |
+
+The grouped W4A8 takes a layer only when both of its banks are admitted (`MoePlan::w4a8` covers
+both stages), so a layer with one IQ bank in fragment order prefills both stages on A16. A frag bank's R8
+limit is four tokens for Q4_0, and for the IQ formats on a board of many DRAM bytes per SM cycle
+(`r8_token_limit`).
+
 ## 8. Decode boundary
 
 Layout decoding yields only persistent logical words:
