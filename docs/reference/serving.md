@@ -2359,7 +2359,7 @@ CHOICE:
 | `task` | `context` (the own context per stream the choice settled on), `contexts` (the steps tried), `concurrency`, `prompt`, `answer`, `accuracy_weight` |
 | `why` | the decision in one line (English) |
 | `by_worth` | `true` when the worth decided; `false` when the quant rule and the family's defaults stood (no reference card for this generation, or a constant set still on one lab card: the `why` says which) |
-| `resolution` | the worth's resolution where it decided (the reference card's generation's decode error, as a fraction; 0 without one): an alternative losing by less on a different speed is `within_resolution` (#301) |
+| `resolution` | the speed estimate's resolution wherever a reference exists (the card's generation's decode error, as a fraction; 0 without one): an alternative losing by less on a different speed is `within_resolution` (#301) |
 | `chunk_by_speed` | `true` when an MoE's prefill chunk was the fastest on the generation's reference card; `false` when the default (or the pinned) chunk stood |
 | `kv_options` | every `--kv-dtype` codec as a start of this model takes it: `codec`, `allowed`, `why_code` (`""`, `family_codec`: the family keeps BF16 or FP8 only, `head_width`: the Qwen paged pool's layout takes another head width, `shape_unknown`), `why` (English), `slow_on_card` (FP8 codes widened in software: no E4M3 instructions below sm_89; the codec runs, slower). The engine's own rules; ninferno-ui's KV buttons are drawn from it |
 | `activations_allowed` | the `--activations` modes the model's family runs (`fast`, `exact`, and `int8` for Qwen), whatever is pinned: what ninferno-ui's selector offers |

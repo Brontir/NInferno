@@ -1746,7 +1746,7 @@ void resolution_labels(const json& fixture) {
                 }
                 const double gap   = best.worth - a.scored->worth;
                 const double apart = std::abs(std::log(a.scored->decision_seconds / best.decision_seconds));
-                const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart);
+                const bool inside  = gap > 1e-9 && gap <= std::min(c.resolution, apart) + 1e-9;
                 check(inside == (a.why_code == "within_resolution"),
                       name + " " + a.value + ": within_resolution exactly inside the band");
                 (inside ? within : lower) += 1;

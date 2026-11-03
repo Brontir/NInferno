@@ -1753,12 +1753,15 @@ std::vector<Alternative> explain(const Choice& choice) {
             } else if (s.decision_seconds > 0 && chosen.decision_seconds > 0 &&
                        chosen.worth - s.worth <=
                            std::min(choice.resolution,
-                                    std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) &&
+                                    std::abs(std::log(s.decision_seconds / chosen.decision_seconds))) +
+                               kWorthTie &&
                        chosen.worth - s.worth > kWorthTie) {
                 // It loses by less than the estimate's uncertainty about the two's speeds: the
                 // generation's decode error, and no more than their speeds differ (configurations
                 // that run nearly the same kernels err alike). Indistinguishable within the
                 // estimate; a gap of accuracy beyond their speeds' difference stays a loss.
+                // The tie's slack absorbs the rounding between the worth's and this log's paths:
+                // at equal accuracy the gap is the speed difference exactly.
                 alt.why_code = "within_resolution";
                 alt.why_not  = "worth " + fixed(s.worth - chosen.worth, 3) +
                                " against the chosen, inside the speed estimate's resolution (" +
