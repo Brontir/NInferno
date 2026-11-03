@@ -9,7 +9,6 @@
 #include "convert/fetch.h"
 #include "convert/gguf.h"
 #include "core/ascii.h"
-#include "models/gemma4/config.h"
 #include "spec/round_cost.h"
 
 #include "product/activation_options.h"
@@ -536,26 +535,27 @@ attached_drafter_memory(const SpeculationSubject& subject, const std::vector<Qua
 
 namespace {
 
-// A converted Gemma 4 assistant's geometry as its loader reads it (gemma4::parse_drafter_config of
-// its text component) and its bound formats: each projection the pass runs
-// (gemma4/load_mtp.cpp: the pre and post projections, a layer's query, output, gate, up and down)
-// and the head's. nullopt for another drafter, or a config the loader refuses.
+// A converted Gemma 4 assistant's geometry from its text component's config, the keys its loader
+// reads (gemma4::parse_drafter_config: hidden_size, intermediate_size, head_rows or vocab_size;
+// read here, the product does not link the model layer), and its bound formats: each projection
+// the pass runs (gemma4/load_mtp.cpp: the pre and post projections, a layer's query, output, gate,
+// up and down) and the head's. nullopt for another drafter or a field not a count.
 std::optional<runtime::PlanDrafterGeometry> assistant_geometry(const artifact::Directory& dir) {
     const auto text = dir.components.find("text");
     if (text == dir.components.end() ||
         text->second.config.value("model_type", std::string()) != "gemma4_assistant") {
         return std::nullopt;
     }
-    models::gemma4::DrafterConfig c;
+    runtime::PlanDrafterGeometry out;
     try {
-        c = models::gemma4::parse_drafter_config(text->second.config);
+        const nlohmann::json& c = text->second.config;
+        out.hidden       = c.value("hidden_size", std::uint32_t{0});
+        out.intermediate = c.value("intermediate_size", std::uint32_t{0});
+        out.head_rows    = c.contains("head_rows") ? c.value("head_rows", std::uint32_t{0})
+                                                   : c.value("vocab_size", std::uint32_t{0});
     } catch (const std::exception&) {
         return std::nullopt;
     }
-    runtime::PlanDrafterGeometry out;
-    out.hidden       = static_cast<std::uint32_t>(c.hidden_size);
-    out.intermediate = static_cast<std::uint32_t>(c.intermediate_size);
-    out.head_rows    = static_cast<std::uint32_t>(c.head_rows);
     std::set<std::string> projections, heads;
     const auto projection = [](std::string_view name) {
         if (name == "text/pre_projection" || name == "text/post_projection") { return true; }
