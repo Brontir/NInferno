@@ -11,6 +11,9 @@
 
 namespace {
 
+// No check of cuda_graph_allowance_bytes: these engines fit their plan automatically (no
+// device_state_slots), so the warm-up probe holds the graph memory and the plan's allowance is
+// 0 (model_instance.cpp, plan_graphs_held; #343).
 ninferno::EngineOptions engine_options(const char* artifact) {
     ninferno::EngineOptions options;
     options.artifact_path             = artifact;
@@ -83,7 +86,7 @@ int verify_loaded_product(const ninferno::Engine& engine, bool with_vision) {
           vision->handoff_capacity_bytes >
               memory.workspace.capacity_bytes - vision->handoff_offset_bytes ||
           vision->handoff_active_bytes != 0 || vision->handoff_peak_bytes != 0)) ||
-        memory.workspace_logical_peak_bytes != 0 || memory.cuda_graph_allowance_bytes == 0) {
+        memory.workspace_logical_peak_bytes != 0) {
         std::cerr << "35B Engine construction has an invalid memory summary\n";
         return 1;
     }
@@ -215,8 +218,7 @@ int exercise_maximum_configuration(const char* artifact) {
           vision->handoff_capacity_bytes == 0 ||
           vision->handoff_capacity_bytes >
               memory.workspace.capacity_bytes - vision->handoff_offset_bytes ||
-          vision->handoff_active_bytes != 0)) ||
-        memory.cuda_graph_allowance_bytes == 0) {
+          vision->handoff_active_bytes != 0))) {
         std::cerr << "35B maximum configuration does not match the planned 256K layout: context="
                   << memory.max_context << " kv_payload=" << memory.kv_payload_bytes
                   << " sequence=" << memory.sequence.capacity_bytes
