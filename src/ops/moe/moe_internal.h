@@ -80,9 +80,9 @@ struct PlanArgs {
 
 // The SIMT router (moe_router_simt.cu): warps per CTA, the widest call, and its dynamic shared
 // memory: x staged as BF16 (read from global memory when it does not fit). The widest call is
-// the R8 route's (kR8Tokens): an A8 verify of up to eight tokens routes as decode does, so its
-// tokens' bytes are those of a decode call (with the register-MMA router from T = 5 they were
-// not: other logits, other weights).
+// the R8 route's (kR8Tokens): an A8 verify of up to eight tokens routes as decode does (with the
+// register-MMA router from T = 5 it did not: other logits, other weights), so where both expert
+// stages keep R8 to eight tokens (r8_token_limit(bank)) its tokens' bytes are a decode call's.
 inline constexpr int kRouterSimtWarps     = 4;
 inline constexpr int kRouterSimtMaxTokens = 8;
 
@@ -212,9 +212,9 @@ inline constexpr std::int32_t kR8Tokens = 8;
 // is not measured and keeps four; Volta splits a wider call into calls of four (moe()).
 inline constexpr std::int32_t kR8NarrowTokens = 4;
 [[nodiscard]] std::int32_t r8_token_limit();
-// The widest R8 call over `bank`: r8_token_limit(), but four for a format of a light decode (one
-// lookup or shift per nibble under one scale: Q4_0, IQ4_NL, IQ4_XS, MXFP4, NVFP4, Q4_G64, Q8_G32),
-// where the register MMA wins above four tokens (moe.cpp).
+// The widest R8 call over `bank`: r8_token_limit(), but four for the FP4-element formats (MXFP4,
+// NVFP4) and a ggml_frag_v1 bank other than Q4_K, where the register MMA wins above four tokens
+// (moe.cpp).
 [[nodiscard]] std::int32_t r8_token_limit(const Weight& bank);
 // The formats the R8 kernel reads: the codebook ones (IQ2_XXS, IQ2_XS, IQ2_S, IQ3_XXS, IQ3_S),
 // the K-quants (Q3_K, Q4_K, Q5_K, Q6_K) and the 32-value ggml blocks (Q4_0, Q4_1, Q5_0, Q5_1,
@@ -260,7 +260,7 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 [[nodiscard]] bool plan_compiled(const MoeWeights& weights, const MoePlan& plan);
 // Whether a grouped stage over `bank` (weights.gate_up or weights.down: the bank itself, which
 // tells the two apart) may take the R8 kernel at T tokens: an A8 expert policy, a codebook format
-// with 16-byte aligned planes, T <= r8_token_limit() and, unless the router quantizes the
+// with 16-byte aligned planes, T <= r8_token_limit(bank) and, unless the router quantizes the
 // activation (gate/up of an unpadded x), an activation that fits a CTA's shared memory;
 // moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
