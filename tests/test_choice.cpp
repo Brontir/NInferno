@@ -1616,6 +1616,34 @@ void drafter_order_does_not_decide(const json& fixture) {
           "the tied drafter that wins does not follow the manifest's order");
 }
 
+// #300: a compute capability the generation table has no row of (a newer major) estimates on the
+// nearest row, says so, and decides nothing (the family's defaults, with the reason); its known
+// neighbour keeps its own evidence and its decisions.
+void lent_generation_does_not_decide(const json& fixture) {
+    const Bench known = nine_b(fixture, "RTX 5090");
+    Bench lent        = known;
+    lent.card.major   = 13;
+    lent.card.minor   = 0;
+    ch::Candidate c;
+    c.kv    = KvCacheStorage::Int8Group64;
+    c.state = RecurrentStateStorage::FP16;
+    const ch::Speed own   = ch::speed_of(known.model, known.card, known.quants[0], c, 1, 4096);
+    const ch::Speed other = ch::speed_of(lent.model, lent.card, lent.quants[0], c, 1, 4096);
+    check(own.basis != ch::SpeedBasis::LentGeneration, "the RTX 5090: its own generation's rows");
+    check(other.basis == ch::SpeedBasis::LentGeneration && other.transferred &&
+              std::abs(other.decode_per_stream - own.decode_per_stream) < 1e-9 * own.decode_per_stream,
+          "compute capability 13.0: gb20x's estimate, marked lent");
+    ch::Task task;
+    const ch::Gates open{true, true};
+    const auto allowed      = ch::allowed_axes(known.model, KvCacheStorage::Int8Group64);
+    const ch::Choice mine   = ch::choose(known.model, known.card, known.quants[0], allowed, {}, task, oracle(known, 20e9), open);
+    const ch::Choice theirs = ch::choose(lent.model, lent.card, lent.quants[0], allowed, {}, task, oracle(lent, 20e9), open);
+    check(mine.by_worth, "the RTX 5090: the switches by worth");
+    check(!theirs.by_worth && theirs.chosen && theirs.why.find("no generation row of its own") != std::string::npos,
+          "compute capability 13.0: the family's defaults, and why");
+    check(!ch::weighs_quantizations(lent.model, lent.card, open), "compute capability 13.0: the quantizations by the rule");
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -1635,6 +1663,7 @@ int main() {
     prices_attention(fixture);
     chooses(fixture);
     decides_by_generation(fixture);
+    lent_generation_does_not_decide(fixture);
     steps_before_the_floor(fixture);
     weighs_the_quantizations(fixture);
     chooses_the_chunk(fixture);
