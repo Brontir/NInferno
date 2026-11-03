@@ -1159,8 +1159,9 @@ void qwen3_8_27b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) {
         // Qwen3.8-27B-NVFP4 holds the MLP of layers 0..55 in NVFP4 and every other projection,
         // lm_head included, in row FP8; NVIDIA's (Model Optimizer) holds every layer's MLP and
         // lm_head in NVFP4 (#342). An NVFP4 lm_head is quantized to row FP8 from the BF16 model
-        // instead, so the head, and the draft head the proposal reads from it, are the same
-        // whichever checkpoint the text comes from.
+        // instead, so the head, and the draft head the proposal reads from it, take one format
+        // whichever checkpoint the text comes from; it keeps BF16 activations (A16Only), as an
+        // FP8 head does under keep_encoded_head (dense.cpp).
         const bool nvfp4 = source->is_nvfp4();
         if (nvfp4 && name == "text/output_head") {
             recipe.assign(i, kFp8, Method::Fp8RowMaxabs);

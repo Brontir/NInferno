@@ -142,9 +142,9 @@ python3 -m tools.convert \
 
 Either published quantized source works. `unsloth/Qwen3.8-27B-NVFP4` holds the MLP of layers
 0..55 in NVFP4 and every other projection, lm_head included, in FP8. `nvidia/Qwen3.8-27B-NVFP4`
-holds every MLP and lm_head in NVFP4. The recipe keeps each projection's published format and
-generates the FP8 head from the BF16 model when the source's head is NVFP4, so the head and the
-draft head are the same with either source.
+holds every MLP and lm_head in NVFP4. The recipe keeps each projection's published format. When
+the source's head is NVFP4, it generates a row-FP8 head from the BF16 model, so the head and the
+draft head are row FP8 with either source.
 
 ## Options
 
