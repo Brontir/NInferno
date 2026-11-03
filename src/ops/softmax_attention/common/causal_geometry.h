@@ -15,7 +15,8 @@ struct CausalGeometry : AttentionHeadMapping<QueryHeads, KVHeads> {
 
 // The instantiated geometries, (query heads, KV heads) at kCausalHeadDim, listed once (#312): the
 // supported predicate, the dispatch and the pairs' table below all expand from it, so they cannot
-// disagree. The kernels read everything from G; a new pair is one line here (and its oracle,
+// disagree (the list stays defined for them: public on purpose). The kernels read everything from
+// G; a new pair is one line here (and its oracle,
 // workspace and launch tests).
 #define NINFERNO_CAUSAL_GEOMETRIES(X) \
     X(24, 4)                          \

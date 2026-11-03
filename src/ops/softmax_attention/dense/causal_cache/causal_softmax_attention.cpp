@@ -44,7 +44,7 @@ void require_causal_geometry(AttentionHeadGeometry geometry, const char* op) {
         throw std::invalid_argument(std::string(op) + ": unsupported head geometry " +
                                     std::to_string(geometry.query_heads) + "/" +
                                     std::to_string(geometry.kv_heads) + " x " +
-                                    std::to_string(geometry.head_dim) + " (query/KV heads x width; " +
+                                    std::to_string(geometry.head_dim) + " (query/KV heads x head_dim; " +
                                     "supported: " + listed + " x " +
                                     std::to_string(detail::kCausalHeadDim) + ")");
     }
