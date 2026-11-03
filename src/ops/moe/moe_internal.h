@@ -205,7 +205,8 @@ struct R8ScheduleInfo {
 // at most T slots (a token selects an expert once), whose quantized activation must fit it
 // unless the router quantized it (r8_admits). Wider calls compute A16.
 inline constexpr std::int32_t kR8Tokens = 8;
-// The widest R8 call on this GPU (r8_admits): kR8Tokens from Ada (sm_89) on, four before. moe_bench
+// The widest R8 call on this GPU (r8_admits): kR8Tokens on Ada (sm_89) and consumer Blackwell
+// (sm_12x), four elsewhere (Hopper and datacenter Blackwell unmeasured). moe_bench
 // (H 2048, F 512, E 128, k 8, published layout), R8 against the register MMA at T = 5..8: RTX 5090
 // / 5070 Ti -5..-15 % on every K-quant and IQ3_XXS, RTX 4090 -3..-7 % (Q6_K level), RTX 4060 Ti
 // -0.4..-6 %; RTX 2080 Ti Q6_K +38..+45 %, Q3_K +15..+19 % (Q4_K, Q5_K, IQ3_XXS ahead). Ampere
