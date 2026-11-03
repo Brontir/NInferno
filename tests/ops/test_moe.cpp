@@ -610,7 +610,7 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 
 // The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
 // moe::r8_token_limit(bank): 8 on Ada and consumer Blackwell, 4 elsewhere and for FP4 elements or
-// most frag banks): every R8 schedule on both stages and on each stage alone against the oracle of
+// some frag banks): every R8 schedule on both stages and on each stage alone against the oracle of
 // the quantized activations; a slot's bytes depend on its own activation only, so every call with
 // R8 on both stages gives a token the bytes of the widest one whatever its schedule, T or position.
 // The default route is the GPU class's A8 route (moe::a8_default_route: R8 on gate/up, an IQ3_XXS
