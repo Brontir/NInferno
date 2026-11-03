@@ -609,7 +609,8 @@ int check_invariant_profile(const Case& c, std::uint32_t seed) {
 }
 
 // The grouped R8 route of codebook experts under an A8 expert policy (decode and verify, T up to
-// moe::r8_token_limit(): 8 from Ada on, 4 before): every R8 schedule on both stages and on each
+// moe::r8_token_limit(bank): 8 from Ada on, 4 before and for a light decode): every R8 schedule on
+// both stages and on each
 // stage alone against the oracle of the quantized activations; a slot's bytes depend on its own
 // activation only, so every call with R8 on both stages gives a token the bytes of the widest one
 // whatever its schedule, T or position. The default route is the GPU class's A8 route
@@ -625,7 +626,9 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
     Case c         = base;
     c.expert_policy = ops::LinearPolicy::AllowA8;
     const Layer l  = make_layer(c, seed);
-    const std::int32_t wide = moe::r8_token_limit();
+    // wide: the gate/up bank's limit (the default route's R8 stage); both: R8 on both stages.
+    const std::int32_t wide = moe::r8_token_limit(l.weights.gate_up);
+    const std::int32_t both = std::min(wide, moe::r8_token_limit(l.weights.down));
     const auto x =
         random_bf16(static_cast<std::size_t>(wide + 1) * c.hidden, seed + 21, -1.0, 1.0);
     const auto residual = random_bf16(x.size(), seed + 22, -2.0, 2.0);
@@ -637,24 +640,25 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
         p.down_r8    = down_r8;
         return p;
     };
-    const auto reference_plan = forced(wide, 0, 0);
-    const Run reference       = run_op(c, l, x, 0, wide, residual, &reference_plan);
-    failures += compare_run(c, l, x, residual, 0, wide, reference, {true, true},
-                            c.label + " A8 T=" + std::to_string(wide) + " (" +
+    const auto reference_plan = forced(both, 0, 0);
+    const Run reference       = run_op(c, l, x, 0, both, residual, &reference_plan);
+    failures += compare_run(c, l, x, residual, 0, both, reference, {true, true},
+                            c.label + " A8 T=" + std::to_string(both) + " (" +
                                 moe::plan_name(reference_plan) + ")");
-    const auto same_bytes = [&](const Run& run, const Run& wide_run, std::int32_t offset,
-                                const std::string& label) {
+    const auto same_bytes = [&](const Run& run, const Run& wide_run, std::int32_t width,
+                                std::int32_t offset, const std::string& label) {
         if (std::memcmp(run.out.data(),
                         wide_run.out.data() + static_cast<std::size_t>(offset) * c.hidden,
                         run.out.size() * 2) != 0) {
-            std::cerr << label << ": bytes differ from the T=" << wide << " call ("
-                      << moe::plan_name(moe::select_plan(l.weights, c.config, wide, false))
+            std::cerr << label << ": bytes differ from the T=" << width << " call ("
+                      << moe::plan_name(moe::select_plan(l.weights, c.config, width, false))
                       << " by default)\n";
             ++failures;
         }
     };
     for (const std::int32_t t : widths) {
-        const std::int32_t offset = wide - t;
+        if (t > both) continue;
+        const std::int32_t offset = both - t;
         for (int s = 0; s < moe::r8_schedule_count(); ++s) {
             for (const auto& [gu, dn] : {std::pair{s, s}, std::pair{s, -1}, std::pair{-1, s}}) {
                 const auto p            = forced(t, gu, dn);
@@ -673,7 +677,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
                     }
                 }
                 if (gu >= 0 && dn >= 0) {
-                    same_bytes(run, reference, offset, label);
+                    same_bytes(run, reference, both, offset, label);
                     if (t != widths.front()) continue; // the oracle once per schedule
                 }
                 failures += compare_run(c, l, x, residual, offset, t, run, a8_stages(c, p), label);
@@ -707,7 +711,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
             }
             for (std::int32_t offset = 0; offset + t <= wide; offset += std::max(1, wide - t)) {
                 const Run run = run_op(c, l, x, offset, t, residual);
-                same_bytes(run, wide_run, offset, label + " +" + std::to_string(offset));
+                same_bytes(run, wide_run, wide, offset, label + " +" + std::to_string(offset));
                 if (t == 1 && offset == 0) {
                     failures +=
                         compare_run(c, l, x, residual, offset, t, run, a8_stages(c, p), label);
@@ -1122,10 +1126,14 @@ int check_expert_policy() {
         w.down           = native_weight(rows(dn, 0, E * H, F));
         w.gate_up.layout = w.down.layout = QuantLayout::GgmlFrag;
         w.expert_policy  = ops::LinearPolicy::AllowA8;
+        // Q4_0 (a light decode) to four tokens, Q4_K to the class's limit.
+        const std::int32_t limit = moe::r8_token_limit(w.gate_up);
         for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p       = moe::select_plan(w, config, t, false);
-            const int expected = route ? route->gate_up_at(t, w.gate_up) : -1;
-            if (p.gate_up_r8 != expected || p.down_r8 != -1 || !moe::r8_admits(w, w.gate_up, t)) {
+            const bool admits  = t <= limit;
+            const int expected = route && admits ? route->gate_up_at(t, w.gate_up) : -1;
+            if (p.gate_up_r8 != expected || p.down_r8 != -1 ||
+                moe::r8_admits(w, w.gate_up, t) != admits) {
                 std::cerr << "frag " << qname(q) << " T=" << t << ": took " << moe::plan_name(p)
                           << '\n';
                 ++failures;

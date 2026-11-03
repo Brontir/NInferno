@@ -701,8 +701,40 @@ std::int32_t r8_token_limit() {
     return device_class().compute_capability() >= 89 ? kR8Tokens : kR8NarrowTokens;
 }
 
+namespace {
+
+// A format whose decode is one table or shift per nibble (or none) under one scale per block: the
+// register MMA's cost per extra token is its tensor-core step, R8's a dp4a pair and an activation
+// load per block, so above four tokens the register MMA wins (RTX 5070 Ti, moe_bench, H 2048, F
+// 512, E 256, k 8, auto plans, T = 5 / 6 / 8, R8 against the register MMA: MXFP4 +7.6 / +9.8 /
+// +14.3 %, IQ4_NL +5.3 / +7.5 / +10.3 %, Q4_0 +1.8 / +3.2 / +5.4 %, IQ4_XS 0 / 0 / +2.4 %;
+// gpt-oss-20b's shape, H 2880, F 2880, E 32, k 4: MXFP4 +11.5 / +12.3 / +13.9 %; end to end
+// gpt-oss-20b MXFP4 C8 109.4 -> 97.1 tok/s). A min, a high-bit plane, a K-quant super-block or a
+// codebook costs the decode R8 shares among the slots: Q4_1 -1..-5 %, Q5_0 -5..-8 %, Q5_1
+// -9..-15 %, Q4_K -11..-13 %, Q5_K -7..-9 %, Q6_K -5..-9 %, IQ3_XXS -10..-12 % on the same runs.
+bool r8_light_decode(QType q) {
+    switch (q) {
+    case QType::GGML_Q4_0:
+    case QType::GGML_IQ4_NL:
+    case QType::GGML_IQ4_XS:
+    case QType::MXFP4:
+    case QType::NVFP4:
+    case QType::Q4_G64_FP16:
+    case QType::Q8_G32_FP16:
+        return true;
+    default: return false;
+    }
+}
+
+} // namespace
+
+std::int32_t r8_token_limit(const Weight& bank) {
+    const std::int32_t limit = r8_token_limit();
+    return r8_light_decode(bank.qtype) ? std::min(limit, kR8NarrowTokens) : limit;
+}
+
 bool r8_admits(const MoeWeights& w, const Weight& bank, std::int32_t tokens) {
-    if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > r8_token_limit() ||
+    if (!allows_a8(w.expert_policy) || tokens < 1 || tokens > r8_token_limit(bank) ||
         !r8_expert_supports(bank)) {
         return false;
     }
@@ -1051,7 +1083,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     }
     if (!r8_stages_admitted(w, p, t)) {
         fail("an R8 stage needs an A8 expert policy, a codebook format, at most r8_token_limit() "
-             "tokens (8 from Ada on, 4 before) and an activation that fits a CTA");
+             "tokens (8 from Ada on for a costly decode, 4 otherwise) and an activation that fits "
+             "a CTA");
     }
     if (x.dtype != DType::BF16 || !x.is_contiguous() || x.ne[0] != g.hidden || t < 1 ||
         x.ne[2] != 1 || x.ne[3] != 1) {
@@ -1377,7 +1410,7 @@ void moe(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     // on its own plan, where four tokens take R8 (V100, Gemma 4 26B experts, tuned: R8 at T = 4
     // 214 us against the register MMA's 1535 at T = 5). R8 sums a token the same way at every T,
     // so a column's bytes are those of plain decode.
-    const std::int32_t r8_tokens = detail::moe::r8_token_limit();
+    const std::int32_t r8_tokens = detail::moe::r8_token_limit(w.gate_up);
     if (!build_features().mma_tensor && t > r8_tokens && t <= 16 && !prefill_routes_active() &&
         !invariant_routes_active() &&
         detail::moe::select_plan(w, c, r8_tokens, false).gate_up_r8 >= 0) {
