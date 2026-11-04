@@ -1,5 +1,5 @@
 // Grouped MoE W4A8 (moe_w4a8.cuh): the native groupwise formats Q4/Q5/Q6 G64 and the u4
-// zero-point formats (G32, G64, G128). w4a8_banks_admit admits every format generic W4A8 reads;
+// zero-point formats (G32, G64, G128). w4a8_bank_refusal admits every format generic W4A8 reads;
 // before these, such an expert bank reached the grouped W4A8 with no tile for it.
 #include "ops/moe/moe_w4a8.cuh"
 

@@ -29,7 +29,7 @@ bool launch_moe_w4a8_ggml32(generic::WeightCodec codec, Stage stage, const GemmA
     case generic::WeightCodec::Mxfp4:
         moe_w4a8_launch_codec<generic::W4a8Mxfp4>(stage, args, act, grid, stream);
         return true;
-    // Every build: with the native NVFP4 kernels only for banks without A4 (w4a8_banks_admit).
+    // Every build: with the native NVFP4 kernels only for banks without A4 (w4a8_bank_refusal).
     case generic::WeightCodec::Nvfp4:
         moe_w4a8_launch_codec<generic::W4a8Nvfp4>(stage, args, act, grid, stream);
         return true;

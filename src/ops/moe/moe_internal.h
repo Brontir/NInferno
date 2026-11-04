@@ -262,10 +262,15 @@ struct MoePlan {
     int gate_up_r8       = -1;
     int down_r8          = -1;
     bool a16             = false;
-    // Both grouped stages on the int8 tier (moe_w4a8.cuh) instead of their register-MMA
-    // schedules: a wide prefill call under an A8 expert policy (w4a8_admits); job_columns stays
-    // the prefill width, a multiple of the W4A8 tile's slots.
-    bool w4a8 = false;
+    // A grouped stage on the int8 tier (moe_w4a8.cuh) instead of its register-MMA schedule: a
+    // wide prefill call under an A8 expert policy, each stage where its own bank admits it
+    // (w4a8_bank_refusal); job_columns stays the prefill width, a multiple of the W4A8 tile's
+    // slots. A stage on the tier writes or reads the BF16 intermediate as the register MMA does
+    // (down quantizes it itself), so the two stages take the tier apart (#311): a codebook bank in
+    // fragment order, which the tier does not read, keeps its register MMA beside the other's tier.
+    bool w4a8_gate_up = false;
+    bool w4a8_down    = false;
+    [[nodiscard]] bool w4a8() const noexcept { return w4a8_gate_up || w4a8_down; }
 };
 
 // The route moe takes for T tokens under the given profile, and moe on an explicit route (the
@@ -328,12 +333,10 @@ struct A8Route {
 
 // What each grouped stage of a plan runs, and why the others do not (#311): the stage routes a
 // plan describes, without changing any. kernel: R8 (int8 activations, one CTA a job), W4a8 (the
-// int8 tier: the plan takes it for both stages or neither) or RegisterMma (BF16 activations);
+// int8 tier, stage by stage: MoePlan::w4a8_gate_up, w4a8_down) or RegisterMma (BF16 activations);
 // schedule: the R8 or register-MMA schedule (-1 under W4A8; "w4a8.mx8": two plain MXFP4 banks on
 // an sm_120a build, the block-scaled MMA with MXFP8 activations); r8 and w4a8: the bank's refusal of
-// each (None where the bank is admitted, whether or not the plan took it); w4a8_partner: the bank is
-// admitted to W4A8 but the other is not, so the all-bank rule keeps both off it (the case a mixed
-// plan would serve).
+// each (None where the bank is admitted, whether or not the plan took it).
 enum class MoeStageKernel { R8, W4a8, RegisterMma };
 struct MoeStageRoute {
     MoeStageKernel kernel = MoeStageKernel::RegisterMma;
@@ -341,7 +344,6 @@ struct MoeStageRoute {
     std::string name;                  // "r8.w..", "rmma.m..", "w4a8", "w4a8.mx8"
     BankRefusal r8   = BankRefusal::None;
     BankRefusal w4a8 = BankRefusal::None;
-    bool w4a8_partner = false;
 };
 struct MoeStageRoutes {
     MoeStageRoute gate_up;
