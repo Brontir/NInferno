@@ -805,16 +805,20 @@ std::vector<std::pair<std::string, fs::path>> fetch_companions(DrafterPlan& plan
                 log_line(options.log, "drafter " + d.decl.repo + " rejected: " + d.reason);
                 continue;
             }
-            auto fetch = options.fetch;
-            fetch.include.clear();
-            fetch.quant.clear();
-            fetch.revision = d.decl.revision;
+            // The drafter's own fetch: its GGUF file where the registry names one. A dflash GGUF
+            // is an auxiliary file to a plain fetch (#100), so without the file named the
+            // snapshot held "no model" (#418).
+            const auto fetch = drafter_fetch(d, options);
             log_line(options.log, "companion drafter " + d.decl.repo + " -> component " +
                                       d.decl.component);
             const auto fetched = fetch_model(d.decl.repo, fetch);
             d.commit           = fetched.commit;
             d.status           = "fetched";
-            out.emplace_back(d.decl.component, fetched.snapshot);
+            // A GGUF drafter is its file: its snapshot directory holds no model to a directory
+            // read (gguf_model_files skips the dflash GGUF there, and the config came out
+            // empty). A separate drafter converts from fetched.model the same way.
+            out.emplace_back(d.decl.component,
+                             d.decl.gguf.empty() ? fetched.snapshot : fetched.model);
         } catch (const std::exception& error) {
             d.status = std::string("failed: ") + error.what();
             log_line(options.log, "  " + d.status);
