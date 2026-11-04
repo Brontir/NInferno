@@ -718,6 +718,8 @@ int test_load() {
             LoadCell out{.concurrency = c, .bound = bound, .tokens = 1000};
             out.seconds = 1000.0 / tok_s;
             out.rounds  = bound == 0 ? 0 : 100;
+            out.graph_kernels  = 31200 + bound;
+            out.graph_launches = 100;
             return out;
         };
         LoadCells kept;
@@ -733,6 +735,8 @@ int test_load() {
                               back.cells.size() == 3 && back.cells[2].bound == 15 &&
                               back.cells[1].bound == 6 &&
                               std::abs(back.cells[1].tok_s() - 254.7) < 1e-9 &&
+                              back.cells[1].graph_kernels == 31206 &&
+                              back.cells[1].graph_launches == 100 &&
                               back.unheld.empty() && doc.at("unheld").size() == 1,
                           "load cells round trip (unheld cells are tried again, not taken over)");
         Json other   = kept.settings;

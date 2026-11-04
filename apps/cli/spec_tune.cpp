@@ -466,6 +466,8 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
         std::atomic<std::size_t> next{0};
         std::mutex mutex;
         std::string failure;
+        // The cell's graph replays: the engine runs no other work while it is measured.
+        const std::uint64_t kernels0 = graph_kernels_launched(), launches0 = graph_launches();
         const auto t0 = std::chrono::steady_clock::now();
         std::vector<std::thread> lanes;
         for (std::uint32_t lane = 0; lane < c; ++lane) {
@@ -498,6 +500,8 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
             });
         }
         for (auto& lane : lanes) { lane.join(); }
+        cell.graph_kernels  = graph_kernels_launched() - kernels0;
+        cell.graph_launches = graph_launches() - launches0;
         if (!failure.empty()) { throw std::runtime_error(failure); }
         cell.seconds = ninferno::seconds_since(t0);
         return cell;
@@ -608,13 +612,18 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
                         state.cells.push_back(cell);
                         std::fprintf(stderr,
                                      "spec-tune --load C=%u bound %-5s %8.1f tok/s  %5.2f "
-                                     "tok/round  plain steps %llu  trips %llu\n",
+                                     "tok/round  plain steps %llu  trips %llu  kernels/graph "
+                                     "%.1f over %llu graphs\n",
                                      c, name(bound).c_str(), cell.tok_s(),
                                      cell.rounds ? double(cell.accepted + cell.rounds) /
                                                        double(cell.rounds)
                                                  : 1.0,
                                      static_cast<unsigned long long>(cell.plain_steps),
-                                     static_cast<unsigned long long>(cell.trips));
+                                     static_cast<unsigned long long>(cell.trips),
+                                     cell.graph_launches ? double(cell.graph_kernels) /
+                                                               double(cell.graph_launches)
+                                                         : 0.0,
+                                     static_cast<unsigned long long>(cell.graph_launches));
                     } catch (const std::exception& error) {
                         mark_unheld(c, bound, std::string("failed: ") + error.what());
                     }

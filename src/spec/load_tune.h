@@ -44,6 +44,9 @@ struct LoadCell {
     std::int64_t tokens       = 0;
     double seconds            = 0;
     std::uint64_t rounds = 0, drafted = 0, accepted = 0, plain_steps = 0, trips = 0;
+    // The kernels the cell's graphs launched and the graph launches they came from (#303: a
+    // batched step's kernels against one request's; 0: not recorded, cells kept before).
+    std::uint64_t graph_kernels = 0, graph_launches = 0;
 
     [[nodiscard]] double tok_s() const noexcept { return seconds > 0 ? tokens / seconds : 0.0; }
 };

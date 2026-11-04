@@ -29,6 +29,7 @@ void destroy_graph(cudaGraph_t& graph) noexcept {
 }
 
 std::atomic<std::uint64_t> g_graph_kernels{0};
+std::atomic<std::uint64_t> g_graph_launches{0};
 
 // The kernel nodes of a captured graph (0 when CUDA cannot list them).
 std::uint32_t count_kernel_nodes(cudaGraph_t graph) noexcept {
@@ -241,11 +242,14 @@ void DecodeGraphExecutable::launch(cudaStream_t stream) {
     if (!ready()) { throw std::logic_error("cannot launch an empty CUDA Graph executable"); }
     CUDA_CHECK(cudaGraphLaunch(exec_, stream));
     g_graph_kernels.fetch_add(kernel_nodes_, std::memory_order_relaxed);
+    g_graph_launches.fetch_add(1, std::memory_order_relaxed);
 }
 
 std::uint64_t graph_kernels_launched() noexcept {
     return g_graph_kernels.load(std::memory_order_relaxed);
 }
+
+std::uint64_t graph_launches() noexcept { return g_graph_launches.load(std::memory_order_relaxed); }
 
 bool DecodeGraphExecutable::ready() const noexcept { return exec_ != nullptr; }
 
