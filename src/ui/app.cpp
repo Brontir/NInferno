@@ -1101,7 +1101,7 @@ Json App::plan_json_idle(const std::string& repo, const std::string& hub, int gp
     inputs.pins = product::ChoicePins{.kv          = launch.exact || (!launch.kv_dtype.empty() && launch.kv_dtype != "auto"),
                                       .activations = launch.activations_pinned()};
     // ninferno-ui's launch passes no --with-drafters: the server attaches a GGUF model's separate
-    // drafters when the choice drafts with one (choice/DECISIONS 45) and starts a quantization
+    // drafters when the choice drafts with one (DECISIONS 45) and starts a quantization
     // converted here with its drafters from that conversion; product::PlannedSubjects plans both as
     // the server's plan does.
     // The commit the listing was read at: a sibling quantization's measurement counts from it.

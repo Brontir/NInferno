@@ -1194,7 +1194,7 @@ void test_speculation_order() {
         const auto memory = pr::attached_drafter_memory(attached, listing, "qwen3_5_text", 5120, nullptr);
         check(memory.bytes == 600ULL << 20 && !memory.state,
               "the GGUF drafter file's size; the repository's not read offline");
-        // Whether a start attaches them (choice/DECISIONS 45): the speculation served drafts with
+        // Whether a start attaches them (DECISIONS 45): the speculation served drafts with
         // one, by its backend or, each request its own, either thinking flag's.
         pr::SpeculationReport report;
         report.engine.backend = ninferno::SpeculativeBackend::None;

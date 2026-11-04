@@ -17,7 +17,7 @@
 // share of the saturated rate (kMoeChunkShare; 1 for a dense model). k_kv and f_route are what a KV
 // codec's read and the exact route cost on a generation beyond their bytes and flops.
 //
-// Fitted (scratchpad fit_choice.py, 2026-10-23) on 49 decode and 15 prefill points of Qwen3.5-9B
+// Fitted (a one-off fit, 2026-10-23) on 49 decode and 15 prefill points of Qwen3.5-9B
 // Q4_K_M, Qwen3.8-27B UD-IQ3_XXS / UD-Q4_K_XL and Qwen3.6-35B-A3B UD-IQ3_XXS / UD-Q4_K_M on the
 // RTX 2080 Ti, 4070 Ti, 4090 and 5070 Ti (run_calib.sh, run_sw.sh, docs/performance/runs):
 // decode 5.2 % rms (worst 15.5 %). The prefill: refitted 2026-10-27 with its attention term

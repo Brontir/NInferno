@@ -48,7 +48,7 @@ inline constexpr const char* kSpecEngineVersion = "ninferno-spec-1";
 // CSV/JSONL/SQL output) 7, math (three long derivations, a Jacobian counterexample) 4, prose
 // (stories, translations, chat) 8, thinking (a logic grid) 1; the needle-in-a-haystack tasks
 // answer in one line and are left out. Equal weights overstated a mixed workload's speed 1.2-1.5 times:
-// prose gains least and our tasks are mostly prose (choice/DECISIONS 50). 0 for another name.
+// prose gains least and our tasks are mostly prose (DECISIONS 50). 0 for another name.
 [[nodiscard]] double section_weight(std::string_view family);
 
 struct Measurement {

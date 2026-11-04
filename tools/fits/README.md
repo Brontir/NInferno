@@ -1,6 +1,6 @@
 # Fits
 
-Each constant the configuration choice could not derive from chip facts alone comes from one of these scripts, run on the measurement rows in `data/` and in `tests/fixtures/choice/`. Rerun a script after new rows land to see whether its constant still holds. [`docs/maintainer/decisions.md`](../../docs/maintainer/decisions.md) records why each one exists.
+Each constant the configuration choice could not derive from chip facts alone comes from one of these scripts, run on the measurement rows in `data/` and in `tests/fixtures/choice/` (lab hostnames in them name the lab's cards). Rerun a script after new rows land to see whether its constant still holds. [`docs/maintainer/decisions.md`](../../docs/maintainer/decisions.md) records why each one exists.
 
 | Script | Constant | Inputs |
 |---|---|---|

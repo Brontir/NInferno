@@ -161,7 +161,7 @@ struct RoundCostEstimate {
 // more, whose gain at a fine-tune's acceptance (each pair's drafted tokens accepted at
 // kFineTuneAcceptance of its measured rate) is highest on average over the pairs that measured it;
 // that gain its tok_s, its floor the highest any of them measured. Plain decode only where no
-// configuration gains kPreliminaryGain so (choice/DECISIONS 49). One request speculates (load:
+// configuration gains kPreliminaryGain so (DECISIONS 49). One request speculates (load:
 // plain from two rows).
 // nullopt for an empty group. With `support`, only the depths the serving Engine runs.
 [[nodiscard]] std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>& group,
@@ -181,7 +181,7 @@ struct RoundCostEstimate {
 // its own measurements over those drafters (profile_for_target) with basis "measured"; else, for a
 // target of `repo` (org/name@commit, the repository revision its quantization was listed at), the
 // measurements of the sibling quantization of that revision nearest in bits per weight within its
-// bit class (choice/DECISIONS 48) with basis "preliminary" (another commit may hold other weights:
+// bit class (DECISIONS 48) with basis "preliminary" (another commit may hold other weights:
 // no sibling, nor without a commit); else the best of its groups' choices (one per kind, the
 // fastest overall) with basis "preliminary"; else nullopt. `source` names where it came from (and,
 // with `gpu`, how its rounds were priced on that card: profile_for_target).

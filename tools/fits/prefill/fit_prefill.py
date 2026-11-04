@@ -12,10 +12,11 @@ the prefill, each piece after the last message a whole-model call that reads a d
 tail_calls x the active share of weight_bytes / DRAM bandwidth (the product prices it from its decode
 rate). Linear in 1/eta_lin and 1/eta_att; relative least squares over t(n) - tail.
 
-    python tools/fits/prefill/fit_prefill.py tools/fits/data/prefill/rows.json
+    python tools/fits/prefill/fit_prefill.py [rows.json]
 """
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -42,7 +43,8 @@ def att_flops(n, full, sliding, window):
 
 
 def main():
-    data = json.load(open(sys.argv[1], encoding="utf-8"))
+    rows_json = sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1] / "data/prefill/rows.json"
+    data = json.load(open(rows_json, encoding="utf-8"))
     cards, models, rows = data["cards"], data["models"], data["rows"]
     for gen in sorted({c["generation"] for c in cards.values()}):
         rs = [r for r in rows if cards[r["card"]]["generation"] == gen]

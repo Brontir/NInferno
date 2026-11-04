@@ -74,7 +74,7 @@ hub_quant_subject(const PlannedTarget& target, const spec::GpuKey& gpu,
 // The speculation subjects of a model not converted yet, one per quantization, as a start resolves
 // each (the lab's pairs are of weights, so every row resolves its own). A hub model's separate
 // drafters are planned as attached, an axis of the choice: a start attaches them when the choice
-// drafts with one (choice/DECISIONS 45); a local GGUF's start attaches none, so none is planned.
+// drafts with one (DECISIONS 45); a local GGUF's start attaches none, so none is planned.
 // A quantization converted here with its drafters is planned from that conversion, which the start
 // serves (hub_quant_subject). The server's plan without weights and ninferno-ui's plan both plan
 // through it.

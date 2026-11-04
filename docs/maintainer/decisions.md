@@ -7,7 +7,9 @@ a stable number. Source comments cite these entries as `DECISIONS <n>`.
 
 Entries 29-53 are summaries; 54 onwards are kept as written at the time, including the open questions.
 Dates are 2026. Card names refer to the lab's own GPUs (see [docs/performance](../performance/README.md)).
-The fit scripts these entries mention live in [`tools/fits`](../../tools/fits/).
+The fit scripts these entries mention live in [`tools/fits`](../../tools/fits/). Measurement scripts named
+here without a path (`mpref.sh`, `mbatch.sh`, `census.sh`, `sm_bench.py` and similar) are the lab's own
+stand scripts and are not shipped; the rows they produced are in `tests/fixtures/choice/` and `tools/fits/data/`.
 
 ## 29. A moved branch whose original commit still exists: the same rule as a deleted one (25.10)
 
@@ -36,7 +38,7 @@ takes DFlash.
 A quant of a repository whose other quants have measured drafter pairs used to get the conservative group
 profile, which often came out as plain decode. Measured on the RTX 4070 Ti (Qwen3.5-9B MTP GGUF): the
 nearest sibling by bits per weight predicts a new quant within 0-4 % (Q4_K_S, Q5_K_M, Q6_K); across three
-families the error is -7..+4 %, and it errs low. Rule: between "own pair" and "group" sits the sibling
+families the error is -7..+4 %, mostly on the low side. Rule: between "own pair" and "group" sits the sibling
 pair: same repository and commit, same bit class (< 4 / >= 4 bits), nearest bits per weight, measured with
 the same drafter version. A sibling counts only from the same commit, since another commit may hold other
 weights.
@@ -220,7 +222,7 @@ accept more than the corpus' prose (50). Master served the same (the 5070 Ti's p
 ## 57. Turing's MTP rounds 12 % dearer than the R(k) the plan transfers to it (29.10, open, measured)
 
 The user kit's first run on a card without its own pair of the target (#210; RTX 2080 Ti Rev. A,
-tu102, the RTX 2080 Ti, build 5ab1c936; Qwen3.5-9B MTP GGUF Q4_K_M, spec-tune on the lab pairs' menu,
+tu102, build 5ab1c936; Qwen3.5-9B MTP GGUF Q4_K_M, spec-tune on the lab pairs' menu,
 414 s, plain decode 92.8-93.0 tok/s across the sections). Acceptance agrees with the six lab
 pairs at every configuration (within 0.7 %). The round cost does not, at shallow MTP depths:
 
@@ -253,7 +255,7 @@ plan's speedup on Turing is predicted high by up to 12 % at mtp:2/3; its pick (d
 unaffected here, dflash rounds agree within 6.4 %. Most of the 12 % is the source being an Ada
 card: against the other non-Ada lab cards (mtp:2 1.53-1.59) Turing is about 5 % dearer.
 
-**For comparison, the facts path (Ada).** The same kit run on the RTX 4060 Ti 16GB (ad106, the RTX 4060 Ti,
+**For comparison, the facts path (Ada).** The same kit run on the RTX 4060 Ti 16GB (ad106,
 build 11388484; no lab pair of ad106, so the plan prices the rounds from the facts, ada, eta 0.148;
 591 s). Acceptance confirms the six lab pairs at all 8 configurations. R measured / R facts: mtp:2
 x0.998, mtp:3 x0.995, mtp:4 x0.972, mtp:5 x0.961, dflash:3 x0.949, dflash:5 x0.911, dflash:7 x0.884
@@ -275,7 +277,7 @@ the card: the records are ordered by GPU class id; two or more lab cards of the 
 give their median R per configuration; with none and no facts, the median R of every lab card that
 measured the target, said in the source as "transferred: median of N lab cards of other
 generations (no facts for turing)". The generation ratios (`generation_round_costs`, off in the
-shipped registry since 52: they needed two cards of each generation) are gone. The same the RTX 2080 Ti tune
+shipped registry since #161 (entry 53): they needed two cards of each generation) are gone. The same RTX 2080 Ti tune
 against the new prediction (the six lab cards' median): mtp:2 x1.062, mtp:3 x1.021, mtp:4 x1.019,
 mtp:5 x1.023, dflash:3 x1.011, dflash:5 x1.020, dflash:7 x1.061: every configuration within the
 kit's ±10 %. Still open: Turing's own eta (a second Turing card), and the T=6-8 DFlash verify the
@@ -330,7 +332,7 @@ attempt 3, for reference).
   it + 1 before slice it's products. Output byte-identical. Geomean time over master's 0.99 on the
   RTX 5070 Ti (instances 0.67..1.52), 0.99 on the RTX 5090 (0.72..1.29), 1.01 on the RTX 4090
   (0.85..1.20) and 1.00 on the RTX 2080 Ti (0.80..1.24): the same re-roll. Measured with `ninferno_r8_schedule_bench --shapes
-  docs/maintainer/tools/fits/data/vec/raw_split.shapes --tokens 2,3,4,5,6,7,8 --samples 7 --launches 30 --rmma 1`, the vector route's
+  tools/fits/data/vec/raw_split.shapes --tokens 2,3,4,5,6,7,8 --samples 7 --launches 30 --rmma 1`, the vector route's
   time at T = 2..8 on the 44 of the file's 46 shapes the vector kernel takes (each of the 18 ggml
   formats at 4096x4096 store and 12288x4096 SwiGLU, Q6_K add 3840x15360 / 5120x17408 / 4096x12288 /
   2048x6144 / 4096x4096, Q4_K add 3840x15360 / 5120x17408, Q5_K add 5120x17408): 308 instances,
@@ -1291,7 +1293,7 @@ layer's attn_qkv and attn_gate its mixer's input) and split a role whose tensors
 into one linear a format, its layers at the format's share of the role's elements
 (`split_linears_by_format`: a Q4_K_M's FFN down half Q6_K). MMQ and the W4A8 tiles price each by its
 format's K step; a linear of no named K format (a role without tensors, Q8_0's ssm_out in a Q6_K
-file) keeps the label's. On the fixture (the GGUFs' role shares, scratchpad grole.py): Qwen3.5 9B's
+file) keeps the label's. On the fixture (the GGUFs' role shares, a one-off lab script): Qwen3.5 9B's
 Q3_K_M -9 .. -3 % -> -4 .. +3 % (rms 6.6 -> 2.5 %); the K-quants together (167 points) rms 4.9 % with
 the two RTX 5070 Ti Q3_K_M points still the share's (+22, +24 %: Q3_K's 64 x 64 W4A8 tile not read).
 Gemma 4 12B's sliding attention input was marked a gated pair in the fixture: fixed.
