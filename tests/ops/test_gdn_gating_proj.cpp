@@ -5,6 +5,7 @@
 #include "ninferno/ops/weight_input.h"
 
 #include "ops/op_tester.h"
+#include "ops/generic/segmented_gating.h"
 #include "ops/quantized_weight.h"
 #include "core/decode_graph.h"
 
@@ -23,6 +24,7 @@
 
 using namespace ninferno;
 using namespace ninferno::test;
+namespace generic = ninferno::ops::detail::generic;
 
 namespace {
 
@@ -694,6 +696,7 @@ int run_segmented_control_case(const Geometry& geometry, QType format, bool one_
     // payloads (one of [a; b], or one each: a payload's code and scale planes do not split by
     // rows). The oracle reads the decoded values.
     std::vector<std::vector<std::uint8_t>> payloads;
+    std::vector<std::uint64_t> scale_offsets; // Q8: each payload's scale plane
     if (q8) {
         std::vector<float> ab(a_weight);
         ab.insert(ab.end(), b_weight.begin(), b_weight.end());
@@ -704,12 +707,14 @@ int run_segmented_control_case(const Geometry& geometry, QType format, bool one_
                       a_weight.begin());
             std::copy(packed.dequant.begin() + rows_elements, packed.dequant.end(),
                       b_weight.begin());
+            scale_offsets.push_back(packed.scale_plane_offset);
             payloads.push_back(std::move(packed.payload));
         } else {
             for (auto* values : {&a_weight, &b_weight}) {
                 auto packed = quantized_weight::pack_q8_g32_row_split(*values, geometry.heads,
                                                                       geometry.hidden);
                 *values     = packed.dequant;
+                scale_offsets.push_back(packed.scale_plane_offset);
                 payloads.push_back(std::move(packed.payload));
             }
         }
@@ -801,6 +806,36 @@ int run_segmented_control_case(const Geometry& geometry, QType format, bool one_
         return out;
     };
     const Outputs widest = run(ops::kSegmentedFusedControlMaxTokens);
+    {
+        // The fused kernel ran: its direct launch on these a/b rows gives the call's bytes.
+        constexpr std::int32_t tokens = 8;
+        const auto* b_codes = q8 && one_parent ? first_data + rows_elements : second_data;
+        const auto* b_scales =
+            !q8 ? nullptr
+            : one_parent
+                ? first_data + scale_offsets[0] + rows_elements / 32 * sizeof(std::uint16_t)
+                : second_data + scale_offsets[1];
+        const generic::GdnControlRows a_rows{first_data,
+                                             q8 ? first_data + scale_offsets[0] : nullptr};
+        const generic::GdnControlRows b_rows{b_codes, b_scales};
+        const std::size_t h_elements = std::size_t(geometry.hidden) * tokens;
+        const std::size_t c_elements = std::size_t(geometry.heads) * tokens;
+        DeviceBuffer dh(h_elements * 2), dg(c_elements * 4), dbeta(c_elements * 4);
+        Tensor tx(device_x.p, DType::BF16, {geometry.hidden, tokens});
+        Tensor th(dh.p, DType::BF16, {geometry.hidden, tokens}),
+            tg(dg.p, DType::FP32, {geometry.heads, tokens}),
+            tb(dbeta.p, DType::FP32, {geometry.heads, tokens});
+        generic::launch_gdn_norm_gating_simt(tx, tn, kEps, a_rows, b_rows, ta, td, th, tg, tb,
+                                             stream);
+        cuda_synchronize(stream);
+        const Outputs call = run(tokens);
+        if (from_device<std::uint16_t>(dh, h_elements) != call.h ||
+            from_device<float>(dg, c_elements) != call.g ||
+            from_device<float>(dbeta, c_elements) != call.beta) {
+            std::cerr << base_label << " T=8: the call did not run the fused kernel\n";
+            ++failures;
+        }
+    }
     for (const std::int32_t tokens : {1, 2, 3, 5, 8, 13}) {
         const Outputs narrow = run(tokens);
         const auto prefix    = [&](const auto& v, std::int32_t rows) {
@@ -926,16 +961,24 @@ int main() {
                 failures += run_published_control_case(
                     *geometry, format, tokens, published_seed += 0x10u, norm_execution.stream);
 
-    // BF16 and Q8 (GGUF Q8_0) a/b at the Qwen3.5 sizes no fused registration owns (9B, 4B, 0.8B).
+    // BF16 and Q8 (GGUF Q8_0) a/b at the Qwen3.5 sizes no fused registration owns (9B, 4B, 0.8B),
+    // and Q8 also at the 27B's and 35B's (a GGUF model's Q8_0 control takes the segmented bank at
+    // every geometry; their BF16 a/b take the registered kernels).
     std::uint32_t segmented_seed = 0xa000u;
-    for (const QType format : {QType::BF16, QType::Q8_G32_FP16})
-        for (const Geometry& geometry :
-             {Geometry{"qwen3_5_9b", 4096, 32, false}, Geometry{"qwen3_5_4b", 2560, 32, false},
-              Geometry{"qwen3_5_0_8b", 1024, 16, false}})
+    for (const QType format : {QType::BF16, QType::Q8_G32_FP16}) {
+        std::vector<Geometry> geometries{Geometry{"qwen3_5_9b", 4096, 32, false},
+                                         Geometry{"qwen3_5_4b", 2560, 32, false},
+                                         Geometry{"qwen3_5_0_8b", 1024, 16, false}};
+        if (format == QType::Q8_G32_FP16) {
+            geometries.push_back(kQwen27Published);
+            geometries.push_back(kQwen35Published);
+        }
+        for (const Geometry& geometry : geometries)
             for (const bool one_parent : {false, true})
                 failures += run_segmented_control_case(geometry, format, one_parent,
                                                        segmented_seed += 0x10u,
                                                        norm_execution.stream);
+    }
 
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gdn_gating_proj correctness\n";
     return failures == 0 ? 0 : 1;
