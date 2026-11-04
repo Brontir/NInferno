@@ -25,6 +25,11 @@ TOLERANCE = 0.10               # predicted against measured: confirm within, con
 REJECT_REASONS = ("hw_slowdown", "hw_thermal_slowdown", "hw_power_brake_slowdown",
                   "sw_thermal_slowdown")
 RECORD_REASONS = ("sw_power_cap",)
+# A route sweep compares routes against each other, each problem's routes timed within seconds; the
+# software thermal slowdown a consumer card reaches in a tune of many minutes (RTX 4070 Ti: every
+# pass of two models, 04.11) moves them together. Its passes are held to each other instead (RT3,
+# REPEAT_MEDIANS); a hardware slowdown still rejects a pass.
+ROUTE_REJECT_REASONS = tuple(r for r in REJECT_REASONS if r != "sw_thermal_slowdown")
 
 
 def active(value):
@@ -526,10 +531,13 @@ def judge_routes(run, out, tolerance):
     for i, p in enumerate(passes):
         tel = p.get("telemetry") or {}
         found = reasons_in(tel, window_indices(tel, "route-tune")) if tel else None
-        bad = sorted((found or set()) & set(REJECT_REASONS))
+        bad = sorted((found or set()) & set(ROUTE_REJECT_REASONS))
         if bad:
             out["notes"].append(f"a pass rejected: RT3 {','.join(bad)} during its tune")
             continue
+        if found and "sw_thermal_slowdown" in found:
+            out["notes"].append("a pass's tune under sw_thermal_slowdown (kept: the passes are held "
+                                "to each other)")
         if found is None:
             out["notes"].append("a pass's slowdown reasons unknown (kept)")
         clean.append(p)

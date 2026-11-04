@@ -550,6 +550,15 @@ class Routes(unittest.TestCase):
                        "routes")
         self.assertTrue(other["status"].startswith("rejected: RT2"))
 
+    def test_software_thermal_slowdown_keeps_the_pass(self):
+        # A consumer card's long tune sits at its thermal target: the passes are held to each
+        # other (RT3) instead; a hardware slowdown still rejects (test_rejections).
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        hot = route_pass(t, reason="sw_thermal_slowdown")
+        m = metric(validate.validate(routes_doc(hot, route_pass(t, reason="sw_thermal_slowdown"))),
+                   "routes")
+        self.assertEqual(m["status"], "accepted")
+
     def test_malformed_rows_are_left_out(self):
         t = {"rmma.a": 10.0, "rmma.b": 10.5}
         bad = route_pass(t)

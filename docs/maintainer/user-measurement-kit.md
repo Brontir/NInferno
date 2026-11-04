@@ -181,7 +181,7 @@ A case is one problem at one width. Its candidates are the routes timed there in
 
 | Rule | Rejects | When |
 |---|---|---|
-| RT1 the passes | the run | fewer than 2 passes that completed, after dropping a pass with a slowdown, thermal or power-brake sample in its `route-tune` window |
+| RT1 the passes | the run | fewer than 2 passes that completed, after dropping a pass with a hardware slowdown, hardware thermal or power-brake sample in its `route-tune` window. A software thermal slowdown is noted and kept: a consumer card sits at its thermal target through a tune of many minutes (an RTX 4070 Ti, every pass), and a problem's routes are timed within seconds of each other; RT3 holds the passes to each other |
 | RT2 the selection | the run | the passes selected different routes for some case (the selection is a function of the card's facts and tables, never of a timing) |
 | RT3 repeats | the case | the selected or the fastest route's times across the passes more than 5 % apart (the R5 threshold) |
 
