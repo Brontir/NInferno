@@ -38,6 +38,7 @@
 #include "core/ggml_frag.h"
 #include "core/weight_view.h"
 #include "ninferno/ops/moe.h"
+#include "ninferno_bench_common.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/moe/moe_internal.h"
 #include "core/fnv.h"
@@ -302,7 +303,9 @@ int main(int argc, char** argv) {
         random_bytes(x.p, x.bytes, 7);
         scale_words(x.p, x.bytes, 3);
         DeviceBuffer out(x.bytes);
-        DeviceBuffer flush(static_cast<std::size_t>(std::stoi(a["flush-mib"])) << 20);
+        // A read flush (L2FlushBuffer): a memset one left the L2 dirty and the timed call paid
+        // its write-back (core/tune_timer.h).
+        bench::L2FlushBuffer flush(static_cast<std::size_t>(std::stoi(a["flush-mib"])) << 20);
         cudaEvent_t e0, e1;
         CUDA_CHECK(cudaEventCreate(&e0));
         CUDA_CHECK(cudaEventCreate(&e1));
@@ -414,8 +417,7 @@ int main(int argc, char** argv) {
                             if (sr > 0 && r == 0) {
                                 CUDA_CHECK(cudaGraphLaunch(execs[i], device.stream));
                             }
-                            CUDA_CHECK(cudaMemsetAsync(flush.p, r & 0xff, flush.bytes,
-                                                       device.stream));
+                            flush.evict(device.stream);
                             workspace.reset();
                             const float us = time_once(i, sr);
                             if (pass == 0 && r < 2) continue; // warm-up
