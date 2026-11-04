@@ -472,9 +472,10 @@ struct Problem {
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
 // in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
 // does not allow the family's activations (R8: int8; r8_refusal asks it after Format, before
-// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8, tiled). W4A8 asks
-// in its own order (w4a8_refusal): Format before NotCompiled, Resource and Policy before
-// Instruction; the tiled family Resource before Instruction (tiled_refusal).
+// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8, tiled, staged, I8).
+// W4A8 asks in its own order (w4a8_refusal): Format before NotCompiled, Resource and Policy
+// before Instruction; the tiled, staged and I8 families Resource before Instruction (I8 Policy
+// too).
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
                              Alignment, Extent, Policy, Resource };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
@@ -561,6 +562,60 @@ struct R8Coverage {
 // its tile does not depend on the call's width.
 [[nodiscard]] FamilyCoverage tiled_coverage(const Weight& weight);
 
+// Staged schedule `index` for `weight`: route_admits' own rule for the family (it decides by
+// this). Not declared; format (the generic path does not read it, or it is not BF16); resource
+// (the tile's shared memory past the build's block, staged_fits, or the device's, the opt-in
+// limit an sm_80 build meets on a 99 KiB part, staged_device_fits); instruction; alignment (the
+// codes off 16 bytes); extent (K not whole 64-value steps).
+[[nodiscard]] ScheduleRefusal staged_refusal(int index, const Weight& weight);
+// The staged family's coverage of a weight (#307): every schedule with its refusal (compiled:
+// every schedule for a BF16 weight), and the family's pick under the prefill profile, the first
+// schedule whose tiles fit the build and the device (-1 where none does), with its refusal.
+// Outside the profile the pick depends on the call (staged_speed_route); where the BF16 MMA is
+// emulated (Turing, Volta) the selection takes no staged tile at all (bf16_mma_native), whatever
+// this reports. No policy (BF16 activations).
+[[nodiscard]] FamilyCoverage staged_coverage(const Weight& weight);
+
+// I8 schedule `index` for `weight` under `policy`: route_admits' own rule for the family (it
+// decides by this). Not declared; format (the generic path does not read it, or it is not Q4 /
+// Q5 / Q6 G64); resource (the tile's stages past the build's shared memory, i8_fits); policy (no
+// A8); instruction; alignment (the codes or scales off 16 bytes, a Q5 high plane off 8, a Q6 one
+// off 16); extent (K or the padded K not whole 512-value runs).
+[[nodiscard]] ScheduleRefusal i8_refusal(int index, const Weight& weight, LinearPolicy policy);
+// The I8 family's coverage of a call of `tokens` tokens (#307): every schedule with its refusal
+// (compiled: every schedule for Q4 / Q5 / Q6 G64), and the family's pick, the tile with the
+// fewest weighted waves of those that fit the build (i8_route takes it where the weight is
+// admitted), with its refusal.
+[[nodiscard]] FamilyCoverage i8_coverage(const Problem& problem, const Weight& weight,
+                                         std::int32_t tokens);
+
+// The remaining families' own rules in route_admits (#307), which it decides by:
+// - W4A4 schedule `index`: not declared (past its names); not compiled (a build without the
+//   Blackwell kernels, w4a4_schedule_count 0, still parses the names); format (not NVFP4, or no
+//   recorded input scale divisor, finite and positive); policy (no A4); instruction.
+// - NVFP4 tiled schedule `index`: not declared; not compiled (outside the 120a build,
+//   kNativeNvfp4); format (not NVFP4); instruction; alignment (the codes off 8 bytes).
+// - ggml's matrix and vector kernels (Family::GgmlMmq / GgmlVec, schedule 0): not declared (any
+//   other schedule); format (a format the kernel does not read, a layout it does not take, a
+//   plane it needs missing); policy (no A8); instruction (the matrix kernel below sm_75,
+//   ggml_mmq::device_supported); alignment (a plane off 16 bytes); extent (K off the kernel's
+//   multiple: 256 values for the matrix kernel, a block for the vector one).
+// Every family adds route_admits' generic checks: the generic path reads the weight, the
+// device's instructions (route_requires), a ggml high plane on 16 bytes.
+[[nodiscard]] ScheduleRefusal w4a4_refusal(int index, const Weight& weight, LinearPolicy policy);
+[[nodiscard]] ScheduleRefusal nvfp4_tiled_refusal(int index, const Weight& weight);
+[[nodiscard]] ScheduleRefusal ggml_refusal(Family family, int index, const Weight& weight,
+                                           LinearPolicy policy);
+// ggml's own admission of a weight to its matrix / vector kernel (mmq_prefill_wins and vec_call
+// ask it), apart from route_admits' generic checks.
+[[nodiscard]] bool ggml_mmq_admits(const Weight& weight, LinearPolicy policy);
+[[nodiscard]] bool ggml_vec_admits(const Weight& weight, LinearPolicy policy);
+// One of these families' coverage of a weight under `policy`: every declared schedule with its
+// refusal (compiled: the schedules this build holds for a format the family reads). No pick: the
+// selection prices these families against the others (cost_route), and the call decides.
+[[nodiscard]] FamilyCoverage other_family_coverage(Family family, const Weight& weight,
+                                                   LinearPolicy policy);
+
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
 // kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the
@@ -628,6 +683,10 @@ struct R8Coverage {
 // first schedule that fits the build; nullopt where none admits the weight.
 [[nodiscard]] std::optional<Route> w4a8_route(const Problem& problem, const Weight& weight,
                                               std::int32_t tokens);
+// The I8 tile of a call: i8_coverage's pick where the weight is admitted to it; nullopt where
+// none admits it.
+[[nodiscard]] std::optional<Route> i8_route(const Problem& problem, const Weight& weight,
+                                            std::int32_t tokens);
 
 // The shape-class heuristic alone (what the tuner is compared against).
 [[nodiscard]] Route heuristic_route(const Problem& problem, const Weight& weight,
