@@ -758,7 +758,11 @@ void add_official_proposal(Model& model, Recipe& recipe, const std::filesystem::
             }
         }
     }
-    auto head = gather_source(model.parameters[model.at("text/output_head")].source, ids);
+    // The drafters' official proposal layout: NInferno's own Q4 matrix of the shortlist rows,
+    // decoded from the head's encoding where the checkpoint published the head quantized (an
+    // NVFP4 lm_head: nvidia/Qwen3.6-35B-A3B-NVFP4), as its plain rows would be quantized.
+    auto head = gather_source(model.parameters[model.at("text/output_head")].source, ids,
+                              "to gather the drafters' proposal rows");
     model.components["text"]["proposal"] = OJson{{"domain", "indexed"}, {"rows", rows}};
     if (!prefixes.empty()) { model.components["text"]["proposal"]["drafter_rows"] = prefixes; }
     Parameter proposal;

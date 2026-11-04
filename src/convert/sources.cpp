@@ -1027,11 +1027,11 @@ private:
 class SelectRowsSource final : public Source {
 public:
     SelectRowsSource(SourcePtr matrix, std::vector<std::pair<std::uint64_t, std::uint64_t>> spans,
-                     std::uint64_t rows)
+                     std::uint64_t rows, std::string reason)
         : Source({rows, matrix->shape()[1]}, "rows(" + matrix->label() + ", " +
                                                  std::to_string(spans.size()) + " spans, " +
                                                  std::to_string(rows) + " rows)"),
-          matrix_(std::move(matrix)), spans_(std::move(spans)) {
+          matrix_(std::move(matrix)), spans_(std::move(spans)), reason_(std::move(reason)) {
         std::uint64_t cursor = 0;
         for (const auto& [first, last] : spans_) {
             starts_.push_back(cursor);
@@ -1068,6 +1068,10 @@ public:
     [[nodiscard]] std::string encoding() const override { return matrix_->encoding(); }
 
     [[nodiscard]] bool dequantizes() const override { return matrix_->dequantizes(); }
+
+    // Set where the rows are a derived matrix the recipe quantizes itself (the drafters' official
+    // proposal head, gather_source's reason), not a published projection kept or split.
+    [[nodiscard]] std::string decode_reason() const override { return reason_; }
 
     [[nodiscard]] bool keeps_losslessly() const override { return matrix_->keeps_losslessly(); }
 
@@ -1132,6 +1136,7 @@ private:
     SourcePtr matrix_;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> spans_;
     std::vector<std::uint64_t> starts_;
+    std::string reason_;
 };
 
 // transpose_source: a small tensor read whole and permuted (Qwen's GDN convolution kernel).
@@ -1319,7 +1324,8 @@ SourcePtr transpose_source(SourcePtr source, std::vector<std::size_t> axes, Shap
 }
 
 SourcePtr select_rows(SourcePtr matrix,
-                      std::vector<std::pair<std::uint64_t, std::uint64_t>> spans) {
+                      std::vector<std::pair<std::uint64_t, std::uint64_t>> spans,
+                      std::string reason) {
     if (matrix->shape().size() != 2 || spans.empty()) {
         throw std::runtime_error("row selection requires a matrix and nonempty ranges");
     }
@@ -1331,7 +1337,8 @@ SourcePtr select_rows(SourcePtr matrix,
         }
         rows += last - first;
     }
-    return std::make_shared<SelectRowsSource>(std::move(matrix), std::move(spans), rows);
+    return std::make_shared<SelectRowsSource>(std::move(matrix), std::move(spans), rows,
+                                              std::move(reason));
 }
 
 namespace {
@@ -1477,7 +1484,7 @@ SourcePtr divisor_scaled_source(SourcePtr matrix, SourcePtr gate, SourcePtr up) 
     return std::make_shared<DivisorScaledSource>(std::move(matrix), std::move(gate), std::move(up));
 }
 
-SourcePtr gather_source(SourcePtr matrix, std::vector<std::int64_t> ids) {
+SourcePtr gather_source(SourcePtr matrix, std::vector<std::int64_t> ids, std::string reason) {
     if (matrix->shape().size() != 2) { throw std::runtime_error("gather source must be a matrix"); }
     if (ids.empty()) { throw std::runtime_error("a gather source needs at least one row id"); }
     for (const auto id : ids) {
@@ -1491,7 +1498,7 @@ SourcePtr gather_source(SourcePtr matrix, std::vector<std::int64_t> ids) {
     for (const auto id : ids) {
         spans.emplace_back(static_cast<std::uint64_t>(id), static_cast<std::uint64_t>(id) + 1);
     }
-    return select_rows(std::move(matrix), std::move(spans));
+    return select_rows(std::move(matrix), std::move(spans), std::move(reason));
 }
 
 SourcePtr int32_source(std::vector<std::int32_t> values, std::string label) {

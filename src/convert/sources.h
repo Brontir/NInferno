@@ -196,11 +196,15 @@ enum class Nvfp4Fields { CompressedTensors, ModelOpt };
 // transpose_source: the whole tensor permuted by `axes`, reshaped to `shape`.
 [[nodiscard]] SourcePtr transpose_source(SourcePtr source, std::vector<std::size_t> axes,
                                          Shape shape);
-// select_rows: row ranges [first, last) of a matrix, in order.
+// select_rows: row ranges [first, last) of a matrix, in order. `reason`, where set, is why a
+// recipe that reads these rows from a quantized encoding decodes them (Source::decode_reason): a
+// derived matrix it quantizes itself, not a published projection.
 [[nodiscard]] SourcePtr select_rows(SourcePtr matrix,
-                                    std::vector<std::pair<std::uint64_t, std::uint64_t>> spans);
-// gather_source: the rows `ids` of a matrix, in order.
-[[nodiscard]] SourcePtr gather_source(SourcePtr matrix, std::vector<std::int64_t> ids);
+                                    std::vector<std::pair<std::uint64_t, std::uint64_t>> spans,
+                                    std::string reason = {});
+// gather_source: the rows `ids` of a matrix, in order (`reason` as for select_rows).
+[[nodiscard]] SourcePtr gather_source(SourcePtr matrix, std::vector<std::int64_t> ids,
+                                      std::string reason = {});
 // array_source over int32 ids.
 [[nodiscard]] SourcePtr int32_source(std::vector<std::int32_t> values, std::string label);
 
