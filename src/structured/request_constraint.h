@@ -86,8 +86,11 @@ class RequestConstraint {
 public:
     // may_open_reasoning: the model may open a reasoning section itself at the first token (the
     // prompt allows it and the output is presented, not raw), as the output session splits it.
+    // strips_headers: the output presentation drops an answer header (GrammarVocabulary::
+    // content_open) the answer begins with, so the grammar starts after one; a raw output keeps
+    // it, and the grammar reads it.
     RequestConstraint(std::shared_ptr<const CompiledConstraint> compiled, bool starts_in_reasoning,
-                      bool may_open_reasoning = false);
+                      bool may_open_reasoning = false, bool strips_headers = true);
 
     // Every round of a constrained request is masked, including rounds inside an open reasoning
     // section (stop tokens only). Writes drafts.size()+1 mask rows of stride_words each. Row j
@@ -161,6 +164,9 @@ private:
     std::optional<ConstraintMatcher> scratch_;
     ConstraintVocabularyView view_;
     ConstraintGate gate_;
+    // The answer may begin with a header the gate steps through (strips_headers and a format
+    // that has them).
+    bool headers_  = false;
     bool violated_ = false;
     std::string violation_;
     std::uint64_t masked_positions_ = 0;

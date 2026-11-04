@@ -683,6 +683,12 @@ void answer_header_contract() {
     const TokenId space[] = {' '};
     cut.commit(space);
     check(!cut.violated(), "a space that may begin a header is held");
+    // A raw output keeps the header (the presentation does not drop it): the grammar reads it.
+    RequestConstraint raw(compiled, true, false, false);
+    raw.commit(closed);
+    raw.fill_round({}, row.data(), words);
+    check(!allowed(row.data(), kStart) && allowed(row.data(), 'y'),
+          "raw output: no header, the grammar from the terminator");
     cut.fill_round({}, row.data(), words);
     check(!allowed(row.data(), kImEnd) && allowed(row.data(), 't'),
           "inside a header's first bytes: its rest, no stop");

@@ -62,11 +62,13 @@ std::size_t ReasoningGate::feed(std::string_view bytes) noexcept {
 }
 
 RequestConstraint::RequestConstraint(std::shared_ptr<const CompiledConstraint> compiled,
-                                     bool starts_in_reasoning, bool may_open_reasoning)
+                                     bool starts_in_reasoning, bool may_open_reasoning,
+                                     bool strips_headers)
     : compiled_(compiled), matcher_(std::move(compiled)),
       view_(vocabulary_view(matcher_.compiled())) {
     const std::string& close = view_.vocabulary->reasoning_close;
-    const bool headers       = !view_.vocabulary->content_open.empty();
+    headers_                 = strips_headers && !view_.vocabulary->content_open.empty();
+    const bool headers       = headers_;
     gate_.close              = ReasoningGate(close, true);
     if (close.empty()) {
         gate_.mode = ConstraintGate::Mode::Open;
@@ -260,7 +262,7 @@ bool RequestConstraint::header_bytes(ConstraintGate& gate, std::string_view byte
 
 bool RequestConstraint::after_close(ConstraintGate& gate, std::string_view tail,
                                     ConstraintGate::Mode next, Track& track, std::string& why) {
-    if (view_.vocabulary->content_open.empty()) { return enter_text(gate, next, tail, track, why); }
+    if (!headers_) { return enter_text(gate, next, tail, track, why); }
     gate.mode        = ConstraintGate::Mode::Header;
     gate.header_next = next;
     gate.header_held.clear();
