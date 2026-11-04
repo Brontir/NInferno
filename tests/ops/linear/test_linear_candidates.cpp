@@ -193,9 +193,10 @@ int main() {
         const ops::ScopedInvariantRoutes invariant(true);
         const Described d(1024, 2048);
         const auto c = ops::detail::linear_candidates(d.weight, ops::LinearPolicy::A16Only, 1);
-        check(c.size() == 2 && c[0].status == Candidate::Status::Inadmissible &&
+        check(c.size() >= 2 && c[0].status == Candidate::Status::Inadmissible &&
                   c[0].why == "invariant" && c[1].status == Candidate::Status::Selected,
               "invariant profile:" + describe(c));
+        if (c.size() >= 2) alternatives(c, 1, "invariant profile");
     }
     // Every width 1..512 of a shape whose table changes launch often: the identity follows it.
     for (std::int32_t t = 1; t <= 512; ++t) {
