@@ -61,10 +61,18 @@ void check_fits(const ServeOptions& options) {
 }
 
 // Recipes whose artifact is about as large as the checkpoint's weights (nothing quantized); a
-// GGUF model's blocks are kept as published too.
+// GGUF model's blocks are kept as published too. The official recipes of a published
+// quantization (NVFP4, FP8) keep its matrices as published: nvidia/Qwen3.6-35B-A3B-NVFP4's 21.5
+// GiB of files were downloaded onto a 16 GB card before the start refused 19.4 GiB of weights.
+// Only the recipes that quantize a BF16 checkpoint themselves make a smaller artifact (the official
+// Qwen3.6-35B-A3B one takes its experts to 4-5 bits), whose size the start knows.
 bool keeps_weights(const std::string& recipe) {
     return recipe == "dense_published" || recipe == "moe_published" || recipe == "dense_bf16" ||
-           recipe == "qwen3_5_bf16" || recipe == "qwen3_5_published";
+           recipe == "qwen3_5_bf16" || recipe == "qwen3_5_published" ||
+           recipe == "dense_encoded" || recipe == "gemma4_published" ||
+           recipe == "gemma4_26b_a4b_nvfp4" || recipe == "gemma4_31b_nvfp4" ||
+           recipe == "qwen3_6_27b_nvfp4" || recipe == "qwen3_8_27b_nvfp4" ||
+           recipe == "qwen3_6_35b_a3b_nvfp4";
 }
 
 void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
