@@ -686,12 +686,29 @@ int run_resources(bool detail) {
                               {generic::Family::StagedMma, generic::staged_schedule_count, "staged"},
                               {generic::Family::W4a8Mma, generic::w4a8_schedule_count, "w4a8"},
                               {generic::Family::I8Mma, generic::i8_schedule_count, "i8"}};
-    for (const QType qtype : kFormats) {
+    // The kFormats and BF16, which the staged tile takes alone.
+    std::vector<QType> tile_formats(std::begin(kFormats), std::end(kFormats));
+    tile_formats.push_back(QType::BF16);
+    for (const QType qtype : tile_formats) {
         const Shape shape{4096, 4096};
         quantized_weight::PatternedWeightOptions options;
         if (qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
-        const auto host = quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
-        const Weight w  = host.device_weight(payload);
+        quantized_weight::PackedWeight host;
+        Weight w;
+        if (qtype == QType::BF16) {
+            // A plain BF16 matrix described at the stand-in address (the fixtures are quantized).
+            w.qtype         = QType::BF16;
+            w.layout        = QuantLayout::Contiguous;
+            w.qdata         = payload;
+            w.payload       = payload;
+            w.payload_bytes = static_cast<std::size_t>(shape.n) * shape.k * 2;
+            w.n = w.shape[0] = w.padded_shape[0] = shape.n;
+            w.k = w.shape[1] = w.padded_shape[1] = shape.k;
+            w.ndim = 2;
+        } else {
+            host = quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+            w    = host.device_weight(payload);
+        }
         if (!generic::supports(w)) continue;
         for (FamilyCount& f : families) {
             for (int i = 0; i < f.count(); ++i) {
