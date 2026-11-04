@@ -9,7 +9,9 @@
 // (#307): route_admits takes a schedule exactly where rmma_refusal names no reason, a cluster
 // schedule is not compiled outside the full build and needs clusters on the board, the 32-value
 // decoders' large tiles are not compiled, and the family's own pick, where it does not run, says
-// why (counted, not failed: the selection then takes another tile).
+// why (counted, not failed: the selection then takes another tile). The R8 family's too: each
+// schedule's refusal as route_admits decides it, an A16 call refused for its policy, and why each
+// call does or does not take R8 (counted).
 //
 // The route table and several heuristics cache what they read of the device on first use, so one
 // process runs one board: without arguments the test runs itself once per board.
@@ -99,6 +101,7 @@ int run_board(const TestBoard& b) {
     int failures = 0, checked = 0;
     int coverage_checked = 0;
     std::map<std::string, int> heuristic_refused; // the family's pick, refused: why, how often
+    std::map<std::string, int> r8_calls;          // why a call does or does not take R8
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -202,6 +205,48 @@ int run_board(const TestBoard& b) {
                         }
                     }
                 }
+                // R8, per weight (#307): the schedule rule against the old one written apart
+                // (the generic path reads the weight, the call's admission to R8, the ggml high
+                // plane on 16 bytes); a high plane 4 bytes off refuses every schedule for
+                // alignment; another layout refuses for format and keeps the compiled count.
+                {
+                    const generic::Problem a8{qtype, LinearPolicy::AllowA8, shape.n, shape.k,
+                                              generic::Epilogue::Store};
+                    const auto r8 = generic::r8_coverage(a8, w, 1);
+                    const bool admitted = r8.call != generic::R8CallRefusal::NotAdmitted;
+                    if (r8.family.declared != generic::r8_schedule_count() ||
+                        (r8.family.compiled != 0 && r8.family.compiled != r8.family.declared) ||
+                        r8.family.legal != (admitted ? r8.family.declared : 0)) {
+                        fail(where + ": R8 counts declared " + std::to_string(r8.family.declared) +
+                             ", compiled " + std::to_string(r8.family.compiled) + ", legal " +
+                             std::to_string(r8.family.legal));
+                    }
+                    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && admitted) {
+                        Weight off = w;
+                        off.qhigh  = static_cast<const char*>(w.qhigh) + 4;
+                        const auto o = generic::r8_coverage(a8, off, 1);
+                        const bool all_alignment = std::all_of(
+                            o.family.schedules.begin(), o.family.schedules.end(), [](const auto& s) {
+                                return s.refusal == generic::ScheduleRefusal::Alignment;
+                            });
+                        if (!all_alignment || o.family.compiled != r8.family.compiled) {
+                            fail(where + ": R8 with the high plane 4 bytes off");
+                        }
+                    }
+                    Weight bad = w;
+                    bad.layout = w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit
+                                                                     : QuantLayout::GgmlPlanes;
+                    if (!generic::supports(bad)) {
+                        const auto b = generic::r8_coverage(a8, bad, 1);
+                        const bool all_format = std::all_of(
+                            b.family.schedules.begin(), b.family.schedules.end(), [](const auto& s) {
+                                return s.refusal == generic::ScheduleRefusal::Format;
+                            });
+                        if (!all_format || b.family.compiled != r8.family.compiled) {
+                            fail(where + ": R8 in a layout the generic path does not read");
+                        }
+                    }
+                }
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :
@@ -241,6 +286,39 @@ int run_board(const TestBoard& b) {
                                 ++heuristic_refused[std::string(generic::schedule_refusal_name(
                                     coverage.heuristic_refusal))];
                             }
+                            // R8's coverage (#307): route_admits decides each schedule by
+                            // r8_refusal; a policy without A8 refuses every schedule of a format R8
+                            // reads as Policy; a call that takes R8 has a schedule to run it on.
+                            const auto r8 = generic::r8_coverage(problem, w, t);
+                            ++r8_calls[std::string(generic::r8_call_refusal_name(r8.call))];
+                            for (const auto& s : r8.family.schedules) {
+                                const generic::Route r{generic::Family::R8Mma,
+                                                       static_cast<std::uint8_t>(s.schedule)};
+                                // The old rule, written apart from r8_refusal: the generic path
+                                // reads the weight (filtered above) and the call's weight is
+                                // admitted to R8 (allows_r8: r8_call_refusal's first test).
+                                const bool old_rule =
+                                    r8.call != generic::R8CallRefusal::NotAdmitted;
+                                if (generic::route_admits(r, w, policy) != old_rule ||
+                                    generic::route_admits(r, w, policy) !=
+                                        (s.refusal == generic::ScheduleRefusal::None)) {
+                                    fail(where + " " + generic::route_name(r) + ": " +
+                                         std::string(generic::schedule_refusal_name(s.refusal)) +
+                                         ", which route_admits decides otherwise");
+                                }
+                                if (policy == LinearPolicy::A16Only && r8.family.compiled > 0 &&
+                                    s.refusal != generic::ScheduleRefusal::Policy &&
+                                    s.refusal != generic::ScheduleRefusal::Format) {
+                                    fail(where + " " + generic::route_name(r) +
+                                         ": an A16 call's R8 refusal is not its policy");
+                                }
+                            }
+                            if (r8.call == generic::R8CallRefusal::None && r8.family.legal == 0) {
+                                fail(where + ": the call takes R8 and no R8 schedule admits it");
+                            }
+                            if (route.family == generic::Family::R8Mma && r8.family.legal == 0) {
+                                fail(where + ": chose " + name + ", which no R8 schedule admits");
+                            }
                             if (!generic::route_admits(route, w, policy)) {
                                 fail(where + ": chose " + name + ", which route_admits refuses");
                             }
@@ -273,6 +351,8 @@ int run_board(const TestBoard& b) {
               << " route choices, " << coverage_checked << " register-MMA coverages, "
               << failures << " failures; the register-MMA pick refused:";
     for (const auto& [why, count] : heuristic_refused) std::cout << " " << why << " " << count;
+    std::cout << "; R8 calls:";
+    for (const auto& [why, count] : r8_calls) std::cout << " " << why << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }
