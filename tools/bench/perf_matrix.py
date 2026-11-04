@@ -82,7 +82,14 @@ class Server:
         self._speculation = {}
         self._speculation_lock = threading.Lock()
 
-    def chat(self, prompt, max_tokens, top_p=None):
+    def _tally(self, timings):
+        # The speculation this request ran: NInferno reports it in the response's timings when the
+        # request drafted (a request that ran plain reports none).
+        config = ((timings or {}).get("speculation") or {}).get("config") or None
+        with self._speculation_lock:
+            self._speculation[config] = self._speculation.get(config, 0) + 1
+
+    def chat(self, prompt, max_tokens, top_p=None, tally=True):
         body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": max_tokens, "temperature": 0.0, "stream": False}
         if top_p is not None:
@@ -94,12 +101,8 @@ class Server:
             out = json.load(r)
         elapsed = time.time() - start
         usage = out.get("usage") or {}
-        # The speculation this request ran: NInferno reports it in the response's timings when the
-        # request drafted (a request that ran plain reports none).
-        spec = (out.get("timings") or {}).get("speculation") or {}
-        config = spec.get("config") or None
-        with self._speculation_lock:
-            self._speculation[config] = self._speculation.get(config, 0) + 1
+        if tally:
+            self._tally(out.get("timings"))
         return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), elapsed
 
     def chat_stream(self, prompt, max_tokens):
@@ -113,7 +116,8 @@ class Server:
         request = urllib.request.Request(self.base + "/v1/chat/completions", json.dumps(body).encode(),
                                          {"Content-Type": "application/json"})
         first = last = None
-        completion = chunks = 0
+        completion = 0
+        timings = None
         with urllib.request.urlopen(request, timeout=3600) as r:
             for raw in r:
                 line = raw.decode("utf-8", "replace").strip()
@@ -123,19 +127,25 @@ class Server:
                 if data == "[DONE]":
                     break
                 event = json.loads(data)
+                if "error" in event:
+                    raise RuntimeError(f"stream failed: {event['error']}")
                 usage = event.get("usage") or {}
                 if usage.get("completion_tokens"):
                     completion = usage["completion_tokens"]
+                timings = event.get("timings") or timings
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
                     if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
                         now = time.time()
                         first = now if first is None else first
                         last = now
-                        chunks += 1
-        if first is None or last is None or last <= first:
-            return completion or chunks, 0.0
-        return completion or chunks, last - first
+        # The token count comes from the server (usage, else llama-server style timings); a count of
+        # stream chunks would be wrong under speculation, where one chunk carries several tokens.
+        completion = completion or int((timings or {}).get("predicted_n") or 0)
+        self._tally(timings)
+        if completion < 2 or first is None or last <= first:
+            raise RuntimeError(f"stream gave no decode to time ({completion} tokens)")
+        return completion, last - first
 
     def take_speculation(self):
         """What the requests since the last call ran, as a row's `served_speculation`: `config` is
@@ -169,10 +179,10 @@ def long_context(server, chars, prompts, out_tokens):
     for i in range(prompts):
         offset = (i * 7919 * 13) % max(1, len(blob) - chars)
         prompt = blob[offset:offset + chars] + QUESTION
-        prompt_tokens, _, first = server.chat(prompt, 1)
+        prompt_tokens, _, first = server.chat(prompt, 1, tally=False)
         completion, seconds = server.chat_stream(prompt, out_tokens)
         prefill.append(prompt_tokens / first)
-        decode.append((completion - 1) / seconds if seconds > 0 else 0.0)
+        decode.append((completion - 1) / seconds)
         lengths.append(prompt_tokens)
     return {"prompt_len": int(statistics.median(lengths)),
             "prefill": (statistics.median(prefill), [min(prefill), max(prefill)]),
