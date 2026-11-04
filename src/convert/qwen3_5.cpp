@@ -1231,7 +1231,15 @@ void qwen3_6_35b_a3b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) 
     const auto& quantized = sources.get("quantized");
     optional_components(model, recipe);
     assign_grouped(model, recipe, "text/token_embedding", kQ8);
-    assign_grouped(model, recipe, "text/output_head", qwen3_5_recipe_head_format("qwen3_6_35b_a3b_nvfp4"));
+    // An NVFP4 lm_head (NVIDIA's Model Optimizer checkpoint) is quantized to row FP8 instead, as
+    // qwen3_8_27b_nvfp4 does (#342); a BF16 one (Red Hat's) takes the recipe's grouped format.
+    const auto head = model.at("text/output_head");
+    if (model.parameters[head].encoded_source(quantized, MatrixFormat::Auto)->is_nvfp4()) {
+        recipe.assign(head, kFp8, Method::Fp8RowMaxabs);
+    } else {
+        assign_grouped(model, recipe, "text/output_head",
+                       qwen3_5_recipe_head_format("qwen3_6_35b_a3b_nvfp4"));
+    }
     for (std::size_t i = 0; i < model.parameters.size(); ++i) {
         const auto& parameter = model.parameters[i];
         const auto& name      = parameter.name;
@@ -1244,6 +1252,18 @@ void qwen3_6_35b_a3b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) 
             recipe.assign(i, QType::NVFP4, Method::ImportEncoded,
                           moe_encoded_source(quantized, parameter));
             recipe.set_policy(i, ActivationPolicy::AllowA4);
+            continue;
+        }
+        // An attention or GDN projection published in FP8 (NVIDIA's: one FP32 scale a tensor)
+        // keeps its published scales, as qwen3_8_27b_nvfp4's do; a BF16 one takes Q8.
+        if (const auto published =
+                parameter.encoded_source(quantized, MatrixFormat::Auto)->encoded_format();
+            published && *published != QType::NVFP4) {
+            const QType format =
+                published == QType::FP8_E4M3FN_ROW_F32 ? QType::FP8_E4M3FN_ROW_F32 : kFp8;
+            recipe.assign(i, format, Method::ImportEncoded,
+                          parameter.encoded_source(quantized, MatrixFormat::Fp8Row));
+            recipe.set_policy(i, ActivationPolicy::AllowA8);
         } else {
             recipe.assign(i, kQ8, Method::GroupedAbsmax);
         }
