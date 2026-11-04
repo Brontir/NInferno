@@ -18,8 +18,10 @@
 // class (and the tables of a release): the same lines, or the lines that moved.
 //
 //   "<format> <policy> <epilogue> <N>x<K> of <stored rows> <layout name> <speed|invariant>"
-//       = "1-3 <route>, 4-16 <route>; prefill <chunk> <route>"   ("none": the path does not read
-//         such a weight)
+//       = "1-3 <route>, 4-16 <route>[; one lane <runs>][; several lanes <runs>]; prefill <chunk>
+//          <route>"   ("none": the path does not read such a weight). The runs by width alone,
+//         then those of a verify round of one sequence and of several (ScopedRoundLanes) where
+//         they differ.
 
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
@@ -32,6 +34,7 @@ namespace ninferno::runtime {
 
 inline constexpr std::int32_t kDecisionRouteWidths = 16; // decode and verify widths 1..16
 inline constexpr const char* kDecisionRouteCount   = "problems"; // the count line's key
+inline constexpr int kDecisionRouteSeveralLanes    = 4;          // "several lanes": a C4 round
 
 // The route lines of `problems` on `device` (route_query: the board's class, the build and the
 // route tables the default lookup reads for it, or the device's own where it is the current one),

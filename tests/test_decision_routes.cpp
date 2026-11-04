@@ -20,6 +20,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -53,7 +55,7 @@ std::vector<generic::SeenProblem> problems() {
 
 // The route a line names at width `t` (its runs), or "" when no run covers it.
 std::string route_at(const std::string& line, std::int32_t t) {
-    const std::string decode = line.substr(0, line.find("; prefill "));
+    const std::string decode = line.substr(0, line.find("; ")); // the runs by width alone
     std::size_t at           = 0;
     while (at < decode.size()) {
         const std::size_t end  = std::min(decode.find(", ", at), decode.size());
@@ -101,6 +103,21 @@ int main() {
                                                     false, s.parent_rows, s.layout);
                 check(route_at(found->second, t) == (r ? generic::route_name(*r) : "none"),
                       found->first + " T=" + std::to_string(t) + ": " + found->second);
+            }
+            // A verify round of one sequence or of several: where it selects otherwise than the
+            // width alone, the line has its own runs.
+            for (const auto& [lanes, label] : {std::pair{1, "; one lane "},
+                                               std::pair{rt::kDecisionRouteSeveralLanes, "; several lanes "}}) {
+                const ops::ScopedRoundLanes round(lanes);
+                const auto r = generic::route_query(d, p.qtype, p.policy, p.epilogue, p.n, p.k, 12,
+                                                    false, s.parent_rows, s.layout);
+                const std::string name = r ? generic::route_name(*r) : "none";
+                const auto at          = found->second.find(label);
+                if (name == route_at(found->second, 12)) continue;
+                check(at != std::string::npos &&
+                          route_at(found->second.substr(at + std::string_view(label).size()), 12) == name,
+                      found->first + " T=12 with " + std::to_string(lanes) + " lane(s): " + name +
+                          ", the line " + found->second);
             }
             const auto pre = generic::route_query(d, p.qtype, p.policy, p.epilogue, p.n, p.k, chunk,
                                                   true, s.parent_rows, s.layout);

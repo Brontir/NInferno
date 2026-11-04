@@ -53,18 +53,29 @@ std::string line_of(const DeviceClass& device, const generic::SeenProblem& s,
         return name_or_none(generic::route_query(device, p.qtype, p.policy, p.epilogue, p.n, p.k,
                                                  tokens, prefill, s.parent_rows, s.layout));
     };
-    std::string out;
-    std::int32_t from = 1;
-    std::string run   = ask(1, false);
-    for (std::int32_t t = 2; t <= kDecisionRouteWidths + 1; ++t) {
-        const std::string at = t <= kDecisionRouteWidths ? ask(t, false) : std::string();
-        if (at == run) continue;
-        out += (out.empty() ? "" : ", ") + std::to_string(from) + '-' + std::to_string(t - 1) + ' ' +
-               run;
-        from = t;
-        run  = at;
-    }
-    return out + "; prefill " + std::to_string(prefill_chunk) + ' ' + ask(prefill_chunk, true);
+    // The decode and verify widths as runs of one route, for a call of `lanes` sequences
+    // (ScopedRoundLanes: 0 decides by width alone, as prefill and capacity queries do).
+    const auto runs = [&](int lanes) {
+        const ops::ScopedRoundLanes round(lanes);
+        std::string out;
+        std::int32_t from = 1;
+        std::string run   = ask(1, false);
+        for (std::int32_t t = 2; t <= kDecisionRouteWidths + 1; ++t) {
+            const std::string at = t <= kDecisionRouteWidths ? ask(t, false) : std::string();
+            if (at == run) continue;
+            out += (out.empty() ? "" : ", ") + std::to_string(from) + '-' + std::to_string(t - 1) +
+                   ' ' + run;
+            from = t;
+            run  = at;
+        }
+        return out;
+    };
+    // A verify round of one sequence (a copy round) or of several can select otherwise than the
+    // width alone (the ggml matrix kernel, mmq_verify_rule): each where it does.
+    const std::string width = runs(0), one = runs(1), several = runs(kDecisionRouteSeveralLanes);
+    return width + (one != width ? "; one lane " + one : "") +
+           (several != width ? "; several lanes " + several : "") + "; prefill " +
+           std::to_string(prefill_chunk) + ' ' + ask(prefill_chunk, true);
 }
 
 [[noreturn]] void malformed(const std::string& key, const char* why) {
