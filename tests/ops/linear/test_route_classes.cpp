@@ -24,6 +24,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ninferno/ops/route_table.h"
 #include "ops/common/native_nvfp4.h"
+#include "ops/generic/build_manifest.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 
@@ -368,6 +369,120 @@ void check_others(const Weight& w, LinearPolicy policy, const DeviceFeatures& fe
     }
 }
 
+// The compiled-variant manifest (#307) against the families' refusals for a weight: a schedule
+// the manifest says this build holds no kernel of for the weight's format is never admitted, and
+// the refusal says so (not compiled, the codec's tile, a tile past the build's shared memory, or a
+// format the family does not read); a schedule refused as not compiled, for its codec's tile
+// (register MMA) or for the build's shared memory (tiled, W4A8, I8, staged past staged_fits) is
+// one the manifest says is absent. A route whose instructions the build itself lacks
+// (route_requires against build_features: I8 on sm_75) is not checked: a synthetic board above
+// the build is offered routes whose kernels it compiled empty, which no real device of that build
+// takes (its features are the build's in common).
+generic::ScheduleRefusal family_refusal(generic::Route r, const Weight& w, LinearPolicy policy) {
+    using generic::Family;
+    switch (r.family) {
+    case Family::RegisterMma: return generic::rmma_refusal(r.schedule, w);
+    case Family::W4a4Mma: return generic::w4a4_refusal(r.schedule, w, policy);
+    case Family::TiledMma: return generic::tiled_refusal(r.schedule, w);
+    case Family::W4a8Mma: return generic::w4a8_refusal(r.schedule, w, policy);
+    case Family::StagedMma: return generic::staged_refusal(r.schedule, w);
+    case Family::Nvfp4TiledMma: return generic::nvfp4_tiled_refusal(r.schedule, w);
+    case Family::R8Mma: return generic::r8_refusal(r.schedule, w, policy);
+    case Family::GgmlMmq:
+    case Family::GgmlVec: return generic::ggml_refusal(r.family, r.schedule, w, policy);
+    case Family::I8Mma: return generic::i8_refusal(r.schedule, w, policy);
+    case Family::Scalar: break;
+    }
+    return generic::ScheduleRefusal::None;
+}
+
+template <class Fail>
+void check_manifest(const generic::BuildManifest& manifest, const Weight& w, LinearPolicy policy,
+                    const std::string& where, std::map<std::string, int>& counts, Fail&& fail) {
+    using generic::ScheduleRefusal;
+    for (const auto& s : manifest.schedules) {
+        if (s.route.family == generic::Family::Scalar ||
+            !has_features(build_features(), generic::route_requires(s.route))) {
+            continue;
+        }
+        const bool listed = s.only_formats.empty() ||
+                            std::find(s.only_formats.begin(), s.only_formats.end(), w.qtype) !=
+                                s.only_formats.end();
+        const bool omitted =
+            std::any_of(s.omitted_formats.begin(), s.omitted_formats.end(), [&](const auto& f) {
+                return f.qtype == w.qtype && (f.k_multiple == 0 || w.k % f.k_multiple == 0);
+            });
+        const bool absent = !s.compiled || !listed || omitted;
+        const auto why    = family_refusal(s.route, w, policy);
+        using generic::Family;
+        const Family family = s.route.family;
+        const bool build_resource =
+            why == ScheduleRefusal::Resource &&
+            (family == Family::TiledMma || family == Family::W4a8Mma || family == Family::I8Mma ||
+             (family == Family::StagedMma && !generic::staged_fits(s.route.schedule)));
+        const bool unbuilt_refusal =
+            why == ScheduleRefusal::NotCompiled || build_resource ||
+            (why == ScheduleRefusal::CodecTile && family == Family::RegisterMma);
+        const bool absent_refusal = unbuilt_refusal || why == ScheduleRefusal::Format ||
+                                    why == ScheduleRefusal::CodecTile ||
+                                    why == ScheduleRefusal::Resource;
+        ++counts[absent ? "absent" : "held"];
+        if ((unbuilt_refusal && !absent) || (absent && !absent_refusal) ||
+            (absent && generic::route_admits(s.route, w, policy))) {
+            fail(where + " policy=" + std::to_string(static_cast<int>(policy)) + " " +
+                 generic::route_name(s.route) + ": the manifest says " +
+                 (absent ? "absent" : "held") + ", the refusal " +
+                 std::string(generic::schedule_refusal_name(why)));
+        }
+    }
+}
+
+// The manifest's schedules are the families' declared lists, in order, each once.
+template <class Fail>
+void check_manifest_lists(const generic::BuildManifest& manifest, Fail&& fail) {
+    using generic::Family;
+    std::map<Family, int> seen;
+    for (const auto& s : manifest.schedules) {
+        if (s.route.schedule != seen[s.route.family]++) {
+            fail("manifest: " + generic::route_name(s.route) + " out of its family's order");
+        }
+    }
+    const std::pair<Family, int> declared[] = {
+        {Family::Scalar, 1},
+        {Family::RegisterMma, generic::rmma_schedule_count()},
+        {Family::W4a4Mma, generic::w4a4_schedule_names()},
+        {Family::TiledMma, generic::tiled_schedule_count()},
+        {Family::W4a8Mma, generic::w4a8_schedule_count()},
+        {Family::StagedMma, generic::staged_schedule_count()},
+        {Family::Nvfp4TiledMma, generic::nvfp4_tiled_schedule_count()},
+        {Family::R8Mma, generic::r8_schedule_count()},
+        {Family::GgmlMmq, 1},
+        {Family::GgmlVec, 1},
+        {Family::I8Mma, generic::i8_schedule_count()},
+    };
+    for (const auto& [family, count] : declared) {
+        if (seen[family] != count) {
+            fail("manifest: family " + std::to_string(static_cast<int>(family)) + " lists " +
+                 std::to_string(seen[family]) + " schedules, " + std::to_string(count) +
+                 " declared");
+        }
+    }
+    const int compiled_w4a4 =
+        static_cast<int>(std::count_if(manifest.schedules.begin(), manifest.schedules.end(),
+                                       [](const auto& s) {
+                                           return s.route.family == Family::W4a4Mma && s.compiled;
+                                       }));
+    if (compiled_w4a4 != generic::w4a4_schedule_count() ||
+        manifest.native_nvfp4 != (generic::w4a4_schedule_count() > 0)) {
+        fail("manifest: the W4A4 kernels held disagree with the build");
+    }
+    const auto json = generic::build_manifest_json(manifest, {{"version", "test"}});
+    if (json.find("\"build\": {\n    \"version\": \"test\"") == std::string::npos ||
+        json.find("\"rmma\"") == std::string::npos) {
+        fail("manifest: the document lacks its fields");
+    }
+}
+
 constexpr Shape kShapes[]        = {{1024, 2048}, {5120, 5120}, {1024, 12288}};
 constexpr std::int32_t kTokens[] = {1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 64, 128, 512, 2048};
 
@@ -422,9 +537,12 @@ int run_board(const TestBoard& b) {
     std::map<std::string, int> staged_refused;    // the staged family's schedules, per weight: why
     std::map<std::string, int> i8_refused;        // the I8 family's schedules, per weight: why
     std::map<std::string, int> others_refused;    // W4A4, NVFP4 tiled, ggml: family and why
+    std::map<std::string, int> manifest_checked;  // schedules the manifest holds or omits
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
+    const generic::BuildManifest manifest = generic::build_manifest();
+    check_manifest_lists(manifest, fail);
     // Weights are never read here: an aligned address stands in for the payload.
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     for (const QType qtype : kFormats) {
@@ -653,6 +771,7 @@ int run_board(const TestBoard& b) {
                 for (const LinearPolicy policy :
                      {LinearPolicy::A16Only, LinearPolicy::AllowA8, LinearPolicy::AllowA4}) {
                     check_others(w, policy, d.features, where, others_refused, fail);
+                    check_manifest(manifest, w, policy, where, manifest_checked, fail);
                     // A ggml high plane 4 bytes off: ggml's kernels refuse it for alignment.
                     if (w.layout != QuantLayout::GgmlPlanes || w.qhigh == nullptr) continue;
                     Weight off = w;
@@ -770,12 +889,16 @@ int run_board(const TestBoard& b) {
             "BF16 " + std::to_string(shape.n) + "x" + std::to_string(shape.k);
         check_staged(w, d.features, where, staged_refused, fail);
         check_tiled(w, d.features, where, tiled_refused, fail);
+        check_manifest(manifest, w, LinearPolicy::A16Only, where, manifest_checked, fail);
     }
     // ggml_mmq::device_supported reads the board (device_class), so a board with tensor mma.sync
     // admits some weight to the matrix kernel too.
     if (others_refused["vec none"] == 0 ||
         (d.features.mma_tensor && others_refused["mmq none"] == 0)) {
         fail("no ggml weight admitted to ggml's vector or matrix kernel");
+    }
+    if (manifest_checked["absent"] == 0 || manifest_checked["held"] == 0) {
+        fail("the manifest held or omitted no schedule for any weight");
     }
     if (d.features.mma_bf16_native && i8_refused["none"] == 0) {
         fail("no G64 weight admitted to an I8 tile");
@@ -810,6 +933,8 @@ int run_board(const TestBoard& b) {
     for (const auto& [why, count] : i8_refused) std::cout << " " << why << " " << count;
     std::cout << "; others:";
     for (const auto& [why, count] : others_refused) std::cout << " " << why << " " << count;
+    std::cout << "; manifest:";
+    for (const auto& [what, count] : manifest_checked) std::cout << " " << what << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }

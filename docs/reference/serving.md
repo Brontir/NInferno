@@ -159,6 +159,34 @@ The optimum per task and its limits are in the
 [CLI guide](../cli.md#choosing-the-backend-and-draft-count). Under concurrency `--spec auto` bounds
 these depths per decode step ([section 3](#3-speculative-decoding)).
 
+### Build manifest
+
+`ninferno-serve --build-manifest` (the first argument; any other argument is ignored, except that
+`--help` or `-h` anywhere prints the usage instead, as for every command) prints what this binary
+holds of the generic GEMM kernels, as JSON, and exits. It needs no GPU and reads no model. The
+document:
+
+- `build`: the decision fingerprint's build section as strings (`version`, `git_commit`, `arch`,
+  `arch_specific`, `cuda_architectures`, `embed_ptx`, `nvfp4`, `cudart`).
+- `arch`, `arch_specific`, `native_nvfp4`: the architecture the tree compiles for, whether its
+  target is architecture- or family-specific, whether the NVFP4 kernels are in it.
+- `volta_cutlass`: whether Volta's CUTLASS prefill is in it; on a build without tensor `mma.sync`
+  it is what the tiled route's first schedule runs for the formats without a tile of their own
+  (the later schedules omit those formats), so without it they are among the first schedule's
+  `omitted_formats` too.
+- `cuda_compiler`, `cxx_compiler`, `cuda_architectures`: the compilers that built it ("NVIDIA
+  13.4.92", "GNU 15.2.0") and the CMake architecture list.
+- `families`: each kernel family (`rmma`, `w4a4`, `tiled`, `w4a8`, `staged`, `nvfp4t`, `r8`,
+  `ggml_mmq`, `ggml_vec`, `i8`, `scalar`), its declared schedules in order, each with `route` (the
+  route-table name), `compiled` (whether the binary holds its kernel), `only_formats` (when the
+  kernel is compiled for these formats alone) and `omitted_formats` (formats this build has no
+  kernel of it for: a decoder without that tile, or a tile past the build's shared memory;
+  `"<format>@k128"`: at K a multiple of 128 only).
+- `r8_verify_formats`: the formats with R8's verify-width form.
+
+Formats are named as in the route tables (`q4k`, `nvfp4`, ...). What a GPU can run of it (its
+instructions and shared memory) is the start's to decide; the manifest says what the build has.
+
 ### Model id
 
 When `--model-id` is omitted, the server advertises and accepts the artifact's `metadata.name`,
@@ -1685,6 +1713,7 @@ contract.
 | `--recipe NAME` | conversion recipe of a hub model or checkpoint | the official one |
 | `--quant LABEL` | the GGUF quantization of a hub model | NVFP4, MXFP4, Q8_0, BF16, ... in that order |
 | `--prepare-only` | fetch and convert, then exit | off |
+| `--build-manifest` | as the first argument: print what this binary holds of the generic GEMM kernels and the compilers that built it as JSON, then exit, no GPU and no model ([build manifest](#build-manifest)) | off |
 | `--plan` | print the plan ladder, the rung the free memory picks now and the advice, then exit without serving ([automatic context selection](#automatic-context-selection)) | off |
 | `--json` | with `--plan`: print it as JSON | off |
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
