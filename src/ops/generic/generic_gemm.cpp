@@ -4349,6 +4349,112 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     return out;
 }
 
+BuildManifest build_manifest() {
+    BuildManifest m;
+#ifdef NINFERNO_BUILD_ARCH
+    m.arch = NINFERNO_BUILD_ARCH;
+#endif
+#ifdef NINFERNO_BUILD_ARCH_SPECIFIC
+    m.arch_specific = true;
+#endif
+    m.native_nvfp4 = kNativeNvfp4;
+    // The formats the generic path has a codec for: every QType number route_table names.
+    std::vector<std::pair<QType, WeightCodec>> formats;
+    for (int n = 0; n <= 0xFF; ++n) {
+        Weight w{};
+        w.qtype = static_cast<QType>(n);
+        if (std::string_view(qtype_name(w.qtype)) == "unknown") continue;
+        try {
+            formats.emplace_back(w.qtype, codec_of(w));
+        } catch (const std::exception&) {}
+    }
+    const auto add = [&](Family family, int count, auto&& fill) {
+        for (int i = 0; i < count; ++i) {
+            ManifestSchedule s;
+            s.route    = Route{family, static_cast<std::uint8_t>(i)};
+            s.compiled = true;
+            fill(i, s);
+            m.schedules.push_back(std::move(s));
+        }
+    };
+    const auto none = [](int, ManifestSchedule&) {};
+    add(Family::Scalar, 1, none);
+    add(Family::RegisterMma, rmma_schedule_count(), [&](int i, ManifestSchedule& s) {
+        s.compiled         = rmma_schedule_launchable(i);
+        const auto info    = rmma_schedule_info(i);
+        for (const auto& [qtype, codec] : formats) {
+            if (!rmma_tile_compiled(codec, info.m_tiles, info.n_tiles, 0)) {
+                s.omitted_formats.push_back({qtype, 0});
+            } else if (!rmma_tile_compiled(codec, info.m_tiles, info.n_tiles, 128)) {
+                s.omitted_formats.push_back({qtype, 128});
+            }
+        }
+    });
+    add(Family::W4a4Mma, w4a4_schedule_names(),
+        [](int i, ManifestSchedule& s) { s.compiled = i < w4a4_schedule_count(); });
+    // A tile past this build's shared-memory ceiling (kMaxSharedBytesPerBlock) compiles to a stub
+    // (generic_tiled.cu, generic_w4a8.cuh, generic_staged.cu, generic_i8.cu): the fits checks the
+    // refusals answer Resource by. Staged's device check (staged_device_fits) is the board's.
+    // The tiles are compiled for tiled_supports' codecs and Q8 (the Volta tiles, volta_tiled_route).
+    // On a build without tensor mma.sync, schedule 0 alone names the CUTLASS copy of every other
+    // format (volta_cutlass_only; tiled_refusal: CodecTile past it): those formats are omitted from
+    // the later schedules, and from schedule 0 too when the build has no CUTLASS.
+    m.volta_cutlass         = volta_cutlass_compiled();
+    const bool cutlass_tier = !build_features().mma_tensor;
+    add(Family::TiledMma, tiled_schedule_count(), [&](int i, ManifestSchedule& s) {
+        for (const auto& [qtype, codec] : formats) {
+            const bool tile = tiled_supports(codec) || codec == WeightCodec::Q8;
+            if ((tile && !tiled_fits(i, codec)) ||
+                (!tile && cutlass_tier && (i != 0 || !m.volta_cutlass))) {
+                s.omitted_formats.push_back({qtype, 0});
+            }
+        }
+    });
+    add(Family::W4a8Mma, w4a8_schedule_count(), [&](int i, ManifestSchedule& s) {
+        const bool producer = w4a8_schedule_info(i).producers > 0;
+        int read            = 0;
+        for (const auto& f : formats) {
+            if (!w4a8_supports(f.first)) continue;
+            ++read;
+            if (producer && w4a8_ws_supports(f.first)) s.only_formats.push_back(f.first);
+            if (!w4a8_fits(i, f.first)) s.omitted_formats.push_back({f.first, 0});
+        }
+        // Omitted for every format it reads (the producer tiles below 99 KiB): no kernel at all.
+        s.compiled = static_cast<int>(s.omitted_formats.size()) < read;
+    });
+    add(Family::StagedMma, staged_schedule_count(),
+        [](int i, ManifestSchedule& s) { s.compiled = staged_fits(i); });
+    add(Family::Nvfp4TiledMma, nvfp4_tiled_schedule_count(),
+        [](int, ManifestSchedule& s) { s.compiled = kNativeNvfp4; });
+    add(Family::R8Mma, r8_schedule_count(), none);
+    for (const Family family : {Family::GgmlMmq, Family::GgmlVec}) {
+        add(family, 1, [&](int, ManifestSchedule& s) {
+            for (const auto& f : formats) {
+                Weight w{};
+                w.qtype         = f.first;
+                const auto type = mmq_type(w);
+                if (type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
+                                                       : ggml_mmq::vec_supported(*type))) {
+                    s.only_formats.push_back(f.first);
+                }
+            }
+        });
+    }
+    // generic_i8.cu compiles its kernels from sm_80 on (NINFERNO_I8_KERNELS); below, empty bodies.
+    add(Family::I8Mma, i8_schedule_count(), [&](int i, ManifestSchedule& s) {
+        s.compiled = m.arch == 0 || m.arch >= 80;
+        for (const QType q : {QType::Q4_G64_FP16, QType::Q5_G64_FP16, QType::Q6_G64_FP16}) {
+            if (!i8_fits(i, q)) s.omitted_formats.push_back({q, 0});
+        }
+    });
+    for (const auto& f : formats) {
+        if (r8_supports(f.first) && r8_verify_compiled(f.first)) {
+            m.r8_verify_formats.push_back(f.first);
+        }
+    }
+    return m;
+}
+
 FamilyCoverage staged_coverage(const Weight& w) {
     FamilyCoverage c;
     c.declared       = staged_schedule_count();

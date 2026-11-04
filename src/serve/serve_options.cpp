@@ -31,6 +31,7 @@ using product::parse_u64;
 
 std::string serve_usage_text(const char* argv0) {
     return std::string("usage: ") + argv0 + " --version\n       " + argv0 +
+           " --build-manifest\n       " + argv0 +
            " <model.ninferno | checkpoint-dir | model.gguf | org/name[@revision]> "
            "[--recipe NAME] [--quant LABEL] [--prepare-only] [--plan [--json] [--no-load "
            "[--plan-device NAME]]] [--with-drafters] [--accept-converted | --refetch "
@@ -273,6 +274,10 @@ ServeOptions parse_serve_options(int argc, char** argv) {
     }
     if (version_requested(argc, argv)) {
         options.version_requested = true;
+        return options;
+    }
+    if (argc >= 2 && std::string_view(argv[1]) == "--build-manifest") {
+        options.build_manifest_requested = true;
         return options;
     }
     if (argc < 2) {

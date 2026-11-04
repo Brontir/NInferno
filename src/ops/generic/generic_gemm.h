@@ -645,6 +645,40 @@ struct KernelResources {
                                                             Epilogue epilogue,
                                                             std::int32_t tokens);
 
+// What this build holds of the generic GEMM families (#307), read without a device: every declared
+// schedule, whether the binary holds its kernel, and where that depends on the format, which
+// formats. The refusals' NotCompiled and CodecTile read the same predicates: a schedule this build
+// omits (rmma_schedule_launchable: a cluster split outside the 120a build; w4a4_schedule_count;
+// kNativeNvfp4), the formats a schedule's kernel alone is compiled for (the producer-warp W4A8
+// tile, w4a8_ws_supports; ggml's kernels, their own types), and the formats whose decoder omits a
+// register-MMA tile (rmma_tile_compiled), or whose tile is past the build's shared-memory ceiling
+// and compiles to a stub (tiled_fits, w4a8_fits, i8_fits; staged_fits for a whole schedule: the
+// refusals' Resource); the I8 kernels from sm_80 on. What the device can run (instructions, its
+// own shared memory, staged_device_fits) is the coverage queries' to say, not this one's.
+struct OmittedFormat {
+    QType qtype;
+    // 0: at every K; else at K a multiple of this (the u4 G32 / G64 quad-run decoder from 128).
+    std::int32_t k_multiple = 0;
+};
+struct ManifestSchedule {
+    Route route;
+    bool compiled = false;
+    std::vector<QType> only_formats; // empty: every format the family reads
+    std::vector<OmittedFormat> omitted_formats;
+};
+struct BuildManifest {
+    int arch           = 0; // the architecture the tree compiles for (NINFERNO_BUILD_ARCH)
+    bool arch_specific = false;
+    bool native_nvfp4  = false;
+    // Volta's CUTLASS prefill (generic_volta_cutlass.cu, volta_cutlass_compiled): on a build
+    // without tensor mma.sync, what the tiled route's schedule 0 runs for the formats without a
+    // tile of their own; without it those formats are omitted there.
+    bool volta_cutlass = false;
+    std::vector<ManifestSchedule> schedules; // family by family, in schedule order
+    std::vector<QType> r8_verify_formats;    // R8's verify-width form (r8_verify_compiled)
+};
+[[nodiscard]] BuildManifest build_manifest();
+
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
 // kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the
