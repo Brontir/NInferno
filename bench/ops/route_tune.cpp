@@ -247,8 +247,8 @@ int main(int argc, char** argv) {
                 call.segment_rows[0] = p.n;
                 // One warm call, then the median of `samples`, each after the tuners' read flush
                 // (core/tune_timer.h): a memset flush left the L2 dirty and the timed call paid its
-                // write-back (RTX 4070 Ti, Q6_K 4096x12288 T=4: 142 us here against 124 in
-                // ninferno_linear_bench, whose flush reads).
+                // write-back (RTX 4070 Ti, Q6_K 4096x12288 T=4, rmma.m1.n1.w1x8: 169 us with the
+                // memset flush, 125 with this one, ninferno_linear_bench 125).
                 const double us =
                     timer.median_us([&](cudaStream_t s) { generic::run_route(r, call, &workspace, s); });
                 if (routes_csv) {
