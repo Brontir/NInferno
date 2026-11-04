@@ -984,12 +984,12 @@ int main() {
     // key keeps quiet.
     using ninferno::is_loopback_host;
     using ninferno::serve::open_bind_warning;
-    for (const char* host : {"127.0.0.1", "127.1.2.3", "localhost", "LocalHost", "::1", "[::1]"}) {
+    for (const char* host : {"127.0.0.1", "127.1.2.3", "127.255.255.255", "localhost", "LocalHost", "::1", "[::1]"}) {
         failures += check(is_loopback_host(host), "a loopback host read as open");
     }
     for (const char* host :
          {"0.0.0.0", "192.168.1.10", "::", "127.0.0.1.example.com", "127.x.0.1", "127..0.1",
-          "127.0.0.0001", "my-host", ""}) {
+          "127.0.0.0001", "127.999.999.999", "127.0.0.256", "my-host", ""}) {
         failures += check(!is_loopback_host(host), "an open host read as loopback");
     }
     failures += check(open_bind_warning("127.0.0.1", 8080, false).empty(),

@@ -22,16 +22,19 @@ namespace ninferno {
         }
         if (same) { return true; }
     }
-    // 127.x.y.z: four dot-separated decimal parts of one to three digits, the first 127.
+    // 127.x.y.z: four dot-separated decimal parts of one to three digits and at most 255, the
+    // first 127 (127.999.0.1 is a name some resolver may send anywhere, not an address).
     if (host.substr(0, 4) != "127.") { return false; }
-    int parts = 1, digits = 0;
+    int parts = 1, digits = 0, value = 0;
     for (const char c : host.substr(4)) {
         if (c == '.') {
             if (digits == 0) { return false; }
             ++parts;
             digits = 0;
+            value = 0;
         } else if (c >= '0' && c <= '9') {
-            if (++digits > 3) { return false; }
+            value = value * 10 + (c - '0');
+            if (++digits > 3 || value > 255) { return false; }
         } else {
             return false;
         }
