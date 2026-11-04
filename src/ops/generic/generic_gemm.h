@@ -358,6 +358,8 @@ inline constexpr std::int32_t kMmqMinTokens = 5;
 // "staged.<rows>x<tokens>.w<WM>x<WN>.s<stages>",
 // "nvfp4t.c<classes>.<BM>x<BN>", "scalar".
 [[nodiscard]] std::string route_name(Route route);
+// A family's name, the first field of its routes' names ("rmma", "w4a8", "ggml_vec", ...).
+[[nodiscard]] std::string_view family_name(Family family) noexcept;
 // The W4A8 schedule run_route executes for a W4A8 route of this weight (its producer-warp or
 // classic twin where the weight takes the other one); any other route unchanged.
 [[nodiscard]] Route w4a8_executed_route(Route route, const Weight& weight);
@@ -615,6 +617,33 @@ struct R8Coverage {
 // selection prices these families against the others (cost_route), and the call decides.
 [[nodiscard]] FamilyCoverage other_family_coverage(Family family, const Weight& weight,
                                                    LinearPolicy policy);
+
+// Each generic family as an alternative for a call (#306): the family's route for it, its cost
+// where the selection prices it, else why the family has none.
+// - route: the family's cheapest priced route, else its pick where that is legal, else its first
+//   legal schedule.
+// - seconds: cost_route's time for that route, where heuristic_route prices the call (17 tokens or
+//   more outside the prefill profile, not NVFP4) and the route is one it prices.
+// - refusal: set where no route. It is the pick's refusal, else the first schedule's.
+// - call: R8's refusal of the call itself; there is then no route.
+// - compiled: as the family's coverage counts it.
+// Which route the call selects is select_route's; this lists, it does not choose.
+struct FamilyAlternative {
+    Family family = Family::RegisterMma;
+    std::optional<Route> route;
+    std::optional<double> seconds;
+    ScheduleRefusal refusal = ScheduleRefusal::None;
+    R8CallRefusal call      = R8CallRefusal::None;
+    int compiled            = 0;
+};
+[[nodiscard]] std::vector<FamilyAlternative> family_alternatives(const Problem& problem,
+                                                                 const Weight& weight,
+                                                                 std::int32_t tokens, bool prefill);
+// cost_route's time for `route` on a call of `tokens` tokens (the A16 scale applied). nullopt where
+// it does not price the route: no roofline in the facts, a family it does not price, or a route
+// route_admits refuses.
+[[nodiscard]] std::optional<double> route_cost_seconds(const Problem& problem, const Weight& weight,
+                                                       Route route, std::int32_t tokens);
 
 // The compiled resources of the kernel a launch runs (#298), as the driver reports them for this
 // binary on this device (cudaFuncGetAttributes): exact facts of the build, not predictions; a

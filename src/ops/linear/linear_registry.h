@@ -58,11 +58,24 @@ struct LinearDecision {
 // that took the call from the shape's kernels, or "owned" for a route the shape's kernels win
 // over). Unavailable: no such implementation for the weight (`why`: what lacks; a ggml_frag_v1
 // weight, which ops::linear refuses, has neither). T must be positive.
+// After these two, each other generic family ("generic.<family>:<route>", generic::
+// family_alternatives) as an alternative to the selected route, where the generic path reads the
+// weight:
+// - Unavailable: no schedule compiled for the format.
+// - Inadmissible: no schedule takes the call (`why`: the refusal).
+// - Dominated: priced, and no cheaper than the selected route by the same model.
+// - PricedBelow: priced cheaper than the selected route, so the selection is not the model's
+//   (a route table, the tuned prefill route or a pin chose it).
+// - Unpriced: takes the call, but there is no comparable cost (a call the model does not price,
+//   a selected route it does not price, or the shape's own kernels selected).
+// `seconds`: the model's time where it prices the candidate (the selected generic route too: the
+// route select_route asks for; the call's layout and workspace may still resolve it lower).
 struct LinearCandidate {
-    enum class Status { Selected, Inadmissible, Unavailable };
+    enum class Status { Selected, Inadmissible, Unavailable, Dominated, PricedBelow, Unpriced };
     std::string id;
     Status status = Status::Unavailable;
     std::string why;
+    std::optional<double> seconds;
 };
 // The launch a shape-owned table selects for [n,k] at width t (#306): the shape and the launch's
 // number in the order the widths 1..t first select its launches ("n1024_k2048.launch2"). The

@@ -26,7 +26,7 @@ class Collect(unittest.TestCase):
         return path
 
     def run_collect(self, passes, selected, qualified="generic linear and route class tests"):
-        sel = self.write("sel.csv", SELECTED_HEAD + selected)
+        sel = [self.write(f"sel{i}.csv", SELECTED_HEAD + selected) for i in range(len(passes))]
         routes = [self.write(f"p{i}.csv", HEAD + text) for i, text in enumerate(passes, 1)]
         return collect.collect(sel, routes, "held-board", "held-model", "rev", "build", "both",
                                ["fit-board"], ["fit-model"], qualified)
@@ -62,6 +62,8 @@ class Collect(unittest.TestCase):
         doc = self.run_collect([rows], "q8,a16,store,64,64,1,rmma.a,rmma.a\n", qualified="")
         self.assertTrue(all(c["status"] == "unmeasured" for c in doc["cases"][0]["candidates"]))
         self.assertNotIn("qualification", doc)
+        doc = self.run_collect([rows], "q8,a16,store,64,64,1,rmma.a,rmma.a\n", qualified="  ")
+        self.assertTrue(all(c["status"] == "unmeasured" for c in doc["cases"][0]["candidates"]))
 
     def test_other_compute_class_is_ineligible(self):
         rows = ("q4k,a16,store,64,64,12,rmma.a,5\nq4k,a16,store,64,64,12,rmma.b,6\n"
@@ -91,8 +93,12 @@ class Collect(unittest.TestCase):
         with self.assertRaises(ValueError):
             collect.collect([a, b], [self.write("p1.csv", HEAD + rows)], "b", "m", "r", "i",
                             "both", [], [], "q")
-        doc = collect.collect([a, a], [self.write("p1.csv", HEAD + rows)], "b", "m", "r", "i",
-                              "both", [], [], "q")
+        with self.assertRaises(ValueError):  # one selection for two passes
+            collect.collect([a], [self.write("p1.csv", HEAD + rows), self.write("p2.csv", HEAD + rows)],
+                            "b", "m", "r", "i", "both", [], [], "q")
+        doc = collect.collect([a, a], [self.write("p1.csv", HEAD + rows),
+                                       self.write("p2.csv", HEAD + rows)],
+                              "b", "m", "r", "i", "both", [], [], "q")
         self.assertIn("A16Only", doc["cases"][0]["numerical_contract"])
         self.assertIn("speed route profile", doc["cases"][0]["workload"])
 

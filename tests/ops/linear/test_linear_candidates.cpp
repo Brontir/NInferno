@@ -58,15 +58,38 @@ struct Described {
 const char* status_name(Candidate::Status s) {
     return s == Candidate::Status::Selected       ? "selected"
            : s == Candidate::Status::Inadmissible ? "inadmissible"
+           : s == Candidate::Status::Dominated    ? "dominated"
+           : s == Candidate::Status::PricedBelow  ? "priced_below"
+           : s == Candidate::Status::Unpriced     ? "unpriced"
                                                   : "unavailable";
 }
 
 std::string describe(const std::vector<Candidate>& c) {
     std::string out;
     for (const Candidate& x : c) {
-        out += " [" + x.id + " " + status_name(x.status) + (x.why.empty() ? "" : " " + x.why) + "]";
+        out += " [" + x.id + " " + status_name(x.status) + (x.why.empty() ? "" : " " + x.why) +
+               (x.seconds ? " " + std::to_string(*x.seconds * 1e6) + " us" : "") + "]";
     }
     return out;
+}
+
+// The generic families after the two (#306): none selected; nothing priced below 17 tokens; a
+// dominated one no cheaper than the selected route by the model's times, one priced below it
+// cheaper.
+void alternatives(const std::vector<Candidate>& c, std::int32_t t, const std::string& at) {
+    for (std::size_t i = 2; i < c.size(); ++i) {
+        const Candidate& x = c[i];
+        check(x.id.rfind("generic.", 0) == 0, at + ": " + x.id + " a generic family");
+        check(x.status != Candidate::Status::Selected, at + ": " + x.id + " not selected");
+        check(t >= 17 || !x.seconds, at + ": " + x.id + " unpriced below 17 tokens");
+        const bool compared = x.seconds && c[1].seconds;
+        check(x.status != Candidate::Status::Dominated ||
+                  (compared && *x.seconds >= *c[1].seconds),
+              at + ": " + x.id + " dominated: no cheaper than the selected route");
+        check(x.status != Candidate::Status::PricedBelow ||
+                  (compared && *x.seconds < *c[1].seconds),
+              at + ": " + x.id + " priced below the selected route");
+    }
 }
 
 // The candidates of one call held to the decision: the owned kernel is Selected exactly where the
@@ -78,8 +101,9 @@ void call(std::int32_t n, std::int32_t k, std::int32_t t, ops::LinearPolicy poli
     const auto decision = ops::detail::linear_decision(d.weight, policy, t);
     const auto c        = ops::detail::linear_candidates(d.weight, policy, t);
     const std::string at = name + " T=" + std::to_string(t) + ":" + describe(c);
-    check(c.size() == 2, at + ": two candidates");
-    if (c.size() != 2) return;
+    check(c.size() >= 2, at + ": the owned kernel and the generic route first");
+    if (c.size() < 2) return;
+    alternatives(c, t, at);
     const bool owned_claims = decision.claim == ops::detail::LinearClaim::Owned;
     const bool registered   = ops::detail::q8_linear_registered(n, k);
     check(c[0].id.rfind("owned:q8", 0) == 0, at + ": the owned candidate first");
@@ -169,9 +193,10 @@ int main() {
         const ops::ScopedInvariantRoutes invariant(true);
         const Described d(1024, 2048);
         const auto c = ops::detail::linear_candidates(d.weight, ops::LinearPolicy::A16Only, 1);
-        check(c.size() == 2 && c[0].status == Candidate::Status::Inadmissible &&
+        check(c.size() >= 2 && c[0].status == Candidate::Status::Inadmissible &&
                   c[0].why == "invariant" && c[1].status == Candidate::Status::Selected,
               "invariant profile:" + describe(c));
+        if (c.size() >= 2) alternatives(c, 1, "invariant profile");
     }
     // Every width 1..512 of a shape whose table changes launch often: the identity follows it.
     for (std::int32_t t = 1; t <= 512; ++t) {
@@ -193,6 +218,12 @@ int main() {
         check(c.size() == 2 && c[0].status == Candidate::Status::Unavailable &&
                   c[1].status == Candidate::Status::Unavailable,
               "ggml_frag_v1:" + describe(c));
+    }
+    {
+        const Described d(4160, 1024);
+        std::cout << "q8 4160x1024 a16 T=64:"
+                  << describe(ops::detail::linear_candidates(d.weight, ops::LinearPolicy::A16Only, 64))
+                  << '\n';
     }
     if (failures != 0) {
         std::cerr << "linear candidates: " << failures << " failure(s)\n";

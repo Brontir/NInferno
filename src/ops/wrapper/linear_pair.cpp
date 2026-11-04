@@ -6,6 +6,7 @@
 #include "ops/linear/linear_registry.h"
 #include "ops/linear_pair/q8/q8_pair_plan.h"
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <cstdint>
@@ -128,7 +129,11 @@ std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first, con
         bool both_run = true;
         for (const Weight* w : {&first, &second}) {
             bool runs = false;
-            for (LinearCandidate& c : linear_candidates(*w, LinearPolicy::A16Only, tokens)) {
+            // The two implementations linear() chooses between (the shape's kernel and the
+            // generic route), not the generic families listed after them.
+            auto parts = linear_candidates(*w, LinearPolicy::A16Only, tokens);
+            parts.resize(std::min<std::size_t>(parts.size(), 2));
+            for (LinearCandidate& c : parts) {
                 runs = runs || c.status == Status::Selected;
                 separate.parts.push_back(std::move(c));
             }
