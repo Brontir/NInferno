@@ -771,9 +771,12 @@ int run_board(const TestBoard& b) {
         check_staged(w, d.features, where, staged_refused, fail);
         check_tiled(w, d.features, where, tiled_refused, fail);
     }
-    // (The matrix kernel asks the stand's own device, ggml_mmq::device_supported: a Volta stand
-    // runs these boards without it.)
-    if (others_refused["vec none"] == 0) fail("no ggml weight admitted to ggml's vector kernel");
+    // ggml_mmq::device_supported reads the board (device_class), so a board with tensor mma.sync
+    // admits some weight to the matrix kernel too.
+    if (others_refused["vec none"] == 0 ||
+        (d.features.mma_tensor && others_refused["mmq none"] == 0)) {
+        fail("no ggml weight admitted to ggml's vector or matrix kernel");
+    }
     if (d.features.mma_bf16_native && i8_refused["none"] == 0) {
         fail("no G64 weight admitted to an I8 tile");
     }
