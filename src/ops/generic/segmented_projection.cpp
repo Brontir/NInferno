@@ -7,6 +7,7 @@
 #include "ninferno/ops/silu_mul.h"
 #include "ops/gdn_input_proj/gdn_projected_conv.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/segmented_gating.h"
 #include "ops/linear/linear_registry.h"
 
 #include <algorithm>
@@ -19,15 +20,6 @@
 #include <vector>
 
 namespace ninferno::ops {
-namespace detail::generic {
-void launch_gdn_gating_runtime(const Tensor& ab, const Tensor& A_log, const Tensor& dt_bias,
-                               Tensor& g, Tensor& beta, cudaStream_t stream);
-void launch_gdn_norm_gating_simt(const Tensor& x, const Tensor& norm_weight, float eps,
-                                 const void* a_rows, const void* b_rows, const Tensor& A_log,
-                                 const Tensor& dt_bias, Tensor& h, Tensor& g, Tensor& beta,
-                                 cudaStream_t stream);
-} // namespace detail::generic
-
 namespace {
 
 namespace generic = detail::generic;
@@ -371,26 +363,39 @@ namespace {
 
 bool aligned16(const void* p) { return (reinterpret_cast<std::uintptr_t>(p) & 15U) == 0; }
 
-// Rows [row, row + rows) of the bank as one BF16 row-major pointer: they lie in one slice of a
-// contiguous BF16 parent. nullptr otherwise.
-const void* bf16_bank_rows(const SegmentedProjectionWeights& w, std::int32_t row,
-                           std::int32_t rows) {
+// Rows [row, row + rows) of the bank as the fused control kernel reads them: they lie in one slice
+// of a contiguous BF16 parent, or of a Q8_G32_FP16 row-split parent whose rows are K codes (no
+// padding) with K / 32 FP16 scales each. Empty otherwise.
+generic::GdnControlRows control_bank_rows(const SegmentedProjectionWeights& w, std::int32_t row,
+                                          std::int32_t rows) {
     std::int32_t logical = 0;
     for (const auto& s : w.slices) {
         if (row >= logical && row + rows <= logical + s.rows) {
-            const Weight& p = s.parent;
-            if (p.qtype != QType::BF16 || p.layout != QuantLayout::Contiguous ||
-                p.qdata == nullptr || p.scales != nullptr || p.qhigh != nullptr) {
-                return nullptr;
+            const Weight& p           = s.parent;
+            const std::size_t first   = static_cast<std::size_t>(s.row_begin) + (row - logical);
+            const std::size_t columns = static_cast<std::size_t>(p.k);
+            if (p.qtype == QType::BF16 && p.layout == QuantLayout::Contiguous &&
+                p.qdata != nullptr && p.scales == nullptr && p.qhigh == nullptr) {
+                const auto* data = static_cast<const std::uint8_t*>(p.qdata) +
+                                   first * columns * sizeof(std::uint16_t);
+                if (aligned16(data)) return {data, nullptr};
             }
-            const auto* data = static_cast<const std::uint8_t*>(p.qdata) +
-                               (static_cast<std::size_t>(s.row_begin) + (row - logical)) *
-                                   static_cast<std::size_t>(p.k) * sizeof(std::uint16_t);
-            return aligned16(data) ? data : nullptr;
+            if (p.qtype == QType::Q8_G32_FP16 && p.layout == QuantLayout::RowSplit &&
+                p.qdata != nullptr && p.scales != nullptr && p.qhigh == nullptr &&
+                p.k % 32 == 0 && p.padded_shape[1] == p.k) {
+                const auto* codes  = static_cast<const std::uint8_t*>(p.qdata) + first * columns;
+                const auto* scales = static_cast<const std::uint8_t*>(p.scales) +
+                                     first * (columns / 32) * sizeof(std::uint16_t);
+                if ((reinterpret_cast<std::uintptr_t>(codes) & 7U) == 0 &&
+                    (reinterpret_cast<std::uintptr_t>(scales) & 1U) == 0) {
+                    return {codes, scales};
+                }
+            }
+            return {};
         }
         logical += s.rows;
     }
-    return nullptr;
+    return {};
 }
 
 } // namespace
@@ -405,26 +410,27 @@ void segmented_gdn_norm_gating_proj(const Tensor& x, const Tensor& norm_weight, 
     require(g.ne[0] == heads && beta.ne[0] == heads && A_log.ne[0] == heads &&
                 dt_bias.ne[0] == heads,
             "segmented GDN control: head count differs");
-    // Decode and verify widths with BF16 a/b: the norm, both projections and the gates in one
-    // kernel (the 27B's fused form at this geometry), whose CTAs each read one head's two rows.
-    // The composed form below costs four dependent launches and runs each projection on
-    // heads / 16 CTAs; this one runs heads CTAs and one launch. It sums K in its own order, so it
-    // stays out of the invariant route profile, and keeps to the decode/verify widths, where no
-    // profile asks a token's bytes to follow a wider call's.
+    // Decode and verify widths with BF16 or Q8 a/b (a GGUF model's Q8_0 control): the norm, both
+    // projections and the gates in one kernel (the 27B's fused form at this geometry), whose CTAs
+    // each read one head's two rows. The composed form below costs four dependent launches and
+    // runs each projection on heads / 16 CTAs; this one runs heads CTAs and one launch. Q8 rows
+    // are read at 16-bit activations (the composed form's routes may quantize h to int8). It sums
+    // K in its own order, so it stays out of the invariant route profile, and keeps to the
+    // decode/verify widths, where no profile asks a token's bytes to follow a wider call's.
     const std::int32_t d = x.ne[0];
     if (tokens <= kSegmentedFusedControlMaxTokens && !invariant_routes_active() && d % 8 == 0 &&
         weights.columns() == d && aligned16(x.data) && aligned16(norm_weight.data) &&
         aligned16(h.data)) {
-        const void* a_rows = bf16_bank_rows(weights, 0, heads);
-        const void* b_rows = bf16_bank_rows(weights, heads, heads);
-        if (a_rows != nullptr && b_rows != nullptr) {
+        const generic::GdnControlRows a = control_bank_rows(weights, 0, heads);
+        const generic::GdnControlRows b = control_bank_rows(weights, heads, heads);
+        if (a.rows != nullptr && b.rows != nullptr &&
+            (a.scales == nullptr) == (b.scales == nullptr)) {
             Tensor x_matrix    = as_matrix(x);
             Tensor h_matrix    = as_matrix(h);
             Tensor g_matrix    = as_matrix(g);
             Tensor beta_matrix = as_matrix(beta);
-            detail::generic::launch_gdn_norm_gating_simt(x_matrix, norm_weight, eps, a_rows, b_rows,
-                                                         A_log, dt_bias, h_matrix, g_matrix,
-                                                         beta_matrix, stream);
+            generic::launch_gdn_norm_gating_simt(x_matrix, norm_weight, eps, a, b, A_log, dt_bias,
+                                                 h_matrix, g_matrix, beta_matrix, stream);
             return;
         }
     }
@@ -435,7 +441,7 @@ void segmented_gdn_norm_gating_proj(const Tensor& x, const Tensor& norm_weight, 
     project(as_matrix(h), weights, outputs, workspace, stream);
     Tensor g_matrix    = as_matrix(g);
     Tensor beta_matrix = as_matrix(beta);
-    detail::generic::launch_gdn_gating_runtime(ab, A_log, dt_bias, g_matrix, beta_matrix, stream);
+    generic::launch_gdn_gating_runtime(ab, A_log, dt_bias, g_matrix, beta_matrix, stream);
 }
 
 bool project_side_by_side(const Tensor& x, std::span<const SideBySideProjection> projections,

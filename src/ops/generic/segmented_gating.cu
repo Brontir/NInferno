@@ -4,6 +4,7 @@
 #include "core/device.h"
 #include "core/device_class.h"
 #include "core/tensor.h"
+#include "ops/generic/segmented_gating.h"
 #include "ops/common/math.cuh"
 #include "ops/gdn_gating_proj/bf16/bf16_gdn_norm_gating_simt.cuh"
 
@@ -59,9 +60,9 @@ int gdn_norm_gating_simt_threads(std::int32_t d) noexcept {
 }
 
 void launch_gdn_norm_gating_simt(const Tensor& x, const Tensor& norm_weight, float eps,
-                                 const void* a_rows, const void* b_rows, const Tensor& A_log,
-                                 const Tensor& dt_bias, Tensor& h, Tensor& g, Tensor& beta,
-                                 cudaStream_t stream) {
+                                 const GdnControlRows& a, const GdnControlRows& b,
+                                 const Tensor& A_log, const Tensor& dt_bias, Tensor& h, Tensor& g,
+                                 Tensor& beta, cudaStream_t stream) {
     const std::int32_t d      = x.ne[0];
     const std::int32_t heads  = g.ne[0];
     const std::int32_t tokens = x.ne[1];
@@ -78,14 +79,16 @@ void launch_gdn_norm_gating_simt(const Tensor& x, const Tensor& norm_weight, flo
         tile *= 2;
     }
     const auto launch = [&]<int Tile, int Threads>() {
-        gdn_norm_gating_simt_kernel<Tile, Threads>
-            <<<dim3(static_cast<unsigned>(heads),
-                    static_cast<unsigned>((tokens + Tile - 1) / Tile)),
-               Threads, 0, stream>>>(
+        const auto kernel = a.scales != nullptr
+                                ? gdn_norm_gating_simt_kernel<Tile, Threads, 0, 0, true>
+                                : gdn_norm_gating_simt_kernel<Tile, Threads, 0, 0, false>;
+        kernel<<<dim3(static_cast<unsigned>(heads),
+                      static_cast<unsigned>((tokens + Tile - 1) / Tile)),
+                 Threads, 0, stream>>>(
                 static_cast<const __nv_bfloat16*>(x.data),
-                static_cast<const __nv_bfloat16*>(norm_weight.data),
-                static_cast<const __nv_bfloat16*>(a_rows),
-                static_cast<const __nv_bfloat16*>(b_rows), static_cast<const float*>(A_log.data),
+                static_cast<const __nv_bfloat16*>(norm_weight.data), a.rows, b.rows,
+                static_cast<const unsigned short*>(a.scales),
+                static_cast<const unsigned short*>(b.scales), static_cast<const float*>(A_log.data),
                 static_cast<const float*>(dt_bias.data), static_cast<__nv_bfloat16*>(h.data),
                 static_cast<float*>(g.data), static_cast<float*>(beta.data), tokens, eps, d, heads);
     };

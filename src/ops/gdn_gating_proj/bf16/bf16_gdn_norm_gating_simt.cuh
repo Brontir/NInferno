@@ -1,28 +1,59 @@
 #pragma once
 
-// The GDN input RMSNorm and BF16 a/b control projection as one SIMT kernel: one CTA per head and
+// The GDN input RMSNorm and a/b control projection as one SIMT kernel: one CTA per head and
 // token tile computes both control dots and the token's complete sum of squares, applies the RMS
 // scale after the dots, and writes the gates; the CTAs of a tile also write disjoint pair-aligned
 // slices of h, so no separate norm kernel runs. A token's bytes depend on the geometry and
 // `Threads` only, never on `Tile` or on the other tokens of the call.
 //
 // kD/kH fix the geometry at compile time (the registered 27B form); 0 reads it from d/heads.
+// The a/b rows are BF16 (as, bs null), or with kQ8 Q8_G32_FP16 row-split rows: int8 codes at a
+// row stride of d and one FP16 scale per 32 values at as/bs (a GGUF model's Q8_0 control), each
+// value code * scale in FP32 before the same dots.
 #include "core/pdl.cuh"
 #include "ops/common/math.cuh"
 #include "ops/common/memory.cuh"
 #include "ops/common/warp.cuh"
 
 #include <cuda_bf16.h>
+#include <cuda_fp16.h>
 
 #include <cstdint>
 
 namespace ninferno::ops::detail {
 
-template <int Tile, int Threads, int kD = 0, int kH = 0>
+// Eight consecutive values of row `row` from `base` (a multiple of 8) as FP32.
+template <bool kQ8>
+__device__ __forceinline__ void gdn_control_row8(const void* w, const unsigned short* scales,
+                                                 int row, int D, int base, float (&out)[8]) {
+    if constexpr (kQ8) {
+        const uint2 c = *reinterpret_cast<const uint2*>(static_cast<const signed char*>(w) +
+                                                        std::int64_t(row) * D + base);
+        const float scale =
+            __half2float(__ushort_as_half(scales[std::int64_t(row) * (D / 32) + base / 32]));
+#pragma unroll
+        for (int i = 0; i < 8; ++i) {
+            const unsigned word = i < 4 ? c.x : c.y;
+            out[i] = float(static_cast<signed char>((word >> ((i & 3) * 8)) & 0xffU)) * scale;
+        }
+    } else {
+        const int4 v =
+            load_vec<int4>(static_cast<const __nv_bfloat16*>(w) + std::int64_t(row) * D + base);
+        const auto* p = reinterpret_cast<const unsigned*>(&v);
+#pragma unroll
+        for (int i = 0; i < 4; ++i) {
+            const float2 f = bf16x2_bits_to_float2(p[i]);
+            out[2 * i]     = f.x;
+            out[2 * i + 1] = f.y;
+        }
+    }
+}
+
+template <int Tile, int Threads, int kD = 0, int kH = 0, bool kQ8 = false>
 __global__ __launch_bounds__(Threads) void gdn_norm_gating_simt_kernel(
-    const __nv_bfloat16* x, const __nv_bfloat16* nw, const __nv_bfloat16* aw,
-    const __nv_bfloat16* bw, const float* alog, const float* bias, __nv_bfloat16* h, float* g,
-    float* beta, int tokens, float eps, int d, int heads) {
+    const __nv_bfloat16* x, const __nv_bfloat16* nw, const void* aw, const void* bw,
+    const unsigned short* as, const unsigned short* bs, const float* alog, const float* bias,
+    __nv_bfloat16* h, float* g, float* beta, int tokens, float eps, int d, int heads) {
     // A programmatic dependent (the GDN input projection, which reads h) may launch now: it waits
     // for this kernel before it reads, and streams its weights meanwhile.
     if (threadIdx.x == 0) pdl::trigger_dependents();
@@ -32,11 +63,10 @@ __global__ __launch_bounds__(Threads) void gdn_norm_gating_simt_kernel(
               first = blockIdx.y * Tile;
     float aa[Tile]{}, bb[Tile]{}, ss[Tile]{};
     for (int base = tid * 8; base < D; base += Threads * 8) {
-        const int4 av  = load_vec<int4>(aw + std::int64_t(head) * D + base),
-                   bv  = load_vec<int4>(bw + std::int64_t(head) * D + base),
-                   nv  = load_vec<int4>(nw + base);
-        const auto* ap = reinterpret_cast<const unsigned*>(&av);
-        const auto* bp = reinterpret_cast<const unsigned*>(&bv);
+        float af[8], bf[8];
+        gdn_control_row8<kQ8>(aw, as, head, D, base, af);
+        gdn_control_row8<kQ8>(bw, bs, head, D, base, bf);
+        const int4 nv  = load_vec<int4>(nw + base);
         const auto* np = reinterpret_cast<const unsigned*>(&nv);
 #pragma unroll
         for (int t = 0; t < Tile; ++t) {
@@ -45,7 +75,7 @@ __global__ __launch_bounds__(Threads) void gdn_norm_gating_simt_kernel(
             const auto* xp = reinterpret_cast<const unsigned*>(&xv);
 #pragma unroll
             for (int p = 0; p < 4; ++p) {
-                const float2 a = bf16x2_bits_to_float2(ap[p]), b = bf16x2_bits_to_float2(bp[p]);
+                const float2 a{af[2 * p], af[2 * p + 1]}, b{bf[2 * p], bf[2 * p + 1]};
                 const float2 n = bf16x2_bits_to_float2(np[p]), v = bf16x2_bits_to_float2(xp[p]);
                 const float z0 = v.x * (1.0f + n.x), z1 = v.y * (1.0f + n.y);
                 aa[t] = fmaf(a.x, z0, aa[t]);
