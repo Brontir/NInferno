@@ -9,6 +9,7 @@
 #include "core/units.h"
 #include "core/weight_view.h"
 #include "ninferno/ops/route_table.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 #include "ops/op_tester.h"
@@ -83,8 +84,9 @@ int main() {
     board.memory_bus_bits  = 384;
     board.facts            = machine_facts_of(board);
     for (const DeviceClass& d : {board, device_class()}) {
-        const auto lines = rt::routes_of(d, list, chunk);
-        check(lines.size() == list.size(), "one line per problem");
+        const auto lines = rt::routes_of(d, list, chunk, false);
+        check(lines.size() == list.size() + 1 && lines.at(rt::kDecisionRouteCount) == "4",
+              "one line per problem and the count");
         // Each line is the selector's answer at every width.
         for (const auto& s : list) {
             const auto& p    = s.problem;
@@ -110,17 +112,38 @@ int main() {
         // The problems' order is not an input.
         auto reversed = list;
         std::reverse(reversed.begin(), reversed.end());
-        check(rt::routes_of(d, reversed, chunk) == lines, "the problems' order changes nothing");
+        check(rt::routes_of(d, reversed, chunk, false) == lines, "the problems' order changes nothing");
+        // An exact start's lines are its invariant routes, and say so.
+        const auto exact = rt::routes_of(d, list, chunk, true);
+        check(rt::replay_routes(d, exact) == exact, "the invariant lines replay to themselves");
+        for (const auto& s : list) {
+            const auto& p    = s.problem;
+            const auto found = std::find_if(exact.begin(), exact.end(), [&](const auto& kv) {
+                return kv.first.find(std::to_string(p.n) + 'x' + std::to_string(p.k) + " of " +
+                                     std::to_string(s.parent_rows)) != std::string::npos;
+            });
+            if (found == exact.end() || !found->first.ends_with(" invariant")) {
+                check(false, "an invariant line for " + std::to_string(p.n) + "x" + std::to_string(p.k));
+                continue;
+            }
+            const ops::ScopedInvariantRoutes invariant(true);
+            const auto r = generic::route_query(d, p.qtype, p.policy, p.epilogue, p.n, p.k, 1, false,
+                                                s.parent_rows, s.layout);
+            check(route_at(found->second, 1) == (r ? generic::route_name(*r) : "none"),
+                  found->first + " T=1 under the invariant profile: " + found->second);
+        }
     }
+    check(rt::routes_of(device_class(), {}, chunk, false).at(rt::kDecisionRouteCount).starts_with("0 ("),
+          "no problem: the count line says the warm-up did not run");
     std::cout << "lines on the device:\n";
-    for (const auto& [key, value] : rt::routes_of(device_class(), list, chunk)) {
+    for (const auto& [key, value] : rt::routes_of(device_class(), list, chunk, false)) {
         std::cout << "  " << key << " = " << value << '\n';
     }
 
     // An explicit table (it stands alone: the lookup's other tables go) that moves the Q8 slice's
     // decode route moves its line: the replay of the recorded lines names it, and gives the lines
     // a start under that table writes; the manifest moves while the fingerprint does not.
-    const auto before = rt::routes_of(device_class(), list, chunk);
+    const auto before = rt::routes_of(device_class(), list, chunk, false);
     const auto q8_key = before.rbegin()->first; // "q8 ..." sorts last
     const auto dir    = std::filesystem::temp_directory_path() / "ninferno_decision_routes";
     std::filesystem::create_directories(dir);
@@ -139,11 +162,14 @@ int main() {
                         << moved << R"("]]}]})";
     (void)ops::load_route_table(path.string());
     const auto after = rt::replay_routes(device_class(), before);
-    const auto fresh = rt::routes_of(device_class(), list, chunk);
+    const auto fresh = rt::routes_of(device_class(), list, chunk, false);
     ops::clear_route_table();
-    check(q8_key.starts_with("q8 ") && route_at(after.at(q8_key), 4) == moved &&
-              after.at(q8_key) != before.at(q8_key),
-          "the moved table moves the Q8 slice's line: " + after.at(q8_key));
+    // Without tensor mma.sync (Volta) the HMMA route takes Q8's decode widths before a table.
+    if (device_class().features.mma_tensor) {
+        check(q8_key.starts_with("q8 ") && route_at(after.at(q8_key), 4) == moved &&
+                  after.at(q8_key) != before.at(q8_key),
+              "the moved table moves the Q8 slice's line: " + after.at(q8_key));
+    }
     check(after == fresh, "the replay under the table is what a start under it records");
     rt::DecisionInputs a;
     a.plan["route_breakpoints"] = "17";
@@ -155,9 +181,13 @@ int main() {
           "a moved route moves the manifest, not the fingerprint");
 
     // Refused: a line that does not parse, or not in its canonical form.
-    for (const std::string key : {"q4k a16only store 4096x4096 of 4096", "zz a16only store 1x1 of 1 layout 0",
-                                  "q4k a16only store 4096x4096 of 4096 layout 0 extra",
-                                  "q4k  a16only store 4096x4096 of 4096 layout 0"}) {
+    for (const std::string key :
+         {"q4k a16only store 4096x4096 of 4096", "zz a16only store 1x1 of 1 ggml_blocks_v1 speed",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 speed extra",
+          "q4k  a16only store 4096x4096 of 4096 ggml_blocks_v1 speed",
+          "q4k a16only store 0x4096 of 4096 ggml_blocks_v1 speed",
+          "q4k a16only store 4096x4096 of 4096 no_such_layout speed",
+          "q4k a16only store 4096x4096 of 4096 ggml_blocks_v1 fast"}) {
         bool refused = false;
         try {
             (void)rt::replay_routes(device_class(), {{key, "1-16 scalar; prefill 1024 scalar"}});

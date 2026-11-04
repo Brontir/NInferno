@@ -1493,6 +1493,12 @@ void record_problem(const Problem& p, const Weight& w) {
 
 } // namespace
 
+void clear_seen_problems() {
+    SeenProblems& s = seen_state();
+    std::lock_guard lock(s.mutex);
+    s.seen.clear();
+}
+
 std::vector<SeenProblem> seen_problems() {
     SeenProblems& s = seen_state();
     std::lock_guard lock(s.mutex);

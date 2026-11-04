@@ -199,7 +199,8 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.taint    = runtime::taint_of(in);
     {
         const auto seen = ops::detail::generic::seen_problems();
-        in.routes       = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk);
+        in.routes       = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
+                                             resolved.activations == ActivationMode::Exact);
     }
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));
@@ -359,6 +360,8 @@ public:
         : options(std::move(normalized)), process_options(options),
           device(initialize_device(options, process_options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
+        // This start's own record of the generic path's problems (decision_routes.h).
+        ops::detail::generic::clear_seen_problems();
         backend             = runtime::make_backend(options, device);
         // Engine::options() reports the effective values: the resolved cached state count, an
         // automatic max_context, the prefill chunk and an automatic Host tier too.

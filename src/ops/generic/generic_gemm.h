@@ -476,6 +476,8 @@ struct SeenProblem {
     QuantLayout layout       = QuantLayout::RowSplit;
 };
 [[nodiscard]] std::vector<SeenProblem> seen_problems();
+// Forgets them: an Engine's load starts its own record (the set is the process's).
+void clear_seen_problems();
 
 // Why a schedule of a family is not a route for a weight on this build and device (#307), one
 // reason each: not declared (an index past the family's list), not compiled (this build omits
