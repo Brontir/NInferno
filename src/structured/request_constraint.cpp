@@ -108,9 +108,37 @@ bool RequestConstraint::on_header(std::string_view held, std::string_view bytes)
     return false;
 }
 
-void RequestConstraint::admit_header(std::uint32_t* row, std::string_view held) const {
+bool RequestConstraint::is_stop(TokenId token) const noexcept {
+    const auto& stops = view_.vocabulary->stop_token_ids;
+    return std::find(stops.begin(), stops.end(), token) != stops.end();
+}
+
+void RequestConstraint::admit_header(std::uint32_t* row, std::string_view held,
+                                     ConstraintGate::Mode next) const {
     for (const TokenId token : *view_.header_candidates) {
-        if (on_header(held, view_.presented(token))) {
+        const std::string_view bytes = view_.presented(token);
+        bool admit                   = on_header(held, bytes);
+        if (!admit && !bytes.empty()) {
+            // A token that completes a header and goes on: what lies past the header enters the
+            // answer's text (enter_text, from the grammar's start: nothing reached it yet).
+            const std::string text = std::string(held) + std::string(bytes);
+            for (const std::string& header : view_.vocabulary->content_open) {
+                if (text.size() <= header.size() || !std::string_view(text).starts_with(header)) {
+                    continue;
+                }
+                std::string_view rest = std::string_view(text).substr(header.size());
+                std::size_t run       = 0;
+                while (next == ConstraintGate::Mode::Gap && run < rest.size() && run < kGapBytes &&
+                       blank(rest.substr(run, 1))) {
+                    ++run;
+                }
+                rest.remove_prefix(run);
+                ConstraintMatcher fresh(compiled_);
+                admit = rest.empty() || fresh.accept_bytes(rest);
+                break;
+            }
+        }
+        if (admit) {
             row[static_cast<std::uint32_t>(token) >> 5U] |=
                 1U << (static_cast<std::uint32_t>(token) & 31U);
         }
@@ -166,7 +194,7 @@ void RequestConstraint::write_row(std::uint32_t* row, const ConstraintGate& gate
                         ~(1U << (static_cast<std::uint32_t>(stop) & 31U));
                 }
             }
-            admit_header(row, gate.header_held);
+            admit_header(row, gate.header_held, ConstraintGate::Mode::Open);
         }
         return;
     }
@@ -204,7 +232,7 @@ void RequestConstraint::write_row(std::uint32_t* row, const ConstraintGate& gate
                     ~(1U << (static_cast<std::uint32_t>(stop) & 31U));
             }
         }
-        admit_header(row, held);
+        admit_header(row, held, gate.header_next);
         return;
     }
     }
@@ -317,9 +345,11 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
     }
     case ConstraintGate::Mode::Header: {
         const std::string_view bytes = view_.presented(token);
-        if (!bytes.empty()) { return header_bytes(gate, bytes, track, why); }
-        // A token the presentation does not show (a stop token): the answer's, after the bytes
-        // held, which the presentation publishes unless they are header markup it cut short.
+        // A stop token (shown or not, preserve_special_tokens) is the answer's, after the bytes
+        // held, which the presentation publishes unless they are header markup it cut short. Any
+        // other token's bytes go through the header (header_bytes); one it does not show is a
+        // control token the grammar decides.
+        if (!bytes.empty() && !is_stop(token)) { return header_bytes(gate, bytes, track, why); }
         if (cut_header(gate.header_held)) {
             why = "committed token " + std::to_string(token) + " interrupts an answer header";
             return false;
@@ -346,7 +376,8 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
     }
     case ConstraintGate::Mode::Pending: {
         const std::string_view bytes  = view_.presented(token);
-        if (bytes.empty() && gate.header_alive && cut_header(gate.header_held)) {
+        if ((bytes.empty() || is_stop(token)) && gate.header_alive &&
+            cut_header(gate.header_held)) {
             why = "committed token " + std::to_string(token) + " interrupts an answer header";
             return false;
         }

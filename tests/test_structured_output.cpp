@@ -560,6 +560,9 @@ void answer_header_contract() {
     muse.token_bytes[kSelf]      = "=self";
     muse.token_bytes[kMessage]   = "<|message|>";
     muse.token_bytes[kEom]       = "<|eom|>";
+    constexpr TokenId kMessageY = 272, kMessageX = 273; // a header's end and the answer's start
+    muse.token_bytes[kMessageY] = "<|message|>y";
+    muse.token_bytes[kMessageX] = "<|message|>x";
     muse.reasoning_open          = " to=self<|message|>";
     muse.reasoning_close         = "<|eom|>";
     muse.content_open = {"<|start|>assistant to=user<|message|>", " to=user<|message|>"};
@@ -717,6 +720,21 @@ void answer_header_contract() {
     cut.commit(half);
     cut.fill_round({}, row.data(), words);
     check(!allowed(row.data(), kImEnd), "no stop inside <|start|>");
+
+    // A token that completes the header and goes on into the answer: admitted where the answer
+    // admits what lies past the header.
+    RequestConstraint crossing(compiled, true);
+    crossing.commit(closed);
+    const TokenId header_head[] = {kStart, kAssistant, kTo, kUser};
+    crossing.commit(header_head);
+    crossing.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kMessage) && allowed(row.data(), kMessageY) &&
+              !allowed(row.data(), kMessageX),
+          "a token past the header's end: admitted where the answer takes its rest");
+    const TokenId message_y[] = {kMessageY};
+    crossing.commit(message_y);
+    check(!crossing.violated(), "a token past the header's end is taken");
+    walk_text(crossing, "es", "the grammar after a token past the header");
 
     // A raw output keeps the header (the presentation does not drop it): the grammar reads it.
     RequestConstraint raw(compiled, true, false, false);

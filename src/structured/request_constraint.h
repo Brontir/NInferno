@@ -152,8 +152,10 @@ private:
                     Track& track, std::string& why);
     // Whether `held` followed by `bytes` begins or is a header, and is not past one.
     [[nodiscard]] bool on_header(std::string_view held, std::string_view bytes) const noexcept;
-    // Admits the tokens that continue a header from `held`.
-    void admit_header(std::uint32_t* row, std::string_view held) const;
+    // Admits the tokens that continue a header from `held`, and those that complete one and go
+    // on into text the answer admits (it starts in `next`, the Gap or the grammar).
+    void admit_header(std::uint32_t* row, std::string_view held, ConstraintGate::Mode next) const;
+    [[nodiscard]] bool is_stop(TokenId token) const noexcept;
     // The grammar restarts after a reasoning section the model opened.
     void reopen(Track& track);
     void violate(std::string reason) noexcept;
