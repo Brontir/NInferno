@@ -42,6 +42,7 @@ public:
     float median_us(Run&& run) {
         for (int r = 0; r < warm_ + reps_; ++r) {
             flush();
+            lead();
             record(start_[static_cast<std::size_t>(r)]);
             run(stream_);
             record(stop_[static_cast<std::size_t>(r)]);
@@ -49,13 +50,20 @@ public:
         return median();
     }
 
+    // A wait of `us` microseconds on the stream before each sample's start, outside the timed
+    // window (0, the default: none): a sample of many short calls is enqueued by the host while
+    // the GPU waits, so the times are the GPU's and not the host's launch rate.
+    void set_lead_us(double us) noexcept { lead_us_ = us; }
+
 private:
     void flush();
+    void lead();
     void record(cudaEvent_t event);
     float median();
 
     cudaStream_t stream_;
     int warm_, reps_;
+    double lead_us_ = 0.0;
     DeviceBuffer flush_;
     std::vector<cudaEvent_t> start_, stop_;
 };

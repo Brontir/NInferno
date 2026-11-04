@@ -193,19 +193,27 @@ int route_tune_main(int argc, char** argv) {
         for (const auto t : custom_points) t_max = std::max(t_max, t);
 
         TuneTimer timer(nullptr, 1, samples);
+        // Whether the run times a decode or verify width (T <= 16): the band sweep's points, or
+        // the prefill widths from chunk / 2.
+        const bool times_small_t =
+            chunk / 2 <= 16 ||
+            (!prefill_only && (custom_points.empty() ||
+                               std::any_of(custom_points.begin(), custom_points.end(),
+                                           [](std::int32_t t) { return t <= 16; })));
         std::vector<generic::RouteEntry> entries;
 
         for (const Problem& p : problems) {
             const bool swiglu     = p.epilogue == generic::Epilogue::SwiGlu;
             const std::int32_t rows = swiglu ? 2 * p.n : p.n;
             RandomWeight w        = random_weight(p.qtype, rows, p.k, 7U + p.n + p.k);
-            // A sample is one call on each of `copies` weights in turn, between one
-            // event pair, as consecutive decode layers read theirs: the copies span 2x L2 and at
-            // least 128 MiB, so each reads DRAM and a sample holds many calls, while the activations
-            // stay in L2. A single call of a few microseconds is timed only to the timer's tick
-            // (1.024 us on the consumer boards and GV100).
+            // A decode or verify sample is one call on each of `copies` weights in turn, between
+            // one event pair, as consecutive decode layers read theirs: up to 64 copies spanning
+            // 2x L2 and 128 MiB, so a sample holds many calls (a single call of a few microseconds
+            // is timed only to the timer's tick, 1.024 us on the consumer boards and GV100) and its
+            // reads stay cold where the timer has no flush buffer; the activations stay in L2.
+            // Only where the run times such a width.
             std::vector<RandomWeight> spare;
-            if (rotate) {
+            if (rotate && times_small_t) {
                 const std::size_t bytes = std::max<std::size_t>(w.parent.geometry.bytes, 1);
                 const std::size_t span  = std::max<std::size_t>(2 * device.l2_bytes, 128U << 20);
                 const std::size_t copies =
@@ -291,6 +299,10 @@ int route_tune_main(int argc, char** argv) {
                 // small-T winners changed; pass-to-pass spread 2.2 -> 0.6 % at p90, GV100 20 ->
                 // 0.6 %). A wider call is long against both and keeps the one flushed call.
                 const bool over_copies = t <= 16;
+                // The GPU waits while the host enqueues the sample (20 us a call), so a sample of
+                // short calls times the kernels and not the host's launch rate. Launch overlap
+                // between the calls is the stream's front end only: the tuner sets no PDL joins.
+                timer.set_lead_us(over_copies && !spare.empty() ? 20.0 * (1 + spare.size()) : 0.0);
                 const double us =
                     timer.median_us([&](cudaStream_t s) {
                         call.weight = &w.weight;
