@@ -27,6 +27,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -385,14 +386,27 @@ struct Model {
 
 // Two plans alike in everything the plan level decides: the ladder (each rung, its bytes part by
 // part and what it needs), the rung selected and its reserve, the storages, the free memory read,
-// the estimate's basis, the reason and what fits instead.
+// the estimate (its basis and why), the axes and margins, the reason and what fits instead.
 bool same_plan(const rt::DryRunPlan& a, const rt::DryRunPlan& b) {
     if (a.planned != b.planned || a.fits != b.fits || a.rung != b.rung ||
         a.reserve != b.reserve || a.kv_cache != b.kv_cache || a.recurrent != b.recurrent ||
         a.free_bytes != b.free_bytes || a.weight_bytes != b.weight_bytes ||
         a.estimate_basis != b.estimate_basis || a.reason != b.reason ||
         a.refused_code != b.refused_code || a.ladder.size() != b.ladder.size() ||
-        a.fits_instead.size() != b.fits_instead.size()) {
+        a.fits_instead.size() != b.fits_instead.size() || a.total_bytes != b.total_bytes ||
+        a.free_measured != b.free_measured || a.free_after_weights != b.free_after_weights ||
+        a.estimate_reason != b.estimate_reason) {
+        return false;
+    }
+    // The axes and margins the ladder was built and selected from.
+    const auto axes = [](const rt::PlanAxes& x) {
+        return std::tie(x.context_ceiling, x.context_automatic, x.concurrency, x.kv_automatic,
+                        x.kv_explicit_tokens, x.headroom_bytes, x.states_pinned, x.states_minimum,
+                        x.prefill_chunk, x.chunk_automatic, x.class_reserve, x.speculation,
+                        x.round_tokens);
+    };
+    if (axes(a.axes) != axes(b.axes) || a.margins.base != b.margins.base ||
+        a.margins.reserve != b.margins.reserve || a.margins.allowance != b.margins.allowance) {
         return false;
     }
     for (std::size_t i = 0; i < a.ladder.size(); ++i) {
