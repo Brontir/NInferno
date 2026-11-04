@@ -1924,7 +1924,8 @@ struct LoadSummary {
     // "nf1-" + 16 hex digits of SHA-256 over decision_canonical, the canonical text of every input
     // the engine's decisions read (device facts, build, requested options, source files, decision
     // environment variables, the resolved plan, taint); decision_manifest, "nm1-" + 16 hex digits,
-    // covers the resolved plan and the observed sizes (decision_observed). decision_taint lists
+    // covers the resolved plan, the route lines (decision_routes) and the observed sizes
+    // (decision_observed). decision_taint lists
     // the pillar violations present ("<what>=<detail>"), each also in the canonical text. Both are
     // "unreadable" when an input could not be read; the start goes on.
     std::string decision_fingerprint;
@@ -1934,6 +1935,10 @@ struct LoadSummary {
     // The sizes startup took from the free memory (the "observed" section): in the manifest, not in
     // the fingerprint, until plan levels exist.
     std::string decision_observed;
+    // The route the generic projection path selects for each problem the start ran, at the decode
+    // and verify widths and the prefill chunk (the "routes" section, manifest only): replayable from
+    // its own lines and the board's class (src/runtime/engine/decision_routes.h).
+    std::string decision_routes;
     // The artifact's id (16 bytes, lowercase hex), as the load read it: drawn at random per
     // conversion, so it names the file (observed), not what it computes.
     std::string artifact_id;

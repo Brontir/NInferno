@@ -492,7 +492,8 @@ std::string format_server_start_json(
     record["decision"] =
         Json{{"schema", "ninferno-fingerprint/1"},   {"fingerprint", load.decision_fingerprint},
              {"manifest", load.decision_manifest},   {"taint", load.decision_taint},
-             {"canonical", load.decision_canonical}, {"observed", load.decision_observed}};
+             {"canonical", load.decision_canonical}, {"routes", load.decision_routes},
+             {"observed", load.decision_observed}};
     // The plan ladder's rung the free memory picked (src/runtime/engine/plan_ladder.h).
     record["plan"]                                   = plan_summary_json(memory.plan, false);
     const ninferno::ContextCacheOptions& cache       = engine_options.context_cache;

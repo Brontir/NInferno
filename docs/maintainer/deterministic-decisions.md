@@ -562,8 +562,22 @@ the canonical text and the taint at debug level), exports it in `/metrics`
 (`ninferno_decision_fingerprint_info`) and `/v1/models` (`meta.decision_fingerprint`,
 `meta.decision_manifest`), writes it into the server-start record of the request log, and
 `tools/bench/perf_matrix.py` writes it into every bench row. Two runs with the same fingerprint
-must make the same decisions. The manifest, `nm1-…`, hashes the plan and the observed sizes: an
-option change moves the fingerprint only, a plan change both, an observed size the manifest only.
+must make the same decisions. The manifest, `nm1-…`, hashes the plan, the route lines and the
+observed sizes: an option change moves the fingerprint only, a plan change both, a route or an
+observed size the manifest only.
+
+The route lines (`routes.*`, `src/runtime/engine/decision_routes.h`, #304) are the routes the
+generic projection path's selector selects for this start, a bounded set: one line per distinct
+problem the start ran before its fingerprint (format, policy, epilogue, N×K, the stored rows and
+layout, the route profile: `invariant` for an exact start), with the route at every decode and
+verify width 1..16 as runs of one route and the route at the prefill chunk, and a `problems` count
+line. A call's own layout can still take it off the selected route (alignment, workspace), and a
+problem first run after startup (a path the warm-up does not take) is not listed; a start whose
+sizes are all pinned runs no warm-up and its count line says so. A line holds what its
+replay needs besides the board's class and the route tables, so `replay_routes` asks the selector
+again from the text alone, on a CPU against a board's class and a release's tables: the same lines,
+or the lines that moved. They are in the startup log at debug level after the canonical text, and in
+the request log's server-start record (`decision.routes`).
 
 ## What will be promised
 

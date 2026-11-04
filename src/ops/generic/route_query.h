@@ -32,11 +32,13 @@ namespace ninferno::ops::detail::generic {
 // call's as the engine passes it: an NVFP4 weight without a calibrated activation divisor runs
 // AllowA8, not AllowA4 (ops/weight_input.cpp projection_slice). The route tables read are the
 // default lookup's for `device`; where `device` is the current device's own class, that device's
-// (an explicit --route-table included). select_route's exceptions propagate.
+// (an explicit --route-table included). select_route's exceptions propagate. `layout`: the stored
+// layout where it is not the converter's default for the format (a recorded call's, SeenProblem).
 [[nodiscard]] std::optional<Route> route_query(const DeviceClass& device, QType qtype,
                                                LinearPolicy policy, Epilogue epilogue,
                                                std::int32_t n, std::int32_t k, std::int32_t tokens,
-                                               bool prefill = false, std::int32_t parent_rows = 0);
+                                               bool prefill = false, std::int32_t parent_rows = 0,
+                                               std::optional<QuantLayout> layout = std::nullopt);
 
 // The route such a call selects and the one it runs on (#298): route_query's choice as run() hands
 // it on (workspace_free_route: no workspace, no quantized family that needs one), resolved as

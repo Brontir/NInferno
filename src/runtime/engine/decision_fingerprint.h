@@ -28,7 +28,10 @@
 //            calibration, no roofline, borrowed or foreign route data, a context-cost machine
 //            carried from another board that prices a component, a local spec-tune, a --spec
 //            auto fallback the free memory forced).
-// and one section that is not part of the fingerprint:
+// and two sections that are not part of the fingerprint:
+//   routes   the route the generic projection path selects for every problem the start ran, at
+//            the decode and verify widths and the prefill chunk (decision_routes.h): derived
+//            from the inputs above, replayable from its own lines and a board's class;
 //   observed what startup measured beside the plan: the rung the selection picked before the
 //            kernel warm-up and the tier it admitted it at (rung_selected, rung_reserve), what it
 //            sized from the Host memory (the Host tier), the driver's clocks where they fed
@@ -73,6 +76,7 @@ struct DecisionInputs {
     DecisionSection sources;
     DecisionSection plan;
     DecisionSection taint;
+    DecisionSection routes;   // in the manifest, not the fingerprint (decision_routes.h)
     DecisionSection observed; // in the manifest, not the fingerprint
 };
 
@@ -80,6 +84,7 @@ struct DecisionFingerprint {
     std::string value;     // "nf1-" + 16 hex digits
     std::string manifest;  // "nm1-" + 16 hex digits
     std::string canonical; // the canonical text value hashes
+    std::string routes;    // the route lines (manifest only)
     std::string observed;  // the observed lines (manifest only)
 };
 

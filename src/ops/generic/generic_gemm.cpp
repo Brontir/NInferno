@@ -1459,17 +1459,40 @@ int heuristic_r8(const Problem& p, std::int32_t tokens) {
     return rules_r8(p, tokens);
 }
 
-// NINFERNO_ROUTE_RECORD=<file>: append every distinct problem that reaches the generic path, in
-// ninferno_route_tune's --shapes format, so a model's shapes come from running it.
-void record_problem(const Problem& p) {
+// Every distinct problem that reached the generic path on a thread collecting them (seen_problems:
+// an Engine's load, on its own thread, so another live Engine's calls stay out), and under
+// NINFERNO_ROUTE_RECORD=<file> each distinct (format, compute, epilogue, N, K) appended to the file
+// in ninferno_route_tune's --shapes format, so a model's shapes come from running it.
+using SeenSet = std::set<std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, int>>;
+struct ThreadSeen {
+    bool collecting = false;
+    SeenSet seen;
+};
+ThreadSeen& thread_seen() {
+    thread_local ThreadSeen state;
+    return state;
+}
+struct RecordedProblems {
+    std::mutex mutex;
+    std::set<std::tuple<int, int, int, int, int>> recorded;
+};
+RecordedProblems& recorded_state() {
+    static RecordedProblems state;
+    return state;
+}
+
+void record_problem(const Problem& p, const Weight& w) {
     static const char* path = std::getenv("NINFERNO_ROUTE_RECORD");
+    if (ThreadSeen& t = thread_seen(); t.collecting) {
+        t.seen.insert({static_cast<int>(p.qtype), static_cast<int>(p.policy),
+                       static_cast<int>(p.epilogue), p.n, p.k, w.n, static_cast<int>(w.layout)});
+    }
     if (path == nullptr || *path == 0) return;
-    static std::mutex mutex;
-    static std::set<std::tuple<int, int, int, int, int>> seen;
+    RecordedProblems& s = recorded_state();
+    std::lock_guard lock(s.mutex);
     const auto compute = compute_class(p.qtype, p.policy);
-    std::lock_guard lock(mutex);
-    if (!seen.insert({static_cast<int>(p.qtype), static_cast<int>(compute),
-                      static_cast<int>(p.epilogue), p.n, p.k})
+    if (!s.recorded.insert({static_cast<int>(p.qtype), static_cast<int>(compute),
+                            static_cast<int>(p.epilogue), p.n, p.k})
              .second) {
         return;
     }
@@ -1479,6 +1502,24 @@ void record_problem(const Problem& p) {
 }
 
 } // namespace
+
+void clear_seen_problems() {
+    ThreadSeen& t = thread_seen();
+    t.collecting  = true;
+    t.seen.clear();
+}
+
+std::vector<SeenProblem> seen_problems() {
+    const ThreadSeen& t = thread_seen();
+    std::vector<SeenProblem> out;
+    out.reserve(t.seen.size());
+    for (const auto& [qtype, policy, epilogue, n, k, parent_rows, layout] : t.seen) {
+        out.push_back({Problem{static_cast<QType>(qtype), static_cast<LinearPolicy>(policy), n, k,
+                               static_cast<Epilogue>(epilogue)},
+                       parent_rows, static_cast<QuantLayout>(layout)});
+    }
+    return out;
+}
 
 // The W4A8 schedule run_route executes for `route`: a producer-warp tile the weight is not admitted
 // to runs the classic tile of its shape, and a w4a8_ws_extra format's classic tile its
@@ -5289,7 +5330,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
 void run(const Call& call, LinearPolicy policy, WorkspaceArena* workspace, cudaStream_t stream,
          bool* released) {
     const Problem problem{call.weight->qtype, policy, call.rows, call.weight->k, call.epilogue};
-    record_problem(problem);
+    record_problem(problem, *call.weight);
     tune_dense(problem, call, stream);
     const Route route =
         workspace_free_route(select_route(problem, *call.weight, call.x->ne[1], prefill_routes_active()),

@@ -239,8 +239,9 @@ DecisionFingerprint decision_fingerprint(const DecisionInputs& inputs) {
     out.value           = "nf1-" + short_hash(out.canonical);
     std::string planned = schema_line();
     section_into(planned, "plan", inputs.plan);
+    section_into(out.routes, "routes", inputs.routes);
     section_into(out.observed, "observed", inputs.observed);
-    out.manifest = "nm1-" + short_hash(planned + out.observed);
+    out.manifest = "nm1-" + short_hash(planned + out.routes + out.observed);
     return out;
 }
 

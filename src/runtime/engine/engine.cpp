@@ -22,6 +22,7 @@
 #include "ops/generic/generic_gemm.h"
 #include "runtime/engine/backend.h"
 #include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/decision_routes.h"
 #include "runtime/engine/process_options_lease.h"
 #include "runtime/engine/decision_sources.h"
 #include "runtime/engine/family_registry.h"
@@ -196,6 +197,11 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     in.plan     = runtime::plan_of(resolved, memory, ops::route_table_breakpoints(17), route_table,
                                    load.decode_steps_per_round);
     in.taint    = runtime::taint_of(in);
+    {
+        const auto seen = ops::detail::generic::seen_problems();
+        in.routes       = runtime::routes_of(device_class(resolved.device), seen, memory.prefill_chunk,
+                                             resolved.activations == ActivationMode::Exact);
+    }
     in.observed = runtime::observed_of(memory);
     in.observed.merge(runtime::observed_of(device_class(resolved.device)));
     in.observed.merge(runtime::artifact_ids_of(
@@ -206,6 +212,7 @@ void fingerprint_decisions_or_throw(LoadSummary& load, const EngineOptions& requ
     load.decision_manifest                         = fingerprint.manifest;
     load.decision_canonical                        = fingerprint.canonical;
     load.decision_observed                         = fingerprint.observed;
+    load.decision_routes                           = fingerprint.routes;
     load.metadata.decision_fingerprint             = fingerprint.value;
     load.metadata.decision_manifest                = fingerprint.manifest;
     load.decision_taint.clear();
@@ -238,6 +245,7 @@ void fingerprint_decisions(LoadSummary& load, const EngineOptions& requested,
     load.metadata.decision_manifest    = "unreadable";
     load.decision_canonical.clear();
     load.decision_observed.clear();
+    load.decision_routes.clear();
     load.decision_taint = {"fingerprint=unreadable: " + why};
 }
 
@@ -352,6 +360,8 @@ public:
         : options(std::move(normalized)), process_options(options),
           device(initialize_device(options, process_options)) {
         nvtx::ScopedRange load_range(nvtx::Name::EngineLoad, nvtx::Category::Runtime);
+        // This start's own record of the generic path's problems (decision_routes.h).
+        ops::detail::generic::clear_seen_problems();
         backend             = runtime::make_backend(options, device);
         // Engine::options() reports the effective values: the resolved cached state count, an
         // automatic max_context, the prefill chunk and an automatic Host tier too.
