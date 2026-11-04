@@ -4474,6 +4474,795 @@
      "rmma.m1.n2.w4x1"
     ]
    ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     255,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m1.n1.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "bf16",
+   "k": 4096,
+   "n": 32,
+   "prefill": "rmma.m1.n1.w4x1",
+   "prefill_bands": [
+    [
+     4096,
+     8191,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     96,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 3840,
+   "n": 2048,
+   "prefill": "rmma.m2.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     3,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     128,
+     191,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 15360,
+   "n": 3840,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     128,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 2560,
+   "n": 8192,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     2,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 262144,
+   "prefill": "rmma.m1.n2.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     255,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m1.n2.w2x2"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q4k",
+   "k": 3840,
+   "n": 15360,
+   "prefill": "rmma.m1.n4.w4x1"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     32,
+     47,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     192,
+     255,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 3840,
+   "prefill": "rmma.m2.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m2.n1.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     3,
+     3,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     5,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     15,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     16,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     32,
+     47,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     192,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 8192,
+   "n": 3840,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     1024,
+     2047,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     2,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     3,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     32,
+     47,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     128,
+     511,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 15360,
+   "n": 3840,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     2,
+     6,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     7,
+     7,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     8,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     128,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 6144,
+   "prefill": "rmma.m2.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     3,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     4,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     32,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     192,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 8192,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     4,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     5,
+     6,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     7,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     192,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 8704,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     4,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     5,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     15,
+     "ggml_mmq"
+    ],
+    [
+     16,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     511,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n2.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 12288,
+   "prefill": "rmma.m1.n2.w4x1",
+   "prefill_bands": [
+    [
+     64,
+     255,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     2,
+     6,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     7,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     16777216,
+     "rmma.m1.n2.w1x4"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 4096,
+   "n": 8192,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
   }
  ],
  "gpu": {
