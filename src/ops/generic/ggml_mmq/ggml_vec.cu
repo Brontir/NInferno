@@ -733,6 +733,11 @@ void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
     const int per_block = kVecWarps * (Gated ? 1 : 2);
     const int groups    = (args.rows + per_block - 1) / per_block;
     const int blocks    = std::min(groups, resident * device_facts().sm_count);
+    if (LaunchShape* described = describe_target()) {
+        describe_launch(*described, reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated>),
+                        dim3(blocks), dim3(kVecWarps * 32), 0);
+        return;
+    }
     check(pdl::launch_dependent({dim3(blocks), dim3(kVecWarps * 32), 0, stream},
                                 vec_kernel<type, T, KS, Gated>, args),
           "vector product launch");

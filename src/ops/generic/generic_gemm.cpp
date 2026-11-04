@@ -4415,6 +4415,61 @@ std::optional<R8Resources> r8_resources(int schedule, const Weight& w, Epilogue 
     return out;
 }
 
+namespace {
+
+// ggml's matrix or vector kernel for the call, as run_route launches it: the matrix kernel on the
+// first kMmqPrefillSlice tokens (a wider call repeats it), the vector kernel on the first
+// kVecMaxColumns (likewise); the gate's product of a SwiGLU pair (the up's is the same kernel).
+// The activation quantizers and the stream-K fixup are not described (ggml_mmq::ScopedDescribe).
+std::optional<KernelResources> ggml_resources(Route route, const Weight& w, Epilogue epilogue,
+                                              const GemmArgs& args) {
+    const auto type = mmq_type(w);
+    if (!type) return std::nullopt;
+    const int bpr   = w.k / static_cast<int>(ggml_block_values(w.qtype));
+    const auto rows = ggml_rows_at(args, w.qtype, bpr, 0);
+    // Never read: a described launch takes only the pointers' presence.
+    void* const stand_in = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    ggml_mmq::LaunchShape shape;
+    {
+        const ggml_mmq::ScopedDescribe describe(shape);
+        if (route.family == Family::GgmlMmq) {
+            const int slice = std::min(args.tokens, kMmqPrefillSlice);
+            ggml_mmq::product(*type, rows, bpr, args.rows, w.k, stand_in, slice,
+                              static_cast<float*>(stand_in), args.rows, stand_in, nullptr);
+        } else {
+            ggml_mmq::VecOut out;
+            out.epilogue = epilogue == Epilogue::SwiGlu ? ggml_mmq::VecOut::Epilogue::SwiGlu
+                           : epilogue == Epilogue::AddResidual
+                               ? ggml_mmq::VecOut::Epilogue::AddResidual
+                               : ggml_mmq::VecOut::Epilogue::Store;
+            out.out[0]         = stand_in;
+            out.segment_end[0] = args.rows;
+            out.ld[0]          = args.rows;
+            const auto up      = epilogue == Epilogue::SwiGlu
+                                     ? ggml_rows_at(args, w.qtype, bpr, args.rows)
+                                     : ggml_mmq::Planes{};
+            ggml_mmq::vec_product(*type, rows, up, bpr, args.rows, w.k, stand_in,
+                                  std::min(args.tokens, ggml_mmq::kVecMaxColumns), out, nullptr);
+        }
+    }
+    if (shape.threads == 0) return std::nullopt;
+    KernelResources out;
+    out.registers             = shape.registers;
+    out.local_bytes           = shape.local_bytes;
+    out.static_smem           = shape.static_smem;
+    out.dynamic_smem          = shape.dynamic_smem;
+    out.threads               = shape.threads;
+    out.max_threads_per_block = shape.max_threads_per_block;
+    out.ptx_version           = shape.ptx_version;
+    out.binary_version        = shape.binary_version;
+    out.grid_x                = shape.grid_x;
+    out.grid_y                = shape.grid_y;
+    out.grid_z                = shape.grid_z;
+    return out;
+}
+
+} // namespace
+
 std::optional<KernelResources> route_resources(Route route, const Weight& w, Epilogue epilogue,
                                                std::int32_t tokens) {
     switch (route.family) {
@@ -4426,13 +4481,26 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
     case Family::TiledMma:
     case Family::StagedMma:
     case Family::W4a8Mma:
-    case Family::I8Mma: break;
+    case Family::I8Mma:
+    case Family::W4a4Mma:
+    case Family::Nvfp4TiledMma:
+    case Family::GgmlMmq:
+    case Family::GgmlVec: break;
     default: return std::nullopt;
     }
-    if (tokens < 1 || !supports(w) || !route_admits(route, w, LinearPolicy::AllowA8)) {
+    // W4A4 computes A4 activations: the policy that admits it.
+    const LinearPolicy policy =
+        route.family == Family::W4a4Mma ? LinearPolicy::AllowA4 : LinearPolicy::AllowA8;
+    if (tokens < 1 || !supports(w) || !route_admits(route, w, policy)) {
         return std::nullopt;
     }
     const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
+    // ggml's matrix kernel holds its planes (both of a SwiGLU pair's) for one prefill slice.
+    const std::size_t workspace =
+        route.family == Family::GgmlMmq
+            ? mmq_workspace_bytes(w.k, epilogue == Epilogue::SwiGlu ? 2 * rows : rows,
+                                  std::min(tokens, kMmqPrefillSlice))
+            : route_workspace_bytes(route, w.k, tokens);
     const ResolvedRoute resolved =
         resolve_route(route, w,
                       CallLayout{.x_aligned16    = true,
@@ -4441,7 +4509,7 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
                                  .rows           = rows,
                                  .segments       = 1,
                                  .epilogue       = epilogue,
-                                 .workspace_free = route_workspace_bytes(route, w.k, tokens)});
+                                 .workspace_free = workspace});
     if (!(resolved.executed == route)) return std::nullopt;
     const WeightCodec codec = codec_of(w);
     if (route.family == Family::TiledMma &&
@@ -4456,6 +4524,9 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
     args.rows     = rows;
     args.tokens   = tokens;
     args.ldx      = w.k;
+    if (route.family == Family::GgmlMmq || route.family == Family::GgmlVec) {
+        return ggml_resources(route, w, epilogue, args);
+    }
     KernelResources out;
     {
         const ScopedKernelDescribe describe(out);
@@ -4470,6 +4541,16 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
             launch_i8(route.schedule, i8_bits(w.qtype), epilogue, args, nullptr, nullptr, nullptr,
                       nullptr);
             break;
+#ifndef NINFERNO_WITHOUT_NVFP4
+        case Family::W4a4Mma:
+            launch_w4a4(route.schedule, epilogue, args, w.input_scale_divisor, nullptr, nullptr,
+                        nullptr);
+            break;
+        case Family::Nvfp4TiledMma:
+            launch_nvfp4_tiled(nvfp4_tiled_schedule_info(route.schedule).classes, epilogue, args,
+                               nullptr);
+            break;
+#endif
         default: break;
         }
     }

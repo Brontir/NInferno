@@ -148,6 +148,12 @@ void launch(const Launch& l, const char* codes, const ggml_planes& planes, int s
     const uint3 ntx_fd    = init_fastdiv_values(l.column_tiles);
     const dim3 block_dims(WARP_SIZE, l.threads / WARP_SIZE, 1);
     const int stride = static_cast<int>(out_column_stride);
+    if (LaunchShape* described = describe_target()) {
+        describe_launch(*described, reinterpret_cast<const void*>(mul_mat_q<type, J, false>),
+                        l.stream_k ? dim3(l.blocks, 1, 1) : dim3(l.row_tiles, l.column_tiles, 1),
+                        block_dims, l.shared);
+        return;
+    }
     if (!l.stream_k) {
         check(::ninferno::pdl::launch_dependent(
                   {dim3(l.row_tiles, l.column_tiles, 1), block_dims, l.shared, stream},

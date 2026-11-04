@@ -21,6 +21,12 @@ void launch_schedule(const GemmArgs& args, W4a4Activation act, cudaStream_t stre
                     (args.tokens + S::kBlockM - 1) / S::kBlockM);
     if (grid.y > kMaxGridYZ)
         throw std::invalid_argument("generic W4A4: token extent exceeds the grid");
+    if (KernelResources* described = kernel_describe_target()) {
+        cudaFuncAttributes attributes{};
+        CUDA_CHECK(cudaFuncGetAttributes(&attributes, (w4a4_kernel<S, E>)));
+        describe_kernel(*described, attributes, grid, S::kThreads, 0, false);
+        return;
+    }
     w4a4_kernel<S, E><<<grid, S::kThreads, 0, stream>>>(args, act);
     CUDA_CHECK(cudaGetLastError());
 }
@@ -43,11 +49,14 @@ void launch_epilogue(int schedule, const GemmArgs& args, W4a4Activation act, cud
 
 void launch_w4a4(int schedule, Epilogue epilogue, const GemmArgs& args, float input_divisor,
                  std::uint8_t* codes, std::uint8_t* scales, cudaStream_t stream) {
-    const std::int64_t tasks = static_cast<std::int64_t>(args.tokens) * (args.k / 16);
-    w4a4_quantize_kernel<<<static_cast<unsigned>((tasks + 255) / 256), 256, 0, stream>>>(
-        static_cast<const __nv_bfloat16*>(args.x), args.ldx, args.k, args.tokens, input_divisor,
-        codes, scales);
-    CUDA_CHECK(cudaGetLastError());
+    // A described launch (route_resources) names the matrix kernel, not the quantizer.
+    if (kernel_describe_target() == nullptr) {
+        const std::int64_t tasks = static_cast<std::int64_t>(args.tokens) * (args.k / 16);
+        w4a4_quantize_kernel<<<static_cast<unsigned>((tasks + 255) / 256), 256, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(args.x), args.ldx, args.k, args.tokens,
+            input_divisor, codes, scales);
+        CUDA_CHECK(cudaGetLastError());
+    }
     const W4a4Activation act{codes, scales, input_divisor};
     switch (epilogue) {
     case Epilogue::Store:
