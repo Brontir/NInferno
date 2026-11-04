@@ -4143,7 +4143,7 @@ FamilyCoverage tiled_coverage(const Weight& w) {
 FamilyCoverage staged_coverage(const Weight& w) {
     FamilyCoverage c;
     c.declared       = staged_schedule_count();
-    const bool reads = supports(w) && codec_of(w) == WeightCodec::Bf16;
+    const bool reads = w.qtype == QType::BF16; // the format alone, whatever the weight
     for (int i = 0; i < c.declared; ++i) {
         const ScheduleRefusal why = staged_refusal(i, w);
         c.schedules.push_back({i, why});
