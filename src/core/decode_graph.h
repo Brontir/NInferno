@@ -70,5 +70,8 @@ private:
 // launch adds its graph's kernel_nodes): a measurement's delta counts the kernels its decode
 // launched through the graphs (spec-tune's graph_kernels).
 [[nodiscard]] std::uint64_t graph_kernels_launched() noexcept;
+// The DecodeGraphExecutable::launch calls of this process so far: over a measurement, the graph
+// replays its kernels (graph_kernels_launched) came from.
+[[nodiscard]] std::uint64_t graph_launches() noexcept;
 
 } // namespace ninferno

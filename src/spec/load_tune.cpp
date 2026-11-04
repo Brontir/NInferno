@@ -78,7 +78,9 @@ Json load_cells_json(const LoadCells& cells, const std::string& load,
                             {"drafted", cell.drafted},
                             {"accepted", cell.accepted},
                             {"plain_steps", cell.plain_steps},
-                            {"trips", cell.trips}});
+                            {"trips", cell.trips},
+                            {"graph_kernels", cell.graph_kernels},
+                            {"graph_launches", cell.graph_launches}});
     }
     Json unheld = Json::array();
     for (const LoadCell& cell : cells.unheld) {
@@ -127,6 +129,8 @@ LoadCells load_cells_from_json(const Json& doc, const Json& expected) {
         cell.accepted    = c.at("accepted").get<std::uint64_t>();
         cell.plain_steps = c.at("plain_steps").get<std::uint64_t>();
         cell.trips       = c.at("trips").get<std::uint64_t>();
+        cell.graph_kernels  = c.at("graph_kernels").get<std::uint64_t>();
+        cell.graph_launches = c.at("graph_launches").get<std::uint64_t>();
         if (!seen.insert({cell.concurrency, cell.bound}).second) {
             throw std::runtime_error("spec-tune --load: --resume has the cell C=" +
                                      std::to_string(cell.concurrency) + " bound " +
