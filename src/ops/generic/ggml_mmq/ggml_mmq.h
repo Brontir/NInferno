@@ -56,7 +56,6 @@ inline constexpr int kKMultiple   = 256;
 
 // The activation: ggml's q8_1 tiles for `columns` tokens of K values (with ggml's over-read slack).
 [[nodiscard]] std::size_t activation_bytes(int k, int columns);
-// Formats of one activation layout read one quantized activation.
 // A launch described instead of run (#298, the generic path's route_resources): while a
 // LaunchShape is installed on this thread, product and vec_product record the matrix kernel they
 // would launch and its geometry there and launch nothing (the stream-K fixup is not described).
@@ -86,6 +85,7 @@ private:
 void describe_launch(LaunchShape& out, const void* kernel, dim3 grid, dim3 block,
                      std::size_t dynamic_smem);
 
+// Formats of one activation layout read one quantized activation.
 [[nodiscard]] int activation_layout(Type type);
 // x is BF16, token c at x + c * ldx.
 void quantize_activation(Type type, const __nv_bfloat16* x, int ldx, int k, int columns, void* out,

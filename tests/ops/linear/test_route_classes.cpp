@@ -768,6 +768,30 @@ int run_resources(bool detail) {
             }
         }
     }
+    // ggml's kernels also under SwiGLU (the gated vector kernel, the matrix kernel's planes of both
+    // halves) and at K 5120 (the vector kernel's unrolled K): described wherever admitted.
+    for (const QType qtype : {QType::GGML_Q4_K, QType::GGML_Q6_K}) {
+        const auto host = quantized_weight::make_patterned_weight(qtype, 4096, 5120, 7U, {});
+        const Weight w  = host.device_weight(payload);
+        if (!generic::supports(w)) continue;
+        for (const auto family : {generic::Family::GgmlMmq, generic::Family::GgmlVec}) {
+            const generic::Route route{family, 0};
+            if (!generic::route_admits(route, w, LinearPolicy::AllowA8)) continue;
+            for (const auto epilogue : {generic::Epilogue::Store, generic::Epilogue::SwiGlu}) {
+                for (const std::int32_t t : {4, 8}) {
+                    const auto r = generic::route_resources(route, w, epilogue, t);
+                    const std::string at = std::string(generic::qtype_name(qtype)) + " 4096x5120 " +
+                                           generic::route_name(route) +
+                                           (epilogue == generic::Epilogue::SwiGlu ? " swiglu" : "") +
+                                           " T=" + std::to_string(t);
+                    if (!r || r->threads % 32 != 0 || r->registers <= 0 || r->grid_x == 0 ||
+                        r->registers * r->threads > registers_per_sm) {
+                        fail(at + (r ? ": implausible description" : ": admitted, not described"));
+                    }
+                }
+            }
+        }
+    }
     std::cout << "resources tiles:";
     for (const FamilyCount& f : families) {
         const std::string family = f.name;

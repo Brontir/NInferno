@@ -691,9 +691,10 @@ struct R8Resources {
 // itself: the register MMA and R8 (rmma_resources, r8_resources) and the shared-memory tiles
 // (TiledMma, StagedMma), the grouped W4A8 tile and its producer-warp form (W4a8Mma) and the I8 tile
 // (I8Mma), the FP4 tiles (W4a4Mma, Nvfp4TiledMma) and ggml's matrix and vector kernels (GgmlMmq on
-// the call's first prefill slice, GgmlVec on its first kVecMaxColumns tokens), each with the
-// workspace the call needs given and its activation quantizer (and ggml's stream-K fixup) not
-// described. nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of a
+// the call's first prefill slice, GgmlVec on its first kVecMaxColumns tokens: a wider call's last
+// part can run another instantiation of the kernel), each with the workspace the call needs given
+// and its activation quantizer (and ggml's stream-K fixup and the matrix kernel's epilogue kernel)
+// not described. nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of a
 // tiled call, and for the scalar route.
 [[nodiscard]] std::optional<KernelResources> route_resources(Route route, const Weight& weight,
                                                              Epilogue epilogue,
