@@ -4084,10 +4084,8 @@ FamilyCoverage w4a8_coverage(const Problem& problem, const Weight& w, std::int32
         c.compiled += reads && (w4a8_schedule_info(i).producers == 0 || w4a8_ws_supports(w.qtype));
         c.legal += why == ScheduleRefusal::None;
     }
-    if (const auto r = w4a8_route(problem, w, tokens)) {
-        c.heuristic         = r->schedule;
-        c.heuristic_refusal = w4a8_refusal(c.heuristic, w, problem.policy);
-    }
+    c.heuristic         = heuristic_w4a8(problem, w, tokens);
+    c.heuristic_refusal = w4a8_refusal(c.heuristic, w, problem.policy);
     return c;
 }
 

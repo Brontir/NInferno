@@ -472,7 +472,8 @@ struct Problem {
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
 // in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
 // does not allow the family's activations (R8: int8; r8_refusal asks it after Format, before
-// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8).
+// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8). W4A8 asks in its
+// own order (w4a8_refusal): Format before NotCompiled, Resource and Policy before Instruction.
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
                              Alignment, Extent, Policy, Resource };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
@@ -539,9 +540,9 @@ struct R8Coverage {
 
 // The W4A8 family's coverage of a call (#307): every schedule with its refusal (compiled: the
 // classic tiles for a format W4A8 reads, the producer-warp tiles for the formats they are built
-// for), and the family's route for the call (w4a8_route; -1 where it offers none) with its
-// refusal. The route a producer tile resolves to where the weight is not admitted to it is
-// resolve_route's (Demotion::W4a8Admission).
+// for), and the family's pick for the call (heuristic_w4a8, before w4a8_route falls back to a
+// schedule that admits the weight) with its refusal. The route a producer tile resolves to where
+// the weight is not admitted to it is resolve_route's (Demotion::W4a8Admission).
 [[nodiscard]] FamilyCoverage w4a8_coverage(const Problem& problem, const Weight& weight,
                                            std::int32_t tokens);
 

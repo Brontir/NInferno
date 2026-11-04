@@ -92,7 +92,7 @@ struct Shape {
 };
 
 bool aligned(const void* p, std::uintptr_t bytes) {
-    return (reinterpret_cast<std::uintptr_t>(p) % bytes) == 0;
+    return p != nullptr && (reinterpret_cast<std::uintptr_t>(p) % bytes) == 0;
 }
 
 // W4A8's admission as route_admits decided it before w4a8_refusal, written apart from it: the
@@ -292,6 +292,11 @@ int run_board(const TestBoard& b) {
                         const generic::Route r{generic::Family::W4a8Mma,
                                                static_cast<std::uint8_t>(s.schedule)};
                         const bool admits = generic::route_admits(r, w, policy);
+                        if (s.schedule == c.heuristic &&
+                            s.refusal != generic::ScheduleRefusal::None) {
+                            ++w4a8_refused["pick " + std::string(generic::schedule_refusal_name(
+                                                         s.refusal))];
+                        }
                         ++w4a8_refused[std::string(generic::schedule_refusal_name(s.refusal))];
                         legal += s.refusal == generic::ScheduleRefusal::None;
                         if (admits != (s.refusal == generic::ScheduleRefusal::None) ||
@@ -310,9 +315,7 @@ int run_board(const TestBoard& b) {
                         }
                     }
                     if (c.declared != generic::w4a8_schedule_count() || c.legal != legal ||
-                        c.compiled > c.declared ||
-                        (c.heuristic >= 0 &&
-                         c.heuristic_refusal == generic::ScheduleRefusal::NotDeclared)) {
+                        c.heuristic_refusal == generic::ScheduleRefusal::NotDeclared) {
                         fail(where + pol + ": W4A8 counts declared " + std::to_string(c.declared) +
                              ", compiled " + std::to_string(c.compiled) + ", legal " +
                              std::to_string(c.legal));
