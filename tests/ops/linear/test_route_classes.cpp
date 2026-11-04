@@ -614,6 +614,161 @@ int run_resources(bool detail) {
         }
     }
     if (described == 0) fail("no register-MMA kernel described");
+    // R8 (r8_resources): nothing where route_admits refuses R8 under AllowA8; where described, the
+    // schedule's threads, one CTA per warps x rows of output rows, a one-dimensional grid, no
+    // pre-quantized form for one token, and registers the SM holds.
+    int r8_described = 0, r8_pre = 0, r8_admitted = 0;
+    for (const QType qtype : kFormats) {
+        const Shape shape{4096, 4096};
+        quantized_weight::PatternedWeightOptions options;
+        if (qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+        const auto host = quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+        const Weight w  = host.device_weight(payload);
+        if (!generic::supports(w)) continue;
+        for (int i = 0; i < generic::r8_schedule_count(); ++i) {
+            const generic::Route route{generic::Family::R8Mma, static_cast<std::uint8_t>(i)};
+            const bool admitted = generic::route_admits(route, w, LinearPolicy::AllowA8);
+            const auto info     = generic::r8_schedule_info(i);
+            r8_admitted += admitted ? 1 : 0;
+            for (const std::int32_t t : {1, 2, 4, 8}) {
+                const auto r = generic::r8_resources(i, w, generic::Epilogue::Store, t);
+                const std::string at = std::string(generic::qtype_name(qtype)) + " " +
+                                       generic::route_name(route) + " T=" + std::to_string(t);
+                if (r && !admitted) {
+                    fail(at + ": described although route_admits refuses it");
+                    continue;
+                }
+                if (!r) continue;
+                ++r8_described;
+                r8_pre += r->prequantized ? 1 : 0;
+                const auto& k = r->kernel;
+                const unsigned ctas = static_cast<unsigned>(
+                    (shape.n + info.warps * info.rows - 1) / (info.warps * info.rows));
+                if (k.threads != 32 * info.warps || k.grid_x != ctas || k.grid_y != 1 ||
+                    k.grid_z != 1 || k.registers <= 0 ||
+                    k.registers * k.threads > registers_per_sm || (t == 1 && r->prequantized)) {
+                    fail(at + ": threads " + std::to_string(k.threads) + ", grid " +
+                         std::to_string(k.grid_x) + "x" + std::to_string(k.grid_y) + "x" +
+                         std::to_string(k.grid_z) + " (" + std::to_string(ctas) + " CTAs), " +
+                         std::to_string(k.registers) + " registers" +
+                         (r->prequantized ? ", pre-quantized" : ""));
+                }
+                if (detail) {
+                    std::cout << at << ": " << k.registers << " registers, "
+                              << k.local_bytes << " B local, " << k.dynamic_smem
+                              << " B dynamic smem" << (r->prequantized ? ", pre-quantized" : "")
+                              << '\n';
+                }
+            }
+        }
+    }
+    // Where route_admits holds R8 for some format and schedule, some call takes it.
+    if (r8_described == 0 && r8_admitted > 0) fail("no R8 kernel described");
+    // The verify widths run the pre-quantized form (T = 2..kR8VerifyTokens) where a format has it.
+    if (r8_admitted > 0 && r8_pre == 0) fail("no pre-quantized R8 kernel described");
+    std::cout << "resources R8: " << r8_described << " described (" << r8_pre
+              << " pre-quantized)\n";
+    // The tile families (route_resources): nothing where route_admits refuses the route under
+    // AllowA8; where described, threads and registers the SM holds, a grid that covers the call,
+    // dynamic shared memory one block takes, and the I8 and staged tiles at their schedules'
+    // threads. Each family some format and schedule admits describes some call.
+    std::size_t smem_optin = 0;
+    try {
+        smem_optin = device_class().smem_per_block_optin;
+    } catch (const std::exception&) {}
+    struct FamilyCount {
+        generic::Family family;
+        int (*count)();
+        const char* name;
+        int admitted = 0, described = 0;
+    };
+    FamilyCount families[] = {{generic::Family::TiledMma, generic::tiled_schedule_count, "tiled"},
+                              {generic::Family::StagedMma, generic::staged_schedule_count, "staged"},
+                              {generic::Family::W4a8Mma, generic::w4a8_schedule_count, "w4a8"},
+                              {generic::Family::I8Mma, generic::i8_schedule_count, "i8"}};
+    // The kFormats and BF16, which the staged tile takes alone.
+    std::vector<QType> tile_formats(std::begin(kFormats), std::end(kFormats));
+    tile_formats.push_back(QType::BF16);
+    for (const QType qtype : tile_formats) {
+        const Shape shape{4096, 4096};
+        quantized_weight::PatternedWeightOptions options;
+        if (qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+        quantized_weight::PackedWeight host;
+        Weight w;
+        if (qtype == QType::BF16) {
+            // A plain BF16 matrix described at the stand-in address (the fixtures are quantized).
+            w.qtype         = QType::BF16;
+            w.layout        = QuantLayout::Contiguous;
+            w.qdata         = payload;
+            w.payload       = payload;
+            w.payload_bytes = static_cast<std::size_t>(shape.n) * shape.k * 2;
+            w.n = w.shape[0] = w.padded_shape[0] = shape.n;
+            w.k = w.shape[1] = w.padded_shape[1] = shape.k;
+            w.ndim = 2;
+        } else {
+            host = quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+            w    = host.device_weight(payload);
+        }
+        if (!generic::supports(w)) continue;
+        for (FamilyCount& f : families) {
+            for (int i = 0; i < f.count(); ++i) {
+                const generic::Route route{f.family, static_cast<std::uint8_t>(i)};
+                const bool admitted = generic::route_admits(route, w, LinearPolicy::AllowA8);
+                f.admitted += admitted ? 1 : 0;
+                for (const std::int32_t t : {64, 512}) {
+                    const auto r = generic::route_resources(route, w, generic::Epilogue::Store, t);
+                    const std::string at = std::string(generic::qtype_name(qtype)) + " " +
+                                           generic::route_name(route) + " T=" + std::to_string(t);
+                    if (r && !admitted) {
+                        fail(at + ": described although route_admits refuses it");
+                        continue;
+                    }
+                    if (!r) continue;
+                    ++f.described;
+                    int threads = r->threads;
+                    if (f.family == generic::Family::I8Mma) {
+                        threads = generic::i8_schedule_info(i).threads;
+                    } else if (f.family == generic::Family::StagedMma) {
+                        const auto s = generic::staged_schedule_info(i);
+                        threads      = 32 * s.warps_m * s.warps_n;
+                    }
+                    // The W4A8 tile's warps are not in its schedule facts: whole warps, and the
+                    // producer-warp kernel's consumers beside its producers.
+                    const int producers = f.family == generic::Family::W4a8Mma
+                                              ? generic::w4a8_schedule_info(i).producers
+                                              : 0;
+                    if (r->threads % 32 != 0 || r->threads <= 32 * producers ||
+                        r->threads != threads || r->registers <= 0 || r->grid_x == 0 ||
+                        r->grid_y == 0 || r->registers * r->threads > registers_per_sm ||
+                        r->max_threads_per_block < r->threads ||
+                        (smem_optin > 0 && r->dynamic_smem + r->static_smem > smem_optin)) {
+                        fail(at + ": threads " + std::to_string(r->threads) + " (schedule " +
+                             std::to_string(threads) + "), " + std::to_string(r->registers) +
+                             " registers, " + std::to_string(r->dynamic_smem) +
+                             " B dynamic smem, grid " + std::to_string(r->grid_x) + "x" +
+                             std::to_string(r->grid_y));
+                    }
+                    if (detail) {
+                        std::cout << at << ": " << r->registers << " registers, " << r->local_bytes
+                                  << " B local, " << r->dynamic_smem << " B dynamic smem, grid "
+                                  << r->grid_x << "x" << r->grid_y << '\n';
+                    }
+                }
+            }
+        }
+    }
+    std::cout << "resources tiles:";
+    for (const FamilyCount& f : families) {
+        const std::string family = f.name;
+        // Volta's tiled calls of these widths run its CUTLASS copy: no tile kernel to describe.
+        if (f.admitted > 0 && f.described == 0 &&
+            (tensor_mma || f.family != generic::Family::TiledMma)) {
+            fail("no " + family + " kernel described (" + std::to_string(f.admitted) +
+                 " admitted)");
+        }
+        std::cout << " " << family << " " << f.described << "/" << f.admitted;
+    }
+    std::cout << " (described calls / admitted schedules)\n";
     std::cout << "resources (" << device_class().id() << "): " << described << " described, "
               << failures << " failures; per format the most registers and spill bytes:";
     for (const auto& [format, m] : most) {

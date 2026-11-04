@@ -16,6 +16,7 @@
 // activation: the bytes do not change with T.
 
 #include "core/pdl.cuh"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_w4a8.cuh"
 #include "ops/generic/generic_schedules.h"
 
@@ -348,6 +349,12 @@ void r8_launch_tokens(const GemmArgs& args, cudaStream_t stream, W4a8Activation 
                       (r8_stage_grid() && r8_grid_words<C>() > 0
                            ? sizeof(std::uint32_t) * r8_grid_words<C>() + r8_grid_pad
                            : 0);
+    if (KernelResources* described = kernel_describe_target()) {
+        cudaFuncAttributes attributes{};
+        CUDA_CHECK(cudaFuncGetAttributes(&attributes, r8_kernel<C, S, NT, E, kPre>));
+        describe_kernel(*described, attributes, grid, S::kThreads, smem, false);
+        return;
+    }
     // kPre launches in stream order: the quantizer it reads is the kernel right before it.
     if (kPre || (args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported()) {
         r8_kernel<C, S, NT, E, kPre><<<grid, S::kThreads, smem, stream>>>(args, act);
