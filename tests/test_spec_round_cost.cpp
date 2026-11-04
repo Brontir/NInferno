@@ -266,6 +266,29 @@ int main() {
                 }
             }
         }
+        // Against a same-build measurement (reported, not held): Qwen3.6-35B-A3B UD-Q4_K_M with its
+        // drafters on the RTX 4090, one build, spec-tune then spec-tune --load 2 (2026-11-04):
+        // plain 260.3 tok/s at C = 1 and 383.8 at C = 2 (a two-row step 1.356 one-row steps);
+        // dflash:3+head 1.884x plain at one request (3.20 tokens a round), C = 2 bound 3 1.609x
+        // (3.12 a round), so R_1 / R_2 = (1.609 / 3.12) / (1.884 / 3.20) = 0.876. Launches are
+        // left out of both sides here (launch_bytes 0).
+        {
+            const auto& p      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
+            const auto& t      = p.round_facts->target;
+            const double k4090 = sp::card_rates_of_board(0x2684).kappa();
+            const auto pass    = [&](std::int32_t rows) {
+                const double active = t.experts > 0 ? double(t.experts_used) / double(t.experts) : 1.0;
+                return t.bytes + t.expert_bytes * sp::moe_read_fraction(t, rows) +
+                       k4090 * 2.0 * rows * (t.params + t.expert_params * active);
+            };
+            const auto config = sp::SpecConfig::parse("dflash:3+head");
+            const auto r1 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 1);
+            const auto r2 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 2);
+            std::printf("Qwen3.6-35B-A3B RTX 4090: two-row plain step %.3f one-row steps (measured "
+                        "1.356); dflash:3+head R_1 / R_2 %.3f (measured 0.876)
+",
+                        pass(2) / pass(1), r1 && r2 ? *r1 / *r2 : 0.0);
+        }
         // Against a measurement (reported, not held: the load cells ran another engine build
         // and corpus than the pair's one-request rounds): Gemma 4 26B A4B QAT UD-Q4_K_XL with its
         // MTP on the RTX 5080, C = 2 over plain at C = 2, bound 2 610.0 / 388.0 and bound 3
