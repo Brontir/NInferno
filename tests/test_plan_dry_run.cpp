@@ -27,6 +27,7 @@
 #include <iostream>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -382,6 +383,25 @@ struct Model {
     std::vector<std::uint64_t> quants; // weight bytes, ascending
 };
 
+// Two plans alike in everything the plan level decides: the ladder (each rung and its bytes), the
+// rung selected and its reserve, the storages, the free memory read, and the reason.
+bool same_plan(const rt::DryRunPlan& a, const rt::DryRunPlan& b) {
+    if (a.planned != b.planned || a.fits != b.fits || a.rung != b.rung ||
+        a.reserve != b.reserve || a.kv_cache != b.kv_cache || a.recurrent != b.recurrent ||
+        a.free_bytes != b.free_bytes || a.reason != b.reason ||
+        a.ladder.size() != b.ladder.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < a.ladder.size(); ++i) {
+        if (!(a.ladder[i].rung == b.ladder[i].rung) ||
+            a.ladder[i].bytes.total() != b.ladder[i].bytes.total() ||
+            a.ladder[i].needed != b.ladder[i].needed) {
+            return false;
+        }
+    }
+    return true;
+}
+
 void test_properties() {
     const std::vector<Model> models = {
         {"qwen27b", qwen27b, {9 * kGiB, 12 * kGiB, 15 * kGiB, 18 * kGiB, 22 * kGiB, 29 * kGiB}},
@@ -413,6 +433,21 @@ void test_properties() {
                                 " GiB on " + device.name + " cc" + std::to_string(cc) +
                                 (wddm ? " wddm" : "") + " ctx " + std::to_string(context) + " x " +
                                 std::to_string(streams);
+                            // #304: the plan level (B1) reads the memory, the compute capability
+                            // and the discrete facts alone. Another board of the same memory and
+                            // generation (an SM count, a PCI id and a name of its own) plans alike.
+                            if (streams == 1 || streams == 4) {
+                                for (const auto& [sms, pci] :
+                                     {std::pair{24, 0x2786U}, std::pair{170, 0x2B85U}}) {
+                                    rt::PlanDeviceFacts other = device;
+                                    other.sms                 = sms;
+                                    other.pci_device_id       = pci;
+                                    other.name                = "another board";
+                                    other.source              = "named board";
+                                    check(same_plan(plan, rt::dry_run_plan(facts, other, options)),
+                                          what + ": another board's SMs and id plan alike");
+                                }
+                            }
                             // Total: a rung, or a refusal with a reason.
                             check(plan.planned && !plan.ladder.empty(), what + ": planned");
                             check(plan.fits || !plan.reason.empty(), what + ": a reason");
