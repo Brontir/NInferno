@@ -1951,43 +1951,34 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     return out;
 }
 
-std::map<std::string, std::uint64_t> safetensors_dtype_bytes(const FetchPlan& plan,
-                                                             const FetchOptions& options) {
+std::map<std::string, std::uint64_t>
+safetensors_dtype_bytes(const FetchPlan& plan, const FetchOptions& options,
+                        const std::function<bool(const std::string&)>& keep) {
     std::map<std::string, std::uint64_t> out;
     const auto root     = options.cache.empty() ? default_hub_cache() : options.cache;
     std::string commit  = plan.commit;
     const auto hub      = make_hub(options, commit);
     const auto snapshot = hub->cache_dir(root, plan.repo) / "snapshots" / plan.commit;
     std::optional<Listing> listing;
-    for (const auto& path : plan.files) {
-        if (!ascii_lower(path).ends_with(".safetensors")) { continue; }
-        // The header: its length (8 bytes, little endian), then that many bytes of JSON.
-        std::function<std::string(std::uint64_t, std::uint64_t)> read;
-        const auto local = snapshot / path;
-        if (fs::exists(local)) {
-            read = [local](std::uint64_t begin, std::uint64_t bytes) {
-                std::string data(static_cast<std::size_t>(bytes), '\0');
-                std::ifstream stream(local, std::ios::binary);
-                stream.seekg(static_cast<std::streamoff>(begin));
-                stream.read(data.data(), static_cast<std::streamsize>(data.size()));
-                data.resize(static_cast<std::size_t>(stream.gcount()));
-                return data;
-            };
-        } else {
-            if (!listing) { listing = hub->list(plan.repo, plan.commit); }
-            const auto file = std::find_if(listing->files.begin(), listing->files.end(),
-                                           [&](const RemoteFile& f) { return f.path == path; });
-            if (file == listing->files.end()) {
-                throw std::runtime_error(plan.repo + "@" + plan.commit + ": no " + path);
-            }
-            const auto resolved = hub->resolve(plan.repo, plan.commit, *file);
-            const auto headers =
-                resolved.authorized ? hub->credentials() : std::vector<std::string>{};
-            read = [url = resolved.url, headers](std::uint64_t begin, std::uint64_t bytes) {
+    // A header's bytes from `begin`: the remote file by HTTP range requests.
+    const auto remote = [&](const std::string& path) {
+        if (!listing) { listing = hub->list(plan.repo, plan.commit); }
+        const auto file = std::find_if(listing->files.begin(), listing->files.end(),
+                                       [&](const RemoteFile& f) { return f.path == path; });
+        if (file == listing->files.end()) {
+            throw std::runtime_error(plan.repo + "@" + plan.commit + ": no " + path);
+        }
+        const auto resolved = hub->resolve(plan.repo, plan.commit, *file);
+        const auto headers = resolved.authorized ? hub->credentials() : std::vector<std::string>{};
+        return std::function<std::string(std::uint64_t, std::uint64_t)>(
+            [url = resolved.url, headers](std::uint64_t begin, std::uint64_t bytes) {
                 std::uint64_t total = 0;
                 return range_prefix(url, headers, bytes, total, begin);
-            };
-        }
+            });
+    };
+    const auto header_of = [&](const std::string& path,
+                               const std::function<std::string(std::uint64_t, std::uint64_t)>& read) {
+        // The header: its length (8 bytes, little endian), then that many bytes of JSON.
         const auto length = read(0, 8);
         if (length.size() != 8) { throw std::runtime_error(plan.repo + "/" + path + ": no header"); }
         std::uint64_t bytes = 0;
@@ -1996,12 +1987,38 @@ std::map<std::string, std::uint64_t> safetensors_dtype_bytes(const FetchPlan& pl
             throw std::runtime_error(plan.repo + "/" + path + ": a header of " +
                                      std::to_string(bytes) + " bytes");
         }
-        const auto header = nlohmann::json::parse(read(8, bytes));
+        return nlohmann::json::parse(read(8, bytes));
+    };
+    for (const auto& path : plan.files) {
+        if (!ascii_lower(path).ends_with(".safetensors")) { continue; }
+        nlohmann::json header;
+        const auto local = snapshot / path;
+        bool read_here   = false;
+        if (fs::exists(local)) {
+            // A shard cut short (an interrupted download) is read from the hub instead.
+            try {
+                header = header_of(path, [local](std::uint64_t begin, std::uint64_t bytes) {
+                    std::string data(static_cast<std::size_t>(bytes), '\0');
+                    std::ifstream stream(local, std::ios::binary);
+                    stream.seekg(static_cast<std::streamoff>(begin));
+                    stream.read(data.data(), static_cast<std::streamsize>(data.size()));
+                    data.resize(static_cast<std::size_t>(stream.gcount()));
+                    return data;
+                });
+                read_here = true;
+            } catch (const std::exception&) {}
+        }
+        if (!read_here) { header = header_of(path, remote(path)); }
         for (const auto& [name, tensor] : header.items()) {
-            if (name == "__metadata__") { continue; }
-            const auto& span = tensor.at("data_offsets");
-            out[tensor.at("dtype").get<std::string>()] +=
-                span.at(1).get<std::uint64_t>() - span.at(0).get<std::uint64_t>();
+            if (name == "__metadata__" || (keep && !keep(name))) { continue; }
+            const auto& span  = tensor.at("data_offsets");
+            const auto first  = span.at(0).get<std::uint64_t>();
+            const auto last   = span.at(1).get<std::uint64_t>();
+            if (last < first) {
+                throw std::runtime_error(plan.repo + "/" + path + ": " + name +
+                                         " ends before it starts");
+            }
+            out[tensor.at("dtype").get<std::string>()] += last - first;
         }
     }
     return out;
