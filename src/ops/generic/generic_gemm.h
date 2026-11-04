@@ -683,6 +683,10 @@ struct R8Coverage {
 // first schedule that fits the build; nullopt where none admits the weight.
 [[nodiscard]] std::optional<Route> w4a8_route(const Problem& problem, const Weight& weight,
                                               std::int32_t tokens);
+// The I8 tile of a call: i8_coverage's pick where the weight is admitted to it; nullopt where
+// none admits it.
+[[nodiscard]] std::optional<Route> i8_route(const Problem& problem, const Weight& weight,
+                                            std::int32_t tokens);
 
 // The shape-class heuristic alone (what the tuner is compared against).
 [[nodiscard]] Route heuristic_route(const Problem& problem, const Weight& weight,
