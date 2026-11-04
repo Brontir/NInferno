@@ -205,6 +205,48 @@ int run_board(const TestBoard& b) {
                         }
                     }
                 }
+                // R8, per weight (#307): the schedule rule against the old one written apart
+                // (the generic path reads the weight, the call's admission to R8, the ggml high
+                // plane on 16 bytes); a high plane 4 bytes off refuses every schedule for
+                // alignment; another layout refuses for format and keeps the compiled count.
+                {
+                    const generic::Problem a8{qtype, LinearPolicy::AllowA8, shape.n, shape.k,
+                                              generic::Epilogue::Store};
+                    const auto r8 = generic::r8_coverage(a8, w, 1);
+                    const bool admitted = r8.call != generic::R8CallRefusal::NotAdmitted;
+                    if (r8.family.declared != generic::r8_schedule_count() ||
+                        (r8.family.compiled != 0 && r8.family.compiled != r8.family.declared) ||
+                        r8.family.legal != (admitted ? r8.family.declared : 0)) {
+                        fail(where + ": R8 counts declared " + std::to_string(r8.family.declared) +
+                             ", compiled " + std::to_string(r8.family.compiled) + ", legal " +
+                             std::to_string(r8.family.legal));
+                    }
+                    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && admitted) {
+                        Weight off = w;
+                        off.qhigh  = static_cast<const char*>(w.qhigh) + 4;
+                        const auto o = generic::r8_coverage(a8, off, 1);
+                        const bool all_alignment = std::all_of(
+                            o.family.schedules.begin(), o.family.schedules.end(), [](const auto& s) {
+                                return s.refusal == generic::ScheduleRefusal::Alignment;
+                            });
+                        if (!all_alignment || o.family.compiled != r8.family.compiled) {
+                            fail(where + ": R8 with the high plane 4 bytes off");
+                        }
+                    }
+                    Weight bad = w;
+                    bad.layout = w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit
+                                                                     : QuantLayout::GgmlPlanes;
+                    if (!generic::supports(bad)) {
+                        const auto b = generic::r8_coverage(a8, bad, 1);
+                        const bool all_format = std::all_of(
+                            b.family.schedules.begin(), b.family.schedules.end(), [](const auto& s) {
+                                return s.refusal == generic::ScheduleRefusal::Format;
+                            });
+                        if (!all_format || b.family.compiled != r8.family.compiled) {
+                            fail(where + ": R8 in a layout the generic path does not read");
+                        }
+                    }
+                }
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :
@@ -252,8 +294,14 @@ int run_board(const TestBoard& b) {
                             for (const auto& s : r8.family.schedules) {
                                 const generic::Route r{generic::Family::R8Mma,
                                                        static_cast<std::uint8_t>(s.schedule)};
-                                if (generic::route_admits(r, w, policy) !=
-                                    (s.refusal == generic::ScheduleRefusal::None)) {
+                                // The old rule, written apart from r8_refusal: the generic path
+                                // reads the weight (filtered above) and the call's weight is
+                                // admitted to R8 (allows_r8: r8_call_refusal's first test).
+                                const bool old_rule =
+                                    r8.call != generic::R8CallRefusal::NotAdmitted;
+                                if (generic::route_admits(r, w, policy) != old_rule ||
+                                    generic::route_admits(r, w, policy) !=
+                                        (s.refusal == generic::ScheduleRefusal::None)) {
                                     fail(where + " " + generic::route_name(r) + ": " +
                                          std::string(generic::schedule_refusal_name(s.refusal)) +
                                          ", which route_admits decides otherwise");

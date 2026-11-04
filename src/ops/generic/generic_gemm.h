@@ -471,7 +471,8 @@ struct Problem {
 // the 32-value decoders), an instruction the device lacks (route_requires), a plane off the
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
 // in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
-// does not allow the family's activations (R8: int8).
+// does not allow the family's activations (R8: int8; r8_refusal asks it after Format, before
+// Instruction).
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
                              Alignment, Extent, Policy };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
