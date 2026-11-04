@@ -4230,18 +4230,21 @@ FamilyCoverage rmma_coverage(const Problem& problem, const Weight& w, std::int32
 FamilyCoverage tiled_coverage(const Weight& w) {
     FamilyCoverage c;
     c.declared = tiled_schedule_count();
+    // What the build holds follows from the format's codec alone, whether or not this weight is
+    // one the generic path reads (its schedules then refuse for format).
     bool cutlass_only = false, takes = false;
-    if (supports(w)) {
-        const WeightCodec codec = codec_of(w);
-        cutlass_only            = volta_cutlass_only(codec);
-        takes                   = tiled_takes(codec);
-    }
+    WeightCodec codec{};
+    try {
+        codec        = codec_of(w);
+        cutlass_only = volta_cutlass_only(codec);
+        takes        = tiled_takes(codec);
+    } catch (const std::exception&) {} // a format with no codec: nothing compiled
     for (int i = 0; i < c.declared; ++i) {
         const ScheduleRefusal why = tiled_refusal(i, w);
         c.schedules.push_back({i, why});
         c.compiled += takes || (cutlass_only && i == 0);
         c.legal += why == ScheduleRefusal::None;
-        if (c.heuristic < 0 && (cutlass_only ? i == 0 : takes && tiled_fits(i, codec_of(w)))) {
+        if (c.heuristic < 0 && (cutlass_only ? i == 0 : takes && tiled_fits(i, codec))) {
             c.heuristic         = i;
             c.heuristic_refusal = why;
         }
@@ -4308,7 +4311,7 @@ FamilyCoverage i8_coverage(const Problem& problem, const Weight& w, std::int32_t
 FamilyCoverage staged_coverage(const Weight& w) {
     FamilyCoverage c;
     c.declared       = staged_schedule_count();
-    const bool reads = supports(w) && codec_of(w) == WeightCodec::Bf16;
+    const bool reads = w.qtype == QType::BF16; // the format alone, whatever the weight
     for (int i = 0; i < c.declared; ++i) {
         const ScheduleRefusal why = staged_refusal(i, w);
         c.schedules.push_back({i, why});
