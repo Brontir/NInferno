@@ -5,7 +5,8 @@
 //
 //   ninferno-serve route-tune --shapes FILE [--out routes/<key>.json] [--key chip|variant|arch]
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
-//                     [--points T,T,...] [--routes-out FILE.csv]
+//                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
+//                     [--selected-out FILE.csv]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
