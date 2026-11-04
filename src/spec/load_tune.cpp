@@ -129,9 +129,8 @@ LoadCells load_cells_from_json(const Json& doc, const Json& expected) {
         cell.accepted    = c.at("accepted").get<std::uint64_t>();
         cell.plain_steps = c.at("plain_steps").get<std::uint64_t>();
         cell.trips       = c.at("trips").get<std::uint64_t>();
-        // Cells kept before the counts were recorded have none.
-        cell.graph_kernels  = c.value("graph_kernels", std::uint64_t{0});
-        cell.graph_launches = c.value("graph_launches", std::uint64_t{0});
+        cell.graph_kernels  = c.at("graph_kernels").get<std::uint64_t>();
+        cell.graph_launches = c.at("graph_launches").get<std::uint64_t>();
         if (!seen.insert({cell.concurrency, cell.bound}).second) {
             throw std::runtime_error("spec-tune --load: --resume has the cell C=" +
                                      std::to_string(cell.concurrency) + " bound " +

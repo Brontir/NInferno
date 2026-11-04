@@ -45,7 +45,7 @@ struct LoadCell {
     double seconds            = 0;
     std::uint64_t rounds = 0, drafted = 0, accepted = 0, plain_steps = 0, trips = 0;
     // The kernels the cell's graphs launched and the graph launches they came from (#303: a
-    // batched step's kernels against one request's; 0: not recorded, cells kept before). Every
+    // batched step's kernels against one request's). Every
     // graph counts: a plain cell's are its batched steps', a speculative cell's mix its rounds,
     // drafts and plain steps; steps run without a graph are in neither.
     std::uint64_t graph_kernels = 0, graph_launches = 0;
@@ -75,7 +75,8 @@ struct LoadCells {
 [[nodiscard]] nlohmann::json load_cells_json(const LoadCells& cells, const std::string& load,
                                              const std::string& measured_on);
 // Throws std::runtime_error when the settings differ from `expected` (naming the first field that
-// does), a bound name is unknown, or a (concurrency, bound) cell appears twice.
+// does), a bound name is unknown, or a (concurrency, bound) cell appears twice; nlohmann's
+// exception when a cell lacks a field (one kept before its graph counts were recorded).
 [[nodiscard]] LoadCells load_cells_from_json(const nlohmann::json& doc,
                                              const nlohmann::json& expected);
 
