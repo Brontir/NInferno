@@ -504,8 +504,9 @@ std::string format_of_ggml(std::uint32_t type) {
 // W4A8 reads a bank of a format with int8 codes (convert::kept_block_policy AllowA8, the formats
 // generic::w4a8_supports names) and K a multiple of 32, in fragment order only the formats
 // ggml_frag_w4a8 names, and prefills it on int8 activations, unless another bank of its layer is
-// A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit register MMA; a layer of MXFP4 banks is its own route. The trunk takes the route of the most of
-// its banks' bytes. The banks' 16-bit and float tensors (biases) do not decide.
+// A16-only (the layer's expert policy is then A16); any other bank runs the 16-bit register MMA;
+// a layer of MXFP4 banks is its own route. The trunk takes the route of the most of its banks'
+// bytes. The banks' 16-bit and float tensors (biases) do not decide.
 class ExpertRoutes {
 public:
     void add(const std::string& layer, const std::string& format, const std::string& layout,
