@@ -4308,6 +4308,47 @@ FamilyCoverage i8_coverage(const Problem& problem, const Weight& w, std::int32_t
     return c;
 }
 
+namespace {
+thread_local KernelResources* t_describe = nullptr;
+} // namespace
+
+KernelResources* kernel_describe_target() noexcept { return t_describe; }
+ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : previous_(t_describe) {
+    t_describe = &out;
+}
+ScopedKernelDescribe::~ScopedKernelDescribe() { t_describe = previous_; }
+
+std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epilogue epilogue,
+                                              std::int32_t tokens) {
+    if (schedule < 0 || schedule >= rmma_schedule_count() || !rmma_schedule_launchable(schedule) ||
+        tokens < 1 || !supports(w)) {
+        return std::nullopt;
+    }
+    const WeightCodec codec = codec_of(w);
+    const auto s            = rmma_schedule_info(schedule);
+    if (!rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k) || (w.k % k_multiple(codec)) != 0) {
+        return std::nullopt;
+    }
+    GemmArgs args = weight_args(w);
+    args.rows     = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
+    args.tokens   = tokens;
+    args.ldx      = w.k;
+    args.lane_local = invariant_routes_active() ? 0 : 1;
+    args.spread_smem =
+        spread_smem(Route{Family::RegisterMma, static_cast<std::uint8_t>(schedule)}, codec, epilogue, args);
+    // Without tensor mma.sync run_route hands such calls to Volta's own HMMA and GEMV kernels
+    // (the call's x aligned as the engine passes it): no register-MMA kernel runs to describe.
+    if (!current_features().mma_tensor &&
+        (volta_hmma_takes(codec, args) || ((args.ldx % 8) == 0 && volta_gemv_takes(codec, args)))) {
+        return std::nullopt;
+    }
+    KernelResources out;
+    const ScopedKernelDescribe describe(out);
+    launch_rmma_codec(codec, schedule, epilogue, args, nullptr);
+    if (out.threads == 0) return std::nullopt; // nothing described: no register-MMA launch ran
+    return out;
+}
+
 BuildManifest build_manifest() {
     BuildManifest m;
 #ifdef NINFERNO_BUILD_ARCH
@@ -4559,6 +4600,123 @@ ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call
     return out;
 }
 
+void launch_rmma_codec(WeightCodec codec, int schedule, Epilogue epilogue, const GemmArgs& args,
+                       cudaStream_t stream) {
+    switch (codec) {
+    case WeightCodec::Bf16:
+        launch_rmma_bf16(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Fp8:
+        launch_rmma_fp8(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Nvfp4:
+        launch_rmma_nvfp4(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Q4:
+        launch_rmma_q4(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Q5:
+        launch_rmma_q5(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Q6:
+        launch_rmma_q6(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Q3G128:
+        launch_rmma_q3g128(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Q3G64:
+        launch_rmma_q3g64(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Q8:
+        launch_rmma_q8(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Fp8RowF32:
+        launch_rmma_fp8_row_f32(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Fp8B128:
+        launch_rmma_fp8_b128(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::U4Zp:
+        launch_rmma_u4zp(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::U4ZpG32:
+        launch_rmma_u4zp_g32(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::U4ZpG64:
+        launch_rmma_u4zp_g64(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ4K:
+        launch_rmma_ggml_q4k(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ5K:
+        launch_rmma_ggml_q5k(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ6K:
+        launch_rmma_ggml_q6k(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ3K:
+        launch_rmma_ggml_q3k(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ2K:
+        launch_rmma_ggml_q2k(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq4Xs:
+        launch_rmma_ggml_iq4xs(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq3Xxs:
+        launch_rmma_ggml_iq3xxs(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq3S:
+        launch_rmma_ggml_iq3s(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ40:
+        launch_rmma_ggml_q40(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ41:
+        launch_rmma_ggml_q41(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ50:
+        launch_rmma_ggml_q50(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ51:
+        launch_rmma_ggml_q51(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq4Nl:
+        launch_rmma_ggml_iq4nl(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq2Xxs:
+        launch_rmma_ggml_iq2xxs(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq2Xs:
+        launch_rmma_ggml_iq2xs(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq2S:
+        launch_rmma_ggml_iq2s(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq1S:
+        launch_rmma_ggml_iq1s(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlIq1M:
+        launch_rmma_ggml_iq1m(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlTq10:
+        launch_rmma_ggml_tq10(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlTq20:
+        launch_rmma_ggml_tq20(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ10:
+        launch_rmma_ggml_q10(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::GgmlQ20:
+        launch_rmma_ggml_q20(schedule, epilogue, args, stream);
+        return;
+    case WeightCodec::Mxfp4:
+        launch_rmma_mxfp4(schedule, epilogue, args, stream);
+        return;
+    }
+}
+
 void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cudaStream_t stream,
                bool* released) {
     if (released != nullptr) *released = false;
@@ -4750,119 +4908,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             launch_volta_gemv(codec, call.epilogue, args, stream);
             return;
         }
-        switch (codec) {
-        case WeightCodec::Bf16:
-            launch_rmma_bf16(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Fp8:
-            launch_rmma_fp8(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Nvfp4:
-            launch_rmma_nvfp4(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Q4:
-            launch_rmma_q4(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Q5:
-            launch_rmma_q5(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Q6:
-            launch_rmma_q6(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Q3G128:
-            launch_rmma_q3g128(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Q3G64:
-            launch_rmma_q3g64(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Q8:
-            launch_rmma_q8(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Fp8RowF32:
-            launch_rmma_fp8_row_f32(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Fp8B128:
-            launch_rmma_fp8_b128(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::U4Zp:
-            launch_rmma_u4zp(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::U4ZpG32:
-            launch_rmma_u4zp_g32(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::U4ZpG64:
-            launch_rmma_u4zp_g64(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ4K:
-            launch_rmma_ggml_q4k(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ5K:
-            launch_rmma_ggml_q5k(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ6K:
-            launch_rmma_ggml_q6k(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ3K:
-            launch_rmma_ggml_q3k(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ2K:
-            launch_rmma_ggml_q2k(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq4Xs:
-            launch_rmma_ggml_iq4xs(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq3Xxs:
-            launch_rmma_ggml_iq3xxs(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq3S:
-            launch_rmma_ggml_iq3s(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ40:
-            launch_rmma_ggml_q40(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ41:
-            launch_rmma_ggml_q41(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ50:
-            launch_rmma_ggml_q50(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ51:
-            launch_rmma_ggml_q51(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq4Nl:
-            launch_rmma_ggml_iq4nl(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq2Xxs:
-            launch_rmma_ggml_iq2xxs(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq2Xs:
-            launch_rmma_ggml_iq2xs(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq2S:
-            launch_rmma_ggml_iq2s(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq1S:
-            launch_rmma_ggml_iq1s(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlIq1M:
-            launch_rmma_ggml_iq1m(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlTq10:
-            launch_rmma_ggml_tq10(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlTq20:
-            launch_rmma_ggml_tq20(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ10:
-            launch_rmma_ggml_q10(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::GgmlQ20:
-            launch_rmma_ggml_q20(route.schedule, call.epilogue, args, stream);
-            return;
-        case WeightCodec::Mxfp4:
-            launch_rmma_mxfp4(route.schedule, call.epilogue, args, stream);
-            return;
-        }
+        launch_rmma_codec(codec, route.schedule, call.epilogue, args, stream);
         return;
     case Family::TiledMma:
         if ((w.k % 64) != 0) {
