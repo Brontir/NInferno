@@ -63,6 +63,16 @@ class Collect(unittest.TestCase):
         self.assertTrue(all(c["status"] == "unmeasured" for c in doc["cases"][0]["candidates"]))
         self.assertNotIn("qualification", doc)
 
+    def test_other_compute_class_is_ineligible(self):
+        rows = ("q4k,a16,store,64,64,12,rmma.a,5\nq4k,a16,store,64,64,12,rmma.b,6\n"
+                "q4k,a16,store,64,64,12,ggml_mmq,3\n")
+        doc = self.run_collect([rows], "q4k,a16,store,64,64,12,rmma.a,rmma.a\n")
+        mmq = [c for c in doc["cases"][0]["candidates"] if c["id"] == "ggml_mmq"][0]
+        self.assertEqual(mmq["status"], "ineligible")
+        case = regret.evaluate(doc)["cases"][0]
+        self.assertEqual(case["status"], "complete")
+        self.assertEqual(case["best_observed"], "rmma.a")
+
     def test_conflicting_selections_refused(self):
         rows = "q8,a16,store,64,64,1,rmma.a,5\n"
         with self.assertRaises(ValueError):

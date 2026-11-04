@@ -20,6 +20,20 @@ from pathlib import Path
 
 KEY = ("format", "compute", "epilogue", "n", "k", "T")
 
+# Route families by the activations they compute with: a case compares only routes of its compute
+# class. route_tune also times ggml's matrix kernel under an a16 key (the default policy runs it at
+# verify widths), which computes int8 activations.
+INT8_FAMILIES = ("ggml_mmq", "ggml_vec", "r8.", "w4a8", "i8.")
+FP4_FAMILIES = ("w4a4",)
+
+
+def route_class(route):
+    if route.startswith(INT8_FAMILIES):
+        return "a8"
+    if route.startswith(FP4_FAMILIES):
+        return "a4"
+    return "a16"
+
 
 def read_rows(path, columns):
     with open(path, newline="", encoding="utf-8") as f:
@@ -66,7 +80,10 @@ def collect(selected_csv, pass_csvs, board, model, revision, build_id, holdout, 
         for route in routes:
             samples = {p: timed[(key, route)] / 1000.0 for p, timed in passes.items()
                        if (key, route) in timed}
-            if len(samples) != len(passes):
+            if key[1] == "a16" and route_class(route) != "a16":
+                candidates.append({"id": route, "status": "ineligible",
+                                   "reason": f"{route_class(route)} activations, not this case's a16"})
+            elif len(samples) != len(passes):
                 missing = sorted(set(passes) - set(samples))
                 candidates.append({"id": route, "status": "unmeasured",
                                    "reason": "not timed in pass " + ", ".join(missing)})
