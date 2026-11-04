@@ -18,8 +18,12 @@
 #include "ninferno/types.h"
 
 #include <chrono>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <functional>
+#include <set>
+#include <thread>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -99,12 +103,8 @@ public:
     void keep(const KeptGrant& grant, Clock::time_point now);
     [[nodiscard]] std::shared_ptr<void> begin_turn(const KeptGrant& grant, Clock::time_point now);
     [[nodiscard]] std::vector<KeptGrant> expired(Clock::time_point now);
-    // The server supervisor's tick: every expired session, and every one a release found the
-    // executor busy for before, asked of `release` (Engine::release_kept_session) outside the
-    // lock. InFlight keeps it another ttl; Busy (a round runs: the release never waits for one)
-    // asks it again at the next call, so a round that hangs never stops the caller (#408).
-    void release_expired(Clock::time_point now,
-                         const std::function<KeptSessionRelease(const std::string&)>& release);
+    // Whether the session holds a deadline again (a grant or a turn since it expired).
+    [[nodiscard]] bool granted(const std::string& session_key);
 
 private:
     void end_turn(const std::string& session_key, Clock::time_point now);
@@ -115,7 +115,36 @@ private:
     };
     std::mutex mutex_;
     std::map<std::string, Deadline> until_;
-    std::vector<KeptGrant> busy_; // released Busy: asked again at the next release_expired
+};
+
+// Releases expired keeps on a thread of its own (#408). The release (Engine::release_kept_session)
+// waits for the executor between rounds; asked from the server's supervisor, a round that hung
+// stopped the supervisor too, before it could report the stall or the engine's failure. submit
+// never waits: it queues each session once, and the thread asks `release` in turn, skipping a
+// session granted again since it expired (its new deadline decides), and keeping an InFlight one
+// another ttl (KeptSessions::keep), as the supervisor did.
+class KeptReleaser {
+public:
+    using Release = std::function<KeptSessionRelease(const std::string&)>;
+    KeptReleaser(KeptSessions& sessions, Release release);
+    ~KeptReleaser();
+    KeptReleaser(const KeptReleaser&)            = delete;
+    KeptReleaser& operator=(const KeptReleaser&) = delete;
+    void submit(std::vector<KeptGrant> grants);
+    // Every submitted session asked (tests).
+    void wait_idle();
+
+private:
+    void run();
+    KeptSessions& sessions_;
+    Release release_;
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<KeptGrant> queue_;
+    std::set<std::string> queued_;
+    bool asking_   = false;
+    bool stopping_ = false;
+    std::thread thread_;
 };
 
 } // namespace ninferno::serve

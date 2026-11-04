@@ -4,10 +4,13 @@
 #include "serve/serve_options.h"
 #include "serve/translate.h"
 
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -145,40 +148,40 @@ int main() {
                               "a kept thread's ttl runs from the end of its turn");
         }
         {
-            // The supervisor's release (#408): Busy (a round runs) is asked again at the next
-            // tick, InFlight after another ttl, Released or None never again; the release is
-            // asked outside the registry's lock (it may call back in); a busy keep granted again
-            // before its retry is left to its new deadline.
+            // The releaser (#408): a release that hangs (a round that never ends) never stops the
+            // caller; a session is queued once; one granted again while it waited is not
+            // released; an InFlight one is kept another ttl.
             KeptSessions kept;
-            kept.keep({"busy", std::chrono::milliseconds(100)}, t0);
-            kept.keep({"run", std::chrono::milliseconds(100)}, t0);
-            kept.keep({"gone", std::chrono::milliseconds(100)}, t0);
-            kept.keep({"renew", std::chrono::milliseconds(100)}, t0);
+            std::mutex m;
+            std::condition_variable cv;
+            bool hang = true;
             std::vector<std::string> asked;
-            int busy_answers = 2, renew_answers = 1;
-            const auto release = [&](const std::string& s) {
+            KeptReleaser releaser(kept, [&](const std::string& s) {
+                std::unique_lock lock(m);
                 asked.push_back(s);
-                (void)kept.expired(t0); // the lock is not held
-                if (s == "busy" && busy_answers-- > 0) return ninferno::KeptSessionRelease::Busy;
-                if (s == "renew" && renew_answers-- > 0) return ninferno::KeptSessionRelease::Busy;
-                if (s == "run") return ninferno::KeptSessionRelease::InFlight;
-                return ninferno::KeptSessionRelease::Released;
-            };
-            const auto tick = [&](int ms) {
-                asked.clear();
-                kept.release_expired(t0 + std::chrono::milliseconds(ms), release);
-                return asked;
-            };
-            using V = std::vector<std::string>;
-            failures += check(tick(50).empty(), "nothing expired, nothing asked");
-            failures += check(tick(100) == V{"busy", "gone", "renew", "run"}, "the expired are asked");
-            kept.keep({"renew", std::chrono::milliseconds(100)}, t0 + std::chrono::milliseconds(120));
-            failures += check(tick(150) == V{"busy"},
-                              "a busy release is asked at the next tick, unless granted again");
-            failures += check(tick(200) == V{"busy", "run"},
-                              "again while busy; the in-flight one after its ttl");
-            failures += check(tick(220) == V{"renew"}, "the granted-again keep at its new deadline");
-            failures += check(tick(250).empty(), "a released keep is asked no more");
+                cv.wait(lock, [&] { return !hang; });
+                return s == "run" ? ninferno::KeptSessionRelease::InFlight
+                                  : ninferno::KeptSessionRelease::Released;
+            });
+            const auto ms = [](int n) { return std::chrono::milliseconds(n); };
+            const auto started = std::chrono::steady_clock::now();
+            releaser.submit({{"first", ms(100)}});
+            releaser.submit({{"renew", ms(100)}, {"run", ms(100)}, {"renew", ms(100)}});
+            failures += check(std::chrono::steady_clock::now() - started < std::chrono::seconds(1),
+                              "submit returns while a release hangs");
+            kept.keep({"renew", ms(100)}, KeptSessions::Clock::now()); // granted again meanwhile
+            {
+                std::lock_guard lock(m);
+                hang = false;
+            }
+            cv.notify_all();
+            releaser.wait_idle();
+            failures += check(asked == std::vector<std::string>{"first", "run"},
+                              "queued once each; the session granted again is not released");
+            const auto again = kept.expired(KeptSessions::Clock::now() + ms(200));
+            failures += check(again.size() == 2 && again[0].session_key == "renew" &&
+                                  again[1].session_key == "run",
+                              "the in-flight keep holds another ttl, the renewed its own");
         }
         failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
                               h.retention == ninferno::CacheRetentionHint::Disposable,
