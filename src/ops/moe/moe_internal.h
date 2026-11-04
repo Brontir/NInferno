@@ -243,9 +243,6 @@ enum class BankRefusal {
 // The grouped W4A8 prefill: each stage whose own bank is admitted (MoePlan::w4a8_gate_up,
 // w4a8_down).
 [[nodiscard]] BankRefusal w4a8_bank_refusal(const MoeWeights& weights, const Weight& bank);
-// `plan` with each grouped stage on the W4A8 tier where `on` and its own bank is admitted, neither
-// where an NVFP4 bank is refused for the A4 policy (Nvfp4A4: the layer stays A16).
-[[nodiscard]] MoePlan with_w4a8(MoePlan plan, const MoeWeights& weights, bool on);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.
 [[nodiscard]] int r8_lanes(const Weight& w);
@@ -275,6 +272,9 @@ struct MoePlan {
     bool w4a8_down    = false;
     [[nodiscard]] bool w4a8() const noexcept { return w4a8_gate_up || w4a8_down; }
 };
+// `plan` with each grouped stage on the W4A8 tier where `on` and its own bank is admitted, neither
+// where an NVFP4 bank is refused for the A4 policy (Nvfp4A4: the layer stays A16).
+[[nodiscard]] MoePlan with_w4a8(MoePlan plan, const MoeWeights& weights, bool on);
 
 // The route moe takes for T tokens under the given profile, and moe on an explicit route (the
 // tuner, benches and tests); the explicit route's workspace need.
