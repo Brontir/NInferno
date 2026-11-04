@@ -1,6 +1,8 @@
 #include "core/removed_environment.h"
 #include "core/device_class.h"
 #include "ops/generic/build_manifest.h"
+#include "ops/generic/route_tune_tool.h"
+#include "../cli/spec_tune.h"
 #include "runtime/engine/decision_fingerprint.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
@@ -38,6 +40,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <typeinfo>
 #include <utility>
@@ -164,6 +167,30 @@ int print_version() {
 
 int main(int argc, char** argv) {
     std::set_terminate(log_terminate);
+    // The measurement tools a release ships in this program, so the dispatcher runs them on the
+    // GPU's own engine (tools/kit/measure.py): the route tuner and the speculation tune.
+    if (argc >= 2 && std::string_view(argv[1]) == "route-tune") {
+        return ninferno::tools::route_tune_main(argc - 1, argv + 1);
+    }
+    if (argc >= 2 && (std::string_view(argv[1]) == "spec-tune" ||
+                      std::string_view(argv[1]) == "spec-reselect")) {
+        const bool tune = std::string_view(argv[1]) == "spec-tune";
+        ninferno::warn_removed_environment(tune ? "ninferno-serve spec-tune"
+                                                : "ninferno-serve spec-reselect");
+        // As `ninferno spec-tune` sets them (apps/cli/main.cpp): the artifact's own frontend and
+        // the plan's workspace queries.
+        ninferno::product::set_prompt_tail_calls_source([](const std::filesystem::path& artifact) {
+            return ninferno::runtime::prompt_tail_calls_or_warn(artifact, {}, false);
+        });
+        ninferno::runtime::register_plan_workspace_queries();
+        try {
+            return tune ? ninferno::cli::run_spec_tune(argc, argv)
+                        : ninferno::cli::run_spec_reselect(argc, argv);
+        } catch (const std::exception& error) {
+            std::cerr << "error: " << error.what() << '\n';
+            return 1;
+        }
+    }
 #ifdef _WIN32
     // Waits of a millisecond (the scheduler's polls) last the 15.6 ms system tick otherwise.
     timeBeginPeriod(1);

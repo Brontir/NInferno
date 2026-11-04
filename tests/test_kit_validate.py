@@ -503,7 +503,103 @@ class Hard50(unittest.TestCase):
                 self.assertEqual(r["correct"], 50 - len(r["wrong"]), (key, r["card"]))
 
 
+def route_pass(times, selected="rmma.a", reason=None):
+    """One route-tune pass of one a16 problem at T=4: `times` route -> us, the selection, and a
+    telemetry window `route-tune` (with `reason` active in it)."""
+    case = ["q4k", "a16", "store", "4096", "4096", "4"]
+    tel = {"t": [0.0, 0.5, 1.0], "reason_fields": P, "marks": [{"name": "route-tune", "start": 0, "end": 2}],
+           "columns": {f"{P}.{r}": ["Active" if r == reason else "Not Active"] * 3
+                       for r in validate.REJECT_REASONS + validate.RECORD_REASONS}}
+    return {"rows": [case + [r, us] for r, us in times.items()],
+            "selected": [case + [selected, selected]], "telemetry": tel}
+
+
+def routes_doc(*passes):
+    d = doc()
+    d["runs"] = [{"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "routes", "passes": list(passes)}]
+    return d
+
+
+class Routes(unittest.TestCase):
+    def test_selection_within_tolerance_confirms(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5, "ggml_mmq": 5.0}  # mmq is int8: not an a16 candidate
+        m = metric(validate.validate(routes_doc(route_pass(t), route_pass(t))), "routes")
+        self.assertEqual(m["status"], "accepted")
+        self.assertTrue(m["verdict"].startswith("confirms"))
+        self.assertEqual(m["measured"], 1.0)
+
+    def test_slow_selection_contradicts(self):
+        t = {"rmma.a": 13.0, "rmma.b": 10.0}
+        m = metric(validate.validate(routes_doc(route_pass(t), route_pass(t))), "routes")
+        self.assertTrue(m["verdict"].startswith("contradicts"))
+        self.assertIn("x1.30", m["notes"][1])
+        # route-tune does not check results: the faster route is timings only until qualified.
+        self.assertFalse(m["qualified"])
+        self.assertIn("once a maintainer qualifies the faster routes", m["verdict"])
+
+    def test_other_compute_process_rejects_the_pass(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        busy = dict(route_pass(t), processes_after={"listed": 2, "others": 1, "informative": True})
+        m = metric(validate.validate(routes_doc(route_pass(t), busy)), "routes")
+        self.assertTrue(m["status"].startswith("rejected: RT1"), m)
+        # Under WDDM the list holds the desktop's processes: not informative, kept.
+        wddm = dict(route_pass(t), processes_after={"listed": 5, "others": 4, "informative": False})
+        m = metric(validate.validate(routes_doc(route_pass(t), wddm)), "routes")
+        self.assertEqual(m["status"], "accepted")
+
+    def test_unreproduced_case_is_left_out(self):
+        a, b = {"rmma.a": 13.0, "rmma.b": 10.0}, {"rmma.a": 13.0, "rmma.b": 12.0}
+        m = metric(validate.validate(routes_doc(route_pass(a), route_pass(b))), "routes")
+        self.assertEqual(m["status"], "rejected: RT3 no case reproduced across the passes")
+
+    def test_rejections(self):
+        t = {"rmma.a": 10.0, "rmma.b": 11.0}
+        one = metric(validate.validate(routes_doc(route_pass(t))), "routes")
+        self.assertTrue(one["status"].startswith("rejected: RT1"))
+        hot = metric(validate.validate(routes_doc(route_pass(t), route_pass(t, reason="hw_slowdown"))),
+                     "routes")
+        self.assertTrue(hot["status"].startswith("rejected: RT1"))
+        other = metric(validate.validate(routes_doc(route_pass(t), route_pass(t, selected="rmma.b"))),
+                       "routes")
+        self.assertTrue(other["status"].startswith("rejected: RT2"))
+
+    def test_software_thermal_slowdown_keeps_the_pass(self):
+        # A consumer card's long tune sits at its thermal target: the passes are held to each
+        # other (RT3) instead; a hardware slowdown still rejects (test_rejections).
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        hot = route_pass(t, reason="sw_thermal_slowdown")
+        m = metric(validate.validate(routes_doc(hot, route_pass(t, reason="sw_thermal_slowdown"))),
+                   "routes")
+        self.assertEqual(m["status"], "accepted")
+
+    def test_malformed_rows_are_left_out(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        bad = route_pass(t)
+        bad["rows"] += [["q4k", "a16"], bad["rows"][0][:7] + ["fast"], bad["rows"][0][:7] + [0]]
+        d = routes_doc(route_pass(t), bad)
+        m = metric(validate.validate(d), "routes")
+        self.assertEqual(m["status"], "accepted")
+        notes = next(r for r in validate.validate(d)["runs"] if r["mode"] == "routes")["notes"]
+        self.assertIn("3 malformed timing row(s) left out", notes)
+        self.assertEqual(len(d["runs"][0]["passes"][1]["rows"]), 5)  # the input is not changed
+
+    def test_a_run_beside_a_fetch_is_noted(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        d = routes_doc(route_pass(t), route_pass(t))
+        d["runs"][0]["fetch_beside"] = True
+        notes = validate.validate(d)["runs"][0]["notes"]
+        self.assertTrue(any(n.startswith("R8 measured while the kit fetched") for n in notes))
+
+
 class Kit(unittest.TestCase):
+    def test_model_set_has_lab_references(self):
+        import json
+        models = json.loads((measure.HERE / "models.json").read_text(encoding="utf-8"))["models"]
+        self.assertEqual(len({m["id"] for m in models}), len(models))
+        reference = json.loads((measure.HERE / "hard50_reference.json").read_text(encoding="utf-8"))
+        for m in models[:-1]:  # the lab's hard50 to be held to (the small last one has none yet)
+            self.assertIn(f"{m['repo']} {m['quant']}", reference["models"], m["id"])
+
     def test_lab_configs_are_the_pairs_menu(self):
         import json
         registry = json.loads(measure.REGISTRY.read_text(encoding="utf-8"))
@@ -517,6 +613,32 @@ class Kit(unittest.TestCase):
         first = [m["config"] for m in newest["tune"]["measurements"] if m["config"] != "plain"]
         self.assertEqual(labels[:len(set(first))], list(dict.fromkeys(first)))
         self.assertEqual(measure.lab_configs({"repo": "nobody/none", "quant": "Q4_K_M"}), [])
+
+    def test_fetch_need_counts_what_the_cache_lacks(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        model = {"repo": "org/m-GGUF", "quant": "Q4_K_M"}
+        gib = 1 << 30
+        with tempfile.TemporaryDirectory() as root:
+            old = os.environ.get("HF_HUB_CACHE")
+            os.environ["HF_HUB_CACHE"] = root
+            try:
+                margin = measure.FETCH_MARGIN_BYTES
+                self.assertEqual(measure.fetch_need_bytes(model, 10 * gib), 20 * gib + margin)
+                snap = Path(root) / "models--org--m-GGUF" / "snapshots" / "abc"
+                snap.mkdir(parents=True)
+                (snap / "m-Q4_K_M.gguf").write_bytes(b"x")
+                self.assertEqual(measure.fetch_need_bytes(model, 10 * gib), 10 * gib + margin)
+                art = Path(root) / "models--org--m-GGUF" / "ninferno" / "abc"
+                art.mkdir(parents=True)
+                (art / "m-Q4_K_M.qwen3_5_bf16.ninferno").write_bytes(b"x")
+                self.assertEqual(measure.fetch_need_bytes(model, 10 * gib), margin)
+            finally:
+                if old is None:
+                    os.environ.pop("HF_HUB_CACHE", None)
+                else:
+                    os.environ["HF_HUB_CACHE"] = old
 
     def test_target_identity_hashes_the_snapshot_file(self):
         import hashlib

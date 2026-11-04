@@ -25,6 +25,11 @@ TOLERANCE = 0.10               # predicted against measured: confirm within, con
 REJECT_REASONS = ("hw_slowdown", "hw_thermal_slowdown", "hw_power_brake_slowdown",
                   "sw_thermal_slowdown")
 RECORD_REASONS = ("sw_power_cap",)
+# A route sweep compares routes against each other, each problem's routes timed within seconds; the
+# software thermal slowdown a consumer card reaches in a tune of many minutes (RTX 4070 Ti: every
+# pass of two models, 04.11) moves them together. Its passes are held to each other instead (RT3,
+# REPEAT_MEDIANS); a hardware slowdown still rejects a pass.
+ROUTE_REJECT_REASONS = tuple(r for r in REJECT_REASONS if r != "sw_thermal_slowdown")
 
 
 def active(value):
@@ -482,6 +487,130 @@ def judge_hard50(run, out, reference):
                       if below else "consistent with " + entry)
 
 
+# Route families by the activations they compute with (tools/bench/regret_collect.py): an a16 case
+# compares only a16 routes (route_tune also times ggml's matrix kernel, int8, under an a16 key).
+INT8_FAMILIES = ("ggml_mmq", "ggml_vec", "r8.", "w4a8", "i8.")
+FP4_FAMILIES = ("w4a4",)
+ROUTES_SHOWN = 10  # the worst cases a routes run lists
+
+
+def route_class(route):
+    return "a8" if route.startswith(INT8_FAMILIES) else "a4" if route.startswith(FP4_FAMILIES) else "a16"
+
+
+def judge_routes(run, out, tolerance):
+    """A route sweep (measure.route_sweep): the route the production path selects at each problem
+    and width against every route timed there, in every pass. RT1 at least two complete passes;
+    RT2 every pass selected the same routes; RT3 a case counts where the selected and the fastest
+    route each reproduce within REPEAT_MEDIANS across the passes, and no slowdown or thermal event
+    fell in a pass's tune. A case whose selected route is more than `tolerance` slower than the
+    fastest contradicts the route selection there: a route table candidate for this chip."""
+    for i, p in enumerate(run.get("passes") or []):
+        if p.get("error"):
+            out["notes"].append(f"pass {i + 1}: {p['error']}")
+    passes = [p for p in run.get("passes") or [] if not p.get("error") and p.get("rows")]
+    # A row the tuner did not write (a short row, a time not a positive number) is left out,
+    # counted: a submitted file is held to its shape, never trusted to it.
+    malformed, kept = 0, []
+    for p in passes:
+        rows = []
+        for r in p.get("rows") or []:
+            try:
+                if len(r) >= 8 and float(r[7]) > 0:
+                    rows.append(r)
+                    continue
+            except (TypeError, ValueError):
+                pass
+            malformed += 1
+        selected = [r for r in p.get("selected") or [] if isinstance(r, list) and len(r) >= 8]
+        kept.append(dict(p, rows=rows, selected=selected))
+    passes = kept
+    if malformed:
+        out["notes"].append(f"{malformed} malformed timing row(s) left out")
+    clean = []
+    for i, p in enumerate(passes):
+        tel = p.get("telemetry") or {}
+        found = reasons_in(tel, window_indices(tel, "route-tune")) if tel else None
+        bad = sorted((found or set()) & set(ROUTE_REJECT_REASONS))
+        if bad:
+            out["notes"].append(f"a pass rejected: RT3 {','.join(bad)} during its tune")
+            continue
+        if found and "sw_thermal_slowdown" in found:
+            out["notes"].append("a pass's tune under sw_thermal_slowdown (kept: the passes are held "
+                                "to each other)")
+        if found is None:
+            out["notes"].append("a pass's slowdown reasons unknown (kept)")
+        # Another compute process on the card can slow some kernels more than others, the same in
+        # both passes: RT2/RT3 would not see it. The R2 gate of the other runs.
+        apps = p.get("processes_after") or {}
+        if apps.get("informative") and apps.get("others"):
+            out["notes"].append(f"a pass rejected: RT1 {apps['others']} other compute process(es) "
+                                "on the card")
+            continue
+        clean.append(p)
+    row = {"metric": "routes"}
+    out["metrics"].append(row)
+    if len(clean) < 2:
+        row["status"] = "rejected: RT1 fewer than 2 complete passes"
+        return
+    selections = [{tuple(r[:6]): r[7] for r in p.get("selected") or []} for p in clean]
+    if any(s != selections[0] for s in selections[1:]):
+        row["status"] = "rejected: RT2 the passes selected different routes"
+        return
+    times = {}
+    for p in clean:
+        seen = set()
+        for r in p["rows"]:
+            key = (tuple(r[:6]), r[6])
+            if key not in seen:  # one timing a (problem, T, route) a pass
+                seen.add(key)
+                times.setdefault(key, []).append(float(r[7]))
+    by_case = {}
+    for (case, route), values in times.items():
+        if len(values) == len(clean):
+            by_case.setdefault(case, {})[route] = values
+    regrets, unstable, worst, untimed = [], 0, [], 0
+    for case, selected in selections[0].items():
+        routes = {r: v for r, v in (by_case.get(case) or {}).items()
+                  if case[1] != "a16" or route_class(r) == "a16"}
+        if selected not in routes or len(routes) < 2:
+            untimed += 1
+            continue
+        median = {r: statistics.median(v) for r, v in routes.items()}
+        best = min(median, key=median.get)
+        spread = lambda v: (max(v) - min(v)) / min(v)  # noqa: E731
+        if spread(routes[selected]) > REPEAT_MEDIANS or spread(routes[best]) > REPEAT_MEDIANS:
+            unstable += 1
+            continue
+        regret = median[selected] / median[best]
+        regrets.append(regret)
+        if regret - 1 > tolerance:
+            worst.append((regret, case, selected, best, median[selected], median[best]))
+    if not regrets:
+        row["status"] = "rejected: RT3 no case reproduced across the passes"
+        return
+    geomean = statistics.geometric_mean(regrets)
+    row.update({"status": "accepted", "measured": round(geomean, 3), "cases": len(regrets)})
+    row["notes"] = [f"{len(regrets)} cases (problem x width), {unstable} left out as not reproduced, "
+                    f"{untimed} with the selected route untimed or alone; "
+                    f"the selected route's time over the fastest: geomean x{geomean:.3f}, "
+                    f"worst x{max(regrets):.2f}"]
+    for regret, case, selected, best, ts, tb in sorted(worst, reverse=True)[:ROUTES_SHOWN]:
+        fmt, compute, epilogue, n, k, t = case
+        row["notes"].append(f"{fmt} {compute} {epilogue} {n}x{k} T={t}: selected {selected} "
+                            f"{ts:.1f} us, fastest {best} {tb:.1f} us (x{regret:.2f})")
+    # route-tune times the routes and does not check their results: a faster route is a table
+    # candidate only once the route correctness tests pass on a lab card of this chip.
+    row["qualified"] = False
+    row["verdict"] = (f"contradicts the route selection on {len(worst)} of {len(regrets)} cases "
+                      f"(the selected route over {tolerance * 100:.0f} % slower than one timed in "
+                      "every pass): timings only, a route table candidate for this chip once a "
+                      "maintainer qualifies the faster routes on a card of it "
+                      "(ninferno_linear_generic_test, ninferno_route_classes_test)"
+                      if worst else "confirms the route selection (no case over "
+                      f"{tolerance * 100:.0f} %)")
+
+
 def validate(doc, tolerance=TOLERANCE, registry=None):
     """The report of `doc`; `registry` the drafter registry its spec runs are held to (the
     in-tree one when None)."""
@@ -508,6 +637,9 @@ def validate(doc, tolerance=TOLERANCE, registry=None):
             if run.get("mode") == "spec":
                 out["candidate"] = "no: the run failed"
             continue
+        if run.get("fetch_beside"):
+            out["notes"].append("R8 measured while the kit fetched a model (the host converting it): "
+                                "a host-bound time here may be low")
         if run.get("mode") == "spec":
             registry = registry if registry is not None else (load_json(REGISTRY) or {})
             judge_spec(doc, run, out, capped, registry, tolerance)
@@ -515,6 +647,9 @@ def validate(doc, tolerance=TOLERANCE, registry=None):
         if run.get("mode") == "hard50":
             reference = reference if reference is not None else (load_json(HARD_REFERENCE) or {})
             judge_hard50(run, out, reference)
+            continue
+        if run.get("mode") == "routes":
+            judge_routes(run, out, tolerance)
             continue
         if run.get("mode") != "plain":
             out["notes"].append("recorded, not validated in this version (" + str(run.get("mode")) + ")")

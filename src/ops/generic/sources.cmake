@@ -5,6 +5,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_tune.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/route_tune_tool.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_i8.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_bf16.cu"
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm_fp8.cu"

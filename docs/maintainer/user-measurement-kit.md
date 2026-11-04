@@ -10,15 +10,30 @@ constant.
 
 ## The command (user side)
 
-    python tools/kit/measure.py --bin DIR [--budget-minutes 30] [--models auto|ID,...] [--device N]
-        [--passes 2] [--hard50] [--spec-tune SECONDS] [--out FILE] [--yes]
+From a release, one command measures everything this card can run, for hours:
 
-- **`--bin DIR`** holds `ninferno-serve`, plus `ninferno` when `--spec-tune` is given: a release or a build.
+    ninferno-kit            # = measure.py --full on the release's own ninferno-serve
+
+`ninferno-kit` passes its options on, and adds `--full` unless one of `--budget-minutes`, `--models` or `--max-models` asks for a shorter run. It is the Linux release's; on Windows, from the unpacked release: `python share\ninferno\kit\tools\kit\measure.py --bin bin --full`.
+
+From a source tree or with options:
+
+    python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...]
+        [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--route-passes 2]
+        [--no-prefetch] [--out FILE] [--yes]
+
+- **`--bin DIR`** holds `ninferno-serve`: a release or a build. `ninferno-serve spec-tune` and `ninferno-serve route-tune` are the speculation tune and the route tuner, run through the dispatcher on this GPU's engine. A build's own `ninferno` beside it is used for the spec tune.
+- **`--full`**: every model of the set whose plan fits the card, plain passes, `--hard50`, `--spec-tune 1200` and `--routes`, under a 24-hour budget. The options given beside it keep their values (spelt in full: the kit takes no abbreviated option).
+- **`--routes`**: the route sweep, below.
 - **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device N` is the N-th card by PCI bus id. Every `nvidia-smi` call names that card by its bus id, never by nvidia-smi's own index, which can follow another order.
 - **Downloads:**
-  - The models are fetched first through `ninferno-serve --prepare-only` into the user's hub cache.
+  - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order.
+  - A model is measured once its own fetch ended, while the next ones download. `--no-prefetch` fetches all of them first.
+  - A conversion is the host's work. Each plain, hard50 and spec run records `fetch_beside`, whether a fetch was running beside it (R8 notes it). The route sweeps run after the last fetch, since their small widths time the host's launches.
+  - A fetch needs free on the hub cache's disk what it writes: the source weights where the hub does not hold them, the converted artifact (about the weights' bytes again) where it is not there, and 4 GiB. Else it is not started (a full disk would break the runs beside it).
+  - The fetch runs on the measured card (`--device`). When the run ends, for any reason, the queued fetches are cancelled and every running one (the background fetch, a spec tune's drafter fetch) is killed.
   - The kit states what it will fetch and asks first (`--yes` skips the question).
-  - A model whose fetch fails is not measured.
+  - A model whose fetch fails is not measured; the others are.
   - Downloads are outside the budget.
 - **Budget:** it counts GPU time only. A model's passes run whole or not at all, and what the budget skips is recorded.
 - **Progress:** each step prints as `[step i/N, used of budget] what`.
@@ -54,6 +69,16 @@ constant.
      - the drafter manifest beside the artifact (`<artifact>.speculation.json`): the engine family and each drafter's kind and status, its repo@revision only when the registry declares that repository (else `other`); no profiles, no paths;
      - the target's identity: the hub revision and the SHA-256 of its weight files, hashed from their bytes (about 10 s per 5 GB; `blob_matches` says whether the hub's blob name agrees), the key of the registry's pairs.
 
+6. **Route sweep** (`--routes`), per model, after every model's other runs: what route each of the model's projections takes on this card, and what every other route would cost there.
+   - A start with `NINFERNO_ROUTE_RECORD` records the problems the engine runs for the model, every problem that reaches the generic path once. It serves one decode and one prefill request.
+   - `ninferno-serve route-tune` then runs over them `--route-passes` times (2), on this card alone.
+   - Each pass keeps:
+     - every timed (problem, T, route), with its median in microseconds;
+     - the route the production path selects there (`--selected-out`), under the problem's own compute class: an `a16` problem is judged on the 16-bit path (the exact mode's, or a format kept A16), never on int8 routes;
+     - the route table the tuner would write;
+     - telemetry (one window, `route-tune`).
+   - About two minutes a problem a pass; a model records ten to twenty problems.
+
 ## The result file: `ninferno-user-run/1.minor`
 
 One JSON object. An additive change bumps the minor version, and the validator accepts any minor of
@@ -61,7 +86,7 @@ major 1.
 
 | Field | What |
 |---|---|
-| `schema` | `"ninferno-user-run/1.1"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`) |
+| `schema` | `"ninferno-user-run/1.2"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`) |
 | `kit` | `{version, models_version, models_sha256}` |
 | `created` | UTC time |
 | `ninferno` | `{version}`: the first line of `ninferno-serve --version` |
@@ -91,6 +116,12 @@ A `hard50` run holds `hard50` (hard_set.py's summary and `wrong`, the ids answer
 - Keys that hold file paths are dropped.
 - Under WDDM only process counts are kept, never PIDs or names.
 - No host name, user name, GPU UUID or serial is collected.
+
+A `routes` run holds `shapes`, the recorded problems. Its `passes[]` each hold:
+- `rows`: `[format, compute, epilogue, n, k, T, route, median_us]`;
+- `selected`: `[format, compute, epilogue, n, k, T, asked, selected]`;
+- `table`: the `ninferno-route-table/1` the pass would write;
+- `seconds`, `processes_after`, `telemetry`, or `error`.
 
 ## Submitting (never automatic)
 
@@ -138,10 +169,27 @@ tests the transfer rule, not this card's facts. Speculation and hard50 runs have
 | R4 caps | the file is marked `capped`: kept, never used to confirm | the enforced power limit below the default; application clocks below the default; the applications-clocks event reason active; on battery. Fields N/A on the card are listed as "R4 could not check" |
 | R5 repeats | the metric | the passes' medians more than 5 % apart, or one pass's min..max more than 10 % of its median |
 | R6 completeness | the metric | fewer than 2 usable passes (a pass with an error is not usable) |
+| R8 host load | the run, noted | the run was measured while the kit fetched a model (`fetch_beside`): a host-bound time (TTFT, a small decode step) may be low. Kept |
 | R7 length | the metric | a contributing request's prompt tokens more than 5 % from the length the plan priced (decode: the depth; prefill: the task's prompt), or no token count |
 
 These numbers (5 %, 256 MiB, 5 %, 10 %, 5 %, ±10 %) are set at the top of `validate.py`. A change
 goes through this page first.
+
+## Judging route sweeps (`routes` runs)
+
+A case is one problem at one width. Its candidates are the routes timed there in every pass, an `a16` case's only those of its own activation class: `route_tune` also times ggml's int8 matrix kernel under an `a16` key.
+
+| Rule | Rejects | When |
+|---|---|---|
+| RT1 the passes | the run | fewer than 2 passes that completed, after dropping a pass with another compute process on the card (the R2 gate: a steady competitor slows some kernels more than others, alike in both passes) or with a hardware slowdown, hardware thermal or power-brake sample in its `route-tune` window. A software thermal slowdown is noted and kept: a consumer card sits at its thermal target through a tune of many minutes (an RTX 4070 Ti, every pass), and a problem's routes are timed within seconds of each other; RT3 holds the passes to each other |
+| RT2 the selection | the run | the passes selected different routes for some case (the selection is a function of the card's facts and tables, never of a timing) |
+| RT3 repeats | the case | the selected or the fastest route's times across the passes more than 5 % apart (the R5 threshold) |
+
+Verdict:
+- **contradicts the route selection**: in a kept case the selected route is more than the tolerance (10 %) slower than the fastest. The worst cases are listed. `route-tune` times the routes and never checks their results, so the passes' tables are timings only (`qualified: false`): they become a route table candidate for this chip once a maintainer runs the route correctness tests (`ninferno_linear_generic_test`, `ninferno_route_classes_test`) on a card of it, and merges them after reading them.
+- **confirms**: no kept case is over the tolerance.
+
+The geometric mean of the selected route's time over the fastest is reported either way, as in `selection_regret.py`.
 
 ## Judging speculation (`spec` runs)
 
