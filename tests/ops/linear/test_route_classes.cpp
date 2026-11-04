@@ -409,6 +409,89 @@ int run_volta_tiled() {
     return failures == 0 ? 0 : 1;
 }
 
+// #298: the register-MMA kernels' compiled resources on this device (rmma_resources, the launch
+// path described instead of run): a description exactly where the schedule is compiled for the
+// weight's codec (rmma_refusal neither not compiled nor the codec's tile nor a format the generic
+// path does not read, and K on the codec's step), with the schedule's threads, its grid over the
+// call's rows and tokens, and registers the SM holds. Prints each codec's most registers and spill
+// bytes over the schedules and widths a call takes.
+int run_resources() {
+    int failures = 0, described = 0;
+    const auto fail = [&](const std::string& what) {
+        if (++failures <= 20) std::cerr << "resources: " << what << '\n';
+    };
+    int registers_per_sm = 65536;
+    try {
+        registers_per_sm = device_class().registers_per_sm > 0 ? device_class().registers_per_sm
+                                                               : registers_per_sm;
+    } catch (const std::exception&) {}
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    struct Most {
+        int registers = 0;
+        std::size_t local = 0;
+        std::string where;
+    };
+    std::map<std::string, Most> most;
+    for (const QType qtype : kFormats) {
+        for (const Shape shape : {Shape{4096, 4096}, Shape{1024, 12288}}) {
+            quantized_weight::PatternedWeightOptions options;
+            if (qtype == QType::NVFP4)
+                options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+            const auto host =
+                quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+            const Weight w = host.device_weight(payload);
+            if (!generic::supports(w)) continue;
+            for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+                const auto why  = generic::rmma_refusal(i, w);
+                const auto info = generic::rmma_schedule_info(i);
+                const bool held = why != generic::ScheduleRefusal::NotCompiled &&
+                                  why != generic::ScheduleRefusal::CodecTile &&
+                                  why != generic::ScheduleRefusal::Format &&
+                                  why != generic::ScheduleRefusal::Extent;
+                for (const std::int32_t t : {1, 4, 8}) {
+                    const auto r = generic::rmma_resources(i, w, generic::Epilogue::Store, t);
+                    const generic::Route route{generic::Family::RegisterMma,
+                                               static_cast<std::uint8_t>(i)};
+                    const std::string at = std::string(generic::qtype_name(qtype)) + " " +
+                                           std::to_string(shape.n) + "x" +
+                                           std::to_string(shape.k) + " " +
+                                           generic::route_name(route) + " T=" + std::to_string(t);
+                    if (r.has_value() != held) {
+                        fail(at + ": described " + (r ? "yes" : "no") + ", refusal " +
+                             std::string(generic::schedule_refusal_name(why)));
+                        continue;
+                    }
+                    if (!r) continue;
+                    ++described;
+                    const int threads = 32 * info.warps_m * info.warps_k;
+                    if (r->threads != threads || r->registers <= 0 || r->grid_x == 0 ||
+                        r->grid_y == 0 || r->registers * r->threads > registers_per_sm ||
+                        r->max_threads_per_block < r->threads) {
+                        fail(at + ": threads " + std::to_string(r->threads) + " (schedule " +
+                             std::to_string(threads) + "), registers " +
+                             std::to_string(r->registers) + ", grid " + std::to_string(r->grid_x) +
+                             "x" + std::to_string(r->grid_y));
+                    }
+                    Most& m = most[generic::qtype_name(qtype)];
+                    if (r->registers > m.registers ||
+                        (r->registers == m.registers && r->local_bytes > m.local)) {
+                        m = {r->registers, r->local_bytes, at};
+                    }
+                    if (r->local_bytes > m.local) m.local = r->local_bytes;
+                }
+            }
+        }
+    }
+    if (described == 0) fail("no register-MMA kernel described");
+    std::cout << "resources (" << device_class().id() << "): " << described << " described, "
+              << failures << " failures; per format the most registers and spill bytes:";
+    for (const auto& [format, m] : most) {
+        std::cout << " " << format << " " << m.registers << "r/" << m.local << "B";
+    }
+    std::cout << '\n';
+    return failures == 0 ? 0 : 1;
+}
+
 int run_board(const TestBoard& b) {
     const ScopedDeviceClass scoped(synthetic_device_class(
         b.pci_device_id, b.major, b.minor, b.sms, b.l2_mib * kMiB, b.memory_gib * 1024 * kMiB));
@@ -826,12 +909,14 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--volta-tiled") return run_volta_tiled();
+        if (argc == 2 && std::string_view(argv[1]) == "--resources") return run_resources();
         int failed = 0;
         for (const TestBoard& b : kBoards) {
             const std::string command = std::string(argv[0]) + " --board " + b.name;
             if (std::system(command.c_str()) != 0) ++failed;
         }
         if (std::system((std::string(argv[0]) + " --volta-tiled").c_str()) != 0) ++failed;
+        if (std::system((std::string(argv[0]) + " --resources").c_str()) != 0) ++failed;
         if (failed != 0) {
             std::cerr << "route classes: " << failed << " boards failed\n";
             return 1;

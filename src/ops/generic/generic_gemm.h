@@ -616,6 +616,35 @@ struct R8Coverage {
 [[nodiscard]] FamilyCoverage other_family_coverage(Family family, const Weight& weight,
                                                    LinearPolicy policy);
 
+// The compiled resources of the kernel a launch runs (#298), as the driver reports them for this
+// binary on this device (cudaFuncGetAttributes): exact facts of the build, not predictions; a
+// compiler change moves them, so they are read, never stored in the source. The launch geometry is
+// the call's: its grid, threads and dynamic shared memory.
+struct KernelResources {
+    int registers               = 0; // per thread
+    std::size_t local_bytes     = 0; // per thread: register spills and stack arrays
+    std::size_t static_smem     = 0; // per CTA
+    std::size_t dynamic_smem    = 0; // per CTA, the launch's own
+    int threads                 = 0; // per CTA, the launch's
+    int max_threads_per_block   = 0; // what the kernel's registers and smem allow
+    int ptx_version             = 0; // the PTX and SASS it was compiled to (major * 10 + minor)
+    int binary_version          = 0;
+    unsigned grid_x = 0, grid_y = 0, grid_z = 0;
+    // The register-MMA kernel variant the launch took: its latency form (rmma_latency_pays), or
+    // neither form (the wide decoder or the plain kernel, told apart by the registers).
+    bool latency_variant = false;
+};
+
+// What register-MMA schedule `schedule` runs for a `tokens`-token call of `weight` under `epilogue`
+// on the current device: the same launch path as run_route takes (the codec's decoder, its wide or
+// latency variant by the same rules), described instead of launched. nullopt where the schedule is
+// not compiled for the weight's codec or the build (rmma_refusal's NotCompiled, CodecTile), the
+// generic path does not read the weight, or K is off the codec's step (the call runs scalar). On a
+// device without tensor mma.sync the HMMA and GEMV routes Volta takes are not described.
+[[nodiscard]] std::optional<KernelResources> rmma_resources(int schedule, const Weight& weight,
+                                                            Epilogue epilogue,
+                                                            std::int32_t tokens);
+
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
 // kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the
