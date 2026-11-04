@@ -29,7 +29,7 @@ namespace ninferno::product {
 [[nodiscard]] choice::ModelFacts choice_model_of(const PlanSourceFacts& facts);
 [[nodiscard]] choice::CardFacts choice_card_of(const spec::GpuKey& gpu);
 
-// The drafter axis (choice/SPECULATION.md S3): beside plain decode, one option per speculation
+// The drafter axis: beside plain decode, one option per speculation
 // mode the subject's profile chose or measured and its Engine runs. A profile with measurements
 // (a lab pair's, a local tune's) chooses each mode again over that mode's measurements alone; one
 // without offers its own choice. Each option carries the served speculation a start of it runs

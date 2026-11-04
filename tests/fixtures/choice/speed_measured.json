@@ -1,5 +1,5 @@
 {
- "about": "Stand measurements the choice constants were fitted on (scratchpad fit_choice.py, 2026-10-23): decode tokens a second per stream at `context` tokens with `concurrency` rows, prefill tokens a second (null: not measured). Short-chat rows are C-stream aggregates over C at a 512-token context. A row marked \"step\" is the step itself: the decode of C concurrent requests apart from their prompts.",
+ "about": "Stand measurements the choice constants were fitted on (lab fit_choice.py, 2026-10-23): decode tokens a second per stream at `context` tokens with `concurrency` rows, prefill tokens a second (null: not measured). Short-chat rows are C-stream aggregates over C at a 512-token context. A row marked \"step\" is the step itself: the decode of C concurrent requests apart from their prompts.",
  "models": {
   "Qwen3.5-9B": {
    "family": "qwen3_5_text",

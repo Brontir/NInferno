@@ -842,7 +842,7 @@ std::optional<Profile> profile_for_group(const std::vector<const MeasuredPair*>&
         }
         // The label a target nobody measured gains most with even when its acceptance is a
         // fine-tune's (label_gain): no plain decode for want of a label every pair measured, or
-        // for the group's weakest pair (choice/DECISIONS 49).
+        // for the group's weakest pair (DECISIONS 49).
         std::string chosen;
         LabelGain best;
         for (const auto& label : labels) {

@@ -21,7 +21,7 @@
 //          DRAM bytes/s / (eta x the generation's int8 tensor peak), eta the share of that peak
 //          small-T kernels reach (kSmallTEta: the only fitted constants, one per generation).
 //
-// Measured against it (docs/maintainer/choice-notes/DECISIONS.md 53, choice-notes/lab/round_cost):
+// Measured against it (docs/maintainer/decisions.md 53, tools/fits/round_cost):
 // Qwen dense within 2 % on average (2-5 % rms), Qwen MoE +1 % (Ada) / +12 % (Blackwell), gpt-oss
 // +7..16 %, at k <= 7 on seven cards of five generations. Where the model does not fit, the estimate
 // is made conservative and says so
@@ -122,7 +122,7 @@ struct RoundFacts {
 // The share of its int8 tensor peak (the generation row's s8 rate, core/generation.h; dp4a's where
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
 // registry's spec-tune rounds of Qwen targets that verify 5-8 rows (k 4..7, the depths profiles
-// choose; choice-notes/lab/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
+// choose; tools/fits/round_cost/fit_eta.py), as kappa = BW / (eta peak). A generation
 // constant rests on two lab cards of the generation or more (AGENTS.md); each card's rounds are
 // predicted from the generation's other cards' fit before a row is added (fit_eta.py, item 3):
 //   ada    0.148  RTX 4070 Ti and RTX 4090 (each card's rounds predicted from the other's fit:

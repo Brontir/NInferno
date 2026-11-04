@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The prefill model's constants (src/product/choice/choice_constants.h: kPrefillEta, kPrefillAttentionEta)
-from data/prefill/rows.json: per card, model and prompt length n, the measured prefill (perf_matrix.py
+from tools/fits/data/prefill/rows.json: per card, model and prompt length n, the measured prefill (perf_matrix.py
 --no-prefix-reuse server, --chars 8000 / 32000 / 95940: ~2K / 7K / 21K tokens).
 
 Per generation, t(n) = tail + n 2P / (eta_lin[kind] peak_s8) + F_att(n) / (eta_att peak_bf16):
@@ -12,10 +12,11 @@ the prefill, each piece after the last message a whole-model call that reads a d
 tail_calls x the active share of weight_bytes / DRAM bandwidth (the product prices it from its decode
 rate). Linear in 1/eta_lin and 1/eta_att; relative least squares over t(n) - tail.
 
-    python fit_prefill.py data/prefill/rows.json
+    python tools/fits/prefill/fit_prefill.py [rows.json]
 """
 import json
 import sys
+from pathlib import Path
 
 import numpy as np
 
@@ -42,7 +43,8 @@ def att_flops(n, full, sliding, window):
 
 
 def main():
-    data = json.load(open(sys.argv[1], encoding="utf-8"))
+    rows_json = sys.argv[1] if len(sys.argv) > 1 else Path(__file__).resolve().parents[1] / "data/prefill/rows.json"
+    data = json.load(open(rows_json, encoding="utf-8"))
     cards, models, rows = data["cards"], data["models"], data["rows"]
     for gen in sorted({c["generation"] for c in cards.values()}):
         rs = [r for r in rows if cards[r["card"]]["generation"] == gen]

@@ -303,7 +303,7 @@ int main() {
         expect(!sp::pair_choice(all, "sha:x", "gemma4", {"gemma4_assistant"}, 4.5, "sm120"),
                "no measurement and no group: nothing");
     }
-    // Not measured, but a sibling quantization of its repository was (choice/DECISIONS 48): the
+    // Not measured, but a sibling quantization of its repository was (DECISIONS 48): the
     // sibling nearest in bits within its bit class, not the group's fine-tune guard.
     {
         auto q4        = mtp_q4;

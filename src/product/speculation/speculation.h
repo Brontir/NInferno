@@ -131,7 +131,7 @@ void apply_builtin_default(SpeculationSubject& subject);
 // the requests of the other flag gain more than kPerRequestMargin (spec::per_request_gain over the
 // configurations the Engine runs). A start without --spec-select, and the plan of one, take it.
 // The margin is above the measurement's spread: tokens per round of one pair agree within 1.8 %
-// across cards and 2.3 % across quantizations of 4 bits or more (choice/SPECULATION.md v4).
+// across cards and 2.3 % across quantizations of 4 bits or more.
 inline constexpr double kPerRequestMargin = 0.03;
 [[nodiscard]] bool per_request_pays(const SpeculationSubject& subject, bool thinking);
 // The served configuration one draft shallower (`config` with k - 1, its watchdog at `floor`),

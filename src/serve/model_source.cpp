@@ -145,7 +145,7 @@ ModelSource resolve_model_source(const ServeOptions& options,
     // A GGUF repository without --quant: the largest quantization that fits the asked context x
     // --max-concurrency on this GPU's class (serve/plan_offline.h), or a refusal before anything
     // is downloaded. Not for --prepare-only, which needs no GPU: it keeps the fetch's default.
-    // A GGUF model's separate drafters (choice/DECISIONS 45): attached when the choice drafts with
+    // A GGUF model's separate drafters (DECISIONS 45): attached when the choice drafts with
     // one, as with --with-drafters. --prepare-only asks the same choice where a GPU can be read,
     // so the start with the same flags converts nothing more (#284); without one, only with
     // --with-drafters.

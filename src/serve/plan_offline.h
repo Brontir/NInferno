@@ -41,7 +41,7 @@ struct OfflinePlan {
 struct HubQuantChoice {
     std::string quant;
     std::uint32_t launch_context = 0;
-    // The choice at it drafts with a separate drafter of the model (choice/DECISIONS 45): the
+    // The choice at it drafts with a separate drafter of the model (DECISIONS 45): the
     // start attaches the GGUF model's drafters (a separate download), as --with-drafters does.
     bool drafters = false;
 };

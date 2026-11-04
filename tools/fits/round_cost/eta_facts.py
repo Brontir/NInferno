@@ -1,4 +1,4 @@
-"""kSmallTEta against two fact hypotheses (choice-notes DECISIONS 54).
+"""kSmallTEta against two fact hypotheses (DECISIONS 54).
 
     python eta_facts.py
 
