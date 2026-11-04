@@ -1966,7 +1966,7 @@ std::map<std::string, std::uint64_t> safetensors_dtype_bytes(const FetchPlan& pl
         const auto local = snapshot / path;
         if (fs::exists(local)) {
             read = [local](std::uint64_t begin, std::uint64_t bytes) {
-                std::string data(static_cast<std::size_t>(bytes), ' ');
+                std::string data(static_cast<std::size_t>(bytes), '\0');
                 std::ifstream stream(local, std::ios::binary);
                 stream.seekg(static_cast<std::streamoff>(begin));
                 stream.read(data.data(), static_cast<std::streamsize>(data.size()));
