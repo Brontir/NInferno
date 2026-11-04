@@ -550,6 +550,24 @@ class Routes(unittest.TestCase):
                        "routes")
         self.assertTrue(other["status"].startswith("rejected: RT2"))
 
+    def test_malformed_rows_are_left_out(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        bad = route_pass(t)
+        bad["rows"] += [["q4k", "a16"], bad["rows"][0][:7] + ["fast"], bad["rows"][0][:7] + [0]]
+        d = routes_doc(route_pass(t), bad)
+        m = metric(validate.validate(d), "routes")
+        self.assertEqual(m["status"], "accepted")
+        notes = next(r for r in validate.validate(d)["runs"] if r["mode"] == "routes")["notes"]
+        self.assertIn("3 malformed timing row(s) left out", notes)
+        self.assertEqual(len(d["runs"][0]["passes"][1]["rows"]), 5)  # the input is not changed
+
+    def test_a_run_beside_a_fetch_is_noted(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        d = routes_doc(route_pass(t), route_pass(t))
+        d["runs"][0]["fetch_beside"] = True
+        notes = validate.validate(d)["runs"][0]["notes"]
+        self.assertTrue(any(n.startswith("R8 measured while the kit fetched") for n in notes))
+
 
 class Kit(unittest.TestCase):
     def test_model_set_has_lab_references(self):

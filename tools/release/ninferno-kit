@@ -3,7 +3,8 @@
 # the NInferno maintainers (docs/maintainer/user-measurement-kit.md). Nothing is sent anywhere.
 #
 #   ninferno-kit            everything for this card (--full): hours; models download meanwhile
-#   ninferno-kit --budget-minutes 30 --models auto     a short run
+#   ninferno-kit --budget-minutes 30 --models auto     a short run (--full is added unless
+#                           --budget-minutes, --models or --max-models is given)
 #
 # Every option goes to tools/kit/measure.py (python3 3.9+, standard library only).
 set -eu
@@ -11,5 +12,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 kit="$here/../share/ninferno/kit/tools/kit/measure.py"
 [ -f "$kit" ] || { echo "ninferno-kit: $kit not found (a release archive carries it)" >&2; exit 1; }
 command -v python3 > /dev/null || { echo "ninferno-kit: python3 is needed (3.9 or newer)" >&2; exit 1; }
-if [ "$#" -eq 0 ]; then set -- --full; fi
-exec python3 "$kit" --bin "$here" "$@"
+full=--full
+for a in "$@"; do
+    case "$a" in --budget-minutes*|--models*|--max-models*) full= ;; esac
+done
+exec python3 "$kit" --bin "$here" $full "$@"

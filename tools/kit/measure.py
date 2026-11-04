@@ -9,9 +9,10 @@ DIR holds ninferno-serve: a release or a build (`ninferno-serve spec-tune` and `
 there; a build's own `ninferno` is used for --spec-tune where it is beside it). Standard library
 only; Windows and Linux. The models are fetched through `ninferno-serve --prepare-only` into your
 hub cache, after the bytes are stated (--yes skips the question): the next model downloads while
-the kit measures the one before (--no-prefetch: all of them first). The budget counts the GPU time
-only. --full measures everything for this card, for hours: every model of the set that fits, plain
-passes, hard50, a speculation tune and the route sweep. Nothing is sent anywhere: the kit writes
+the kit measures the one before (--no-prefetch: all of them first), where the disk holds it. The
+budget counts the GPU time only. --full measures everything for this card, for hours: every model
+of the set that fits, plain passes, hard50, a speculation tune and the route sweep (the sweeps run
+last, once nothing downloads beside them). Nothing is sent anywhere: the kit writes
 FILE.json and FILE.md (a ready PR or issue body) and prints how to submit them yourself.
 """
 import argparse
@@ -22,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import statistics
 import subprocess
@@ -333,16 +335,57 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, smi_id, 
     return out
 
 
-def prepare(serve, model, with_drafters=False):
-    """Fetch and convert (the start's own cache): the artifact path from `model | prepared <path>`
-    (apps/serve/main.cpp), and the error when it failed."""
-    cmd = [serve, model["repo"], "--quant", model["quant"], "--prepare-only"]
+# The background fetch (main): `stop` set when the run ends, so no queued fetch starts and the
+# running one is killed rather than waited for.
+FETCH = {"stop": False, "proc": None}
+# Free disk a fetch needs beyond the weights' bytes (the converted artifact's headers, the logs).
+FETCH_MARGIN_BYTES = 4 << 30
+
+
+def hub_dir():
+    """The hub cache the fetch writes to (huggingface_hub's own order)."""
+    if os.environ.get("HF_HUB_CACHE"):
+        return Path(os.environ["HF_HUB_CACHE"])
+    if os.environ.get("HF_HOME"):
+        return Path(os.environ["HF_HOME"]) / "hub"
+    return Path(os.environ.get("XDG_CACHE_HOME") or Path.home() / ".cache") / "huggingface" / "hub"
+
+
+def free_bytes(path):
+    p = Path(path)
+    while not p.exists() and p != p.parent:
+        p = p.parent
+    try:
+        return shutil.disk_usage(p).free
+    except OSError:
+        return None
+
+
+def prepare(serve, model, with_drafters=False, weights_bytes=0, device=0):
+    """Fetch and convert (the start's own cache) on the measured card: the artifact path from
+    `model | prepared <path>` (apps/serve/main.cpp), and the error when it failed, when the disk
+    has not the weights' bytes and FETCH_MARGIN_BYTES free (a model already cached is refused all
+    the same: a full disk would break the runs beside it), or when the run stopped."""
+    if FETCH["stop"]:
+        return None, "not fetched: the run stopped"
+    free = free_bytes(hub_dir())
+    if free is not None and weights_bytes and free < weights_bytes + FETCH_MARGIN_BYTES:
+        return None, (f"not fetched: {free / 2**30:.0f} GiB free on the hub cache's disk, about "
+                      f"{(weights_bytes + FETCH_MARGIN_BYTES) / 2**30:.0f} GiB needed")
+    cmd = [serve, model["repo"], "--quant", model["quant"], "--prepare-only", "--device", str(device)]
     if with_drafters:
         cmd.append("--with-drafters")
-    out = subprocess.run(cmd, capture_output=True, text=True)
-    text = out.stdout + out.stderr
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                encoding="utf-8", errors="replace")
+        FETCH["proc"] = proc
+        text, _ = proc.communicate()
+    except Exception as error:  # a fetch's failure is that model's, not the run's
+        return None, scrub(f"{type(error).__name__}: {error}")
+    finally:
+        FETCH["proc"] = None
     found = re.findall(r"model \| prepared (.+?)\s*$", text, re.M)
-    if out.returncode != 0:
+    if proc.returncode != 0:
         lines = text.strip().splitlines()
         return None, scrub(lines[-1] if lines else "failed")
     return (found[-1] if found else None), None
@@ -382,7 +425,8 @@ or GPU serial is collected. Read it before you send it.
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[1],
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 allow_abbrev=False)  # --full reads the options as spelt
     ap.add_argument("--bin", required=True, help="the directory holding ninferno-serve (and ninferno)")
     ap.add_argument("--budget-minutes", type=float, default=30, help="GPU time (downloads apart)")
     ap.add_argument("--models", default="auto", help="auto, or ids from tools/kit/models.json")
@@ -394,7 +438,8 @@ def main():
     ap.add_argument("--spec-tune", type=int, default=0, metavar="SECONDS",
                     help="also `ninferno spec-tune` per model for SECONDS (0: no)")
     ap.add_argument("--routes", action="store_true",
-                    help="also the route sweep of each model's projections (ninferno-serve route-tune)")
+                    help="also the route sweep of each model's projections (ninferno-serve "
+                         "route-tune; about an hour a model, after every model's other runs)")
     ap.add_argument("--route-passes", type=int, default=2, help="route sweeps per model (a repeat each)")
     ap.add_argument("--full", action="store_true",
                     help="everything for this card: every fitting model, hard50, spec-tune, routes")
@@ -447,6 +492,7 @@ def main():
     workdir = out_json.with_suffix(".logs")
     workdir.mkdir(parents=True, exist_ok=True)
     progress = Progress(args.budget_minutes * 60, 1)
+    fetcher = None
     try:
         # The models whose plan fits this card, in the set's order (the plan's own answer).
         chosen = []
@@ -477,14 +523,19 @@ def main():
                 sys.exit("Nothing fetched; nothing measured.")
         # The fetches run one after another in the background, in the set's order: a model is
         # measured once its own fetch ended, while the next ones download (--no-prefetch: all
-        # first). A conversion is the host's work; each run records whether a fetch was running
-        # beside it.
+        # first). A conversion is the host's work: each run records whether a fetch ran beside it
+        # (validate.py notes it), and the route sweeps, whose small widths time the host's
+        # launches, run after the last fetch.
         fetcher = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fetches = []
-        for model, _ in chosen:
-            fetches.append(fetcher.submit(prepare, serve, model, args.spec_tune > 0))
+        for model, plan in chosen:
+            weights = int(((plan.get("model") or {}).get("weights_bytes")) or 0)
+            fetches.append(fetcher.submit(prepare, serve, model, args.spec_tune > 0, weights,
+                                          args.device))
         if args.no_prefetch:
             concurrent.futures.wait(fetches)
+        fetching = lambda: any(not f.done() for f in fetches)  # noqa: E731
+        sweeps = []
 
         per_pass = 150 + args.prompts * 90
         progress.steps = max(1, len(chosen) * (args.passes + (1 if args.hard50 else 0)
@@ -498,7 +549,7 @@ def main():
                 doc["runs"].append({"id": model["id"], "repo": model["repo"], "quant": model["quant"],
                                     "mode": "plain", "error": "fetch: " + error})
                 continue
-            beside = any(not f.done() for f in fetches[index + 1:])
+            beside = fetching()
             flags = run_flags(model, args.device)
             choice = plan.get("choice") or {}
             chosen_plan = choice.get("chosen") or {}
@@ -521,6 +572,7 @@ def main():
                                       smi_id, workdir, f"{model['id']}.plain.{p + 1}", wddm)
                 progress.spend(time.time() - started)
                 run["passes"].append(result)
+                run["fetch_beside"] = run["fetch_beside"] or fetching()
                 m = result.get("measured") or {}
                 print(f"    prefill {m.get('prefill', {}).get('median')} tok/s, decode "
                       f"{m.get('decode', {}).get('median')} tok/s (plan: prefill "
@@ -530,26 +582,39 @@ def main():
             hard_cost = 150 + 50 * 1100 / max(1.0, float(chosen_plan.get("decode_tok_s") or 30))
             if args.hard50 and progress.fits(hard_cost, f"{model['id']} hard50"):
                 progress.step(f"{model['id']}: the hard question set (plain)")
-                started = time.time()
+                started, beside = time.time(), fetching()
                 doc["runs"].append(hard50(serve, model, flags, args.port, workdir))
+                doc["runs"][-1]["fetch_beside"] = beside or fetching()
                 progress.spend(time.time() - started)
             if args.spec_tune and progress.fits(args.spec_tune + 300, f"{model['id']} spec-tune"):
                 progress.step(f"{model['id']}: spec-tune for {args.spec_tune} s")
-                started = time.time()
+                started, beside = time.time(), fetching()
                 doc["runs"].append(spec_tune(serve, tune_cmd, model, args.device, args.spec_tune, card,
                                               workdir, smi_id, wddm))
+                doc["runs"][-1]["fetch_beside"] = beside or fetching()
                 progress.spend(time.time() - started)
             # A route sweep pass is about two minutes a recorded problem; a model records ten to
             # twenty (its distinct projection shapes).
-            route_cost = 180 + args.route_passes * 15 * 120
-            if args.routes and progress.fits(route_cost, f"{model['id']} route sweep"):
+            if args.routes:
+                sweeps.append((model, flags))
+        # The route sweeps once nothing downloads beside them.
+        concurrent.futures.wait(fetches)
+        route_cost = 180 + args.route_passes * 15 * 120
+        for model, flags in sweeps:
+            if progress.fits(route_cost, f"{model['id']} route sweep"):
                 progress.step(f"{model['id']}: the route sweep ({args.route_passes} passes)")
                 started = time.time()
                 doc["runs"].append(route_sweep(serve, model, flags, args.device, args.port,
                                                args.route_passes, workdir, smi_id, wddm))
                 progress.spend(time.time() - started)
-        fetcher.shutdown(wait=False, cancel_futures=True)
     finally:
+        # No fetch outlives the run: the queued ones are cancelled, the running one killed.
+        FETCH["stop"] = True
+        if fetcher is not None:
+            fetcher.shutdown(wait=False, cancel_futures=True)
+        proc = FETCH["proc"]
+        if proc is not None and proc.poll() is None:
+            proc.kill()
         # Written whatever happened (an interrupted run keeps what it measured).
         doc["budget"] = {"asked_s": progress.budget_s, "used_s": round(progress.used),
                          "skipped": progress.skipped}

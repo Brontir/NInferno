@@ -504,6 +504,24 @@ def judge_routes(run, out, tolerance):
         if p.get("error"):
             out["notes"].append(f"pass {i + 1}: {p['error']}")
     passes = [p for p in run.get("passes") or [] if not p.get("error") and p.get("rows")]
+    # A row the tuner did not write (a short row, a time not a positive number) is left out,
+    # counted: a submitted file is held to its shape, never trusted to it.
+    malformed, kept = 0, []
+    for p in passes:
+        rows = []
+        for r in p.get("rows") or []:
+            try:
+                if len(r) >= 8 and float(r[7]) > 0:
+                    rows.append(r)
+                    continue
+            except (TypeError, ValueError):
+                pass
+            malformed += 1
+        selected = [r for r in p.get("selected") or [] if isinstance(r, list) and len(r) >= 8]
+        kept.append(dict(p, rows=rows, selected=selected))
+    passes = kept
+    if malformed:
+        out["notes"].append(f"{malformed} malformed timing row(s) left out")
     clean = []
     for i, p in enumerate(passes):
         tel = p.get("telemetry") or {}
@@ -536,11 +554,12 @@ def judge_routes(run, out, tolerance):
     for (case, route), values in times.items():
         if len(values) == len(clean):
             by_case.setdefault(case, {})[route] = values
-    regrets, unstable, worst = [], 0, []
+    regrets, unstable, worst, untimed = [], 0, [], 0
     for case, selected in selections[0].items():
         routes = {r: v for r, v in (by_case.get(case) or {}).items()
                   if case[1] != "a16" or route_class(r) == "a16"}
         if selected not in routes or len(routes) < 2:
+            untimed += 1
             continue
         median = {r: statistics.median(v) for r, v in routes.items()}
         best = min(median, key=median.get)
@@ -557,7 +576,8 @@ def judge_routes(run, out, tolerance):
         return
     geomean = statistics.geometric_mean(regrets)
     row.update({"status": "accepted", "measured": round(geomean, 3), "cases": len(regrets)})
-    row["notes"] = [f"{len(regrets)} cases (problem x width), {unstable} left out as not reproduced; "
+    row["notes"] = [f"{len(regrets)} cases (problem x width), {unstable} left out as not reproduced, "
+                    f"{untimed} with the selected route untimed or alone; "
                     f"the selected route's time over the fastest: geomean x{geomean:.3f}, "
                     f"worst x{max(regrets):.2f}"]
     for regret, case, selected, best, ts, tb in sorted(worst, reverse=True)[:ROUTES_SHOWN]:
@@ -597,6 +617,9 @@ def validate(doc, tolerance=TOLERANCE, registry=None):
             if run.get("mode") == "spec":
                 out["candidate"] = "no: the run failed"
             continue
+        if run.get("fetch_beside"):
+            out["notes"].append("R8 measured while the kit fetched a model (the host converting it): "
+                                "a host-bound time here may be low")
         if run.get("mode") == "spec":
             registry = registry if registry is not None else (load_json(REGISTRY) or {})
             judge_spec(doc, run, out, capped, registry, tolerance)
