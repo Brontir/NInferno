@@ -4308,6 +4308,82 @@ FamilyCoverage i8_coverage(const Problem& problem, const Weight& w, std::int32_t
     return c;
 }
 
+BuildManifest build_manifest() {
+    BuildManifest m;
+#ifdef NINFERNO_BUILD_ARCH
+    m.arch = NINFERNO_BUILD_ARCH;
+#endif
+#ifdef NINFERNO_BUILD_ARCH_SPECIFIC
+    m.arch_specific = true;
+#endif
+    m.native_nvfp4 = kNativeNvfp4;
+    // The formats the generic path has a codec for: every QType number route_table names.
+    std::vector<std::pair<QType, WeightCodec>> formats;
+    for (int n = 0; n <= 0xFF; ++n) {
+        Weight w{};
+        w.qtype = static_cast<QType>(n);
+        if (std::string_view(qtype_name(w.qtype)) == "unknown") continue;
+        try {
+            formats.emplace_back(w.qtype, codec_of(w));
+        } catch (const std::exception&) {}
+    }
+    const auto add = [&](Family family, int count, auto&& fill) {
+        for (int i = 0; i < count; ++i) {
+            ManifestSchedule s;
+            s.route    = Route{family, static_cast<std::uint8_t>(i)};
+            s.compiled = true;
+            fill(i, s);
+            m.schedules.push_back(std::move(s));
+        }
+    };
+    const auto none = [](int, ManifestSchedule&) {};
+    add(Family::Scalar, 1, none);
+    add(Family::RegisterMma, rmma_schedule_count(), [&](int i, ManifestSchedule& s) {
+        s.compiled         = rmma_schedule_launchable(i);
+        const auto info    = rmma_schedule_info(i);
+        for (const auto& [qtype, codec] : formats) {
+            if (!rmma_tile_compiled(codec, info.m_tiles, info.n_tiles, 0)) {
+                s.omitted_formats.push_back({qtype, 0});
+            } else if (!rmma_tile_compiled(codec, info.m_tiles, info.n_tiles, 128)) {
+                s.omitted_formats.push_back({qtype, 128});
+            }
+        }
+    });
+    add(Family::W4a4Mma, w4a4_schedule_names(),
+        [](int i, ManifestSchedule& s) { s.compiled = i < w4a4_schedule_count(); });
+    add(Family::TiledMma, tiled_schedule_count(), none);
+    add(Family::W4a8Mma, w4a8_schedule_count(), [&](int i, ManifestSchedule& s) {
+        if (w4a8_schedule_info(i).producers == 0) return;
+        for (const auto& f : formats) {
+            if (w4a8_ws_supports(f.first)) s.only_formats.push_back(f.first);
+        }
+    });
+    add(Family::StagedMma, staged_schedule_count(), none);
+    add(Family::Nvfp4TiledMma, nvfp4_tiled_schedule_count(),
+        [](int, ManifestSchedule& s) { s.compiled = kNativeNvfp4; });
+    add(Family::R8Mma, r8_schedule_count(), none);
+    for (const Family family : {Family::GgmlMmq, Family::GgmlVec}) {
+        add(family, 1, [&](int, ManifestSchedule& s) {
+            for (const auto& f : formats) {
+                Weight w{};
+                w.qtype         = f.first;
+                const auto type = mmq_type(w);
+                if (type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
+                                                       : ggml_mmq::vec_supported(*type))) {
+                    s.only_formats.push_back(f.first);
+                }
+            }
+        });
+    }
+    add(Family::I8Mma, i8_schedule_count(), none);
+    for (const auto& f : formats) {
+        if (r8_supports(f.first) && r8_verify_compiled(f.first)) {
+            m.r8_verify_formats.push_back(f.first);
+        }
+    }
+    return m;
+}
+
 FamilyCoverage staged_coverage(const Weight& w) {
     FamilyCoverage c;
     c.declared       = staged_schedule_count();

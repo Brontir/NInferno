@@ -2,6 +2,7 @@
 # from the per-GPU-class route table (src/ops/route_table.cpp, include/ninferno/ops/route_table.h).
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_tune.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/route_query.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_i8.cu"
@@ -65,6 +66,12 @@ ninferno_target_sources(ninferno_ops PRIVATE
 )
 target_link_libraries(ninferno_ops PRIVATE ninferno::json)
 include("${CMAKE_CURRENT_LIST_DIR}/ggml_mmq/sources.cmake")
+# The compilers the compiled-variant manifest names (build_manifest.cpp, #307), on that file alone.
+string(REPLACE ";" "," ninferno_manifest_archs "${CMAKE_CUDA_ARCHITECTURES}")
+set_source_files_properties("${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
+  TARGET_DIRECTORY ninferno_ops
+  PROPERTIES COMPILE_DEFINITIONS
+    "NINFERNO_CUDA_COMPILER=\"${CMAKE_CUDA_COMPILER_ID} ${CMAKE_CUDA_COMPILER_VERSION}\";NINFERNO_CXX_COMPILER=\"${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}\";NINFERNO_MANIFEST_CUDA_ARCHITECTURES=\"${ninferno_manifest_archs}\"")
 
 # CUTLASS's headers for the Volta prefill GEMM, on the sm_70 tree alone (CMakeLists.txt).
 if(NINFERNO_CUTLASS_INCLUDE)
