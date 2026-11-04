@@ -1955,7 +1955,8 @@ std::map<std::string, std::uint64_t> safetensors_dtype_bytes(const FetchPlan& pl
                                                              const FetchOptions& options) {
     std::map<std::string, std::uint64_t> out;
     const auto root     = options.cache.empty() ? default_hub_cache() : options.cache;
-    const auto hub      = make_hub(options, plan.commit);
+    std::string commit  = plan.commit;
+    const auto hub      = make_hub(options, commit);
     const auto snapshot = hub->cache_dir(root, plan.repo) / "snapshots" / plan.commit;
     std::optional<Listing> listing;
     for (const auto& path : plan.files) {
