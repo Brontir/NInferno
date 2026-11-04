@@ -22,6 +22,13 @@ bool blank(std::string_view bytes) noexcept {
     });
 }
 
+// Bytes held at the start of an answer header that the presentation drops when the output ends on
+// them: header markup ("<|" or "="), as chat::is_cut_content_header decides (the bytes held always
+// begin a header). Plain bytes (" ") it publishes as the answer.
+bool cut_header(std::string_view held) noexcept {
+    return held.find("<|") != std::string_view::npos || held.find('=') != std::string_view::npos;
+}
+
 // How `bytes` continues `marker` after `matched` bytes: 0 when it does not, else the bytes of
 // the token that lie on the marker (all of them, or fewer when the token completes it and goes
 // on).
@@ -178,9 +185,10 @@ void RequestConstraint::write_row(std::uint32_t* row, const ConstraintGate& gate
         } else {
             std::memset(row, 0, words * sizeof(std::uint32_t));
         }
-        // A stop token does not end the output inside a header (advance refuses it there), even
-        // where the grammar would accept the bytes held as a whole answer.
-        if (!held.empty()) {
+        // A stop token does not end the output inside header markup (advance refuses it there),
+        // even where the grammar would accept the bytes held as a whole answer: the presentation
+        // drops them. Plain bytes held (" ") it publishes, so the grammar decides.
+        if (cut_header(held)) {
             for (const std::int32_t stop : view_.vocabulary->stop_token_ids) {
                 row[static_cast<std::uint32_t>(stop) >> 5U] &=
                     ~(1U << (static_cast<std::uint32_t>(stop) & 31U));
@@ -300,13 +308,15 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
     case ConstraintGate::Mode::Header: {
         const std::string_view bytes = view_.presented(token);
         if (!bytes.empty()) { return header_bytes(gate, bytes, track, why); }
-        // A token the presentation does not show (a stop token): the answer's, after no header.
-        if (!gate.header_held.empty()) {
+        // A token the presentation does not show (a stop token): the answer's, after the bytes
+        // held, which the presentation publishes unless they are header markup it cut short.
+        if (cut_header(gate.header_held)) {
             why = "committed token " + std::to_string(token) + " interrupts an answer header";
             return false;
         }
         const ConstraintGate saved = gate;
-        if (!enter_text(gate, gate.header_next, {}, track, why) ||
+        const std::string held     = gate.header_held;
+        if (!enter_text(gate, gate.header_next, held, track, why) ||
             !advance(gate, token, track, why)) {
             gate = saved;
             return false;

@@ -674,24 +674,41 @@ void answer_header_contract() {
     check(!gap.violated(), "whitespace after the header, before the grammar");
     walk_text(gap, "yes", "the grammar after the header and a newline");
 
-    // No stop token inside a header, even where the grammar would take the bytes held as a
-    // whole answer (a choice of " ", which a header's first byte also begins).
+    // Bytes held that begin a header: plain ones (" ") the presentation publishes when the output
+    // ends on them, so a grammar they complete may stop there; header markup ("<|start|>", " to=")
+    // it drops, so no stop inside it, even where the grammar would take the bytes as an answer.
     OutputConstraintSpec blank_choice;
     blank_choice.kind    = OutputConstraintKind::Choice;
-    blank_choice.choices = {" ", "yes"};
-    RequestConstraint cut(compiler.compile(blank_choice), false, false);
+    blank_choice.choices = {" ", " to=x", "yes"};
+    const auto blank_compiled = compiler.compile(blank_choice);
+    RequestConstraint plain_held(blank_compiled, false, false);
     const TokenId space[] = {' '};
-    cut.commit(space);
-    check(!cut.violated(), "a space that may begin a header is held");
+    plain_held.commit(space);
+    plain_held.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kImEnd) && allowed(row.data(), 't'),
+          "plain bytes held: the header's rest, or a stop where they complete the answer");
+    const TokenId stop[] = {kImEnd};
+    plain_held.commit(stop);
+    check(!plain_held.violated() && plain_held.stats().complete,
+          "an answer of the plain bytes held ends");
+    RequestConstraint markup_held(blank_compiled, false, false);
+    markup_held.commit(to_user);
+    markup_held.fill_round({}, row.data(), words);
+    check(!allowed(row.data(), kImEnd) && allowed(row.data(), kMessage),
+          "inside header markup: its rest, no stop");
+    RequestConstraint cut(compiled, true);
+    cut.commit(closed);
+    const TokenId half[] = {kStart};
+    cut.commit(half);
+    cut.fill_round({}, row.data(), words);
+    check(!allowed(row.data(), kImEnd), "no stop inside <|start|>");
+
     // A raw output keeps the header (the presentation does not drop it): the grammar reads it.
     RequestConstraint raw(compiled, true, false, false);
     raw.commit(closed);
     raw.fill_round({}, row.data(), words);
     check(!allowed(row.data(), kStart) && allowed(row.data(), 'y'),
           "raw output: no header, the grammar from the terminator");
-    cut.fill_round({}, row.data(), words);
-    check(!allowed(row.data(), kImEnd) && allowed(row.data(), 't'),
-          "inside a header's first bytes: its rest, no stop");
 }
 
 void violation_contract(const ConstraintCompiler& compiler) {
