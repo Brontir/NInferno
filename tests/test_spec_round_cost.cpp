@@ -285,8 +285,7 @@ int main() {
             const auto r1 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 1);
             const auto r2 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 2);
             std::printf("Qwen3.6-35B-A3B RTX 4090: two-row plain step %.3f one-row steps (measured "
-                        "1.356); dflash:3+head R_1 / R_2 %.3f (measured 0.876)
-",
+                        "1.356); dflash:3+head R_1 / R_2 %.3f (measured 0.876)\n",
                         pass(2) / pass(1), r1 && r2 ? *r1 / *r2 : 0.0);
         }
         // Against a measurement (reported, not held: the load cells ran another engine build
