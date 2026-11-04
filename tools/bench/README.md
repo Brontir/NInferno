@@ -120,12 +120,20 @@ them explicitly for the linear route axis. Each band point of a `ninferno_route_
 case; its candidates are the routes timed there, and the selected route is the one recorded by
 `--selected-out`, which is timed too. The fit inventory, holdout and identities are passed by hand.
 A candidate is `ok` only with `--qualified`, the correctness tests that passed on that build and
-board; the statement is kept in the document. A route missing from a pass is `unmeasured`.
+board; the statement is kept in the document. A route missing from a pass is `unmeasured`; a route
+timed twice in one pass, or passes whose selections differ, are refused.
+
+route_tune selects with its problems' policy (an `a16` problem is `A16Only`, the exact mode's
+linears, not the default `AllowA8` path of a published model's projections) and the speed route
+profile (`prefill_routes` inactive, so `T >= 17` is a batched decode call, not a prefill chunk);
+each case's workload and numerical contract say so.
 
 ```bash
-for p in 1 2 3; do ninferno_route_tune --shapes shapes.txt --out /dev/null --routes-out p$p.csv --selected-out sel.csv; done
-python3 tools/bench/regret_collect.py --selected sel.csv --routes p1.csv p2.csv p3.csv --board rtx3060 --model qwen3.5-9b --selector-revision <commit> --build-id <build> --holdout board --fit-boards rtx4090,rtx5090 --qualified "ninferno_generic_linear_test, ninferno_route_classes_test" > selection.json
-``` The report preserves selector/build identity and a SHA-256
+for p in 1 2 3; do ninferno_route_tune --shapes shapes.txt --out /dev/null --routes-out p$p.csv --selected-out sel_p$p.csv; done
+python3 tools/bench/regret_collect.py --selected sel_p1.csv sel_p2.csv sel_p3.csv --routes p1.csv p2.csv p3.csv --board rtx3060 --model qwen3.5-9b --selector-revision <commit> --build-id <build> --holdout board --fit-boards rtx4090,rtx5090 --qualified "ninferno_linear_generic_test, ninferno_route_classes_test" > selection.json
+```
+
+The report preserves selector/build identity and a SHA-256
 of the exact input bytes. This is an offline evaluation aid for #301, not runtime autotuning.
 
 ## Published performance numbers

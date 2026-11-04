@@ -79,6 +79,30 @@ class Collect(unittest.TestCase):
             self.run_collect([rows], "q8,a16,store,64,64,1,rmma.a,rmma.a\n"
                                      "q8,a16,store,64,64,1,rmma.b,rmma.b\n")
 
+    def test_route_timed_twice_in_a_pass_refused(self):
+        rows = "q8,a16,store,64,64,1,rmma.a,5\nq8,a16,store,64,64,1,rmma.a,4\n"
+        with self.assertRaises(ValueError):
+            self.run_collect([rows], "q8,a16,store,64,64,1,rmma.a,rmma.a\n")
+
+    def test_passes_with_different_selections_refused(self):
+        rows = "q8,a16,store,64,64,1,rmma.a,5\nq8,a16,store,64,64,1,rmma.b,6\n"
+        a = self.write("sa.csv", SELECTED_HEAD + "q8,a16,store,64,64,1,rmma.a,rmma.a\n")
+        b = self.write("sb.csv", SELECTED_HEAD + "q8,a16,store,64,64,1,rmma.a,rmma.b\n")
+        with self.assertRaises(ValueError):
+            collect.collect([a, b], [self.write("p1.csv", HEAD + rows)], "b", "m", "r", "i",
+                            "both", [], [], "q")
+        doc = collect.collect([a, a], [self.write("p1.csv", HEAD + rows)], "b", "m", "r", "i",
+                              "both", [], [], "q")
+        self.assertIn("A16Only", doc["cases"][0]["numerical_contract"])
+        self.assertIn("speed route profile", doc["cases"][0]["workload"])
+
+    def test_short_row_exits_2(self):
+        sel = self.write("sel.csv", SELECTED_HEAD + "q8,a16\n")
+        routes = self.write("p1.csv", HEAD + "q8,a16,store,64,64,1,rmma.a,5\n")
+        args = ["--selected", str(sel), "--routes", str(routes), "--board", "b", "--model", "m",
+                "--selector-revision", "r", "--build-id", "i", "--holdout", "both"]
+        self.assertEqual(collect.main(args), 2)
+
     def test_missing_column_refused(self):
         sel = self.write("sel.csv", "format,compute\nq8,a16\n")
         with self.assertRaises(ValueError):

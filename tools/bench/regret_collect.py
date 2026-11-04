@@ -2,13 +2,13 @@
 """Lab collector for selection_regret.py (#301): route sweeps and the production selection.
 
 Combines ninferno_route_tune's CSVs of one board into one ninferno-selection-regret/1 document:
-  --selected  the --selected-out CSV of a run: per (problem, T), the route the production path runs;
+  --selected  each pass's --selected-out CSV: per (problem, T), the route the production path runs;
   --routes    one --routes-out CSV per measurement pass (interleave whole runs, same build and board).
 Every (problem, T) of the selected CSV becomes a case whose candidates are the routes timed for it.
 A route timed in some passes and not others is `unmeasured`; nothing timed is dropped silently.
 
 route_tune does not check results. A candidate is `ok` only with --qualified, which states that this
-build's route correctness tests (ninferno_generic_linear_test, ninferno_route_classes_test) passed
+build's route correctness tests (ninferno_linear_generic_test, ninferno_route_classes_test) passed
 on this board; the statement is copied into the document. Without it every candidate is
 `unmeasured` and the evaluator reports the cases incomplete.
 """
@@ -53,25 +53,47 @@ def case_id(key):
     return f"{fmt}.{compute}.{epilogue}.n{n}.k{k}.T{t}"
 
 
-def collect(selected_csv, pass_csvs, board, model, revision, build_id, holdout, fit_boards,
+# The policy route_tune selects with for a compute class (its problems' policy), and the route
+# profile it runs: the speed profile (prefill_routes inactive), so a T >= 17 case is a batched
+# decode call, not a prefill chunk. The default Fast mode runs a published model's non-NVFP4
+# projections AllowA8 (the vector kernel, R8, W4A8 ahead of the a16 routes): an a16 case is the
+# A16Only path, the exact mode's linears.
+POLICY = {"a16": "A16Only", "a8": "AllowA8", "a4": "AllowA4"}
+
+
+def read_selections(paths):
+    selected = None
+    for path in paths:
+        run = {}
+        for row in read_rows(path, KEY + ("selected",)):
+            key = key_of(row)
+            route = row["selected"].strip()
+            if key in run and run[key] != route:
+                raise ValueError(f"{path}: {case_id(key)} selected twice ({run[key]}, {route})")
+            run[key] = route
+        if selected is not None and run != selected:
+            raise ValueError(f"{path}: the selection differs from the first pass's")
+        selected = run
+    return selected
+
+
+def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout, fit_boards,
             fit_models, qualified):
     if not pass_csvs:
         raise ValueError("at least one --routes pass")
-    selected = {}
-    for row in read_rows(selected_csv, KEY + ("selected",)):
-        key = key_of(row)
-        route = row["selected"].strip()
-        if key in selected and selected[key] != route:
-            raise ValueError(f"{case_id(key)}: two selections ({selected[key]}, {route})")
-        selected[key] = route
+    if isinstance(selected_csvs, (str, Path)):
+        selected_csvs = [selected_csvs]
+    selected = read_selections(selected_csvs)
     passes = {}
     for i, path in enumerate(pass_csvs, 1):
         timed = {}
         for row in read_rows(path, KEY + ("route", "median_us")):
             us = float(row["median_us"])
-            # route_tune times a (route, T) once per run; a repeat within one run is kept as the
-            # first, as route_tune's own cache does.
-            timed.setdefault((key_of(row), row["route"].strip()), us)
+            at = (key_of(row), row["route"].strip())
+            # route_tune times a (route, T) once per run: a repeat is two runs in one file.
+            if at in timed:
+                raise ValueError(f"{path}: {case_id(at[0])} {at[1]} timed twice in one pass")
+            timed[at] = us
         passes[f"p{i}"] = timed
     cases = []
     for key in sorted(selected, key=lambda k: (k[:5], int(k[5]))):
@@ -98,13 +120,14 @@ def collect(selected_csv, pass_csvs, board, model, revision, build_id, holdout, 
         fmt, compute, epilogue, n, k, t = key
         cases.append({
             "id": case_id(key), "board": board, "model": model,
-            "workload": f"route_tune {fmt} {compute} {epilogue} n={n} k={k} T={t}, "
-                        "L2 flushed, median of the run's samples",
-            "numerical_contract": f"compute class {compute} (the policy's admitted routes)",
+            "workload": f"route_tune {fmt} {compute} {epilogue} n={n} k={k} T={t}, policy "
+                        f"{POLICY.get(compute, compute)}, speed route profile, L2 flushed, median "
+                        "of the run's samples",
+            "numerical_contract": f"{compute} activations under {POLICY.get(compute, compute)}",
             "selected": selected[key], "candidates": candidates,
         })
     if not cases:
-        raise ValueError(f"{selected_csv}: no selections")
+        raise ValueError("no selections")
     document = {
         "schema": "ninferno-selection-regret/1", "selector_revision": revision,
         "build_id": build_id, "holdout": holdout, "fit_boards": sorted(set(fit_boards)),
@@ -118,7 +141,8 @@ def collect(selected_csv, pass_csvs, board, model, revision, build_id, holdout, 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--selected", type=Path, required=True)
+    parser.add_argument("--selected", type=Path, nargs="+", required=True,
+                        help="each pass's --selected-out; they must agree")
     parser.add_argument("--routes", type=Path, nargs="+", required=True)
     parser.add_argument("--board", required=True)
     parser.add_argument("--model", required=True, help="the checkpoint the shapes come from")
@@ -135,7 +159,7 @@ def main(argv=None):
         document = collect(args.selected, args.routes, args.board, args.model,
                            args.selector_revision, args.build_id, args.holdout,
                            split(args.fit_boards), split(args.fit_models), args.qualified)
-    except (OSError, ValueError, KeyError) as error:
+    except (OSError, ValueError, KeyError, AttributeError, TypeError) as error:  # a short row
         print(f"regret_collect: {error}", file=sys.stderr)
         return 2
     print(json.dumps(document, indent=2, sort_keys=True))
