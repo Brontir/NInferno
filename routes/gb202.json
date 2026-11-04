@@ -144,7 +144,6 @@
    "k": 2048,
    "n": 2048,
    "prefill": "staged.64x128.w1x4.s2",
-   "prefill_tuned_on": "qwen35_2b_bf16",
    "prefill_bands": [
     [
      17,
@@ -166,7 +165,8 @@
      4095,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -202,7 +202,6 @@
    "k": 6144,
    "n": 2048,
    "prefill": "staged.128x64.w2x2.s2",
-   "prefill_tuned_on": "qwen35_2b_bf16",
    "prefill_bands": [
     [
      17,
@@ -224,7 +223,8 @@
      4095,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -255,7 +255,6 @@
    "k": 4096,
    "n": 2560,
    "prefill": "staged.128x64.w2x2.s2",
-   "prefill_tuned_on": "qwen35_4b_bf16",
    "prefill_bands": [
     [
      17,
@@ -272,7 +271,8 @@
      4095,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -360,7 +360,7 @@
    "k": 2048,
    "n": 16,
    "prefill": "staged.64x64.w2x2.s3",
-   "prefill_tuned_on": "qwen35_2b_bf16"
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -521,7 +521,6 @@
    "k": 2048,
    "n": 5120,
    "prefill": "staged.128x64.w2x2.s2",
-   "prefill_tuned_on": "qwen35_2b_bf16",
    "prefill_bands": [
     [
      17,
@@ -543,7 +542,8 @@
      4095,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -651,7 +651,6 @@
    "k": 2048,
    "n": 8192,
    "prefill": "staged.64x128.w1x4.s2",
-   "prefill_tuned_on": "qwen35_2b_bf16",
    "prefill_bands": [
     [
      17,
@@ -673,7 +672,8 @@
      2047,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -719,7 +719,6 @@
    "k": 2560,
    "n": 10240,
    "prefill": "staged.128x64.w2x2.s2",
-   "prefill_tuned_on": "qwen35_4b_bf16",
    "prefill_bands": [
     [
      17,
@@ -741,7 +740,8 @@
      2047,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -911,14 +911,14 @@
    "k": 2048,
    "n": 248320,
    "prefill": "staged.256x128.w4x2.s2",
-   "prefill_tuned_on": "qwen35_2b_bf16",
    "prefill_bands": [
     [
      17,
      127,
      "staged.128x64.w2x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -1061,14 +1061,14 @@
    "k": 2048,
    "n": 6144,
    "prefill": "staged.128x64.w2x2.s2",
-   "prefill_tuned_on": "qwen35_2b_bf16",
    "prefill_bands": [
     [
      17,
      511,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5256,8 +5256,6 @@
    "k": 3072,
    "n": 6144,
    "prefill": "staged.128x64.w2x2.s2",
-   "tuned_on": "ministral3_3b_bf16",
-   "prefill_tuned_on": "ministral3_3b_bf16",
    "prefill_bands": [
     [
      17,
@@ -5269,7 +5267,9 @@
      1023,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5310,8 +5310,6 @@
    "k": 3072,
    "n": 131072,
    "prefill": "staged.256x128.w4x2.s2",
-   "tuned_on": "ministral3_3b_bf16",
-   "prefill_tuned_on": "ministral3_3b_bf16",
    "prefill_bands": [
     [
      17,
@@ -5323,7 +5321,9 @@
      511,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5364,8 +5364,6 @@
    "k": 4096,
    "n": 3072,
    "prefill": "staged.64x128.w1x4.s2",
-   "tuned_on": "ministral3_3b_bf16",
-   "prefill_tuned_on": "ministral3_3b_bf16",
    "prefill_bands": [
     [
      17,
@@ -5377,7 +5375,9 @@
      2047,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5403,15 +5403,15 @@
    "k": 9216,
    "n": 3072,
    "prefill": "staged.128x64.w2x2.s2",
-   "tuned_on": "ministral3_3b_bf16",
-   "prefill_tuned_on": "ministral3_3b_bf16",
    "prefill_bands": [
     [
      17,
      2047,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5467,8 +5467,6 @@
    "k": 3072,
    "n": 9216,
    "prefill": "staged.256x128.w4x2.s2",
-   "tuned_on": "ministral3_3b_bf16",
-   "prefill_tuned_on": "ministral3_3b_bf16",
    "prefill_bands": [
     [
      17,
@@ -5490,7 +5488,9 @@
      2047,
      "staged.128x128.w2x4.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5541,7 +5541,6 @@
    "k": 2048,
    "n": 2048,
    "prefill": "rmma.m2.n4.w4x1",
-   "tuned_on": "smollm3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5563,7 +5562,8 @@
      2047,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5614,7 +5614,6 @@
    "k": 2048,
    "n": 3072,
    "prefill": "rmma.m2.n4.w4x1",
-   "tuned_on": "smollm3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5631,7 +5630,8 @@
      511,
      "rmma.m2.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5677,7 +5677,6 @@
    "k": 3072,
    "n": 6144,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "ministral3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5699,7 +5698,8 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5770,7 +5770,6 @@
    "k": 4096,
    "n": 3072,
    "prefill": "rmma.m2.n4.w4x1",
-   "tuned_on": "ministral3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5792,7 +5791,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5843,7 +5843,6 @@
    "k": 4096,
    "n": 4096,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "qwen3_8b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5860,7 +5859,8 @@
      511,
      "rmma.m2.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5901,7 +5901,6 @@
    "k": 4096,
    "n": 6144,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "qwen3_8b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5923,7 +5922,8 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5969,7 +5969,6 @@
    "k": 9216,
    "n": 3072,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "ministral3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -5996,7 +5995,8 @@
      2047,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6037,7 +6037,6 @@
    "k": 11008,
    "n": 2048,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "smollm3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -6054,7 +6053,8 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6105,7 +6105,6 @@
    "k": 12288,
    "n": 4096,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "qwen3_8b_fp8",
    "prefill_bands": [
     [
      17,
@@ -6122,7 +6121,8 @@
      511,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6183,7 +6183,6 @@
    "k": 2048,
    "n": 11008,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "smollm3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -6200,7 +6199,8 @@
      511,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6256,7 +6256,6 @@
    "k": 3072,
    "n": 9216,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "ministral3_3b_fp8",
    "prefill_bands": [
     [
      17,
@@ -6273,7 +6272,8 @@
      8191,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6334,7 +6334,6 @@
    "k": 4096,
    "n": 12288,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "qwen3_8b_fp8",
    "prefill_bands": [
     [
      17,
@@ -6346,7 +6345,8 @@
      255,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6407,7 +6407,6 @@
    "k": 2048,
    "n": 2048,
    "prefill": "rmma.m1.n4.w4x1",
-   "tuned_on": "smollm3_3b_nvfp4",
    "prefill_bands": [
     [
      17,
@@ -6424,7 +6423,8 @@
      16777216,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6470,7 +6470,6 @@
    "k": 2048,
    "n": 3072,
    "prefill": "rmma.m2.n4.w4x1",
-   "tuned_on": "smollm3_3b_nvfp4",
    "prefill_bands": [
     [
      17,
@@ -6482,7 +6481,8 @@
      511,
      "rmma.m1.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6532,7 +6532,6 @@
    "format": "nvfp4",
    "k": 3072,
    "n": 6144,
-   "tuned_on": "ministral3_3b_nvfp4",
    "prefill": "rmma.m2.n8.w4x1",
    "prefill_bands": [
     [
@@ -6550,7 +6549,8 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6591,7 +6591,6 @@
    "k": 4096,
    "n": 3072,
    "prefill": "rmma.m2.n8.w4x1",
-   "tuned_on": "ministral3_3b_nvfp4",
    "prefill_bands": [
     [
      17,
@@ -6613,7 +6612,8 @@
      2047,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6658,7 +6658,6 @@
    "format": "nvfp4",
    "k": 9216,
    "n": 3072,
-   "tuned_on": "ministral3_3b_nvfp4",
    "prefill": "rmma.m2.n8.w4x1",
    "prefill_bands": [
     [
@@ -6681,7 +6680,8 @@
      2047,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6731,7 +6731,6 @@
    "format": "nvfp4",
    "k": 11008,
    "n": 2048,
-   "tuned_on": "smollm3_3b_nvfp4",
    "prefill": "rmma.m2.n8.w4x1",
    "prefill_bands": [
     [
@@ -6754,7 +6753,8 @@
      4095,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6815,7 +6815,6 @@
    "k": 2048,
    "n": 11008,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "smollm3_3b_nvfp4",
    "prefill_bands": [
     [
      17,
@@ -6832,7 +6831,8 @@
      2047,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6893,7 +6893,6 @@
    "k": 3072,
    "n": 9216,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "ministral3_3b_nvfp4",
    "prefill_bands": [
     [
      17,
@@ -6910,7 +6909,8 @@
      1023,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6951,7 +6951,7 @@
    "k": 4096,
    "n": 4096,
    "prefill": "w4a4.128x128",
-   "tuned_on": "granite42_8b_nvfp4,llama31_8b_nvfp4,qwen3_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6997,7 +6997,7 @@
    "k": 4096,
    "n": 6144,
    "prefill": "w4a4.128x128",
-   "tuned_on": "granite42_8b_nvfp4,llama31_8b_nvfp4,qwen3_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7043,7 +7043,7 @@
    "k": 12288,
    "n": 4096,
    "prefill": "w4a4.128x128",
-   "tuned_on": "qwen3_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7089,7 +7089,7 @@
    "k": 12800,
    "n": 4096,
    "prefill": "w4a4.128x128",
-   "tuned_on": "granite42_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7135,7 +7135,7 @@
    "k": 14336,
    "n": 4096,
    "prefill": "w4a4.128x128",
-   "tuned_on": "llama31_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7176,7 +7176,7 @@
    "k": 4096,
    "n": 12800,
    "prefill": "w4a4.128x128",
-   "tuned_on": "granite42_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7212,7 +7212,7 @@
    "k": 4096,
    "n": 14336,
    "prefill": "w4a4.128x128",
-   "tuned_on": "llama31_8b_nvfp4"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7258,7 +7258,6 @@
    "k": 2048,
    "n": 2048,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "smollm3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -7275,7 +7274,8 @@
      1023,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7326,7 +7326,6 @@
    "k": 2048,
    "n": 3072,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "smollm3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -7343,7 +7342,8 @@
      511,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7379,7 +7379,7 @@
    "k": 2048,
    "n": 128256,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "smollm3_3b_fp8,smollm3_3b_nvfp4,smollm3_3b_q8"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7435,7 +7435,6 @@
    "k": 3072,
    "n": 6144,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "ministral3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -7457,7 +7456,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7483,7 +7483,7 @@
    "k": 3072,
    "n": 131072,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "ministral3_3b_fp8,ministral3_3b_nvfp4,ministral3_3b_q8"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7529,7 +7529,6 @@
    "k": 4096,
    "n": 3072,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "ministral3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -7546,7 +7545,8 @@
      511,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7597,7 +7597,6 @@
    "k": 4096,
    "n": 4096,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "olmo3_7b_q8",
    "prefill_bands": [
     [
      17,
@@ -7614,7 +7613,8 @@
      511,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7670,7 +7670,6 @@
    "k": 4096,
    "n": 12288,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "olmo3_7b_q8",
    "prefill_bands": [
     [
      17,
@@ -7687,7 +7686,8 @@
      255,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7713,7 +7713,7 @@
    "k": 4096,
    "n": 100278,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "olmo3_7b_q8"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7739,14 +7739,14 @@
    "k": 4096,
    "n": 100352,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "granite42_8b_nvfp4",
    "prefill_bands": [
     [
      128,
      511,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7772,7 +7772,6 @@
    "k": 4096,
    "n": 128256,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "llama31_8b_nvfp4",
    "prefill_bands": [
     [
      17,
@@ -7784,7 +7783,8 @@
      1023,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7810,14 +7810,14 @@
    "k": 4096,
    "n": 151936,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "qwen3_8b_fp8,qwen3_8b_nvfp4",
    "prefill_bands": [
     [
      64,
      127,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7873,7 +7873,6 @@
    "k": 9216,
    "n": 3072,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "ministral3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -7895,7 +7894,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7941,7 +7941,6 @@
    "k": 11008,
    "n": 2048,
    "prefill": "rmma.m1.n8.w4x1",
-   "tuned_on": "smollm3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -7953,7 +7952,8 @@
      511,
      "rmma.m1.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7994,7 +7994,6 @@
    "k": 11008,
    "n": 4096,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "olmo3_7b_q8",
    "prefill_bands": [
     [
      17,
@@ -8021,7 +8020,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -8057,7 +8057,6 @@
    "k": 2048,
    "n": 11008,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "smollm3_3b_q8",
    "prefill_bands": [
     [
      17,
@@ -8069,7 +8068,8 @@
      127,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -8115,14 +8115,14 @@
    "k": 3072,
    "n": 9216,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "ministral3_3b_q8",
    "prefill_bands": [
     [
      17,
      127,
      "rmma.m1.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -8158,7 +8158,6 @@
    "k": 4096,
    "n": 11008,
    "prefill": "rmma.m1.n8.w8x1",
-   "tuned_on": "olmo3_7b_q8",
    "prefill_bands": [
     [
      17,
@@ -8170,7 +8169,8 @@
      127,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8196,7 +8196,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "qwen35_4b_bf16",
    "bands": [
     [
      1,
@@ -8218,7 +8217,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8234,7 +8234,6 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "tuned_on": "qwen35_4b_bf16",
    "bands": [
     [
      1,
@@ -8276,7 +8275,8 @@
      16777216,
      "staged.128x64.w2x2.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8297,7 +8297,6 @@
      "staged.128x64.w2x2.s2"
     ]
    ],
-   "tuned_on": "qwen35_4b_bf16",
    "bands": [
     [
      1,
@@ -8334,7 +8333,8 @@
      16777216,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8365,8 +8365,6 @@
      "staged.128x64.w2x2.s2"
     ]
    ],
-   "tuned_on": "qwen35_4b_bf16",
-   "prefill_tuned_on": "qwen35_4b_bf16",
    "bands": [
     [
      1,
@@ -8423,7 +8421,9 @@
      16777216,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8439,7 +8439,6 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "tuned_on": "smollm3_3b_bf16",
    "bands": [
     [
      1,
@@ -8461,7 +8460,8 @@
      16777216,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8487,7 +8487,6 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "tuned_on": "smollm3_3b_bf16",
    "bands": [
     [
      1,
@@ -8509,7 +8508,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8530,7 +8530,6 @@
      "staged.128x64.w2x2.s2"
     ]
    ],
-   "tuned_on": "smollm3_3b_bf16",
    "bands": [
     [
      1,
@@ -8557,7 +8556,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8578,7 +8578,6 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "tuned_on": "smollm3_3b_bf16",
    "bands": [
     [
      1,
@@ -8605,7 +8604,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8614,7 +8614,6 @@
    "n": 11008,
    "k": 2048,
    "prefill": "staged.128x64.w2x2.s2",
-   "tuned_on": "smollm3_3b_bf16",
    "bands": [
     [
      1,
@@ -8666,7 +8665,8 @@
      16777216,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8687,7 +8687,6 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "tuned_on": "granite42_3b_bf16",
    "bands": [
     [
      1,
@@ -8709,7 +8708,8 @@
      16777216,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8740,7 +8740,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "granite42_3b_bf16",
    "bands": [
     [
      1,
@@ -8767,7 +8766,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8793,7 +8793,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "granite42_3b_bf16",
    "bands": [
     [
      1,
@@ -8820,7 +8819,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8841,7 +8841,6 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "tuned_on": "granite42_3b_bf16",
    "bands": [
     [
      1,
@@ -8863,7 +8862,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8889,7 +8889,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "granite42_3b_bf16",
    "bands": [
     [
      1,
@@ -8931,7 +8930,8 @@
      16777216,
      "staged.128x64.w2x2.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -8952,7 +8952,6 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "tuned_on": "olmo3_7b_bf16",
    "bands": [
     [
      1,
@@ -8989,7 +8988,8 @@
      16777216,
      "staged.128x128.w2x4.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9015,7 +9015,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "olmo3_7b_bf16",
    "bands": [
     [
      1,
@@ -9067,7 +9066,8 @@
      16777216,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9093,7 +9093,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "olmo3_7b_bf16",
    "bands": [
     [
      1,
@@ -9125,7 +9124,8 @@
      16777216,
      "staged.128x128.w2x4.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9156,7 +9156,6 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "tuned_on": "olmo3_7b_bf16",
    "bands": [
     [
      1,
@@ -9193,7 +9192,8 @@
      16777216,
      "staged.128x128.w2x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9219,7 +9219,6 @@
      "staged.128x128.w2x4.s3"
     ]
    ],
-   "tuned_on": "olmo3_7b_bf16",
    "bands": [
     [
      1,
@@ -9271,7 +9270,8 @@
      16777216,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9292,7 +9292,6 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "tuned_on": "granite42_8b_bf16",
    "bands": [
     [
      1,
@@ -9329,7 +9328,8 @@
      16777216,
      "staged.128x128.w2x4.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9355,7 +9355,6 @@
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "granite42_8b_bf16",
    "bands": [
     [
      1,
@@ -9382,7 +9381,8 @@
      16777216,
      "staged.128x128.w2x4.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9398,7 +9398,6 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "tuned_on": "granite42_8b_bf16",
    "bands": [
     [
      1,
@@ -9420,7 +9419,8 @@
      16777216,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "format": "bf16",
@@ -9441,7 +9441,6 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "tuned_on": "granite42_8b_bf16",
    "bands": [
     [
      1,
@@ -9473,7 +9472,8 @@
      16777216,
      "staged.64x128.w1x4.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -11842,7 +11842,6 @@
    "format": "bf16",
    "k": 2880,
    "n": 5120,
-   "tuned_on": "openai/gpt-oss-20b",
    "evidence_decode_us": [
     [
      1,
@@ -11872,7 +11871,8 @@
      8191,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -11917,7 +11917,6 @@
    "format": "bf16",
    "k": 4096,
    "n": 2880,
-   "tuned_on": "openai/gpt-oss-20b",
    "evidence_decode_us": [
     [
      1,
@@ -11937,7 +11936,8 @@
      4095,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -11977,7 +11977,6 @@
    "format": "bf16",
    "k": 2880,
    "n": 201088,
-   "tuned_on": "openai/gpt-oss-20b",
    "evidence_decode_us": [
     [
      1,
@@ -11992,7 +11991,8 @@
      127,
      "staged.64x64.w2x2.s4"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   }
  ],
  "moe": [
