@@ -1,10 +1,11 @@
 #pragma once
 
 // The decision manifest's route lines (#304): for every distinct problem the generic projection
-// path ran during this start (ops::detail::generic::seen_problems, cleared when an Engine loads),
-// the route the selector selects (select_route, under the start's route profile) at each decode
-// and verify width (1..16) and at the prefill chunk. A bounded, canonical set: one line per
-// problem, the widths as runs of one route, no per-token trace, and a count line.
+// path ran during this start (ops::detail::generic::seen_problems: the loading thread's own,
+// cleared when an Engine loads), the route the selector selects (select_route, under the start's
+// route profile) at each decode and verify width (1..16) and at the prefill chunk. A bounded,
+// canonical set: one line per problem, the widths as runs of one route, no per-token trace, and a
+// count line.
 //
 // What a line does not say: a call's own layout can still take it off the selected route
 // (resolve_route: alignment, workspace, segments; workspace_free_route), a weight's column order

@@ -1459,27 +1459,37 @@ int heuristic_r8(const Problem& p, std::int32_t tokens) {
     return rules_r8(p, tokens);
 }
 
-// Every distinct problem that reached the generic path (seen_problems), and under
+// Every distinct problem that reached the generic path on a thread collecting them (seen_problems:
+// an Engine's load, on its own thread, so another live Engine's calls stay out), and under
 // NINFERNO_ROUTE_RECORD=<file> each distinct (format, compute, epilogue, N, K) appended to the file
 // in ninferno_route_tune's --shapes format, so a model's shapes come from running it.
-struct SeenProblems {
+using SeenSet = std::set<std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, int>>;
+struct ThreadSeen {
+    bool collecting = false;
+    SeenSet seen;
+};
+ThreadSeen& thread_seen() {
+    thread_local ThreadSeen state;
+    return state;
+}
+struct RecordedProblems {
     std::mutex mutex;
-    std::set<std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, int>> seen;
     std::set<std::tuple<int, int, int, int, int>> recorded;
 };
-SeenProblems& seen_state() {
-    static SeenProblems state;
+RecordedProblems& recorded_state() {
+    static RecordedProblems state;
     return state;
 }
 
 void record_problem(const Problem& p, const Weight& w) {
     static const char* path = std::getenv("NINFERNO_ROUTE_RECORD");
-    SeenProblems& s = seen_state();
-    std::lock_guard lock(s.mutex);
-    s.seen.insert({static_cast<int>(p.qtype), static_cast<int>(p.policy),
-                   static_cast<int>(p.epilogue), p.n, p.k, w.n,
-                   static_cast<int>(w.layout)});
+    if (ThreadSeen& t = thread_seen(); t.collecting) {
+        t.seen.insert({static_cast<int>(p.qtype), static_cast<int>(p.policy),
+                       static_cast<int>(p.epilogue), p.n, p.k, w.n, static_cast<int>(w.layout)});
+    }
     if (path == nullptr || *path == 0) return;
+    RecordedProblems& s = recorded_state();
+    std::lock_guard lock(s.mutex);
     const auto compute = compute_class(p.qtype, p.policy);
     if (!s.recorded.insert({static_cast<int>(p.qtype), static_cast<int>(compute),
                             static_cast<int>(p.epilogue), p.n, p.k})
@@ -1494,17 +1504,16 @@ void record_problem(const Problem& p, const Weight& w) {
 } // namespace
 
 void clear_seen_problems() {
-    SeenProblems& s = seen_state();
-    std::lock_guard lock(s.mutex);
-    s.seen.clear();
+    ThreadSeen& t = thread_seen();
+    t.collecting  = true;
+    t.seen.clear();
 }
 
 std::vector<SeenProblem> seen_problems() {
-    SeenProblems& s = seen_state();
-    std::lock_guard lock(s.mutex);
+    const ThreadSeen& t = thread_seen();
     std::vector<SeenProblem> out;
-    out.reserve(s.seen.size());
-    for (const auto& [qtype, policy, epilogue, n, k, parent_rows, layout] : s.seen) {
+    out.reserve(t.seen.size());
+    for (const auto& [qtype, policy, epilogue, n, k, parent_rows, layout] : t.seen) {
         out.push_back({Problem{static_cast<QType>(qtype), static_cast<LinearPolicy>(policy), n, k,
                                static_cast<Epilogue>(epilogue)},
                        parent_rows, static_cast<QuantLayout>(layout)});

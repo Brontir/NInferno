@@ -466,17 +466,18 @@ struct Problem {
     Epilogue epilogue;
 };
 
-// A distinct problem that reached the generic path in this process (run), with its weight's stored
-// rows and layout: what route_query needs to ask the call's route again (the decision manifest's
-// route lines, runtime/engine/decision_routes.h). In (format, policy, epilogue, N, K, stored rows,
-// layout) order.
+// A distinct problem that reached the generic path on this thread since clear_seen_problems, with
+// its weight's stored rows and layout: what route_query needs to ask the call's route again (the
+// decision manifest's route lines, runtime/engine/decision_routes.h). In (format, policy,
+// epilogue, N, K, stored rows, layout) order.
 struct SeenProblem {
     Problem problem;
     std::int32_t parent_rows = 0;
     QuantLayout layout       = QuantLayout::RowSplit;
 };
 [[nodiscard]] std::vector<SeenProblem> seen_problems();
-// Forgets them: an Engine's load starts its own record (the set is the process's).
+// Forgets them and collects this thread's from here on: an Engine's load starts its own record, and
+// the calls of another live Engine (its own worker thread) do not enter it.
 void clear_seen_problems();
 
 // Why a schedule of a family is not a route for a weight on this build and device (#307), one
