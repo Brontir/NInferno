@@ -1951,6 +1951,61 @@ GgufHead fetch_gguf_head(const std::string& spec, const FetchOptions& options,
     return out;
 }
 
+std::map<std::string, std::uint64_t> safetensors_dtype_bytes(const FetchPlan& plan,
+                                                             const FetchOptions& options) {
+    std::map<std::string, std::uint64_t> out;
+    const auto root     = options.cache.empty() ? default_hub_cache() : options.cache;
+    const auto hub      = make_hub(options, plan.commit);
+    const auto snapshot = hub->cache_dir(root, plan.repo) / "snapshots" / plan.commit;
+    std::optional<Listing> listing;
+    for (const auto& path : plan.files) {
+        if (!ascii_lower(path).ends_with(".safetensors")) { continue; }
+        // The header: its length (8 bytes, little endian), then that many bytes of JSON.
+        std::function<std::string(std::uint64_t, std::uint64_t)> read;
+        const auto local = snapshot / path;
+        if (fs::exists(local)) {
+            read = [local](std::uint64_t begin, std::uint64_t bytes) {
+                std::string data(static_cast<std::size_t>(bytes), ' ');
+                std::ifstream stream(local, std::ios::binary);
+                stream.seekg(static_cast<std::streamoff>(begin));
+                stream.read(data.data(), static_cast<std::streamsize>(data.size()));
+                data.resize(static_cast<std::size_t>(stream.gcount()));
+                return data;
+            };
+        } else {
+            if (!listing) { listing = hub->list(plan.repo, plan.commit); }
+            const auto file = std::find_if(listing->files.begin(), listing->files.end(),
+                                           [&](const RemoteFile& f) { return f.path == path; });
+            if (file == listing->files.end()) {
+                throw std::runtime_error(plan.repo + "@" + plan.commit + ": no " + path);
+            }
+            const auto resolved = hub->resolve(plan.repo, plan.commit, *file);
+            const auto headers =
+                resolved.authorized ? hub->credentials() : std::vector<std::string>{};
+            read = [url = resolved.url, headers](std::uint64_t begin, std::uint64_t bytes) {
+                std::uint64_t total = 0;
+                return range_prefix(url, headers, bytes, total, begin);
+            };
+        }
+        const auto length = read(0, 8);
+        if (length.size() != 8) { throw std::runtime_error(plan.repo + "/" + path + ": no header"); }
+        std::uint64_t bytes = 0;
+        for (int i = 7; i >= 0; --i) { bytes = bytes << 8 | static_cast<unsigned char>(length[i]); }
+        if (bytes == 0 || bytes > (std::uint64_t{100} << 20)) {
+            throw std::runtime_error(plan.repo + "/" + path + ": a header of " +
+                                     std::to_string(bytes) + " bytes");
+        }
+        const auto header = nlohmann::json::parse(read(8, bytes));
+        for (const auto& [name, tensor] : header.items()) {
+            if (name == "__metadata__") { continue; }
+            const auto& span = tensor.at("data_offsets");
+            out[tensor.at("dtype").get<std::string>()] +=
+                span.at(1).get<std::uint64_t>() - span.at(0).get<std::uint64_t>();
+        }
+    }
+    return out;
+}
+
 std::map<std::string, std::uint64_t>
 gguf_quants_head_bytes(const std::string& spec, const FetchOptions& options,
                        const std::vector<std::string>& quants, std::uint64_t table_end,
