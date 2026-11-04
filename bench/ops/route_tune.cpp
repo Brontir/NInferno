@@ -26,10 +26,13 @@
 // verify widths: the band sweep times it there as the dense tuner does (generic_tune.cpp), and the
 // dispatch takes such a band only where the policy admits it. --points replaces the
 // band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV.
+// --selected-out writes, per problem and band point, the route the production path runs there
+// (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
 #include "core/weight_view.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 #include "random_weight.h"
@@ -125,6 +128,15 @@ int main(int argc, char** argv) {
             routes_csv.open(opt["--routes-out"]);
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us\n";
+        }
+        // The route the production path runs at each band point (#301): select_route's choice
+        // with the tables this device loads, resolved for the contiguous call and this workspace,
+        // and timed like the candidates, so a regret collector compares it to them.
+        std::ofstream selected_csv;
+        if (opt.count("--selected-out")) {
+            selected_csv.open(opt["--selected-out"]);
+            if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
+            selected_csv << "format,compute,epilogue,n,k,T,asked,selected\n";
         }
 
         std::vector<Problem> problems;
@@ -317,6 +329,26 @@ int main(int argc, char** argv) {
                     }
                 }
                 winners.push_back({t, best_route});
+                if (selected_csv) {
+                    const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
+                    const generic::Route asked =
+                        generic::select_route(gp, w.weight, t, ops::prefill_routes_active());
+                    const generic::CallLayout layout{.x_aligned16    = true,
+                                                     .ldx            = p.k,
+                                                     .tokens         = t,
+                                                     .rows           = p.n,
+                                                     .segments       = 1,
+                                                     .epilogue       = p.epilogue,
+                                                     .workspace_free = workspace.capacity()};
+                    const generic::Route ran =
+                        generic::resolve_route(asked, w.weight, layout).executed;
+                    time_route(ran, t);
+                    selected_csv << generic::qtype_name(p.qtype) << ','
+                                 << generic::compute_class_name(p.compute) << ','
+                                 << generic::epilogue_name(p.epilogue) << ',' << p.n << ','
+                                 << p.k << ',' << t << ',' << generic::route_name(asked) << ','
+                                 << generic::route_name(ran) << '\n';
+                }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),
                             generic::epilogue_name(p.epilogue), p.n, p.k, t,

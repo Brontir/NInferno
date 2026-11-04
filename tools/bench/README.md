@@ -32,6 +32,7 @@ python3 tools/bench/run_ninferno_bench_matrix.py --preset core             # run
 | `r8_decode_table.py` | Generate `src/ops/generic/r8_decode_table.h` from R8 schedule sweeps. |
 | `hard_set.py` | One serving configuration through the hard question set ([eval/corpora/hard50](../../eval/corpora/hard50/README.md)): answers graded against the references, decode rate and, at a fixed speculative depth, tokens per round. |
 | `selection_regret.py` | Offline regret of recorded production choices against qualified, matched alternatives on held-out boards or models ([below](#offline-selection-regret)). |
+| `regret_collect.py` | The lab collector for `selection_regret.py`: `ninferno_route_tune --selected-out` (the route the production path runs per problem and width) and one `--routes-out` sweep per pass into its input ([below](#offline-selection-regret)). |
 | `quality_rows.py` | Perplexity and KL divergence of each `--activations` mode against `exact` on the fixed corpus, appended as `docs/performance/` rows. |
 
 ## Offline selection regret
@@ -113,9 +114,18 @@ evaluation. Missing candidates cannot be inferred by this consumer; never silent
 measurements. An oracle failure excludes an incorrect alternative, but must not be used to hide a
 timeout (which is `unmeasured`). Regret is relative to the supplied inventory, not a global optimum.
 
-There is intentionally no automatic import from route-sweep CSVs or product choice JSON yet:
-neither alone carries all qualification, fit-inventory and matched-run facts required here. A lab
-collector must combine them explicitly. The report preserves selector/build identity and a SHA-256
+There is no automatic import from route-sweep CSVs or product choice JSON: neither alone carries
+all qualification, fit-inventory and matched-run facts required here. `regret_collect.py` combines
+them explicitly for the linear route axis. Each band point of a `ninferno_route_tune` run becomes a
+case; its candidates are the routes timed there, and the selected route is the one recorded by
+`--selected-out`, which is timed too. The fit inventory, holdout and identities are passed by hand.
+A candidate is `ok` only with `--qualified`, the correctness tests that passed on that build and
+board; the statement is kept in the document. A route missing from a pass is `unmeasured`.
+
+```bash
+for p in 1 2 3; do ninferno_route_tune --shapes shapes.txt --out /dev/null --routes-out p$p.csv --selected-out sel.csv; done
+python3 tools/bench/regret_collect.py --selected sel.csv --routes p1.csv p2.csv p3.csv --board rtx3060 --model qwen3.5-9b --selector-revision <commit> --build-id <build> --holdout board --fit-boards rtx4090,rtx5090 --qualified "ninferno_generic_linear_test, ninferno_route_classes_test" > selection.json
+``` The report preserves selector/build identity and a SHA-256
 of the exact input bytes. This is an offline evaluation aid for #301, not runtime autotuning.
 
 ## Published performance numbers

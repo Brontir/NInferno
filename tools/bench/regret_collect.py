@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Lab collector for selection_regret.py (#301): route sweeps and the production selection.
+
+Combines ninferno_route_tune's CSVs of one board into one ninferno-selection-regret/1 document:
+  --selected  the --selected-out CSV of a run: per (problem, T), the route the production path runs;
+  --routes    one --routes-out CSV per measurement pass (interleave whole runs, same build and board).
+Every (problem, T) of the selected CSV becomes a case whose candidates are the routes timed for it.
+A route timed in some passes and not others is `unmeasured`; nothing timed is dropped silently.
+
+route_tune does not check results. A candidate is `ok` only with --qualified, which states that this
+build's route correctness tests (ninferno_generic_linear_test, ninferno_route_classes_test) passed
+on this board; the statement is copied into the document. Without it every candidate is
+`unmeasured` and the evaluator reports the cases incomplete.
+"""
+import argparse
+import csv
+import json
+import sys
+from pathlib import Path
+
+KEY = ("format", "compute", "epilogue", "n", "k", "T")
+
+
+def read_rows(path, columns):
+    with open(path, newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        missing = [c for c in columns if c not in (reader.fieldnames or [])]
+        if missing:
+            raise ValueError(f"{path}: missing columns {missing}")
+        return list(reader)
+
+
+def key_of(row):
+    return tuple(row[c].strip() for c in KEY)
+
+
+def case_id(key):
+    fmt, compute, epilogue, n, k, t = key
+    return f"{fmt}.{compute}.{epilogue}.n{n}.k{k}.T{t}"
+
+
+def collect(selected_csv, pass_csvs, board, model, revision, build_id, holdout, fit_boards,
+            fit_models, qualified):
+    if not pass_csvs:
+        raise ValueError("at least one --routes pass")
+    selected = {}
+    for row in read_rows(selected_csv, KEY + ("selected",)):
+        key = key_of(row)
+        route = row["selected"].strip()
+        if key in selected and selected[key] != route:
+            raise ValueError(f"{case_id(key)}: two selections ({selected[key]}, {route})")
+        selected[key] = route
+    passes = {}
+    for i, path in enumerate(pass_csvs, 1):
+        timed = {}
+        for row in read_rows(path, KEY + ("route", "median_us")):
+            us = float(row["median_us"])
+            # route_tune times a (route, T) once per run; a repeat within one run is kept as the
+            # first, as route_tune's own cache does.
+            timed.setdefault((key_of(row), row["route"].strip()), us)
+        passes[f"p{i}"] = timed
+    cases = []
+    for key in sorted(selected, key=lambda k: (k[:5], int(k[5]))):
+        routes = sorted({r for timed in passes.values() for (k, r) in timed if k == key})
+        candidates = []
+        for route in routes:
+            samples = {p: timed[(key, route)] / 1000.0 for p, timed in passes.items()
+                       if (key, route) in timed}
+            if len(samples) != len(passes):
+                missing = sorted(set(passes) - set(samples))
+                candidates.append({"id": route, "status": "unmeasured",
+                                   "reason": "not timed in pass " + ", ".join(missing)})
+            elif not qualified:
+                candidates.append({"id": route, "status": "unmeasured",
+                                   "reason": "no correctness qualification stated (--qualified)"})
+            else:
+                candidates.append({"id": route, "status": "ok", "samples_ms": samples})
+        if selected[key] not in routes:
+            candidates.append({"id": selected[key], "status": "unmeasured",
+                               "reason": "the selected route was not timed"})
+        fmt, compute, epilogue, n, k, t = key
+        cases.append({
+            "id": case_id(key), "board": board, "model": model,
+            "workload": f"route_tune {fmt} {compute} {epilogue} n={n} k={k} T={t}, "
+                        "L2 flushed, median of the run's samples",
+            "numerical_contract": f"compute class {compute} (the policy's admitted routes)",
+            "selected": selected[key], "candidates": candidates,
+        })
+    if not cases:
+        raise ValueError(f"{selected_csv}: no selections")
+    document = {
+        "schema": "ninferno-selection-regret/1", "selector_revision": revision,
+        "build_id": build_id, "holdout": holdout, "fit_boards": sorted(set(fit_boards)),
+        "fit_models": sorted(set(fit_models)), "cases": cases,
+    }
+    if qualified:
+        document["qualification"] = qualified
+    return document
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--selected", type=Path, required=True)
+    parser.add_argument("--routes", type=Path, nargs="+", required=True)
+    parser.add_argument("--board", required=True)
+    parser.add_argument("--model", required=True, help="the checkpoint the shapes come from")
+    parser.add_argument("--selector-revision", required=True)
+    parser.add_argument("--build-id", required=True)
+    parser.add_argument("--holdout", choices=("board", "model", "both"), required=True)
+    parser.add_argument("--fit-boards", default="", help="comma-separated")
+    parser.add_argument("--fit-models", default="", help="comma-separated")
+    parser.add_argument("--qualified", default="",
+                        help="the correctness tests that passed on this build and board")
+    args = parser.parse_args(argv)
+    split = lambda s: [x for x in (v.strip() for v in s.split(",")) if x]
+    try:
+        document = collect(args.selected, args.routes, args.board, args.model,
+                           args.selector_revision, args.build_id, args.holdout,
+                           split(args.fit_boards), split(args.fit_models), args.qualified)
+    except (OSError, ValueError, KeyError) as error:
+        print(f"regret_collect: {error}", file=sys.stderr)
+        return 2
+    print(json.dumps(document, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
