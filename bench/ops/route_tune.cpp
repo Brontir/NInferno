@@ -28,7 +28,9 @@
 // band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
-// --rotate 1 times each sample over weight copies spanning 2x L2 and 128 MiB, not one flushed call.
+// A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
+// and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
+// flush there too, as at the wider widths.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -106,7 +108,7 @@ int main(int argc, char** argv) {
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
         const int chunk         = opt.count("--prefill-chunk") ? std::stoi(opt["--prefill-chunk"]) : 1024;
         const bool prefill_only = opt.count("--prefill-only") && opt["--prefill-only"] == "1";
-        const bool rotate       = opt.count("--rotate") && opt["--rotate"] == "1";
+        const bool rotate       = !(opt.count("--rotate") && opt["--rotate"] == "0");
         const auto& device      = device_class();
         const std::string key_kind = opt.count("--key") ? opt["--key"] : "chip";
         if (key_kind != "chip" && key_kind != "variant" && key_kind != "arch") {
@@ -192,7 +194,7 @@ int main(int argc, char** argv) {
             const bool swiglu     = p.epilogue == generic::Epilogue::SwiGlu;
             const std::int32_t rows = swiglu ? 2 * p.n : p.n;
             RandomWeight w        = random_weight(p.qtype, rows, p.k, 7U + p.n + p.k);
-            // --rotate 1: a sample is one call on each of `copies` weights in turn, between one
+            // A sample is one call on each of `copies` weights in turn, between one
             // event pair, as consecutive decode layers read theirs: the copies span 2x L2 and at
             // least 128 MiB, so each reads DRAM and a sample holds many calls, while the activations
             // stay in L2. A single call of a few microseconds is timed only to the timer's tick
@@ -274,20 +276,27 @@ int main(int argc, char** argv) {
                 call.epilogue        = p.epilogue;
                 call.out[0]          = &ty;
                 call.segment_rows[0] = p.n;
-                // One warm call, then the median of `samples`, each after the tuners' read flush
+                // One warm sample, then the median of `samples`, each after the tuners' read flush
                 // (core/tune_timer.h): a memset flush left the L2 dirty and the timed call paid its
                 // write-back (RTX 4070 Ti, Q6_K 4096x12288 T=4, rmma.m1.n1.w1x8: 169 us with the
-                // memset flush, 125 with this one, ninferno_linear_bench 125).
+                // memset flush, 125 with this one, ninferno_linear_bench 125). A decode or verify
+                // call (T <= 16) runs over the copies: a flushed single call of a few microseconds
+                // is timed only to the event tick and counts its launch, which consecutive layers
+                // overlap (RTX 5090, Q4_K 4096x4096 T=1: 12.3 us flushed, 8.2 over copies; 13 of 40
+                // small-T winners changed; pass-to-pass spread 2.2 -> 0.6 % at p90, GV100 20 ->
+                // 0.6 %). A wider call is long against both and keeps the one flushed call.
+                const bool over_copies = t <= 16;
                 const double us =
                     timer.median_us([&](cudaStream_t s) {
                         call.weight = &w.weight;
                         generic::run_route(r, call, &workspace, s);
+                        if (!over_copies) return;
                         for (const RandomWeight& c : spare) {
                             call.weight = &c.weight;
                             generic::run_route(r, call, &workspace, s);
                         }
                     }) /
-                    static_cast<double>(1 + spare.size());
+                    static_cast<double>(over_copies ? 1 + spare.size() : 1);
                 if (routes_csv) {
                     routes_csv << generic::qtype_name(p.qtype) << ','
                                << generic::compute_class_name(p.compute) << ','
