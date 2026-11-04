@@ -681,6 +681,21 @@ void answer_header_contract() {
     blank_choice.kind    = OutputConstraintKind::Choice;
     blank_choice.choices = {" ", " to=x", "yes"};
     const auto blank_compiled = compiler.compile(blank_choice);
+    // At the first token too, where the open marker shares the header's " to=": the grammar's
+    // whole answer " to=" ends nothing, the presentation would drop it.
+    OutputConstraintSpec markup_choice;
+    markup_choice.kind    = OutputConstraintKind::Choice;
+    markup_choice.choices = {" to=", "yes"};
+    RequestConstraint pending_markup(compiler.compile(markup_choice), false, true);
+    const TokenId to_eq[] = {kTo, '='};
+    pending_markup.commit(to_eq);
+    check(!pending_markup.violated(), "the marker's and a header's ' to=' at the first token");
+    pending_markup.fill_round({}, row.data(), words);
+    check(!allowed(row.data(), kImEnd) && allowed(row.data(), 'u') && allowed(row.data(), 's'),
+          "inside the shared ' to=': the marker or the header, no stop");
+    const TokenId eos[] = {kImEnd};
+    pending_markup.commit(eos);
+    check(pending_markup.violated(), "a stop inside the shared ' to=' is refused");
     RequestConstraint plain_held(blank_compiled, false, false);
     const TokenId space[] = {' '};
     plain_held.commit(space);

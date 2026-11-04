@@ -157,7 +157,17 @@ void RequestConstraint::write_row(std::uint32_t* row, const ConstraintGate& gate
                 admit(token);
             }
         }
-        if (gate.header_alive) { admit_header(row, gate.header_held); }
+        if (gate.header_alive) {
+            // As in the Header mode: no stop inside header markup the presentation would drop
+            // (the bytes held may be the grammar's whole answer too, " to=").
+            if (cut_header(gate.header_held)) {
+                for (const std::int32_t stop : view_.vocabulary->stop_token_ids) {
+                    row[static_cast<std::uint32_t>(stop) >> 5U] &=
+                        ~(1U << (static_cast<std::uint32_t>(stop) & 31U));
+                }
+            }
+            admit_header(row, gate.header_held);
+        }
         return;
     }
     case ConstraintGate::Mode::Header: {
@@ -336,6 +346,10 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
     }
     case ConstraintGate::Mode::Pending: {
         const std::string_view bytes  = view_.presented(token);
+        if (bytes.empty() && gate.header_alive && cut_header(gate.header_held)) {
+            why = "committed token " + std::to_string(token) + " interrupts an answer header";
+            return false;
+        }
         const std::string_view marker = view_.vocabulary->reasoning_open;
         const std::size_t on = gate.open_alive ? on_marker(marker, gate.open_matched, bytes) : 0;
         const bool header    = gate.header_alive && on_header(gate.header_held, bytes);
