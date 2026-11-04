@@ -28,7 +28,7 @@
 // band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
-// --rotate 1 times each sample over weight copies spanning 2x L2 instead of one flushed call.
+// --rotate 1 times each sample over weight copies spanning 2x L2 and 128 MiB, not one flushed call.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -193,14 +193,16 @@ int main(int argc, char** argv) {
             const std::int32_t rows = swiglu ? 2 * p.n : p.n;
             RandomWeight w        = random_weight(p.qtype, rows, p.k, 7U + p.n + p.k);
             // --rotate 1: a sample is one call on each of `copies` weights in turn, between one
-            // event pair, as consecutive decode layers read theirs: the copies span 2x L2, so each
-            // reads DRAM, while the activations stay in L2. A single call of a few microseconds is
-            // timed only to the timer's tick (1.024 us on the consumer boards).
+            // event pair, as consecutive decode layers read theirs: the copies span 2x L2 and at
+            // least 128 MiB, so each reads DRAM and a sample holds many calls, while the activations
+            // stay in L2. A single call of a few microseconds is timed only to the timer's tick
+            // (1.024 us on the consumer boards and GV100).
             std::vector<RandomWeight> spare;
             if (rotate) {
                 const std::size_t bytes = std::max<std::size_t>(w.parent.geometry.bytes, 1);
+                const std::size_t span  = std::max<std::size_t>(2 * device.l2_bytes, 128U << 20);
                 const std::size_t copies =
-                    std::clamp<std::size_t>((2 * device.l2_bytes + bytes - 1) / bytes, 1, 32);
+                    std::clamp<std::size_t>((span + bytes - 1) / bytes, 1, 64);
                 for (std::size_t c = 1; c < copies; ++c) {
                     spare.push_back(random_weight(p.qtype, rows, p.k, 7U + p.n + p.k + 977U * c));
                 }
