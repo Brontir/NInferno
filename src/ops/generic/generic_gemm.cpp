@@ -4355,9 +4355,15 @@ BuildManifest build_manifest() {
     // (generic_tiled.cu, generic_w4a8.cuh, generic_staged.cu, generic_i8.cu): the fits checks the
     // refusals answer Resource by. Staged's device check (staged_device_fits) is the board's.
     // The tiles are compiled for tiled_supports' codecs and Q8 (the Volta tiles, volta_tiled_route).
+    // On a build without tensor mma.sync, schedule 0 also names the CUTLASS copy of every other
+    // format (volta_cutlass_only): omitted there when the build has no CUTLASS.
+    m.volta_cutlass         = volta_cutlass_compiled();
+    const bool cutlass_tier = !build_features().mma_tensor;
     add(Family::TiledMma, tiled_schedule_count(), [&](int i, ManifestSchedule& s) {
         for (const auto& [qtype, codec] : formats) {
-            if ((tiled_supports(codec) || codec == WeightCodec::Q8) && !tiled_fits(i, codec)) {
+            const bool tile = tiled_supports(codec) || codec == WeightCodec::Q8;
+            if ((tile && !tiled_fits(i, codec)) ||
+                (!tile && cutlass_tier && i == 0 && !m.volta_cutlass)) {
                 s.omitted_formats.push_back({qtype, 0});
             }
         }

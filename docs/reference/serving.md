@@ -161,14 +161,18 @@ these depths per decode step ([section 3](#3-speculative-decoding)).
 
 ### Build manifest
 
-`ninferno-serve --build-manifest` (the first argument; the rest are ignored) prints what this
-binary holds of the generic GEMM kernels, as JSON, and exits. It needs no GPU and reads no model.
-The document:
+`ninferno-serve --build-manifest` (the first argument; any other argument is ignored, except that
+`--help` or `-h` anywhere prints the usage instead, as for every command) prints what this binary
+holds of the generic GEMM kernels, as JSON, and exits. It needs no GPU and reads no model. The
+document:
 
 - `build`: the decision fingerprint's build section as strings (`version`, `git_commit`, `arch`,
   `arch_specific`, `cuda_architectures`, `embed_ptx`, `nvfp4`, `cudart`).
 - `arch`, `arch_specific`, `native_nvfp4`: the architecture the tree compiles for, whether its
   target is architecture- or family-specific, whether the NVFP4 kernels are in it.
+- `volta_cutlass`: whether Volta's CUTLASS prefill is in it; on a build without tensor `mma.sync`
+  it is what the tiled route's first schedule runs for the formats without a tile of their own, so
+  without it those formats are among that schedule's `omitted_formats`.
 - `cuda_compiler`, `cxx_compiler`, `cuda_architectures`: the compilers that built it ("NVIDIA
   13.4.92", "GNU 15.2.0") and the CMake architecture list.
 - `families`: each kernel family (`rmma`, `w4a4`, `tiled`, `w4a8`, `staged`, `nvfp4t`, `r8`,

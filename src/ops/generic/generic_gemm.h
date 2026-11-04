@@ -641,6 +641,10 @@ struct BuildManifest {
     int arch           = 0; // the architecture the tree compiles for (NINFERNO_BUILD_ARCH)
     bool arch_specific = false;
     bool native_nvfp4  = false;
+    // Volta's CUTLASS prefill (generic_volta_cutlass.cu, volta_cutlass_compiled): on a build
+    // without tensor mma.sync, what the tiled route's schedule 0 runs for the formats without a
+    // tile of their own; without it those formats are omitted there.
+    bool volta_cutlass = false;
     std::vector<ManifestSchedule> schedules; // family by family, in schedule order
     std::vector<QType> r8_verify_formats;    // R8's verify-width form (r8_verify_compiled)
 };

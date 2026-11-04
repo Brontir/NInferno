@@ -46,9 +46,10 @@ std::string build_manifest_json(const BuildManifest& m,
         auto& section = out["build"] = nlohmann::json::object();
         for (const auto& [key, value] : build) section[key] = value;
     }
-    out["arch"]             = m.arch;
+    out["arch"]               = m.arch;
     out["arch_specific"]      = m.arch_specific;
     out["native_nvfp4"]       = m.native_nvfp4;
+    out["volta_cutlass"]      = m.volta_cutlass;
     out["cuda_compiler"]      = NINFERNO_CUDA_COMPILER;
     out["cxx_compiler"]       = NINFERNO_CXX_COMPILER;
     out["cuda_architectures"] = NINFERNO_MANIFEST_CUDA_ARCHITECTURES;
