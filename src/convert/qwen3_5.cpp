@@ -1213,7 +1213,9 @@ SourcePtr moe_encoded_source(const Checkpoint& store, const Parameter& parameter
     const auto leaf = prefix + field;
     for (const char* root : {"model.language_model.layers.", "model.layers."}) {
         const auto full = std::string(root) + layer + "." + leaf;
-        if (store.has(full + ".weight_packed")) {
+        // compressed-tensors (weight_packed) or ModelOpt (U8 weight with weight_scale_2:
+        // nvidia/Qwen3.6-35B-A3B-NVFP4, whose experts ModelOpt lists as one W4A16_NVFP4 module).
+        if (store.has(full + ".weight_packed") || nvfp4_layout(store, full)) {
             return compressed_source(store, full, parameter.shape, MatrixFormat::Nvfp4);
         }
         // A GGUF checkpoint exposes every expert of its NVFP4 banks as a 2-D matrix.
@@ -1239,9 +1241,12 @@ void qwen3_6_35b_a3b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) 
             continue;
         }
         if (has_part(name, "/moe/experts/") || has_part(name, "/moe/shared/")) {
-            recipe.assign(i, QType::NVFP4, Method::ImportEncoded,
-                          moe_encoded_source(quantized, parameter));
-            recipe.set_policy(i, ActivationPolicy::AllowA4);
+            // FP4 activations against the checkpoint's calibrated divisor (.input_scale); an
+            // export without one (W4A16) keeps BF16 activations, as kept_policy gives a kept site.
+            auto source        = moe_encoded_source(quantized, parameter);
+            const bool divisor = source->provides_input_divisor();
+            recipe.assign(i, QType::NVFP4, Method::ImportEncoded, std::move(source));
+            recipe.set_policy(i, divisor ? ActivationPolicy::AllowA4 : ActivationPolicy::A16Only);
         } else {
             recipe.assign(i, kQ8, Method::GroupedAbsmax);
         }

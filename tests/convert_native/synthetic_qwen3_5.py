@@ -245,19 +245,22 @@ def quantized_dense(root: Path, *, fp8: bool, seed: int, modelopt: bool = False,
     (root / "config.json").write_text(json.dumps(config(False, nested=False)), encoding="utf-8")
 
 
-def quantized_moe(root: Path, seed: int) -> None:
-    """Per-expert compressed-tensors NVFP4 banks and shared experts, each with its divisor."""
+def quantized_moe(root: Path, seed: int, modelopt: bool = False) -> None:
+    """Per-expert compressed-tensors NVFP4 banks and shared experts, each with its divisor.
+    modelopt: Model Optimizer's fields instead (U8 weight, weight_scale_2), as
+    nvidia/Qwen3.6-35B-A3B-NVFP4 publishes its experts."""
     w = Q(seed)
+    layout = {"layout": "modelopt"} if modelopt else {}
     for layer in range(LAYERS):
         p = f"model.language_model.layers.{layer}.mlp."
         for expert in range(EXPERTS):
             e = f"{p}experts.{expert}."
-            w.nvfp4(e + "gate_proj", MOE_INTER, H, 0.2 + 0.01 * expert, 0.5 + 0.05 * expert)
-            w.nvfp4(e + "up_proj", MOE_INTER, H, 0.25 + 0.01 * expert, 0.55)
-            w.nvfp4(e + "down_proj", H, MOE_INTER, 0.3 + 0.02 * expert, 0.4 + 0.03 * expert)
+            w.nvfp4(e + "gate_proj", MOE_INTER, H, 0.2 + 0.01 * expert, 0.5 + 0.05 * expert, **layout)
+            w.nvfp4(e + "up_proj", MOE_INTER, H, 0.25 + 0.01 * expert, 0.55, **layout)
+            w.nvfp4(e + "down_proj", H, MOE_INTER, 0.3 + 0.02 * expert, 0.4 + 0.03 * expert, **layout)
         for role in ("gate_proj", "up_proj"):
-            w.nvfp4(p + "shared_expert." + role, SHARED, H, 0.33, 0.6)
-        w.nvfp4(p + "shared_expert.down_proj", H, SHARED, 0.37, 0.61)
+            w.nvfp4(p + "shared_expert." + role, SHARED, H, 0.33, 0.6, **layout)
+        w.nvfp4(p + "shared_expert.down_proj", H, SHARED, 0.37, 0.61, **layout)
     w.save(root)
     (root / "config.json").write_text(json.dumps({"quantization_config": {"format": "nvfp4-pack-quantized"}}), encoding="utf-8")
 
@@ -324,6 +327,7 @@ def main() -> int:
         quantized_dense(work / "q-fp8-modelopt", fp8=True, seed=28, modelopt=True)
         quantized_dense(work / "q-nvidia", fp8=True, seed=29, modelopt=True, fp8_tensor=True)
         quantized_moe(work / "q-moe", seed=25)
+        quantized_moe(work / "q-moe-modelopt", seed=25, modelopt=True)
         drafter(work / "dflash", "dflash", 26)
         drafter(work / "dflash2", "dflash2", 27)
         full = ["--components=text,vision,mtp,dflash,dflash2", f"--source=dflash={work / 'dflash'}",
@@ -429,6 +433,24 @@ def main() -> int:
             ok = False
             errors.append(f"nvidia layout: Python did not refuse it\n{refused.stderr[-1000:]}")
         print(f"nvidia layout: {'ok' if ok else 'FAILED'}", flush=True)
+        # NVIDIA's MoE experts in Model Optimizer's fields: the 35B recipe imports every routed and
+        # shared expert matrix as NVFP4, as it does compressed-tensors' (native only).
+        args = [f"--model={moe_dir}", "--recipe=qwen3_6_35b_a3b_nvfp4", "--components=text",
+                f"--source=quantized={work / 'q-moe-modelopt'}"]
+        out = work / "native" / "moe-modelopt.ninferno"
+        result = subprocess.run([str(native), *args, "--quiet", f"--out={out}"], cwd=repository,
+                                capture_output=True, text=True)
+        ok = result.returncode == 0
+        if ok:
+            report = json.loads(Path(str(out) + ".conversion.json").read_text(encoding="utf-8"))
+            formats = {p: (m["method"], m["format"]) for m in report["methods"] for p in m["parameters"]}
+            experts = [p for p in formats if "/moe/experts/" in p or "/moe/shared/" in p]
+            ok = bool(experts) and all(formats[p] == ("import_encoded", "nvfp4") for p in experts)
+            if not ok:
+                errors.append(f"moe modelopt: {sorted({formats[p] for p in experts})}")
+        else:
+            errors.append(f"moe modelopt: native failed\n{result.stderr[-2000:]}")
+        print(f"moe modelopt: {'ok' if ok else 'FAILED'}", flush=True)
         # --drafter-quant on a target quantizes its companion drafter only (native only: the
         # Python converter has no such option). The text keeps the recipe's methods.
         methods = {}
