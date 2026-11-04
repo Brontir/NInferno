@@ -28,6 +28,7 @@
 // band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
+// --rotate 1 times each sample over weight copies spanning 2x L2 instead of one flushed call.
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
@@ -105,6 +106,7 @@ int main(int argc, char** argv) {
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
         const int chunk         = opt.count("--prefill-chunk") ? std::stoi(opt["--prefill-chunk"]) : 1024;
         const bool prefill_only = opt.count("--prefill-only") && opt["--prefill-only"] == "1";
+        const bool rotate       = opt.count("--rotate") && opt["--rotate"] == "1";
         const auto& device      = device_class();
         const std::string key_kind = opt.count("--key") ? opt["--key"] : "chip";
         if (key_kind != "chip" && key_kind != "variant" && key_kind != "arch") {
@@ -190,6 +192,19 @@ int main(int argc, char** argv) {
             const bool swiglu     = p.epilogue == generic::Epilogue::SwiGlu;
             const std::int32_t rows = swiglu ? 2 * p.n : p.n;
             RandomWeight w        = random_weight(p.qtype, rows, p.k, 7U + p.n + p.k);
+            // --rotate 1: a sample is one call on each of `copies` weights in turn, between one
+            // event pair, as consecutive decode layers read theirs: the copies span 2x L2, so each
+            // reads DRAM, while the activations stay in L2. A single call of a few microseconds is
+            // timed only to the timer's tick (1.024 us on the consumer boards).
+            std::vector<RandomWeight> spare;
+            if (rotate) {
+                const std::size_t bytes = std::max<std::size_t>(w.parent.geometry.bytes, 1);
+                const std::size_t copies =
+                    std::clamp<std::size_t>((2 * device.l2_bytes + bytes - 1) / bytes, 1, 32);
+                for (std::size_t c = 1; c < copies; ++c) {
+                    spare.push_back(random_weight(p.qtype, rows, p.k, 7U + p.n + p.k + 977U * c));
+                }
+            }
             const auto policy = p.compute == generic::ComputeClass::A4 ? ops::LinearPolicy::AllowA4
                                 : p.compute == generic::ComputeClass::A8
                                     ? ops::LinearPolicy::AllowA8
@@ -262,7 +277,15 @@ int main(int argc, char** argv) {
                 // write-back (RTX 4070 Ti, Q6_K 4096x12288 T=4, rmma.m1.n1.w1x8: 169 us with the
                 // memset flush, 125 with this one, ninferno_linear_bench 125).
                 const double us =
-                    timer.median_us([&](cudaStream_t s) { generic::run_route(r, call, &workspace, s); });
+                    timer.median_us([&](cudaStream_t s) {
+                        call.weight = &w.weight;
+                        generic::run_route(r, call, &workspace, s);
+                        for (const RandomWeight& c : spare) {
+                            call.weight = &c.weight;
+                            generic::run_route(r, call, &workspace, s);
+                        }
+                    }) /
+                    static_cast<double>(1 + spare.size());
                 if (routes_csv) {
                     routes_csv << generic::qtype_name(p.qtype) << ','
                                << generic::compute_class_name(p.compute) << ','
