@@ -10,8 +10,9 @@ Two workloads, both greedy, each after one untimed warm-up request
 - long24k_fr2026_6p: six ~24K-token slices of the Federal Register text (September-October 2026,
   new to every model measured) in examples/cli/messages/long_niah_256k.json, each followed by a
   request to summarize it. Prefill = prompt tokens / wall time of a max_tokens=1
-  request; decode = completion tokens / wall time of the same prompt with 512 tokens (its prefix is
-  then cached). The medians are reported, with min..max.
+  request; decode = the same prompt with 512 tokens, streamed: the tokens after the first over the
+  time from the first token to the last, so the prompt's cost (recomputed, or reused from a prefix
+  cache) never enters it. The medians are reported, with min..max.
 - short_chat_20req: twenty fixed short prompts with up to 512 tokens each, sent by C concurrent
   workers (worker k takes prompts k, k+C, ...); aggregate = all completion tokens / wave wall time.
 
@@ -81,7 +82,14 @@ class Server:
         self._speculation = {}
         self._speculation_lock = threading.Lock()
 
-    def chat(self, prompt, max_tokens, top_p=None):
+    def _tally(self, timings):
+        # The speculation this request ran: NInferno reports it in the response's timings when the
+        # request drafted (a request that ran plain reports none).
+        config = ((timings or {}).get("speculation") or {}).get("config") or None
+        with self._speculation_lock:
+            self._speculation[config] = self._speculation.get(config, 0) + 1
+
+    def chat(self, prompt, max_tokens, top_p=None, tally=True):
         body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": max_tokens, "temperature": 0.0, "stream": False}
         if top_p is not None:
@@ -93,13 +101,55 @@ class Server:
             out = json.load(r)
         elapsed = time.time() - start
         usage = out.get("usage") or {}
-        # The speculation this request ran: NInferno reports it in the response's timings when the
-        # request drafted (a request that ran plain reports none).
-        spec = (out.get("timings") or {}).get("speculation") or {}
-        config = spec.get("config") or None
-        with self._speculation_lock:
-            self._speculation[config] = self._speculation.get(config, 0) + 1
+        if tally:
+            self._tally(out.get("timings"))
         return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), elapsed
+
+    def chat_stream(self, prompt, max_tokens):
+        """One streamed request: (completion tokens, seconds from the first generated token to the
+        last). The decode rate is then (completion - 1) / that time, whatever the prompt cost: a
+        server that recomputes the prompt (no prefix cache, or one turned off) and one that reuses
+        it measure the same decode."""
+        body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens, "temperature": 0.0, "stream": True,
+                "stream_options": {"include_usage": True}}
+        request = urllib.request.Request(self.base + "/v1/chat/completions", json.dumps(body).encode(),
+                                         {"Content-Type": "application/json"})
+        first = last = None
+        completion = 0
+        timings = None
+        with urllib.request.urlopen(request, timeout=3600) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                event = json.loads(data)
+                if "error" in event:
+                    raise RuntimeError(f"stream failed: {event['error']}")
+                usage = event.get("usage") or {}
+                if usage.get("completion_tokens"):
+                    completion = usage["completion_tokens"]
+                timings = event.get("timings") or timings
+                for choice in event.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    now = time.time()
+                    if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
+                        first = now if first is None else first
+                        last = now
+                    if choice.get("finish_reason") and first is not None:
+                        # The end is the finishing event: a stop or EOS token that is counted but
+                        # never shown, and text held back to the end, are decoded before it.
+                        last = now
+        # The token count comes from the server (usage, else llama-server style timings); a count of
+        # stream chunks would be wrong under speculation, where one chunk carries several tokens.
+        completion = completion or int((timings or {}).get("predicted_n") or 0)
+        self._tally(timings)
+        if completion < 2 or first is None or last <= first:
+            raise RuntimeError(f"stream gave no decode to time ({completion} tokens)")
+        return completion, last - first
 
     def take_speculation(self):
         """What the requests since the last call ran, as a row's `served_speculation`: `config` is
@@ -133,10 +183,10 @@ def long_context(server, chars, prompts, out_tokens):
     for i in range(prompts):
         offset = (i * 7919 * 13) % max(1, len(blob) - chars)
         prompt = blob[offset:offset + chars] + QUESTION
-        prompt_tokens, _, first = server.chat(prompt, 1)
-        _, completion, wall = server.chat(prompt, out_tokens)
+        prompt_tokens, _, first = server.chat(prompt, 1, tally=False)
+        completion, seconds = server.chat_stream(prompt, out_tokens)
         prefill.append(prompt_tokens / first)
-        decode.append(completion / wall)
+        decode.append((completion - 1) / seconds)
         lengths.append(prompt_tokens)
     return {"prompt_len": int(statistics.median(lengths)),
             "prefill": (statistics.median(prefill), [min(prefill), max(prefill)]),

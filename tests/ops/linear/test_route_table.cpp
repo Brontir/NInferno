@@ -119,8 +119,13 @@ int similar_default() {
                std::to_string(k) + R"(, "bands": [[1, 16, ")" + route + R"("]]})";
     };
     std::ofstream(dir / (file + ".json")) << table(gpu, entry(1024, "rmma.m1.n1.w1x8"));
-    std::ofstream(dir / (similar.front() + ".json"))
-        << table(similar.front(), entry(1024, "rmma.m1.n1.w1x4") + ", " + entry(2048, "rmma.m1.n1.w2x2"));
+    // The similar chip's table also holds an MoE layer the own table lacks.
+    std::string lender =
+        table(similar.front(), entry(1024, "rmma.m1.n1.w1x4") + ", " + entry(2048, "rmma.m1.n1.w2x2"));
+    lender.pop_back();
+    lender += R"(, "moe": [{"format": "mxfp4", "experts": 32, "top_k": 4, "hidden": 2880, "inter": 2880,
+                "bands": [[1, 16, "rmma.m1.n1.w1x8|rmma.m1.n1.w1x4"]]}]})";
+    std::ofstream(dir / (similar.front() + ".json")) << lender;
     // A table measured on a board of another instruction set lends nothing, however near its SMs.
     const int foreign_cc = ninferno::device_class().compute_capability() == 70 ? 75 : 70;
     std::ofstream(dir / "foreign.json")
@@ -145,9 +150,14 @@ int similar_default() {
                   similar.front() + " " +
                       ninferno::file_sha256_hex(dir / (similar.front() + ".json")).value_or(""),
               "the status names each lending table by its content: " + s.lender_sha256);
-    failures += check(s.borrowed_entries == 1 && s.borrowed_from.find(similar.front()) == 0 &&
-                          s.message.find("from the next nearest (" + similar.front() + " 1)") != std::string::npos,
+    failures += check(s.borrowed_entries == 1 && s.borrowed_moe_layers == 1 &&
+                          s.borrowed_from.find(similar.front()) == 0 &&
+                          s.message.find("from the next nearest (" + similar.front() + " 2)") != std::string::npos,
                       "the status says what was borrowed from whom: " + s.message);
+    const ninferno::ops::detail::moe::MoeRouteKey layer{ninferno::QType::MXFP4, ninferno::QType::MXFP4,
+                                                        32, 4, 2880, 2880};
+    failures += check(ninferno::ops::detail::moe::table_plan(layer, 4, false).has_value(),
+                      "an MoE layer the own table lacks takes the similar chip's bands");
     failures += check(!generic::table_claims(lent, 4, false), "a borrowed entry claims nothing");
     const generic::Problem foreign{ninferno::QType::Q8_G32_FP16, ninferno::ops::LinearPolicy::A16Only,
                                    4096, 4096, generic::Epilogue::Store};

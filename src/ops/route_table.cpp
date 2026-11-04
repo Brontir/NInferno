@@ -442,11 +442,14 @@ std::vector<std::shared_ptr<Table>> tables_by_distance(const std::string& dir) {
 // heuristic wherever a chip's table missed a model's shapes, and the startup tuner that used to
 // fill those gaps is off: the RTX 5070 Ti (gb203:70sm, whose table the RTX 5080 measured on other
 // models) ran ISTA Qwen3.8 27B IQ3_S's projections untuned and lost C4 by 10 % to ninfer-all,
-// while gb206 and gb202 had measured the same shapes. Only the generic entries borrow: a nearest
-// shape of the own table was no better than the heuristic (r84), and MoE and route_as entries
-// stay the nearest table's. A borrowed entry never claims a problem.
+// while gb206 and gb202 had measured the same shapes. The generic entries and the MoE layers
+// borrow, each by its exact key: a nearest shape of the own table was no better than the
+// heuristic (r84), and an MoE layer the nearest table lacks ran the default plans (the RTX 5070,
+// nearer the 5070 Ti's table than gb206's, lost gb206's IQ layers). route_as entries stay the
+// nearest table's. A borrowed entry never claims a problem.
 void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders) {
     std::size_t added = 0;
+    std::size_t layers = 0;
     std::string from;
     std::string hashes;
     for (const auto& other : lenders) {
@@ -458,15 +461,22 @@ void fill_from(Table& table, const std::vector<std::shared_ptr<Table>>& lenders)
             table.problems.insert(key);
             ++lent;
         }
-        if (lent == 0) continue;
         added += lent;
+        for (auto& [key, entry] : other->moe) {
+            if (table.moe.emplace(key, std::move(entry)).second) {
+                ++lent;
+                ++layers;
+            }
+        }
+        if (lent == 0) continue;
         from += (from.empty() ? "" : ", ") + other->status.gpu_class + " " + std::to_string(lent);
         hashes += (hashes.empty() ? "" : ", ") + other->status.gpu_class + " " +
                   other->status.content_sha256;
     }
-    if (added == 0) return;
+    if (added == 0 && layers == 0) return;
     table.status.generic_entries += added;
-    table.status.borrowed_entries = added;
+    table.status.borrowed_entries    = added;
+    table.status.borrowed_moe_layers = layers;
     table.status.borrowed_from    = from;
     table.status.lender_sha256    = hashes;
 }
@@ -533,10 +543,12 @@ RouteTableStatus publish_loaded_locked(DeviceTables& d, std::shared_ptr<Table> t
                             (elsewhere ? " (measured on " + key + ", the nearest measured board; " +
                                              "this device is " + route_gpu_class() + ")"
                                        : "") +
-                            (table->status.borrowed_entries == 0
+                            (table->status.borrowed_from.empty()
                                  ? ""
                                  : "; " + std::to_string(table->status.borrowed_entries) +
-                                       " problems it lacks from the next nearest (" +
+                                       " problems and " +
+                                       std::to_string(table->status.borrowed_moe_layers) +
+                                       " MoE layers it lacks from the next nearest (" +
                                        table->status.borrowed_from + ")");
     const RouteTableStatus status = table->status;
     publish_locked(d, std::move(table));
