@@ -28,6 +28,7 @@ import socket
 import statistics
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -335,10 +336,11 @@ def measure_pass(serve, model, flags, port, depth, prompt_len, prompts, smi_id, 
     return out
 
 
-# The background fetch (main): `stop` set when the run ends, so no queued fetch starts and the
-# running one is killed rather than waited for.
-FETCH = {"stop": False, "proc": None}
-# Free disk a fetch needs beyond the weights' bytes (the converted artifact's headers, the logs).
+# The fetches (main's background one, spec_tune's for drafters): `stop` set when the run ends, so
+# no fetch starts and every running one is killed rather than waited for.
+FETCH = {"stop": False, "procs": set()}
+FETCH_LOCK = threading.Lock()
+# Free disk a fetch needs beyond the bytes it writes (the artifacts' headers, the logs).
 FETCH_MARGIN_BYTES = 4 << 30
 
 
@@ -361,29 +363,53 @@ def free_bytes(path):
         return None
 
 
+def cached_parts(model):
+    """Whether the hub cache already holds the model's source weights (a snapshot file naming the
+    quant, or safetensors) and its converted artifact (a .ninferno naming it)."""
+    root = hub_dir() / ("models--" + model["repo"].replace("/", "--"))
+    quant = model["quant"].lower()
+    source = any(quant in f.name.lower() or f.suffix == ".safetensors"
+                 for f in root.glob("snapshots/*/*"))
+    converted = any(quant in f.name.lower() for f in root.glob("ninferno/*/*.ninferno"))
+    return source, converted
+
+
+def fetch_need_bytes(model, weights_bytes):
+    """The disk a fetch writes: the source weights where they are not cached, and the converted
+    artifact (about the weights' bytes again) where it is not, plus FETCH_MARGIN_BYTES."""
+    source, converted = cached_parts(model)
+    return weights_bytes * ((0 if source else 1) + (0 if converted else 1)) + FETCH_MARGIN_BYTES
+
+
 def prepare(serve, model, with_drafters=False, weights_bytes=0, device=0):
     """Fetch and convert (the start's own cache) on the measured card: the artifact path from
     `model | prepared <path>` (apps/serve/main.cpp), and the error when it failed, when the disk
-    has not the weights' bytes and FETCH_MARGIN_BYTES free (a model already cached is refused all
-    the same: a full disk would break the runs beside it), or when the run stopped."""
+    has not what the fetch writes free (fetch_need_bytes: a full disk would break the runs beside
+    it), or when the run stopped."""
     if FETCH["stop"]:
         return None, "not fetched: the run stopped"
     free = free_bytes(hub_dir())
-    if free is not None and weights_bytes and free < weights_bytes + FETCH_MARGIN_BYTES:
+    need = fetch_need_bytes(model, weights_bytes) if weights_bytes else 0
+    if free is not None and need and free < need:
         return None, (f"not fetched: {free / 2**30:.0f} GiB free on the hub cache's disk, about "
-                      f"{(weights_bytes + FETCH_MARGIN_BYTES) / 2**30:.0f} GiB needed")
+                      f"{need / 2**30:.0f} GiB needed")
     cmd = [serve, model["repo"], "--quant", model["quant"], "--prepare-only", "--device", str(device)]
     if with_drafters:
         cmd.append("--with-drafters")
     try:
-        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                encoding="utf-8", errors="replace")
-        FETCH["proc"] = proc
-        text, _ = proc.communicate()
+        with FETCH_LOCK:
+            if FETCH["stop"]:
+                return None, "not fetched: the run stopped"
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                    encoding="utf-8", errors="replace")
+            FETCH["procs"].add(proc)
+        try:
+            text, _ = proc.communicate()
+        finally:
+            with FETCH_LOCK:
+                FETCH["procs"].discard(proc)
     except Exception as error:  # a fetch's failure is that model's, not the run's
         return None, scrub(f"{type(error).__name__}: {error}")
-    finally:
-        FETCH["proc"] = None
     found = re.findall(r"model \| prepared (.+?)\s*$", text, re.M)
     if proc.returncode != 0:
         lines = text.strip().splitlines()
@@ -608,13 +634,15 @@ def main():
                                                args.route_passes, workdir, smi_id, wddm))
                 progress.spend(time.time() - started)
     finally:
-        # No fetch outlives the run: the queued ones are cancelled, the running one killed.
-        FETCH["stop"] = True
+        # No fetch outlives the run: the queued ones are cancelled, every running one killed.
+        with FETCH_LOCK:
+            FETCH["stop"] = True
+            running = list(FETCH["procs"])
         if fetcher is not None:
             fetcher.shutdown(wait=False, cancel_futures=True)
-        proc = FETCH["proc"]
-        if proc is not None and proc.poll() is None:
-            proc.kill()
+        for proc in running:
+            if proc.poll() is None:
+                proc.kill()
         # Written whatever happened (an interrupted run keeps what it measured).
         doc["budget"] = {"asked_s": progress.budget_s, "used_s": round(progress.used),
                          "skipped": progress.skipped}
@@ -769,7 +797,7 @@ def spec_tune(serve, tune_cmd, model, device, seconds, card, workdir, smi_id=Non
     run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "spec"}
     sampler = proc = None
     try:
-        artifact, error = prepare(serve, model, with_drafters=True)
+        artifact, error = prepare(serve, model, with_drafters=True, device=device)
         if not artifact:
             raise RuntimeError(error or "no artifact")
         # Planned after the drafters are fetched: the plan resolves the profile from their manifest.

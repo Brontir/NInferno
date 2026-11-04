@@ -30,8 +30,8 @@ From a source tree or with options:
   - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order.
   - A model is measured once its own fetch ended, while the next ones download. `--no-prefetch` fetches all of them first.
   - A conversion is the host's work. Each plain, hard50 and spec run records `fetch_beside`, whether a fetch was running beside it (R8 notes it). The route sweeps run after the last fetch, since their small widths time the host's launches.
-  - A fetch needs the model's weight bytes and 4 GiB free on the hub cache's disk, else it is not started (a model already cached is held to it too: a full disk would break the runs beside it).
-  - The fetch runs on the measured card (`--device`). When the run ends, for any reason, the queued fetches are cancelled and the running one is killed.
+  - A fetch needs free on the hub cache's disk what it writes: the source weights where the hub does not hold them, the converted artifact (about the weights' bytes again) where it is not there, and 4 GiB. Else it is not started (a full disk would break the runs beside it).
+  - The fetch runs on the measured card (`--device`). When the run ends, for any reason, the queued fetches are cancelled and every running one (the background fetch, a spec tune's drafter fetch) is killed.
   - The kit states what it will fetch and asks first (`--yes` skips the question).
   - A model whose fetch fails is not measured; the others are.
   - Downloads are outside the budget.

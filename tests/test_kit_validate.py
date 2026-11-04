@@ -601,6 +601,32 @@ class Kit(unittest.TestCase):
         self.assertEqual(labels[:len(set(first))], list(dict.fromkeys(first)))
         self.assertEqual(measure.lab_configs({"repo": "nobody/none", "quant": "Q4_K_M"}), [])
 
+    def test_fetch_need_counts_what_the_cache_lacks(self):
+        import os
+        import tempfile
+        from pathlib import Path
+        model = {"repo": "org/m-GGUF", "quant": "Q4_K_M"}
+        gib = 1 << 30
+        with tempfile.TemporaryDirectory() as root:
+            old = os.environ.get("HF_HUB_CACHE")
+            os.environ["HF_HUB_CACHE"] = root
+            try:
+                margin = measure.FETCH_MARGIN_BYTES
+                self.assertEqual(measure.fetch_need_bytes(model, 10 * gib), 20 * gib + margin)
+                snap = Path(root) / "models--org--m-GGUF" / "snapshots" / "abc"
+                snap.mkdir(parents=True)
+                (snap / "m-Q4_K_M.gguf").write_bytes(b"x")
+                self.assertEqual(measure.fetch_need_bytes(model, 10 * gib), 10 * gib + margin)
+                art = Path(root) / "models--org--m-GGUF" / "ninferno" / "abc"
+                art.mkdir(parents=True)
+                (art / "m-Q4_K_M.qwen3_5_bf16.ninferno").write_bytes(b"x")
+                self.assertEqual(measure.fetch_need_bytes(model, 10 * gib), margin)
+            finally:
+                if old is None:
+                    os.environ.pop("HF_HUB_CACHE", None)
+                else:
+                    os.environ["HF_HUB_CACHE"] = old
+
     def test_target_identity_hashes_the_snapshot_file(self):
         import hashlib
         import tempfile
