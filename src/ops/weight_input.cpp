@@ -317,7 +317,7 @@ MoeWeights prepare_moe_weights(const WeightInput& router, const WeightInput& sha
     out.down           = down.weight;
     // The routed experts take A8 only where every expert projection allows it, and keep A4 where
     // one allows that (moe_policy: the grouped W4A8 leaves A4 NVFP4 banks on A16 where W4A4
-    // kernels exist, moe.cpp w4a8_banks_admit).
+    // kernels exist, moe.cpp w4a8_bank_refusal).
     out.expert_policy         = moe_policy(gate_up.policy, down.policy);
     const auto shared_gate_up = prepare_linear_swiglu_weight(shared_gate, shared_up);
     const auto shared_down_w  = prepare_linear_weight(shared_down);

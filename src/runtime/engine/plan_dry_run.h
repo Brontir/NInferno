@@ -161,10 +161,11 @@ enum class WeightBasis : std::uint8_t {
 [[nodiscard]] std::string_view weight_basis_name(WeightBasis basis) noexcept;
 
 // The GEMM an MoE's routed banks prefill on (product/plan expert_prefill_of: the banks' formats and
-// their stored layout, as ops/moe w4a8_banks_admit decides it). Unknown: dense, or not known.
+// their stored layout, as ops/moe w4a8_bank_refusal decides it bank by bank: the route of the most
+// of the banks' bytes). Unknown: dense, or not known.
 enum class ExpertPrefill : std::uint8_t {
     Unknown,
-    Int8,  // the grouped W4A8 reads every bank: int8 activations on the int8 MMA (dp4a without one)
+    Int8,  // the grouped W4A8 reads the bank: int8 activations on the int8 MMA (dp4a without one)
     A16,   // a bank it does not read (a codebook i-quant in fragment order): the 16-bit register MMA
     Mxfp4, // MXFP4 banks: int8 as Int8, or the block-scaled MMA where the build has it (sm_120a)
 };

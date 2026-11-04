@@ -296,7 +296,7 @@ int check_a8(const Case& c, std::uint32_t seed) {
     return failures;
 }
 
-// The grouped W4A8 (MoePlan::w4a8, moe_w4a8_frag.cu) on a frag bank: under an A8 expert policy
+// The grouped W4A8 (MoePlan::w4a8_gate_up / w4a8_down, moe_w4a8_frag.cu) on a frag bank: under an A8 expert policy
 // the prefill plan with both stages on the int8 tile gives the published bank's bytes at widths
 // across a job and with partial tiles; the fragment-order bytes read as published differ.
 int check_w4a8(const Case& c, std::uint32_t seed) {
@@ -309,27 +309,51 @@ int check_w4a8(const Case& c, std::uint32_t seed) {
     // match it): a forced plan is refused before a launch.
     const auto iquant = [](QType q) { return q == QType::GGML_IQ2_S || q == QType::GGML_IQ3_XXS; };
     if (iquant(c.gate_up) || iquant(c.down)) {
-        auto p = dmoe::select_plan(l.published, l.config, 17, true);
-        p.w4a8 = true;
+        auto p         = dmoe::select_plan(l.published, l.config, 17, true);
+        p.w4a8_gate_up = p.w4a8_down = true;
+        bool refused   = false;
         try {
             (void)run(c, l, l.frag, x, 17, &p);
-        } catch (const std::invalid_argument&) {
-            std::cout << c.label << ": W4A8 refused on the fragment-order bank\n";
-            return 0;
+        } catch (const std::invalid_argument&) { refused = true; }
+        if (!refused) {
+            std::cerr << c.label << ": the fragment-order i-quant bank took the grouped W4A8\n";
+            return 1;
         }
-        std::cerr << c.label << ": the fragment-order i-quant bank took the grouped W4A8\n";
-        return 1;
+        // The other bank's stage takes the tier where it admits it (#311): the prefill plan of the
+        // fragment-order layer puts that stage alone on it, and gives the published layer's bytes
+        // under the same plan.
+        const auto admitted = [&](const Weight& bank) {
+            return dmoe::w4a8_bank_refusal(l.frag, bank) == dmoe::BankRefusal::None;
+        };
+        int failures = 0;
+        for (const std::int32_t t : {17, 130}) {
+            const auto s = dmoe::select_plan(l.frag, l.config, t, true);
+            if (s.w4a8_gate_up != admitted(l.frag.gate_up) || s.w4a8_down != admitted(l.frag.down) ||
+                iquant(c.gate_up) == s.w4a8_gate_up || iquant(c.down) == s.w4a8_down) {
+                std::cerr << c.label << ": T=" << t << " plan " << dmoe::plan_name(s)
+                          << " does not put exactly the admitted banks' stages on the tier\n";
+                ++failures;
+                continue;
+            }
+            failures += compare(c.label + " " + dmoe::plan_name(s) + " T=" + std::to_string(t),
+                                run(c, l, l.published, x, t, &s), run(c, l, l.frag, x, t, &s));
+        }
+        if (failures == 0) {
+            std::cout << c.label << ": W4A8 refused on the fragment-order bank, the other stage's "
+                                    "plan byte-identical across layouts\n";
+        }
+        return failures;
     }
     int failures = 0, compared = 0;
     for (const std::int32_t t : {17, 64, 130}) {
         auto p = dmoe::select_plan(l.published, l.config, t, true);
-        p.w4a8 = true;
+        p.w4a8_gate_up = p.w4a8_down = true;
         failures += compare(c.label + " W4A8 T=" + std::to_string(t),
                             run(c, l, l.published, x, t, &p), run(c, l, l.frag, x, t, &p));
         ++compared;
     }
     auto p = dmoe::select_plan(l.published, l.config, 17, true);
-    p.w4a8 = true;
+    p.w4a8_gate_up = p.w4a8_down = true;
     if (run(c, l, l.published, x, 17, &p) == run(c, l, l.control, x, 17, &p)) {
         std::cerr << c.label
                   << ": the fragment-order bytes read as published by W4A8 gave the "
@@ -384,6 +408,12 @@ int main() {
          A::SwiGlu},
         {"iq3xxs H512 F512", QType::GGML_IQ3_XXS, QType::GGML_IQ3_XXS, 8, 2, 512, 512, A::SwiGlu},
         {"iq2s H512 F256", QType::GGML_IQ2_S, QType::GGML_IQ2_S, 8, 2, 512, 256, A::SwiGlu},
+        // One fragment-order i-quant bank beside a plain one (#311: the plain IQ3_S / IQ2_XXS
+        // bank's stage alone on the int8 tier): Qwen3.6-35B-A3B UD-Q3_K_S and UD-IQ2_XXS.
+        {"qwen-like iq3xxs/iq3s H2048 F512", QType::GGML_IQ3_XXS, QType::GGML_IQ3_S, 8, 4, 2048,
+         512, A::SwiGlu},
+        {"qwen-like iq2xxs/iq2s H2048 F512", QType::GGML_IQ2_XXS, QType::GGML_IQ2_S, 8, 4, 2048,
+         512, A::SwiGlu},
         {"qwen-like iq2s/iq3xxs H2048 F512", QType::GGML_IQ2_S, QType::GGML_IQ3_XXS, 8, 4, 2048,
          512, A::SwiGlu},
     };

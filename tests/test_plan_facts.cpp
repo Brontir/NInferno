@@ -179,9 +179,9 @@ int gguf_qwen35() {
     const auto e = pr::plan_facts_of_gguf(moe, 999999);
     failures += same(e.model.routed_expert_bytes, 300, "routed expert banks as stored");
     failures += same(e.model.mtp_routed_expert_bytes, 70, "the MTP layer's routed bank apart");
-    // Their prefill GEMM (ops/moe w4a8_banks_admit): Q4_K banks (fragment order) on the grouped
-    // W4A8; an IQ3_XXS bank in fragment order the W4A8 does not read, so its layer on the 16-bit
-    // register MMA; MXFP4 banks their own route.
+    // Their prefill GEMM (ops/moe w4a8_bank_refusal, bank by bank): Q4_K banks (fragment order) on
+    // the grouped W4A8; IQ3_XXS and IQ3_S banks in fragment order the W4A8 does not read, so the
+    // 16-bit register MMA; MXFP4 banks their own route.
     failures += check(e.model.expert_prefill == rt::ExpertPrefill::Int8, "Q4_K banks: int8");
     GgufFile iq3 = file;
     iq3.tensors.push_back(

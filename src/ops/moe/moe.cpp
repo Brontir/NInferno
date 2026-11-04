@@ -449,7 +449,7 @@ struct Workspace {
 // The router's CTAs quantize x for an R8 gate/up (GemmArgs::xq) where x is the bank's input as
 // it is (no zero-padded copy).
 bool router_quantizes_x(const Geometry& g, const MoePlan& p, std::int32_t tokens) {
-    return p.gate_up_r8 >= 0 && !p.w4a8 && g.input == g.hidden && tokens <= kR8Tokens;
+    return p.gate_up_r8 >= 0 && !p.w4a8() && g.input == g.hidden && tokens <= kR8Tokens;
 }
 
 template <class Arena>
@@ -470,7 +470,7 @@ Workspace allocate(Arena& arena, const Geometry& g, const MoeConfig& c, std::int
     w.mid          = arena.alloc(DType::BF16, {g.inter, a});
     w.y            = arena.alloc(DType::BF16, {g.hidden, a});
     if (g.input != g.hidden) { w.padded_x = arena.alloc(DType::BF16, {g.input, tokens}); }
-    if (p.w4a8 || router_quantizes_x(g, p, tokens)) {
+    if (p.w4a8_gate_up || router_quantizes_x(g, p, tokens)) {
         // x at the zero-padded bank's K (g.input): the quantizer writes the tail as zeros (an R8
         // gate/up's x, quantized by the router, takes the same rows).
         const std::int32_t lh = moe_w4a8_ld(g.input);
@@ -478,7 +478,7 @@ Workspace allocate(Arena& arena, const Geometry& g, const MoeConfig& c, std::int
         w.x_scales   = arena.alloc(DType::FP32, {lh / 32, tokens});
         w.x_sums     = arena.alloc(DType::FP32, {lh / 32, tokens});
     }
-    if (p.w4a8) {
+    if (p.w4a8_down) {
         const std::int32_t li = moe_w4a8_ld(g.inter);
         w.mid_codes  = arena.alloc(DType::I8, {li, a});
         w.mid_scales = arena.alloc(DType::FP32, {li / 32, a});
@@ -562,9 +562,9 @@ generic::GemmArgs weight_args(const Weight& w) {
 
 unsigned blocks(std::int64_t n, std::int64_t per) { return static_cast<unsigned>(div_up(n, per)); }
 
-// Whether the layer's expert banks may take the grouped W4A8 (MoePlan::w4a8), whatever T: an A8
-// expert policy and both banks in a format the int8 tile decodes (a ggml_frag_v1 bank: each format
-// with a map, moe_w4a8_frag.cu).
+// Whether an expert bank may take the grouped W4A8 (MoePlan::w4a8_gate_up / w4a8_down, whatever T:
+// w4a8_bank_refusal): an A8 expert policy and a format the int8 tile decodes (a ggml_frag_v1 bank:
+// each format with a map, moe_w4a8_frag.cu).
 // A fragment-ordered bank takes the grouped W4A8 only for the formats ggml_frag_w4a8 names
 // (core/ggml_frag.h: Q4_0, Q4_K).
 bool w4a8_frag_admits(QType qtype) { return ggml_frag_w4a8(qtype); }
@@ -574,9 +574,32 @@ bool w4a8_frag_admits(QType qtype) { return ggml_frag_w4a8(qtype); }
 // for A4, moe_policy) keeps both banks on the A16 register MMA there as before, and a W4A16
 // checkpoint under --activations int8 prefills its experts on int8 activations as on the builds
 // without those kernels.
-bool w4a8_banks_admit(const MoeWeights& w) {
-    return w4a8_bank_refusal(w, w.gate_up) == BankRefusal::None &&
-           w4a8_bank_refusal(w, w.down) == BankRefusal::None;
+//
+// The plan with each grouped stage on the int8 tier where `on` and its own bank admits it (#311):
+// a layer whose one bank the tier cannot read (a codebook format in fragment order, refused because
+// its register MMA was the faster) runs the other bank's stage there. One layer, W4A8 against the
+// register MMA on both banks (ninferno_moe_bench, T = 512 / 2048): RTX 3060 0.57-0.71, RTX 2080 Ti
+// 0.29-0.74, GV100 0.35-0.48 (IQ2_XXS, IQ3_S, IQ4_NL at the Qwen3.6-35B and Gemma 4 26B experts):
+// a down stage of a third of the bytes, or a gate/up of two thirds, takes its share of that.
+// An NVFP4 bank under an A4 policy (Nvfp4A4) vetoes the layer, as above: the other stage stays on
+// the A16 register MMA too.
+} // namespace
+MoePlan with_w4a8(MoePlan p, const MoeWeights& w, bool on) {
+    const BankRefusal gate_up = w4a8_bank_refusal(w, w.gate_up);
+    const BankRefusal down    = w4a8_bank_refusal(w, w.down);
+    const bool a4             = gate_up == BankRefusal::Nvfp4A4 || down == BankRefusal::Nvfp4A4;
+    p.w4a8_gate_up            = on && !a4 && gate_up == BankRefusal::None;
+    p.w4a8_down               = on && !a4 && down == BankRefusal::None;
+    return p;
+}
+bool w4a8_stages_admitted(const MoePlan& p, const MoeWeights& w) {
+    const MoePlan allowed = with_w4a8(MoePlan{}, w, true);
+    return (!p.w4a8_gate_up || allowed.w4a8_gate_up) && (!p.w4a8_down || allowed.w4a8_down);
+}
+namespace {
+
+bool w4a8_bank_admitted(const MoeWeights& w) {
+    return with_w4a8(MoePlan{}, w, true).w4a8();
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
@@ -661,7 +684,7 @@ std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& conf
     for (int s = 0; s < schedule_count(); ++s) {
         narrowest.job_columns = std::min(narrowest.job_columns, schedule_info(s).tokens_per_cta());
     }
-    narrowest.w4a8 = w4a8_banks_admit(weights);
+    narrowest = with_w4a8(narrowest, weights, true);
     const auto bound = [&](std::int32_t tokens, const MoePlan& plan) {
         WorkspaceLayoutBuilder layout;
         (void)allocate(layout, g, config, tokens, plan);
@@ -678,8 +701,10 @@ std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& conf
     if (g.input == g.hidden) {
         for (std::int32_t t = std::min(max_tokens, kR8Tokens); t >= min_tokens; --t) {
             if (!r8_admits(weights, weights.gate_up, t)) continue;
-            MoePlan xq    = narrowest;
-            xq.gate_up_r8 = 0;
+            // Neither stage on the tier: a W4A8 down would keep the router from quantizing x.
+            MoePlan xq      = narrowest;
+            xq.gate_up_r8   = 0;
+            xq.w4a8_gate_up = xq.w4a8_down = false;
             bytes         = std::max(bytes, bound(t, xq));
             break;
         }
@@ -950,19 +975,22 @@ std::string plan_name(const MoePlan& plan) {
         plan.down_r8 >= 0 ? r8_schedule_name(plan.down_r8) : schedule_name(plan.down_schedule);
     return (plan.gate_up_r8 >= 0 ? r8_schedule_name(plan.gate_up_r8)
                                  : schedule_name(plan.gate_up_schedule)) +
-           "|" + down + (plan.a16 ? "|a16" : "") + (plan.w4a8 ? "|w4a8" : "");
+           "|" + down + (plan.a16 ? "|a16" : "") +
+           (plan.w4a8_gate_up && plan.w4a8_down ? "|w4a8"
+            : plan.w4a8_gate_up                 ? "|w4a8.gate_up"
+            : plan.w4a8_down                    ? "|w4a8.down"
+                                                : "");
 }
 
 MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan) {
     const BankRefusal gate_up_w4a8 = w4a8_bank_refusal(weights, weights.gate_up);
     const BankRefusal down_w4a8    = w4a8_bank_refusal(weights, weights.down);
     const auto stage = [&](const Weight& bank, int r8_schedule, int rmma_schedule, BankRefusal w4a8,
-                           BankRefusal other_w4a8) {
+                           bool on_tier) {
         MoeStageRoute s;
-        s.r8           = r8_bank_refusal(bank);
-        s.w4a8         = w4a8;
-        s.w4a8_partner = w4a8 == BankRefusal::None && other_w4a8 != BankRefusal::None;
-        if (plan.w4a8) {
+        s.r8   = r8_bank_refusal(bank);
+        s.w4a8 = w4a8;
+        if (on_tier) {
             // Two plain MXFP4 banks on an sm_120a build run the block-scaled MMA with MXFP8
             // activations (launch_moe_w4a8_mx) in the tier's place.
             s.kernel = MoeStageKernel::W4a8;
@@ -978,8 +1006,10 @@ MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan) {
         }
         return s;
     };
-    return {stage(weights.gate_up, plan.gate_up_r8, plan.gate_up_schedule, gate_up_w4a8, down_w4a8),
-            stage(weights.down, plan.down_r8, plan.down_schedule, down_w4a8, gate_up_w4a8)};
+    return {stage(weights.gate_up, plan.gate_up_r8, plan.gate_up_schedule, gate_up_w4a8,
+                  plan.w4a8_gate_up),
+            stage(weights.down, plan.down_r8, plan.down_schedule, down_w4a8,
+                  plan.w4a8_down)};
 }
 
 std::optional<MoePlan> parse_plan(std::string_view name, std::int32_t hidden) {
@@ -1049,10 +1079,10 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
         generic::w4a4_schedule_count() > 0 &&
         (weights.gate_up.qtype == QType::NVFP4 || weights.down.qtype == QType::NVFP4);
     const auto speed_w4a8 = [&](MoePlan p) {
-        p.w4a8 = !prefill && !nvfp4_native && tokens >= kMoeW4a8SpeedMinTokens && !p.a16 &&
-                 p.gate_up_r8 < 0 && p.down_r8 < 0 && p.job_columns % kMoeW4a8BlockM == 0 &&
-                 w4a8_banks_admit(weights);
-        return p;
+        return with_w4a8(p, weights,
+                         !prefill && !nvfp4_native && tokens >= kMoeW4a8SpeedMinTokens && !p.a16 &&
+                             p.gate_up_r8 < 0 && p.down_r8 < 0 &&
+                             p.job_columns % kMoeW4a8BlockM == 0);
     };
     // A prefill call of 17 tokens or more that admits the grouped W4A8 takes it, as a dense W4A8
     // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
@@ -1060,11 +1090,11 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
     // MXFP4 experts: the gb203 entry 2950 us at T=1024, the W4A8 2110 us).
     MoePlan p               = plan_for(g, tokens, prefill);
     const bool w4a8_prefill = prefill && tokens >= 17 &&
-                              w4a8_banks_admit(weights) && p.job_columns % kMoeW4a8BlockM == 0;
+                              w4a8_bank_admitted(weights) && p.job_columns % kMoeW4a8BlockM == 0;
     if (auto tuned =
             w4a8_prefill ? std::nullopt : table_plan(route_key(weights, config), tokens, prefill)) {
         if (!(prefill && tokens >= 17) || plan_is_token_invariant(*tuned)) {
-            if (const MoePlan wide = speed_w4a8(*tuned); wide.w4a8) { return wide; }
+            if (const MoePlan wide = speed_w4a8(*tuned); wide.w4a8()) { return wide; }
             // A table's R8 stages run only where this layer admits them (the streaming register
             // MMA otherwise). A band of register-MMA stages takes the class's A8 gate/up on top
             // unless it is marked A16; its schedules stay as measured.
@@ -1075,11 +1105,8 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
             return *tuned;
         }
     }
-    if (prefill && tokens >= 17) {
-        p.w4a8 = w4a8_prefill;
-        return p;
-    }
-    if (const MoePlan wide = speed_w4a8(p); wide.w4a8) { return wide; }
+    if (prefill && tokens >= 17) { return with_w4a8(p, weights, w4a8_prefill); }
+    if (const MoePlan wide = speed_w4a8(p); wide.w4a8()) { return wide; }
     return heuristic_r8(weights, g, p, tokens);
 }
 
@@ -1157,9 +1184,11 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         (p.down_r8 < 0 && p.job_columns % schedule_info(p.down_schedule).tokens_per_cta() != 0)) {
         fail("the job width must be a multiple of both grouped schedules' columns, <= 64");
     }
-    if (p.w4a8 && (p.job_columns % kMoeW4a8BlockM != 0 || !w4a8_banks_admit(w) ||
-                   p.gate_up_r8 >= 0 || p.down_r8 >= 0)) {
-        fail("a W4A8 plan needs admitted banks, no R8 stage and a job width of whole W4A8 tiles");
+    if (p.w4a8() &&
+        (p.job_columns % kMoeW4a8BlockM != 0 || !w4a8_stages_admitted(p, w) ||
+         p.gate_up_r8 >= 0 || p.down_r8 >= 0)) {
+        fail("a W4A8 stage needs its bank admitted (and no A4 NVFP4 partner), no R8 stage and a "
+             "job width of whole W4A8 tiles");
     }
     const std::int32_t t = x.ne[1];
     // Every plan reads the activation in 16-byte words: the router's BF16 register MMA (and the
@@ -1343,7 +1372,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     grouped.job_total    = static_cast<const int*>(ws.job_total.data);
     // 4. Gate/up and the activation, per slot. A zero-padded bank reads x widened with zeros.
     const void* gate_up_x = x.data;
-    if (g.input != g.hidden && !p.w4a8) {
+    if (g.input != g.hidden && !p.w4a8_gate_up) {
         const std::size_t row  = sizeof(std::uint16_t) * static_cast<std::size_t>(g.input);
         const std::size_t live = sizeof(std::uint16_t) * static_cast<std::size_t>(g.hidden);
         auto* padded           = static_cast<char*>(ws.padded_x.data);
@@ -1371,11 +1400,11 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.alpha        = c.alpha;
         args.limit        = c.limit;
         args.out_bf16     = ws.mid.data;
-        args.pdl               = pdl && gate_up_x == x.data && !p.w4a8;
+        args.pdl               = pdl && gate_up_x == x.data && !p.w4a8_gate_up;
         // A non-gated expert reads its one up row once, not as both sets of a gated one.
         const Stage first = gated ? Stage::GateUp : Stage::Up;
         args.ldo          = g.inter;
-        if (p.w4a8) {
+        if (p.w4a8_gate_up) {
             const auto xq  = w4a8_buffers(ws.x_codes, ws.x_scales, ws.x_sums);
             const bool mx  = mx8_banks(w);
             args.sub_tiles = p.job_columns / kMoeW4a8BlockM;
@@ -1426,8 +1455,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.bias_bf16   = w.down_bias.dtype == DType::BF16;
         args.out_bf16    = ws.y.data;
         args.ldo         = g.hidden;
-        args.pdl         = pdl && !p.w4a8;
-        if (p.w4a8) {
+        args.pdl         = pdl && !p.w4a8_down;
+        if (p.w4a8_down) {
             const auto mq  = w4a8_buffers(ws.mid_codes, ws.mid_scales, ws.mid_sums);
             args.sub_tiles = p.job_columns / kMoeW4a8BlockM;
             const dim3 grid(blocks(g.hidden, kMoeW4a8BlockN),

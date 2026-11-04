@@ -359,7 +359,10 @@ bool g_mx8 = false;
 // The stages a plan quantizes: its R8 stages, or both under the grouped W4A8 (MXFP8 where the
 // block-scaled MMA takes MXFP4 banks), which the speed profile runs from 64 tokens.
 A8Stages a8_stages(const Case& c, const ops::detail::moe::MoePlan& p) {
-    if (p.w4a8) return {true, true, g_mx8 && c.gate_up == QType::MXFP4 && c.down == QType::MXFP4};
+    if (p.w4a8()) {
+        return {p.w4a8_gate_up, p.w4a8_down, g_mx8 && p.w4a8_gate_up && p.w4a8_down &&
+                                                 c.gate_up == QType::MXFP4 && c.down == QType::MXFP4};
+    }
     return {p.gate_up_r8 >= 0, p.down_r8 >= 0};
 }
 
@@ -846,7 +849,7 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
     int failures      = 0;
     const auto forced = [&](std::int32_t t) {
         auto p = moe::select_plan(l.weights, c.config, t, true);
-        p.w4a8 = true;
+        p.w4a8_gate_up = p.w4a8_down = true;
         return p;
     };
     const auto wide_plan = forced(wide);
@@ -868,13 +871,27 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
             ++failures;
         }
     }
+    // Each stage alone on the tier (#311: a layer whose other bank the tier does not read), the
+    // other on the plan's register MMA: the oracle with that stage's activations alone quantized.
+    // The block-scaled MMA takes two MXFP4 stages together only.
+    if (!a8.mx) {
+        for (const bool gate_up : {true, false}) {
+            auto p         = moe::select_plan(l.weights, c.config, wide, true);
+            p.gate_up_r8   = p.down_r8 = -1;
+            p.w4a8_gate_up = gate_up;
+            p.w4a8_down    = !gate_up;
+            const Run run  = run_op(c, l, x, 0, wide, residual, &p);
+            failures += compare_run(c, l, x, residual, 0, wide, run, {gate_up, !gate_up},
+                                    c.label + " " + moe::plan_name(p) + " T=" + std::to_string(wide));
+        }
+    }
     // An A16 expert policy refuses the plan.
     {
         Case a16          = c;
         a16.expert_policy = ops::LinearPolicy::A16Only;
         const Layer la    = make_layer(a16, seed);
         auto p            = moe::select_plan(la.weights, a16.config, widths.front(), true);
-        p.w4a8            = true;
+        p.w4a8_gate_up    = p.w4a8_down = true;
         bool refused      = false;
         try {
             (void)run_op(a16, la, x, 0, widths.front(), residual, &p);
@@ -901,12 +918,12 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
     const auto residual = random_bf16(x.size(), seed + 32, -2.0, 2.0);
     const ops::ScopedPrefillRoutes profile(false);
     int failures = 0;
-    if (moe::select_plan(l.weights, c.config, narrow, false).w4a8) {
+    if (moe::select_plan(l.weights, c.config, narrow, false).w4a8()) {
         std::cerr << c.label << ": the speed profile took W4A8 at T=" << narrow << '\n';
         ++failures;
     }
     const auto plan = moe::select_plan(l.weights, c.config, wide, false);
-    if (!plan.w4a8) {
+    if (!plan.w4a8()) {
         std::cerr << c.label << ": the speed profile kept A16 at T=" << wide << '\n';
         return failures + 1;
     }
@@ -1653,10 +1670,40 @@ int check_bank_refusals() {
        R::KGroup);
     layer.expert_policy = ops::LinearPolicy::A16Only;
     is("Q4_K W4A8 under A16Only", moe::w4a8_bank_refusal(layer, q4k), R::Policy);
+    // with_w4a8 (#311): each stage where its own bank is admitted; an NVFP4 bank refused for the
+    // A4 policy (the builds with the W4A4 kernels) keeps the Q4_K stage off the tier too.
+    {
+        ops::MoeWeights mix;
+        mix.expert_policy = ops::LinearPolicy::AllowA8;
+        mix.gate_up       = q4k;
+        mix.down          = bank(QType::GGML_IQ3_XXS, 2048, QuantLayout::GgmlFrag);
+        const auto half   = moe::with_w4a8(moe::MoePlan{}, mix, true);
+        const auto off    = moe::with_w4a8(moe::MoePlan{}, mix, false);
+        if (!half.w4a8_gate_up || half.w4a8_down || off.w4a8()) {
+            std::cerr << "bank refusals: with_w4a8 on Q4_K / IQ3_XXS frag gave "
+                      << moe::plan_name(half) << '\n';
+            ++failures;
+        }
+        mix.expert_policy = ops::LinearPolicy::AllowA4;
+        mix.down          = bank(QType::NVFP4, 2048, QuantLayout::RowSplit);
+        if (moe::w4a8_bank_refusal(mix, mix.down) == R::Nvfp4A4 &&
+            moe::with_w4a8(moe::MoePlan{}, mix, true).w4a8()) {
+            std::cerr << "bank refusals: an A4 NVFP4 bank let the Q4_K stage take W4A8\n";
+            ++failures;
+        }
+        // An explicit plan with the Q4_K stage alone on the tier is refused the same way.
+        moe::MoePlan gate_up_only;
+        gate_up_only.w4a8_gate_up = true;
+        if (moe::w4a8_bank_refusal(mix, mix.down) == R::Nvfp4A4 &&
+            moe::w4a8_stages_admitted(gate_up_only, mix)) {
+            std::cerr << "bank refusals: an explicit gate/up W4A8 plan passed the A4 veto\n";
+            ++failures;
+        }
+    }
 
     // Stage routes (#311): what each stage of a plan runs and why not the others. A layer whose
-    // gate/up bank is admitted to W4A8 and whose down bank is not keeps both off it; the gate/up
-    // stage says the partner is why.
+    // gate/up bank is admitted to W4A8 and whose down bank is not: each stage names its own bank's
+    // refusal, and a plan with gate/up alone on the tier keeps down on its register-MMA schedule.
     ops::MoeWeights mixed;
     mixed.expert_policy = ops::LinearPolicy::AllowA8;
     mixed.gate_up       = q4k;
@@ -1668,7 +1715,7 @@ int check_bank_refusals() {
     const bool described =
         routes.gate_up.kernel == moe::MoeStageKernel::RegisterMma &&
         routes.gate_up.name.starts_with("rmma.") && routes.gate_up.w4a8 == R::None &&
-        routes.gate_up.w4a8_partner && routes.down.w4a8 == R::Format && !routes.down.w4a8_partner &&
+        routes.down.w4a8 == R::Format &&
         routes.down.r8 == R::Format && routes.gate_up.r8 == R::None &&
         routes.gate_up.schedule == 0 && routes.down.schedule == rmma.down_schedule &&
         routes.gate_up.name != routes.down.name &&
@@ -1676,8 +1723,10 @@ int check_bank_refusals() {
     moe::MoePlan r8 = rmma;
     r8.gate_up_r8   = 0;
     const auto r8_routes = moe::stage_routes(mixed, r8);
-    // A layer of two Q4_K banks: down on R8, and the W4A8 tier with neither bank kept off by the
-    // other.
+    moe::MoePlan half = rmma;
+    half.w4a8_gate_up = true;
+    const auto half_routes = moe::stage_routes(mixed, half);
+    // A layer of two Q4_K banks: down on R8, and both stages on the W4A8 tier.
     ops::MoeWeights both;
     both.expert_policy = ops::LinearPolicy::AllowA8;
     both.gate_up       = q4k;
@@ -1686,7 +1735,7 @@ int check_bank_refusals() {
     down_r8.down_r8      = moe::r8_schedule_count() - 1;
     const auto down_routes = moe::stage_routes(both, down_r8);
     moe::MoePlan tier = rmma;
-    tier.w4a8         = true;
+    tier.w4a8_gate_up = tier.w4a8_down = true;
     const auto tier_routes = moe::stage_routes(both, tier);
     if (!described || r8_routes.gate_up.kernel != moe::MoeStageKernel::R8 ||
         !r8_routes.gate_up.name.starts_with("r8.") ||
@@ -1698,10 +1747,14 @@ int check_bank_refusals() {
         tier_routes.gate_up.kernel != moe::MoeStageKernel::W4a8 ||
         tier_routes.down.kernel != moe::MoeStageKernel::W4a8 || tier_routes.gate_up.schedule != -1 ||
         tier_routes.down.schedule != -1 || tier_routes.gate_up.name != "w4a8" ||
-        tier_routes.gate_up.w4a8_partner || tier_routes.down.w4a8_partner) {
+        moe::plan_name(tier) != moe::plan_name(rmma) + "|w4a8" ||
+        half_routes.gate_up.kernel != moe::MoeStageKernel::W4a8 ||
+        half_routes.down.kernel != moe::MoeStageKernel::RegisterMma ||
+        half_routes.down.schedule != rmma.down_schedule ||
+        moe::plan_name(half) != moe::plan_name(rmma) + "|w4a8.gate_up") {
         std::cerr << "stage routes: " << routes.gate_up.name << " / " << routes.down.name << ", "
                   << r8_routes.gate_up.name << ", " << down_routes.down.name << ", "
-                  << tier_routes.gate_up.name << '\n';
+                  << tier_routes.gate_up.name << ", " << moe::plan_name(half) << '\n';
         ++failures;
     }
     if (failures == 0) {
@@ -2156,11 +2209,11 @@ int main(int argc, char** argv) {
                     c.expert_policy = ops::LinearPolicy::AllowA4;
                     const Layer l   = make_layer(c, 117U);
                     auto p          = moe::select_plan(l.weights, c.config, 96, true);
-                    if (p.w4a8 || moe::select_plan(l.weights, c.config, 96, false).w4a8) {
+                    if (p.w4a8() || moe::select_plan(l.weights, c.config, 96, false).w4a8()) {
                         std::cerr << c.label << " A4: the grouped W4A8 was picked\n";
                         ++failures;
                     }
-                    p.w4a8 = true;
+                    p.w4a8_gate_up = p.w4a8_down = true;
                     const auto x =
                         random_bf16(static_cast<std::size_t>(96) * c.hidden, 118U, -1.0, 1.0);
                     const auto residual = random_bf16(x.size(), 119U, -2.0, 2.0);
@@ -2191,8 +2244,8 @@ int main(int argc, char** argv) {
                     Case a8          = qwen3_like();
                     a8.expert_policy = ops::LinearPolicy::AllowA8;
                     const Layer l8   = make_layer(a8, 120U);
-                    if (!moe::select_plan(l8.weights, a8.config, 96, true).w4a8 ||
-                        moe::select_plan(l8.weights, a8.config, 96, false).w4a8) {
+                    if (!moe::select_plan(l8.weights, a8.config, 96, true).w4a8() ||
+                        moe::select_plan(l8.weights, a8.config, 96, false).w4a8()) {
                         std::cerr << a8.label << " A8: grouped W4A8 outside the prefill profile\n";
                         ++failures;
                     }
