@@ -19,6 +19,7 @@
 
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <optional>
@@ -98,6 +99,12 @@ public:
     void keep(const KeptGrant& grant, Clock::time_point now);
     [[nodiscard]] std::shared_ptr<void> begin_turn(const KeptGrant& grant, Clock::time_point now);
     [[nodiscard]] std::vector<KeptGrant> expired(Clock::time_point now);
+    // The server supervisor's tick: every expired session, and every one a release found the
+    // executor busy for before, asked of `release` (Engine::release_kept_session) outside the
+    // lock. InFlight keeps it another ttl; Busy (a round runs: the release never waits for one)
+    // asks it again at the next call, so a round that hangs never stops the caller (#408).
+    void release_expired(Clock::time_point now,
+                         const std::function<KeptSessionRelease(const std::string&)>& release);
 
 private:
     void end_turn(const std::string& session_key, Clock::time_point now);
@@ -108,6 +115,7 @@ private:
     };
     std::mutex mutex_;
     std::map<std::string, Deadline> until_;
+    std::vector<KeptGrant> busy_; // released Busy: asked again at the next release_expired
 };
 
 } // namespace ninferno::serve

@@ -190,4 +190,25 @@ std::vector<KeptGrant> KeptSessions::expired(Clock::time_point now) {
     return out;
 }
 
+void KeptSessions::release_expired(
+    Clock::time_point now, const std::function<KeptSessionRelease(const std::string&)>& release) {
+    std::vector<KeptGrant> due;
+    {
+        std::lock_guard lock(mutex_);
+        due.swap(busy_);
+    }
+    for (KeptGrant& grant : expired(now)) due.push_back(std::move(grant));
+    std::vector<KeptGrant> busy;
+    for (KeptGrant& grant : due) {
+        const KeptSessionRelease released = release(grant.session_key);
+        if (released == KeptSessionRelease::InFlight) {
+            keep(grant, now);
+        } else if (released == KeptSessionRelease::Busy) {
+            busy.push_back(std::move(grant));
+        }
+    }
+    std::lock_guard lock(mutex_);
+    for (KeptGrant& grant : busy) busy_.push_back(std::move(grant));
+}
+
 } // namespace ninferno::serve

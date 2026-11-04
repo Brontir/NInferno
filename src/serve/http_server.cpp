@@ -868,20 +868,19 @@ void HttpServer::run_supervisor() {
         const Clock::time_point now      = Clock::now();
         const ninferno::RuntimeStats stats = service_->runtime_stats();
         const bool stalled               = monitor.update(stats, now);
-        // A kept thread silent past its ttl-ms falls to the private weight (cache_hint.h).
-        // A turn still running under the keep publishes its entry kept: asked again after a ttl.
-        for (const KeptGrant& grant : kept_sessions_.expired(now)) {
-            if (service_->release_kept_session(grant.session_key) ==
-                ninferno::KeptSessionRelease::InFlight) {
-                kept_sessions_.keep(grant, now);
-            }
-        }
+        // The executor's watch before anything that asks the engine (#408).
         if (stalled != stalled_.exchange(stalled)) { operational_log_.executor_stall(stalled); }
         // Checked while draining too: a device that fails then still ends the process with 1.
         if (!service_->is_available() && !engine_failed_.exchange(true)) {
             operational_log_.engine_failed();
             drain_requested_.store(true);
         }
+        // A kept thread silent past its ttl-ms falls to the private weight (cache_hint.h).
+        // A turn still running under the keep publishes its entry kept: asked again after a ttl.
+        // The release never waits for a round: one that runs (or hangs) leaves it for a later tick.
+        kept_sessions_.release_expired(now, [&](const std::string& session) {
+            return service_->release_kept_session(session);
+        });
         if (drain_requested_.load() && !drain_started) {
             drain_started = now;
             draining_.store(true);

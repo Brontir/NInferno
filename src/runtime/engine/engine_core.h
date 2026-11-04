@@ -323,7 +323,9 @@ public:
         if (session.empty() || session.size() > key.bytes.size()) { return KeptSessionRelease::None; }
         key.size = static_cast<decltype(key.size)>(session.size());
         std::copy(session.begin(), session.end(), key.bytes.begin());
-        std::scoped_lock lock(execution_mutex_);
+        // Never waits for a round: the supervisor that asks also watches the executor (#408).
+        std::unique_lock lock(execution_mutex_, std::try_to_lock);
+        if (!lock.owns_lock()) { return KeptSessionRelease::Busy; }
         return resources_.release_kept_session(key);
     }
 
