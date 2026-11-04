@@ -1207,7 +1207,9 @@ constexpr const char* kNativeEncodings =
     "Q2_0";
 
 // What a plan does to the checkpoint's numbers beyond keeping or casting them. A published
-// quantization is kept as published, never dequantized. NInferno quantizes plain (BF16, F16, F32)
+// quantization is kept as published, never dequantized, with one declared exception: the
+// drafters' proposal rows gathered from a quantized output head (a source's decode_reason names
+// it), which are decoded and quantized again as the proposal layout. NInferno quantizes plain (BF16, F16, F32)
 // values itself only where an official recipe's table assigns a format to what a quantized
 // checkpoint's publisher left plain (the vocabulary, projections kept in BF16 next to a quantized
 // body) and in the drafters' official layouts; the projections of a checkpoint without any

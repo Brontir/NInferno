@@ -1241,9 +1241,12 @@ void qwen3_6_35b_a3b_nvfp4(Model& model, Recipe& recipe, SourceInputs& sources) 
             continue;
         }
         if (has_part(name, "/moe/experts/") || has_part(name, "/moe/shared/")) {
-            recipe.assign(i, QType::NVFP4, Method::ImportEncoded,
-                          moe_encoded_source(quantized, parameter));
-            recipe.set_policy(i, ActivationPolicy::AllowA4);
+            // FP4 activations against the checkpoint's calibrated divisor (.input_scale); an
+            // export without one (W4A16) keeps BF16 activations, as kept_policy gives a kept site.
+            auto source        = moe_encoded_source(quantized, parameter);
+            const bool divisor = source->provides_input_divisor();
+            recipe.assign(i, QType::NVFP4, Method::ImportEncoded, std::move(source));
+            recipe.set_policy(i, divisor ? ActivationPolicy::AllowA4 : ActivationPolicy::A16Only);
         } else {
             recipe.assign(i, kQ8, Method::GroupedAbsmax);
         }
