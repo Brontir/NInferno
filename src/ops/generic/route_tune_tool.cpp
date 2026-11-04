@@ -27,7 +27,9 @@
 // a16 under every policy, while the default policy (AllowA8) also runs ggml's matrix kernel at
 // verify widths: the band sweep times it there as the dense tuner does (generic_tune.cpp), and the
 // dispatch takes such a band only where the policy admits it. --points replaces the
-// band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV.
+// band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV, with the
+// cost model's price of the route (route_cost_seconds) and a register-MMA kernel's registers and
+// local bytes beside the timing.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
@@ -138,7 +140,8 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--routes-out")) {
             routes_csv.open(opt["--routes-out"]);
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
-            routes_csv << "format,compute,epilogue,n,k,T,route,median_us\n";
+            routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
+                          "local_bytes\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -319,7 +322,25 @@ int route_tune_main(int argc, char** argv) {
                     routes_csv << generic::qtype_name(p.qtype) << ','
                                << generic::compute_class_name(p.compute) << ','
                                << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
-                               << ',' << t << ',' << generic::route_name(r) << ',' << us << '\n';
+                               << ',' << t << ',' << generic::route_name(r) << ',' << us << ',';
+                    // The cost model's time for the route where it prices the call, and the
+                    // register-MMA kernel's compiled registers and local bytes (spills): what a
+                    // timing far from its price is read against. Empty where there is none.
+                    const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
+                    if (const auto s = generic::route_cost_seconds(gp, w.weight, r, t)) {
+                        routes_csv << *s * 1e6;
+                    }
+                    routes_csv << ',';
+                    const auto res = r.family == generic::Family::RegisterMma
+                                         ? generic::rmma_resources(r.schedule, w.weight,
+                                                                   p.epilogue, t)
+                                         : std::nullopt;
+                    if (res) {
+                        routes_csv << res->registers << ',' << res->local_bytes;
+                    } else {
+                        routes_csv << ',';
+                    }
+                    routes_csv << '\n';
                 }
                 return us; // microseconds
             };
