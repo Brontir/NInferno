@@ -1670,6 +1670,28 @@ int check_bank_refusals() {
        R::KGroup);
     layer.expert_policy = ops::LinearPolicy::A16Only;
     is("Q4_K W4A8 under A16Only", moe::w4a8_bank_refusal(layer, q4k), R::Policy);
+    // with_w4a8 (#311): each stage where its own bank is admitted; an NVFP4 bank refused for the
+    // A4 policy (the builds with the W4A4 kernels) keeps the Q4_K stage off the tier too.
+    {
+        ops::MoeWeights mix;
+        mix.expert_policy = ops::LinearPolicy::AllowA8;
+        mix.gate_up       = q4k;
+        mix.down          = bank(QType::GGML_IQ3_XXS, 2048, QuantLayout::GgmlFrag);
+        const auto half   = moe::with_w4a8(moe::MoePlan{}, mix, true);
+        const auto off    = moe::with_w4a8(moe::MoePlan{}, mix, false);
+        if (!half.w4a8_gate_up || half.w4a8_down || off.w4a8()) {
+            std::cerr << "bank refusals: with_w4a8 on Q4_K / IQ3_XXS frag gave "
+                      << moe::plan_name(half) << '\n';
+            ++failures;
+        }
+        mix.expert_policy = ops::LinearPolicy::AllowA4;
+        mix.down          = bank(QType::NVFP4, 2048, QuantLayout::RowSplit);
+        if (moe::w4a8_bank_refusal(mix, mix.down) == R::Nvfp4A4 &&
+            moe::with_w4a8(moe::MoePlan{}, mix, true).w4a8()) {
+            std::cerr << "bank refusals: an A4 NVFP4 bank let the Q4_K stage take W4A8\n";
+            ++failures;
+        }
+    }
 
     // Stage routes (#311): what each stage of a plan runs and why not the others. A layer whose
     // gate/up bank is admitted to W4A8 and whose down bank is not: each stage names its own bank's

@@ -581,15 +581,21 @@ bool w4a8_frag_admits(QType qtype) { return ggml_frag_w4a8(qtype); }
 // register MMA on both banks (ninferno_moe_bench, T = 512 / 2048): RTX 3060 0.57-0.71, RTX 2080 Ti
 // 0.29-0.74, GV100 0.35-0.48 (IQ2_XXS, IQ3_S, IQ4_NL at the Qwen3.6-35B and Gemma 4 26B experts):
 // a down stage of a third of the bytes, or a gate/up of two thirds, takes its share of that.
+// An NVFP4 bank under an A4 policy (Nvfp4A4) vetoes the layer, as above: the other stage stays on
+// the A16 register MMA too.
+} // namespace
 MoePlan with_w4a8(MoePlan p, const MoeWeights& w, bool on) {
-    p.w4a8_gate_up = on && w4a8_bank_refusal(w, w.gate_up) == BankRefusal::None;
-    p.w4a8_down    = on && w4a8_bank_refusal(w, w.down) == BankRefusal::None;
+    const BankRefusal gate_up = w4a8_bank_refusal(w, w.gate_up);
+    const BankRefusal down    = w4a8_bank_refusal(w, w.down);
+    const bool a4             = gate_up == BankRefusal::Nvfp4A4 || down == BankRefusal::Nvfp4A4;
+    p.w4a8_gate_up            = on && !a4 && gate_up == BankRefusal::None;
+    p.w4a8_down               = on && !a4 && down == BankRefusal::None;
     return p;
 }
+namespace {
 
 bool w4a8_bank_admitted(const MoeWeights& w) {
-    return w4a8_bank_refusal(w, w.gate_up) == BankRefusal::None ||
-           w4a8_bank_refusal(w, w.down) == BankRefusal::None;
+    return with_w4a8(MoePlan{}, w, true).w4a8();
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
