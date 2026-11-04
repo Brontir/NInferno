@@ -415,7 +415,7 @@ int run_volta_tiled() {
 // path does not read, and K on the codec's step), with the schedule's threads, its grid over the
 // call's rows and tokens, and registers the SM holds. Prints each codec's most registers and spill
 // bytes over the schedules and widths a call takes.
-int run_resources() {
+int run_resources(bool detail) {
     int failures = 0, described = 0;
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << "resources: " << what << '\n';
@@ -471,6 +471,13 @@ int run_resources() {
                              std::to_string(threads) + "), registers " +
                              std::to_string(r->registers) + ", grid " + std::to_string(r->grid_x) +
                              "x" + std::to_string(r->grid_y));
+                    }
+                    if (detail) {
+                        std::cout << at << ": " << r->registers << " registers, " << r->local_bytes
+                                  << " B local, " << r->static_smem << " B smem, grid " << r->grid_x
+                                  << "x" << r->grid_y << "x" << r->grid_z
+                                  << (r->latency_variant ? ", latency" : "") << '
+';
                     }
                     Most& m = most[generic::qtype_name(qtype)];
                     if (r->registers > m.registers ||
@@ -909,7 +916,10 @@ int main(int argc, char** argv) {
             return 2;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--volta-tiled") return run_volta_tiled();
-        if (argc == 2 && std::string_view(argv[1]) == "--resources") return run_resources();
+        if (argc == 2 && std::string_view(argv[1]) == "--resources") return run_resources(false);
+        if (argc == 2 && std::string_view(argv[1]) == "--resources-detail") {
+            return run_resources(true);
+        }
         int failed = 0;
         for (const TestBoard& b : kBoards) {
             const std::string command = std::string(argv[0]) + " --board " + b.name;
