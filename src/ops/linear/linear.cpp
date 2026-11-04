@@ -249,6 +249,56 @@ std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy pol
         route.why    = runs_generic ? linear_claim_name(decision.claim) : "owned";
     }
     out.push_back(std::move(route));
+    if (!generic_reads) return out;
+    // The other generic families against the selected route, priced by the selector's own model
+    // where it prices the call.
+    const bool prefill = prefill_routes_active();
+    const generic::Problem problem{w.qtype, decision.policy, w.n, w.k, generic::Epilogue::Store};
+    const generic::Route selected = generic::select_route(problem, w, tokens, prefill);
+    const auto alternatives       = generic::family_alternatives(problem, w, tokens, prefill);
+    // The call is priced where any family is (family_alternatives prices the calls the selection
+    // does); the selected route then has the model's time unless it is a route the model leaves out.
+    const bool priced = std::any_of(alternatives.begin(), alternatives.end(),
+                                    [](const auto& a) { return a.seconds.has_value(); });
+    const std::optional<double> selected_seconds =
+        priced ? generic::route_cost_seconds(problem, w, selected, tokens) : std::nullopt;
+    out[1].seconds = selected_seconds;
+    const auto us  = [](double s) { return std::to_string(static_cast<long long>(s * 1e6 + 0.5)); };
+    const std::string chose =
+        runs_generic ? std::string("select_route (") + linear_claim_name(decision.claim) + ")"
+                     : std::string("the shape's own kernels");
+    for (const auto& a : alternatives) {
+        if (a.family == selected.family) continue;
+        LinearCandidate c;
+        c.id      = "generic." + std::string(generic::family_name(a.family));
+        c.seconds = a.seconds;
+        if (!a.route) {
+            if (a.compiled == 0) {
+                c.status = Status::Unavailable;
+                c.why    = "no schedule compiled for the format";
+            } else {
+                c.status = Status::Inadmissible;
+                c.why    = a.call != generic::R8CallRefusal::None
+                               ? std::string(generic::r8_call_refusal_name(a.call))
+                               : std::string(generic::schedule_refusal_name(a.refusal));
+            }
+        } else {
+            c.id += ":" + generic::route_name(*a.route);
+            if (a.seconds && selected_seconds && runs_generic) {
+                c.status = Status::Dominated;
+                c.why    = *a.seconds >= *selected_seconds
+                               ? "model " + us(*a.seconds) + " us, selected " +
+                                     us(*selected_seconds) + " us"
+                               : "model " + us(*a.seconds) + " us below the selected " +
+                                     us(*selected_seconds) + " us; selected by " + chose;
+            } else {
+                c.status = Status::Unpriced;
+                c.why    = a.seconds ? "selected by " + chose + ", which the model does not price"
+                                     : "the model does not price this call";
+            }
+        }
+        out.push_back(std::move(c));
+    }
     return out;
 }
 
