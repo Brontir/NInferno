@@ -112,8 +112,10 @@ struct RoundFacts {
 // The same over `streams` requests of `rows` rows each, decoded together (#303): the rows of one
 // request route alike (kMoeRoutedShare, fitted on one request's rows), different requests'
 // independently, so together they read 1 - (1 - f)^streams of the experts, f one request's share.
-// RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M: a plain step of two requests took 1.356 one-request steps;
-// the one-request rule over two rows gave 1.083.
+// RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M, plain decode, one server, graph durations (a graph-level
+// trace): a step of two requests 4.805 ms against one request's 3.964, 1.212 one-request steps;
+// this rule gives 1.210, the one-request rule over two rows 1.083. (spec-tune --load's cells,
+// 1.356, also hold the requests' turnover: the next request's prefill between steps.)
 [[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows,
                                        std::int32_t streams) noexcept;
 
@@ -232,10 +234,10 @@ inline constexpr std::int32_t kPricedVerifyRows = 8;
 // price over the joint one's, speedup x R_1(k) / R_C(k). nullopt where a joint verify exceeds
 // kPricedVerifyRows, where the drafter's joint pass is wider than both that and its own one-stream
 // pass (DFlash's block of 16 rows at C >= 2: tiles change past ~12 rows), or either round is not
-// priced. Not priced either way: an MoE's routed share (kMoeRoutedShare) was fitted on one
-// stream's rows, which route alike; rows of different streams route more apart, so the C-row read
-// is likely under-counted in the verify and the plain step alike. The KV and attention bytes, which
-// grow with C in both, are left out as in R_1: at long context the gain is priced low.
+// priced. An MoE's experts are read as different streams route them, apart (moe_read_fraction).
+// The KV and attention bytes and each stream's recurrent state, which grow with C in both, are
+// left out as in R_1 (the GDN state is ~3 % of an MoE step; at long context the gain is priced
+// low); so are the requests' turnover between steps, which a load cell's tok/s holds.
 [[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
                                               double kappa, double speedup, std::int32_t streams,
                                               const ProposalRows& head_rows = {},

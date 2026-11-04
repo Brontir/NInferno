@@ -270,12 +270,13 @@ int main() {
                 }
             }
         }
-        // Against a same-build measurement (reported, not held): Qwen3.6-35B-A3B UD-Q4_K_M with its
-        // drafters on the RTX 4090, one build, spec-tune then spec-tune --load 2 (2026-11-04):
-        // plain 260.3 tok/s at C = 1 and 383.8 at C = 2 (a two-row step 1.356 one-row steps);
-        // dflash:3+head 1.884x plain at one request (3.20 tokens a round), C = 2 bound 3 1.609x
-        // (3.12 a round), so R_1 / R_2 = (1.609 / 3.12) / (1.884 / 3.20) = 0.876. Launches are
-        // left out of both sides here (launch_bytes 0).
+        // Against measurements on the RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M (2026-11-04). The plain
+        // step (held within 3 %): graph durations of one server, one request then two at once,
+        // 3.964 ms and 4.805 ms, 1.212 one-request steps. The round (reported, not held): spec-tune
+        // then spec-tune --load 2, dflash:3+head 1.884x plain at one request (3.20 tokens a round),
+        // C = 2 bound 3 1.609x (3.12 a round), so R_1 / R_2 = (1.609 / 3.12) / (1.884 / 3.20) =
+        // 0.876, both load cells holding the requests' turnover (the plain one 1.356 a step).
+        // Launches are left out of both sides here (launch_bytes 0).
         {
             const auto& p      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
             const auto& t      = p.round_facts->target;
@@ -289,8 +290,10 @@ int main() {
             const auto r1 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 1);
             const auto r2 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 2);
             std::printf("Qwen3.6-35B-A3B RTX 4090: two-row plain step %.3f one-row steps (measured "
-                        "1.356); dflash:3+head R_1 / R_2 %.3f (measured 0.876)\n",
+                        "1.212); dflash:3+head R_1 / R_2 %.3f (measured 0.876 at load)\n",
                         pass(2) / pass(1), r1 && r2 ? *r1 / *r2 : 0.0);
+            expect(std::abs(pass(2) / pass(1) - 1.212) < 0.03 * 1.212,
+                   "the two-request plain step within 3 % of its graph durations (RTX 4090)");
         }
         // Against a measurement (reported, not held: the load cells ran another engine build
         // and corpus than the pair's one-request rounds): Gemma 4 26B A4B QAT UD-Q4_K_XL with its
