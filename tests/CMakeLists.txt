@@ -67,6 +67,9 @@ add_test(NAME ninferno_kit_validate_test
 # (#301), no GPU.
 add_test(NAME ninferno_selection_regret_test
   COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_selection_regret.py)
+# tools/bench/regret_collect.py: route sweeps and the production selection into its input, no GPU.
+add_test(NAME ninferno_regret_collect_test
+  COMMAND ${Python3_EXECUTABLE} -B ${CMAKE_CURRENT_LIST_DIR}/test_regret_collect.py)
 
 # Repository hygiene, no GPU: only scripts (a #! first line) may be committed executable.
 add_test(NAME ninferno_file_modes_test
