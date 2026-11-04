@@ -78,9 +78,10 @@ on your own card. If something does not hold up, please open an issue.
 
 ### Network access
 
-There is no telemetry. A release build checks once a day, in the background, whether a newer release
-exists: two small requests to `ninferno.brontir.com` (the manifest and its signature), carrying only the
-product name and version in the user agent. It logs a notice and installs nothing. `NINFERNO_UPDATE_CHECK=0` turns the check off. Models
+There is no telemetry. A release build checks in the background, at start and then once a day, whether a
+newer release exists: two small requests to `ninferno.brontir.com` (the manifest and its signature), carrying only the
+product name and version in the user agent. On Windows the tray launcher and the server check separately, so a start there can make
+two such pairs. It logs a notice and installs nothing. `NINFERNO_UPDATE_CHECK=0` turns the check off. Models
 are downloaded from Hugging Face only when you name one.
 
 ## Contents
@@ -267,7 +268,8 @@ ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters \
 
 ### 5. Precision: fast or exact
 
-By default NInferno runs **fast**: on wide calls (prompt processing, batched speculative verify) it
+Left to itself, NInferno picks **fast** unless exact costs under about 11 % of a typical request's time
+(and it picks exact on a GPU generation it has no lab measurements for). Fast means: on wide calls (prompt processing, batched speculative verify) it
 encodes activations to 8 bits, or 4 bits for NVFP4 weights, and takes an 8-bit or smaller KV cache where
 that leaves room for more context. The output is close to the reference but not bit-identical, and it
 can change slightly with the load. **Exact** keeps 16-bit activations: the same
