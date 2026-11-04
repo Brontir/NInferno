@@ -4,7 +4,8 @@
 //
 //   ninferno_route_tune --shapes FILE [--out routes/<key>.json] [--key chip|variant|arch]
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
-//                     [--points T,T,...] [--routes-out FILE.csv]
+//                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
+//                     [--selected-out FILE.csv]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -102,7 +103,8 @@ int main(int argc, char** argv) {
         if (!opt.count("--shapes")) {
             std::cerr << "usage: ninferno_route_tune --shapes FILE [--out FILE] "
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
-                         "[--prefill-only 1]\n";
+                         "[--prefill-only 1] [--points T,T,...] [--rotate 0|1] "
+                         "[--routes-out FILE.csv] [--selected-out FILE.csv]\n";
             return 2;
         }
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
