@@ -10324,6 +10324,791 @@
    "n": 248320,
    "prefill": "rmma.m2.n4.w4x1",
    "tuned_on": "route_tune --rotate 1 on the RTX 5070 Ti (format-correct random weights)"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.128x128"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     256,
+     511,
+     "tiled.64x128"
+    ],
+    [
+     512,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 6144,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     191,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     192,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 3840,
+   "n": 2048,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     32,
+     63,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 3840,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     128,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 15360,
+   "n": 3840,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     95,
+     "tiled.64x128"
+    ],
+    [
+     96,
+     191,
+     "tiled.128x128"
+    ],
+    [
+     192,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 8704,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     48,
+     95,
+     "tiled.64x128"
+    ],
+    [
+     96,
+     191,
+     "tiled.128x128"
+    ],
+    [
+     192,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 8192,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     48,
+     95,
+     "tiled.64x128"
+    ],
+    [
+     96,
+     191,
+     "tiled.128x128"
+    ],
+    [
+     192,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 3840,
+   "n": 262144,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     48,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 4096,
+   "n": 8192,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     48,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 4096,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q5k",
+   "k": 4096,
+   "n": 4096,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 4096,
+   "n": 1024,
+   "prefill": "rmma.m2.n4.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     48,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q4k",
+   "k": 4096,
+   "n": 4096,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 12288,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     48,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "add",
+   "format": "q4k",
+   "k": 12288,
+   "n": 4096,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     255,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     256,
+     511,
+     "tiled.64x128"
+    ],
+    [
+     512,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 10240,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     128,
+     16777216,
+     "rmma.m1.n8.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q6k",
+   "k": 4096,
+   "n": 248320,
+   "prefill": "rmma.m1.n8.w8x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     64,
+     255,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
   }
  ],
  "note": "RTX 5070 Ti (04.11): the generic entries' bands, prefill and prefill_bands re-tuned on this board with ninferno_route_tune over weight copies (#405) and checked by a second pass (99.7 % of the band points held); the route_as and claim entries, tuned_on and the moe section are the RTX 5080's (gb203.json), as this board read them before. The RTX 5080's note: route_as: for a call of t_min..t_max tokens the shape-owned table is asked at T' (ops/common/shape_routes.h); measured with ninferno_linear_route_sweep_bench --random-weight --no-class-table, every override bit-identical to the table's own choice; evidence_us rows are [T, table us, override us], mean over 2 passes; min gain 5.0%, 2.1 us. The entries with \"bands\" (and \"prefill\") are the any-geometry generic path's, tuned per model on the RTX 5080 with ninferno_route_tune (--samples 11); \"tuned_on\" names the model whose problems they are. Entries with \"claim\": true take a problem whose shape also has a shape-owned Linear table (the dispatcher's first choice) at the widths their bands and prefill route cover, under an A16Only policy only: Qwen3.6-27B's five FP8 shapes, whose owned table computes A16 in chunks of 11 tokens (attn_in 14336x5120 at T=512: 4290.6 us owned, 1054.7 us generic; 940f/942f, RTX 5080); a band is claimed only where the generic route was at least 5% faster at the measured widths it covers.",
