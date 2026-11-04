@@ -215,12 +215,16 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
     return (verify + draft) / plain;
 }
 
+double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams) {
+    return pass_cost(facts.target, 1, kappa, streams);
+}
+
 std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa,
                                 double speedup, std::int32_t streams, const ProposalRows& head_rows,
                                 double launch_bytes, const RoundLaunches& launches) {
-    if (streams < 1 || speedup <= 0 || streams * (config.k + 1) > kPricedVerifyRows) {
-        return std::nullopt;
-    }
+    if (streams < 1 || speedup <= 0) { return std::nullopt; }
+    if (streams == 1) { return speedup; }
+    if (streams * (config.k + 1) > kPricedVerifyRows) { return std::nullopt; }
     const auto d = facts.drafters.find(mode_name(config.mode));
     if (d != facts.drafters.end() &&
         streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {

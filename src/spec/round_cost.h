@@ -215,14 +215,18 @@ struct CardRates {
 // drafts nothing.
 // With `launches` known and `launch_bytes` > 0 (CardRates::launch_bytes), the round's kernel
 // launches and the plain step's are added (each launch_bytes).
-// `streams` rows decode together (#303): their round verifies streams x (k + 1) rows in one pass
-// and drafts streams rows at once, against a plain step of streams rows; the launches are one
-// round's either way.
+// `streams` requests decode together (#303): their round verifies streams x (k + 1) rows in one
+// pass and drafts streams x the drafter's rows at once, against a plain step of streams rows; the
+// launches are one round's either way.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
                                                double kappa, const ProposalRows& head_rows = {},
                                                double launch_bytes          = 0,
                                                const RoundLaunches& launches = {},
                                                std::int32_t streams         = 1);
+
+// The plain decode step of `streams` requests decoded together, in bytes-equivalent (the
+// denominator of round_cost at `streams`); its ratio to one request's is the step's price at load.
+[[nodiscard]] double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams);
 
 // The verify rows within which the round cost was measured against the cards (DECISIONS 53, and
 // kSmallTEta's fit): from 12 rows verify kernels change tiles. A joint verify of more rows is not
@@ -231,7 +235,8 @@ inline constexpr std::int32_t kPricedVerifyRows = 8;
 
 // A drafter's gain over plain decode at `streams` streams, from its one-request gain (#303): the
 // tokens a round yields are the pair's at any load, so the gain scales by the one-stream round's
-// price over the joint one's, speedup x R_1(k) / R_C(k). nullopt where a joint verify exceeds
+// price over the joint one's, speedup x R_1(k) / R_C(k); one stream's is `speedup` itself. At
+// two or more streams, nullopt where a joint verify exceeds
 // kPricedVerifyRows, where the drafter's joint pass is wider than both that and its own one-stream
 // pass (DFlash's block of 16 rows at C >= 2: tiles change past ~12 rows), or either round is not
 // priced. An MoE's experts are read as different streams route them, apart (moe_read_fraction).

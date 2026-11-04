@@ -270,21 +270,31 @@ int main() {
                 }
             }
         }
+        // The priced rows, said outright: mtp:3 verifies 4 rows a stream (two streams 8, three 12),
+        // a DFlash drafter drafts a block of 16 rows a stream (two streams 32).
+        {
+            const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
+            const auto mtp    = sp::SpecConfig::parse("mtp:3");
+            expect(sp::load_gain(facts, mtp, k4070, 2.0, 2).has_value() &&
+                       !sp::load_gain(facts, mtp, k4070, 2.0, 3),
+                   "mtp:3 priced at two streams, not at three");
+            expect(!sp::load_gain(facts, sp::SpecConfig::parse("dflash:3"), k4070, 2.0, 2),
+                   "dflash:3 not priced at two streams (its block of 16 rows each)");
+        }
         // Against measurements on the RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M (2026-11-04). The plain
         // step (held within 3 %): graph durations of one server, one request then two at once,
         // 3.964 ms and 4.805 ms, 1.212 one-request steps. The round (reported, not held): spec-tune
         // then spec-tune --load 2, dflash:3+head 1.884x plain at one request (3.20 tokens a round),
         // C = 2 bound 3 1.609x (3.12 a round), so R_1 / R_2 = (1.609 / 3.12) / (1.884 / 3.20) =
         // 0.876, both load cells holding the requests' turnover (the plain one 1.356 a step).
-        // Launches are left out of both sides here (launch_bytes 0).
+        // That joint round drafts 32 rows, past the priced rows (load_gain refuses it): the R_1 /
+        // R_2 printed is round_cost outside its measured range. Launches are left out of both
+        // sides here (launch_bytes 0).
         {
             const auto& p      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
-            const auto& t      = p.round_facts->target;
             const double k4090 = sp::card_rates_of_board(0x2684).kappa();
             const auto pass    = [&](std::int32_t streams) {
-                const double active = t.experts > 0 ? double(t.experts_used) / double(t.experts) : 1.0;
-                return t.bytes + t.expert_bytes * sp::moe_read_fraction(t, 1, streams) +
-                       k4090 * 2.0 * streams * (t.params + t.expert_params * active);
+                return sp::plain_step_cost(*p.round_facts, k4090, streams);
             };
             const auto config = sp::SpecConfig::parse("dflash:3+head");
             const auto r1 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 1);
