@@ -739,6 +739,15 @@ int test_load() {
                               back.cells[1].graph_launches == 100 &&
                               back.unheld.empty() && doc.at("unheld").size() == 1,
                           "load cells round trip (unheld cells are tried again, not taken over)");
+        Json older = doc; // cells kept before the graph counts were recorded
+        for (Json& c : older.at("cells")) {
+            c.erase("graph_kernels");
+            c.erase("graph_launches");
+        }
+        const LoadCells before = load_cells_from_json(older, kept.settings);
+        failures += check(before.cells.size() == 3 && before.cells[1].graph_kernels == 0 &&
+                              before.cells[1].graph_launches == 0,
+                          "load cells kept before the graph counts read them as not recorded");
         Json other   = kept.settings;
         other["gpu"] = "gb203:84sm";
         bool named   = false;

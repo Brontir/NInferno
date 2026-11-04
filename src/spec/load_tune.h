@@ -45,7 +45,9 @@ struct LoadCell {
     double seconds            = 0;
     std::uint64_t rounds = 0, drafted = 0, accepted = 0, plain_steps = 0, trips = 0;
     // The kernels the cell's graphs launched and the graph launches they came from (#303: a
-    // batched step's kernels against one request's; 0: not recorded, cells kept before).
+    // batched step's kernels against one request's; 0: not recorded, cells kept before). Every
+    // graph counts: a plain cell's are its batched steps', a speculative cell's mix its rounds,
+    // drafts and plain steps; steps run without a graph are in neither.
     std::uint64_t graph_kernels = 0, graph_launches = 0;
 
     [[nodiscard]] double tok_s() const noexcept { return seconds > 0 ? tokens / seconds : 0.0; }

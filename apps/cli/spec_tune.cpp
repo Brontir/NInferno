@@ -612,8 +612,8 @@ int run_spec_tune_load(const std::string& artifact, const std::map<std::string, 
                         state.cells.push_back(cell);
                         std::fprintf(stderr,
                                      "spec-tune --load C=%u bound %-5s %8.1f tok/s  %5.2f "
-                                     "tok/round  plain steps %llu  trips %llu  kernels/graph "
-                                     "%.1f over %llu graphs\n",
+                                     "tok/round  plain steps %llu  trips %llu  kernels per graph "
+                                     "launch %.1f over %llu launches\n",
                                      c, name(bound).c_str(), cell.tok_s(),
                                      cell.rounds ? double(cell.accepted + cell.rounds) /
                                                        double(cell.rounds)
