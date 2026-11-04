@@ -1213,7 +1213,9 @@ SourcePtr moe_encoded_source(const Checkpoint& store, const Parameter& parameter
     const auto leaf = prefix + field;
     for (const char* root : {"model.language_model.layers.", "model.layers."}) {
         const auto full = std::string(root) + layer + "." + leaf;
-        if (store.has(full + ".weight_packed")) {
+        // compressed-tensors (weight_packed) or ModelOpt (U8 weight with weight_scale_2:
+        // nvidia/Qwen3.6-35B-A3B-NVFP4, whose experts ModelOpt lists as one W4A16_NVFP4 module).
+        if (store.has(full + ".weight_packed") || nvfp4_layout(store, full)) {
             return compressed_source(store, full, parameter.shape, MatrixFormat::Nvfp4);
         }
         // A GGUF checkpoint exposes every expert of its NVFP4 banks as a 2-D matrix.
