@@ -4354,9 +4354,10 @@ BuildManifest build_manifest() {
     // A tile past this build's shared-memory ceiling (kMaxSharedBytesPerBlock) compiles to a stub
     // (generic_tiled.cu, generic_w4a8.cuh, generic_staged.cu, generic_i8.cu): the fits checks the
     // refusals answer Resource by. Staged's device check (staged_device_fits) is the board's.
+    // The tiles are compiled for tiled_supports' codecs and Q8 (the Volta tiles, volta_tiled_route).
     add(Family::TiledMma, tiled_schedule_count(), [&](int i, ManifestSchedule& s) {
         for (const auto& [qtype, codec] : formats) {
-            if (tiled_supports(codec) && !tiled_fits(i, codec)) {
+            if ((tiled_supports(codec) || codec == WeightCodec::Q8) && !tiled_fits(i, codec)) {
                 s.omitted_formats.push_back({qtype, 0});
             }
         }

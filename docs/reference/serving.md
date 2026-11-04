@@ -1708,6 +1708,7 @@ contract.
 | `--recipe NAME` | conversion recipe of a hub model or checkpoint | the official one |
 | `--quant LABEL` | the GGUF quantization of a hub model | NVFP4, MXFP4, Q8_0, BF16, ... in that order |
 | `--prepare-only` | fetch and convert, then exit | off |
+| `--build-manifest` | as the first argument: print what this binary holds of the generic GEMM kernels and the compilers that built it as JSON, then exit, no GPU and no model ([build manifest](#build-manifest)) | off |
 | `--plan` | print the plan ladder, the rung the free memory picks now and the advice, then exit without serving ([automatic context selection](#automatic-context-selection)) | off |
 | `--json` | with `--plan`: print it as JSON | off |
 | `--no-load` | with `--plan`: plan without loading or downloading the weights and without a GPU, from the model's header or config ([the plan without the weights](#the-plan-without-the-weights)) | off |
