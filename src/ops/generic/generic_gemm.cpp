@@ -4363,11 +4363,15 @@ BuildManifest build_manifest() {
     });
     add(Family::W4a8Mma, w4a8_schedule_count(), [&](int i, ManifestSchedule& s) {
         const bool producer = w4a8_schedule_info(i).producers > 0;
+        int read            = 0;
         for (const auto& f : formats) {
             if (!w4a8_supports(f.first)) continue;
+            ++read;
             if (producer && w4a8_ws_supports(f.first)) s.only_formats.push_back(f.first);
             if (!w4a8_fits(i, f.first)) s.omitted_formats.push_back({f.first, 0});
         }
+        // Omitted for every format it reads (the producer tiles below 99 KiB): no kernel at all.
+        s.compiled = static_cast<int>(s.omitted_formats.size()) < read;
     });
     add(Family::StagedMma, staged_schedule_count(),
         [](int i, ManifestSchedule& s) { s.compiled = staged_fits(i); });
