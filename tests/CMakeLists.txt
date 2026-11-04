@@ -24,6 +24,17 @@ if(NINFERNO_BUILD_APPS)
   set_tests_properties(ninferno_ui_moved_update_test PROPERTIES SKIP_RETURN_CODE 77)
 endif()
 
+# ninferno-connect (#339): a stand-in router dialed over loopback (Upgrade, then HTTP/2 with the
+# roles reversed; plain and TLS) and a stand-in engine; registration, concurrent streams, a reset
+# that closes the engine's connection (also before any byte of the answer), ping timeout, GOAWAY
+# with a replacement while the old session drains, a refused key, the router's certificate checked.
+# No GPU.
+if(TARGET ninferno_connect)
+  ninferno_add_test(ninferno_connect_test
+    SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_connect.cpp"
+    LIBRARIES ninferno_connect PkgConfig::NGHTTP2 OpenSSL::SSL OpenSSL::Crypto)
+endif()
+
 # Speculation support (registry, corpus, fingerprints, profiles, watchdog, manifests): no GPU.
 ninferno_add_test(ninferno_spec_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_spec.cpp"

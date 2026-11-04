@@ -72,6 +72,11 @@ for arch in $ARCHS; do
   # The first tree builds the programs every machine shares; the others their engine alone.
   if [ -z "$first" ]; then
     targets="ninferno-ui ninferno-serve ninferno-convert ninferno-dispatch ${NINFERNO_PACKAGE_TARGETS:-}"
+    # ninferno-connect where the tree has it (libnghttp2 and OpenSSL found): its install rule
+    # expects it built.
+    if grep -q '^NINFERNO_HAS_CONNECT:INTERNAL=ON$' "$build/CMakeCache.txt"; then
+      targets="$targets ninferno-connect"
+    fi
   else
     targets=ninferno-serve
   fi
