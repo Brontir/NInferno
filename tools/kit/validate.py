@@ -540,6 +540,13 @@ def judge_routes(run, out, tolerance):
                                 "to each other)")
         if found is None:
             out["notes"].append("a pass's slowdown reasons unknown (kept)")
+        # Another compute process on the card can slow some kernels more than others, the same in
+        # both passes: RT2/RT3 would not see it. The R2 gate of the other runs.
+        apps = p.get("processes_after") or {}
+        if apps.get("informative") and apps.get("others"):
+            out["notes"].append(f"a pass rejected: RT1 {apps['others']} other compute process(es) "
+                                "on the card")
+            continue
         clean.append(p)
     row = {"metric": "routes"}
     out["metrics"].append(row)
@@ -592,9 +599,14 @@ def judge_routes(run, out, tolerance):
         fmt, compute, epilogue, n, k, t = case
         row["notes"].append(f"{fmt} {compute} {epilogue} {n}x{k} T={t}: selected {selected} "
                             f"{ts:.1f} us, fastest {best} {tb:.1f} us (x{regret:.2f})")
+    # route-tune times the routes and does not check their results: a faster route is a table
+    # candidate only once the route correctness tests pass on a lab card of this chip.
+    row["qualified"] = False
     row["verdict"] = (f"contradicts the route selection on {len(worst)} of {len(regrets)} cases "
                       f"(the selected route over {tolerance * 100:.0f} % slower than one timed in "
-                      "every pass): a route table candidate for this chip"
+                      "every pass): timings only, a route table candidate for this chip once a "
+                      "maintainer qualifies the faster routes on a card of it "
+                      "(ninferno_linear_generic_test, ninferno_route_classes_test)"
                       if worst else "confirms the route selection (no case over "
                       f"{tolerance * 100:.0f} %)")
 

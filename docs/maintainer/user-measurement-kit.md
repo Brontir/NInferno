@@ -181,12 +181,12 @@ A case is one problem at one width. Its candidates are the routes timed there in
 
 | Rule | Rejects | When |
 |---|---|---|
-| RT1 the passes | the run | fewer than 2 passes that completed, after dropping a pass with a hardware slowdown, hardware thermal or power-brake sample in its `route-tune` window. A software thermal slowdown is noted and kept: a consumer card sits at its thermal target through a tune of many minutes (an RTX 4070 Ti, every pass), and a problem's routes are timed within seconds of each other; RT3 holds the passes to each other |
+| RT1 the passes | the run | fewer than 2 passes that completed, after dropping a pass with another compute process on the card (the R2 gate: a steady competitor slows some kernels more than others, alike in both passes) or with a hardware slowdown, hardware thermal or power-brake sample in its `route-tune` window. A software thermal slowdown is noted and kept: a consumer card sits at its thermal target through a tune of many minutes (an RTX 4070 Ti, every pass), and a problem's routes are timed within seconds of each other; RT3 holds the passes to each other |
 | RT2 the selection | the run | the passes selected different routes for some case (the selection is a function of the card's facts and tables, never of a timing) |
 | RT3 repeats | the case | the selected or the fastest route's times across the passes more than 5 % apart (the R5 threshold) |
 
 Verdict:
-- **contradicts the route selection**: in a kept case the selected route is more than the tolerance (10 %) slower than the fastest. The worst cases are listed, and the passes' tables are a route table candidate for this chip, which a maintainer merges after reading them.
+- **contradicts the route selection**: in a kept case the selected route is more than the tolerance (10 %) slower than the fastest. The worst cases are listed. `route-tune` times the routes and never checks their results, so the passes' tables are timings only (`qualified: false`): they become a route table candidate for this chip once a maintainer runs the route correctness tests (`ninferno_linear_generic_test`, `ninferno_route_classes_test`) on a card of it, and merges them after reading them.
 - **confirms**: no kept case is over the tolerance.
 
 The geometric mean of the selected route's time over the fastest is reported either way, as in `selection_regret.py`.

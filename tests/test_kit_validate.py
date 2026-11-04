@@ -533,6 +533,19 @@ class Routes(unittest.TestCase):
         m = metric(validate.validate(routes_doc(route_pass(t), route_pass(t))), "routes")
         self.assertTrue(m["verdict"].startswith("contradicts"))
         self.assertIn("x1.30", m["notes"][1])
+        # route-tune does not check results: the faster route is timings only until qualified.
+        self.assertFalse(m["qualified"])
+        self.assertIn("once a maintainer qualifies the faster routes", m["verdict"])
+
+    def test_other_compute_process_rejects_the_pass(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5}
+        busy = dict(route_pass(t), processes_after={"listed": 2, "others": 1, "informative": True})
+        m = metric(validate.validate(routes_doc(route_pass(t), busy)), "routes")
+        self.assertTrue(m["status"].startswith("rejected: RT1"), m)
+        # Under WDDM the list holds the desktop's processes: not informative, kept.
+        wddm = dict(route_pass(t), processes_after={"listed": 5, "others": 4, "informative": False})
+        m = metric(validate.validate(routes_doc(route_pass(t), wddm)), "routes")
+        self.assertEqual(m["status"], "accepted")
 
     def test_unreproduced_case_is_left_out(self):
         a, b = {"rmma.a": 13.0, "rmma.b": 10.0}, {"rmma.a": 13.0, "rmma.b": 12.0}
