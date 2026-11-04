@@ -674,6 +674,18 @@ struct KernelResources {
                                                             Epilogue epilogue,
                                                             std::int32_t tokens);
 
+// The same for R8 schedule `schedule`: the R8 kernel run_route launches for the call, its
+// in-kernel quantization or, at verify widths where the format has it, its pre-quantized form
+// (`prequantized`: one activation quantizer runs before it, not described). nullopt where
+// resolve_route takes the call off R8 (the format, K, or tokens past the kernel's fit), with the
+// workspace the call needs given.
+struct R8Resources {
+    KernelResources kernel;
+    bool prequantized = false;
+};
+[[nodiscard]] std::optional<R8Resources> r8_resources(int schedule, const Weight& weight,
+                                                      Epilogue epilogue, std::int32_t tokens);
+
 // What this build holds of the generic GEMM families (#307), read without a device: every declared
 // schedule, whether the binary holds its kernel, and where that depends on the format, which
 // formats. The refusals' NotCompiled and CodecTile read the same predicates: a schedule this build

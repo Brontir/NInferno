@@ -12,8 +12,8 @@
 namespace ninferno::ops::detail::generic {
 
 // A launch described instead of run (#298, rmma_resources): while a KernelResources is installed on
-// this thread, the register-MMA launch (launch_rmma_kernel) records the kernel it would run and its
-// geometry there and launches nothing.
+// this thread, the register-MMA launch (launch_rmma_kernel) and the R8 launch (r8_launch_tokens)
+// record the kernel they would run and its geometry there and launch nothing.
 KernelResources* kernel_describe_target() noexcept;
 class ScopedKernelDescribe {
 public:
