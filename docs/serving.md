@@ -112,7 +112,7 @@ automatically, and the startup log states each choice (`context | ...`, `capacit
 |---|---|---|
 | `--version` | | print the version, the GPU architecture of this build and whether the driver and GPUs here run it, then exit |
 | `--build-manifest` | | print, as JSON, what this binary holds of the generic GEMM kernels and the compilers that built it, then exit; no GPU needed ([reference](reference/serving.md#build-manifest)) |
-| `--host H` | `127.0.0.1` | listen address |
+| `--host H` | `127.0.0.1` | listen address; any address but loopback without an API key logs a warning at startup |
 | `--port N` | `8080` | listen port |
 | `--api-key KEY`, `--api-key-file PATH` | unset | require a bearer / `x-api-key` value |
 | `--model-id ID` | `metadata.name`, else the file name | public model alias; it does not change execution |

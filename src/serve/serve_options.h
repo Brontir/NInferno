@@ -199,4 +199,8 @@ std::string resolve_public_model_id(const ServeOptions& options,
                                     std::string_view artifact_model_name);
 std::string serve_usage_text(const char* argv0);
 
+// The startup warning for a server reachable from the network without an API key; empty when
+// the bind is loopback (core/loopback.h) or a key is set.
+std::string open_bind_warning(std::string_view host, int port, bool auth_enabled);
+
 } // namespace ninferno::serve

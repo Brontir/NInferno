@@ -1,4 +1,5 @@
 #include "serve/serve_options.h"
+#include "core/loopback.h"
 #include "core/command_line.h"
 #include "product/activation_options.h"
 #include "product/engine_flags.h"
@@ -701,6 +702,13 @@ ServeOptions parse_serve_options(int argc, char** argv) {
         }
     }
     return options;
+}
+
+std::string open_bind_warning(std::string_view host, int port, bool auth_enabled) {
+    if (auth_enabled || is_loopback_host(host)) { return {}; }
+    return "no API key on " + std::string(host) + ":" + std::to_string(port) +
+           ": anyone who can reach this address can use the server; pass --api-key-file (or "
+           "$NINFERNO_API_KEY), or bind 127.0.0.1";
 }
 
 std::string resolve_public_model_id(const ServeOptions& options,

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/loopback.h"
+
 // The worker's side of a reversed connection to a router (#339, docs/connect.md): the worker dials
 // the router, asks it to switch the connection to HTTP/2 with the roles reversed, and from then on
 // the router sends requests over it as an HTTP/2 client and the worker answers them as the server.
@@ -36,8 +38,8 @@ struct RouterUrl {
 
 // nullopt with *why on a URL that is not https:// or http://, has no host, or a bad port.
 [[nodiscard]] std::optional<RouterUrl> parse_router_url(std::string_view url, std::string* why);
-// localhost, 127.0.0.0/8 and ::1: where plain TCP stays on the machine.
-[[nodiscard]] bool is_loopback_host(std::string_view host) noexcept;
+// localhost, 127.0.0.0/8 and ::1: where plain TCP stays on the machine (core/loopback.h).
+using ninferno::is_loopback_host;
 
 struct TlsOptions {
     std::string ca_file; // empty: the system's default trust store

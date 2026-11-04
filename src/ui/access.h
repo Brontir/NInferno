@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/loopback.h"
+
 // Who may talk to ninferno-ui. It starts processes, downloads models and spends the GPUs, so by
 // default it answers only this machine.
 //
@@ -27,8 +29,7 @@ struct AccessPolicy {
     std::string key;                  // the access key; empty: none asked
 };
 
-// 127.0.0.0/8, ::1 and "localhost" (with or without brackets).
-[[nodiscard]] bool is_loopback_host(std::string_view host) noexcept;
+using ninferno::is_loopback_host; // core/loopback.h
 
 // The host part of a Host header or of an origin's authority: "[::1]:8090" -> "::1",
 // "localhost:8090" -> "localhost", "example.com" -> "example.com". Lower-cased. A bare IPv6

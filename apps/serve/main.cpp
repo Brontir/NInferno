@@ -358,6 +358,11 @@ int main(int argc, char** argv) {
         serving = true;
         operational_log.server_ready(options.host, options.port, server.public_model_id(),
                                      !options.api_key.empty());
+        if (const auto warning = ninferno::serve::open_bind_warning(
+                options.host, options.port, !options.api_key.empty());
+            !warning.empty()) {
+            logger->warn("{}", warning);
+        }
         // A newer release, said once in the log; off the serving path (a dead network costs
         // nothing but this thread's few seconds).
         std::thread([logger] {
