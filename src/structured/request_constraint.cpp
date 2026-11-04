@@ -176,6 +176,14 @@ void RequestConstraint::write_row(std::uint32_t* row, const ConstraintGate& gate
         } else {
             std::memset(row, 0, words * sizeof(std::uint32_t));
         }
+        // A stop token does not end the output inside a header (advance refuses it there), even
+        // where the grammar would accept the bytes held as a whole answer.
+        if (!held.empty()) {
+            for (const std::int32_t stop : view_.vocabulary->stop_token_ids) {
+                row[static_cast<std::uint32_t>(stop) >> 5U] &=
+                    ~(1U << (static_cast<std::uint32_t>(stop) & 31U));
+            }
+        }
         admit_header(row, held);
         return;
     }
@@ -340,15 +348,15 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
             }
             return true;
         }
-        if (header) {
+        if (gate.header_alive && !bytes.empty()) {
             const std::string held = gate.header_held + std::string(bytes);
             for (const std::string& h : view_.vocabulary->content_open) {
-                if (held == h) {
-                    // The model began its answer with a header: the grammar starts after it.
+                if (std::string_view(held).starts_with(h)) {
+                    // The model began its answer with a header: the grammar starts after it, with
+                    // what the token holds past it (as strip_content_header passes it on).
                     reopen(track);
-                    gate.header_held.clear();
-                    gate.mode = ConstraintGate::Mode::Open;
-                    return true;
+                    return enter_text(gate, ConstraintGate::Mode::Open,
+                                      std::string_view(held).substr(h.size()), track, why);
                 }
             }
         }

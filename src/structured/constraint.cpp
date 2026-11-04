@@ -34,16 +34,6 @@ struct SharedVocabulary {
     std::vector<TokenId> blank_tokens;
 };
 
-// Whether `bytes` spell part of `marker` from some offset on (all of them, or the marker's rest).
-bool spells_part_of(const std::string& marker, const std::string& bytes) {
-    if (marker.empty() || marker.find(bytes.front()) == std::string::npos) { return false; }
-    for (std::size_t at = 0; at < marker.size(); ++at) {
-        const std::size_t take = std::min(marker.size() - at, bytes.size());
-        if (marker.compare(at, take, bytes, 0, take) == 0) { return true; }
-    }
-    return false;
-}
-
 class CompiledConstraint {
 public:
     CompiledConstraint(xgrammar::CompiledGrammar compiled,
@@ -60,6 +50,16 @@ public:
 };
 
 namespace {
+
+// Whether `bytes` spell part of `marker` from some offset on (all of them, or the marker's rest).
+bool spells_part_of(const std::string& marker, const std::string& bytes) {
+    if (marker.empty() || marker.find(bytes.front()) == std::string::npos) { return false; }
+    for (std::size_t at = 0; at < marker.size(); ++at) {
+        const std::size_t take = std::min(marker.size() - at, bytes.size());
+        if (marker.compare(at, take, bytes, 0, take) == 0) { return true; }
+    }
+    return false;
+}
 
 void set_bit(std::vector<std::uint32_t>& words, std::uint32_t token, bool value) {
     if (value) {

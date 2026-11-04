@@ -648,13 +648,44 @@ void answer_header_contract() {
     window.commit(rest);
     walk_text(window, "yes", "after a window through the header");
 
-    // No stop token inside a header.
-    RequestConstraint cut(compiled, true);
-    cut.commit(closed);
-    const TokenId half[] = {kStart};
-    cut.commit(half);
+    // A speculative window through a header at the first token: the grammar starts after it in
+    // the window, and the committed state is left as it was.
+    RequestConstraint start_window(compiled, false, true);
+    const std::vector<TokenId> start_drafts = {kTo, kUser, kMessage, 'y'};
+    std::vector<std::uint32_t> start_rows((start_drafts.size() + 1) * words);
+    start_window.fill_round(start_drafts, start_rows.data(), words);
+    const auto start_at = [&](std::size_t index) { return start_rows.data() + index * words; };
+    check(allowed(start_at(1), kUser) && allowed(start_at(1), kSelf), "after ' to': either name");
+    check(allowed(start_at(3), 'y') && !allowed(start_at(3), kTo),
+          "after a header at the start: the grammar");
+    check(allowed(start_at(4), 'e'), "the grammar advances after a header in the window");
+    start_window.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kTo) && allowed(row.data(), 'y'),
+          "a speculative round leaves the committed start");
+    start_window.commit(start_drafts);
+    walk_text(start_window, "es", "after a window through a header at the start", true);
+
+    // After a reasoning section the model opened: the header, then the Gap's whitespace run.
+    RequestConstraint gap(compiled, false, true);
+    gap.commit(reasoning);
+    gap.commit(after_header);
+    const TokenId newline[] = {'\n'};
+    gap.commit(newline);
+    check(!gap.violated(), "whitespace after the header, before the grammar");
+    walk_text(gap, "yes", "the grammar after the header and a newline");
+
+    // No stop token inside a header, even where the grammar would take the bytes held as a
+    // whole answer (a choice of " ", which a header's first byte also begins).
+    OutputConstraintSpec blank_choice;
+    blank_choice.kind    = OutputConstraintKind::Choice;
+    blank_choice.choices = {" ", "yes"};
+    RequestConstraint cut(compiler.compile(blank_choice), false, false);
+    const TokenId space[] = {' '};
+    cut.commit(space);
+    check(!cut.violated(), "a space that may begin a header is held");
     cut.fill_round({}, row.data(), words);
-    check(!allowed(row.data(), kImEnd), "no stop inside a header");
+    check(!allowed(row.data(), kImEnd) && allowed(row.data(), 't'),
+          "inside a header's first bytes: its rest, no stop");
 }
 
 void violation_contract(const ConstraintCompiler& compiler) {
