@@ -137,8 +137,10 @@ void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
     // A recipe that quantizes a BF16 checkpoint (the official Qwen3.6-35B-A3B one takes its experts
     // to 4-5 bits) makes an artifact whose size the start knows.
     if (!keeps_encoded(recipe)) { return; }
-    if (const auto floor = encoded_floor_bytes(fetch, options.enable_vision,
-                                                  recipe == "gemma4_published" ? 16 : 4)) { check_fits(asked, floor); }
+    const std::uint64_t plain_bits = recipe == "gemma4_published" ? 16 : 4;
+    if (const auto floor = encoded_floor_bytes(fetch, options.enable_vision, plain_bits)) {
+        check_fits(asked, floor);
+    }
 }
 
 } // namespace
