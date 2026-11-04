@@ -668,6 +668,84 @@ int run_resources(bool detail) {
     if (r8_admitted > 0 && r8_pre == 0) fail("no pre-quantized R8 kernel described");
     std::cout << "resources R8: " << r8_described << " described (" << r8_pre
               << " pre-quantized)\n";
+    // The tile families (route_resources): nothing where route_admits refuses the route under
+    // AllowA8; where described, threads and registers the SM holds, a grid that covers the call,
+    // dynamic shared memory one block takes, and the I8 and staged tiles at their schedules'
+    // threads. Each family some format and schedule admits describes some call.
+    std::size_t smem_optin = 0;
+    try {
+        smem_optin = device_class().smem_per_block_optin;
+    } catch (const std::exception&) {}
+    struct FamilyCount {
+        generic::Family family;
+        int (*count)();
+        const char* name;
+        int admitted = 0, described = 0;
+    };
+    FamilyCount families[] = {{generic::Family::TiledMma, generic::tiled_schedule_count, "tiled"},
+                              {generic::Family::StagedMma, generic::staged_schedule_count, "staged"},
+                              {generic::Family::W4a8Mma, generic::w4a8_schedule_count, "w4a8"},
+                              {generic::Family::I8Mma, generic::i8_schedule_count, "i8"}};
+    for (const QType qtype : kFormats) {
+        const Shape shape{4096, 4096};
+        quantized_weight::PatternedWeightOptions options;
+        if (qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+        const auto host = quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+        const Weight w  = host.device_weight(payload);
+        if (!generic::supports(w)) continue;
+        for (FamilyCount& f : families) {
+            for (int i = 0; i < f.count(); ++i) {
+                const generic::Route route{f.family, static_cast<std::uint8_t>(i)};
+                const bool admitted = generic::route_admits(route, w, LinearPolicy::AllowA8);
+                f.admitted += admitted ? 1 : 0;
+                for (const std::int32_t t : {64, 512}) {
+                    const auto r = generic::route_resources(route, w, generic::Epilogue::Store, t);
+                    const std::string at = std::string(generic::qtype_name(qtype)) + " " +
+                                           generic::route_name(route) + " T=" + std::to_string(t);
+                    if (r && !admitted) {
+                        fail(at + ": described although route_admits refuses it");
+                        continue;
+                    }
+                    if (!r) continue;
+                    ++f.described;
+                    int threads = r->threads;
+                    if (f.family == generic::Family::I8Mma) {
+                        threads = generic::i8_schedule_info(i).threads;
+                    } else if (f.family == generic::Family::StagedMma) {
+                        const auto s = generic::staged_schedule_info(i);
+                        threads      = 32 * s.warps_m * s.warps_n;
+                    }
+                    if (r->threads != threads || r->registers <= 0 || r->grid_x == 0 ||
+                        r->grid_y == 0 || r->registers * r->threads > registers_per_sm ||
+                        r->max_threads_per_block < r->threads ||
+                        (smem_optin > 0 && r->dynamic_smem + r->static_smem > smem_optin)) {
+                        fail(at + ": threads " + std::to_string(r->threads) + " (schedule " +
+                             std::to_string(threads) + "), " + std::to_string(r->registers) +
+                             " registers, " + std::to_string(r->dynamic_smem) +
+                             " B dynamic smem, grid " + std::to_string(r->grid_x) + "x" +
+                             std::to_string(r->grid_y));
+                    }
+                    if (detail) {
+                        std::cout << at << ": " << r->registers << " registers, " << r->local_bytes
+                                  << " B local, " << r->dynamic_smem << " B dynamic smem, grid "
+                                  << r->grid_x << "x" << r->grid_y << '\n';
+                    }
+                }
+            }
+        }
+    }
+    std::cout << "resources tiles:";
+    for (const FamilyCount& f : families) {
+        const std::string family = f.name;
+        // Volta's tiled calls of these widths run its CUTLASS copy: no tile kernel to describe.
+        if (f.admitted > 0 && f.described == 0 &&
+            (tensor_mma || f.family != generic::Family::TiledMma)) {
+            fail("no " + family + " kernel described (" + std::to_string(f.admitted) +
+                 " admitted)");
+        }
+        std::cout << " " << family << " " << f.described << "/" << f.admitted;
+    }
+    std::cout << " (described calls / admitted schedules)\n";
     std::cout << "resources (" << device_class().id() << "): " << described << " described, "
               << failures << " failures; per format the most registers and spill bytes:";
     for (const auto& [format, m] : most) {

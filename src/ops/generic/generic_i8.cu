@@ -344,9 +344,15 @@ void launch_tile(const GemmArgs& args, const std::int8_t* codes, const float* sc
     constexpr int kRowsPerBlock = E == Epilogue::SwiGlu ? L::kN / 2 : L::kN;
     const auto kernel = i8_kernel<WT, WN, Stages, Bits, E>;
     static ::ninferno::PerDevice<bool> sized;
-    ::ninferno::allow_dynamic_smem(sized, kernel, L::kSmemBytes);
     const dim3 grid(static_cast<unsigned>(padded / L::kT),
                     static_cast<unsigned>((args.rows + kRowsPerBlock - 1) / kRowsPerBlock));
+    if (KernelResources* described = kernel_describe_target()) {
+        cudaFuncAttributes attributes{};
+        CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
+        describe_kernel(*described, attributes, grid, L::kThreads, L::kSmemBytes, false);
+        return;
+    }
+    ::ninferno::allow_dynamic_smem(sized, kernel, L::kSmemBytes);
     kernel<<<grid, L::kThreads, L::kSmemBytes, stream>>>(args, codes, scales, sums, padded);
     CUDA_CHECK(cudaGetLastError());
 }
@@ -393,10 +399,13 @@ void launch_i8(int schedule, int bits, Epilogue epilogue, const GemmArgs& args,
                std::int8_t* codes, float* scales, int* sums, cudaStream_t stream) {
     const int padded         = i8_padded_tokens(args.tokens);
     const std::int64_t tasks = static_cast<std::int64_t>(padded) * (args.k / 64);
-    i8_quantize_kernel<<<static_cast<unsigned>((tasks + 255) / 256), 256, 0, stream>>>(
-        static_cast<const __nv_bfloat16*>(args.x), args.ldx, args.k, args.tokens, padded, codes,
-        scales, sums);
-    CUDA_CHECK(cudaGetLastError());
+    // A described launch (i8 route_resources) quantizes nothing.
+    if (kernel_describe_target() == nullptr) {
+        i8_quantize_kernel<<<static_cast<unsigned>((tasks + 255) / 256), 256, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(args.x), args.ldx, args.k, args.tokens, padded,
+            codes, scales, sums);
+        CUDA_CHECK(cudaGetLastError());
+    }
     switch (epilogue) {
     case Epilogue::Store:
         launch_epilogue<Epilogue::Store>(schedule, bits, args, codes, scales, sums, padded, stream);
