@@ -351,11 +351,10 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
            aligned_to(w.qdata, 16);
 }
 
-// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits).
+// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits):
+// r8_call_refusal names why not.
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    if (!allows_r8(w, policy)) return false;
-    if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= r8_verify_widest(w.qtype) && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return r8_call_refusal(w, policy, tokens) == R8CallRefusal::None;
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -2386,8 +2385,47 @@ std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept {
     case ScheduleRefusal::Alignment: return "alignment";
     case ScheduleRefusal::Extent: return "extent";
     case ScheduleRefusal::CodecTile: return "codec_tile";
+    case ScheduleRefusal::Policy: return "policy";
     }
     return "none";
+}
+
+std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept {
+    switch (why) {
+    case R8CallRefusal::None: return "none";
+    case R8CallRefusal::NotAdmitted: return "not_admitted";
+    case R8CallRefusal::DecodeFit: return "decode_fit";
+    case R8CallRefusal::VerifyWidth: return "verify_width";
+    case R8CallRefusal::VerifyShape: return "verify_shape";
+    }
+    return "none";
+}
+
+R8CallRefusal r8_call_refusal(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+    if (!allows_r8(w, policy)) return R8CallRefusal::NotAdmitted;
+    if (tokens <= kR8DecodeTokens) {
+        return r8_fits(w.qtype, w.k, tokens) ? R8CallRefusal::None : R8CallRefusal::DecodeFit;
+    }
+    if (tokens > r8_verify_widest(w.qtype)) return R8CallRefusal::VerifyWidth;
+    return r8_verify_takes_shape(w.qtype, w.n, w.k) ? R8CallRefusal::None
+                                                     : R8CallRefusal::VerifyShape;
+}
+
+ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
+    if (index < 0 || index >= r8_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w) || !r8_supports(w.qtype)) return ScheduleRefusal::Format;
+    if (!allows_a8(policy)) return ScheduleRefusal::Policy;
+    const Route route{Family::R8Mma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        !aligned_to(w.qdata, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % r8_k_values(w.qtype)) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
 }
 
 ScheduleRefusal rmma_refusal(int index, const Weight& w) {
@@ -2427,6 +2465,9 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
 bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     if (route.family == Family::RegisterMma) {
         return rmma_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::R8Mma) {
+        return r8_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
     }
     if (!supports(w)) return false;
     if (!has_features(current_features(), route_requires(route))) return false;
@@ -2468,8 +2509,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
         // and the route tables must not reach a launch that throws.
         return kNativeNvfp4 && route.schedule < nvfp4_tiled_schedule_count() &&
                w.qtype == QType::NVFP4 && aligned_to(w.qdata, 8);
-    case Family::R8Mma:
-        return route.schedule < r8_schedule_count() && allows_r8(w, policy);
+    case Family::R8Mma: // r8_refusal, above
+        return false;
     case Family::GgmlMmq:
         return route.schedule == 0 && mmq_admits(w, policy);
     case Family::GgmlVec:
@@ -4005,6 +4046,24 @@ FamilyCoverage rmma_coverage(const Problem& problem, const Weight& w, std::int32
     c.heuristic         = heuristic_rmma(problem, tokens, prefill_band);
     c.heuristic_refusal = rmma_refusal(c.heuristic, w);
     return c;
+}
+
+R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    R8Coverage r;
+    FamilyCoverage& c = r.family;
+    c.declared        = r8_schedule_count();
+    const bool reads  = r8_supports(w.qtype);
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = r8_refusal(i, w, problem.policy);
+        c.schedules.push_back({i, why});
+        c.compiled += reads;
+        c.legal += why == ScheduleRefusal::None;
+    }
+    c.heuristic             = heuristic_r8(problem, tokens);
+    c.heuristic_refusal     = r8_refusal(c.heuristic, w, problem.policy);
+    r.call                  = r8_call_refusal(w, problem.policy, tokens);
+    r.prequantized_compiled = r8_verify_compiled(w.qtype);
+    return r;
 }
 
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {

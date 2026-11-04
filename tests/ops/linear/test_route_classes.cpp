@@ -9,7 +9,9 @@
 // (#307): route_admits takes a schedule exactly where rmma_refusal names no reason, a cluster
 // schedule is not compiled outside the full build and needs clusters on the board, the 32-value
 // decoders' large tiles are not compiled, and the family's own pick, where it does not run, says
-// why (counted, not failed: the selection then takes another tile).
+// why (counted, not failed: the selection then takes another tile). The R8 family's too: each
+// schedule's refusal as route_admits decides it, an A16 call refused for its policy, and why each
+// call does or does not take R8 (counted).
 //
 // The route table and several heuristics cache what they read of the device on first use, so one
 // process runs one board: without arguments the test runs itself once per board.
@@ -99,6 +101,7 @@ int run_board(const TestBoard& b) {
     int failures = 0, checked = 0;
     int coverage_checked = 0;
     std::map<std::string, int> heuristic_refused; // the family's pick, refused: why, how often
+    std::map<std::string, int> r8_calls;          // why a call does or does not take R8
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -241,6 +244,33 @@ int run_board(const TestBoard& b) {
                                 ++heuristic_refused[std::string(generic::schedule_refusal_name(
                                     coverage.heuristic_refusal))];
                             }
+                            // R8's coverage (#307): route_admits decides each schedule by
+                            // r8_refusal; a policy without A8 refuses every schedule of a format R8
+                            // reads as Policy; a call that takes R8 has a schedule to run it on.
+                            const auto r8 = generic::r8_coverage(problem, w, t);
+                            ++r8_calls[std::string(generic::r8_call_refusal_name(r8.call))];
+                            for (const auto& s : r8.family.schedules) {
+                                const generic::Route r{generic::Family::R8Mma,
+                                                       static_cast<std::uint8_t>(s.schedule)};
+                                if (generic::route_admits(r, w, policy) !=
+                                    (s.refusal == generic::ScheduleRefusal::None)) {
+                                    fail(where + " " + generic::route_name(r) + ": " +
+                                         std::string(generic::schedule_refusal_name(s.refusal)) +
+                                         ", which route_admits decides otherwise");
+                                }
+                                if (policy == LinearPolicy::A16Only && r8.family.compiled > 0 &&
+                                    s.refusal != generic::ScheduleRefusal::Policy &&
+                                    s.refusal != generic::ScheduleRefusal::Format) {
+                                    fail(where + " " + generic::route_name(r) +
+                                         ": an A16 call's R8 refusal is not its policy");
+                                }
+                            }
+                            if (r8.call == generic::R8CallRefusal::None && r8.family.legal == 0) {
+                                fail(where + ": the call takes R8 and no R8 schedule admits it");
+                            }
+                            if (route.family == generic::Family::R8Mma && r8.family.legal == 0) {
+                                fail(where + ": chose " + name + ", which no R8 schedule admits");
+                            }
                             if (!generic::route_admits(route, w, policy)) {
                                 fail(where + ": chose " + name + ", which route_admits refuses");
                             }
@@ -273,6 +303,8 @@ int run_board(const TestBoard& b) {
               << " route choices, " << coverage_checked << " register-MMA coverages, "
               << failures << " failures; the register-MMA pick refused:";
     for (const auto& [why, count] : heuristic_refused) std::cout << " " << why << " " << count;
+    std::cout << "; R8 calls:";
+    for (const auto& [why, count] : r8_calls) std::cout << " " << why << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }

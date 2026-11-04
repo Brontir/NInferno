@@ -470,9 +470,10 @@ struct Problem {
 // layout (supports), the tile not compiled for the codec (rmma_tile_compiled: the large tiles of
 // the 32-value decoders), an instruction the device lacks (route_requires), a plane off the
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
-// in that order, so only Format hides whether a tile is compiled.
+// in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
+// does not allow the family's activations (R8: int8).
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
-                             Alignment, Extent };
+                             Alignment, Extent, Policy };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
 // Register-MMA schedule `index` for `weight`: route_admits' own rule for the family (it decides
 // by this), so None exactly where route_admits takes the route.
@@ -497,8 +498,35 @@ struct FamilyCoverage {
     int heuristic = -1;
     ScheduleRefusal heuristic_refusal = ScheduleRefusal::None;
 };
+// R8 schedule `index` for `weight` under `policy`: route_admits' own rule for the family (it
+// decides by this). Not declared, format (the generic path or R8 does not read it), policy (no
+// A8), instruction, alignment (the ggml high plane or the codes off 16 bytes), extent (K off the
+// format's R8 run).
+[[nodiscard]] ScheduleRefusal r8_refusal(int index, const Weight& weight, LinearPolicy policy);
+// Why a call of `tokens` tokens does not take R8 where its weight could (#307): the weight not
+// admitted to R8 (allows_r8), a decode call whose activation does not fit one CTA, a verify call
+// wider than the format's widest R8 verify, or a shape the verify kernel does not take. r8_call
+// decides by this.
+enum class R8CallRefusal { None, NotAdmitted, DecodeFit, VerifyWidth, VerifyShape };
+[[nodiscard]] std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept;
+[[nodiscard]] R8CallRefusal r8_call_refusal(const Weight& weight, LinearPolicy policy,
+                                            std::int32_t tokens);
+
 [[nodiscard]] FamilyCoverage rmma_coverage(const Problem& problem, const Weight& weight,
                                            std::int32_t tokens, bool prefill_band);
+
+// The R8 family's coverage of a call (#307): every schedule with its refusal (compiled: every
+// schedule for a format R8 reads, none for another), the family's pick for the call
+// (heuristic_r8) and its refusal, why the call itself does or does not take R8, and whether the
+// format has R8's pre-quantized verify form (r8_verify_compiled; it runs where a verify call has
+// the workspace).
+struct R8Coverage {
+    FamilyCoverage family;
+    R8CallRefusal call         = R8CallRefusal::None;
+    bool prequantized_compiled = false;
+};
+[[nodiscard]] R8Coverage r8_coverage(const Problem& problem, const Weight& weight,
+                                     std::int32_t tokens);
 
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
