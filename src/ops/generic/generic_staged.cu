@@ -33,6 +33,12 @@ void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
                         (args.tokens + S::kTokens - 1) / S::kTokens);
         if (grid.y > kMaxGridYZ)
             throw std::invalid_argument("generic staged: token extent exceeds the grid");
+        if (KernelResources* described = kernel_describe_target()) {
+            cudaFuncAttributes attributes{};
+            CUDA_CHECK(cudaFuncGetAttributes(&attributes, (staged_kernel<S, E>)));
+            describe_kernel(*described, attributes, grid, S::kThreads, kShared, false);
+            return;
+        }
         staged_kernel<S, E><<<grid, S::kThreads, kShared, stream>>>(args);
         CUDA_CHECK(cudaGetLastError());
     }

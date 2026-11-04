@@ -4415,6 +4415,68 @@ std::optional<R8Resources> r8_resources(int schedule, const Weight& w, Epilogue 
     return out;
 }
 
+std::optional<KernelResources> route_resources(Route route, const Weight& w, Epilogue epilogue,
+                                               std::int32_t tokens) {
+    switch (route.family) {
+    case Family::RegisterMma: return rmma_resources(route.schedule, w, epilogue, tokens);
+    case Family::R8Mma: {
+        const auto r8 = r8_resources(route.schedule, w, epilogue, tokens);
+        return r8 ? std::optional<KernelResources>(r8->kernel) : std::nullopt;
+    }
+    case Family::TiledMma:
+    case Family::StagedMma:
+    case Family::W4a8Mma:
+    case Family::I8Mma: break;
+    default: return std::nullopt;
+    }
+    if (tokens < 1 || !supports(w) || !route_admits(route, w, LinearPolicy::AllowA8)) {
+        return std::nullopt;
+    }
+    const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
+    const ResolvedRoute resolved =
+        resolve_route(route, w,
+                      CallLayout{.x_aligned16    = true,
+                                 .ldx            = w.k,
+                                 .tokens         = tokens,
+                                 .rows           = rows,
+                                 .segments       = 1,
+                                 .epilogue       = epilogue,
+                                 .workspace_free = route_workspace_bytes(route, w.k, tokens)});
+    if (!(resolved.executed == route)) return std::nullopt;
+    const WeightCodec codec = codec_of(w);
+    if (route.family == Family::TiledMma &&
+        (w.k % 64 != 0 || volta_cutlass_only(codec) ||
+         volta_cutlass_runs(volta_cutlass_only(codec), tokens))) {
+        // Scalar, or Volta's CUTLASS copy. Where the copy does not fit the call's workspace (or
+        // there is none) run_route falls back to the tile kernel: described here as none, never
+        // as another kernel.
+        return std::nullopt;
+    }
+    GemmArgs args = weight_args(w);
+    args.rows     = rows;
+    args.tokens   = tokens;
+    args.ldx      = w.k;
+    KernelResources out;
+    {
+        const ScopedKernelDescribe describe(out);
+        switch (route.family) {
+        case Family::TiledMma: launch_tiled(route.schedule, codec, epilogue, args, nullptr); break;
+        case Family::StagedMma: launch_staged(route.schedule, epilogue, args, nullptr); break;
+        case Family::W4a8Mma:
+            launch_w4a8(route.schedule, codec, epilogue, args, nullptr, nullptr, nullptr,
+                        kW4a8TokenMajor, nullptr);
+            break;
+        case Family::I8Mma:
+            launch_i8(route.schedule, i8_bits(w.qtype), epilogue, args, nullptr, nullptr, nullptr,
+                      nullptr);
+            break;
+        default: break;
+        }
+    }
+    if (out.threads == 0) return std::nullopt;
+    return out;
+}
+
 BuildManifest build_manifest() {
     BuildManifest m;
 #ifdef NINFERNO_BUILD_ARCH

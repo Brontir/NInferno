@@ -32,6 +32,12 @@ void launch_schedule(const GemmArgs& args, cudaStream_t stream) {
                         (args.tokens + S::kBlockM - 1) / S::kBlockM);
         if (grid.y > kMaxGridYZ)
             throw std::invalid_argument("generic tiled: token extent exceeds the grid");
+        if (KernelResources* described = kernel_describe_target()) {
+            cudaFuncAttributes attributes{};
+            CUDA_CHECK(cudaFuncGetAttributes(&attributes, (tiled_kernel<S, C, E>)));
+            describe_kernel(*described, attributes, grid, S::kThreads, kShared, false);
+            return;
+        }
         tiled_kernel<S, C, E><<<grid, S::kThreads, kShared, stream>>>(args);
         CUDA_CHECK(cudaGetLastError());
     }

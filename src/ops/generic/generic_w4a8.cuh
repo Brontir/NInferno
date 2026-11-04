@@ -24,6 +24,7 @@
 #include "ops/common/arch_limits.h"
 #include "ops/common/memory.cuh"
 #include "ops/common/mma.cuh"
+#include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_gemm.cuh"
 #include "ops/generic/generic_schedules.h"
 
@@ -1918,6 +1919,12 @@ void w4a8_launch_schedule(const GemmArgs& args, W4a8Activation act, cudaStream_t
         throw std::invalid_argument("generic W4A8: schedule exceeds this build's shared memory");
     } else {
         const dim3 grid = w4a8_grid<S, E>(args, act);
+        if (KernelResources* described = kernel_describe_target()) {
+            cudaFuncAttributes attributes{};
+            CUDA_CHECK(cudaFuncGetAttributes(&attributes, (w4a8_kernel<C, S, E, Flavor>)));
+            describe_kernel(*described, attributes, grid, S::kThreads, kSmem, false);
+            return;
+        }
         CUDA_CHECK(cudaFuncSetAttribute(w4a8_kernel<C, S, E, Flavor>,
                                         cudaFuncAttributeMaxDynamicSharedMemorySize, kSmem));
         w4a8_kernel<C, S, E, Flavor><<<grid, S::kThreads, kSmem, stream>>>(args, act);
@@ -1939,6 +1946,12 @@ void w4a8_ws_launch_schedule(const GemmArgs& args, W4a8Activation act, cudaStrea
     } else {
         const dim3 grid = w4a8_grid<S, E>(args, act);
         const auto kernel = w4a8_ws_kernel<C, S, E, kStages, Producers>;
+        if (KernelResources* described = kernel_describe_target()) {
+            cudaFuncAttributes attributes{};
+            CUDA_CHECK(cudaFuncGetAttributes(&attributes, kernel));
+            describe_kernel(*described, attributes, grid, S::kThreads + 32 * Producers, kSmem, false);
+            return;
+        }
         CUDA_CHECK(
             cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmem));
         kernel<<<grid, S::kThreads + 32 * Producers, kSmem, stream>>>(args, act);

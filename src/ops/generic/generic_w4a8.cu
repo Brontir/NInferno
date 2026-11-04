@@ -57,7 +57,10 @@ void launch_w4a8_quantize(const GemmArgs& args, std::int8_t* codes, float* scale
 void launch_w4a8(int schedule, WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                  std::int8_t* codes, float* scales, float* sums, bool token_major,
                  cudaStream_t stream) {
-    launch_w4a8_quantize(args, codes, scales, sums, stream, w4a8_ld(args.k));
+    // A described launch (w4a8 route_resources) quantizes nothing.
+    if (kernel_describe_target() == nullptr) {
+        launch_w4a8_quantize(args, codes, scales, sums, stream, w4a8_ld(args.k));
+    }
     const W4a8Activation act{codes, scales, sums, token_major ? 1 : 0};
     if (launch_w4a8_ggml32(schedule, codec, epilogue, args, act, stream)) return;
     if (launch_w4a8_superblock(schedule, codec, epilogue, args, act, stream)) return;

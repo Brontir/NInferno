@@ -687,6 +687,17 @@ struct R8Resources {
 [[nodiscard]] std::optional<R8Resources> r8_resources(int schedule, const Weight& weight,
                                                       Epilogue epilogue, std::int32_t tokens);
 
+// The kernel `route` runs for the call, for every family whose kernel the generic path launches
+// itself: the register MMA and R8 (rmma_resources, r8_resources) and the shared-memory tiles
+// (TiledMma, StagedMma), the grouped W4A8 tile and its producer-warp form (W4a8Mma) and the I8 tile
+// (I8Mma), each with the workspace the call needs given and its activation quantizer not described.
+// nullopt where resolve_route takes the call off `route`, on Volta's CUTLASS band of a tiled call,
+// and for the families described elsewhere or not at all (Scalar, W4a4Mma, Nvfp4TiledMma, ggml's
+// GgmlMmq and GgmlVec).
+[[nodiscard]] std::optional<KernelResources> route_resources(Route route, const Weight& weight,
+                                                             Epilogue epilogue,
+                                                             std::int32_t tokens);
+
 // What this build holds of the generic GEMM families (#307), read without a device: every declared
 // schedule, whether the binary holds its kernel, and where that depends on the format, which
 // formats. The refusals' NotCompiled and CodecTile read the same predicates: a schedule this build
