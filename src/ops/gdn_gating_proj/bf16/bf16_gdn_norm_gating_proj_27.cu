@@ -17,7 +17,7 @@ void bf16_gdn_norm_gating_proj_27_launch(const Tensor& x, const Tensor& norm_wei
                 static_cast<const __nv_bfloat16*>(x.data),
                 static_cast<const __nv_bfloat16*>(norm_weight.data),
                 static_cast<const __nv_bfloat16*>(a_weight.qdata),
-                static_cast<const __nv_bfloat16*>(b_weight.qdata),
+                static_cast<const __nv_bfloat16*>(b_weight.qdata), nullptr, nullptr,
                 static_cast<const float*>(alog.data), static_cast<const float*>(bias.data),
                 static_cast<__nv_bfloat16*>(h.data), static_cast<float*>(g.data),
                 static_cast<float*>(beta.data), x.ne[1], eps, 5120, 48);

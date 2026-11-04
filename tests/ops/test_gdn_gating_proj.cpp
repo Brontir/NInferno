@@ -654,17 +654,21 @@ int run_published_control_case(const Geometry& geometry, PublishedFormat format,
     return failures;
 }
 
-// BF16 a/b at an unregistered geometry (the Qwen3.5 0.8B..9B sizes): the segmented generic path.
-// At decode and verify widths (T <= kSegmentedFusedControlMaxTokens) it runs the fused norm and
-// control kernel, wider calls the composed form; both against the FP64 oracle. In the fused
-// widths a token's h, g and beta must not depend on the other columns of its call (a verify pass
-// and the decode step of the same token agree). `one_parent` binds a and b as consecutive rows of
-// one [2H, D] parent, otherwise as two parents.
-int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, std::uint32_t seed,
-                                    cudaStream_t stream) {
+// BF16 or Q8_G32_FP16 (a GGUF model's Q8_0) a/b at an unregistered geometry (the Qwen3.5
+// 0.8B..9B sizes): the segmented generic path. At decode and verify widths (T <=
+// kSegmentedFusedControlMaxTokens) it runs the fused norm and control kernel, wider calls the
+// composed form; both against the FP64 oracle over the decoded weights. In the fused widths a
+// token's h, g and beta must not depend on the other columns of its call (a verify pass and the
+// decode step of the same token agree). `one_parent` binds a and b as consecutive rows of one
+// [2H, D] parent, otherwise as two parents. Q8 a/b take AllowA8 as a GGUF model's do: the fused
+// kernel reads them at 16-bit activations, the composed form's routes may quantize h to int8.
+int run_segmented_control_case(const Geometry& geometry, QType format, bool one_parent,
+                               std::uint32_t seed, cudaStream_t stream) {
     constexpr float kEps         = 1.0e-6F;
     constexpr std::int32_t kMaxT = 64;
-    const std::string base_label = std::string("segmented bf16 ") + geometry.label + " [" +
+    const bool q8                = format == QType::Q8_G32_FP16;
+    const std::string base_label = std::string("segmented ") + (q8 ? "q8 " : "bf16 ") +
+                                   geometry.label + " [" +
                                    std::to_string(geometry.heads) + ", " +
                                    std::to_string(geometry.hidden) + "]" +
                                    (one_parent ? " one parent" : " two parents");
@@ -682,28 +686,58 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
     round_to_bf16(norm_weight);
     round_to_bf16(a_weight);
     round_to_bf16(b_weight);
-    auto ab_bits             = bf16_bits(a_weight);
-    const auto b_weight_bits = bf16_bits(b_weight);
-    ab_bits.insert(ab_bits.end(), b_weight_bits.begin(), b_weight_bits.end());
-    DeviceBuffer device_ab = to_device(ab_bits);
     const std::vector<std::uint64_t> a_shape{static_cast<std::uint64_t>(geometry.heads),
                                              static_cast<std::uint64_t>(geometry.hidden)};
     const std::vector<std::uint64_t> ab_shape{static_cast<std::uint64_t>(2 * geometry.heads),
                                               static_cast<std::uint64_t>(geometry.hidden)};
-    const auto* ab_data = static_cast<const std::byte*>(device_ab.p);
-    const WeightParent ab_parent{weight_geometry(QType::BF16, QuantLayout::Contiguous, ab_shape),
-                                 ab_data};
-    const WeightParent a_parent{weight_geometry(QType::BF16, QuantLayout::Contiguous, a_shape),
-                                ab_data};
-    const WeightParent b_parent{weight_geometry(QType::BF16, QuantLayout::Contiguous, a_shape),
-                                ab_data + rows_elements * 2};
+    // The weights' device bytes: BF16 [a; b] (two parents are its halves), or Q8 row-split
+    // payloads (one of [a; b], or one each: a payload's code and scale planes do not split by
+    // rows). The oracle reads the decoded values.
+    std::vector<std::vector<std::uint8_t>> payloads;
+    if (q8) {
+        std::vector<float> ab(a_weight);
+        ab.insert(ab.end(), b_weight.begin(), b_weight.end());
+        if (one_parent) {
+            auto packed = quantized_weight::pack_q8_g32_row_split(ab, 2 * geometry.heads,
+                                                                  geometry.hidden);
+            std::copy(packed.dequant.begin(), packed.dequant.begin() + rows_elements,
+                      a_weight.begin());
+            std::copy(packed.dequant.begin() + rows_elements, packed.dequant.end(),
+                      b_weight.begin());
+            payloads.push_back(std::move(packed.payload));
+        } else {
+            for (auto* values : {&a_weight, &b_weight}) {
+                auto packed = quantized_weight::pack_q8_g32_row_split(*values, geometry.heads,
+                                                                      geometry.hidden);
+                *values     = packed.dequant;
+                payloads.push_back(std::move(packed.payload));
+            }
+        }
+    } else {
+        auto ab_bits             = bf16_bits(a_weight);
+        const auto b_weight_bits = bf16_bits(b_weight);
+        ab_bits.insert(ab_bits.end(), b_weight_bits.begin(), b_weight_bits.end());
+        payloads.emplace_back(reinterpret_cast<const std::uint8_t*>(ab_bits.data()),
+                              reinterpret_cast<const std::uint8_t*>(ab_bits.data() + ab_bits.size()));
+    }
+    std::vector<DeviceBuffer> device_payloads;
+    for (const auto& payload : payloads) device_payloads.push_back(to_device(payload));
+    const QuantLayout layout = q8 ? QuantLayout::RowSplit : QuantLayout::Contiguous;
+    const auto* first_data   = static_cast<const std::byte*>(device_payloads[0].p);
+    const auto* second_data  = q8 && !one_parent
+                                   ? static_cast<const std::byte*>(device_payloads[1].p)
+                                   : first_data + rows_elements * 2;
+    const WeightParent ab_parent{weight_geometry(format, layout, ab_shape), first_data};
+    const WeightParent a_parent{weight_geometry(format, layout, a_shape), first_data};
+    const WeightParent b_parent{weight_geometry(format, layout, a_shape), second_data};
     const WeightView a_view{a_shape, {{one_parent ? &ab_parent : &a_parent, 0, rows_elements}}};
     const WeightView b_view{a_shape,
                             {one_parent ? WeightRegion{&ab_parent, rows_elements, 2 * rows_elements}
                                         : WeightRegion{&b_parent, 0, rows_elements}}};
-    const ops::ProjectionWeights prepared = ops::prepare_gdn_gating_proj_weights(
-        ops::WeightInput{a_view, ops::LinearPolicy::A16Only, std::nullopt},
-        ops::WeightInput{b_view, ops::LinearPolicy::A16Only, std::nullopt});
+    const auto policy = q8 ? ops::LinearPolicy::AllowA8 : ops::LinearPolicy::A16Only;
+    const ops::ProjectionWeights prepared =
+        ops::prepare_gdn_gating_proj_weights(ops::WeightInput{a_view, policy, std::nullopt},
+                                             ops::WeightInput{b_view, policy, std::nullopt});
     const auto* segmented = std::get_if<ops::SegmentedProjectionWeights>(&prepared);
     if (segmented == nullptr || segmented->rows() != 2 * geometry.heads) {
         std::cerr << base_label
@@ -755,6 +789,7 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
                                     kGdnNormOutputBf16);
         const ReductionCriterion& control =
             !composed && tokens <= ops::kSegmentedFusedControlMaxTokens ? kGdnNormControlFp32
+            : q8                                                        ? kPublishedA8Control
                                                                         : kSegmentedComposedControl;
         failures += verify_normwise(label + " g", {out.g.begin(), out.g.end()}, rg, control);
         failures +=
@@ -786,9 +821,11 @@ int run_segmented_bf16_control_case(const Geometry& geometry, bool one_parent, s
         const ops::ScopedInvariantRoutes invariant;
         (void)run(8, true);
     }
-    if (from_device<std::uint16_t>(device_ab.p, ab_bits.size()) != ab_bits) {
-        std::cerr << base_label << ": a/b weights were modified\n";
-        ++failures;
+    for (std::size_t i = 0; i < payloads.size(); ++i) {
+        if (from_device<std::uint8_t>(device_payloads[i], payloads[i].size()) != payloads[i]) {
+            std::cerr << base_label << ": a/b weights were modified\n";
+            ++failures;
+        }
     }
     std::cout << base_label << (failures == 0 ? " ok" : " FAILED") << '\n';
     return failures;
@@ -889,14 +926,16 @@ int main() {
                 failures += run_published_control_case(
                     *geometry, format, tokens, published_seed += 0x10u, norm_execution.stream);
 
-    // BF16 a/b at the Qwen3.5 sizes no fused registration owns (9B, 4B, 0.8B).
+    // BF16 and Q8 (GGUF Q8_0) a/b at the Qwen3.5 sizes no fused registration owns (9B, 4B, 0.8B).
     std::uint32_t segmented_seed = 0xa000u;
-    for (const Geometry& geometry :
-         {Geometry{"qwen3_5_9b", 4096, 32, false}, Geometry{"qwen3_5_4b", 2560, 32, false},
-          Geometry{"qwen3_5_0_8b", 1024, 16, false}})
-        for (const bool one_parent : {false, true})
-            failures += run_segmented_bf16_control_case(
-                geometry, one_parent, segmented_seed += 0x10u, norm_execution.stream);
+    for (const QType format : {QType::BF16, QType::Q8_G32_FP16})
+        for (const Geometry& geometry :
+             {Geometry{"qwen3_5_9b", 4096, 32, false}, Geometry{"qwen3_5_4b", 2560, 32, false},
+              Geometry{"qwen3_5_0_8b", 1024, 16, false}})
+            for (const bool one_parent : {false, true})
+                failures += run_segmented_control_case(geometry, format, one_parent,
+                                                       segmented_seed += 0x10u,
+                                                       norm_execution.stream);
 
     std::cout << (failures == 0 ? "OK" : "FAIL") << " gdn_gating_proj correctness\n";
     return failures == 0 ? 0 : 1;
