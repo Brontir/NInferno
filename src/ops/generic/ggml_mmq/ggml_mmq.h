@@ -56,6 +56,7 @@ inline constexpr int kKMultiple   = 256;
 
 // The activation: ggml's q8_1 tiles for `columns` tokens of K values (with ggml's over-read slack).
 [[nodiscard]] std::size_t activation_bytes(int k, int columns);
+
 // A launch described instead of run (#298, the generic path's route_resources): while a
 // LaunchShape is installed on this thread, product and vec_product record the matrix kernel they
 // would launch and its geometry there and launch nothing (the stream-K fixup is not described).
