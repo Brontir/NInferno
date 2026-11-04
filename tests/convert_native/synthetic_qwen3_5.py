@@ -449,8 +449,7 @@ def main() -> int:
             if not ok:
                 errors.append(f"moe modelopt: {sorted({formats[p] for p in experts})}")
         else:
-            errors.append(f"moe modelopt: native failed
-{result.stderr[-2000:]}")
+            errors.append(f"moe modelopt: native failed\n{result.stderr[-2000:]}")
         print(f"moe modelopt: {'ok' if ok else 'FAILED'}", flush=True)
         # --drafter-quant on a target quantizes its companion drafter only (native only: the
         # Python converter has no such option). The text keeps the recipe's methods.
