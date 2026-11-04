@@ -21,7 +21,7 @@ import statistics
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[5]
+ROOT = Path(__file__).resolve().parents[3]
 ETA = 0.946
 # The share of the DRAM rate a saturating weight read reaches (choice_constants.h kDramEta, kDramEtaOf):
 # Volta's HBM2 with ECC tops out at 660 of its 870 GB/s.

@@ -1,5 +1,5 @@
 // A speculation round's cost from facts (spec/round_cost.h): the formula on the registry's own
-// pairs (golden numbers from choice-notes/lab/round_cost/fit_eta.py), the cards' rates from the
+// pairs (golden numbers from tools/fits/round_cost/fit_eta.py), the cards' rates from the
 // PCI-ID table, and a pair-removal consistency check: the plan's speedup for a card whose own pair
 // is left out, against that pair's measurement. It is no hold-out of the fit (kSmallTEta rests on
 // these cards' rounds); the hold-out evidence is fit_eta.py's cross-fit (DECISIONS 53). No GPU.

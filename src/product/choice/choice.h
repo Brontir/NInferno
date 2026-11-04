@@ -10,7 +10,7 @@
 //   speed      the seconds of a typical request at it (decode and prefill, choice_constants.h);
 //   accuracy   its KLD against the exact reference (choice_constants.h's measured terms).
 //
-// A drafter is one more axis (choice/SPECULATION.md S3): plain decode or one of the drafters the
+// A drafter is one more axis: plain decode or one of the drafters the
 // model carries and the serving Engine runs, each at the configuration chosen for it (the lab's
 // measured pair, its group's, a published profile), its memory in the plan and its gain in the
 // decode speed; it changes no output (greedy verification), so no accuracy term.

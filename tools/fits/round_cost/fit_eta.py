@@ -26,7 +26,7 @@ import math
 import os
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[5]
+ROOT = Path(__file__).resolve().parents[3]
 REG = json.loads((ROOT / "src/spec/data/drafter_registry.json").read_text(encoding="utf-8"))
 BOARDS = {g["id"].upper(): g for g in json.loads((ROOT / "src/core/data/gpu_facts.json").read_text(encoding="utf-8"))["gpus"]}
 GEN = {70: "volta", 75: "turing", 86: "ga10x", 89: "ada", 120: "gb20x"}

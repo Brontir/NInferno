@@ -46,7 +46,7 @@ their options as given.
   its own rate) plus `G / decode(P + G/2)`. Decode: fitted on 49 points over four cards and three
   models, 5.2 % rms (`tests/fixtures/choice/speed_measured.json`; the test holds the code to it).
   Prefill: fitted on 82 points, six models at ~2K / 7K / 21K-token prompts on seven cards
-  (`choice-notes/lab/scripts/fit_prefill.py`, `choice-notes/data/prefill/rows.json`): from 7K tokens
+  (`tools/fits/prefill/fit_prefill.py`, `tools/fits/data/prefill/rows.json`): from 7K tokens
   on, dense 6.4 % rms (worst 18.7 %), MoE 8.3 % (18.9 %); a request's fixed time (10-190 ms) is not
   modeled. A generation without its own prefill rows takes those of one with its BF16 tensor rate
   per SM (Volta: Turing's), else Ada's.

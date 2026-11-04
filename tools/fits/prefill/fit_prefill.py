@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The prefill model's constants (src/product/choice/choice_constants.h: kPrefillEta, kPrefillAttentionEta)
-from data/prefill/rows.json: per card, model and prompt length n, the measured prefill (perf_matrix.py
+from tools/fits/data/prefill/rows.json: per card, model and prompt length n, the measured prefill (perf_matrix.py
 --no-prefix-reuse server, --chars 8000 / 32000 / 95940: ~2K / 7K / 21K tokens).
 
 Per generation, t(n) = tail + n 2P / (eta_lin[kind] peak_s8) + F_att(n) / (eta_att peak_bf16):
@@ -12,7 +12,7 @@ the prefill, each piece after the last message a whole-model call that reads a d
 tail_calls x the active share of weight_bytes / DRAM bandwidth (the product prices it from its decode
 rate). Linear in 1/eta_lin and 1/eta_att; relative least squares over t(n) - tail.
 
-    python fit_prefill.py data/prefill/rows.json
+    python tools/fits/prefill/fit_prefill.py tools/fits/data/prefill/rows.json
 """
 import json
 import sys

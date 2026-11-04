@@ -20,7 +20,7 @@ import statistics
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[5]
+ROOT = Path(__file__).resolve().parents[3]
 ETA = 0.946
 GEN = {(7, 0): "volta", (7, 5): "turing", (8, 6): "ga10x", (8, 9): "ada", (12, 0): "gb20x"}
 # choice_constants.h: kRowsEta's K-quant rows (an MoE's weights are WeightClass::Other: the K-quants'),

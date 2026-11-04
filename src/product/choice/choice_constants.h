@@ -21,7 +21,7 @@
 // Q4_K_M, Qwen3.8-27B UD-IQ3_XXS / UD-Q4_K_XL and Qwen3.6-35B-A3B UD-IQ3_XXS / UD-Q4_K_M on the
 // RTX 2080 Ti, 4070 Ti, 4090 and 5070 Ti (run_calib.sh, run_sw.sh, docs/performance/runs):
 // decode 5.2 % rms (worst 15.5 %). The prefill: refitted 2026-10-27 with its attention term
-// (choice-notes/lab/scripts/fit_prefill.py on choice-notes/data/prefill/rows.json: 82 points, Qwen3.5
+// (tools/fits/prefill/fit_prefill.py on tools/fits/data/prefill/rows.json: 82 points, Qwen3.5
 // 9B, Qwen3.8 27B, Gemma 4 12B / 26B-A4B / 31B, Qwen3.6 35B-A3B at ~2K / 7K / 21K-token prompts on the
 // RTX 2080 Ti, 3060, 4060 Ti, 4070 Ti, 4090, 5070 Ti, 5090, and the 22K points of
 // tests/fixtures/choice/speed_measured.json): from 7K tokens on, dense 6.4 % rms (worst 18.7 %), MoE
@@ -81,7 +81,7 @@ enum class Route : std::uint8_t {
 // decode_measured.json (Qwen3.5-9B Q4_K_M and Q8_0, Gemma 4 12B Q4_K_M, 1/2/4/8 streams, seven cards,
 // master f68eca34, 2026-10-31; first master 03afc418, 2026-10-28) and the census
 // tests/fixtures/choice/decode_census.json (likewise; the RTX 4070 Ti's rows and the IQ4 rows of 28.10);
-// choice-notes/lab/speed_model/fit_decode.py derives every row from the two.
+// tools/fits/speed_model/fit_decode.py derives every row from the two.
 // The share of the DRAM rate a weight read long enough to saturate it reaches: per kernel 0.946-0.952
 // on GDDR6, 6X and 7 (nsys census of Qwen3.5-9B decode, 28.10: RTX 4090, 4070 Ti, 4060 Ti, 5070 Ti;
 // its R8 GEMVs and the Q6_K output head). Volta's row: the Quadro GV100's HBM2 with ECC tops out at

@@ -140,7 +140,7 @@ ch::QuantOption quant_of(const std::string& label, const json& q) {
 // The 2026-10-23 points: an MoE's decode from facts at one stream and on the 2026-10-30 step rows
 // (DECISIONS 65); a dense model's one-stream decode from facts (its several-stream rows are wave
 // aggregates, not a step's rate: decodes_from_facts measures those) and its steps at C rows (mbatch.sh); prefill (the 22K points, at their prompt,
-// attention over it) within the refit's (choice-notes/lab/scripts/fit_prefill.py).
+// attention over it) within the refit's (tools/fits/prefill/fit_prefill.py).
 void reproduces_the_measurements(const json& fixture) {
     double decode_sq = 0, prefill_sq = 0, decode_worst = 0, prefill_worst = 0, moe_sq = 0, moe_worst = 0;
     int decodes = 0, prefills = 0, moes = 0;
@@ -1555,7 +1555,7 @@ void explains_the_state(const json& fixture) {
 
 } // namespace
 
-// The drafter is one more axis (choice/SPECULATION.md S3): its memory in the plan, its gain in the
+// The drafter is one more axis: its memory in the plan, its gain in the
 // decode. The fastest that holds the asked context wins where the worth decides; one the context
 // leaves out is explained with its gain; past its load table's streams it gains nothing; a pin
 // keeps it; where the worth does not decide, the resolved profile's stands.
