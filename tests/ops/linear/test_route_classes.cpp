@@ -182,12 +182,13 @@ void check_tiled(const Weight& w, const DeviceFeatures& features, const std::str
     // A layout the generic path does not read: every schedule refused for format, and what the
     // build holds (compiled, the pick) unchanged.
     Weight bad = w;
-    bad.layout = w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit : QuantLayout::GgmlPlanes;
+    bad.layout =
+        w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit : QuantLayout::GgmlPlanes;
     if (!generic::supports(bad)) {
-        const auto b = generic::tiled_coverage(bad);
-        const bool all_format = std::all_of(b.schedules.begin(), b.schedules.end(), [](const auto& s) {
-            return s.refusal == generic::ScheduleRefusal::Format;
-        });
+        const auto b          = generic::tiled_coverage(bad);
+        const bool all_format = std::all_of(
+            b.schedules.begin(), b.schedules.end(),
+            [](const auto& s) { return s.refusal == generic::ScheduleRefusal::Format; });
         if (!all_format || b.compiled != c.compiled || b.heuristic != c.heuristic) {
             fail(where + ": tiled in a layout the generic path does not read");
         }
