@@ -29,6 +29,7 @@
 #include "core/arena.h"
 #include "core/device.h"
 #include "core/device_class.h"
+#include "core/tune_timer.h"
 #include "core/weight_view.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
@@ -170,10 +171,7 @@ int main(int argc, char** argv) {
         std::int32_t t_max = *std::max_element(prefill_points.begin(), prefill_points.end());
         for (const auto t : custom_points) t_max = std::max(t_max, t);
 
-        DeviceBuffer flush(std::max<std::size_t>(device.l2_bytes * 2, 1 << 20));
-        cudaEvent_t start, stop;
-        CUDA_CHECK(cudaEventCreate(&start));
-        CUDA_CHECK(cudaEventCreate(&stop));
+        TuneTimer timer(nullptr, 1, samples);
         std::vector<generic::RouteEntry> entries;
 
         for (const Problem& p : problems) {
@@ -247,20 +245,12 @@ int main(int argc, char** argv) {
                 call.epilogue        = p.epilogue;
                 call.out[0]          = &ty;
                 call.segment_rows[0] = p.n;
-                generic::run_route(r, call, &workspace, nullptr); // warm (JIT-free, but caches)
-                std::vector<float> ms;
-                for (int s = 0; s < samples; ++s) {
-                    CUDA_CHECK(cudaMemsetAsync(flush.p, s & 0xff, flush.bytes, nullptr));
-                    CUDA_CHECK(cudaEventRecord(start, nullptr));
-                    generic::run_route(r, call, &workspace, nullptr);
-                    CUDA_CHECK(cudaEventRecord(stop, nullptr));
-                    CUDA_CHECK(cudaEventSynchronize(stop));
-                    float v = 0;
-                    CUDA_CHECK(cudaEventElapsedTime(&v, start, stop));
-                    ms.push_back(v);
-                }
-                std::nth_element(ms.begin(), ms.begin() + ms.size() / 2, ms.end());
-                const double us = static_cast<double>(ms[ms.size() / 2]) * 1000.0;
+                // One warm call, then the median of `samples`, each after the tuners' read flush
+                // (core/tune_timer.h): a memset flush left the L2 dirty and the timed call paid its
+                // write-back (RTX 4070 Ti, Q6_K 4096x12288 T=4, rmma.m1.n1.w1x8: 169 us with the
+                // memset flush, 125 with this one, ninferno_linear_bench 125).
+                const double us =
+                    timer.median_us([&](cudaStream_t s) { generic::run_route(r, call, &workspace, s); });
                 if (routes_csv) {
                     routes_csv << generic::qtype_name(p.qtype) << ','
                                << generic::compute_class_name(p.compute) << ','

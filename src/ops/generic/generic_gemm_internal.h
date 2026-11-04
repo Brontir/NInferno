@@ -11,6 +11,41 @@
 
 namespace ninferno::ops::detail::generic {
 
+// A launch described instead of run (#298, rmma_resources): while a KernelResources is installed on
+// this thread, the register-MMA launch (launch_rmma_kernel) records the kernel it would run and its
+// geometry there and launches nothing.
+KernelResources* kernel_describe_target() noexcept;
+class ScopedKernelDescribe {
+public:
+    explicit ScopedKernelDescribe(KernelResources& out) noexcept;
+    ~ScopedKernelDescribe();
+    ScopedKernelDescribe(const ScopedKernelDescribe&)            = delete;
+    ScopedKernelDescribe& operator=(const ScopedKernelDescribe&) = delete;
+
+private:
+    KernelResources* previous_;
+};
+inline void describe_kernel(KernelResources& out, const cudaFuncAttributes& a, dim3 grid,
+                            int threads, std::size_t dynamic_smem, bool latency) noexcept {
+    out.registers             = a.numRegs;
+    out.local_bytes           = a.localSizeBytes;
+    out.static_smem           = a.sharedSizeBytes;
+    out.dynamic_smem          = dynamic_smem;
+    out.threads               = threads;
+    out.max_threads_per_block = a.maxThreadsPerBlock;
+    out.ptx_version           = a.ptxVersion;
+    out.binary_version        = a.binaryVersion;
+    out.grid_x                = grid.x;
+    out.grid_y                = grid.y;
+    out.grid_z                = grid.z;
+    out.latency_variant       = latency;
+}
+
+// The register-MMA launch of `codec` (one of the launch_rmma_* below): run_route's, and
+// rmma_resources' described one.
+void launch_rmma_codec(WeightCodec codec, int schedule, Epilogue epilogue, const GemmArgs& args,
+                       cudaStream_t stream);
+
 // out [K, T] BF16 = x [K, T] (leading dimension ldx) gathered by K int32 column indices.
 void launch_gather_k(const void* x, int ldx, const void* order, int k, int tokens, void* out,
                      cudaStream_t stream);

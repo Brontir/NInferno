@@ -1,5 +1,7 @@
 #include "core/removed_environment.h"
 #include "core/device_class.h"
+#include "ops/generic/build_manifest.h"
+#include "runtime/engine/decision_fingerprint.h"
 #include "product/logging/logging.h"
 #include "product/logging/startup_log.h"
 #include "product/plan/plan_choice.h"
@@ -104,6 +106,16 @@ public:
     TerminateLog& operator=(const TerminateLog&) = delete;
 };
 
+// --build-manifest: what this binary holds of the generic GEMM families (#307), with its build
+// identity (decision fingerprint's build section) and compilers, read without a GPU.
+int print_build_manifest() {
+    namespace generic = ninferno::ops::detail::generic;
+    std::cout << generic::build_manifest_json(generic::build_manifest(),
+                                              ninferno::runtime::build_of())
+              << '\n';
+    return 0;
+}
+
 // --version: what this executable was built for, and whether the machine's driver and GPUs run
 // it. The installer calls it to check a download before saying it works.
 int print_version() {
@@ -172,6 +184,7 @@ int main(int argc, char** argv) {
         return 0;
     }
     if (options.version_requested) { return print_version(); }
+    if (options.build_manifest_requested) { return print_build_manifest(); }
     // The plan without the weights sizes a family's workspace as a start does (#302).
     ninferno::runtime::register_plan_workspace_queries();
     // The prefill's tail calls come from the served frontend (DECISIONS 62).

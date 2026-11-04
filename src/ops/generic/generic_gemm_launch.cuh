@@ -182,6 +182,13 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     if (grid.y > kMaxGridYZ)
         throw std::invalid_argument("generic linear: token extent exceeds the grid");
     const auto smem = static_cast<std::size_t>(args.spread_smem);
+    if (KernelResources* described = kernel_describe_target()) {
+        cudaFuncAttributes attributes{};
+        CUDA_CHECK(cudaFuncGetAttributes(&attributes, rmma_kernel<Decoder, Schedule, E, Latency>));
+        describe_kernel(*described, attributes, dim3(grid.x, grid.y, Schedule::kCluster),
+                        Schedule::kThreads, smem, Latency);
+        return;
+    }
     if (Schedule::kCluster == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
         rmma_kernel<Decoder, Schedule, E, Latency>

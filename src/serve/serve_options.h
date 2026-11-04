@@ -25,6 +25,8 @@ inline constexpr std::size_t kDefaultResponseStoreBytes   = 256ULL << 20;
 struct ServeOptions {
     bool help_requested    = false;
     bool version_requested = false;
+    // --build-manifest as the first argument: the compiled-variant manifest (#307) and exit.
+    bool build_manifest_requested = false;
     // The model as named on the command line: a .ninferno artifact, a Hugging Face checkpoint
     // directory or GGUF model (converted once into its .ninferno-cache), or a hub id
     // org/name[@revision] (fetched, converted and cached; see serve/model_source.h). The artifact
