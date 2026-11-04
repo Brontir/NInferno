@@ -1,3 +1,4 @@
+#include "core/loopback.h"
 #include "product/speculative_options.h"
 #include "serve/cache_hint.h"
 #include "serve/generation_service.h"
