@@ -329,7 +329,7 @@ int check_w4a8(const Case& c, std::uint32_t seed) {
         for (const std::int32_t t : {17, 130}) {
             const auto s = dmoe::select_plan(l.frag, l.config, t, true);
             if (s.w4a8_gate_up != admitted(l.frag.gate_up) || s.w4a8_down != admitted(l.frag.down) ||
-                (iquant(c.gate_up) && s.w4a8_gate_up) || (iquant(c.down) && s.w4a8_down)) {
+                iquant(c.gate_up) == s.w4a8_gate_up || iquant(c.down) == s.w4a8_down) {
                 std::cerr << c.label << ": T=" << t << " plan " << dmoe::plan_name(s)
                           << " does not put exactly the admitted banks' stages on the tier\n";
                 ++failures;
@@ -408,8 +408,8 @@ int main() {
          A::SwiGlu},
         {"iq3xxs H512 F512", QType::GGML_IQ3_XXS, QType::GGML_IQ3_XXS, 8, 2, 512, 512, A::SwiGlu},
         {"iq2s H512 F256", QType::GGML_IQ2_S, QType::GGML_IQ2_S, 8, 2, 512, 256, A::SwiGlu},
-        // One fragment-order i-quant bank beside a plain one (#311: the plain bank's stage alone on
-        // the int8 tier): Qwen3.6-35B-A3B UD-Q3_K_S and UD-IQ2_XXS.
+        // One fragment-order i-quant bank beside a plain one (#311: the plain IQ3_S / IQ2_XXS
+        // bank's stage alone on the int8 tier): Qwen3.6-35B-A3B UD-Q3_K_S and UD-IQ2_XXS.
         {"qwen-like iq3xxs/iq3s H2048 F512", QType::GGML_IQ3_XXS, QType::GGML_IQ3_S, 8, 4, 2048,
          512, A::SwiGlu},
         {"qwen-like iq2xxs/iq2s H2048 F512", QType::GGML_IQ2_XXS, QType::GGML_IQ2_S, 8, 4, 2048,

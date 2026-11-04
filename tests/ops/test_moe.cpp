@@ -871,6 +871,20 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
             ++failures;
         }
     }
+    // Each stage alone on the tier (#311: a layer whose other bank the tier does not read), the
+    // other on the plan's register MMA: the oracle with that stage's activations alone quantized.
+    // The block-scaled MMA takes two MXFP4 stages together only.
+    if (!a8.mx) {
+        for (const bool gate_up : {true, false}) {
+            auto p         = moe::select_plan(l.weights, c.config, wide, true);
+            p.gate_up_r8   = p.down_r8 = -1;
+            p.w4a8_gate_up = gate_up;
+            p.w4a8_down    = !gate_up;
+            const Run run  = run_op(c, l, x, 0, wide, residual, &p);
+            failures += compare_run(c, l, x, residual, 0, wide, run, {gate_up, !gate_up},
+                                    c.label + " " + moe::plan_name(p) + " T=" + std::to_string(wide));
+        }
+    }
     // An A16 expert policy refuses the plan.
     {
         Case a16          = c;

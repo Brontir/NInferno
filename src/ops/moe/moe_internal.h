@@ -240,8 +240,8 @@ enum class BankRefusal {
 // R8 (T <= r8_token_limit): r8_expert_supports is r8_bank_refusal == None; r8_admits adds the
 // token limit and the quantized activation's shared memory.
 [[nodiscard]] BankRefusal r8_bank_refusal(const Weight& w);
-// The grouped W4A8 prefill: it takes a layer whose both banks are admitted (MoePlan::w4a8 covers
-// both stages).
+// The grouped W4A8 prefill: each stage whose own bank is admitted (MoePlan::w4a8_gate_up,
+// w4a8_down).
 [[nodiscard]] BankRefusal w4a8_bank_refusal(const MoeWeights& weights, const Weight& bank);
 // Lanes per row of an R8 warp on this bank (GemmArgs::r8_lanes); an R8 CTA covers
 // rows_per_cta() * 32 / r8_lanes rows.

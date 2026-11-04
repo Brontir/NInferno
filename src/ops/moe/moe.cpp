@@ -691,8 +691,10 @@ std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& conf
     if (g.input == g.hidden) {
         for (std::int32_t t = std::min(max_tokens, kR8Tokens); t >= min_tokens; --t) {
             if (!r8_admits(weights, weights.gate_up, t)) continue;
-            MoePlan xq    = narrowest;
-            xq.gate_up_r8 = 0;
+            // Neither stage on the tier: a W4A8 down would keep the router from quantizing x.
+            MoePlan xq      = narrowest;
+            xq.gate_up_r8   = 0;
+            xq.w4a8_gate_up = xq.w4a8_down = false;
             bytes         = std::max(bytes, bound(t, xq));
             break;
         }
