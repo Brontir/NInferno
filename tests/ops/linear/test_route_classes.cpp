@@ -428,9 +428,11 @@ int run_resources(bool detail) {
         if (++failures <= 20) std::cerr << "resources: " << what << '\n';
     };
     int registers_per_sm = 65536;
+    bool tensor_mma      = true;
     try {
         registers_per_sm = device_class().registers_per_sm > 0 ? device_class().registers_per_sm
                                                                : registers_per_sm;
+        tensor_mma       = device_class().features.mma_tensor;
     } catch (const std::exception&) {}
     void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
     struct Most {
@@ -463,7 +465,8 @@ int run_resources(bool detail) {
                                            std::to_string(shape.n) + "x" +
                                            std::to_string(shape.k) + " " +
                                            generic::route_name(route) + " T=" + std::to_string(t);
-                    if (r.has_value() != held) {
+                    // Without tensor mma.sync Volta's HMMA and GEMV kernels take some held calls.
+                    if (r.has_value() != held && (r || tensor_mma)) {
                         fail(at + ": described " + (r ? "yes" : "no") + ", refusal " +
                              std::string(generic::schedule_refusal_name(why)));
                         continue;
