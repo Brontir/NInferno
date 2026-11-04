@@ -135,9 +135,13 @@ class Server:
                 timings = event.get("timings") or timings
                 for choice in event.get("choices") or []:
                     delta = choice.get("delta") or {}
+                    now = time.time()
                     if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
-                        now = time.time()
                         first = now if first is None else first
+                        last = now
+                    if choice.get("finish_reason") and first is not None:
+                        # The end is the finishing event: a stop or EOS token that is counted but
+                        # never shown, and text held back to the end, are decoded before it.
                         last = now
         # The token count comes from the server (usage, else llama-server style timings); a count of
         # stream chunks would be wrong under speculation, where one chunk carries several tokens.
