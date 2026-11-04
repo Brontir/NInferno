@@ -2,34 +2,84 @@
 
 **Fast LLM inference on the NVIDIA GPU you already own.**
 
-A well-tuned launch can run a model more than twice as fast as a plain one
-([measured](docs/performance/README.md)). NInferno comes
-already measured on nearly every GPU you can buy: it knows the best settings for each
-architecture and model and starts with them, and its GUI walks you through fitting them to your
-task. The aim: fast, cheap inference for everyone.
+NInferno is an inference server for a single NVIDIA GPU, from a GeForce RTX 20 or a V100 up to an
+RTX 5090. It ships with settings measured on real cards of each generation: which quantization fits,
+which drafter to speculate with and how deep, which kernel runs each layer. You name a model on
+Hugging Face and it starts with those settings; the GUI shows what changes if you trade context,
+users or precision. On one stream, speculative decoding runs a model 1.5 to 3 times as fast as plain
+decoding of the same weights, depending on the model and the task ([measured](docs/performance/README.md)).
 
 <!-- perf-summary:begin -->
 <!-- perf-summary:end -->
 
-- **GPUs:** NVIDIA Volta, Turing, Ampere, Ada and Blackwell: GeForce RTX 20 to 50, V100, T4, A10,
-  A100, L4, L40S, RTX PRO 6000.
-- **Not the target:** ✗ H100, H200, B200, B300. The project is fast inference on affordable cards;
-  these run, but get no tuning and no measurements.
-- **Models:** Qwen3.5 to 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, **and every
-  fine-tune, fork and version built on their architectures** (support is per architecture), as
-  published on Hugging Face: GGUF, NVFP4, MXFP4, FP8, AWQ, GPTQ.
-- **Speed:** speculative decoding (MTP, DFlash, DFlash2) and kernels measured per GPU, one to eight
-  concurrent streams.
-- **Long context:** YaRN and LongRoPE as the checkpoint defines them (Qwen3.5/3.6 stretch their window
-  with `--rope-yarn-factor`), KV cache in FP8 (NVFP4 for Qwen).
+- **GPUs:** NVIDIA only: GeForce RTX 20 to 50, RTX PRO and workstation cards, V100, T4, A10, A100,
+  L4, L40S. H100, H200, B200 and B300 run, but nothing is tuned or measured for them.
+- **Models:** Qwen3.5 to 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, and fine-tunes of those
+  architectures with their weights merged, as published on Hugging Face: GGUF, NVFP4, MXFP4, FP8, AWQ,
+  GPTQ. It is not a general engine: other architectures are refused at start.
+- **Speed:** speculative decoding (MTP, DFlash, DFlash2, the Gemma 4 assistant), every drafted token
+  checked by the full model; kernels chosen per GPU; one to eight concurrent streams.
+- **Long context:** YaRN and LongRoPE as the checkpoint defines them, KV cache in FP8 (NVFP4 for Qwen).
 - **Prompt cache:** a repeated prefix (system prompt, chat history, a document) is not computed
   again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD†.
 - **API:** OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`) on one
   server, with tool calls, structured output, vision and PDF documents.
-- **Where it goes:** the [roadmap](#roadmap).
+- **Reproducible output:** `--activations exact` gives the same tokens whatever the load, the batch or
+  the drafts.
 
 <sub>† A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
 two months, an enterprise one in six to eight. NInferno will not offer one.</sub>
+
+### What it does not do
+
+So you do not find out after the download:
+
+- **One GPU per process.** No tensor or pipeline parallelism yet; pipeline parallelism across a few
+  consumer cards is on the [roadmap](#roadmap).
+- **The model must fit in GPU memory.** No offload of layers or experts to system RAM yet (also on the
+  roadmap).
+- **One to eight concurrent requests**, fixed at startup. It is built for a person or a small team,
+  not for serving hundreds of users.
+- **NVIDIA only**, on Linux and Windows (a native engine, or WSL 2). No AMD, Apple, Intel or CPU-only
+  backend. GTX 10 and GTX 16 cards are not supported.
+- **No `/v1/completions`, `/v1/embeddings` or LoRA adapters.** Raw-text completion (used by
+  fill-in-the-middle code completion) is planned; embedding models and adapters loaded at run time are
+  not.
+
+### Where it came from
+
+NInferno grew out of [ninfer](https://github.com/Neroued/ninfer) by
+[Neroued](https://github.com/Neroued), a very fast engine for Qwen on NVIDIA GPUs. At
+[Brontir](https://brontir.com) we needed fast local inference for an MCP server we were building,
+found ninfer, and started sending patches upstream. The more we used it, the more we wanted it to run
+on the cards people actually have, from an RTX 2080 Ti to an RTX 5090, with more model families and
+formats than the original set out to cover. That became this project. Thank you, Neroued: none of it
+would exist without ninfer. The [acknowledgements](#acknowledgements) list every project NInferno
+takes code or ideas from.
+
+### How it is built
+
+Almost all of the code in this repository was written by AI models, under the direction of one
+maintainer ([Michael Dementii](https://github.com/MichaelDementii)), starting in mid-August 2026.
+Claude Code writes the code and runs the experiments on our lab's GPUs; OpenAI's Codex reviews every
+pull request, and a second Claude model reviews it independently. In about two and a half months that
+took roughly $40,000 worth of tokens.
+
+We say so up front because it changes what you should trust. What we rely on is evidence, not
+authorship: changes are checked against bit-exact reference outputs (selector goldens, exact-mode
+tests) and against the reference model's perplexity and KL divergence, and kernel or selection changes
+are measured end to end on the GPUs they affect, out of the eight cards of five generations in our lab,
+before they are merged. Measurements are published with the commands that
+produced them, and the [measurement kit](docs/maintainer/user-measurement-kit.md) lets you check them
+on your own card. If something does not hold up, open an issue: that is exactly the feedback the
+process needs.
+
+### Network access
+
+There is no telemetry. A release build checks once a day, in the background, whether a newer release
+exists: one request for the signed manifest at `ninferno.brontir.com`, carrying only the version in the
+user agent. It logs a notice and installs nothing. `NINFERNO_UPDATE_CHECK=0` turns the check off. Models
+are downloaded from Hugging Face only when you name one.
 
 ## Contents
 
@@ -213,6 +263,24 @@ ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters \
 
 [Serving](docs/serving.md#important-options) lists every flag.
 
+### 5. Precision: fast or exact
+
+By default NInferno runs **fast**: on wide calls (prompt processing, batched speculative verify) it
+encodes activations to 8 bits, or 4 bits for NVFP4 weights, and takes an 8-bit or smaller KV cache where
+that leaves room for more context. The output is close to the reference but not bit-identical, and it
+can change slightly with the load. **Exact** keeps 16-bit activations and a BF16 KV cache: the same
+prompt gives the same tokens whatever else is running, at some cost in speed and context.
+
+- **GUI:** pick *exact output* or the faster default before Start; "What another value would change"
+  shows the speed, context and accuracy (KLD) each choice gives on your GPU.
+- **Command line:** `--activations exact` (with `--kv-dtype bf16` for the cache), or
+  `--activations int8` for a middle ground on Qwen. [CLI: activation precision](docs/cli.md#activation-precision)
+  has the details.
+- **The quantization** matters more than either mode. On a small card the automatic choice may take
+  a 2- or 3-bit quant (UD-IQ2_XXS, UD-IQ3_XXS) to fit the model at all; pass `--quant` for a larger one
+  and a shorter context. [Perplexity evaluation](docs/perplexity.md) shows how to measure the
+  difference on your own prompts.
+
 ### Build it yourself
 
 You need Linux, a CUDA toolkit (12.8, 13.2 or 13.4; 12.8 for a V100), CMake 3.28+, a C++20 compiler and Ninja,
@@ -249,9 +317,11 @@ images and release archives.
 
 ## Limits
 
-- One GPU and one resident model per process; no multi-GPU or distributed serving.
-- One to eight concurrent requests, fixed at startup, with a bounded FIFO queue; a running request
-  gives up its lane only when the KV pool runs short (`--kv-lease-window`), and resumes.
+The larger ones are [above](#what-it-does-not-do). In detail:
+
+- One resident model per process.
+- Requests beyond the concurrency wait in a bounded FIFO queue; a running request gives up its lane
+  only when the KV pool runs short (`--kv-lease-window`), and resumes.
 - Model architectures and weight formats run on explicitly implemented paths only.
 - Tool calls are parsed and returned to the client; NInferno does not execute tools.
 

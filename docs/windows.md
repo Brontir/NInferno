@@ -8,7 +8,8 @@ and run it. It needs no administrator rights and builds nothing:
 1. It reads your GPUs (`nvidia-smi`) and shows them. An NVIDIA driver must be installed
    ([nvidia.com/drivers](https://www.nvidia.com/drivers)); every GPU from compute capability 7.0 runs:
    GeForce RTX 20 to 50, the workstation (Quadro, RTX A/Ada/PRO) and datacenter (Tesla V100, T4, A100,
-   A10, L4, L40, H100, B200, ...) cards, several of them in one machine.
+   A10, L4, L40, ...) cards, several of them in one machine. H100, H200, B200 and B300 run too, but
+   nothing is tuned or measured for them.
 2. It downloads NInferno (one archive for every GPU), checks it against the signed release
    manifest, and installs it under
    `%LOCALAPPDATA%\Programs\NInferno`. The engine carries the Visual C++ runtime it needs: no
