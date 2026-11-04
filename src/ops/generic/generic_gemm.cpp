@@ -1872,6 +1872,23 @@ std::string route_name(Route route) {
     return "unknown";
 }
 
+std::string_view family_name(Family family) noexcept {
+    switch (family) {
+    case Family::RegisterMma: return "rmma";
+    case Family::Scalar: return "scalar";
+    case Family::W4a4Mma: return "w4a4";
+    case Family::TiledMma: return "tiled";
+    case Family::W4a8Mma: return "w4a8";
+    case Family::StagedMma: return "staged";
+    case Family::Nvfp4TiledMma: return "nvfp4t";
+    case Family::R8Mma: return "r8";
+    case Family::GgmlMmq: return "ggml_mmq";
+    case Family::GgmlVec: return "ggml_vec";
+    case Family::I8Mma: return "i8";
+    }
+    return "unknown";
+}
+
 std::optional<Route> parse_route(std::string_view name) {
     if (name == "scalar") return Route{Family::Scalar, 0};
     if (name == "ggml_mmq") return Route{Family::GgmlMmq, 0};
@@ -3002,16 +3019,20 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
 // without the chain and reduction terms; the optimum of every constant is flat (200 and 500
 // cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the facts have no roofline.
-std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
+// price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
+// false where the facts have no roofline (nothing priced).
+template <class Take>
+bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                  const Take& take) {
     DeviceClass d;
     try {
         d = device_class();
-    } catch (const std::exception&) { return std::nullopt; }
+    } catch (const std::exception&) { return false; }
     // The reference clock and bandwidth of the board's facts (B2: the PCI-ID table, else the
     // driver's values on the 2^(1/16) grid), never the driver's clocks.
     if (d.sms <= 0 || !d.facts.has_roofline() || problem.n <= 0 || problem.k <= 0 ||
         weight.payload_bytes == 0) {
-        return std::nullopt;
+        return false;
     }
     const GenerationRow& g = generation_row(d.major, d.minor);
     const bool emulated  = !d.features.mma_bf16_native;
@@ -3057,8 +3078,6 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
         const double chain  = rounds * std::ceil(kc / (16.0 * warps_k)) * 150.0 / clk;
         return (mem + mma + reduce) / std::clamp(warps / 11.0, 0.05, 1.0) + chain;
     };
-    std::optional<Route> best;
-    double best_time = 0;
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
     // the order of the A16 tiles as it was. 1 on a lent row, where no A8 candidate is offered
@@ -3071,10 +3090,7 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
             r.family == Family::StagedMma) {
             time *= kA16Scale;
         }
-        if (!best || time < best_time) {
-            best      = r;
-            best_time = time;
-        }
+        take(r, time);
     };
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const auto s = rmma_schedule_info(i);
@@ -3089,7 +3105,7 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
                    s.warps_k, false, 1));
     }
     a8_candidates(problem, weight, tokens, d, offer);
-    if (emulated) return best;
+    if (emulated) return true;
     const auto pipelined_occ = [&](double threads, double stages, double rows, double cols) {
         const double tile = std::min(stages * (rows + cols) * 128.0, 99.0 * 1024.0);
         return std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / tile)});
@@ -3107,6 +3123,18 @@ std::optional<Route> cost_route(const Problem& problem, const Weight& weight, st
               cost(s.rows / sets, s.tokens, threads, 1,
                    pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true, 0.9));
     }
+    return true;
+}
+
+std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
+    std::optional<Route> best;
+    double best_time = 0;
+    price_routes(problem, weight, tokens, [&](Route r, double time) {
+        if (!best || time < best_time) {
+            best      = r;
+            best_time = time;
+        }
+    });
     return best;
 }
 
@@ -4503,6 +4531,69 @@ R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tok
     r.call                  = r8_call_refusal(w, problem.policy, tokens);
     r.prequantized_compiled = r8_verify_compiled(w.qtype);
     return r;
+}
+
+std::vector<FamilyAlternative> family_alternatives(const Problem& problem, const Weight& w,
+                                                   std::int32_t tokens, bool prefill) {
+    const bool band = prefill && tokens >= 17;
+    // The calls heuristic_route prices (cost_route): 17 tokens or more outside the prefill profile,
+    // NVFP4 apart. The times are cost_route's own, so a priced alternative compares as it would.
+    std::vector<std::pair<Route, double>> priced;
+    if (!band && tokens >= 17 && problem.qtype != QType::NVFP4) {
+        price_routes(problem, w, tokens,
+                     [&](Route r, double time) { priced.emplace_back(r, time); });
+    }
+    std::vector<FamilyAlternative> out;
+    const auto take = [&](Family family, const FamilyCoverage& c, R8CallRefusal call) {
+        FamilyAlternative a;
+        a.family   = family;
+        a.compiled = c.compiled;
+        a.call     = call;
+        for (const auto& [r, time] : priced) {
+            if (r.family == family && (!a.seconds || time < *a.seconds)) {
+                a.route   = r;
+                a.seconds = time;
+            }
+        }
+        if (!a.route && call == R8CallRefusal::None) {
+            if (c.heuristic >= 0 && c.heuristic_refusal == ScheduleRefusal::None) {
+                a.route = Route{family, static_cast<std::uint8_t>(c.heuristic)};
+            } else {
+                for (const ScheduleCoverage& s : c.schedules) {
+                    if (s.refusal != ScheduleRefusal::None) continue;
+                    a.route = Route{family, static_cast<std::uint8_t>(s.schedule)};
+                    break;
+                }
+            }
+        }
+        if (!a.route) {
+            a.refusal = c.heuristic >= 0      ? c.heuristic_refusal
+                        : c.schedules.empty() ? ScheduleRefusal::NotDeclared
+                                              : c.schedules.front().refusal;
+        }
+        out.push_back(a);
+    };
+    take(Family::RegisterMma, rmma_coverage(problem, w, tokens, band), R8CallRefusal::None);
+    const R8Coverage r8 = r8_coverage(problem, w, tokens);
+    take(Family::R8Mma, r8.family, r8.call);
+    take(Family::W4a8Mma, w4a8_coverage(problem, w, tokens), R8CallRefusal::None);
+    take(Family::I8Mma, i8_coverage(problem, w, tokens), R8CallRefusal::None);
+    take(Family::TiledMma, tiled_coverage(w), R8CallRefusal::None);
+    take(Family::StagedMma, staged_coverage(w), R8CallRefusal::None);
+    for (const Family f :
+         {Family::W4a4Mma, Family::Nvfp4TiledMma, Family::GgmlMmq, Family::GgmlVec}) {
+        take(f, other_family_coverage(f, w, problem.policy), R8CallRefusal::None);
+    }
+    return out;
+}
+
+std::optional<double> route_cost_seconds(const Problem& problem, const Weight& w, Route route,
+                                         std::int32_t tokens) {
+    std::optional<double> out;
+    price_routes(problem, w, tokens, [&](Route r, double time) {
+        if (r.family == route.family && r.schedule == route.schedule) out = time;
+    });
+    return out;
 }
 
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {
