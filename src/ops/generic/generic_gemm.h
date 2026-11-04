@@ -472,9 +472,10 @@ struct Problem {
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
 // in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
 // does not allow the family's activations (R8: int8; r8_refusal asks it after Format, before
-// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8, tiled, staged).
+// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8, tiled, staged, I8).
 // W4A8 asks in its own order (w4a8_refusal): Format before NotCompiled, Resource and Policy
-// before Instruction; the tiled and staged families Resource before Instruction.
+// before Instruction; the tiled, staged and I8 families Resource before Instruction (I8 Policy
+// too).
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
                              Alignment, Extent, Policy, Resource };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
@@ -574,6 +575,19 @@ struct R8Coverage {
 // emulated (Turing, Volta) the selection takes no staged tile at all (bf16_mma_native), whatever
 // this reports. No policy (BF16 activations).
 [[nodiscard]] FamilyCoverage staged_coverage(const Weight& weight);
+
+// I8 schedule `index` for `weight` under `policy`: route_admits' own rule for the family (it
+// decides by this). Not declared; format (the generic path does not read it, or it is not Q4 /
+// Q5 / Q6 G64); resource (the tile's stages past the build's shared memory, i8_fits); policy (no
+// A8); instruction; alignment (the codes or scales off 16 bytes, a Q5 high plane off 8, a Q6 one
+// off 16); extent (K or the padded K not whole 512-value runs).
+[[nodiscard]] ScheduleRefusal i8_refusal(int index, const Weight& weight, LinearPolicy policy);
+// The I8 family's coverage of a call of `tokens` tokens (#307): every schedule with its refusal
+// (compiled: every schedule for Q4 / Q5 / Q6 G64), and the family's pick, the tile with the
+// fewest weighted waves of those that fit the build (i8_route takes it where the weight is
+// admitted), with its refusal.
+[[nodiscard]] FamilyCoverage i8_coverage(const Problem& problem, const Weight& weight,
+                                         std::int32_t tokens);
 
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below

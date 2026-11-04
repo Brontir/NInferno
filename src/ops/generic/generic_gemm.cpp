@@ -2530,6 +2530,28 @@ ScheduleRefusal staged_refusal(int index, const Weight& w) {
     return ScheduleRefusal::None;
 }
 
+ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
+    if (index < 0 || index >= i8_schedule_count()) return ScheduleRefusal::NotDeclared;
+    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16,
+               q6 = w.qtype == QType::Q6_G64_FP16;
+    if (!supports(w) || !(q4 || q5 || q6)) return ScheduleRefusal::Format;
+    if (!i8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
+    if (!allows_a8(policy)) return ScheduleRefusal::Policy;
+    const Route route{Family::I8Mma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off 16 bytes (route_admits; a G64 weight has none), the
+    // codes or scales off 16 (one 16-byte copy per row), a Q5 / Q6 high plane off 8 / 16.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16) ||
+        (!q4 && !aligned_to(w.qhigh, q5 ? 8 : 16))) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % 512) != 0 || (w.padded_shape[1] % 512) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
 bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     if (route.family == Family::RegisterMma) {
         return rmma_refusal(route.schedule, w) == ScheduleRefusal::None;
@@ -2545,6 +2567,9 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     }
     if (route.family == Family::StagedMma) {
         return staged_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::I8Mma) {
+        return i8_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
     }
     if (!supports(w)) return false;
     if (!has_features(current_features(), route_requires(route))) return false;
@@ -2582,9 +2607,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
         return route.schedule == 0 && mmq_admits(w, policy);
     case Family::GgmlVec:
         return route.schedule == 0 && vec_admits(w, policy);
-    case Family::I8Mma:
-        return route.schedule < i8_schedule_count() && allows_i8(w, policy) &&
-               i8_fits(route.schedule, w.qtype);
+    case Family::I8Mma: // i8_refusal, above
+        return false;
     }
     return false;
 }
@@ -2697,28 +2721,39 @@ I8ScheduleInfo i8_schedule_info(int index) {
     return kI8Schedules[index];
 }
 
+namespace {
 // The I8 tile of a call: the one with the fewest tile-waves weighted by its tile's work over its
-// share of the int8 peak (kI8Eff): the largest tile while its grid fills the SMs, a smaller one
-// where it would leave them idle. Every schedule gives the same bytes, so the choice may vary
-// with T.
-std::optional<Route> i8_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
-    const double sets       = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-    const double sms        = std::max(sm_count(), 1);
-    std::optional<Route> best;
-    double best_cost = 0;
+// share of the int8 peak (kI8Eff), of those that fit the build: the largest tile while its grid
+// fills the SMs, a smaller one where it would leave them idle. Every schedule gives the same
+// bytes, so the choice may vary with T. -1 where none fits.
+int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
+    const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+    const double sms  = std::max(sm_count(), 1);
+    int best          = -1;
+    double best_cost  = 0;
     for (int i = 0; i < i8_schedule_count(); ++i) {
-        const Route r{Family::I8Mma, static_cast<std::uint8_t>(i)};
-        if (!route_admits(r, weight, problem.policy)) continue;
+        if (!i8_fits(i, qtype)) continue;
         const auto s       = kI8Schedules[i];
         const double ctas  = std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
         const double waves = std::ceil(ctas / sms);
         const double cost  = waves * s.block_m * s.block_n / kI8Eff[i];
-        if (!best || cost < best_cost) {
-            best      = r;
+        if (best < 0 || cost < best_cost) {
+            best      = i;
             best_cost = cost;
         }
     }
     return best;
+}
+} // namespace
+
+// i8_pick's tile where the weight is admitted to it. The schedules differ in what they admit only
+// by i8_fits (i8_refusal), so this is the best tile of those the weight is admitted to.
+std::optional<Route> i8_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
+    const int pick = i8_pick(problem, weight.qtype, tokens);
+    if (pick < 0) return std::nullopt;
+    const Route r{Family::I8Mma, static_cast<std::uint8_t>(pick)};
+    if (!route_admits(r, weight, problem.policy)) return std::nullopt;
+    return r;
 }
 
 // The heuristic's W4A8 tile, else the first schedule that fits the build (Turing: the 128x128
@@ -4133,6 +4168,24 @@ FamilyCoverage tiled_coverage(const Weight& w) {
             c.heuristic         = i;
             c.heuristic_refusal = why;
         }
+    }
+    return c;
+}
+
+FamilyCoverage i8_coverage(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    FamilyCoverage c;
+    c.declared       = i8_schedule_count();
+    const bool reads = w.qtype == QType::Q4_G64_FP16 || w.qtype == QType::Q5_G64_FP16 ||
+                       w.qtype == QType::Q6_G64_FP16;
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = i8_refusal(i, w, problem.policy);
+        c.schedules.push_back({i, why});
+        c.compiled += reads;
+        c.legal += why == ScheduleRefusal::None;
+    }
+    if (reads) {
+        c.heuristic = i8_pick(problem, w.qtype, tokens);
+        if (c.heuristic >= 0) c.heuristic_refusal = i8_refusal(c.heuristic, w, problem.policy);
     }
     return c;
 }
