@@ -117,15 +117,17 @@ int main() {
         std::cout << "  " << key << " = " << value << '\n';
     }
 
-    // An explicit table that moves the Q8 slice's decode route moves its line: the replay of the
-    // recorded lines names it, and the manifest moves while the fingerprint does not.
+    // An explicit table (it stands alone: the lookup's other tables go) that moves the Q8 slice's
+    // decode route moves its line: the replay of the recorded lines names it, and gives the lines
+    // a start under that table writes; the manifest moves while the fingerprint does not.
     const auto before = rt::routes_of(device_class(), list, chunk);
+    const auto q8_key = before.rbegin()->first; // "q8 ..." sorts last
     const auto dir    = std::filesystem::temp_directory_path() / "ninferno_decision_routes";
     std::filesystem::create_directories(dir);
     const auto path = dir / "moved.json";
     std::string moved;
     for (const char* route : {"rmma.m1.n1.w2x2", "rmma.m1.n1.w1x4"}) {
-        if (route_at(before.rbegin()->second, 1) != route) {
+        if (route_at(before.at(q8_key), 4) != route) {
             moved = route;
             break;
         }
@@ -137,11 +139,12 @@ int main() {
                         << moved << R"("]]}]})";
     (void)ops::load_route_table(path.string());
     const auto after = rt::replay_routes(device_class(), before);
+    const auto fresh = rt::routes_of(device_class(), list, chunk);
     ops::clear_route_table();
-    std::size_t differ = 0;
-    for (const auto& [key, value] : before) differ += after.at(key) != value ? 1 : 0;
-    check(differ == 1 && route_at(after.at(before.rbegin()->first), 4) == moved,
-          "the moved table moves the Q8 slice's line alone (" + std::to_string(differ) + " moved)");
+    check(q8_key.starts_with("q8 ") && route_at(after.at(q8_key), 4) == moved &&
+              after.at(q8_key) != before.at(q8_key),
+          "the moved table moves the Q8 slice's line: " + after.at(q8_key));
+    check(after == fresh, "the replay under the table is what a start under it records");
     rt::DecisionInputs a;
     a.plan["route_breakpoints"] = "17";
     a.routes                    = before;
