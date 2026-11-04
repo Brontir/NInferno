@@ -25,6 +25,10 @@ struct GrammarVocabulary {
     // Byte sequence with which the model opens a reasoning section itself ("<think>",
     // "<|channel>thought", "<|channel|>analysis<|message|>"). Empty when it has none.
     std::string reasoning_open;
+    // Headers the model writes before its answer, after its reasoning or in place of it (Muse
+    // Glimmer's "<|start|>assistant to=user<|message|>", harmony's final channel): the output
+    // presentation drops the one the answer begins with (chat::ReasoningMarkup::content_open).
+    std::vector<std::string> content_open;
     // Sampled token domain; token_bytes and special have exactly this many entries.
     std::uint32_t token_domain = 0;
 };

@@ -86,10 +86,12 @@ struct ConstraintVocabularyView {
     const std::uint32_t* no_stop_mask = nullptr;
     // Only the stop tokens: the mask that ends a request whose constraint failed.
     const std::uint32_t* stop_only_mask = nullptr;
-    // Tokens that spell part of the reasoning open marker (at any offset), and whitespace-only
-    // tokens of up to four bytes: what a request may sample beside its grammar before it.
-    const std::vector<TokenId>* open_candidates = nullptr;
-    const std::vector<TokenId>* blank_tokens    = nullptr;
+    // Tokens that spell part of the reasoning open marker (at any offset), of an answer header
+    // (GrammarVocabulary::content_open), and whitespace-only tokens of up to four bytes: what a
+    // request may sample beside its grammar before it.
+    const std::vector<TokenId>* open_candidates   = nullptr;
+    const std::vector<TokenId>* header_candidates = nullptr;
+    const std::vector<TokenId>* blank_tokens      = nullptr;
 
     // The bytes the output presentation shows for a token.
     [[nodiscard]] std::string_view presented(TokenId token) const noexcept;

@@ -47,6 +47,14 @@ add_executable(ninferno-dispatch dispatch/main.cpp)
 ninferno_internal_includes(ninferno-dispatch)
 target_link_libraries(ninferno-dispatch PRIVATE ninferno::json)
 
+# The worker's reversed connection to a router (src/connect): where its libraries were found.
+if(TARGET ninferno_connect)
+  add_executable(ninferno-connect connect/main.cpp)
+  ninferno_internal_includes(ninferno-connect)
+  target_link_libraries(ninferno-connect PRIVATE ninferno_connect)
+  target_compile_definitions(ninferno-connect PRIVATE NINFERNO_VERSION_STRING="${NINFERNO_VERSION_STRING}")
+endif()
+
 add_executable(ninferno-convert convert/main.cpp)
 ninferno_internal_includes(ninferno-convert)
 target_link_libraries(ninferno-convert PRIVATE ninferno_convert)

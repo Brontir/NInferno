@@ -4,6 +4,7 @@
 #include "ninferno/ops/linear.h" // LinearPolicy
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -17,7 +18,8 @@ namespace ninferno::ops::detail {
 // call before it in one segmented projection (generic Call::join_previous), as the dense pass's
 // side-by-side projections do: the generic path takes it (no shape-owned table) with the register
 // MMA, in a format the joined launch was measured on (NVFP4, FP8, Q8_G32), or with the R8 decode
-// kernel in any format it reads (the GGUF K-quants, i-quants and legacy blocks). The bytes must
+// kernel in any format it reads (the GGUF K-quants, i-quants and legacy blocks): the route the
+// launch runs (generic::resolve_route) and joins (generic::launch_overlap). The bytes must
 // equal ops::linear's (tests/ops/linear/test_side_by_side_projection.cpp checks every format
 // against this answer, so a format added here is checked there too).
 [[nodiscard]] bool side_by_side_admits(const Weight& weight, LinearPolicy policy,
@@ -46,8 +48,9 @@ struct LinearDecision {
 [[nodiscard]] const char* linear_claim_name(LinearClaim claim);
 
 // Every implementation ops::linear has for one call, and which one it runs (#306): the shape-owned
-// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32: the launch its table selects at the width,
-// q8_launch_id; another format "owned:<format>") and the generic route ("generic:<route>", the
+// kernel ("owned:q8.n<N>_k<K>.launch<i>" for Q8_G32, "owned:<format>.n<N>_k<K>.launch<i>" for
+// Q4/Q5/Q6_G64 and BF16: the launch its table selects at the width, owned_launch_id; NVFP4 and
+// FP8 "owned:<format>") and the generic route ("generic:<route>", the
 // route select_route asks for; the call's layout and workspace may still resolve it lower,
 // generic::resolve_route).
 // Selected: the one dispatch_linear runs (none where it refuses the call; `why` of the generic
@@ -61,6 +64,12 @@ struct LinearCandidate {
     Status status = Status::Unavailable;
     std::string why;
 };
+// The launch a shape-owned table selects for [n,k] at width t (#306): the shape and the launch's
+// number in the order the widths 1..t first select its launches ("n1024_k2048.launch2"). The
+// Q8_G32, Q4/Q5/Q6_G64 and BF16 tables; nullopt for a format whose dispatch chooses inside itself
+// (NVFP4, FP8). The shape must be registered.
+[[nodiscard]] std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n,
+                                                         std::int32_t k, std::int32_t t);
 [[nodiscard]] std::vector<LinearCandidate> linear_candidates(const Weight& weight,
                                                              LinearPolicy policy,
                                                              std::int32_t tokens);

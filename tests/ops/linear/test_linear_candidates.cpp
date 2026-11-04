@@ -1,9 +1,15 @@
 // ops::linear's candidates for one call (#306, ops/linear/linear_registry.h linear_candidates): the
 // shape-owned Q8_G32 kernel with the launch its table selects at each width, and the generic route;
-// the one dispatch_linear runs is Selected, and it is the one linear_decision names.
+// the one dispatch_linear runs is Selected, and it is the one linear_decision names. The Q4/Q5/Q6_G64
+// and BF16 tables' launches are named the same way (owned_launch_id).
 #include "core/weight_view.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/linear/linear_registry.h"
+#include "ops/generic/route_table.h"
+#include "ops/linear/bf16/bf16_dispatch.h"
+#include "ops/linear/q4/q4_dispatch.h"
+#include "ops/linear/q5/q5_dispatch.h"
+#include "ops/linear/q6/q6_dispatch.h"
 #include "ops/linear/q8/q8_dispatch.h"
 
 #include <cuda_runtime.h>
@@ -35,12 +41,12 @@ struct Described {
     ninferno::WeightParent parent;
     ninferno::WeightView view;
     Weight weight;
-    Described(std::int32_t n, std::int32_t k) {
+    Described(std::int32_t n, std::int32_t k, QType qtype = QType::Q8_G32_FP16) {
         parent.data = reinterpret_cast<const std::byte*>(std::uintptr_t{1} << 32);
         const std::uint64_t shape[2] = {static_cast<std::uint64_t>(n),
                                         static_cast<std::uint64_t>(k)};
         parent.geometry = ninferno::weight_geometry(
-            QType::Q8_G32_FP16, ninferno::default_weight_layout(QType::Q8_G32_FP16), shape);
+            qtype, ninferno::default_weight_layout(qtype), shape);
         view.shape  = {shape[0], shape[1]};
         view.parts  = {ninferno::WeightRegion{&parent, 0, shape[0] * shape[1]}};
         weight      = ninferno::native_weight(view, 0.0F);
@@ -102,6 +108,37 @@ void call(std::int32_t n, std::int32_t k, std::int32_t t, ops::LinearPolicy poli
     }
 }
 
+// A shape-owned table's launches at every width 1..max_t: the identity changes from the width
+// before exactly where the table's selection does, starts at launch0, and the owned candidate of a
+// weight of that format and shape carries it.
+template <class Select>
+void table_ids(QType qtype, Select select, std::int32_t n, std::int32_t k, const std::string& name) {
+    const std::string shape = "n" + std::to_string(n) + "_k" + std::to_string(k) + ".launch";
+    std::string before;
+    for (std::int32_t t = 1; t <= 512; ++t) {
+        const auto id = ops::detail::owned_launch_id(qtype, n, k, t);
+        const std::string at = name + " T=" + std::to_string(t) + ": " + id.value_or("none");
+        check(id && id->rfind(shape, 0) == 0, at + ": the shape and a launch number");
+        if (!id) return;
+        if (t == 1) {
+            check(*id == shape + "0", at + ": the first width's launch is launch0");
+        } else {
+            check((select(n, k, t) == select(n, k, t - 1)) == (*id == before),
+                  at + ": the launch identity follows the table's launch");
+        }
+        before = *id;
+    }
+    const Described d(n, k, qtype);
+    for (const std::int32_t t : {1, 17, 512}) {
+        const auto c = ops::detail::linear_candidates(d.weight, ops::LinearPolicy::A16Only, t);
+        const std::string want = "owned:" + ops::detail::generic::format_label(qtype) + "." +
+                                 ops::detail::owned_launch_id(qtype, n, k, t).value_or("");
+        check(!c.empty() && c[0].id == want,
+              name + " T=" + std::to_string(t) + ": the owned candidate names its launch," +
+                  describe(c));
+    }
+}
+
 } // namespace
 
 int main() {
@@ -140,6 +177,14 @@ int main() {
     for (std::int32_t t = 1; t <= 512; ++t) {
         call(5120, 25600, t, ops::LinearPolicy::A16Only, "q8 5120x25600 sweep");
     }
+    // The other tables that name their launches: a registered shape of each (q4/q5/q6/bf16
+    // _dispatch.cpp kShapes).
+    table_ids(QType::Q4_G64_FP16, ops::detail::select_q4_a16_launch, 1024, 5120, "q4 1024x5120");
+    table_ids(QType::Q5_G64_FP16, ops::detail::select_q5_a16_launch, 5120, 17408, "q5 5120x17408");
+    table_ids(QType::Q6_G64_FP16, ops::detail::select_q6_a16_launch, 248320, 5120, "q6 248320x5120");
+    table_ids(QType::BF16, ops::detail::select_bf16_a16_launch, 5120, 6144, "bf16 5120x6144");
+    check(!ops::detail::owned_launch_id(QType::NVFP4, 5120, 5120, 1),
+          "a table that chooses inside its dispatch names no launch");
     // A fragment-order weight: dispatch_linear refuses it, so nothing is selected.
     {
         Described d(1024, 2048);
@@ -153,7 +198,7 @@ int main() {
         std::cerr << "linear candidates: " << failures << " failure(s)\n";
         return 1;
     }
-    std::cout << "linear candidates: the owned Q8 kernel and the generic route, one selected as "
-                 "dispatch_linear runs\n";
+    std::cout << "linear candidates: the owned kernels (Q8, Q4/Q5/Q6, BF16 named by launch) and the "
+                 "generic route, one selected as dispatch_linear runs\n";
     return 0;
 }

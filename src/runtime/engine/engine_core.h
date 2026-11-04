@@ -271,7 +271,8 @@ public:
             if (const auto& constraint = request->options.constraint.compiled) {
                 request->constraint.emplace(
                     constraint->compiled(), prompt_summary.starts_in_reasoning,
-                    prompt_summary.reasoning_open_allowed && !request->options.output.raw);
+                    prompt_summary.reasoning_open_allowed && !request->options.output.raw,
+                    !request->options.output.raw);
             }
         } catch (...) {
             release_reserved_capacity();

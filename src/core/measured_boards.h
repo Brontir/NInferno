@@ -22,7 +22,7 @@ inline constexpr Board kL4{8, 9, 58, 48, 300};
 inline constexpr Board kRtx4060Ti{8, 9, 34, 32, 288};
 inline constexpr Board kRtx3090{8, 6, 82, 6, 936};
 inline constexpr Board kA10{8, 6, 72, 6, 600};
-inline constexpr Board kA100Sxm40{8, 0, 108, 40, 1555};
+inline constexpr Board kA100Sxm40{8, 0, 108, 40, 1555.2};
 inline constexpr Board kRtx2080Ti{7, 5, 68, 5.5, 616};
 inline constexpr Board kV100Sxm2{7, 0, 80, 6, 900};
 

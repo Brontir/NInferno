@@ -172,7 +172,8 @@ if(NINFERNO_BUILD_APPS)
   include(GNUInstallDirs)
   # An installed executable also looks in <prefix>/lib for the shared libraries a release archive
   # carries beside it (tools/release/package.sh), before the system's.
-  foreach(app ninferno ninferno-serve ninferno-convert ninferno-perplexity ninferno-ui ninferno-dispatch)
+  foreach(app ninferno ninferno-serve ninferno-convert ninferno-perplexity ninferno-ui ninferno-dispatch
+          ninferno-connect)
     if(TARGET ${app})
       set_target_properties(${app} PROPERTIES INSTALL_RPATH "$ORIGIN/../${CMAKE_INSTALL_LIBDIR}")
       if(WIN32)
@@ -182,6 +183,15 @@ if(NINFERNO_BUILD_APPS)
   endforeach()
   install(TARGETS ninferno ninferno-serve ninferno-convert ninferno-perplexity ninferno-ui OPTIONAL
           RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  if(TARGET ninferno-connect)
+    install(TARGETS ninferno-connect RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  endif()
+  # Whether this tree builds ninferno-connect, for tools/release/package.sh (any generator).
+  if(TARGET ninferno-connect)
+    set(NINFERNO_HAS_CONNECT ON CACHE INTERNAL "this tree builds ninferno-connect")
+  else()
+    set(NINFERNO_HAS_CONNECT OFF CACHE INTERNAL "this tree builds ninferno-connect")
+  endif()
   install(DIRECTORY routes/ DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/routes)
   install(DIRECTORY tools/spec/rankings/ DESTINATION ${CMAKE_INSTALL_DATADIR}/ninferno/rankings
           FILES_MATCHING PATTERN "*.i64")

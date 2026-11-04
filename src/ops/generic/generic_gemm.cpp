@@ -351,11 +351,10 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
            aligned_to(w.qdata, 16);
 }
 
-// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits).
+// Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits):
+// r8_call_refusal names why not.
 bool r8_call(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
-    if (!allows_r8(w, policy)) return false;
-    if (tokens <= kR8DecodeTokens) return r8_fits(w.qtype, w.k, tokens);
-    return tokens <= r8_verify_widest(w.qtype) && r8_verify_takes_shape(w.qtype, w.n, w.k);
+    return r8_call_refusal(w, policy, tokens) == R8CallRefusal::None;
 }
 
 // The ggml block formats ggml's matrix kernel reads (ggml_mmq.h) in the layout NInferno stores
@@ -2376,78 +2375,317 @@ bool volta_tiled_format(QType qtype) {
     return !current_features().mma_tensor && volta_tiled_qtype(qtype);
 }
 
+std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept {
+    switch (why) {
+    case ScheduleRefusal::None: return "none";
+    case ScheduleRefusal::NotDeclared: return "not_declared";
+    case ScheduleRefusal::NotCompiled: return "not_compiled";
+    case ScheduleRefusal::Format: return "format";
+    case ScheduleRefusal::Instruction: return "instruction";
+    case ScheduleRefusal::Alignment: return "alignment";
+    case ScheduleRefusal::Extent: return "extent";
+    case ScheduleRefusal::CodecTile: return "codec_tile";
+    case ScheduleRefusal::Policy: return "policy";
+    case ScheduleRefusal::Resource: return "resource";
+    }
+    return "none";
+}
+
+std::string_view r8_call_refusal_name(R8CallRefusal why) noexcept {
+    switch (why) {
+    case R8CallRefusal::None: return "none";
+    case R8CallRefusal::NotAdmitted: return "not_admitted";
+    case R8CallRefusal::DecodeFit: return "decode_fit";
+    case R8CallRefusal::VerifyWidth: return "verify_width";
+    case R8CallRefusal::VerifyShape: return "verify_shape";
+    }
+    return "none";
+}
+
+R8CallRefusal r8_call_refusal(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
+    if (!allows_r8(w, policy)) return R8CallRefusal::NotAdmitted;
+    if (tokens <= kR8DecodeTokens) {
+        return r8_fits(w.qtype, w.k, tokens) ? R8CallRefusal::None : R8CallRefusal::DecodeFit;
+    }
+    if (tokens > r8_verify_widest(w.qtype)) return R8CallRefusal::VerifyWidth;
+    return r8_verify_takes_shape(w.qtype, w.n, w.k) ? R8CallRefusal::None
+                                                     : R8CallRefusal::VerifyShape;
+}
+
+ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
+    if (index < 0 || index >= r8_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w) || !r8_supports(w.qtype)) return ScheduleRefusal::Format;
+    if (!allows_a8(policy)) return ScheduleRefusal::Policy;
+    const Route route{Family::R8Mma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        !aligned_to(w.qdata, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % r8_k_values(w.qtype)) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
+ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
+    if (index < 0 || index >= w4a8_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w) || !w4a8_supports(w.qtype)) return ScheduleRefusal::Format;
+    const bool producer = w4a8_schedule_info(index).producers > 0;
+    if (producer && !w4a8_ws_supports(w.qtype)) return ScheduleRefusal::NotCompiled;
+    if (!w4a8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
+    if (!allows_a8(policy) ||
+        (w.qtype == QType::NVFP4 && !nvfp4_prefill_a8_policy(w.qtype, policy))) {
+        return ScheduleRefusal::Policy;
+    }
+    const Route route{Family::W4a8Mma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // The classic tiles read a ggml high plane a byte at a time; the producer tiles in vector
+    // words (route_admits), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
+    const bool high_off = w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr &&
+                          !aligned_to(w.qhigh, 16);
+    if (!aligned_to(w.qdata, 16) || (producer && high_off) ||
+        (producer && w.qtype == QType::GGML_IQ3_XXS && !aligned_to(w.qhigh, 8))) {
+        return ScheduleRefusal::Alignment;
+    }
+    if (!w4a8_k_admits(w.qtype, w.k)) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
+ScheduleRefusal rmma_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= rmma_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!rmma_schedule_launchable(index)) return ScheduleRefusal::NotCompiled;
+    if (!supports(w)) return ScheduleRefusal::Format;
+    // Whether the build holds the tile for the codec, ahead of the weight's own checks, so an
+    // alignment or extent refusal does not hide it (rmma_coverage counts compiled tiles by it).
+    const WeightCodec codec = codec_of(w);
+    const auto s            = rmma_schedule_info(index);
+    if (!rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k)) return ScheduleRefusal::CodecTile;
+    const Route route{Family::RegisterMma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off a 16-byte boundary (route_admits).
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % k_multiple(codec)) != 0) return ScheduleRefusal::Extent;
+    if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
+        codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
+        codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
+        codec == WeightCodec::U4ZpG64 ||
+        codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+        codec == WeightCodec::GgmlQ6K || codec == WeightCodec::GgmlQ3K ||
+        codec == WeightCodec::GgmlQ2K || codec == WeightCodec::GgmlIq4Xs ||
+        codec == WeightCodec::GgmlIq3Xxs || codec == WeightCodec::GgmlIq3S ||
+        codec == WeightCodec::GgmlQ40 || codec == WeightCodec::GgmlQ41 ||
+        codec == WeightCodec::GgmlQ50 || codec == WeightCodec::GgmlQ51 ||
+        codec == WeightCodec::GgmlIq4Nl || is_ggml_block(w.qtype)) {
+        return aligned_to(w.qdata, 16) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
+    }
+    return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
+}
+
+ScheduleRefusal tiled_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= tiled_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w)) return ScheduleRefusal::Format;
+    const WeightCodec codec = codec_of(w);
+    const bool cutlass_only = volta_cutlass_only(codec);
+    if (!cutlass_only && !tiled_takes(codec)) return ScheduleRefusal::Format;
+    // A CUTLASS-only format (volta_cutlass_only) runs no tile of its own: schedule 0 names it.
+    if (cutlass_only && index != 0) return ScheduleRefusal::CodecTile;
+    if (!cutlass_only && !tiled_fits(index, codec)) return ScheduleRefusal::Resource;
+    const Route route{Family::TiledMma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes where
+    // the tiles read them.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        (!cutlass_only && !aligned_to(w.qdata, 16))) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % 64) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
+ScheduleRefusal staged_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= staged_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w) || codec_of(w) != WeightCodec::Bf16) return ScheduleRefusal::Format;
+    if (!staged_fits(index) || !staged_device_fits(index)) return ScheduleRefusal::Resource;
+    const Route route{Family::StagedMma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off 16 bytes (route_admits; a BF16 weight has none), or
+    // the codes.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        !aligned_to(w.qdata, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % 64) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
+ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
+    if (index < 0 || index >= i8_schedule_count()) return ScheduleRefusal::NotDeclared;
+    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16,
+               q6 = w.qtype == QType::Q6_G64_FP16;
+    if (!supports(w) || !(q4 || q5 || q6)) return ScheduleRefusal::Format;
+    if (!i8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
+    if (!allows_a8(policy)) return ScheduleRefusal::Policy;
+    const Route route{Family::I8Mma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off 16 bytes (route_admits; a G64 weight has none), the
+    // codes or scales off 16 (one 16-byte copy per row), a Q5 / Q6 high plane off 8 / 16.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16) ||
+        (!q4 && !aligned_to(w.qhigh, q5 ? 8 : 16))) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % 512) != 0 || (w.padded_shape[1] % 512) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
+namespace {
+// The generic checks route_admits asks of every family but the scalar one: the generic path reads
+// the weight (Format), the device has the route's instructions, and a ggml high plane on 16
+// bytes. NotDeclared stands for none.
+ScheduleRefusal generic_refusal(Route route, const Weight& w) {
+    if (!supports(w)) return ScheduleRefusal::Format;
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    return ScheduleRefusal::NotDeclared;
+}
+} // namespace
+
+ScheduleRefusal w4a4_refusal(int index, const Weight& w, LinearPolicy policy) {
+    if (index < 0 || index >= w4a4_schedule_names()) return ScheduleRefusal::NotDeclared;
+    if (index >= w4a4_schedule_count()) return ScheduleRefusal::NotCompiled;
+    if (!supports(w) || w.qtype != QType::NVFP4 || !std::isfinite(w.input_scale_divisor) ||
+        w.input_scale_divisor <= 0.0F) {
+        return ScheduleRefusal::Format;
+    }
+    if (!allows_a4(policy)) return ScheduleRefusal::Policy;
+    const auto common =
+        generic_refusal(Route{Family::W4a4Mma, static_cast<std::uint8_t>(index)}, w);
+    return common == ScheduleRefusal::NotDeclared ? ScheduleRefusal::None : common;
+}
+
+ScheduleRefusal nvfp4_tiled_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= nvfp4_tiled_schedule_count()) return ScheduleRefusal::NotDeclared;
+    // The schedules parse on every build, but their kernels are 120a-only.
+    if (!kNativeNvfp4) return ScheduleRefusal::NotCompiled;
+    if (!supports(w) || w.qtype != QType::NVFP4) return ScheduleRefusal::Format;
+    const auto common =
+        generic_refusal(Route{Family::Nvfp4TiledMma, static_cast<std::uint8_t>(index)}, w);
+    if (common != ScheduleRefusal::NotDeclared) return common;
+    // supports() holds K to whole 64-value steps; a lane reads eight code bytes at once.
+    return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
+}
+
+ScheduleRefusal ggml_refusal(Family family, int index, const Weight& w, LinearPolicy policy) {
+    const bool matrix = family == Family::GgmlMmq;
+    if (index != 0 || (!matrix && family != Family::GgmlVec)) return ScheduleRefusal::NotDeclared;
+    if (!supports(w)) return ScheduleRefusal::Format;
+    const auto type = mmq_type(w);
+    if (!type || !(matrix ? ggml_mmq::matrix_supported(*type) : ggml_mmq::vec_supported(*type))) {
+        return ScheduleRefusal::Format;
+    }
+    // ggml_layout_admits: Q4_K / Q5_K as blocks, the others as planes, each plane it reads there.
+    const bool planes = w.qtype != QType::GGML_Q4_K && w.qtype != QType::GGML_Q5_K;
+    const auto bytes  = mmq_plane_bytes(w.qtype);
+    if (planes != (w.layout == QuantLayout::GgmlPlanes) || (bytes.high > 0 && w.qhigh == nullptr) ||
+        (bytes.scales > 0 && w.scales == nullptr)) {
+        return ScheduleRefusal::Format;
+    }
+    if (!allows_a8(policy)) return ScheduleRefusal::Policy;
+    const auto common = generic_refusal(Route{family, 0}, w);
+    if (common != ScheduleRefusal::NotDeclared) return common;
+    if (matrix && !ggml_mmq::device_supported()) return ScheduleRefusal::Instruction;
+    // ggml's loaders read every plane in vector words.
+    if (!aligned_to(w.qdata, 16) || (bytes.high > 0 && !aligned_to(w.qhigh, 16)) ||
+        (bytes.scales > 0 && !aligned_to(w.scales, 16))) {
+        return ScheduleRefusal::Alignment;
+    }
+    const auto multiple = matrix ? static_cast<std::int32_t>(ggml_mmq::kKMultiple)
+                                 : static_cast<std::int32_t>(ggml_block_values(w.qtype));
+    return (w.k % multiple) == 0 ? ScheduleRefusal::None : ScheduleRefusal::Extent;
+}
+
+bool ggml_mmq_admits(const Weight& w, LinearPolicy policy) { return mmq_admits(w, policy); }
+bool ggml_vec_admits(const Weight& w, LinearPolicy policy) { return vec_admits(w, policy); }
+
 bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
+    if (route.family == Family::RegisterMma) {
+        return rmma_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::R8Mma) {
+        return r8_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::W4a8Mma) {
+        return w4a8_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::TiledMma) {
+        return tiled_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::StagedMma) {
+        return staged_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::I8Mma) {
+        return i8_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::W4a4Mma) {
+        return w4a4_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::Nvfp4TiledMma) {
+        return nvfp4_tiled_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::GgmlMmq || route.family == Family::GgmlVec) {
+        return ggml_refusal(route.family, route.schedule, w, policy) == ScheduleRefusal::None;
+    }
     if (!supports(w)) return false;
     if (!has_features(current_features(), route_requires(route))) return false;
     // A ggml block format's high (sign / bit) plane off a 16-byte boundary (a view into a packed
     // buffer; a row view of one stays aligned, 32 bytes a row and 256 values): the kernels read it
-    // in vector words, all but the classic W4A8 tiles (one byte at a time) and the scalar path. The
-    // 2080 Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4 bytes off once the
-    // cost model's pick left the classic tile.
+    // in vector words, all but the classic W4A8 tiles (one byte at a time; w4a8_refusal) and the
+    // scalar path. The 2080 Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4
+    // bytes off once the cost model's pick left the classic tile.
     if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16) &&
-        route.family != Family::Scalar &&
-        !(route.family == Family::W4a8Mma && route.schedule < w4a8_schedule_count() &&
-          w4a8_schedule_info(route.schedule).producers == 0)) {
+        route.family != Family::Scalar) {
         return false;
     }
     switch (route.family) {
     case Family::Scalar:
         return true;
-    case Family::RegisterMma: {
-        if (route.schedule >= rmma_schedule_count()) return false;
-        const WeightCodec codec = codec_of(w);
-        if ((w.k % k_multiple(codec)) != 0) return false;
-        const auto s = rmma_schedule_info(route.schedule);
-        if (!rmma_schedule_launchable(route.schedule) ||
-            !rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k)) {
-            return false;
-        }
-        if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
-            codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
-            codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
-            codec == WeightCodec::U4ZpG64 ||
-            codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-            codec == WeightCodec::GgmlQ6K || codec == WeightCodec::GgmlQ3K ||
-            codec == WeightCodec::GgmlQ2K || codec == WeightCodec::GgmlIq4Xs ||
-            codec == WeightCodec::GgmlIq3Xxs || codec == WeightCodec::GgmlIq3S ||
-            codec == WeightCodec::GgmlQ40 || codec == WeightCodec::GgmlQ41 ||
-            codec == WeightCodec::GgmlQ50 || codec == WeightCodec::GgmlQ51 ||
-            codec == WeightCodec::GgmlIq4Nl || is_ggml_block(w.qtype)) {
-            return aligned_to(w.qdata, 16);
-        }
-        return aligned_to(w.qdata, 8);
-    }
-    case Family::W4a4Mma:
-        return route.schedule < w4a4_schedule_count() && allows_w4a4(w, policy);
-    case Family::TiledMma:
-        // A CUTLASS-only format (volta_cutlass_only) runs no tile of its own: schedule 0 names it.
-        if (volta_cutlass_only(codec_of(w))) { return route.schedule == 0 && (w.k % 64) == 0; }
-        return route.schedule < tiled_schedule_count() && tiled_takes(codec_of(w)) &&
-               tiled_fits(route.schedule, codec_of(w)) && (w.k % 64) == 0 &&
-               aligned_to(w.qdata, 16);
-    case Family::W4a8Mma:
-        return route.schedule < w4a8_schedule_count() && w4a8_fits(route.schedule, w.qtype) &&
-               allows_w4a8(w, policy) &&
-               (w4a8_schedule_info(route.schedule).producers == 0 || w4a8_ws_admits(w));
-    case Family::StagedMma:
-        return route.schedule < staged_schedule_count() && staged_fits(route.schedule) &&
-               staged_device_fits(route.schedule) && codec_of(w) == WeightCodec::Bf16 &&
-               (w.k % 64) == 0 && aligned_to(w.qdata, 16);
-    case Family::Nvfp4TiledMma:
-        // supports() holds K to whole 64-value steps; a lane reads eight code bytes at once. The
-        // schedules parse on every build, but their kernels are 120a-only: elsewhere the tuner
-        // and the route tables must not reach a launch that throws.
-        return kNativeNvfp4 && route.schedule < nvfp4_tiled_schedule_count() &&
-               w.qtype == QType::NVFP4 && aligned_to(w.qdata, 8);
-    case Family::R8Mma:
-        return route.schedule < r8_schedule_count() && allows_r8(w, policy);
-    case Family::GgmlMmq:
-        return route.schedule == 0 && mmq_admits(w, policy);
+    case Family::RegisterMma: // rmma_refusal, above
+        return false;
+    case Family::W4a4Mma: // w4a4_refusal, above
+        return false;
+    case Family::TiledMma: // tiled_refusal, above
+        return false;
+    case Family::W4a8Mma: // w4a8_refusal, above
+        return false;
+    case Family::StagedMma: // staged_refusal, above
+        return false;
+    case Family::Nvfp4TiledMma: // nvfp4_tiled_refusal, above
+        return false;
+    case Family::R8Mma: // r8_refusal, above
+        return false;
+    case Family::GgmlMmq: // ggml_refusal, above
     case Family::GgmlVec:
-        return route.schedule == 0 && vec_admits(w, policy);
-    case Family::I8Mma:
-        return route.schedule < i8_schedule_count() && allows_i8(w, policy) &&
-               i8_fits(route.schedule, w.qtype);
+        return false;
+    case Family::I8Mma: // i8_refusal, above
+        return false;
     }
     return false;
 }
@@ -2560,28 +2798,39 @@ I8ScheduleInfo i8_schedule_info(int index) {
     return kI8Schedules[index];
 }
 
+namespace {
 // The I8 tile of a call: the one with the fewest tile-waves weighted by its tile's work over its
-// share of the int8 peak (kI8Eff): the largest tile while its grid fills the SMs, a smaller one
-// where it would leave them idle. Every schedule gives the same bytes, so the choice may vary
-// with T.
-std::optional<Route> i8_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
-    const double sets       = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-    const double sms        = std::max(sm_count(), 1);
-    std::optional<Route> best;
-    double best_cost = 0;
+// share of the int8 peak (kI8Eff), of those that fit the build: the largest tile while its grid
+// fills the SMs, a smaller one where it would leave them idle. Every schedule gives the same
+// bytes, so the choice may vary with T. -1 where none fits.
+int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens) {
+    const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+    const double sms  = std::max(sm_count(), 1);
+    int best          = -1;
+    double best_cost  = 0;
     for (int i = 0; i < i8_schedule_count(); ++i) {
-        const Route r{Family::I8Mma, static_cast<std::uint8_t>(i)};
-        if (!route_admits(r, weight, problem.policy)) continue;
+        if (!i8_fits(i, qtype)) continue;
         const auto s       = kI8Schedules[i];
         const double ctas  = std::ceil(problem.n * sets / s.block_n) * std::ceil(tokens / double(s.block_m));
         const double waves = std::ceil(ctas / sms);
         const double cost  = waves * s.block_m * s.block_n / kI8Eff[i];
-        if (!best || cost < best_cost) {
-            best      = r;
+        if (best < 0 || cost < best_cost) {
+            best      = i;
             best_cost = cost;
         }
     }
     return best;
+}
+} // namespace
+
+// i8_pick's tile where the weight is admitted to it. The schedules differ in what they admit only
+// by i8_fits (i8_refusal), so this is the best tile of those the weight is admitted to.
+std::optional<Route> i8_route(const Problem& problem, const Weight& weight, std::int32_t tokens) {
+    const int pick = i8_pick(problem, weight.qtype, tokens);
+    if (pick < 0) return std::nullopt;
+    const Route r{Family::I8Mma, static_cast<std::uint8_t>(pick)};
+    if (!route_admits(r, weight, problem.policy)) return std::nullopt;
+    return r;
 }
 
 // The heuristic's W4A8 tile, else the first schedule that fits the build (Turing: the 128x128
@@ -3952,6 +4201,161 @@ Route workspace_free_route(Route selected, const Problem& problem, const Weight&
             weight, tokens, prefill);
     }
     return selected;
+}
+
+FamilyCoverage rmma_coverage(const Problem& problem, const Weight& w, std::int32_t tokens,
+                             bool prefill_band) {
+    FamilyCoverage c;
+    c.declared = rmma_schedule_count();
+    // Compiled is the build's for the weight's codec, whatever else refuses the weight (a
+    // malformed layout refuses every schedule as Format): none where the format has no codec.
+    std::optional<WeightCodec> codec;
+    try {
+        codec = codec_of(w);
+    } catch (const std::exception&) {
+    }
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = rmma_refusal(i, w);
+        c.schedules.push_back({i, why});
+        const auto s = rmma_schedule_info(i);
+        c.compiled += rmma_schedule_launchable(i) && codec.has_value() &&
+                      rmma_tile_compiled(*codec, s.m_tiles, s.n_tiles, w.k);
+        c.legal += why == ScheduleRefusal::None;
+    }
+    c.heuristic         = heuristic_rmma(problem, tokens, prefill_band);
+    c.heuristic_refusal = rmma_refusal(c.heuristic, w);
+    return c;
+}
+
+FamilyCoverage tiled_coverage(const Weight& w) {
+    FamilyCoverage c;
+    c.declared = tiled_schedule_count();
+    // What the build holds follows from the format's codec alone, whether or not this weight is
+    // one the generic path reads (its schedules then refuse for format).
+    bool cutlass_only = false, takes = false;
+    WeightCodec codec{};
+    try {
+        codec        = codec_of(w);
+        cutlass_only = volta_cutlass_only(codec);
+        takes        = tiled_takes(codec);
+    } catch (const std::exception&) {} // a format with no codec: nothing compiled
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = tiled_refusal(i, w);
+        c.schedules.push_back({i, why});
+        c.compiled += takes || (cutlass_only && i == 0);
+        c.legal += why == ScheduleRefusal::None;
+        if (c.heuristic < 0 && (cutlass_only ? i == 0 : takes && tiled_fits(i, codec))) {
+            c.heuristic         = i;
+            c.heuristic_refusal = why;
+        }
+    }
+    return c;
+}
+
+FamilyCoverage other_family_coverage(Family family, const Weight& w, LinearPolicy policy) {
+    FamilyCoverage c;
+    const bool nvfp4 = w.qtype == QType::NVFP4;
+    switch (family) {
+    case Family::W4a4Mma:
+        c.declared = w4a4_schedule_names();
+        for (int i = 0; i < c.declared; ++i) {
+            const ScheduleRefusal why = w4a4_refusal(i, w, policy);
+            c.schedules.push_back({i, why});
+            c.compiled += nvfp4 && i < w4a4_schedule_count();
+            c.legal += why == ScheduleRefusal::None;
+        }
+        return c;
+    case Family::Nvfp4TiledMma:
+        c.declared = nvfp4_tiled_schedule_count();
+        for (int i = 0; i < c.declared; ++i) {
+            const ScheduleRefusal why = nvfp4_tiled_refusal(i, w);
+            c.schedules.push_back({i, why});
+            c.compiled += nvfp4 && kNativeNvfp4;
+            c.legal += why == ScheduleRefusal::None;
+        }
+        return c;
+    case Family::GgmlMmq:
+    case Family::GgmlVec: {
+        c.declared               = 1;
+        const ScheduleRefusal why = ggml_refusal(family, 0, w, policy);
+        c.schedules.push_back({0, why});
+        const auto type = mmq_type(w);
+        c.compiled = type && (family == Family::GgmlMmq ? ggml_mmq::matrix_supported(*type)
+                                                        : ggml_mmq::vec_supported(*type));
+        c.legal    = why == ScheduleRefusal::None;
+        return c;
+    }
+    default:
+        return c;
+    }
+}
+
+FamilyCoverage i8_coverage(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    FamilyCoverage c;
+    c.declared       = i8_schedule_count();
+    const bool reads = w.qtype == QType::Q4_G64_FP16 || w.qtype == QType::Q5_G64_FP16 ||
+                       w.qtype == QType::Q6_G64_FP16;
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = i8_refusal(i, w, problem.policy);
+        c.schedules.push_back({i, why});
+        c.compiled += reads;
+        c.legal += why == ScheduleRefusal::None;
+    }
+    if (reads) {
+        c.heuristic = i8_pick(problem, w.qtype, tokens);
+        if (c.heuristic >= 0) c.heuristic_refusal = i8_refusal(c.heuristic, w, problem.policy);
+    }
+    return c;
+}
+
+FamilyCoverage staged_coverage(const Weight& w) {
+    FamilyCoverage c;
+    c.declared       = staged_schedule_count();
+    const bool reads = w.qtype == QType::BF16; // the format alone, whatever the weight
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = staged_refusal(i, w);
+        c.schedules.push_back({i, why});
+        c.compiled += reads;
+        c.legal += why == ScheduleRefusal::None;
+        if (c.heuristic < 0 && reads && staged_fits(i) && staged_device_fits(i)) {
+            c.heuristic         = i;
+            c.heuristic_refusal = why;
+        }
+    }
+    return c;
+}
+
+FamilyCoverage w4a8_coverage(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    FamilyCoverage c;
+    c.declared       = w4a8_schedule_count();
+    const bool reads = w4a8_supports(w.qtype);
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = w4a8_refusal(i, w, problem.policy);
+        c.schedules.push_back({i, why});
+        c.compiled += reads && (w4a8_schedule_info(i).producers == 0 || w4a8_ws_supports(w.qtype));
+        c.legal += why == ScheduleRefusal::None;
+    }
+    c.heuristic         = heuristic_w4a8(problem, w, tokens);
+    c.heuristic_refusal = w4a8_refusal(c.heuristic, w, problem.policy);
+    return c;
+}
+
+R8Coverage r8_coverage(const Problem& problem, const Weight& w, std::int32_t tokens) {
+    R8Coverage r;
+    FamilyCoverage& c = r.family;
+    c.declared        = r8_schedule_count();
+    const bool reads  = r8_supports(w.qtype);
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = r8_refusal(i, w, problem.policy);
+        c.schedules.push_back({i, why});
+        c.compiled += reads;
+        c.legal += why == ScheduleRefusal::None;
+    }
+    c.heuristic             = heuristic_r8(problem, tokens);
+    c.heuristic_refusal     = r8_refusal(c.heuristic, w, problem.policy);
+    r.call                  = r8_call_refusal(w, problem.policy, tokens);
+    r.prequantized_compiled = r8_verify_compiled(w.qtype);
+    return r;
 }
 
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {

@@ -9,6 +9,7 @@
 // CPU.
 
 #include "product/choice/choice.h"
+#include "product/choice/choice_replay.h"
 
 #include <nlohmann/json.hpp>
 
@@ -1860,6 +1861,126 @@ void lent_generation_does_not_decide(const json& fixture) {
           "the RTX 4090: the switches by worth");
 }
 
+// #304: a choice made again from its record alone. On every fixture card, for the dense 9B and the
+// MoE 35B with its two measured drafters, at a short and a long context, with and without a pin:
+// the record (written as text and read back) replays to the same choice, every scored candidate
+// alike; a record lacking a value it is asked is incomplete, never a guess; a record of another
+// schema is refused.
+void choices_replay(const json& fixture) {
+    std::vector<std::pair<std::string, Bench>> benches;
+    for (const auto& [name, unused] : fixture.at("cards").items()) {
+        (void)unused;
+        benches.emplace_back(name + ", Qwen3.5-9B", nine_b(fixture, name));
+        const json& m35 = fixture.at("models").at("Qwen3.6-35B-A3B");
+        Bench moe{model_of(m35), card_of(fixture.at("cards").at(name)), {}};
+        moe.quants.push_back(quant_of("UD-IQ3_XXS", m35.at("quants").at("UD-IQ3_XXS")));
+        moe.model.drafters        = {{"dflash:7", "dflash", 2.5, 2, "measured"}, {"mtp:4", "mtp", 1.9, 2, "measured"}};
+        moe.model.default_drafter = 2;
+        // A load table too: its bounds go through the record.
+        moe.model.drafters[0].load = {{4, 1.6, 3, true, true}, {16, 1.2, 1, true, false}};
+        benches.emplace_back(name + ", Qwen3.6-35B-A3B", moe);
+    }
+    int replays = 0;
+    for (const auto& [label, b] : benches) {
+        const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+        for (const std::uint32_t context : {4096U, 131072U}) {
+            for (const bool pinned : {false, true}) {
+                ch::Task task;
+                task.contexts = {context, context / 2};
+                ch::Pins pins;
+                if (pinned) {
+                    pins.kv          = KvCacheStorage::BFloat16;
+                    pins.activations = ActivationMode::Fast;
+                }
+                const ch::ChoiceRecord record = ch::record_choice(
+                    b.model, b.card, b.quants[0], allowed, pins, task, oracle(b, 40e9), ch::Gates{true, true});
+                const ch::Choice direct = ch::choose(b.model, b.card, b.quants[0], allowed, pins, task,
+                                                     oracle(b, 40e9), ch::Gates{true, true});
+                const auto read_back = nlohmann::ordered_json::parse(record.inputs.dump());
+                const ch::Choice again = ch::replay_choice(read_back);
+                ++replays;
+                check(ch::choice_summary(record.choice) == ch::choice_summary(direct) &&
+                          ch::choice_summary(again) == ch::choice_summary(direct),
+                      label + ", " + std::to_string(context) + (pinned ? " pinned" : "") +
+                          ": the record replays to the same choice");
+            }
+        }
+    }
+    check(replays == static_cast<int>(benches.size()) * 4, "every bench replayed");
+    // Incomplete: a candidate's own context the record lacks.
+    const Bench b = nine_b(fixture, "RTX 4090");
+    const ch::Allowed allowed = ch::allowed_axes(b.model, KvCacheStorage::Int8Group64);
+    ch::ChoiceRecord record = ch::record_choice(b.model, b.card, b.quants[0], allowed, {}, {}, oracle(b, 40e9),
+                                                ch::Gates{true, true});
+    auto lacking = record.inputs;
+    lacking["own_context"].erase(lacking["own_context"].begin());
+    bool incomplete = false;
+    try {
+        (void)ch::replay_choice(lacking);
+    } catch (const ch::ReplayIncomplete&) { incomplete = true; }
+    check(incomplete, "a record lacking a candidate's own context is incomplete");
+    auto other = record.inputs;
+    other["schema"] = "ninferno-choice-replay/0";
+    bool refused = false;
+    try {
+        (void)ch::replay_choice(other);
+    } catch (const std::invalid_argument&) { refused = true; }
+    check(refused, "a record of another schema is refused");
+    // Malformed, not wrapped or thrown past the contract: a negative own context, a schema that
+    // is no string.
+    for (const auto& corrupt : {[&] {
+                                    auto r = record.inputs;
+                                    r["own_context"].begin().value() = -1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r      = record.inputs;
+                                    r["schema"] = 1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                        = record.inputs;
+                                    r["model"]["default_drafter"] = -1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r = record.inputs;
+                                    r["model"]["kv_bytes_per_token"]["0junk"] = 1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r = record.inputs;
+                                    r["model"]["state_bytes"]["99"] = 1;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                   = record.inputs;
+                                    r["task"]["contexts"]    = nullptr;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                     = record.inputs;
+                                    r["model"]["linears"]      = 7;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                       = record.inputs;
+                                    r["allowed"]["automatic_kv"] = 4294967296LL;
+                                    return r;
+                                }(),
+                                [&] {
+                                    auto r                = record.inputs;
+                                    r["card"]["fp4"]      = 1;
+                                    return r;
+                                }()}) {
+        bool malformed = false;
+        try {
+            (void)ch::replay_choice(corrupt);
+        } catch (const std::invalid_argument&) { malformed = true; }
+        check(malformed, "a malformed record is refused as invalid_argument");
+    }
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -1897,6 +2018,7 @@ int main() {
     load_bounds_the_gain(fixture);
     axis_order_does_not_decide(fixture);
     board_facts_do_not_decide(fixture);
+    choices_replay(fixture);
     resolution_labels(fixture);
     if (failures != 0) {
         std::cerr << failures << " failure(s)\n";

@@ -21,8 +21,11 @@
 #include <algorithm>
 #include <cstdint>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
+#include <vector>
 
 namespace ninferno::ops {
 namespace detail {
@@ -95,8 +98,24 @@ bool side_by_side_admits(const Weight& weight, LinearPolicy policy, std::int32_t
     }
     const generic::Problem problem{weight.qtype, policy, weight.n, weight.k,
                                    generic::Epilogue::Store};
-    const generic::Family family =
-        generic::select_route(problem, weight, tokens, prefill_routes_active()).family;
+    const generic::Route selected =
+        generic::select_route(problem, weight, tokens, prefill_routes_active());
+    // What the launch runs and whether it joins (#309): run_route's own resolution and overlap
+    // rule, so the admission and the launch cannot disagree. x is the pass's contiguous
+    // activation, and the projection sizes its workspace for the slices it joins.
+    const generic::CallLayout layout{.x_aligned16    = true,
+                                     .ldx            = weight.k,
+                                     .tokens         = tokens,
+                                     .rows           = weight.n,
+                                     .segments       = 1,
+                                     .epilogue       = generic::Epilogue::Store,
+                                     .workspace_free = std::numeric_limits<std::size_t>::max()};
+    const generic::ResolvedRoute resolved = generic::resolve_route(selected, weight, layout);
+    if (!generic::launch_overlap(resolved, generic::Epilogue::Store, tokens, true, false, true)
+             .joins()) {
+        return false;
+    }
+    const generic::Family family = resolved.executed.family;
     // The R8 decode kernel joins in every format it reads (a GGUF layer's q/k/v and gate).
     if (family == generic::Family::R8Mma) { return true; }
     const generic::WeightCodec codec = generic::codec_of(weight);
@@ -152,6 +171,37 @@ const char* linear_claim_name(LinearClaim claim) {
     return "unknown";
 }
 
+namespace {
+// The launch a shape-owned table selects at width t, named as q8_launch_id names Q8's: the shape,
+// and the launch's number in the order the widths 1..t first select its launches (they are
+// template instances in each shape's translation unit, with no name here).
+template <class Select>
+std::string table_launch_id(Select select, std::int32_t n, std::int32_t k, std::int32_t t) {
+    const auto at = select(n, k, t); // a function pointer
+    using Launch  = std::remove_cv_t<decltype(at)>;
+    std::vector<Launch> seen;
+    for (std::int32_t width = 1; width <= t; ++width) {
+        const auto launch = select(n, k, width);
+        if (std::find(seen.begin(), seen.end(), launch) == seen.end()) { seen.push_back(launch); }
+        if (launch == at) { break; }
+    }
+    const auto index = std::find(seen.begin(), seen.end(), at) - seen.begin();
+    return "n" + std::to_string(n) + "_k" + std::to_string(k) + ".launch" + std::to_string(index);
+}
+} // namespace
+
+std::optional<std::string> owned_launch_id(QType qtype, std::int32_t n, std::int32_t k,
+                                           std::int32_t t) {
+    switch (qtype) {
+    case QType::Q8_G32_FP16: return q8_launch_id(n, k, t);
+    case QType::Q4_G64_FP16: return table_launch_id(select_q4_a16_launch, n, k, t);
+    case QType::Q5_G64_FP16: return table_launch_id(select_q5_a16_launch, n, k, t);
+    case QType::Q6_G64_FP16: return table_launch_id(select_q6_a16_launch, n, k, t);
+    case QType::BF16: return table_launch_id(select_bf16_a16_launch, n, k, t);
+    default: return std::nullopt; // NVFP4 and FP8 choose inside their dispatch
+    }
+}
+
 std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy policy,
                                                std::int32_t tokens) {
     using Status = LinearCandidate::Status;
@@ -179,8 +229,8 @@ std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy pol
     if (!registered) {
         owned.why = "no shape-owned kernel for this [N,K]";
     } else {
-        if (w.qtype == QType::Q8_G32_FP16) {
-            owned.id += "." + q8_launch_id(w.n, w.k, tokens);
+        if (const auto launch = owned_launch_id(w.qtype, w.n, w.k, tokens)) {
+            owned.id += "." + *launch;
         }
         owned.status = runs_owned ? Status::Selected : Status::Inadmissible;
         if (!runs_owned) { owned.why = linear_claim_name(decision.claim); }
