@@ -457,7 +457,8 @@ void test_properties() {
                                     rt::dry_run_plan(facts, measured, options);
                                 for (const auto& [sms, pci] :
                                      {std::pair{24, 0x2786U}, std::pair{170, 0x2B85U}}) {
-                                    for (const auto* base : {&device, &measured}) {
+                                    for (const rt::PlanDeviceFacts* base :
+                                         {&device, static_cast<const rt::PlanDeviceFacts*>(&measured)}) {
                                         rt::PlanDeviceFacts other = *base;
                                         other.sms                 = sms;
                                         other.pci_device_id       = pci;
