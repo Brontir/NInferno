@@ -21,6 +21,16 @@ __global__ void read_flush_kernel(const uint4* p, std::size_t n, unsigned* never
     if (acc == 0x9e3779b9U && never != nullptr) { *never = acc; }
 }
 
+// One thread holding the stream for `ns` nanoseconds (the GPU's global timer), outside the timed
+// window: the host enqueues a sample's calls meanwhile (TuneTimer::set_lead_us).
+__global__ void lead_kernel(unsigned long long ns) {
+    unsigned long long t0 = 0, t = 0;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t0));
+    do {
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t));
+    } while (t - t0 < ns);
+}
+
 } // namespace
 
 TuneTimer::TuneTimer(cudaStream_t stream, int warm, int reps)
@@ -56,6 +66,12 @@ void TuneTimer::flush() {
     CUDA_CHECK(cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, device));
     read_flush_kernel<<<sms * 4, 512, 0, stream_>>>(static_cast<const uint4*>(flush_.p),
                                                     flush_.bytes / 16, nullptr);
+    CUDA_CHECK(cudaGetLastError());
+}
+
+void TuneTimer::lead() {
+    if (lead_us_ <= 0.0) { return; }
+    lead_kernel<<<1, 1, 0, stream_>>>(static_cast<unsigned long long>(lead_us_ * 1000.0));
     CUDA_CHECK(cudaGetLastError());
 }
 
