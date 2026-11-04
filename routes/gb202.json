@@ -1,4 +1,15 @@
 {
+ "schema": "ninferno-route-table/1",
+ "gpu": {
+  "board": {
+   "cc": 120,
+   "dram_gbps": 1792.0,
+   "l2_mib": 96.0,
+   "sms": 170
+  },
+  "class": "gb202",
+  "name": "NVIDIA GeForce RTX 5090"
+ },
  "entries": [
   {
    "bands": [
@@ -11871,15 +11882,72 @@
    ]
   }
  ],
- "gpu": {
-  "board": {
-   "cc": 120,
-   "dram_gbps": 1792.0,
-   "l2_mib": 96.0,
-   "sms": 170
-  },
-  "class": "gb202",
-  "name": "NVIDIA GeForce RTX 5090"
- },
- "schema": "ninferno-route-table/1"
+ "moe": [
+  {
+   "format": "nvfp4",
+   "experts": 128,
+   "top_k": 8,
+   "hidden": 2048,
+   "inter": 768,
+   "prefill": "rmma.m1.n8.w4x1|rmma.m1.n4.w4x1",
+   "tuned_on": "nvidia/Qwen3-30B-A3B-NVFP4",
+   "evidence_us": [
+    [
+     17,
+     394.24,
+     349.18
+    ],
+    [
+     32,
+     489.44,
+     430.08
+    ],
+    [
+     64,
+     557.02,
+     489.47
+    ],
+    [
+     128,
+     561.15,
+     494.59
+    ],
+    [
+     256,
+     570.34,
+     502.78
+    ],
+    [
+     512,
+     583.71,
+     536.58
+    ],
+    [
+     1024,
+     718.82,
+     675.84
+    ],
+    [
+     2048,
+     1124.32,
+     1114.14
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x4|rmma.m1.n1.w1x4"
+    ]
+   ],
+   "evidence_decode_us": [
+    [
+     1,
+     55.3,
+     54.27
+    ]
+   ]
+  }
+ ],
+ "moe_note": "moe: the generic MoE Op (ops/moe) per exact layer; \"prefill\" serves every call of 17 tokens or more under the prefill profile, chosen from ninferno_moe_bench --plans sweep --prefill as the token-invariant plan with the lowest geometric mean of time over the best plan at T = 17..2048; evidence_us rows are [T, default plan us, this plan us], median of the bench. Decode keeps the default plans (within 0-7 %). \"bands\" [1, 1]: the fastest plan of ninferno_moe_bench --plans sweep at T = 1, kept where ninferno-dense decode gains; evidence_decode_us rows are [T, default plan us, this plan us]. The gpt-oss MXFP4 layer's prefill plan (rmma, measured before the grouped W4A8 existed) is gone: as a token-invariant table plan it kept the experts on the register MMA; the heuristic's grouped W4A8 prefills 1K/4K/16K at chunk 1024 in 25.3K/24.4K/20.8K tok/s against 21.2K/20.5K/17.8K (+17..19 %), at chunk 4096 +20..25 %, decode equal (RTX 5090, A B B A)."
 }
