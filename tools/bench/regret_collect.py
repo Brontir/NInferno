@@ -83,6 +83,9 @@ def collect(selected_csvs, pass_csvs, board, model, revision, build_id, holdout,
         raise ValueError("at least one --routes pass")
     if isinstance(selected_csvs, (str, Path)):
         selected_csvs = [selected_csvs]
+    if len(selected_csvs) != len(pass_csvs):
+        raise ValueError(f"{len(selected_csvs)} --selected files for {len(pass_csvs)} passes: "
+                         "one per pass")
     selected = read_selections(selected_csvs)
     passes = {}
     for i, path in enumerate(pass_csvs, 1):
