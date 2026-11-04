@@ -2512,6 +2512,24 @@ ScheduleRefusal tiled_refusal(int index, const Weight& w) {
     return ScheduleRefusal::None;
 }
 
+ScheduleRefusal staged_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= staged_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w) || codec_of(w) != WeightCodec::Bf16) return ScheduleRefusal::Format;
+    if (!staged_fits(index) || !staged_device_fits(index)) return ScheduleRefusal::Resource;
+    const Route route{Family::StagedMma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off 16 bytes (route_admits; a BF16 weight has none), or
+    // the codes.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        !aligned_to(w.qdata, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % 64) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
 bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     if (route.family == Family::RegisterMma) {
         return rmma_refusal(route.schedule, w) == ScheduleRefusal::None;
@@ -2524,6 +2542,9 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     }
     if (route.family == Family::TiledMma) {
         return tiled_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::StagedMma) {
+        return staged_refusal(route.schedule, w) == ScheduleRefusal::None;
     }
     if (!supports(w)) return false;
     if (!has_features(current_features(), route_requires(route))) return false;
@@ -2547,10 +2568,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
         return false;
     case Family::W4a8Mma: // w4a8_refusal, above
         return false;
-    case Family::StagedMma:
-        return route.schedule < staged_schedule_count() && staged_fits(route.schedule) &&
-               staged_device_fits(route.schedule) && codec_of(w) == WeightCodec::Bf16 &&
-               (w.k % 64) == 0 && aligned_to(w.qdata, 16);
+    case Family::StagedMma: // staged_refusal, above
+        return false;
     case Family::Nvfp4TiledMma:
         // supports() holds K to whole 64-value steps; a lane reads eight code bytes at once. The
         // schedules parse on every build, but their kernels are 120a-only: elsewhere the tuner
@@ -4111,6 +4130,23 @@ FamilyCoverage tiled_coverage(const Weight& w) {
         c.compiled += takes || (cutlass_only && i == 0);
         c.legal += why == ScheduleRefusal::None;
         if (c.heuristic < 0 && (cutlass_only ? i == 0 : takes && tiled_fits(i, codec_of(w)))) {
+            c.heuristic         = i;
+            c.heuristic_refusal = why;
+        }
+    }
+    return c;
+}
+
+FamilyCoverage staged_coverage(const Weight& w) {
+    FamilyCoverage c;
+    c.declared       = staged_schedule_count();
+    const bool reads = supports(w) && codec_of(w) == WeightCodec::Bf16;
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = staged_refusal(i, w);
+        c.schedules.push_back({i, why});
+        c.compiled += reads;
+        c.legal += why == ScheduleRefusal::None;
+        if (c.heuristic < 0 && reads && staged_fits(i) && staged_device_fits(i)) {
             c.heuristic         = i;
             c.heuristic_refusal = why;
         }

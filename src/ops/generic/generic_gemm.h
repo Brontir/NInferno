@@ -472,9 +472,9 @@ struct Problem {
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
 // in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
 // does not allow the family's activations (R8: int8; r8_refusal asks it after Format, before
-// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8, tiled). W4A8 asks
-// in its own order (w4a8_refusal): Format before NotCompiled, Resource and Policy before
-// Instruction; the tiled family Resource before Instruction (tiled_refusal).
+// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8, tiled, staged).
+// W4A8 asks in its own order (w4a8_refusal): Format before NotCompiled, Resource and Policy
+// before Instruction; the tiled and staged families Resource before Instruction.
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
                              Alignment, Extent, Policy, Resource };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
@@ -560,6 +560,19 @@ struct R8Coverage {
 // format; -1 where none does), with its refusal. The family takes no policy (f16 activations) and
 // its tile does not depend on the call's width.
 [[nodiscard]] FamilyCoverage tiled_coverage(const Weight& weight);
+
+// Staged schedule `index` for `weight`: route_admits' own rule for the family (it decides by
+// this). Not declared; format (the generic path does not read it, or it is not BF16); resource
+// (the tile's shared memory past the build's block, staged_fits, or the device's, the opt-in
+// limit an sm_80 build meets on a 99 KiB part, staged_device_fits); instruction; alignment (the
+// codes off 16 bytes); extent (K not whole 64-value steps).
+[[nodiscard]] ScheduleRefusal staged_refusal(int index, const Weight& weight);
+// The staged family's coverage of a weight (#307): every schedule with its refusal (compiled:
+// every schedule for a BF16 weight), and the family's pick under the prefill profile, the first
+// schedule whose tiles fit the build and the device (-1 where none does), with its refusal.
+// Outside the profile the pick depends on the call (staged_speed_route). No policy (BF16
+// activations).
+[[nodiscard]] FamilyCoverage staged_coverage(const Weight& weight);
 
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below

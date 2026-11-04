@@ -181,6 +181,64 @@ void check_tiled(const Weight& w, const DeviceFeatures& features, const std::str
     }
 }
 
+// The staged family's admission as route_admits decided it before staged_refusal, written apart
+// from it: the generic path reads the weight, the board has the tile's instructions, a ggml high
+// plane on 16 bytes, the tile within the build's and the device's shared memory, a BF16 weight, K
+// in 64-value steps and 16-byte codes.
+bool staged_old_rule(int index, const Weight& w, const DeviceFeatures& features) {
+    const generic::Route r{generic::Family::StagedMma, static_cast<std::uint8_t>(index)};
+    if (!generic::supports(w) || !has_features(features, generic::route_requires(r))) return false;
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned(w.qhigh, 16)) {
+        return false;
+    }
+    return index < generic::staged_schedule_count() && generic::staged_fits(index) &&
+           generic::staged_device_fits(index) &&
+           generic::codec_of(w) == generic::WeightCodec::Bf16 && (w.k % 64) == 0 &&
+           aligned(w.qdata, 16);
+}
+
+// The staged family's coverage of `w` (#307): each schedule's refusal as route_admits decides it
+// and as the old rule did; the counts; codes 8 bytes off refuse every schedule that admitted the
+// weight for alignment.
+template <class Fail>
+void check_staged(const Weight& w, const DeviceFeatures& features, const std::string& where,
+                  std::map<std::string, int>& counts, Fail&& fail) {
+    const auto c = generic::staged_coverage(w);
+    int legal    = 0;
+    for (const auto& s : c.schedules) {
+        const generic::Route r{generic::Family::StagedMma, static_cast<std::uint8_t>(s.schedule)};
+        const bool admits = generic::route_admits(r, w, LinearPolicy::A16Only);
+        ++counts[std::string(generic::schedule_refusal_name(s.refusal))];
+        legal += s.refusal == generic::ScheduleRefusal::None;
+        if (admits != (s.refusal == generic::ScheduleRefusal::None) ||
+            admits != staged_old_rule(s.schedule, w, features)) {
+            fail(where + " " + generic::route_name(r) + ": " +
+                 std::string(generic::schedule_refusal_name(s.refusal)) +
+                 ", which route_admits or the old rule decides otherwise");
+        }
+    }
+    if (c.declared != generic::staged_schedule_count() || c.legal != legal ||
+        (c.compiled != 0 && c.compiled != c.declared) ||
+        (c.heuristic >= 0 && c.heuristic_refusal != c.schedules[c.heuristic].refusal)) {
+        fail(where + ": staged counts declared " + std::to_string(c.declared) + ", compiled " +
+             std::to_string(c.compiled) + ", legal " + std::to_string(c.legal));
+    }
+    if (c.heuristic >= 0 && c.heuristic_refusal != generic::ScheduleRefusal::None) {
+        ++counts["pick " + std::string(generic::schedule_refusal_name(c.heuristic_refusal))];
+    }
+    if (legal > 0) {
+        Weight off = w;
+        off.qdata  = static_cast<const char*>(w.qdata) + 8;
+        const auto o = generic::staged_coverage(off);
+        for (std::size_t i = 0; i < c.schedules.size(); ++i) {
+            if (c.schedules[i].refusal == generic::ScheduleRefusal::None &&
+                o.schedules[i].refusal != generic::ScheduleRefusal::Alignment) {
+                fail(where + ": staged with the codes 8 bytes off");
+            }
+        }
+    }
+}
+
 constexpr Shape kShapes[]        = {{1024, 2048}, {5120, 5120}, {1024, 12288}};
 constexpr std::int32_t kTokens[] = {1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 64, 128, 512, 2048};
 
@@ -232,6 +290,7 @@ int run_board(const TestBoard& b) {
     std::map<std::string, int> r8_calls;          // why a call does or does not take R8
     std::map<std::string, int> w4a8_refused;      // W4A8's schedules, per weight and policy: why
     std::map<std::string, int> tiled_refused;     // the tiled family's schedules, per weight: why
+    std::map<std::string, int> staged_refused;    // the staged family's schedules, per weight: why
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -456,6 +515,7 @@ int run_board(const TestBoard& b) {
                     }
                 }
                 check_tiled(w, d.features, where, tiled_refused, fail);
+                check_staged(w, d.features, where, staged_refused, fail);
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :
@@ -570,6 +630,8 @@ int run_board(const TestBoard& b) {
     for (const auto& [why, count] : w4a8_refused) std::cout << " " << why << " " << count;
     std::cout << "; tiled schedules:";
     for (const auto& [why, count] : tiled_refused) std::cout << " " << why << " " << count;
+    std::cout << "; staged schedules:";
+    for (const auto& [why, count] : staged_refused) std::cout << " " << why << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }
