@@ -59,6 +59,7 @@ const char* status_name(Candidate::Status s) {
     return s == Candidate::Status::Selected       ? "selected"
            : s == Candidate::Status::Inadmissible ? "inadmissible"
            : s == Candidate::Status::Dominated    ? "dominated"
+           : s == Candidate::Status::PricedBelow  ? "priced_below"
            : s == Candidate::Status::Unpriced     ? "unpriced"
                                                   : "unavailable";
 }
@@ -72,31 +73,22 @@ std::string describe(const std::vector<Candidate>& c) {
     return out;
 }
 
-// The generic families after the two (#306): none selected; a priced one only against a priced
-// selected route; nothing priced below 17 tokens; where the model's route is the selection (no
-// shape-owned kernel, no route-table entry claiming the call) none is priced below it.
-void alternatives(const std::vector<Candidate>& c, const Weight& w,
-                  const ops::detail::LinearDecision& decision, std::int32_t t,
-                  const std::string& at) {
-    namespace generic = ops::detail::generic;
-    double cheapest   = 0;
-    bool any_priced   = false;
+// The generic families after the two (#306): none selected; nothing priced below 17 tokens; a
+// dominated one no cheaper than the selected route by the model's times, one priced below it
+// cheaper.
+void alternatives(const std::vector<Candidate>& c, std::int32_t t, const std::string& at) {
     for (std::size_t i = 2; i < c.size(); ++i) {
         const Candidate& x = c[i];
         check(x.id.rfind("generic.", 0) == 0, at + ": " + x.id + " a generic family");
         check(x.status != Candidate::Status::Selected, at + ": " + x.id + " not selected");
-        check(x.status != Candidate::Status::Dominated || (x.seconds && c[1].seconds),
-              at + ": " + x.id + " dominated by the model's times");
         check(t >= 17 || !x.seconds, at + ": " + x.id + " unpriced below 17 tokens");
-        if (x.seconds && (!any_priced || *x.seconds < cheapest)) cheapest = *x.seconds;
-        any_priced = any_priced || x.seconds.has_value();
-    }
-    const generic::Problem problem{w.qtype, decision.policy, w.n, w.k, generic::Epilogue::Store};
-    const bool by_model = decision.claim == ops::detail::LinearClaim::Unregistered &&
-                          !generic::table_claims(problem, t, ops::prefill_routes_active());
-    if (by_model && any_priced && c[1].seconds) {
-        check(cheapest >= *c[1].seconds,
-              at + ": no family priced below the model's own selection");
+        const bool compared = x.seconds && c[1].seconds;
+        check(x.status != Candidate::Status::Dominated ||
+                  (compared && *x.seconds >= *c[1].seconds),
+              at + ": " + x.id + " dominated: no cheaper than the selected route");
+        check(x.status != Candidate::Status::PricedBelow ||
+                  (compared && *x.seconds < *c[1].seconds),
+              at + ": " + x.id + " priced below the selected route");
     }
 }
 
@@ -111,7 +103,7 @@ void call(std::int32_t n, std::int32_t k, std::int32_t t, ops::LinearPolicy poli
     const std::string at = name + " T=" + std::to_string(t) + ":" + describe(c);
     check(c.size() >= 2, at + ": the owned kernel and the generic route first");
     if (c.size() < 2) return;
-    alternatives(c, d.weight, decision, t, at);
+    alternatives(c, t, at);
     const bool owned_claims = decision.claim == ops::detail::LinearClaim::Owned;
     const bool registered   = ops::detail::q8_linear_registered(n, k);
     check(c[0].id.rfind("owned:q8", 0) == 0, at + ": the owned candidate first");

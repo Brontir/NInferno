@@ -285,12 +285,13 @@ std::vector<LinearCandidate> linear_candidates(const Weight& w, LinearPolicy pol
         } else {
             c.id += ":" + generic::route_name(*a.route);
             if (a.seconds && selected_seconds && runs_generic) {
-                c.status = Status::Dominated;
-                c.why    = *a.seconds >= *selected_seconds
-                               ? "model " + us(*a.seconds) + " us, selected " +
-                                     us(*selected_seconds) + " us"
-                               : "model " + us(*a.seconds) + " us below the selected " +
-                                     us(*selected_seconds) + " us; selected by " + chose;
+                const bool below = *a.seconds < *selected_seconds;
+                c.status         = below ? Status::PricedBelow : Status::Dominated;
+                c.why = "model " + us(*a.seconds) + " us, selected " + us(*selected_seconds) +
+                        " us" +
+                        (below ? "; the selection is a route table's, the tuned prefill route's "
+                                 "or a pin's"
+                               : "");
             } else {
                 c.status = Status::Unpriced;
                 c.why    = a.seconds ? "selected by " + chose + ", which the model does not price"

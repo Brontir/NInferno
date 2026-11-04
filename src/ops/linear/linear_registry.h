@@ -63,14 +63,15 @@ struct LinearDecision {
 // weight:
 // - Unavailable: no schedule compiled for the format.
 // - Inadmissible: no schedule takes the call (`why`: the refusal).
-// - Dominated: priced, and no cheaper than the selected route by the same model; `why` says
-//   by how much. Where the selection is not the model's (a route table, a rule), a cheaper
-//   priced alternative is also Dominated, and `why` names what selected the other.
+// - Dominated: priced, and no cheaper than the selected route by the same model.
+// - PricedBelow: priced cheaper than the selected route, so the selection is not the model's
+//   (a route table, the tuned prefill route or a pin chose it).
 // - Unpriced: takes the call, but there is no comparable cost (a call the model does not price,
-//   or the shape's own kernels selected).
-// `seconds`: the model's time where it prices the candidate (the selected generic route too).
+//   a selected route it does not price, or the shape's own kernels selected).
+// `seconds`: the model's time where it prices the candidate (the selected generic route too: the
+// route select_route asks for; the call's layout and workspace may still resolve it lower).
 struct LinearCandidate {
-    enum class Status { Selected, Inadmissible, Unavailable, Dominated, Unpriced };
+    enum class Status { Selected, Inadmissible, Unavailable, Dominated, PricedBelow, Unpriced };
     std::string id;
     Status status = Status::Unavailable;
     std::string why;
