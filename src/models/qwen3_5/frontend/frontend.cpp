@@ -1354,9 +1354,11 @@ structured::GrammarVocabulary Frontend::grammar_vocabulary(std::uint32_t token_d
             vocabulary.stop_token_ids.push_back(token);
         }
     }
-    // The output presentation splits reasoning from content at these bytes (OutputSession).
+    // The output presentation splits reasoning from content at these bytes and drops the answer
+    // header (OutputSession).
     vocabulary.reasoning_close = impl_->output->reasoning_close;
     vocabulary.reasoning_open  = impl_->output->reasoning_open;
+    vocabulary.content_open    = impl_->output->content_open;
     return vocabulary;
 }
 
