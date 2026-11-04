@@ -8,6 +8,6 @@ Each constant the configuration choice could not derive from chip facts alone co
 | `round_cost/eta_facts.py` | checks `kSmallTEta` against two fact hypotheses (decision 54) | the same, through `fit_eta.py` |
 | `speed_model/fit_decode.py` | decode rows per generation (`src/product/choice/choice_constants.h`) | `tests/fixtures/choice/decode_measured.json`, `decode_census.json` |
 | `speed_model/fit_moe_decode.py` | the routed-expert share of an MoE decode step (decision 65) | `tests/fixtures/choice/speed_measured.json` |
-| `prefill/fit_prefill.py` | prefill linears and attention per generation | `data/prefill/rows.json` |
+| `prefill/fit_prefill.py` | prefill linears and attention per generation (needs NumPy) | `data/prefill/rows.json` |
 
-Run each from the repository root, for example `python tools/fits/round_cost/fit_eta.py`. They need only Python 3 and the repository; no GPU.
+Run each from the repository root, for example `python tools/fits/round_cost/fit_eta.py`. They need Python 3 and the repository, no GPU; `prefill/fit_prefill.py` also needs NumPy (`pip install numpy`).
