@@ -10,8 +10,9 @@ Two workloads, both greedy, each after one untimed warm-up request
 - long24k_fr2026_6p: six ~24K-token slices of the Federal Register text (September-October 2026,
   new to every model measured) in examples/cli/messages/long_niah_256k.json, each followed by a
   request to summarize it. Prefill = prompt tokens / wall time of a max_tokens=1
-  request; decode = completion tokens / wall time of the same prompt with 512 tokens (its prefix is
-  then cached). The medians are reported, with min..max.
+  request; decode = the same prompt with 512 tokens, streamed: the tokens after the first over the
+  time from the first token to the last, so the prompt's cost (recomputed, or reused from a prefix
+  cache) never enters it. The medians are reported, with min..max.
 - short_chat_20req: twenty fixed short prompts with up to 512 tokens each, sent by C concurrent
   workers (worker k takes prompts k, k+C, ...); aggregate = all completion tokens / wave wall time.
 
@@ -101,6 +102,41 @@ class Server:
             self._speculation[config] = self._speculation.get(config, 0) + 1
         return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0), elapsed
 
+    def chat_stream(self, prompt, max_tokens):
+        """One streamed request: (completion tokens, seconds from the first generated token to the
+        last). The decode rate is then (completion - 1) / that time, whatever the prompt cost: a
+        server that recomputes the prompt (no prefix cache, or one turned off) and one that reuses
+        it measure the same decode."""
+        body = {"model": self.model, "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens, "temperature": 0.0, "stream": True,
+                "stream_options": {"include_usage": True}}
+        request = urllib.request.Request(self.base + "/v1/chat/completions", json.dumps(body).encode(),
+                                         {"Content-Type": "application/json"})
+        first = last = None
+        completion = chunks = 0
+        with urllib.request.urlopen(request, timeout=3600) as r:
+            for raw in r:
+                line = raw.decode("utf-8", "replace").strip()
+                if not line.startswith("data:"):
+                    continue
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                event = json.loads(data)
+                usage = event.get("usage") or {}
+                if usage.get("completion_tokens"):
+                    completion = usage["completion_tokens"]
+                for choice in event.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    if delta.get("content") or delta.get("reasoning_content") or delta.get("reasoning"):
+                        now = time.time()
+                        first = now if first is None else first
+                        last = now
+                        chunks += 1
+        if first is None or last is None or last <= first:
+            return completion or chunks, 0.0
+        return completion or chunks, last - first
+
     def take_speculation(self):
         """What the requests since the last call ran, as a row's `served_speculation`: `config` is
         the drafter and depth most of the drafting requests ran ("plain" when none drafted),
@@ -134,9 +170,9 @@ def long_context(server, chars, prompts, out_tokens):
         offset = (i * 7919 * 13) % max(1, len(blob) - chars)
         prompt = blob[offset:offset + chars] + QUESTION
         prompt_tokens, _, first = server.chat(prompt, 1)
-        _, completion, wall = server.chat(prompt, out_tokens)
+        completion, seconds = server.chat_stream(prompt, out_tokens)
         prefill.append(prompt_tokens / first)
-        decode.append(completion / wall)
+        decode.append((completion - 1) / seconds if seconds > 0 else 0.0)
         lengths.append(prompt_tokens)
     return {"prompt_len": int(statistics.median(lengths)),
             "prefill": (statistics.median(prefill), [min(prefill), max(prefill)]),

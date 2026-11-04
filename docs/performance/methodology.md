@@ -28,9 +28,11 @@ memorized them; [`long_niah_256k.json`](../../examples/cli/messages/long_niah_25
 followed by a request to summarize the text section by section.
 
 - **Prefill** is prompt tokens divided by the wall time of a request with `max_tokens=1`.
-- **Decode @24K** is completion tokens divided by the wall time of the same prompt with
-  `max_tokens=512`; its prefix is then already cached, so the time is the decode of 512 tokens
-  after a 24K-token context.
+- **Decode @24K** is the same prompt with `max_tokens=512`, streamed: the tokens after the first
+  divided by the time from the first token to the last. The prompt's cost never enters it, so a
+  server that recomputes the prompt and one that reuses it from a prefix cache measure the same
+  decode after a 24K-token context. (Rows before 2026-11-05 divided the completion by the whole
+  request with the prefix cached, which counted the cached request's small prefill too.)
 - Each value is the median over the six prompts; the row records min..max (`spread`).
 
 ## Short chat: aggregate decode at C=1, 4 and 8
