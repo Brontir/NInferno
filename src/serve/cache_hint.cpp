@@ -233,11 +233,15 @@ void KeptReleaser::run() {
         queued_.erase(grant.session_key);
         asking_ = true;
         lock.unlock();
-        // A session granted again while it waited here keeps its new deadline.
-        if (!sessions_.granted(grant.session_key) &&
-            release_(grant.session_key) == KeptSessionRelease::InFlight) {
-            sessions_.keep(grant, KeptSessions::Clock::now());
-        }
+        // A session granted again while it waited here keeps its new deadline. A release that
+        // throws (a lock's system_error, an allocation) drops that grant, not the thread: its
+        // entry stays kept until the kept-token budget lets it go.
+        try {
+            if (!sessions_.granted(grant.session_key) &&
+                release_(grant.session_key) == KeptSessionRelease::InFlight) {
+                sessions_.keep(grant, KeptSessions::Clock::now());
+            }
+        } catch (...) {}
         lock.lock();
         asking_ = false;
         cv_.notify_all();

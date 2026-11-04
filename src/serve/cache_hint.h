@@ -122,7 +122,8 @@ private:
 // stopped the supervisor too, before it could report the stall or the engine's failure. submit
 // never waits: it queues each session once, and the thread asks `release` in turn, skipping a
 // session granted again since it expired (its new deadline decides), and keeping an InFlight one
-// another ttl (KeptSessions::keep), as the supervisor did.
+// another ttl (KeptSessions::keep), as the supervisor did. Its destructor waits for a release in
+// progress: an executor that hangs holds the server's teardown there (as it holds the Engine's).
 class KeptReleaser {
 public:
     using Release = std::function<KeptSessionRelease(const std::string&)>;
