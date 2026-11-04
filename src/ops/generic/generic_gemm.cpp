@@ -4377,6 +4377,44 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     return out;
 }
 
+std::optional<R8Resources> r8_resources(int schedule, const Weight& w, Epilogue epilogue,
+                                        std::int32_t tokens) {
+    const Route route{Family::R8Mma, static_cast<std::uint8_t>(schedule)};
+    if (schedule < 0 || schedule >= r8_schedule_count() || tokens < 1 ||
+        tokens > kR8VerifyTokens || !supports(w) || !route_admits(route, w, LinearPolicy::AllowA8)) {
+        return std::nullopt;
+    }
+    const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
+    // The call as the engine passes it, with the workspace its pre-quantized form needs.
+    const ResolvedRoute resolved =
+        resolve_route(route, w,
+                      CallLayout{.x_aligned16    = true,
+                                 .ldx            = w.k,
+                                 .tokens         = tokens,
+                                 .rows           = rows,
+                                 .segments       = 1,
+                                 .epilogue       = epilogue,
+                                 .workspace_free = route_workspace_bytes(route, w.k, tokens)});
+    if (!(resolved.executed == route)) return std::nullopt;
+    GemmArgs args = weight_args(w);
+    args.rows     = rows;
+    args.tokens   = tokens;
+    args.ldx      = w.k;
+    // Never read: the described launch takes only their presence (the pre-quantized form).
+    static const std::int8_t codes = 0;
+    static const float planes      = 0.0F;
+    const W4a8Activation pre =
+        resolved.r8_prequantized ? W4a8Activation{&codes, &planes, &planes} : W4a8Activation{};
+    R8Resources out;
+    out.prequantized = resolved.r8_prequantized;
+    {
+        const ScopedKernelDescribe describe(out.kernel);
+        launch_r8(schedule, codec_of(w), epilogue, args, nullptr, pre);
+    }
+    if (out.kernel.threads == 0) return std::nullopt;
+    return out;
+}
+
 BuildManifest build_manifest() {
     BuildManifest m;
 #ifdef NINFERNO_BUILD_ARCH

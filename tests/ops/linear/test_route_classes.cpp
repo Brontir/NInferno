@@ -614,6 +614,60 @@ int run_resources(bool detail) {
         }
     }
     if (described == 0) fail("no register-MMA kernel described");
+    // R8 (r8_resources): nothing where route_admits refuses R8 under AllowA8; where described, the
+    // schedule's threads, one CTA per warps x rows of output rows, a one-dimensional grid, no
+    // pre-quantized form for one token, and registers the SM holds.
+    int r8_described = 0, r8_pre = 0, r8_admitted = 0;
+    for (const QType qtype : kFormats) {
+        const Shape shape{4096, 4096};
+        quantized_weight::PatternedWeightOptions options;
+        if (qtype == QType::NVFP4) options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+        const auto host = quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+        const Weight w  = host.device_weight(payload);
+        if (!generic::supports(w)) continue;
+        for (int i = 0; i < generic::r8_schedule_count(); ++i) {
+            const generic::Route route{generic::Family::R8Mma, static_cast<std::uint8_t>(i)};
+            const bool admitted = generic::route_admits(route, w, LinearPolicy::AllowA8);
+            const auto info     = generic::r8_schedule_info(i);
+            r8_admitted += admitted ? 1 : 0;
+            for (const std::int32_t t : {1, 2, 4, 8}) {
+                const auto r = generic::r8_resources(i, w, generic::Epilogue::Store, t);
+                const std::string at = std::string(generic::qtype_name(qtype)) + " " +
+                                       generic::route_name(route) + " T=" + std::to_string(t);
+                if (r && !admitted) {
+                    fail(at + ": described although route_admits refuses it");
+                    continue;
+                }
+                if (!r) continue;
+                ++r8_described;
+                r8_pre += r->prequantized ? 1 : 0;
+                const auto& k = r->kernel;
+                const unsigned ctas = static_cast<unsigned>(
+                    (shape.n + info.warps * info.rows - 1) / (info.warps * info.rows));
+                if (k.threads != 32 * info.warps || k.grid_x != ctas || k.grid_y != 1 ||
+                    k.grid_z != 1 || k.registers <= 0 ||
+                    k.registers * k.threads > registers_per_sm || (t == 1 && r->prequantized)) {
+                    fail(at + ": threads " + std::to_string(k.threads) + ", grid " +
+                         std::to_string(k.grid_x) + "x" + std::to_string(k.grid_y) + "x" +
+                         std::to_string(k.grid_z) + " (" + std::to_string(ctas) + " CTAs), " +
+                         std::to_string(k.registers) + " registers" +
+                         (r->prequantized ? ", pre-quantized" : ""));
+                }
+                if (detail) {
+                    std::cout << at << ": " << k.registers << " registers, "
+                              << k.local_bytes << " B local, " << k.dynamic_smem
+                              << " B dynamic smem" << (r->prequantized ? ", pre-quantized" : "")
+                              << '\n';
+                }
+            }
+        }
+    }
+    // Where route_admits holds R8 for some format and schedule, some call takes it.
+    if (r8_described == 0 && r8_admitted > 0) fail("no R8 kernel described");
+    // The verify widths run the pre-quantized form (T = 2..kR8VerifyTokens) where a format has it.
+    if (r8_admitted > 0 && r8_pre == 0) fail("no pre-quantized R8 kernel described");
+    std::cout << "resources R8: " << r8_described << " described (" << r8_pre
+              << " pre-quantized)\n";
     std::cout << "resources (" << device_class().id() << "): " << described << " described, "
               << failures << " failures; per format the most registers and spill bytes:";
     for (const auto& [format, m] : most) {
