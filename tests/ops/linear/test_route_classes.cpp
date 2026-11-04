@@ -119,8 +119,122 @@ bool w4a8_old_rule(int index, const Weight& w, LinearPolicy policy,
            (!producer || (ws_built && (q != QType::GGML_IQ3_XXS || aligned(w.qhigh, 8))));
 }
 
+// The tiled family's admission as route_admits decided it before tiled_refusal, written apart from
+// it: the generic path reads the weight, the board has the tile's instructions, a ggml high plane
+// on 16 bytes; a CUTLASS-only format (no tiled tile for its codec, on Volta) as schedule 0 with K
+// in 64-value steps; any other a codec the tiled kernel takes (Q8 too on Volta), the tile's shared
+// memory, K in 64-value steps and 16-byte codes.
+bool tiled_old_rule(int index, const Weight& w, const DeviceFeatures& features) {
+    const generic::Route r{generic::Family::TiledMma, static_cast<std::uint8_t>(index)};
+    if (!generic::supports(w) || !has_features(features, generic::route_requires(r))) return false;
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned(w.qhigh, 16)) {
+        return false;
+    }
+    const auto codec = generic::codec_of(w);
+    const bool takes = generic::tiled_supports(codec) ||
+                       (codec == generic::WeightCodec::Q8 && !features.mma_tensor);
+    if (!takes && !features.mma_tensor) return index == 0 && (w.k % 64) == 0;
+    return index < generic::tiled_schedule_count() && takes && generic::tiled_fits(index, codec) &&
+           (w.k % 64) == 0 && aligned(w.qdata, 16);
+}
+
+// The tiled family's coverage of `w` (#307): each schedule's refusal as route_admits decides it
+// and as the old rule did; the counts; a ggml high plane 4 bytes off refuses every schedule that
+// admitted the weight for alignment. Counts the refusals in `counts`.
+template <class Fail>
+void check_tiled(const Weight& w, const DeviceFeatures& features, const std::string& where,
+                 std::map<std::string, int>& counts, Fail&& fail) {
+    const auto c = generic::tiled_coverage(w);
+    int legal    = 0;
+    for (const auto& s : c.schedules) {
+        const generic::Route r{generic::Family::TiledMma, static_cast<std::uint8_t>(s.schedule)};
+        const bool admits = generic::route_admits(r, w, LinearPolicy::A16Only);
+        ++counts[std::string(generic::schedule_refusal_name(s.refusal))];
+        legal += s.refusal == generic::ScheduleRefusal::None;
+        if (admits != (s.refusal == generic::ScheduleRefusal::None) ||
+            admits != tiled_old_rule(s.schedule, w, features)) {
+            fail(where + " " + generic::route_name(r) + ": " +
+                 std::string(generic::schedule_refusal_name(s.refusal)) +
+                 ", which route_admits or the old rule decides otherwise");
+        }
+    }
+    if (c.declared != generic::tiled_schedule_count() || c.legal != legal ||
+        (c.compiled != 0 && c.compiled != 1 && c.compiled != c.declared) ||
+        (c.heuristic >= 0 && c.heuristic_refusal != c.schedules[c.heuristic].refusal)) {
+        fail(where + ": tiled counts declared " + std::to_string(c.declared) + ", compiled " +
+             std::to_string(c.compiled) + ", legal " + std::to_string(c.legal));
+    }
+    if (c.heuristic >= 0 && c.heuristic_refusal != generic::ScheduleRefusal::None) {
+        ++counts["pick " + std::string(generic::schedule_refusal_name(c.heuristic_refusal))];
+    }
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && legal > 0) {
+        Weight off = w;
+        off.qhigh  = static_cast<const char*>(w.qhigh) + 4;
+        const auto o = generic::tiled_coverage(off);
+        for (std::size_t i = 0; i < c.schedules.size(); ++i) {
+            if (c.schedules[i].refusal == generic::ScheduleRefusal::None &&
+                o.schedules[i].refusal != generic::ScheduleRefusal::Alignment) {
+                fail(where + ": tiled with the high plane 4 bytes off");
+            }
+        }
+        if (o.compiled != c.compiled) fail(where + ": tiled compiled count moved with the plane");
+    }
+    // A layout the generic path does not read: every schedule refused for format, and what the
+    // build holds (compiled, the pick) unchanged.
+    Weight bad = w;
+    bad.layout =
+        w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit : QuantLayout::GgmlPlanes;
+    if (!generic::supports(bad)) {
+        const auto b          = generic::tiled_coverage(bad);
+        const bool all_format = std::all_of(
+            b.schedules.begin(), b.schedules.end(),
+            [](const auto& s) { return s.refusal == generic::ScheduleRefusal::Format; });
+        if (!all_format || b.compiled != c.compiled || b.heuristic != c.heuristic) {
+            fail(where + ": tiled in a layout the generic path does not read");
+        }
+    }
+}
+
 constexpr Shape kShapes[]        = {{1024, 2048}, {5120, 5120}, {1024, 12288}};
 constexpr std::int32_t kTokens[] = {1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 64, 128, 512, 2048};
+
+// Volta (Quadro GV100, sm_70: no tensor mma.sync), where a format without a tiled tile takes the
+// tiled route's CUTLASS path as schedule 0 and Q8 takes the tiles: the tiled family's coverage of
+// every format and shape.
+int run_volta_tiled() {
+    const ScopedDeviceClass scoped(
+        synthetic_device_class(0x1DBA, 7, 0, 80, 6 * kMiB, std::size_t{32} * 1024 * kMiB));
+    const DeviceClass& d = device_class();
+    int failures         = 0;
+    std::map<std::string, int> counts;
+    const auto fail = [&](const std::string& what) {
+        if (++failures <= 20) std::cerr << "gv100 (" << d.id() << "): " << what << '\n';
+    };
+    void* const payload = reinterpret_cast<void*>(std::uintptr_t{1} << 32);
+    for (const QType qtype : kFormats) {
+        for (const Shape shape : kShapes) {
+            quantized_weight::PatternedWeightOptions options;
+            if (qtype == QType::NVFP4)
+                options.weight_scale_divisor = options.input_scale_divisor = 1.0F;
+            const auto host =
+                quantized_weight::make_patterned_weight(qtype, shape.n, shape.k, 7U, options);
+            const Weight w = host.device_weight(payload);
+            if (!generic::supports(w)) continue;
+            check_tiled(w, d.features,
+                        std::string(generic::qtype_name(qtype)) + " " + std::to_string(shape.n) +
+                            "x" + std::to_string(shape.k),
+                        counts, fail);
+        }
+    }
+    if (counts["codec_tile"] == 0 || counts["none"] == 0) {
+        fail("no CUTLASS-only format or no admitted tile on Volta");
+    }
+    std::cout << "gv100 (" << d.id() << ", " << d.arch() << "): " << failures
+              << " failures; tiled schedules:";
+    for (const auto& [why, count] : counts) std::cout << " " << why << " " << count;
+    std::cout << '\n';
+    return failures == 0 ? 0 : 1;
+}
 
 int run_board(const TestBoard& b) {
     const ScopedDeviceClass scoped(synthetic_device_class(
@@ -131,6 +245,7 @@ int run_board(const TestBoard& b) {
     std::map<std::string, int> heuristic_refused; // the family's pick, refused: why, how often
     std::map<std::string, int> r8_calls;          // why a call does or does not take R8
     std::map<std::string, int> w4a8_refused;      // W4A8's schedules, per weight and policy: why
+    std::map<std::string, int> tiled_refused;     // the tiled family's schedules, per weight: why
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -354,6 +469,7 @@ int run_board(const TestBoard& b) {
                         }
                     }
                 }
+                check_tiled(w, d.features, where, tiled_refused, fail);
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :
@@ -466,6 +582,8 @@ int run_board(const TestBoard& b) {
     for (const auto& [why, count] : r8_calls) std::cout << " " << why << " " << count;
     std::cout << "; W4A8 schedules:";
     for (const auto& [why, count] : w4a8_refused) std::cout << " " << why << " " << count;
+    std::cout << "; tiled schedules:";
+    for (const auto& [why, count] : tiled_refused) std::cout << " " << why << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }
@@ -481,11 +599,13 @@ int main(int argc, char** argv) {
             std::cerr << "unknown board " << argv[2] << '\n';
             return 2;
         }
+        if (argc == 2 && std::string_view(argv[1]) == "--volta-tiled") return run_volta_tiled();
         int failed = 0;
         for (const TestBoard& b : kBoards) {
             const std::string command = std::string(argv[0]) + " --board " + b.name;
             if (std::system(command.c_str()) != 0) ++failed;
         }
+        if (std::system((std::string(argv[0]) + " --volta-tiled").c_str()) != 0) ++failed;
         if (failed != 0) {
             std::cerr << "route classes: " << failed << " boards failed\n";
             return 1;
