@@ -979,6 +979,24 @@ int main() {
                           "does not fit either: short by 2 GiB",
                       "the refusal when plain decode does not fit after --spec auto");
 
+    // A server reachable from the network without a key says so at startup; a loopback bind or a
+    // key keeps quiet.
+    using ninferno::serve::loopback_host;
+    using ninferno::serve::open_bind_warning;
+    for (const char* host : {"127.0.0.1", "127.1.2.3", "localhost", "::1", "[::1]"}) {
+        failures += check(loopback_host(host), "a loopback host read as open");
+    }
+    for (const char* host :
+         {"0.0.0.0", "192.168.1.10", "::", "127.0.0.1.example.com", "127.x.0.1", "my-host"}) {
+        failures += check(!loopback_host(host), "an open host read as loopback");
+    }
+    failures += check(open_bind_warning("127.0.0.1", 8080, false).empty(),
+                      "a loopback bind without a key warned");
+    failures += check(open_bind_warning("0.0.0.0", 8080, true).empty(),
+                      "an open bind with a key warned");
+    failures += check(open_bind_warning("0.0.0.0", 8080, false).starts_with("no API key on 0.0.0.0:8080"),
+                      "an open bind without a key did not warn");
+
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
 }
