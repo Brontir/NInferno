@@ -10,6 +10,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace ninferno::structured {
 
@@ -43,6 +44,11 @@ struct ConstraintGate {
         Reasoning,
         // After a reasoning section the model opened: a short whitespace run before the text.
         Gap,
+        // Where the answer may begin with a header (GrammarVocabulary::content_open): at the
+        // output start and after a reasoning terminator. Bytes are held while they spell the start
+        // of a header; a whole header is dropped, as the output presentation drops it, and
+        // anything else is the answer's (header_next).
+        Header,
         // The constrained text: every token masked by the grammar.
         Open,
     };
@@ -55,6 +61,15 @@ struct ConstraintGate {
     bool self_opened = false;
     // Gap: whitespace bytes taken.
     std::size_t gap_bytes = 0;
+    // Pending: the open marker can still be what the model writes.
+    bool open_alive = true;
+    // Pending: an answer header can still be (header_held the bytes of it so far).
+    bool header_alive = false;
+    // Header and Pending: the bytes held that begin a header.
+    std::string header_held;
+    // Header: where the answer's text starts, with or without its header: the Gap after a
+    // reasoning section the model opened, else the grammar.
+    Mode header_next = Mode::Open;
     // Reasoning: the terminator detector.
     ReasoningGate close;
 };
@@ -71,8 +86,11 @@ class RequestConstraint {
 public:
     // may_open_reasoning: the model may open a reasoning section itself at the first token (the
     // prompt allows it and the output is presented, not raw), as the output session splits it.
+    // strips_headers: the output presentation drops an answer header (GrammarVocabulary::
+    // content_open) the answer begins with, so the grammar starts after one; a raw output keeps
+    // it, and the grammar reads it.
     RequestConstraint(std::shared_ptr<const CompiledConstraint> compiled, bool starts_in_reasoning,
-                      bool may_open_reasoning = false);
+                      bool may_open_reasoning = false, bool strips_headers = true);
 
     // Every round of a constrained request is masked, including rounds inside an open reasoning
     // section (stop tokens only). Writes drafts.size()+1 mask rows of stride_words each. Row j
@@ -122,6 +140,22 @@ private:
     // Bytes after a self-opened reasoning's terminator: the Gap, then the grammar.
     bool after_reasoning(ConstraintGate& gate, std::string_view tail, Track& track,
                          std::string& why);
+    // Bytes after a reasoning terminator: an answer header where the model has them, then `next`
+    // (the Gap or the grammar).
+    bool after_close(ConstraintGate& gate, std::string_view tail, ConstraintGate::Mode next,
+                     Track& track, std::string& why);
+    // Bytes in the Header mode: held while they begin a header, dropped with a whole one.
+    bool header_bytes(ConstraintGate& gate, std::string_view bytes, Track& track,
+                      std::string& why);
+    // The answer's text from `bytes` on, in `next` (the Gap or the grammar).
+    bool enter_text(ConstraintGate& gate, ConstraintGate::Mode next, std::string_view bytes,
+                    Track& track, std::string& why);
+    // Whether `held` followed by `bytes` begins or is a header, and is not past one.
+    [[nodiscard]] bool on_header(std::string_view held, std::string_view bytes) const noexcept;
+    // Admits the tokens that continue a header from `held`, and those that complete one and go
+    // on into text the answer admits (it starts in `next`, the Gap or the grammar).
+    void admit_header(std::uint32_t* row, std::string_view held, ConstraintGate::Mode next) const;
+    [[nodiscard]] bool is_stop(TokenId token) const noexcept;
     // The grammar restarts after a reasoning section the model opened.
     void reopen(Track& track);
     void violate(std::string reason) noexcept;
@@ -132,6 +166,9 @@ private:
     std::optional<ConstraintMatcher> scratch_;
     ConstraintVocabularyView view_;
     ConstraintGate gate_;
+    // The answer may begin with a header the gate steps through (strips_headers and a format
+    // that has them).
+    bool headers_  = false;
     bool violated_ = false;
     std::string violation_;
     std::uint64_t masked_positions_ = 0;
