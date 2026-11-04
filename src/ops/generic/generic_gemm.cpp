@@ -2376,7 +2376,58 @@ bool volta_tiled_format(QType qtype) {
     return !current_features().mma_tensor && volta_tiled_qtype(qtype);
 }
 
+std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept {
+    switch (why) {
+    case ScheduleRefusal::None: return "none";
+    case ScheduleRefusal::NotDeclared: return "not_declared";
+    case ScheduleRefusal::NotCompiled: return "not_compiled";
+    case ScheduleRefusal::Format: return "format";
+    case ScheduleRefusal::Instruction: return "instruction";
+    case ScheduleRefusal::Alignment: return "alignment";
+    case ScheduleRefusal::Extent: return "extent";
+    case ScheduleRefusal::CodecTile: return "codec_tile";
+    }
+    return "none";
+}
+
+ScheduleRefusal rmma_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= rmma_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!rmma_schedule_launchable(index)) return ScheduleRefusal::NotCompiled;
+    if (!supports(w)) return ScheduleRefusal::Format;
+    // Whether the build holds the tile for the codec, ahead of the weight's own checks, so an
+    // alignment or extent refusal does not hide it (rmma_coverage counts compiled tiles by it).
+    const WeightCodec codec = codec_of(w);
+    const auto s            = rmma_schedule_info(index);
+    if (!rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k)) return ScheduleRefusal::CodecTile;
+    const Route route{Family::RegisterMma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off a 16-byte boundary (route_admits).
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % k_multiple(codec)) != 0) return ScheduleRefusal::Extent;
+    if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
+        codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
+        codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
+        codec == WeightCodec::U4ZpG64 ||
+        codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
+        codec == WeightCodec::GgmlQ6K || codec == WeightCodec::GgmlQ3K ||
+        codec == WeightCodec::GgmlQ2K || codec == WeightCodec::GgmlIq4Xs ||
+        codec == WeightCodec::GgmlIq3Xxs || codec == WeightCodec::GgmlIq3S ||
+        codec == WeightCodec::GgmlQ40 || codec == WeightCodec::GgmlQ41 ||
+        codec == WeightCodec::GgmlQ50 || codec == WeightCodec::GgmlQ51 ||
+        codec == WeightCodec::GgmlIq4Nl || is_ggml_block(w.qtype)) {
+        return aligned_to(w.qdata, 16) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
+    }
+    return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
+}
+
 bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
+    if (route.family == Family::RegisterMma) {
+        return rmma_refusal(route.schedule, w) == ScheduleRefusal::None;
+    }
     if (!supports(w)) return false;
     if (!has_features(current_features(), route_requires(route))) return false;
     // A ggml block format's high (sign / bit) plane off a 16-byte boundary (a view into a packed
@@ -2393,30 +2444,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     switch (route.family) {
     case Family::Scalar:
         return true;
-    case Family::RegisterMma: {
-        if (route.schedule >= rmma_schedule_count()) return false;
-        const WeightCodec codec = codec_of(w);
-        if ((w.k % k_multiple(codec)) != 0) return false;
-        const auto s = rmma_schedule_info(route.schedule);
-        if (!rmma_schedule_launchable(route.schedule) ||
-            !rmma_tile_compiled(codec, s.m_tiles, s.n_tiles, w.k)) {
-            return false;
-        }
-        if (codec == WeightCodec::Fp8 || codec == WeightCodec::Fp8RowF32 ||
-            codec == WeightCodec::Fp8B128 || codec == WeightCodec::Bf16 ||
-            codec == WeightCodec::Mxfp4 || codec == WeightCodec::U4Zp ||
-            codec == WeightCodec::U4ZpG64 ||
-            codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
-            codec == WeightCodec::GgmlQ6K || codec == WeightCodec::GgmlQ3K ||
-            codec == WeightCodec::GgmlQ2K || codec == WeightCodec::GgmlIq4Xs ||
-            codec == WeightCodec::GgmlIq3Xxs || codec == WeightCodec::GgmlIq3S ||
-            codec == WeightCodec::GgmlQ40 || codec == WeightCodec::GgmlQ41 ||
-            codec == WeightCodec::GgmlQ50 || codec == WeightCodec::GgmlQ51 ||
-            codec == WeightCodec::GgmlIq4Nl || is_ggml_block(w.qtype)) {
-            return aligned_to(w.qdata, 16);
-        }
-        return aligned_to(w.qdata, 8);
-    }
+    case Family::RegisterMma: // rmma_refusal, above
+        return false;
     case Family::W4a4Mma:
         return route.schedule < w4a4_schedule_count() && allows_w4a4(w, policy);
     case Family::TiledMma:
@@ -3952,6 +3981,30 @@ Route workspace_free_route(Route selected, const Problem& problem, const Weight&
             weight, tokens, prefill);
     }
     return selected;
+}
+
+FamilyCoverage rmma_coverage(const Problem& problem, const Weight& w, std::int32_t tokens,
+                             bool prefill_band) {
+    FamilyCoverage c;
+    c.declared = rmma_schedule_count();
+    // Compiled is the build's for the weight's codec, whatever else refuses the weight (a
+    // malformed layout refuses every schedule as Format): none where the format has no codec.
+    std::optional<WeightCodec> codec;
+    try {
+        codec = codec_of(w);
+    } catch (const std::exception&) {
+    }
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = rmma_refusal(i, w);
+        c.schedules.push_back({i, why});
+        const auto s = rmma_schedule_info(i);
+        c.compiled += rmma_schedule_launchable(i) && codec.has_value() &&
+                      rmma_tile_compiled(*codec, s.m_tiles, s.n_tiles, w.k);
+        c.legal += why == ScheduleRefusal::None;
+    }
+    c.heuristic         = heuristic_rmma(problem, tokens, prefill_band);
+    c.heuristic_refusal = rmma_refusal(c.heuristic, w);
+    return c;
 }
 
 ResolvedRoute resolve_route(Route asked, const Weight& w, const CallLayout& call) {

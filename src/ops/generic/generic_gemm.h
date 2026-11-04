@@ -464,6 +464,42 @@ struct Problem {
     Epilogue epilogue;
 };
 
+// Why a schedule of a family is not a route for a weight on this build and device (#307), one
+// reason each: not declared (an index past the family's list), not compiled (this build omits
+// it: the thread-block cluster schedules outside the full sm_12x build), the weight's format or
+// layout (supports), the tile not compiled for the codec (rmma_tile_compiled: the large tiles of
+// the 32-value decoders), an instruction the device lacks (route_requires), a plane off the
+// alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
+// in that order, so only Format hides whether a tile is compiled.
+enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
+                             Alignment, Extent };
+[[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
+// Register-MMA schedule `index` for `weight`: route_admits' own rule for the family (it decides
+// by this), so None exactly where route_admits takes the route.
+[[nodiscard]] ScheduleRefusal rmma_refusal(int index, const Weight& weight);
+
+// The register-MMA family's coverage of a call (the pilot family of #307): every declared schedule
+// with its refusal, and the counts apart. declared: the schedule list; compiled: the schedules
+// this build holds for the weight's codec, whatever else refuses the weight (0 where the format
+// has no codec); legal: those the
+// weight and device take (None). The family has no policy gate, so admitted equals legal here.
+// heuristic: the family's own pick for the call (heuristic_rmma), the tile a selection that
+// reaches the register MMA tries first; heuristic_refusal: why it does not run where it is not
+// legal (the selection then takes a narrower tile, the staged MMA or the scalar route). Which
+// route the call selects across families is select_route's.
+struct ScheduleCoverage {
+    int schedule             = 0;
+    ScheduleRefusal refusal  = ScheduleRefusal::None;
+};
+struct FamilyCoverage {
+    std::vector<ScheduleCoverage> schedules;
+    int declared = 0, compiled = 0, legal = 0;
+    int heuristic = -1;
+    ScheduleRefusal heuristic_refusal = ScheduleRefusal::None;
+};
+[[nodiscard]] FamilyCoverage rmma_coverage(const Problem& problem, const Weight& weight,
+                                           std::int32_t tokens, bool prefill_band);
+
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
 // kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the
