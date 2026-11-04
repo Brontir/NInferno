@@ -15,8 +15,9 @@ namespace ninferno::ops::detail::generic {
 // {"arch", "arch_specific", "native_nvfp4", "cuda_compiler", "cxx_compiler", "cuda_architectures",
 //  "families": {"<family>": [{"route", "compiled", "only_formats"?, "omitted_formats"?}, ...]},
 //  "r8_verify_formats": [...]}: formats by their route-table names (qtype_name), an omission at
-// K multiples as "<format>@k<multiple>". `build` adds the caller's own fields (its version, git
-// commit) at the top level; the document is indented by two.
+// K multiples as "<format>@k<multiple>". `build` is the caller's own section (the decision
+// fingerprint's build fields: version, git commit), kept as given under "build"; the document is
+// indented by two.
 [[nodiscard]] std::string build_manifest_json(const BuildManifest& manifest,
                                               const std::map<std::string, std::string>& build = {});
 

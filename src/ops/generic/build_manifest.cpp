@@ -42,8 +42,11 @@ const char* family_key(Family family) {
 std::string build_manifest_json(const BuildManifest& m,
                                 const std::map<std::string, std::string>& build) {
     nlohmann::json out;
-    for (const auto& [key, value] : build) out[key] = value;
-    out["arch"]               = m.arch;
+    if (!build.empty()) {
+        auto& section = out["build"] = nlohmann::json::object();
+        for (const auto& [key, value] : build) section[key] = value;
+    }
+    out["arch"]             = m.arch;
     out["arch_specific"]      = m.arch_specific;
     out["native_nvfp4"]       = m.native_nvfp4;
     out["cuda_compiler"]      = NINFERNO_CUDA_COMPILER;

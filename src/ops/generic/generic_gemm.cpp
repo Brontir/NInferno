@@ -4351,14 +4351,26 @@ BuildManifest build_manifest() {
     });
     add(Family::W4a4Mma, w4a4_schedule_names(),
         [](int i, ManifestSchedule& s) { s.compiled = i < w4a4_schedule_count(); });
-    add(Family::TiledMma, tiled_schedule_count(), none);
-    add(Family::W4a8Mma, w4a8_schedule_count(), [&](int i, ManifestSchedule& s) {
-        if (w4a8_schedule_info(i).producers == 0) return;
-        for (const auto& f : formats) {
-            if (w4a8_ws_supports(f.first)) s.only_formats.push_back(f.first);
+    // A tile past this build's shared-memory ceiling (kMaxSharedBytesPerBlock) compiles to a stub
+    // (generic_tiled.cu, generic_w4a8.cuh, generic_staged.cu, generic_i8.cu): the fits checks the
+    // refusals answer Resource by. Staged's device check (staged_device_fits) is the board's.
+    add(Family::TiledMma, tiled_schedule_count(), [&](int i, ManifestSchedule& s) {
+        for (const auto& [qtype, codec] : formats) {
+            if (tiled_supports(codec) && !tiled_fits(i, codec)) {
+                s.omitted_formats.push_back({qtype, 0});
+            }
         }
     });
-    add(Family::StagedMma, staged_schedule_count(), none);
+    add(Family::W4a8Mma, w4a8_schedule_count(), [&](int i, ManifestSchedule& s) {
+        const bool producer = w4a8_schedule_info(i).producers > 0;
+        for (const auto& f : formats) {
+            if (!w4a8_supports(f.first)) continue;
+            if (producer && w4a8_ws_supports(f.first)) s.only_formats.push_back(f.first);
+            if (!w4a8_fits(i, f.first)) s.omitted_formats.push_back({f.first, 0});
+        }
+    });
+    add(Family::StagedMma, staged_schedule_count(),
+        [](int i, ManifestSchedule& s) { s.compiled = staged_fits(i); });
     add(Family::Nvfp4TiledMma, nvfp4_tiled_schedule_count(),
         [](int, ManifestSchedule& s) { s.compiled = kNativeNvfp4; });
     add(Family::R8Mma, r8_schedule_count(), none);
@@ -4375,7 +4387,13 @@ BuildManifest build_manifest() {
             }
         });
     }
-    add(Family::I8Mma, i8_schedule_count(), none);
+    // generic_i8.cu compiles its kernels from sm_80 on (NINFERNO_I8_KERNELS); below, empty bodies.
+    add(Family::I8Mma, i8_schedule_count(), [&](int i, ManifestSchedule& s) {
+        s.compiled = m.arch == 0 || m.arch >= 80;
+        for (const QType q : {QType::Q4_G64_FP16, QType::Q5_G64_FP16, QType::Q6_G64_FP16}) {
+            if (!i8_fits(i, q)) s.omitted_formats.push_back({q, 0});
+        }
+    });
     for (const auto& f : formats) {
         if (r8_supports(f.first) && r8_verify_compiled(f.first)) {
             m.r8_verify_formats.push_back(f.first);

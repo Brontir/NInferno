@@ -371,9 +371,13 @@ void check_others(const Weight& w, LinearPolicy policy, const DeviceFeatures& fe
 
 // The compiled-variant manifest (#307) against the families' refusals for a weight: a schedule
 // the manifest says this build holds no kernel of for the weight's format is never admitted, and
-// the refusal says so (not compiled, the codec's tile, or a format the family does not read);
-// a schedule refused as not compiled (or, register MMA, for its codec's tile) is one the manifest
-// says is absent.
+// the refusal says so (not compiled, the codec's tile, a tile past the build's shared memory, or a
+// format the family does not read); a schedule refused as not compiled, for its codec's tile
+// (register MMA) or for the build's shared memory (tiled, W4A8, I8, staged past staged_fits) is
+// one the manifest says is absent. A route whose instructions the build itself lacks
+// (route_requires against build_features: I8 on sm_75) is not checked: a synthetic board above
+// the build is offered routes whose kernels it compiled empty, which no real device of that build
+// takes (its features are the build's in common).
 generic::ScheduleRefusal family_refusal(generic::Route r, const Weight& w, LinearPolicy policy) {
     using generic::Family;
     switch (r.family) {
@@ -397,7 +401,10 @@ void check_manifest(const generic::BuildManifest& manifest, const Weight& w, Lin
                     const std::string& where, std::map<std::string, int>& counts, Fail&& fail) {
     using generic::ScheduleRefusal;
     for (const auto& s : manifest.schedules) {
-        if (s.route.family == generic::Family::Scalar) continue;
+        if (s.route.family == generic::Family::Scalar ||
+            !has_features(build_features(), generic::route_requires(s.route))) {
+            continue;
+        }
         const bool listed = s.only_formats.empty() ||
                             std::find(s.only_formats.begin(), s.only_formats.end(), w.qtype) !=
                                 s.only_formats.end();
@@ -407,11 +414,18 @@ void check_manifest(const generic::BuildManifest& manifest, const Weight& w, Lin
             });
         const bool absent = !s.compiled || !listed || omitted;
         const auto why    = family_refusal(s.route, w, policy);
+        using generic::Family;
+        const Family family = s.route.family;
+        const bool build_resource =
+            why == ScheduleRefusal::Resource &&
+            (family == Family::TiledMma || family == Family::W4a8Mma || family == Family::I8Mma ||
+             (family == Family::StagedMma && !generic::staged_fits(s.route.schedule)));
         const bool unbuilt_refusal =
-            why == ScheduleRefusal::NotCompiled ||
-            (why == ScheduleRefusal::CodecTile && s.route.family == generic::Family::RegisterMma);
+            why == ScheduleRefusal::NotCompiled || build_resource ||
+            (why == ScheduleRefusal::CodecTile && family == Family::RegisterMma);
         const bool absent_refusal = unbuilt_refusal || why == ScheduleRefusal::Format ||
-                                    why == ScheduleRefusal::CodecTile;
+                                    why == ScheduleRefusal::CodecTile ||
+                                    why == ScheduleRefusal::Resource;
         ++counts[absent ? "absent" : "held"];
         if ((unbuilt_refusal && !absent) || (absent && !absent_refusal) ||
             (absent && generic::route_admits(s.route, w, policy))) {
@@ -463,7 +477,7 @@ void check_manifest_lists(const generic::BuildManifest& manifest, Fail&& fail) {
         fail("manifest: the W4A4 kernels held disagree with the build");
     }
     const auto json = generic::build_manifest_json(manifest, {{"version", "test"}});
-    if (json.find("\"version\": \"test\"") == std::string::npos ||
+    if (json.find("\"build\": {\n    \"version\": \"test\"") == std::string::npos ||
         json.find("\"rmma\"") == std::string::npos) {
         fail("manifest: the document lacks its fields");
     }

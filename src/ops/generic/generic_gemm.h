@@ -622,8 +622,10 @@ struct R8Coverage {
 // omits (rmma_schedule_launchable: a cluster split outside the 120a build; w4a4_schedule_count;
 // kNativeNvfp4), the formats a schedule's kernel alone is compiled for (the producer-warp W4A8
 // tile, w4a8_ws_supports; ggml's kernels, their own types), and the formats whose decoder omits a
-// register-MMA tile (rmma_tile_compiled). What the device can run (instructions, shared memory)
-// is the coverage queries' to say, not this one's.
+// register-MMA tile (rmma_tile_compiled), or whose tile is past the build's shared-memory ceiling
+// and compiles to a stub (tiled_fits, w4a8_fits, i8_fits; staged_fits for a whole schedule: the
+// refusals' Resource); the I8 kernels from sm_80 on. What the device can run (instructions, its
+// own shared memory, staged_device_fits) is the coverage queries' to say, not this one's.
 struct OmittedFormat {
     QType qtype;
     // 0: at every K; else at K a multiple of this (the u4 G32 / G64 quad-run decoder from 128).
