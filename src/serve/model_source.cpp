@@ -81,7 +81,7 @@ bool keeps_encoded(const std::string& recipe) {
 }
 
 // The least such a recipe writes: the encoded tensors (U8 codes, FP8, their scales) as they are,
-// and every 16-bit (32-bit) tensor at 4 bits a weight, below the smallest encoding these recipes
+// and every plain float tensor (16, 32 or 64 bits) at 4 bits a weight, below the smallest encoding these recipes
 // give a tensor they quantize (Q6). nullopt when a header cannot be read.
 std::optional<std::uint64_t> encoded_floor_bytes(const convert::FetchPlan& fetch) {
     std::map<std::string, std::uint64_t> dtypes;
@@ -96,6 +96,8 @@ std::optional<std::uint64_t> encoded_floor_bytes(const convert::FetchPlan& fetch
             bytes += size / 4;
         } else if (dtype == "F32") {
             bytes += size / 8;
+        } else if (dtype == "F64") {
+            bytes += size / 16;
         } else {
             bytes += size;
         }
