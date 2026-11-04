@@ -62,6 +62,8 @@ class Collect(unittest.TestCase):
         doc = self.run_collect([rows], "q8,a16,store,64,64,1,rmma.a,rmma.a\n", qualified="")
         self.assertTrue(all(c["status"] == "unmeasured" for c in doc["cases"][0]["candidates"]))
         self.assertNotIn("qualification", doc)
+        doc = self.run_collect([rows], "q8,a16,store,64,64,1,rmma.a,rmma.a\n", qualified="  ")
+        self.assertTrue(all(c["status"] == "unmeasured" for c in doc["cases"][0]["candidates"]))
 
     def test_other_compute_class_is_ineligible(self):
         rows = ("q4k,a16,store,64,64,12,rmma.a,5\nq4k,a16,store,64,64,12,rmma.b,6\n"
