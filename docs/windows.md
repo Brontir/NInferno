@@ -8,7 +8,8 @@ and run it. It needs no administrator rights and builds nothing:
 1. It reads your GPUs (`nvidia-smi`) and shows them. An NVIDIA driver must be installed
    ([nvidia.com/drivers](https://www.nvidia.com/drivers)); every GPU from compute capability 7.0 runs:
    GeForce RTX 20 to 50, the workstation (Quadro, RTX A/Ada/PRO) and datacenter (Tesla V100, T4, A100,
-   A10, L4, L40, H100, B200, ...) cards, several of them in one machine.
+   A10, L4, L40, ...) cards, several of them in one machine. H100, H200, B200 and B300 have engines too,
+   but nobody has run them on those cards yet.
 2. It downloads NInferno (one archive for every GPU), checks it against the signed release
    manifest, and installs it under
    `%LOCALAPPDATA%\Programs\NInferno`. The engine carries the Visual C++ runtime it needs: no
@@ -46,7 +47,8 @@ starts and once a day, and never waits for it:
 - a release older than the manifest's `min_version` is out of date: NInferno asks to update at every
   start.
 
-`NINFERNO_UPDATE_CHECK=0` (or `off`, `no`, `false`) turns the check off; `NINFERNO_UPDATE_URL`
+`NINFERNO_UPDATE_CHECK=0` (or `off`, `no`, `false`) turns the daily check off, in the engine and the
+tray launcher (Check for updates in the tray menu still checks); `NINFERNO_UPDATE_URL`
 points it at another manifest.
 
 ## Uninstall

@@ -262,8 +262,8 @@ Notes that often matter:
   `unknown_parameter`.
 - NInferno never runs tools. It renders your tool definitions into the prompt and returns parsed
   calls. Your client runs them and sends the results back.
-- Unsupported features (audio, logprobs, hosted tools, stored Chat Completions, and similar) are
-  rejected with an error that names the field. See the
+- Unsupported features (audio, logprobs outside Chat Completions, hosted tools, stored Chat
+  Completions, and similar) are rejected with an error that names the field. See the
   [compatibility details](reference/serving.md#6-openai-chat-completions).
 
 ## Speculative decoding

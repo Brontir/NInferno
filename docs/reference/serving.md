@@ -746,9 +746,10 @@ behavior:
 - non-empty legacy `functions`.
 
 Each capability rejection identifies the affected field and the guarantee NInferno cannot provide.
-Known constrained-decoding aliases (`grammar`, `structured_outputs`, `guided_json`, `guided_regex`,
-`guided_choice`, and `guided_grammar`) receive the same explicit rejection instead of being treated
-as unknown hints.
+The constrained-decoding spellings of other servers (llama.cpp's `grammar`, vLLM's
+`structured_outputs` and `guided_json`, `guided_regex`, `guided_choice`, `guided_grammar`) are not
+rejected: they are enforced like `response_format` ([constrained output](#constrained-output)); a
+request may carry only one of them.
 
 ### Accepted but neutral fields
 
