@@ -2489,6 +2489,29 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     return aligned_to(w.qdata, 8) ? ScheduleRefusal::None : ScheduleRefusal::Alignment;
 }
 
+ScheduleRefusal tiled_refusal(int index, const Weight& w) {
+    if (index < 0 || index >= tiled_schedule_count()) return ScheduleRefusal::NotDeclared;
+    if (!supports(w)) return ScheduleRefusal::Format;
+    const WeightCodec codec = codec_of(w);
+    const bool cutlass_only = volta_cutlass_only(codec);
+    if (!cutlass_only && !tiled_takes(codec)) return ScheduleRefusal::Format;
+    // A CUTLASS-only format (volta_cutlass_only) runs no tile of its own: schedule 0 names it.
+    if (cutlass_only && index != 0) return ScheduleRefusal::CodecTile;
+    if (!cutlass_only && !tiled_fits(index, codec)) return ScheduleRefusal::Resource;
+    const Route route{Family::TiledMma, static_cast<std::uint8_t>(index)};
+    if (!has_features(current_features(), route_requires(route))) {
+        return ScheduleRefusal::Instruction;
+    }
+    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes where
+    // the tiles read them.
+    if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
+        (!cutlass_only && !aligned_to(w.qdata, 16))) {
+        return ScheduleRefusal::Alignment;
+    }
+    if ((w.k % 64) != 0) return ScheduleRefusal::Extent;
+    return ScheduleRefusal::None;
+}
+
 bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     if (route.family == Family::RegisterMma) {
         return rmma_refusal(route.schedule, w) == ScheduleRefusal::None;
@@ -2498,6 +2521,9 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     }
     if (route.family == Family::W4a8Mma) {
         return w4a8_refusal(route.schedule, w, policy) == ScheduleRefusal::None;
+    }
+    if (route.family == Family::TiledMma) {
+        return tiled_refusal(route.schedule, w) == ScheduleRefusal::None;
     }
     if (!supports(w)) return false;
     if (!has_features(current_features(), route_requires(route))) return false;
@@ -2517,12 +2543,8 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
         return false;
     case Family::W4a4Mma:
         return route.schedule < w4a4_schedule_count() && allows_w4a4(w, policy);
-    case Family::TiledMma:
-        // A CUTLASS-only format (volta_cutlass_only) runs no tile of its own: schedule 0 names it.
-        if (volta_cutlass_only(codec_of(w))) { return route.schedule == 0 && (w.k % 64) == 0; }
-        return route.schedule < tiled_schedule_count() && tiled_takes(codec_of(w)) &&
-               tiled_fits(route.schedule, codec_of(w)) && (w.k % 64) == 0 &&
-               aligned_to(w.qdata, 16);
+    case Family::TiledMma: // tiled_refusal, above
+        return false;
     case Family::W4a8Mma: // w4a8_refusal, above
         return false;
     case Family::StagedMma:
@@ -4071,6 +4093,28 @@ FamilyCoverage rmma_coverage(const Problem& problem, const Weight& w, std::int32
     }
     c.heuristic         = heuristic_rmma(problem, tokens, prefill_band);
     c.heuristic_refusal = rmma_refusal(c.heuristic, w);
+    return c;
+}
+
+FamilyCoverage tiled_coverage(const Weight& w) {
+    FamilyCoverage c;
+    c.declared = tiled_schedule_count();
+    bool cutlass_only = false, takes = false;
+    if (supports(w)) {
+        const WeightCodec codec = codec_of(w);
+        cutlass_only            = volta_cutlass_only(codec);
+        takes                   = tiled_takes(codec);
+    }
+    for (int i = 0; i < c.declared; ++i) {
+        const ScheduleRefusal why = tiled_refusal(i, w);
+        c.schedules.push_back({i, why});
+        c.compiled += takes || (cutlass_only && i == 0);
+        c.legal += why == ScheduleRefusal::None;
+        if (c.heuristic < 0 && (cutlass_only ? i == 0 : takes && tiled_fits(i, codec_of(w)))) {
+            c.heuristic         = i;
+            c.heuristic_refusal = why;
+        }
+    }
     return c;
 }
 
