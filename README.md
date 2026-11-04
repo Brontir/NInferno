@@ -275,8 +275,12 @@ goal is fast, affordable inference for everyone, and there is a lot to do:
 
 - **Run it on your GPU** and report what breaks or runs slower than the tables say, with
   `ninferno-serve --version` and the startup log.
-- **Measure a GPU** that has no page yet: [`tools/bench/perf_matrix.py`](tools/bench/perf_matrix.py)
-  and the [methodology](docs/performance/methodology.md); send the rows in a pull request.
+- **Measure your GPU for us**, especially one we have no page for: run `ninferno-kit` from the
+  release. It measures everything this card can run, for a few hours, downloading the models as it
+  goes: speed against what the plan predicts, answer quality, speculation, and the speed of every
+  kernel route the models' layers can take, which is how we fix a card's route table. It writes one
+  file and the text of a pull request or issue for it, and sends nothing itself. What it measures
+  and how we judge it: [the measurement kit](docs/maintainer/user-measurement-kit.md).
 - **Add a model, a format or a kernel.** [Build from source](docs/building.md), read the
   [maintainer documentation](docs/maintainer/), and open an issue first: [CONTRIBUTING](CONTRIBUTING.md)
   explains how changes are agreed, tested and measured before they are merged.

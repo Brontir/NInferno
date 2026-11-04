@@ -131,6 +131,15 @@ done
   { echo "package.sh: the chat window (llama-ui) was not fetched at configure time" >&2; exit 1; }
 
 install -m 0755 "$ROOT/tools/release/ninferno-start" "$STAGE/bin/ninferno-start"
+# The user measurement kit (tools/kit, docs/maintainer/user-measurement-kit.md) under the source
+# tree's own layout, which measure.py resolves its data from; bin/ninferno-kit runs it on this
+# release's ninferno-serve.
+for f in tools/kit/measure.py tools/kit/validate.py tools/kit/gpu.py tools/kit/models.json \
+         tools/kit/hard50_reference.json tools/bench/hard_set.py eval/corpora/hard50/hard50.json \
+         examples/cli/messages/long_niah_256k.json src/spec/data/drafter_registry.json; do
+  install -D -m 0644 "$ROOT/$f" "$STAGE/share/ninferno/kit/$f"
+done
+install -m 0755 "$ROOT/tools/release/ninferno-kit" "$STAGE/bin/ninferno-kit"
 # ninferno-update installs a newer release with the installer this archive carries.
 install -m 0755 "$ROOT/tools/release/ninferno-update" "$STAGE/bin/ninferno-update"
 install -m 0644 "$ROOT/tools/release/install.sh" "$STAGE/share/ninferno/install.sh"

@@ -2,16 +2,21 @@
 """The user measurement kit (docs/maintainer/user-measurement-kit.md): on your own card, what our
 stands measure, beside what the plan predicts for the same start, in one file you can send us.
 
-    python tools/kit/measure.py --bin DIR [--budget-minutes 30] [--models auto|ID,...] [--device N]
-        [--passes 2] [--hard50] [--spec-tune SECONDS] [--out FILE] [--yes]
+    python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...]
+        [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--out FILE] [--yes]
 
-DIR holds ninferno-serve (and ninferno, for --spec-tune): a release or a build. Standard library
-only; Windows and Linux. The models are fetched first through `ninferno-serve --prepare-only` into
-your hub cache, after the bytes are stated (--yes skips the question); the budget counts the GPU
-time only. Nothing is sent anywhere: the kit writes FILE.json and FILE.md (a ready PR or issue
-body) and prints how to submit them yourself.
+DIR holds ninferno-serve: a release or a build (`ninferno-serve spec-tune` and `route-tune` run
+there; a build's own `ninferno` is used for --spec-tune where it is beside it). Standard library
+only; Windows and Linux. The models are fetched through `ninferno-serve --prepare-only` into your
+hub cache, after the bytes are stated (--yes skips the question): the next model downloads while
+the kit measures the one before (--no-prefetch: all of them first). The budget counts the GPU time
+only. --full measures everything for this card, for hours: every model of the set that fits, plain
+passes, hard50, a speculation tune and the route sweep. Nothing is sent anywhere: the kit writes
+FILE.json and FILE.md (a ready PR or issue body) and prints how to submit them yourself.
 """
 import argparse
+import concurrent.futures
+import csv
 import datetime
 import hashlib
 import json
@@ -31,8 +36,8 @@ sys.path.insert(0, str(HERE))
 import gpu  # noqa: E402
 import validate  # noqa: E402
 
-KIT_VERSION = "1"
-SCHEMA = "ninferno-user-run/1.1"
+KIT_VERSION = "2"
+SCHEMA = "ninferno-user-run/1.2"
 HAYSTACK = ROOT / "examples/cli/messages/long_niah_256k.json"  # perf_matrix.py's long text
 QUESTION = "\n\nSummarize the text above in detail, section by section."
 START_TIMEOUT_S = 900
@@ -152,14 +157,14 @@ def request(port, prompt, max_tokens):
 
 
 class Server:
-    def __init__(self, serve, model, flags, port, log):
+    def __init__(self, serve, model, flags, port, log, env=None):
         if not port_free(port):
             raise RuntimeError(f"port {port} is in use (--port takes another)")
         self.port, self.log = port, log
         self.log_file = open(log, "w", encoding="utf-8", errors="replace")
         self.proc = subprocess.Popen([serve, model["repo"], "--quant", model["quant"], "--port",
                                       str(port), "--model-id", "m"] + flags,
-                                     stdout=self.log_file, stderr=subprocess.STDOUT)
+                                     stdout=self.log_file, stderr=subprocess.STDOUT, env=env)
 
     def wait(self):
         start = time.time()
@@ -388,10 +393,27 @@ def main():
     ap.add_argument("--hard50", action="store_true", help="also the hard question set (quality)")
     ap.add_argument("--spec-tune", type=int, default=0, metavar="SECONDS",
                     help="also `ninferno spec-tune` per model for SECONDS (0: no)")
+    ap.add_argument("--routes", action="store_true",
+                    help="also the route sweep of each model's projections (ninferno-serve route-tune)")
+    ap.add_argument("--route-passes", type=int, default=2, help="route sweeps per model (a repeat each)")
+    ap.add_argument("--full", action="store_true",
+                    help="everything for this card: every fitting model, hard50, spec-tune, routes")
+    ap.add_argument("--no-prefetch", action="store_true",
+                    help="fetch every model before measuring (default: the next while one is measured)")
     ap.add_argument("--port", type=int, default=18390)
     ap.add_argument("--out", default=None, help="result file (default user-run-<gpu>-<date>.json)")
     ap.add_argument("--yes", action="store_true", help="fetch without asking")
     args = ap.parse_args()
+    if args.full:
+        # Hours, not minutes: the budget is a guard against a run that never ends, not a plan.
+        given = {a.split("=")[0] for a in sys.argv[1:]}
+        if "--budget-minutes" not in given:
+            args.budget_minutes = 24 * 60
+        if "--max-models" not in given:
+            args.max_models = len(json.loads((HERE / "models.json").read_text(encoding="utf-8"))["models"])
+        if "--spec-tune" not in given:
+            args.spec_tune = 1200
+        args.hard50 = args.routes = True
     os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"  # the CUDA ordinal is nvidia-smi's index
     # A visibility remapping would make the engine's --device another card than nvidia-smi's
     # --id: --device alone picks the card.
@@ -399,7 +421,10 @@ def main():
         print("CUDA_VISIBLE_DEVICES is ignored by the kit: --device picks the card", flush=True)
 
     serve = exe(args.bin, "ninferno-serve")
-    cli = exe(args.bin, "ninferno") if args.spec_tune else None
+    # A build's own CLI where it is beside ninferno-serve, else the release's `ninferno-serve
+    # spec-tune` (the same code, through the dispatcher's engine for this GPU).
+    cli_path = Path(args.bin) / ("ninferno" + (".exe" if os.name == "nt" else ""))
+    tune_cmd = [str(cli_path), "spec-tune"] if cli_path.exists() else [serve, "spec-tune"]
     models_file = HERE / "models.json"
     models_doc = json.loads(models_file.read_text(encoding="utf-8"))
     wanted = models_doc["models"] if args.models == "auto" else [
@@ -450,22 +475,30 @@ def main():
                   + "; ".join(listed))
             if not args.yes and input("Fetch now? [y/N] ").strip().lower() != "y":
                 sys.exit("Nothing fetched; nothing measured.")
-            fetched = []
-            for model, plan in chosen:
-                print(f"fetching {model['repo']} {model['quant']} ...", flush=True)
-                _, error = prepare(serve, model, with_drafters=args.spec_tune > 0)
-                if error:
-                    print(f"  failed: {error}; not measured", flush=True)
-                    doc["runs"].append({"id": model["id"], "repo": model["repo"], "quant": model["quant"],
-                                        "mode": "plain", "error": "fetch: " + error})
-                    continue
-                fetched.append((model, plan))
-            chosen = fetched
+        # The fetches run one after another in the background, in the set's order: a model is
+        # measured once its own fetch ended, while the next ones download (--no-prefetch: all
+        # first). A conversion is the host's work; each run records whether a fetch was running
+        # beside it.
+        fetcher = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        fetches = []
+        for model, _ in chosen:
+            fetches.append(fetcher.submit(prepare, serve, model, args.spec_tune > 0))
+        if args.no_prefetch:
+            concurrent.futures.wait(fetches)
 
         per_pass = 150 + args.prompts * 90
         progress.steps = max(1, len(chosen) * (args.passes + (1 if args.hard50 else 0)
-                                               + (1 if args.spec_tune else 0)))
-        for model, plan in chosen:
+                                               + (1 if args.spec_tune else 0) + (1 if args.routes else 0)))
+        for index, (model, plan) in enumerate(chosen):
+            if not fetches[index].done():
+                print(f"waiting for the fetch of {model['repo']} {model['quant']} ...", flush=True)
+            _, error = fetches[index].result()
+            if error:
+                print(f"  {model['id']}: fetch failed: {error}; not measured", flush=True)
+                doc["runs"].append({"id": model["id"], "repo": model["repo"], "quant": model["quant"],
+                                    "mode": "plain", "error": "fetch: " + error})
+                continue
+            beside = any(not f.done() for f in fetches[index + 1:])
             flags = run_flags(model, args.device)
             choice = plan.get("choice") or {}
             chosen_plan = choice.get("chosen") or {}
@@ -473,7 +506,8 @@ def main():
             prompt_len = int((choice.get("task") or {}).get("prompt") or 2048)
             run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "plain",
                    "flags": flags, "plan": {"chosen": chosen_plan, "prompt": prompt_len,
-                                            "document": kept_plan(plan)}, "passes": []}
+                                            "document": kept_plan(plan)}, "passes": [],
+                   "fetch_beside": beside}
             doc["runs"].append(run)
             # A model's passes are measured whole or not at all (one pass cannot be validated).
             if not progress.fits(per_pass * args.passes, f"{model['id']} ({args.passes} passes)"):
@@ -500,11 +534,21 @@ def main():
                 doc["runs"].append(hard50(serve, model, flags, args.port, workdir))
                 progress.spend(time.time() - started)
             if args.spec_tune and progress.fits(args.spec_tune + 300, f"{model['id']} spec-tune"):
-                progress.step(f"{model['id']}: ninferno spec-tune for {args.spec_tune} s")
+                progress.step(f"{model['id']}: spec-tune for {args.spec_tune} s")
                 started = time.time()
-                doc["runs"].append(spec_tune(serve, cli, model, args.device, args.spec_tune, card, workdir,
-                                              smi_id, wddm))
+                doc["runs"].append(spec_tune(serve, tune_cmd, model, args.device, args.spec_tune, card,
+                                              workdir, smi_id, wddm))
                 progress.spend(time.time() - started)
+            # A route sweep pass is about two minutes a recorded problem; a model records ten to
+            # twenty (its distinct projection shapes).
+            route_cost = 180 + args.route_passes * 15 * 120
+            if args.routes and progress.fits(route_cost, f"{model['id']} route sweep"):
+                progress.step(f"{model['id']}: the route sweep ({args.route_passes} passes)")
+                started = time.time()
+                doc["runs"].append(route_sweep(serve, model, flags, args.device, args.port,
+                                               args.route_passes, workdir, smi_id, wddm))
+                progress.spend(time.time() - started)
+        fetcher.shutdown(wait=False, cancel_futures=True)
     finally:
         # Written whatever happened (an interrupted run keeps what it measured).
         doc["budget"] = {"asked_s": progress.budget_s, "used_s": round(progress.used),
@@ -652,7 +696,7 @@ def lab_configs(model):
 SPEC_KEEP = ("ask", "served", "basis", "source", "round_cost", "by_thinking", "fallbacks", "notes")
 
 
-def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wddm=False):
+def spec_tune(serve, tune_cmd, model, device, seconds, card, workdir, smi_id=None, wddm=False):
     """`ninferno spec-tune` as the stands publish registry entries from, under telemetry, beside
     the plan's own speculation (--spec auto: its basis, source and round costs), the drafter
     manifest and the target's identity (validate.py judges it; registry_add.py --from-user-run
@@ -680,7 +724,7 @@ def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wd
         t0 = sampler.now() if sampler else 0
         run["configs"] = lab_configs(model)
         menu = ["--configs", ",".join(run["configs"])] if run["configs"] else []
-        proc = subprocess.Popen([cli, "spec-tune", artifact, "--budget-seconds", str(seconds), "--device",
+        proc = subprocess.Popen(tune_cmd + [artifact, "--budget-seconds", str(seconds), "--device",
                                  str(device), "--out", str(profile), "--publish", str(publish),
                                  "--applies-to", model["repo"], "--measured-on",
                                  f"{card['smi'].get('name')} user-kit"] + menu,
@@ -706,6 +750,85 @@ def spec_tune(serve, cli, model, device, seconds, card, workdir, smi_id=None, wd
             proc.wait()
         if sampler:
             run["telemetry"] = sampler.stop()
+    return run
+
+
+ROUTE_COLUMNS = ("format", "compute", "epilogue", "n", "k", "T")
+
+
+def read_csv(path):
+    with open(path, newline="", encoding="utf-8") as f:
+        return list(csv.DictReader(f))
+
+
+def route_sweep(serve, model, flags, device, port, passes, workdir, smi_id=None, wddm=False):
+    """This card's own timings of the routes the model's projections can take: the problems the
+    engine runs for it, recorded by a start (NINFERNO_ROUTE_RECORD: every problem that reaches
+    the generic path, once), then `ninferno-serve route-tune` over them `passes` times. Each pass
+    keeps every timed (problem, T, route), the route the production path selects there and the
+    route table it would write (validate.py: the selection's regret; a maintainer: a table)."""
+    run = {"id": model["id"], "repo": model["repo"], "quant": model["quant"], "mode": "routes",
+           "passes": []}
+    shapes = workdir / f"{model['id']}.shapes"
+    shapes.unlink(missing_ok=True)
+    server = None
+    try:
+        env = dict(os.environ, NINFERNO_ROUTE_RECORD=str(shapes))
+        server = Server(serve, model, flags, port, str(workdir / f"{model['id']}.routes.serve.log"), env)
+        server.wait()
+        # A decode and a prefill: the record holds the problems, whatever their width.
+        request(port, "Say hello in one short sentence.", 32)
+        request(port, prompt_of(text_blob(), 6000, 7, "routes"), 1)
+        server.stop()
+        server = None
+        lines = sorted({line.strip() for line in shapes.read_text(encoding="utf-8").splitlines()
+                        if line.strip() and not line.startswith("#")}) if shapes.exists() else []
+        run["shapes"] = lines
+        if not lines:
+            raise RuntimeError("the start recorded no problem of the generic path")
+        print(f"    {len(lines)} problems recorded", flush=True)
+        # The tune runs on this card alone: its first CUDA device is the one in bus order.
+        tune_env = dict(os.environ, CUDA_DEVICE_ORDER="PCI_BUS_ID", CUDA_VISIBLE_DEVICES=str(device))
+        for p in range(passes):
+            tag = f"{model['id']}.routes.{p + 1}"
+            table, routes, selected = (workdir / f"{tag}.table.json", workdir / f"{tag}.csv",
+                                       workdir / f"{tag}.selected.csv")
+            for f in (table, routes, selected):
+                f.unlink(missing_ok=True)
+            sampler = gpu.Sampler(smi_id, period_ms=500).start() if smi_id else None
+            t0 = sampler.now() if sampler else 0
+            started = time.time()
+            out = {}
+            try:
+                done = subprocess.run([serve, "route-tune", "--shapes", str(shapes), "--out", str(table),
+                                       "--routes-out", str(routes), "--selected-out", str(selected)],
+                                      env=tune_env, capture_output=True, text=True,
+                                      timeout=len(lines) * 1800 + 600)
+                out["seconds"] = round(time.time() - started)
+                if sampler:
+                    sampler.mark("route-tune", t0, sampler.now())
+                    out["processes_after"] = apps_info(smi_id, wddm, os.getpid())
+                if done.returncode != 0:
+                    tail = (done.stderr or done.stdout).strip().splitlines()
+                    raise RuntimeError("route-tune failed: " + (tail[-1] if tail else str(done.returncode)))
+                out["rows"] = [[r[c] for c in ROUTE_COLUMNS] + [r["route"], float(r["median_us"])]
+                               for r in read_csv(routes)]
+                out["selected"] = [[r[c] for c in ROUTE_COLUMNS] + [r["asked"], r["selected"]]
+                                   for r in read_csv(selected)]
+                out["table"] = json.loads(table.read_text(encoding="utf-8"))
+                print(f"    pass {p + 1}: {len(out['rows'])} timings in {out['seconds'] / 60:.0f} min",
+                      flush=True)
+            except Exception as e:  # noqa: BLE001 - the next pass and the other runs go on
+                out["error"] = scrub(e)
+            finally:
+                if sampler:
+                    out["telemetry"] = sampler.stop()
+            run["passes"].append(out)
+    except Exception as e:  # noqa: BLE001
+        run["error"] = scrub(e)
+    finally:
+        if server:
+            server.stop()
     return run
 
 

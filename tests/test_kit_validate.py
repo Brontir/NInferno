@@ -503,7 +503,63 @@ class Hard50(unittest.TestCase):
                 self.assertEqual(r["correct"], 50 - len(r["wrong"]), (key, r["card"]))
 
 
+def route_pass(times, selected="rmma.a", reason=None):
+    """One route-tune pass of one a16 problem at T=4: `times` route -> us, the selection, and a
+    telemetry window `route-tune` (with `reason` active in it)."""
+    case = ["q4k", "a16", "store", "4096", "4096", "4"]
+    tel = {"t": [0.0, 0.5, 1.0], "reason_fields": P, "marks": [{"name": "route-tune", "start": 0, "end": 2}],
+           "columns": {f"{P}.{r}": ["Active" if r == reason else "Not Active"] * 3
+                       for r in validate.REJECT_REASONS + validate.RECORD_REASONS}}
+    return {"rows": [case + [r, us] for r, us in times.items()],
+            "selected": [case + [selected, selected]], "telemetry": tel}
+
+
+def routes_doc(*passes):
+    d = doc()
+    d["runs"] = [{"id": "q9", "repo": "org/m", "quant": "Q4_K_M", "mode": "routes", "passes": list(passes)}]
+    return d
+
+
+class Routes(unittest.TestCase):
+    def test_selection_within_tolerance_confirms(self):
+        t = {"rmma.a": 10.0, "rmma.b": 10.5, "ggml_mmq": 5.0}  # mmq is int8: not an a16 candidate
+        m = metric(validate.validate(routes_doc(route_pass(t), route_pass(t))), "routes")
+        self.assertEqual(m["status"], "accepted")
+        self.assertTrue(m["verdict"].startswith("confirms"))
+        self.assertEqual(m["measured"], 1.0)
+
+    def test_slow_selection_contradicts(self):
+        t = {"rmma.a": 13.0, "rmma.b": 10.0}
+        m = metric(validate.validate(routes_doc(route_pass(t), route_pass(t))), "routes")
+        self.assertTrue(m["verdict"].startswith("contradicts"))
+        self.assertIn("x1.30", m["notes"][1])
+
+    def test_unreproduced_case_is_left_out(self):
+        a, b = {"rmma.a": 13.0, "rmma.b": 10.0}, {"rmma.a": 13.0, "rmma.b": 12.0}
+        m = metric(validate.validate(routes_doc(route_pass(a), route_pass(b))), "routes")
+        self.assertEqual(m["status"], "rejected: RT3 no case reproduced across the passes")
+
+    def test_rejections(self):
+        t = {"rmma.a": 10.0, "rmma.b": 11.0}
+        one = metric(validate.validate(routes_doc(route_pass(t))), "routes")
+        self.assertTrue(one["status"].startswith("rejected: RT1"))
+        hot = metric(validate.validate(routes_doc(route_pass(t), route_pass(t, reason="hw_slowdown"))),
+                     "routes")
+        self.assertTrue(hot["status"].startswith("rejected: RT1"))
+        other = metric(validate.validate(routes_doc(route_pass(t), route_pass(t, selected="rmma.b"))),
+                       "routes")
+        self.assertTrue(other["status"].startswith("rejected: RT2"))
+
+
 class Kit(unittest.TestCase):
+    def test_model_set_has_lab_references(self):
+        import json
+        models = json.loads((measure.HERE / "models.json").read_text(encoding="utf-8"))["models"]
+        self.assertEqual(len({m["id"] for m in models}), len(models))
+        reference = json.loads((measure.HERE / "hard50_reference.json").read_text(encoding="utf-8"))
+        for m in models[:-1]:  # the lab's hard50 to be held to (the small last one has none yet)
+            self.assertIn(f"{m['repo']} {m['quant']}", reference["models"], m["id"])
+
     def test_lab_configs_are_the_pairs_menu(self):
         import json
         registry = json.loads(measure.REGISTRY.read_text(encoding="utf-8"))

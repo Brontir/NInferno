@@ -1,9 +1,14 @@
 {
-  "version": 1,
-  "note": "The user measurement kit's model set (docs/maintainer/user-measurement-kit.md), in priority order: the kit measures the first ones whose plan fits the card. The last one is small so that every supported card yields a row.",
+  "version": 2,
+  "note": "The user measurement kit's model set (docs/maintainer/user-measurement-kit.md), in priority order: the kit measures the first --max-models ones whose plan fits the card (--full: every one that fits). The last one is small so that every supported card yields a row. Every entry but the last is a checkpoint the lab ran hard50 on (hard50_reference.json).",
   "models": [
     {"id": "qwen35-9b-q4km", "repo": "unsloth/Qwen3.5-9B-MTP-GGUF", "quant": "Q4_K_M", "context": 32768},
     {"id": "gemma4-12b-q4km", "repo": "unsloth/gemma-4-12b-it-GGUF", "quant": "Q4_K_M", "context": 32768},
+    {"id": "gpt-oss-20b-mxfp4", "repo": "ggml-org/gpt-oss-20b-GGUF", "quant": "MXFP4", "context": 32768},
+    {"id": "qwen36-35b-a3b-q3ks", "repo": "unsloth/Qwen3.6-35B-A3B-GGUF", "quant": "UD-Q3_K_S", "context": 32768},
+    {"id": "gemma4-26b-a4b-iq4nl", "repo": "unsloth/gemma-4-26B-A4B-it-GGUF", "quant": "UD-IQ4_NL", "context": 32768},
+    {"id": "qwen36-35b-a3b-q4km", "repo": "unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "quant": "UD-Q4_K_M", "context": 32768},
+    {"id": "qwen38-27b-q4ks", "repo": "unsloth/Qwen3.8-27B-GGUF", "quant": "UD-Q4_K_S", "context": 32768},
     {"id": "qwen35-4b-q4km", "repo": "unsloth/Qwen3.5-4B-MTP-GGUF", "quant": "Q4_K_M", "context": 16384}
   ]
 }
