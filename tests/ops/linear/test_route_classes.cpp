@@ -15,6 +15,7 @@
 //
 // The route table and several heuristics cache what they read of the device on first use, so one
 // process runs one board: without arguments the test runs itself once per board.
+#include "ops/direct_bf16_weight.h"
 #include "ops/quantized_weight.h"
 
 #include "core/device_class.h"
@@ -609,6 +610,21 @@ int run_board(const TestBoard& b) {
                 }
             }
         }
+    }
+    // The staged family reads BF16 weights only, which the formats above leave out: every shape,
+    // and a K off the 64-value steps (the generic path reads it, the staged tiles do not). Where
+    // the BF16 MMA is native some schedule admits them.
+    for (const Shape shape : {Shape{1024, 2048}, Shape{5120, 5120}, Shape{1024, 2080}}) {
+        const auto host = direct_bf16_weight::make_patterned(shape.n, shape.k, 7U);
+        const Weight w  = host.device_weight(payload);
+        const std::string where =
+            "BF16 " + std::to_string(shape.n) + "x" + std::to_string(shape.k);
+        check_staged(w, d.features, where, staged_refused, fail);
+        check_tiled(w, d.features, where, tiled_refused, fail);
+    }
+    if (d.features.mma_bf16_native &&
+        (staged_refused["none"] == 0 || staged_refused["extent"] == 0)) {
+        fail("no BF16 weight admitted to a staged tile, or none refused for its K");
     }
     const auto status     = ops::route_table_status();
     const bool want_table = std::string_view(b.table) != "";

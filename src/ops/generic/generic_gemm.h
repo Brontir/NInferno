@@ -570,8 +570,9 @@ struct R8Coverage {
 // The staged family's coverage of a weight (#307): every schedule with its refusal (compiled:
 // every schedule for a BF16 weight), and the family's pick under the prefill profile, the first
 // schedule whose tiles fit the build and the device (-1 where none does), with its refusal.
-// Outside the profile the pick depends on the call (staged_speed_route). No policy (BF16
-// activations).
+// Outside the profile the pick depends on the call (staged_speed_route); where the BF16 MMA is
+// emulated (Turing, Volta) the selection takes no staged tile at all (bf16_mma_native), whatever
+// this reports. No policy (BF16 activations).
 [[nodiscard]] FamilyCoverage staged_coverage(const Weight& weight);
 
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
