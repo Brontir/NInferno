@@ -284,13 +284,6 @@ std::optional<RouterUrl> parse_router_url(std::string_view url, std::string* why
     return out;
 }
 
-bool is_loopback_host(std::string_view host) noexcept {
-    if (host == "localhost" || host == "::1") { return true; }
-    in_addr v4{};
-    const std::string copy(host);
-    return inet_pton(AF_INET, copy.c_str(), &v4) == 1 && (ntohl(v4.s_addr) >> 24) == 127;
-}
-
 std::unique_ptr<Link> dial(const RouterUrl& url, const TlsOptions& tls, int timeout_ms,
                            std::string* why) {
     const int fd = tcp_connect(url, timeout_ms, why);

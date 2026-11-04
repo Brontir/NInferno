@@ -199,11 +199,8 @@ std::string resolve_public_model_id(const ServeOptions& options,
                                     std::string_view artifact_model_name);
 std::string serve_usage_text(const char* argv0);
 
-// Whether --host keeps the server on this machine: localhost, 127.0.0.0/8 or ::1. Any other
-// address (0.0.0.0, a LAN address, a host name) is reachable from the network.
-bool loopback_host(std::string_view host);
 // The startup warning for a server reachable from the network without an API key; empty when
-// the bind is loopback or a key is set.
+// the bind is loopback (core/loopback.h) or a key is set.
 std::string open_bind_warning(std::string_view host, int port, bool auth_enabled);
 
 } // namespace ninferno::serve

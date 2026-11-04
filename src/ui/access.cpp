@@ -8,28 +8,6 @@
 
 namespace ninferno::ui {
 
-bool is_loopback_host(std::string_view host) noexcept {
-    if (host.size() >= 2 && host.front() == '[' && host.back() == ']') {
-        host = host.substr(1, host.size() - 2);
-    }
-    if (host == "localhost" || host == "::1") { return true; }
-    // 127.x.y.z: four dot-separated decimal parts, the first 127.
-    if (host.substr(0, 4) != "127.") { return false; }
-    int parts = 1, digits = 0;
-    for (const char c : host.substr(4)) {
-        if (c == '.') {
-            if (digits == 0) { return false; }
-            ++parts;
-            digits = 0;
-        } else if (c >= '0' && c <= '9') {
-            if (++digits > 3) { return false; }
-        } else {
-            return false;
-        }
-    }
-    return parts == 3 && digits > 0;
-}
-
 std::string host_of_authority(std::string_view authority) {
     // Strip any userinfo (never sent by browsers, but cheap to ignore).
     if (const auto at = authority.rfind('@'); at != std::string_view::npos) {
