@@ -6,20 +6,24 @@ NInferno is an inference server for a single NVIDIA GPU, from a GeForce RTX 20 o
 RTX 5090. It ships with settings measured on real cards of each generation: which quantization fits,
 which drafter to speculate with and how deep, which kernel runs each layer. You name a model on
 Hugging Face and it starts with those settings; the GUI shows what changes if you trade context,
-users or precision. On one stream, speculative decoding runs a model 1.5 to 3 times as fast as plain
-decoding of the same weights, depending on the model and the task ([measured](docs/performance/README.md)).
+users or precision. On one stream, speculative decoding usually runs a model 1.2 to 2.5 times as fast as plain
+decoding of the same weights (about 1.4 times on a typical page; on a V100 it can be no faster),
+depending on the model and the task ([measured](docs/performance/README.md)).
 
 <!-- perf-summary:begin -->
 <!-- perf-summary:end -->
 
 - **GPUs:** NVIDIA only: GeForce RTX 20 to 50, RTX PRO and workstation cards, V100, T4, A10, A100,
-  L4, L40S. H100, H200, B200 and B300 run, but nothing is tuned or measured for them.
-- **Models:** Qwen3.5 to 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, and fine-tunes of those
+  L4, L40S. H100, H200, B200 and B300 have their own engines in the release, but nobody has run
+  them on those cards yet.
+- **Models:** Qwen3.5, 3.6 and 3.8, Gemma 4, gpt-oss, Nemotron 3.5 and Muse Glimmer, and fine-tunes of those
   architectures with their weights merged, as published on Hugging Face: GGUF, NVFP4, MXFP4, FP8, AWQ,
-  GPTQ. It is not a general engine: other architectures are refused at start.
+  GPTQ. Llama, Mistral, Qwen2/3, Phi-3, Gemma 3 and similar decoders run on a generic path that is
+  less tuned; other architectures are refused at start.
 - **Speed:** speculative decoding (MTP, DFlash, DFlash2, the Gemma 4 assistant), every drafted token
   checked by the full model; kernels chosen per GPU; one to eight concurrent streams.
-- **Long context:** YaRN and LongRoPE as the checkpoint defines them, KV cache in FP8 (NVFP4 for Qwen).
+- **Long context:** YaRN and LongRoPE as the checkpoint defines them, KV cache in 8 bits or less where it
+  leaves room for more context.
 - **Prompt cache:** a repeated prefix (system prompt, chat history, a document) is not computed
   again: its KV state stays in GPU memory, then in pinned host RAM. Never on an SSD†.
 - **API:** OpenAI (`/v1/chat/completions`, `/v1/responses`) and Anthropic (`/v1/messages`) on one
@@ -27,8 +31,8 @@ decoding of the same weights, depending on the model and the task ([measured](do
 - **Reproducible output:** `--activations exact` gives the same tokens whatever the load, the batch or
   the drafts.
 
-<sub>† A KV cache writes the drive all the time: under load it wears out a consumer SSD in one to
-two months, an enterprise one in six to eight. NInferno will not offer one.</sub>
+<sub>† A KV cache rewrites its storage all the time, which is cheap for RAM and wears out an SSD.
+NInferno keeps it in RAM.</sub>
 
 ### What it does not do
 
@@ -63,22 +67,20 @@ Almost all of the code in this repository was written by AI models, under the di
 maintainer ([Michael Dementii](https://github.com/MichaelDementii)), starting in mid-August 2026.
 Claude Code writes the code and runs the experiments on our lab's GPUs; OpenAI's Codex reviews every
 pull request, and a second Claude model reviews it independently. In about two and a half months that
-took roughly $40,000 worth of tokens.
+took tokens worth roughly $40,000 at API list prices.
 
-We say so up front because it changes what you should trust. What we rely on is evidence, not
-authorship: changes are checked against bit-exact reference outputs (selector goldens, exact-mode
-tests) and against the reference model's perplexity and KL divergence, and kernel or selection changes
-are measured end to end on the GPUs they affect, out of the eight cards of five generations in our lab,
+So don't take our word for it: changes are checked against bit-exact reference outputs (selector goldens, exact-mode
+tests) and against our exact mode by perplexity and KL divergence, and kernel or selection changes
+are measured end to end on the GPUs they affect, out of the nine cards of six generations in our lab,
 before they are merged. Measurements are published with the commands that
 produced them, and the [measurement kit](docs/maintainer/user-measurement-kit.md) lets you check them
-on your own card. If something does not hold up, open an issue: that is exactly the feedback the
-process needs.
+on your own card. If something does not hold up, please open an issue.
 
 ### Network access
 
 There is no telemetry. A release build checks once a day, in the background, whether a newer release
-exists: one request for the signed manifest at `ninferno.brontir.com`, carrying only the version in the
-user agent. It logs a notice and installs nothing. `NINFERNO_UPDATE_CHECK=0` turns the check off. Models
+exists: two small requests to `ninferno.brontir.com` (the manifest and its signature), carrying only the
+product name and version in the user agent. It logs a notice and installs nothing. `NINFERNO_UPDATE_CHECK=0` turns the check off. Models
 are downloaded from Hugging Face only when you name one.
 
 ## Contents
@@ -268,10 +270,11 @@ ninferno-serve unsloth/Qwen3.6-35B-A3B-GGUF --quant UD-Q4_K_XL --with-drafters \
 By default NInferno runs **fast**: on wide calls (prompt processing, batched speculative verify) it
 encodes activations to 8 bits, or 4 bits for NVFP4 weights, and takes an 8-bit or smaller KV cache where
 that leaves room for more context. The output is close to the reference but not bit-identical, and it
-can change slightly with the load. **Exact** keeps 16-bit activations and a BF16 KV cache: the same
+can change slightly with the load. **Exact** keeps 16-bit activations: the same
 prompt gives the same tokens whatever else is running, at some cost in speed and context.
 
-- **GUI:** pick *exact output* or the faster default before Start; "What another value would change"
+- **GUI:** under Activations pick "16-bit" (it also takes a BF16 KV cache), "mixed (fast)", "8-bit
+  everywhere" or Auto before Start; "What another value would change"
   shows the speed, context and accuracy (KLD) each choice gives on your GPU.
 - **Command line:** `--activations exact` (with `--kv-dtype bf16` for the cache), or
   `--activations int8` for a middle ground on Qwen. [CLI: activation precision](docs/cli.md#activation-precision)
@@ -329,8 +332,8 @@ The larger ones are [above](#what-it-does-not-do). In detail:
 
 1. **Proven on real consumer GPUs** *(now)*. Run every supported model on every GPU generation
    people actually own, fix what breaks, and keep the published numbers current.
-2. **New models first** *(ongoing)*. Support the new open models that matter soon after their
-   release, starting with those that fit in one GPU's memory.
+2. **New models first** *(ongoing)*. Support new open models that fit in one GPU's memory soon after
+   their release.
 3. **Bigger models and longer contexts on one GPU** *(planned)*. Compute part of a
    MoE model's experts outside the GPU, so larger MoE models and contexts fit, while keeping the
    speed of one to four concurrent users.
@@ -340,8 +343,7 @@ The larger ones are [above](#what-it-does-not-do). In detail:
 
 ## Contributing
 
-NInferno is fully open (Apache 2.0) and gets better with every GPU and model people run it on. The
-goal is fast, affordable inference for everyone, and there is a lot to do:
+NInferno is open source (Apache 2.0). There is a lot to do:
 
 - **Run it on your GPU** and report what breaks or runs slower than the tables say, with
   `ninferno-serve --version` and the startup log.

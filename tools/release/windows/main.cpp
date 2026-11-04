@@ -23,6 +23,8 @@
 #include <shellapi.h>
 
 #include <atomic>
+#include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
@@ -507,6 +509,16 @@ void update_now(bool from_page) {
     }).detach();
 }
 
+// NINFERNO_UPDATE_CHECK=0 (off, no, false) turns the daily check off, as in the engine
+// (product/update/update_check.h); a check asked from the tray menu still runs.
+bool automatic_checks_enabled() {
+    const char* value = std::getenv("NINFERNO_UPDATE_CHECK");
+    if (value == nullptr) { return true; }
+    std::string v(value);
+    for (auto& c : v) { c = static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
+    return v != "0" && v != "off" && v != "no" && v != "false";
+}
+
 void check_updates(bool said_by_user) {
     std::thread([said_by_user] {
         try {
@@ -630,8 +642,10 @@ int run_launcher() {
         message(nullptr, fmt(word(Word::StartFailed), {fmt(word(Word::LogHint), {log_path()})}), MB_OK | MB_ICONERROR);
         PostMessageW(g_launcher.hwnd, WM_CLOSE, 0, 0);
     }).detach();
-    check_updates(false);
-    SetTimer(g_launcher.hwnd, 1, 24 * 3600 * 1000, [](HWND, UINT, UINT_PTR, DWORD) { check_updates(false); });
+    if (automatic_checks_enabled()) {
+        check_updates(false);
+        SetTimer(g_launcher.hwnd, 1, 24 * 3600 * 1000, [](HWND, UINT, UINT_PTR, DWORD) { check_updates(false); });
+    }
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
