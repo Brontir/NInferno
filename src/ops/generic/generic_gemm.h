@@ -466,6 +466,17 @@ struct Problem {
     Epilogue epilogue;
 };
 
+// A distinct problem that reached the generic path in this process (run), with its weight's stored
+// rows and layout: what route_query needs to ask the call's route again (the decision manifest's
+// route lines, runtime/engine/decision_routes.h). In (format, policy, epilogue, N, K, stored rows,
+// layout) order.
+struct SeenProblem {
+    Problem problem;
+    std::int32_t parent_rows = 0;
+    QuantLayout layout       = QuantLayout::RowSplit;
+};
+[[nodiscard]] std::vector<SeenProblem> seen_problems();
+
 // Why a schedule of a family is not a route for a weight on this build and device (#307), one
 // reason each: not declared (an index past the family's list), not compiled (this build omits
 // it: the thread-block cluster schedules outside the full sm_12x build), the weight's format or

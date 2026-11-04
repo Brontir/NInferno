@@ -51,6 +51,7 @@ add_library(ninferno_engine STATIC
   engine/model_instance.cpp
   engine/warmup_widths.cpp
   contract/sampling.cpp
+  engine/decision_routes.cpp
   engine/engine.cpp
 )
 ninferno_internal_includes(ninferno_engine)

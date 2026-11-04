@@ -60,6 +60,13 @@ ninferno_add_test(ninferno_decision_fingerprint_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_fingerprint.cpp"
   LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
 
+# The decision manifest's route lines (#304): the selector's answer at every decode and verify width
+# and the prefill chunk, replayed from their text on the board's class, independent of the
+# problems' order, moved by a table that moves a route (the manifest, not the fingerprint).
+ninferno_add_op_test(ninferno_decision_routes_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decision_routes.cpp"
+  LIBRARIES ninferno_engine ninferno_runtime_support ninferno_ops ninferno_core)
+
 ninferno_add_test(ninferno_process_options_lease_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_process_options_lease.cpp"
   LIBRARIES ninferno_runtime_support)

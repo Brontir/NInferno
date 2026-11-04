@@ -23,7 +23,8 @@ struct DescribedWeight {
 };
 
 void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::int32_t n,
-                     std::int32_t k, std::int32_t parent_rows) {
+                     std::int32_t k, std::int32_t parent_rows,
+                     std::optional<QuantLayout> layout = std::nullopt) {
     const std::uint64_t own = epilogue == Epilogue::SwiGlu ? 2ULL * static_cast<std::uint64_t>(n)
                                                            : static_cast<std::uint64_t>(n);
     const bool nvfp4 = qtype == QType::NVFP4;
@@ -33,7 +34,7 @@ void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::
     // projection_slice: native_weight of the complete parent, the call's rows in Problem::n).
     const std::uint64_t stored = std::max<std::uint64_t>(own, static_cast<std::uint64_t>(parent_rows));
     const std::uint64_t shape[2] = {stored, static_cast<std::uint64_t>(k)};
-    out.parent.geometry = weight_geometry(qtype, default_weight_layout(qtype), shape);
+    out.parent.geometry = weight_geometry(qtype, layout.value_or(default_weight_layout(qtype)), shape);
     out.view.shape      = {stored, static_cast<std::uint64_t>(k)};
     out.view.parts      = {WeightRegion{&out.parent, 0, stored * static_cast<std::uint64_t>(k)}};
     out.weight          = native_weight(out.view, nvfp4 ? 1.0F : 0.0F);
@@ -43,11 +44,12 @@ void describe_weight(DescribedWeight& out, QType qtype, Epilogue epilogue, std::
 
 std::optional<Route> route_query(const DeviceClass& device, QType qtype, LinearPolicy policy,
                                  Epilogue epilogue, std::int32_t n, std::int32_t k,
-                                 std::int32_t tokens, bool prefill, std::int32_t parent_rows) {
+                                 std::int32_t tokens, bool prefill, std::int32_t parent_rows,
+                                 std::optional<QuantLayout> layout) {
     if (n <= 0 || k <= 0 || tokens <= 0 || parent_rows < 0) return std::nullopt;
     const ScopedDeviceClass scoped(device);
     DescribedWeight described;
-    describe_weight(described, qtype, epilogue, n, k, parent_rows);
+    describe_weight(described, qtype, epilogue, n, k, parent_rows, layout);
     if (!supports(described.weight)) return std::nullopt;
     const Problem problem{qtype, policy, n, k, epilogue};
     return select_route(problem, described.weight, tokens, prefill);
