@@ -589,6 +589,33 @@ struct R8Coverage {
 [[nodiscard]] FamilyCoverage i8_coverage(const Problem& problem, const Weight& weight,
                                          std::int32_t tokens);
 
+// The remaining families' own rules in route_admits (#307), which it decides by:
+// - W4A4 schedule `index`: not declared (past its names); not compiled (a build without the
+//   Blackwell kernels, w4a4_schedule_count 0, still parses the names); format (not NVFP4, or no
+//   recorded input scale divisor, finite and positive); policy (no A4); instruction.
+// - NVFP4 tiled schedule `index`: not declared; not compiled (outside the 120a build,
+//   kNativeNvfp4); format (not NVFP4); instruction; alignment (the codes off 8 bytes).
+// - ggml's matrix and vector kernels (Family::GgmlMmq / GgmlVec, schedule 0): not declared (any
+//   other schedule); format (a format the kernel does not read, a layout it does not take, a
+//   plane it needs missing); policy (no A8); instruction (the matrix kernel below sm_75,
+//   ggml_mmq::device_supported); alignment (a plane off 16 bytes); extent (K off the kernel's
+//   multiple: 256 values for the matrix kernel, a block for the vector one).
+// Every family adds route_admits' generic checks: the generic path reads the weight, the
+// device's instructions (route_requires), a ggml high plane on 16 bytes.
+[[nodiscard]] ScheduleRefusal w4a4_refusal(int index, const Weight& weight, LinearPolicy policy);
+[[nodiscard]] ScheduleRefusal nvfp4_tiled_refusal(int index, const Weight& weight);
+[[nodiscard]] ScheduleRefusal ggml_refusal(Family family, int index, const Weight& weight,
+                                           LinearPolicy policy);
+// ggml's own admission of a weight to its matrix / vector kernel (mmq_prefill_wins and vec_call
+// ask it), apart from route_admits' generic checks.
+[[nodiscard]] bool ggml_mmq_admits(const Weight& weight, LinearPolicy policy);
+[[nodiscard]] bool ggml_vec_admits(const Weight& weight, LinearPolicy policy);
+// One of these families' coverage of a weight under `policy`: every declared schedule with its
+// refusal (compiled: the schedules this build holds for a format the family reads). No pick: the
+// selection prices these families against the others (cost_route), and the call decides.
+[[nodiscard]] FamilyCoverage other_family_coverage(Family family, const Weight& weight,
+                                                   LinearPolicy policy);
+
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
 // kQ8PrefillA8Tokens). A wrapper's query takes the larger of this and its own plan's, since the

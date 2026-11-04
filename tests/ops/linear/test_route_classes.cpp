@@ -28,6 +28,7 @@
 #include "ops/generic/route_table.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -291,6 +292,68 @@ void check_i8(const Weight& w, LinearPolicy policy, const DeviceFeatures& featur
     }
 }
 
+// The remaining families' admission as route_admits decided it before their refusals, written
+// apart from them: the generic checks (the generic path reads the weight, the tile's
+// instructions, a ggml high plane on 16 bytes), then W4A4: a compiled schedule, NVFP4, A4 allowed
+// and a finite positive input scale divisor; NVFP4 tiled: the 120a kernels, NVFP4, 8-byte codes;
+// ggml's kernels: schedule 0 and the kernel's own admission (ggml_mmq_admits / ggml_vec_admits).
+bool other_old_rule(generic::Family family, int index, const Weight& w, LinearPolicy policy,
+                    const DeviceFeatures& features) {
+    const generic::Route r{family, static_cast<std::uint8_t>(index)};
+    if (!generic::supports(w) || !has_features(features, generic::route_requires(r))) return false;
+    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned(w.qhigh, 16)) {
+        return false;
+    }
+    switch (family) {
+    case generic::Family::W4a4Mma:
+        return index < generic::w4a4_schedule_count() && w.qtype == QType::NVFP4 &&
+               allows_a4(policy) && std::isfinite(w.input_scale_divisor) &&
+               w.input_scale_divisor > 0.0F;
+    case generic::Family::Nvfp4TiledMma:
+        return ops::detail::kNativeNvfp4 && index < generic::nvfp4_tiled_schedule_count() &&
+               w.qtype == QType::NVFP4 && aligned(w.qdata, 8);
+    case generic::Family::GgmlMmq:
+        return index == 0 && generic::ggml_mmq_admits(w, policy);
+    case generic::Family::GgmlVec:
+        return index == 0 && generic::ggml_vec_admits(w, policy);
+    default:
+        return false;
+    }
+}
+
+// The remaining families' coverage of `w` under `policy` (#307): each declared schedule's refusal
+// as route_admits decides it and as the old rule did, and the counts.
+template <class Fail>
+void check_others(const Weight& w, LinearPolicy policy, const DeviceFeatures& features,
+                  const std::string& where, std::map<std::string, int>& counts, Fail&& fail) {
+    for (const auto family : {generic::Family::W4a4Mma, generic::Family::Nvfp4TiledMma,
+                              generic::Family::GgmlMmq, generic::Family::GgmlVec}) {
+        const auto c = generic::other_family_coverage(family, w, policy);
+        int legal    = 0;
+        for (const auto& s : c.schedules) {
+            const generic::Route r{family, static_cast<std::uint8_t>(s.schedule)};
+            const bool admits = generic::route_admits(r, w, policy);
+            const std::string name =
+                family == generic::Family::GgmlMmq ? "mmq"
+                : family == generic::Family::GgmlVec ? "vec"
+                : family == generic::Family::W4a4Mma ? "w4a4"
+                                                     : "nvfp4t";
+            ++counts[name + " " + std::string(generic::schedule_refusal_name(s.refusal))];
+            legal += s.refusal == generic::ScheduleRefusal::None;
+            if (admits != (s.refusal == generic::ScheduleRefusal::None) ||
+                admits != other_old_rule(family, s.schedule, w, policy, features)) {
+                fail(where + " policy=" + std::to_string(static_cast<int>(policy)) + " " +
+                     generic::route_name(r) + ": " +
+                     std::string(generic::schedule_refusal_name(s.refusal)) +
+                     ", which route_admits or the old rule decides otherwise");
+            }
+        }
+        if (c.legal != legal || c.compiled > c.declared || c.declared == 0) {
+            fail(where + ": counts of family " + std::to_string(static_cast<int>(family)));
+        }
+    }
+}
+
 constexpr Shape kShapes[]        = {{1024, 2048}, {5120, 5120}, {1024, 12288}};
 constexpr std::int32_t kTokens[] = {1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 64, 128, 512, 2048};
 
@@ -344,6 +407,7 @@ int run_board(const TestBoard& b) {
     std::map<std::string, int> tiled_refused;     // the tiled family's schedules, per weight: why
     std::map<std::string, int> staged_refused;    // the staged family's schedules, per weight: why
     std::map<std::string, int> i8_refused;        // the I8 family's schedules, per weight: why
+    std::map<std::string, int> others_refused;    // W4A4, NVFP4 tiled, ggml: family and why
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -572,6 +636,22 @@ int run_board(const TestBoard& b) {
                 for (const LinearPolicy policy : {LinearPolicy::A16Only, LinearPolicy::AllowA8}) {
                     check_i8(w, policy, d.features, where, i8_refused, fail);
                 }
+                for (const LinearPolicy policy :
+                     {LinearPolicy::A16Only, LinearPolicy::AllowA8, LinearPolicy::AllowA4}) {
+                    check_others(w, policy, d.features, where, others_refused, fail);
+                    // A ggml high plane 4 bytes off: ggml's kernels refuse it for alignment.
+                    if (w.layout != QuantLayout::GgmlPlanes || w.qhigh == nullptr) continue;
+                    Weight off = w;
+                    off.qhigh  = static_cast<const char*>(w.qhigh) + 4;
+                    for (const auto family : {generic::Family::GgmlMmq, generic::Family::GgmlVec}) {
+                        if (generic::ggml_refusal(family, 0, w, policy) ==
+                                generic::ScheduleRefusal::None &&
+                            generic::ggml_refusal(family, 0, off, policy) !=
+                                generic::ScheduleRefusal::Alignment) {
+                            fail(where + ": ggml with the high plane 4 bytes off");
+                        }
+                    }
+                }
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :
@@ -677,6 +757,9 @@ int run_board(const TestBoard& b) {
         check_staged(w, d.features, where, staged_refused, fail);
         check_tiled(w, d.features, where, tiled_refused, fail);
     }
+    // (The matrix kernel asks the stand's own device, ggml_mmq::device_supported: a Volta stand
+    // runs these boards without it.)
+    if (others_refused["vec none"] == 0) fail("no ggml weight admitted to ggml's vector kernel");
     if (d.features.mma_bf16_native && i8_refused["none"] == 0) {
         fail("no G64 weight admitted to an I8 tile");
     }
@@ -708,6 +791,8 @@ int run_board(const TestBoard& b) {
     for (const auto& [why, count] : staged_refused) std::cout << " " << why << " " << count;
     std::cout << "; I8 schedules:";
     for (const auto& [why, count] : i8_refused) std::cout << " " << why << " " << count;
+    std::cout << "; others:";
+    for (const auto& [why, count] : others_refused) std::cout << " " << why << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }
