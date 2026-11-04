@@ -544,6 +544,119 @@ void self_opened_reasoning_contract() {
           "no open marker where the model may not open reasoning");
 }
 
+// A model whose answer begins with a header (Muse Glimmer, #387): "<|start|>assistant
+// to=user<|message|>" after its reasoning's "<|eom|>", or " to=user<|message|>" in place of the
+// reasoning it opens with " to=self<|message|>". The constraint steps through a whole header, as
+// the output presentation drops it, and the grammar starts after it; without one it starts as
+// before.
+void answer_header_contract() {
+    constexpr TokenId kStart = 265, kAssistant = 266, kTo = 267, kUser = 268, kSelf = 269,
+                      kMessage = 270, kEom = 271;
+    GrammarVocabulary muse       = vocabulary();
+    muse.token_bytes[kStart]     = "<|start|>";
+    muse.token_bytes[kAssistant] = "assistant";
+    muse.token_bytes[kTo]        = " to";
+    muse.token_bytes[kUser]      = "=user";
+    muse.token_bytes[kSelf]      = "=self";
+    muse.token_bytes[kMessage]   = "<|message|>";
+    muse.token_bytes[kEom]       = "<|eom|>";
+    muse.reasoning_open          = " to=self<|message|>";
+    muse.reasoning_close         = "<|eom|>";
+    muse.content_open = {"<|start|>assistant to=user<|message|>", " to=user<|message|>"};
+    const ConstraintCompiler compiler(muse);
+    OutputConstraintSpec choice;
+    choice.kind         = OutputConstraintKind::Choice;
+    choice.choices      = {"yes", "<b>"};
+    const auto compiled = compiler.compile(choice);
+    const TokenId after_header[] = {kStart, kAssistant, kTo, kUser, kMessage};
+    const TokenId reasoning[]    = {kTo, kSelf, kMessage, 'x', kEom};
+
+    // The issue's failure: the model opens its reasoning, closes it, writes the header.
+    RequestConstraint self_opened(compiled, false, true);
+    self_opened.commit(reasoning);
+    self_opened.commit(after_header);
+    check(!self_opened.violated(), "a header after a reasoning section the model opened");
+    walk_text(self_opened, "yes", "the grammar after the header");
+
+    // The reasoning the prompt opened (thinking on), with the header and without one.
+    RequestConstraint prompt_opened(compiled, true);
+    const TokenId closed[] = {'x', kEom};
+    prompt_opened.commit(closed);
+    const std::size_t words = prompt_opened.mask_words();
+    std::vector<std::uint32_t> row(words);
+    prompt_opened.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kStart) && allowed(row.data(), 'y') && allowed(row.data(), kTo) &&
+              !allowed(row.data(), kAssistant) && !allowed(row.data(), kImEnd),
+          "after the terminator: a header or the grammar");
+    prompt_opened.commit(after_header);
+    check(!prompt_opened.violated(), "a header after a reasoning section the prompt opened");
+    walk_text(prompt_opened, "yes", "the grammar after the header, prompt reasoning");
+    RequestConstraint no_header(compiled, true);
+    no_header.commit(closed);
+    walk_text(no_header, "yes", "no header after the terminator");
+    RequestConstraint text_on_header(compiled, true);
+    text_on_header.commit(closed);
+    walk_text(text_on_header, "<b>", "text sharing a header's first byte");
+
+    // The answer's header in place of the reasoning, at the first token (thinking allowed or
+    // not), and spelled in bytes.
+    RequestConstraint at_start(compiled, false, true);
+    at_start.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kTo) && allowed(row.data(), kStart) && allowed(row.data(), 'y') &&
+              !allowed(row.data(), kImEnd),
+          "before the first token: the open marker, a header or the grammar");
+    const TokenId to_user[] = {kTo, kUser};
+    at_start.commit(to_user);
+    at_start.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kMessage) && !allowed(row.data(), 'y'),
+          "inside the header: its rest only");
+    const TokenId message[] = {kMessage};
+    at_start.commit(message);
+    check(!at_start.violated(), "a header in place of the reasoning");
+    walk_text(at_start, "yes", "the grammar after a header at the start");
+    RequestConstraint thinking_off(compiled, false, false);
+    thinking_off.commit(to_user);
+    thinking_off.commit(message);
+    check(!thinking_off.violated(), "a header where the model may not open reasoning");
+    walk_text(thinking_off, "yes", "the grammar after a header, thinking off");
+    RequestConstraint plain(compiled, false, false);
+    walk_text(plain, "yes", "no header, thinking off");
+    RequestConstraint spelled(compiled, true);
+    spelled.commit(closed);
+    for (const TokenId token : bytes_of(" to=user<|message|>")) {
+        const TokenId one[] = {token};
+        spelled.commit(one);
+    }
+    check(!spelled.violated(), "a header spelled in bytes");
+    walk_text(spelled, "yes", "the grammar after a spelled header");
+
+    // One speculative window through the terminator and the header.
+    RequestConstraint window(compiled, true);
+    const TokenId x[] = {'x'};
+    window.commit(x);
+    const std::vector<TokenId> drafts = {kEom, kStart, kAssistant, kTo, kUser, kMessage, 'y'};
+    std::vector<std::uint32_t> rows((drafts.size() + 1) * words);
+    window.fill_round(drafts, rows.data(), words);
+    const auto at = [&](std::size_t index) { return rows.data() + index * words; };
+    check(allowed(at(2), kAssistant) && !allowed(at(2), 'y'), "after <|start|>: the header");
+    check(allowed(at(6), 'y') && !allowed(at(6), kTo), "after the header: the grammar");
+    check(allowed(at(7), 'e') && !allowed(at(7), 'y'), "the grammar advances in the window");
+    window.fill_round({}, row.data(), words);
+    check(allowed(row.data(), kEom) && allowed(row.data(), 'x'),
+          "a speculative round leaves the committed reasoning");
+    const TokenId rest[] = {kEom, kStart, kAssistant, kTo, kUser, kMessage};
+    window.commit(rest);
+    walk_text(window, "yes", "after a window through the header");
+
+    // No stop token inside a header.
+    RequestConstraint cut(compiled, true);
+    cut.commit(closed);
+    const TokenId half[] = {kStart};
+    cut.commit(half);
+    cut.fill_round({}, row.data(), words);
+    check(!allowed(row.data(), kImEnd), "no stop inside a header");
+}
+
 void violation_contract(const ConstraintCompiler& compiler) {
     OutputConstraintSpec spec;
     spec.kind = OutputConstraintKind::JsonObject;
@@ -1079,6 +1192,7 @@ int main() {
     speculative_rows_contract(compiler);
     reasoning_gate_contract(compiler);
     self_opened_reasoning_contract();
+    answer_header_contract();
     violation_contract(compiler);
     mask_row_class_contract(compiler);
     visible_special_contract(compiler);

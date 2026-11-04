@@ -30,8 +30,19 @@ struct SharedVocabulary {
     std::vector<std::uint32_t> no_stop_mask;
     std::vector<std::uint32_t> stop_only_mask;
     std::vector<TokenId> open_candidates;
+    std::vector<TokenId> header_candidates;
     std::vector<TokenId> blank_tokens;
 };
+
+// Whether `bytes` spell part of `marker` from some offset on (all of them, or the marker's rest).
+bool spells_part_of(const std::string& marker, const std::string& bytes) {
+    if (marker.empty() || marker.find(bytes.front()) == std::string::npos) { return false; }
+    for (std::size_t at = 0; at < marker.size(); ++at) {
+        const std::size_t take = std::min(marker.size() - at, bytes.size());
+        if (marker.compare(at, take, bytes, 0, take) == 0) { return true; }
+    }
+    return false;
+}
 
 class CompiledConstraint {
 public:
@@ -87,13 +98,12 @@ std::shared_ptr<const SharedVocabulary> make_shared_vocabulary(GrammarVocabulary
         if (bytes.size() <= 4 && bytes.find_first_not_of(" \t\n\r") == std::string::npos) {
             shared->blank_tokens.push_back(static_cast<TokenId>(token));
         }
-        if (open.empty() || open.find(bytes.front()) == std::string::npos) { continue; }
-        for (std::size_t at = 0; at < open.size(); ++at) {
-            const std::size_t take = std::min(open.size() - at, bytes.size());
-            if (open.compare(at, take, bytes, 0, take) == 0) {
-                shared->open_candidates.push_back(static_cast<TokenId>(token));
-                break;
-            }
+        if (spells_part_of(open, bytes)) {
+            shared->open_candidates.push_back(static_cast<TokenId>(token));
+        }
+        if (std::any_of(vocabulary.content_open.begin(), vocabulary.content_open.end(),
+                        [&](const std::string& header) { return spells_part_of(header, bytes); })) {
+            shared->header_candidates.push_back(static_cast<TokenId>(token));
         }
     }
     shared->vocabulary = std::move(vocabulary);
@@ -317,6 +327,7 @@ ConstraintVocabularyView vocabulary_view(const CompiledConstraint& compiled) noe
         .no_stop_mask           = shared.no_stop_mask.data(),
         .stop_only_mask         = shared.stop_only_mask.data(),
         .open_candidates        = &shared.open_candidates,
+        .header_candidates      = &shared.header_candidates,
         .blank_tokens           = &shared.blank_tokens,
     };
 }

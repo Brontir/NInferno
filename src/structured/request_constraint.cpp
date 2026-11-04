@@ -66,6 +66,7 @@ RequestConstraint::RequestConstraint(std::shared_ptr<const CompiledConstraint> c
     : compiled_(compiled), matcher_(std::move(compiled)),
       view_(vocabulary_view(matcher_.compiled())) {
     const std::string& close = view_.vocabulary->reasoning_close;
+    const bool headers       = !view_.vocabulary->content_open.empty();
     gate_.close              = ReasoningGate(close, true);
     if (close.empty()) {
         gate_.mode = ConstraintGate::Mode::Open;
@@ -73,7 +74,37 @@ RequestConstraint::RequestConstraint(std::shared_ptr<const CompiledConstraint> c
         gate_.mode  = ConstraintGate::Mode::Reasoning;
         gate_.close = ReasoningGate(close, false);
     } else if (may_open_reasoning && !view_.vocabulary->reasoning_open.empty()) {
-        gate_.mode = ConstraintGate::Mode::Pending;
+        gate_.mode         = ConstraintGate::Mode::Pending;
+        gate_.header_alive = headers;
+        return;
+    }
+    // An answer the model begins without reasoning may carry its header too (the output
+    // presentation drops it there as well).
+    if (gate_.mode == ConstraintGate::Mode::Open && headers) {
+        gate_.mode        = ConstraintGate::Mode::Header;
+        gate_.header_next = ConstraintGate::Mode::Open;
+    }
+}
+
+bool RequestConstraint::on_header(std::string_view held, std::string_view bytes) const noexcept {
+    // A token the presentation does not show (a stop token) continues no header.
+    if (bytes.empty()) { return false; }
+    for (const std::string& header : view_.vocabulary->content_open) {
+        if (held.size() + bytes.size() > header.size()) { continue; }
+        if (header.compare(0, held.size(), held) == 0 &&
+            header.compare(held.size(), bytes.size(), bytes) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void RequestConstraint::admit_header(std::uint32_t* row, std::string_view held) const {
+    for (const TokenId token : *view_.header_candidates) {
+        if (on_header(held, view_.presented(token))) {
+            row[static_cast<std::uint32_t>(token) >> 5U] |=
+                1U << (static_cast<std::uint32_t>(token) & 31U);
+        }
     }
 }
 
@@ -113,8 +144,39 @@ void RequestConstraint::write_row(std::uint32_t* row, const ConstraintGate& gate
         }
         const std::string_view marker = view_.vocabulary->reasoning_open;
         for (const TokenId token : *view_.open_candidates) {
-            if (on_marker(marker, gate.open_matched, view_.presented(token)) != 0) { admit(token); }
+            if (gate.open_alive && on_marker(marker, gate.open_matched, view_.presented(token)) != 0) {
+                admit(token);
+            }
         }
+        if (gate.header_alive) { admit_header(row, gate.header_held); }
+        return;
+    }
+    case ConstraintGate::Mode::Header: {
+        // Beside the header's continuation, what the answer's text admits after the bytes held,
+        // as they would enter it (enter_text): the Gap's whitespace run first where it follows a
+        // reasoning section the model opened, the rest to the grammar.
+        const std::string_view held = gate.header_held;
+        const bool gap              = gate.header_next == ConstraintGate::Mode::Gap;
+        std::size_t run             = 0;
+        while (gap && run < held.size() && gate.gap_bytes + run < kGapBytes &&
+               blank(held.substr(run, 1))) {
+            ++run;
+        }
+        const std::string_view text = held.substr(run);
+        if (text.empty()) {
+            matcher.fill_mask(row);
+            for (const TokenId token : *view_.blank_tokens) {
+                if (gap && gate.gap_bytes + run + view_.presented(token).size() <= kGapBytes) {
+                    admit(token);
+                }
+            }
+        } else if (matcher.accept_bytes(text)) {
+            matcher.fill_mask(row);
+            matcher.rollback(1);
+        } else {
+            std::memset(row, 0, words * sizeof(std::uint32_t));
+        }
+        admit_header(row, held);
         return;
     }
     }
@@ -153,6 +215,50 @@ bool RequestConstraint::after_reasoning(ConstraintGate& gate, std::string_view t
     return true;
 }
 
+bool RequestConstraint::enter_text(ConstraintGate& gate, ConstraintGate::Mode next,
+                                   std::string_view bytes, Track& track, std::string& why) {
+    gate.header_held.clear();
+    if (next == ConstraintGate::Mode::Gap) {
+        gate.mode = ConstraintGate::Mode::Gap;
+        return after_reasoning(gate, bytes, track, why);
+    }
+    gate.mode = ConstraintGate::Mode::Open;
+    if (bytes.empty()) { return true; }
+    if (!track.matcher->accept_bytes(bytes)) {
+        why = "the answer's first bytes are not admitted by the constraint";
+        return false;
+    }
+    ++track.steps;
+    return true;
+}
+
+bool RequestConstraint::header_bytes(ConstraintGate& gate, std::string_view bytes, Track& track,
+                                     std::string& why) {
+    // As the output presentation strips a header (strip_content_header): a whole header is
+    // dropped, bytes that may still begin one are held, anything else is the answer's text.
+    const std::string held = gate.header_held + std::string(bytes);
+    for (const std::string& header : view_.vocabulary->content_open) {
+        if (std::string_view(held).starts_with(header)) {
+            return enter_text(gate, gate.header_next, std::string_view(held).substr(header.size()),
+                              track, why);
+        }
+    }
+    if (on_header({}, held)) {
+        gate.header_held = held;
+        return true;
+    }
+    return enter_text(gate, gate.header_next, held, track, why);
+}
+
+bool RequestConstraint::after_close(ConstraintGate& gate, std::string_view tail,
+                                    ConstraintGate::Mode next, Track& track, std::string& why) {
+    if (view_.vocabulary->content_open.empty()) { return enter_text(gate, next, tail, track, why); }
+    gate.mode        = ConstraintGate::Mode::Header;
+    gate.header_next = next;
+    gate.header_held.clear();
+    return tail.empty() || header_bytes(gate, tail, track, why);
+}
+
 bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& track,
                                 std::string& why) {
     ConstraintMatcher& matcher = *track.matcher;
@@ -181,32 +287,39 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
         }
         return true;
     }
+    case ConstraintGate::Mode::Header: {
+        const std::string_view bytes = view_.presented(token);
+        if (!bytes.empty()) { return header_bytes(gate, bytes, track, why); }
+        // A token the presentation does not show (a stop token): the answer's, after no header.
+        if (!gate.header_held.empty()) {
+            why = "committed token " + std::to_string(token) + " interrupts an answer header";
+            return false;
+        }
+        const ConstraintGate saved = gate;
+        if (!enter_text(gate, gate.header_next, {}, track, why) ||
+            !advance(gate, token, track, why)) {
+            gate = saved;
+            return false;
+        }
+        return true;
+    }
     case ConstraintGate::Mode::Reasoning: {
         const std::string_view bytes = view_.presented(token);
         const std::size_t tail       = gate.close.feed(bytes);
         if (tail == std::string_view::npos) { return true; }
-        if (!gate.self_opened) {
-            // A reasoning section the prompt opened goes straight to the grammar, which carries
-            // its own whitespace prefix (follows_reasoning).
-            gate.mode = ConstraintGate::Mode::Open;
-            if (tail < bytes.size()) {
-                if (!matcher.accept_bytes(bytes.substr(tail))) {
-                    why = "content following the reasoning terminator in token " +
-                          std::to_string(token) + " is not admitted by the constraint";
-                    return false;
-                }
-                ++track.steps;
-            }
-            return true;
-        }
-        gate.mode = ConstraintGate::Mode::Gap;
-        return after_reasoning(gate, bytes.substr(tail), track, why);
+        // A reasoning section the prompt opened goes straight to the grammar, which carries its
+        // own whitespace prefix (follows_reasoning); one the model opened to the Gap. Either may
+        // take an answer header first.
+        const auto next =
+            gate.self_opened ? ConstraintGate::Mode::Gap : ConstraintGate::Mode::Open;
+        return after_close(gate, bytes.substr(tail), next, track, why);
     }
     case ConstraintGate::Mode::Pending: {
         const std::string_view bytes  = view_.presented(token);
         const std::string_view marker = view_.vocabulary->reasoning_open;
-        const std::size_t on          = on_marker(marker, gate.open_matched, bytes);
-        bool grammar                  = false;
+        const std::size_t on = gate.open_alive ? on_marker(marker, gate.open_matched, bytes) : 0;
+        const bool header    = gate.header_alive && on_header(gate.header_held, bytes);
+        bool grammar         = false;
         if (gate.grammar_alive && !matcher.terminated() && matcher.accept_token(token)) {
             grammar = true;
             ++track.steps;
@@ -221,14 +334,36 @@ bool RequestConstraint::advance(ConstraintGate& gate, TokenId token, Track& trac
             if (!rest.empty()) {
                 const std::size_t tail = gate.close.feed(rest);
                 if (tail != std::string_view::npos) {
-                    gate.mode = ConstraintGate::Mode::Gap;
-                    return after_reasoning(gate, rest.substr(tail), track, why);
+                    return after_close(gate, rest.substr(tail), ConstraintGate::Mode::Gap, track,
+                                       why);
                 }
             }
             return true;
         }
-        if (on != 0) {
-            gate.open_matched += on;
+        if (header) {
+            const std::string held = gate.header_held + std::string(bytes);
+            for (const std::string& h : view_.vocabulary->content_open) {
+                if (held == h) {
+                    // The model began its answer with a header: the grammar starts after it.
+                    reopen(track);
+                    gate.header_held.clear();
+                    gate.mode = ConstraintGate::Mode::Open;
+                    return true;
+                }
+            }
+        }
+        if (on != 0 || header) {
+            if (on != 0) {
+                gate.open_matched += on;
+            } else {
+                gate.open_alive = false;
+            }
+            if (header) {
+                gate.header_held += bytes;
+            } else {
+                gate.header_alive = false;
+                gate.header_held.clear();
+            }
             if (!grammar) { gate.grammar_alive = false; }
             return true;
         }
