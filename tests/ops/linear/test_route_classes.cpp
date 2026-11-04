@@ -91,6 +91,34 @@ struct Shape {
     std::int32_t n, k;
 };
 
+bool aligned(const void* p, std::uintptr_t bytes) {
+    return p != nullptr && (reinterpret_cast<std::uintptr_t>(p) % bytes) == 0;
+}
+
+// W4A8's admission as route_admits decided it before w4a8_refusal, written apart from it: the
+// generic path reads the weight, the board has the tile's instructions, a producer-warp tile reads
+// a ggml high plane on 16 bytes, the tile's shared memory fits, A8 allowed, a W4A8 codec, a K of
+// whole W4A8 groups, 16-byte codes, NVFP4 under its prefill A8 policy, and a producer-warp tile
+// built for the format (the list below) with an IQ3_XXS sign plane on 8 bytes.
+bool w4a8_old_rule(int index, const Weight& w, LinearPolicy policy,
+                   const DeviceFeatures& features) {
+    const generic::Route r{generic::Family::W4a8Mma, static_cast<std::uint8_t>(index)};
+    const bool producer = generic::w4a8_schedule_info(index).producers > 0;
+    const QType q       = w.qtype;
+    const bool ws_built = q == QType::GGML_IQ3_XXS || q == QType::GGML_IQ2_S ||
+                          q == QType::GGML_Q4_K || q == QType::GGML_Q6_K ||
+                          q == QType::GGML_Q4_0 || q == QType::GGML_IQ4_XS ||
+                          q == QType::GGML_IQ2_XS || q == QType::GGML_IQ2_XXS ||
+                          q == QType::GGML_IQ3_S;
+    const bool high_off =
+        w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned(w.qhigh, 16);
+    return generic::supports(w) && has_features(features, generic::route_requires(r)) &&
+           !(producer && high_off) && generic::w4a8_fits(index, q) && allows_a8(policy) &&
+           generic::w4a8_supports(q) && generic::w4a8_k_admits(q, w.k) && aligned(w.qdata, 16) &&
+           (q != QType::NVFP4 || generic::nvfp4_prefill_a8_policy(q, policy)) &&
+           (!producer || (ws_built && (q != QType::GGML_IQ3_XXS || aligned(w.qhigh, 8))));
+}
+
 constexpr Shape kShapes[]        = {{1024, 2048}, {5120, 5120}, {1024, 12288}};
 constexpr std::int32_t kTokens[] = {1, 2, 3, 4, 5, 8, 9, 16, 17, 32, 64, 128, 512, 2048};
 
@@ -102,6 +130,7 @@ int run_board(const TestBoard& b) {
     int coverage_checked = 0;
     std::map<std::string, int> heuristic_refused; // the family's pick, refused: why, how often
     std::map<std::string, int> r8_calls;          // why a call does or does not take R8
+    std::map<std::string, int> w4a8_refused;      // W4A8's schedules, per weight and policy: why
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << b.name << " (" << d.id() << "): " << what << '\n';
     };
@@ -247,6 +276,84 @@ int run_board(const TestBoard& b) {
                         }
                     }
                 }
+                // W4A8, per weight and policy (#307): route_admits decides each schedule by
+                // w4a8_refusal, and agrees with the old rule written apart; an A16 call is refused
+                // for its policy (or before it); the counts; a high plane 4 bytes off refuses the
+                // producer-warp tiles for alignment and leaves the classic ones; another layout
+                // refuses for format and keeps the compiled count.
+                for (const LinearPolicy policy :
+                     {LinearPolicy::A16Only, LinearPolicy::AllowA8, LinearPolicy::AllowA4}) {
+                    const generic::Problem p{qtype, policy, shape.n, shape.k,
+                                             generic::Epilogue::Store};
+                    const auto c   = generic::w4a8_coverage(p, w, 512);
+                    const auto pol = " policy=" + std::to_string(static_cast<int>(policy));
+                    int legal      = 0;
+                    for (const auto& s : c.schedules) {
+                        const generic::Route r{generic::Family::W4a8Mma,
+                                               static_cast<std::uint8_t>(s.schedule)};
+                        const bool admits = generic::route_admits(r, w, policy);
+                        if (s.schedule == c.heuristic &&
+                            s.refusal != generic::ScheduleRefusal::None) {
+                            ++w4a8_refused["pick " + std::string(generic::schedule_refusal_name(
+                                                         s.refusal))];
+                        }
+                        ++w4a8_refused[std::string(generic::schedule_refusal_name(s.refusal))];
+                        legal += s.refusal == generic::ScheduleRefusal::None;
+                        if (admits != (s.refusal == generic::ScheduleRefusal::None) ||
+                            admits != w4a8_old_rule(s.schedule, w, policy, d.features)) {
+                            fail(where + pol + " " + generic::route_name(r) + ": " +
+                                 std::string(generic::schedule_refusal_name(s.refusal)) +
+                                 ", which route_admits or the old rule decides otherwise");
+                        }
+                        if (policy == LinearPolicy::A16Only &&
+                            s.refusal != generic::ScheduleRefusal::Policy &&
+                            s.refusal != generic::ScheduleRefusal::Format &&
+                            s.refusal != generic::ScheduleRefusal::NotCompiled &&
+                            s.refusal != generic::ScheduleRefusal::Resource) {
+                            fail(where + pol + " " + generic::route_name(r) +
+                                 ": an A16 call's W4A8 refusal is not its policy");
+                        }
+                    }
+                    if (c.declared != generic::w4a8_schedule_count() || c.legal != legal ||
+                        c.heuristic_refusal == generic::ScheduleRefusal::NotDeclared) {
+                        fail(where + pol + ": W4A8 counts declared " + std::to_string(c.declared) +
+                             ", compiled " + std::to_string(c.compiled) + ", legal " +
+                             std::to_string(c.legal));
+                    }
+                    if (policy != LinearPolicy::AllowA8) continue;
+                    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr) {
+                        Weight off = w;
+                        off.qhigh  = static_cast<const char*>(w.qhigh) + 4;
+                        const auto o = generic::w4a8_coverage(p, off, 512);
+                        for (std::size_t i = 0; i < c.schedules.size(); ++i) {
+                            const bool producer =
+                                generic::w4a8_schedule_info(c.schedules[i].schedule).producers > 0;
+                            const auto before = c.schedules[i].refusal;
+                            const auto after  = o.schedules[i].refusal;
+                            const bool right =
+                                producer && before == generic::ScheduleRefusal::None
+                                    ? after == generic::ScheduleRefusal::Alignment
+                                    : (producer || after == before);
+                            if (!right) fail(where + ": W4A8 with the high plane 4 bytes off");
+                        }
+                        if (o.compiled != c.compiled) {
+                            fail(where + ": W4A8's compiled count moved with the high plane");
+                        }
+                    }
+                    Weight bad = w;
+                    bad.layout = w.layout == QuantLayout::GgmlPlanes ? QuantLayout::RowSplit
+                                                                     : QuantLayout::GgmlPlanes;
+                    if (!generic::supports(bad)) {
+                        const auto b = generic::w4a8_coverage(p, bad, 512);
+                        const bool all_format =
+                            std::all_of(b.schedules.begin(), b.schedules.end(), [](const auto& s) {
+                                return s.refusal == generic::ScheduleRefusal::Format;
+                            });
+                        if (!all_format || b.compiled != c.compiled) {
+                            fail(where + ": W4A8 in a layout the generic path does not read");
+                        }
+                    }
+                }
                 ++coverage_checked;
             }
             for (const LinearPolicy policy :
@@ -319,6 +426,10 @@ int run_board(const TestBoard& b) {
                             if (route.family == generic::Family::R8Mma && r8.family.legal == 0) {
                                 fail(where + ": chose " + name + ", which no R8 schedule admits");
                             }
+                            if (route.family == generic::Family::W4a8Mma &&
+                                generic::w4a8_coverage(problem, w, t).legal == 0) {
+                                fail(where + ": chose " + name + ", which no W4A8 schedule admits");
+                            }
                             if (!generic::route_admits(route, w, policy)) {
                                 fail(where + ": chose " + name + ", which route_admits refuses");
                             }
@@ -353,6 +464,8 @@ int run_board(const TestBoard& b) {
     for (const auto& [why, count] : heuristic_refused) std::cout << " " << why << " " << count;
     std::cout << "; R8 calls:";
     for (const auto& [why, count] : r8_calls) std::cout << " " << why << " " << count;
+    std::cout << "; W4A8 schedules:";
+    for (const auto& [why, count] : w4a8_refused) std::cout << " " << why << " " << count;
     std::cout << '\n';
     return failures == 0 ? 0 : 1;
 }

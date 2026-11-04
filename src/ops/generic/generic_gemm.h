@@ -472,9 +472,10 @@ struct Problem {
 // alignment its kernel reads, or K not a whole number of the codec's runs; the first that applies,
 // in that order, so only Format hides whether a tile is compiled. Policy: the call's policy
 // does not allow the family's activations (R8: int8; r8_refusal asks it after Format, before
-// Instruction).
+// Instruction). Resource: the tile's shared memory exceeds the block's (W4A8). W4A8 asks in its
+// own order (w4a8_refusal): Format before NotCompiled, Resource and Policy before Instruction.
 enum class ScheduleRefusal { None, NotDeclared, NotCompiled, Format, CodecTile, Instruction,
-                             Alignment, Extent, Policy };
+                             Alignment, Extent, Policy, Resource };
 [[nodiscard]] std::string_view schedule_refusal_name(ScheduleRefusal why) noexcept;
 // Register-MMA schedule `index` for `weight`: route_admits' own rule for the family (it decides
 // by this), so None exactly where route_admits takes the route.
@@ -504,6 +505,14 @@ struct FamilyCoverage {
 // A8), instruction, alignment (the ggml high plane or the codes off 16 bytes), extent (K off the
 // format's R8 run).
 [[nodiscard]] ScheduleRefusal r8_refusal(int index, const Weight& weight, LinearPolicy policy);
+// W4A8 schedule `index` for `weight` under `policy`: route_admits' own rule for the family (it
+// decides by this). Not declared, format (the generic path or W4A8 does not read it), not compiled
+// (a producer-warp tile for a format it is not built for, w4a8_ws_supports), resource (the tile's
+// shared memory past the block's), policy (no A8, or NVFP4 outside its prefill A8 policy),
+// instruction, alignment (the codes off 16 bytes; a producer tile's ggml high plane off 16, an
+// IQ3_XXS sign plane off 8), extent (K the format's W4A8 groups do not take).
+[[nodiscard]] ScheduleRefusal w4a8_refusal(int index, const Weight& weight, LinearPolicy policy);
+
 // Why a call of `tokens` tokens does not take R8 where its weight could (#307): the weight not
 // admitted to R8 (allows_r8), a decode call whose activation does not fit one CTA, a verify call
 // wider than the format's widest R8 verify, or a shape the verify kernel does not take. r8_call
@@ -528,6 +537,14 @@ struct R8Coverage {
 };
 [[nodiscard]] R8Coverage r8_coverage(const Problem& problem, const Weight& weight,
                                      std::int32_t tokens);
+
+// The W4A8 family's coverage of a call (#307): every schedule with its refusal (compiled: the
+// classic tiles for a format W4A8 reads, the producer-warp tiles for the formats they are built
+// for), and the family's pick for the call (heuristic_w4a8, before w4a8_route falls back to a
+// schedule that admits the weight) with its refusal. The route a producer tile resolves to where
+// the weight is not admitted to it is resolve_route's (Demotion::W4a8Admission).
+[[nodiscard]] FamilyCoverage w4a8_coverage(const Problem& problem, const Weight& weight,
+                                           std::int32_t tokens);
 
 // The workspace the int8 prefill tier of `problem` takes over [min_tokens, max_tokens]: 0 where no
 // call takes it (a format off the int8 tiers, a policy without A8 here, or an interval below
