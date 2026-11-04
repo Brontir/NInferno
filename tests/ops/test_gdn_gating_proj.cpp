@@ -717,8 +717,8 @@ int run_segmented_control_case(const Geometry& geometry, QType format, bool one_
         auto ab_bits             = bf16_bits(a_weight);
         const auto b_weight_bits = bf16_bits(b_weight);
         ab_bits.insert(ab_bits.end(), b_weight_bits.begin(), b_weight_bits.end());
-        payloads.emplace_back(reinterpret_cast<const std::uint8_t*>(ab_bits.data()),
-                              reinterpret_cast<const std::uint8_t*>(ab_bits.data() + ab_bits.size()));
+        const auto* bytes = reinterpret_cast<const std::uint8_t*>(ab_bits.data());
+        payloads.emplace_back(bytes, bytes + ab_bits.size() * sizeof(std::uint16_t));
     }
     std::vector<DeviceBuffer> device_payloads;
     for (const auto& payload : payloads) device_payloads.push_back(to_device(payload));
