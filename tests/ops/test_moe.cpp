@@ -1691,6 +1691,14 @@ int check_bank_refusals() {
             std::cerr << "bank refusals: an A4 NVFP4 bank let the Q4_K stage take W4A8\n";
             ++failures;
         }
+        // An explicit plan with the Q4_K stage alone on the tier is refused the same way.
+        moe::MoePlan gate_up_only;
+        gate_up_only.w4a8_gate_up = true;
+        if (moe::w4a8_bank_refusal(mix, mix.down) == R::Nvfp4A4 &&
+            moe::w4a8_stages_admitted(gate_up_only, mix)) {
+            std::cerr << "bank refusals: an explicit gate/up W4A8 plan passed the A4 veto\n";
+            ++failures;
+        }
     }
 
     // Stage routes (#311): what each stage of a plan runs and why not the others. A layer whose

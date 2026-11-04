@@ -275,6 +275,8 @@ struct MoePlan {
 // `plan` with each grouped stage on the W4A8 tier where `on` and its own bank is admitted, neither
 // where an NVFP4 bank is refused for the A4 policy (Nvfp4A4: the layer stays A16).
 [[nodiscard]] MoePlan with_w4a8(MoePlan plan, const MoeWeights& weights, bool on);
+// Whether every W4A8 stage `plan` asks for is one with_w4a8 would put there (the A4 veto included).
+[[nodiscard]] bool w4a8_stages_admitted(const MoePlan& plan, const MoeWeights& weights);
 
 // The route moe takes for T tokens under the given profile, and moe on an explicit route (the
 // tuner, benches and tests); the explicit route's workspace need.

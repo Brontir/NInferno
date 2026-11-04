@@ -592,6 +592,10 @@ MoePlan with_w4a8(MoePlan p, const MoeWeights& w, bool on) {
     p.w4a8_down               = on && !a4 && down == BankRefusal::None;
     return p;
 }
+bool w4a8_stages_admitted(const MoePlan& p, const MoeWeights& w) {
+    const MoePlan allowed = with_w4a8(MoePlan{}, w, true);
+    return (!p.w4a8_gate_up || allowed.w4a8_gate_up) && (!p.w4a8_down || allowed.w4a8_down);
+}
 namespace {
 
 bool w4a8_bank_admitted(const MoeWeights& w) {
@@ -1181,12 +1185,10 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         fail("the job width must be a multiple of both grouped schedules' columns, <= 64");
     }
     if (p.w4a8() &&
-        (p.job_columns % kMoeW4a8BlockM != 0 ||
-         (p.w4a8_gate_up && w4a8_bank_refusal(w, w.gate_up) != BankRefusal::None) ||
-         (p.w4a8_down && w4a8_bank_refusal(w, w.down) != BankRefusal::None) || p.gate_up_r8 >= 0 ||
-         p.down_r8 >= 0)) {
-        fail("a W4A8 stage needs its bank admitted, no R8 stage and a job width of whole W4A8 "
-             "tiles");
+        (p.job_columns % kMoeW4a8BlockM != 0 || !w4a8_stages_admitted(p, w) ||
+         p.gate_up_r8 >= 0 || p.down_r8 >= 0)) {
+        fail("a W4A8 stage needs its bank admitted (and no A4 NVFP4 partner), no R8 stage and a "
+             "job width of whole W4A8 tiles");
     }
     const std::int32_t t = x.ne[1];
     // Every plan reads the activation in 16-byte words: the router's BF16 register MMA (and the
