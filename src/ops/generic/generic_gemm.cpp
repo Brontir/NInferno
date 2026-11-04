@@ -4334,6 +4334,8 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     args.tokens   = tokens;
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;
+    args.spread_smem =
+        spread_smem(Route{Family::RegisterMma, static_cast<std::uint8_t>(schedule)}, codec, epilogue, args);
     KernelResources out;
     const ScopedKernelDescribe describe(out);
     launch_rmma_codec(codec, schedule, epilogue, args, nullptr);

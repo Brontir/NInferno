@@ -27,6 +27,8 @@
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/route_table.h"
 
+#include <cuda_runtime.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -416,6 +418,11 @@ int run_volta_tiled() {
 // call's rows and tokens, and registers the SM holds. Prints each codec's most registers and spill
 // bytes over the schedules and widths a call takes.
 int run_resources(bool detail) {
+    int devices = 0;
+    if (cudaGetDeviceCount(&devices) != cudaSuccess || devices == 0) {
+        std::cout << "resources: CUDA unavailable; skipped\n";
+        return 0;
+    }
     int failures = 0, described = 0;
     const auto fail = [&](const std::string& what) {
         if (++failures <= 20) std::cerr << "resources: " << what << '\n';
@@ -476,8 +483,7 @@ int run_resources(bool detail) {
                         std::cout << at << ": " << r->registers << " registers, " << r->local_bytes
                                   << " B local, " << r->static_smem << " B smem, grid " << r->grid_x
                                   << "x" << r->grid_y << "x" << r->grid_z
-                                  << (r->latency_variant ? ", latency" : "") << '
-';
+                                  << (r->latency_variant ? ", latency" : "") << '\n';
                     }
                     Most& m = most[generic::qtype_name(qtype)];
                     if (r->registers > m.registers ||
