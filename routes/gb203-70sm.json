@@ -11109,6 +11109,191 @@
      "rmma.m1.n8.w4x1"
     ]
    ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     2,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     47,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     48,
+     95,
+     "tiled.64x128"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     128,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "q4k",
+   "k": 3840,
+   "n": 15360,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     48,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     256,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 8192,
+   "n": 3840,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     48,
+     127,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     128,
+     191,
+     "tiled.64x128"
+    ],
+    [
+     192,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 15360,
+   "n": 3840,
+   "prefill": "tiled.128x128"
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "ggml_mmq"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     191,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     192,
+     511,
+     "tiled.64x128"
+    ],
+    [
+     512,
+     16777216,
+     "tiled.128x128"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q4k",
+   "k": 4096,
+   "n": 9216,
+   "prefill": "tiled.128x128"
   }
  ],
  "note": "RTX 5070 Ti (04.11): the generic entries' bands, prefill and prefill_bands re-tuned on this board with ninferno_route_tune over weight copies (#405) and checked by a second pass (99.7 % of the band points held); the route_as and claim entries, tuned_on and the moe section are the RTX 5080's (gb203.json), as this board read them before. The RTX 5080's note: route_as: for a call of t_min..t_max tokens the shape-owned table is asked at T' (ops/common/shape_routes.h); measured with ninferno_linear_route_sweep_bench --random-weight --no-class-table, every override bit-identical to the table's own choice; evidence_us rows are [T, table us, override us], mean over 2 passes; min gain 5.0%, 2.1 us. The entries with \"bands\" (and \"prefill\") are the any-geometry generic path's, tuned per model on the RTX 5080 with ninferno_route_tune (--samples 11); \"tuned_on\" names the model whose problems they are. Entries with \"claim\": true take a problem whose shape also has a shape-owned Linear table (the dispatcher's first choice) at the widths their bands and prefill route cover, under an A16Only policy only: Qwen3.6-27B's five FP8 shapes, whose owned table computes A16 in chunks of 11 tokens (attn_in 14336x5120 at T=512: 4290.6 us owned, 1054.7 us generic; 940f/942f, RTX 5080); a band is claimed only where the generic route was at least 5% faster at the measured widths it covers.",
