@@ -678,7 +678,8 @@ struct KernelResources {
 // in-kernel quantization or, at verify widths where the format has it, its pre-quantized form
 // (`prequantized`: one activation quantizer runs before it, not described). nullopt where
 // resolve_route takes the call off R8 (the format, K, or tokens past the kernel's fit), with the
-// workspace the call needs given.
+// workspace the call needs given (a weight with a k_order also gathers x into the workspace, which
+// can leave a production call short of the pre-quantized form's planes).
 struct R8Resources {
     KernelResources kernel;
     bool prequantized = false;

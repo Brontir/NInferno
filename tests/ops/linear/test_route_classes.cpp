@@ -655,7 +655,7 @@ int run_resources(bool detail) {
                 }
                 if (detail) {
                     std::cout << at << ": " << k.registers << " registers, "
-                              << r->kernel.local_bytes << " B local, " << r->kernel.dynamic_smem
+                              << k.local_bytes << " B local, " << k.dynamic_smem
                               << " B dynamic smem" << (r->prequantized ? ", pre-quantized" : "")
                               << '\n';
                 }
@@ -664,6 +664,8 @@ int run_resources(bool detail) {
     }
     // Where route_admits holds R8 for some format and schedule, some call takes it.
     if (r8_described == 0 && r8_admitted > 0) fail("no R8 kernel described");
+    // The verify widths run the pre-quantized form (T = 2..kR8VerifyTokens) where a format has it.
+    if (r8_admitted > 0 && r8_pre == 0) fail("no pre-quantized R8 kernel described");
     std::cout << "resources R8: " << r8_described << " described (" << r8_pre
               << " pre-quantized)\n";
     std::cout << "resources (" << device_class().id() << "): " << described << " described, "

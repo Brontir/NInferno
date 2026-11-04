@@ -4381,7 +4381,7 @@ std::optional<R8Resources> r8_resources(int schedule, const Weight& w, Epilogue 
                                         std::int32_t tokens) {
     const Route route{Family::R8Mma, static_cast<std::uint8_t>(schedule)};
     if (schedule < 0 || schedule >= r8_schedule_count() || tokens < 1 ||
-        tokens > kR8MaxTokens || !supports(w) || !route_admits(route, w, LinearPolicy::AllowA8)) {
+        tokens > kR8VerifyTokens || !supports(w) || !route_admits(route, w, LinearPolicy::AllowA8)) {
         return std::nullopt;
     }
     const std::int32_t rows = epilogue == Epilogue::SwiGlu ? w.n / 2 : w.n;
