@@ -668,10 +668,12 @@ int run_resources(bool detail) {
     if (r8_admitted > 0 && r8_pre == 0) fail("no pre-quantized R8 kernel described");
     std::cout << "resources R8: " << r8_described << " described (" << r8_pre
               << " pre-quantized)\n";
-    // The tile families (route_resources): nothing where route_admits refuses the route under
-    // AllowA8; where described, threads and registers the SM holds, a grid that covers the call,
-    // dynamic shared memory one block takes, and the I8 and staged tiles at their schedules'
-    // threads. Each family some format and schedule admits describes some call.
+    // The other families (route_resources): nothing where route_admits refuses the route under
+    // AllowA8 (W4A4: AllowA4); where described, threads and registers the SM holds, a grid that
+    // covers the call, dynamic shared memory one block takes, and the I8 and staged tiles at their
+    // schedules' threads. Each family some format and schedule admits describes some call, at the
+    // widths it serves (ggml's matrix kernel at verify and prefill-slice widths, its vector kernel
+    // at decode and verify).
     std::size_t smem_optin = 0;
     try {
         smem_optin = device_class().smem_per_block_optin;
@@ -680,12 +682,21 @@ int run_resources(bool detail) {
         generic::Family family;
         int (*count)();
         const char* name;
+        std::vector<std::int32_t> widths;
+        LinearPolicy policy = LinearPolicy::AllowA8;
         int admitted = 0, described = 0;
     };
-    FamilyCount families[] = {{generic::Family::TiledMma, generic::tiled_schedule_count, "tiled"},
-                              {generic::Family::StagedMma, generic::staged_schedule_count, "staged"},
-                              {generic::Family::W4a8Mma, generic::w4a8_schedule_count, "w4a8"},
-                              {generic::Family::I8Mma, generic::i8_schedule_count, "i8"}};
+    const auto one = +[] { return 1; };
+    FamilyCount families[] = {
+        {generic::Family::TiledMma, generic::tiled_schedule_count, "tiled", {64, 512}},
+        {generic::Family::StagedMma, generic::staged_schedule_count, "staged", {64, 512}},
+        {generic::Family::W4a8Mma, generic::w4a8_schedule_count, "w4a8", {64, 512}},
+        {generic::Family::I8Mma, generic::i8_schedule_count, "i8", {64, 512}},
+        {generic::Family::W4a4Mma, generic::w4a4_schedule_count, "w4a4", {64, 512},
+         LinearPolicy::AllowA4},
+        {generic::Family::Nvfp4TiledMma, generic::nvfp4_tiled_schedule_count, "nvfp4t", {64, 512}},
+        {generic::Family::GgmlMmq, one, "mmq", {8, 64}},
+        {generic::Family::GgmlVec, one, "vec", {1, 8}}};
     // The kFormats and BF16, which the staged tile takes alone.
     std::vector<QType> tile_formats(std::begin(kFormats), std::end(kFormats));
     tile_formats.push_back(QType::BF16);
@@ -713,9 +724,9 @@ int run_resources(bool detail) {
         for (FamilyCount& f : families) {
             for (int i = 0; i < f.count(); ++i) {
                 const generic::Route route{f.family, static_cast<std::uint8_t>(i)};
-                const bool admitted = generic::route_admits(route, w, LinearPolicy::AllowA8);
+                const bool admitted = generic::route_admits(route, w, f.policy);
                 f.admitted += admitted ? 1 : 0;
-                for (const std::int32_t t : {64, 512}) {
+                for (const std::int32_t t : f.widths) {
                     const auto r = generic::route_resources(route, w, generic::Epilogue::Store, t);
                     const std::string at = std::string(generic::qtype_name(qtype)) + " " +
                                            generic::route_name(route) + " T=" + std::to_string(t);

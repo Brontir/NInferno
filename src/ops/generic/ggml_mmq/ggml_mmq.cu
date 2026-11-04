@@ -247,6 +247,33 @@ std::size_t fixup_bound(int columns) {
     return std::size_t(detail::device_facts().sm_count) * j * 128 * sizeof(float);
 }
 
+namespace {
+thread_local LaunchShape* t_describe = nullptr;
+} // namespace
+
+LaunchShape* describe_target() noexcept { return t_describe; }
+ScopedDescribe::ScopedDescribe(LaunchShape& out) noexcept : previous_(t_describe) {
+    t_describe = &out;
+}
+ScopedDescribe::~ScopedDescribe() { t_describe = previous_; }
+
+void describe_launch(LaunchShape& out, const void* kernel, dim3 grid, dim3 block,
+                     std::size_t dynamic_smem) {
+    cudaFuncAttributes a{};
+    detail::check(cudaFuncGetAttributes(&a, kernel), "kernel attributes");
+    out.registers             = a.numRegs;
+    out.local_bytes           = a.localSizeBytes;
+    out.static_smem           = a.sharedSizeBytes;
+    out.dynamic_smem          = dynamic_smem;
+    out.threads               = static_cast<int>(block.x * block.y * block.z);
+    out.max_threads_per_block = a.maxThreadsPerBlock;
+    out.ptx_version           = a.ptxVersion;
+    out.binary_version        = a.binaryVersion;
+    out.grid_x                = grid.x;
+    out.grid_y                = grid.y;
+    out.grid_z                = grid.z;
+}
+
 void product(Type type, const Planes& weight, int blocks_per_row, int rows, int k,
              const void* activation, int columns, float* out, std::int64_t out_column_stride,
              void* fixup, cudaStream_t stream) {

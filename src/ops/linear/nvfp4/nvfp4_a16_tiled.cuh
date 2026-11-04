@@ -37,6 +37,7 @@
 #include <cuda_bf16.h>
 #include <cuda_runtime.h>
 
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 
@@ -409,12 +410,23 @@ __global__ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocksPerSm) void
     }
 }
 
-// One launch of `tokens` columns of x on a problem (static or runtime).
+// The launch launch_nvfp4_a16_tiled_problem makes, described instead of run (the generic path's
+// route_resources, #298).
+struct Nvfp4TiledLaunchShape {
+    cudaFuncAttributes attributes{};
+    dim3 grid;
+    int threads      = 0;
+    std::size_t smem  = 0;
+};
+
+// One launch of `tokens` columns of x on a problem (static or runtime); with `describe`, the launch
+// it would make is written there and nothing runs.
 template <class Problem, class Schedule, class Epilogue, class Output>
 void launch_nvfp4_a16_tiled_problem(const Problem& problem, const __nv_bfloat16* x,
                                     const std::uint8_t* codes, const std::uint8_t* scales,
                                     float inverse_weight_divisor, Epilogue epilogue,
-                                    Output output, std::int32_t tokens, cudaStream_t stream) {
+                                    Output output, std::int32_t tokens, cudaStream_t stream,
+                                    Nvfp4TiledLaunchShape* describe = nullptr) {
     if (tokens <= 0 || problem.rows() <= 0) {
         throw std::invalid_argument("nvfp4 A16 tiled: empty call");
     }
@@ -429,6 +441,13 @@ void launch_nvfp4_a16_tiled_problem(const Problem& problem, const __nv_bfloat16*
     constexpr int kRowsPerCta = Schedule::kRowsPerCta / (Problem::kPaired ? 2 : 1);
     const dim3 grid((problem.rows() + kRowsPerCta - 1) / kRowsPerCta,
                     (tokens + Schedule::kTokens - 1) / Schedule::kTokens);
+    if (describe != nullptr) {
+        CUDA_CHECK(cudaFuncGetAttributes(&describe->attributes, kernel));
+        describe->grid    = grid;
+        describe->threads = Schedule::kThreads;
+        describe->smem    = Schedule::kSmemBytes;
+        return;
+    }
     kernel<<<grid, Schedule::kThreads, Schedule::kSmemBytes, stream>>>(
         problem, x, codes, scales, inverse_weight_divisor, epilogue, output, tokens);
     CUDA_CHECK(cudaGetLastError());

@@ -42,9 +42,15 @@ void launch_classes(const GemmArgs& args, cudaStream_t stream) {
         kMaxGridYZ) {
         throw std::invalid_argument("generic nvfp4 tiled: token extent exceeds the grid");
     }
+    KernelResources* described = kernel_describe_target();
+    Nvfp4TiledLaunchShape shape;
     launch_nvfp4_a16_tiled_problem<Nvfp4A16RuntimeProblem<kPaired>, Nvfp4TiledSchedule<Classes>>(
         problem, static_cast<const __nv_bfloat16*>(args.x), args.codes, args.scales, 1.0F,
-        LinearIdentityEpilogue{}, GenericNvfp4Output<E>{args}, args.tokens, stream);
+        LinearIdentityEpilogue{}, GenericNvfp4Output<E>{args}, args.tokens, stream,
+        described != nullptr ? &shape : nullptr);
+    if (described != nullptr) {
+        describe_kernel(*described, shape.attributes, shape.grid, shape.threads, shape.smem, false);
+    }
 }
 
 template <int Classes>
