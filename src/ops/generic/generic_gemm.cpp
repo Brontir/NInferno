@@ -4447,7 +4447,10 @@ std::optional<KernelResources> route_resources(Route route, const Weight& w, Epi
     if (route.family == Family::TiledMma &&
         (w.k % 64 != 0 || volta_cutlass_only(codec) ||
          volta_cutlass_runs(volta_cutlass_only(codec), tokens))) {
-        return std::nullopt; // scalar, or Volta's CUTLASS copy: no tile kernel runs
+        // Scalar, or Volta's CUTLASS copy. Where the copy does not fit the call's workspace (or
+        // there is none) run_route falls back to the tile kernel: described here as none, never
+        // as another kernel.
+        return std::nullopt;
     }
     GemmArgs args = weight_args(w);
     args.rows     = rows;

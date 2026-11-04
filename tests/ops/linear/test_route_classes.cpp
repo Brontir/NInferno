@@ -732,7 +732,13 @@ int run_resources(bool detail) {
                         const auto s = generic::staged_schedule_info(i);
                         threads      = 32 * s.warps_m * s.warps_n;
                     }
-                    if (r->threads != threads || r->registers <= 0 || r->grid_x == 0 ||
+                    // The W4A8 tile's warps are not in its schedule facts: whole warps, and the
+                    // producer-warp kernel's consumers beside its producers.
+                    const int producers = f.family == generic::Family::W4a8Mma
+                                              ? generic::w4a8_schedule_info(i).producers
+                                              : 0;
+                    if (r->threads % 32 != 0 || r->threads <= 32 * producers ||
+                        r->threads != threads || r->registers <= 0 || r->grid_x == 0 ||
                         r->grid_y == 0 || r->registers * r->threads > registers_per_sm ||
                         r->max_threads_per_block < r->threads ||
                         (smem_optin > 0 && r->dynamic_smem + r->static_smem > smem_optin)) {
