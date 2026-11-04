@@ -198,8 +198,10 @@ private:
     std::atomic<bool> engine_failed_{false};
     std::atomic<bool> supervisor_stopping_{false};
     std::thread supervisor_thread_;
-    // The kept threads' deadlines (--cache-keep-tokens): the supervisor releases the expired.
+    // The kept threads' deadlines (--cache-keep-tokens): the supervisor hands the expired to the
+    // releaser, which never stops it (#408).
     mutable KeptSessions kept_sessions_;
+    std::unique_ptr<KeptReleaser> kept_releaser_;
 };
 
 } // namespace ninferno::serve

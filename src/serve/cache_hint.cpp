@@ -190,4 +190,62 @@ std::vector<KeptGrant> KeptSessions::expired(Clock::time_point now) {
     return out;
 }
 
+bool KeptSessions::granted(const std::string& session_key) {
+    std::lock_guard lock(mutex_);
+    return until_.contains(session_key);
+}
+
+KeptReleaser::KeptReleaser(KeptSessions& sessions, Release release)
+    : sessions_(sessions), release_(std::move(release)), thread_([this] { run(); }) {}
+
+KeptReleaser::~KeptReleaser() {
+    {
+        std::lock_guard lock(mutex_);
+        stopping_ = true;
+    }
+    cv_.notify_all();
+    thread_.join();
+}
+
+void KeptReleaser::submit(std::vector<KeptGrant> grants) {
+    if (grants.empty()) return;
+    {
+        std::lock_guard lock(mutex_);
+        for (KeptGrant& grant : grants) {
+            if (queued_.insert(grant.session_key).second) queue_.push_back(std::move(grant));
+        }
+    }
+    cv_.notify_all();
+}
+
+void KeptReleaser::wait_idle() {
+    std::unique_lock lock(mutex_);
+    cv_.wait(lock, [&] { return queue_.empty() && !asking_; });
+}
+
+void KeptReleaser::run() {
+    std::unique_lock lock(mutex_);
+    for (;;) {
+        cv_.wait(lock, [&] { return stopping_ || !queue_.empty(); });
+        if (stopping_) return;
+        KeptGrant grant = std::move(queue_.front());
+        queue_.pop_front();
+        queued_.erase(grant.session_key);
+        asking_ = true;
+        lock.unlock();
+        // A session granted again while it waited here keeps its new deadline. A release that
+        // throws (a lock's system_error, an allocation) drops that grant, not the thread: its
+        // entry stays kept until the kept-token budget lets it go.
+        try {
+            if (!sessions_.granted(grant.session_key) &&
+                release_(grant.session_key) == KeptSessionRelease::InFlight) {
+                sessions_.keep(grant, KeptSessions::Clock::now());
+            }
+        } catch (...) {}
+        lock.lock();
+        asking_ = false;
+        cv_.notify_all();
+    }
+}
+
 } // namespace ninferno::serve

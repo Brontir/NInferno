@@ -786,6 +786,9 @@ bool HttpServer::listen() {
             stats_stopping_ = false;
             stats_thread_   = std::thread([this] { run_stats_reporter(); });
         }
+        kept_releaser_ = std::make_unique<KeptReleaser>(kept_sessions_, [this](const std::string& s) {
+            return service_->release_kept_session(s);
+        });
         supervisor_stopping_ = false;
         supervisor_thread_   = std::thread([this] { run_supervisor(); });
         const bool result = server_.listen_after_bind();
@@ -868,14 +871,11 @@ void HttpServer::run_supervisor() {
         const Clock::time_point now      = Clock::now();
         const ninferno::RuntimeStats stats = service_->runtime_stats();
         const bool stalled               = monitor.update(stats, now);
-        // A kept thread silent past its ttl-ms falls to the private weight (cache_hint.h).
-        // A turn still running under the keep publishes its entry kept: asked again after a ttl.
-        for (const KeptGrant& grant : kept_sessions_.expired(now)) {
-            if (service_->release_kept_session(grant.session_key) ==
-                ninferno::KeptSessionRelease::InFlight) {
-                kept_sessions_.keep(grant, now);
-            }
-        }
+        // A kept thread silent past its ttl-ms falls to the private weight (cache_hint.h), on the
+        // releaser's thread: the release waits for the executor between rounds, and a round that
+        // hangs must not stop this one (#408). A turn still running under the keep publishes its
+        // entry kept: asked again after a ttl.
+        kept_releaser_->submit(kept_sessions_.expired(now));
         if (stalled != stalled_.exchange(stalled)) { operational_log_.executor_stall(stalled); }
         // Checked while draining too: a device that fails then still ends the process with 1.
         if (!service_->is_available() && !engine_failed_.exchange(true)) {
@@ -909,6 +909,7 @@ void HttpServer::run_supervisor() {
 void HttpServer::stop_supervisor() {
     supervisor_stopping_.store(true);
     if (supervisor_thread_.joinable()) { supervisor_thread_.join(); }
+    kept_releaser_.reset();
 }
 
 } // namespace ninferno::serve
