@@ -195,7 +195,12 @@ void KeptSessions::release_expired(
     std::vector<KeptGrant> due;
     {
         std::lock_guard lock(mutex_);
-        due.swap(busy_);
+        // A busy keep granted again since (a new turn's keep or begin_turn) has its deadline
+        // back: that one decides, not the old retry.
+        for (KeptGrant& grant : busy_) {
+            if (!until_.contains(grant.session_key)) due.push_back(std::move(grant));
+        }
+        busy_.clear();
     }
     for (KeptGrant& grant : expired(now)) due.push_back(std::move(grant));
     std::vector<KeptGrant> busy;

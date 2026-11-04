@@ -147,17 +147,20 @@ int main() {
         {
             // The supervisor's release (#408): Busy (a round runs) is asked again at the next
             // tick, InFlight after another ttl, Released or None never again; the release is
-            // asked outside the registry's lock (it may call back in).
+            // asked outside the registry's lock (it may call back in); a busy keep granted again
+            // before its retry is left to its new deadline.
             KeptSessions kept;
             kept.keep({"busy", std::chrono::milliseconds(100)}, t0);
             kept.keep({"run", std::chrono::milliseconds(100)}, t0);
             kept.keep({"gone", std::chrono::milliseconds(100)}, t0);
+            kept.keep({"renew", std::chrono::milliseconds(100)}, t0);
             std::vector<std::string> asked;
-            int busy_answers = 2;
+            int busy_answers = 2, renew_answers = 1;
             const auto release = [&](const std::string& s) {
                 asked.push_back(s);
                 (void)kept.expired(t0); // the lock is not held
                 if (s == "busy" && busy_answers-- > 0) return ninferno::KeptSessionRelease::Busy;
+                if (s == "renew" && renew_answers-- > 0) return ninferno::KeptSessionRelease::Busy;
                 if (s == "run") return ninferno::KeptSessionRelease::InFlight;
                 return ninferno::KeptSessionRelease::Released;
             };
@@ -168,10 +171,13 @@ int main() {
             };
             using V = std::vector<std::string>;
             failures += check(tick(50).empty(), "nothing expired, nothing asked");
-            failures += check(tick(100) == V{"busy", "gone", "run"}, "the expired are asked");
-            failures += check(tick(150) == V{"busy"}, "a busy release is asked at the next tick");
+            failures += check(tick(100) == V{"busy", "gone", "renew", "run"}, "the expired are asked");
+            kept.keep({"renew", std::chrono::milliseconds(100)}, t0 + std::chrono::milliseconds(120));
+            failures += check(tick(150) == V{"busy"},
+                              "a busy release is asked at the next tick, unless granted again");
             failures += check(tick(200) == V{"busy", "run"},
                               "again while busy; the in-flight one after its ttl");
+            failures += check(tick(220) == V{"renew"}, "the granted-again keep at its new deadline");
             failures += check(tick(250).empty(), "a released keep is asked no more");
         }
         failures += check(apply_cache_hint(&drop, true, h) == "drop" &&
