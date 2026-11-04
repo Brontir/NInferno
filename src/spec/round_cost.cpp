@@ -68,10 +68,11 @@ PassFacts parse_pass(const Json& doc) {
     return p;
 }
 
-double pass_cost(const PassFacts& p, std::int32_t rows, double kappa) {
+// A pass over `rows` rows of each of `streams` requests decoded together.
+double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32_t streams = 1) {
     const double active = p.experts > 0 ? double(p.experts_used) / double(p.experts) : 1.0;
-    const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows);
-    const double ops    = 2.0 * double(rows) * (p.params + p.expert_params * active);
+    const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows, streams);
+    const double ops    = 2.0 * double(rows) * double(streams) * (p.params + p.expert_params * active);
     return bytes + kappa * ops;
 }
 
@@ -168,6 +169,11 @@ double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept {
     return pick + kMoeRoutedShare * (apart - pick);
 }
 
+double moe_read_fraction(const PassFacts& pass, std::int32_t rows, std::int32_t streams) noexcept {
+    const double one = moe_read_fraction(pass, rows);
+    return streams <= 1 ? one : 1.0 - std::pow(1.0 - one, double(streams));
+}
+
 CardRates card_rates(int compute_capability, int sms, int sm_clock_khz, double dram_gbps) {
     return rates(compute_capability / 10, compute_capability % 10, sms, sm_clock_khz * 1e3,
                  dram_gbps * 1e9);
@@ -186,26 +192,48 @@ CardRates card_rates_of_board(std::uint32_t pci_device_id) {
 
 std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config, double kappa,
                                  const ProposalRows& head_rows, double launch_bytes,
-                                 const RoundLaunches& launches) {
-    if (!config.enabled() || config.k < 1) { return std::nullopt; }
+                                 const RoundLaunches& launches, std::int32_t streams) {
+    if (!config.enabled() || config.k < 1 || streams < 1) { return std::nullopt; }
     const std::string mode = mode_name(config.mode);
     const auto d           = facts.drafters.find(mode);
     if (d == facts.drafters.end()) { return std::nullopt; }
     const DraftFacts& draft_facts = d->second;
-    const double plain            = pass_cost(facts.target, 1, kappa);
-    const double verify           = pass_cost(facts.target, config.k + 1, kappa);
+    const double plain            = pass_cost(facts.target, 1, kappa, streams);
+    const double verify           = pass_cost(facts.target, config.k + 1, kappa, streams);
     const double passes           = draft_facts.per_draft ? double(config.k) : 1.0;
     double head                   = 0;
     if (draft_facts.head) {
         const PassFacts read = head_over_rows(*draft_facts.head, head_rows.of(mode));
-        head = draft_facts.per_draft ? passes * pass_cost(read, draft_facts.rows, kappa)
-                                     : pass_cost(read, config.k, kappa);
+        head = draft_facts.per_draft ? passes * pass_cost(read, draft_facts.rows, kappa, streams)
+                                     : pass_cost(read, config.k, kappa, streams);
     }
-    const double draft = passes * pass_cost(draft_facts.pass, draft_facts.rows, kappa) + head;
+    const double draft =
+        passes * pass_cost(draft_facts.pass, draft_facts.rows, kappa, streams) + head;
     if (launch_bytes > 0 && launches.known()) {
         return (verify + draft + launch_bytes * launches.round) / (plain + launch_bytes * launches.step);
     }
     return (verify + draft) / plain;
+}
+
+double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams) {
+    return pass_cost(facts.target, 1, kappa, streams);
+}
+
+std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config, double kappa,
+                                double speedup, std::int32_t streams, const ProposalRows& head_rows,
+                                double launch_bytes, const RoundLaunches& launches) {
+    if (streams < 1 || speedup <= 0) { return std::nullopt; }
+    if (streams == 1) { return speedup; }
+    if (streams * (config.k + 1) > kPricedVerifyRows) { return std::nullopt; }
+    const auto d = facts.drafters.find(mode_name(config.mode));
+    if (d != facts.drafters.end() &&
+        streams * d->second.rows > std::max(kPricedVerifyRows, d->second.rows)) {
+        return std::nullopt;
+    }
+    const auto one   = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, 1);
+    const auto joint = round_cost(facts, config, kappa, head_rows, launch_bytes, launches, streams);
+    if (!one || !joint || *one <= 0 || *joint <= 0) { return std::nullopt; }
+    return speedup * *one / *joint;
 }
 
 } // namespace ninferno::spec

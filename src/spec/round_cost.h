@@ -109,6 +109,15 @@ struct RoundFacts {
 // any of them routes to (1 - (1 - k/E)^rows) at kMoeRoutedShare (spec/moe_routed_share.h) of
 // independent routing.
 [[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept;
+// The same over `streams` requests of `rows` rows each, decoded together (#303): the rows of one
+// request route alike (kMoeRoutedShare, fitted on one request's rows), different requests'
+// independently, so together they read 1 - (1 - f)^streams of the experts, f one request's share.
+// RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M, plain decode, one server, graph durations (a graph-level
+// trace): a step of two requests 4.805 ms against one request's 3.964, 1.212 one-request steps;
+// this rule gives 1.210, the one-request rule over two rows 1.083. (spec-tune --load's cells,
+// 1.356, also hold the requests' turnover: the next request's prefill between steps.)
+[[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows,
+                                       std::int32_t streams) noexcept;
 
 // The share of its int8 tensor peak (the generation row's s8 rate, core/generation.h; dp4a's where
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
@@ -206,9 +215,38 @@ struct CardRates {
 // drafts nothing.
 // With `launches` known and `launch_bytes` > 0 (CardRates::launch_bytes), the round's kernel
 // launches and the plain step's are added (each launch_bytes).
+// `streams` requests decode together (#303): their round verifies streams x (k + 1) rows in one
+// pass and drafts streams x the drafter's rows at once, against a plain step of streams rows; the
+// launches are one round's either way.
 [[nodiscard]] std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& config,
                                                double kappa, const ProposalRows& head_rows = {},
                                                double launch_bytes          = 0,
-                                               const RoundLaunches& launches = {});
+                                               const RoundLaunches& launches = {},
+                                               std::int32_t streams         = 1);
+
+// The plain decode step of `streams` requests decoded together, in bytes-equivalent (the
+// denominator of round_cost at `streams`); its ratio to one request's is the step's price at load.
+[[nodiscard]] double plain_step_cost(const RoundFacts& facts, double kappa, std::int32_t streams);
+
+// The verify rows within which the round cost was measured against the cards (DECISIONS 53, and
+// kSmallTEta's fit): from 12 rows verify kernels change tiles. A joint verify of more rows is not
+// priced.
+inline constexpr std::int32_t kPricedVerifyRows = 8;
+
+// A drafter's gain over plain decode at `streams` streams, from its one-request gain (#303): the
+// tokens a round yields are the pair's at any load, so the gain scales by the one-stream round's
+// price over the joint one's, speedup x R_1(k) / R_C(k); one stream's is `speedup` itself. At
+// two or more streams, nullopt where a joint verify exceeds
+// kPricedVerifyRows, where the drafter's joint pass is wider than both that and its own one-stream
+// pass (DFlash's block of 16 rows at C >= 2: tiles change past ~12 rows), or either round is not
+// priced. An MoE's experts are read as different streams route them, apart (moe_read_fraction).
+// The KV and attention bytes and each stream's recurrent state, which grow with C in both, are
+// left out as in R_1 (the GDN state is ~3 % of an MoE step; at long context the gain is priced
+// low); so are the requests' turnover between steps, which a load cell's tok/s holds.
+[[nodiscard]] std::optional<double> load_gain(const RoundFacts& facts, const SpecConfig& config,
+                                              double kappa, double speedup, std::int32_t streams,
+                                              const ProposalRows& head_rows = {},
+                                              double launch_bytes          = 0,
+                                              const RoundLaunches& launches = {});
 
 } // namespace ninferno::spec

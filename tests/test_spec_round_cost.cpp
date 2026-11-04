@@ -182,6 +182,10 @@ int main() {
                    std::abs(sp::moe_read_fraction(moe, 100000) - (8.0 / 256 + 0.30 * (1 - 8.0 / 256))) <
                        1e-9,
                "routed experts read: k/E a row, 0.30 of independent routing for many");
+        // Requests route apart: two of one row each read the union of two independent picks.
+        expect(std::abs(sp::moe_read_fraction(moe, 1, 2) - (1 - std::pow(1 - 8.0 / 256, 2))) < 1e-12 &&
+                   sp::moe_read_fraction(moe, 3, 1) == sp::moe_read_fraction(moe, 3),
+               "MoE read fraction across requests");
         expect(sp::moe_read_fraction(sp::PassFacts{.bytes = 1, .params = 1}, 8) == 1.0,
                "a dense pass reads all its weights");
     }
@@ -237,6 +241,83 @@ int main() {
         }
         expect(!sp::round_cost(*pair_of(kQ9, "ad104:60sm").round_facts, sp::SpecConfig{}, k4070),
                "plain decode has no round");
+        // A joint verify of C streams (#303): one stream is the round above; beyond
+        // kPricedVerifyRows rows a round is not priced. A dense target's gain falls with C: its
+        // weights are read once a pass whatever the rows, so the verify's C x (k + 1) rows add
+        // only operations, and the plain step of C rows gains as much from sharing that read.
+        // An MoE's may rise: its plain step of C rows already reads more experts, and the
+        // verify's read saturates (moe_read_fraction). Two requests read their experts apart.
+        for (const auto& g : golden) {
+            const auto& p     = full_head_pair(g.repo, g.gpu);
+            const auto config = sp::SpecConfig::parse(g.config);
+            const auto one    = sp::load_gain(*p.round_facts, config, k4070, 2.0, 1);
+            expect(one && near(*one, 2.0, 1e-12),
+                   std::string("one stream's load gain is its own, ") + g.repo + " " + g.config);
+            const bool dense = p.round_facts->target.experts == 0;
+            for (std::int32_t streams = 2; streams <= 8; ++streams) {
+                const auto gain = sp::load_gain(*p.round_facts, config, k4070, 2.0, streams);
+                const std::int32_t draft_rows =
+                    p.round_facts->drafters.at(std::string(sp::mode_name(config.mode))).rows;
+                const bool priced = streams * (config.k + 1) <= sp::kPricedVerifyRows &&
+                                    streams * draft_rows <= std::max(sp::kPricedVerifyRows, draft_rows);
+                expect(gain.has_value() == priced && (!gain || (*gain > 0 && (!dense || *gain < 2.0))),
+                       std::string("the load gain at ") + std::to_string(streams) +
+                           " streams is priced within the measured rows (a dense target's falls), " +
+                           g.repo + " " + g.config);
+                if (gain) {
+                    std::printf("load gain %s %s C=%d: %.4f of 2\n", g.repo, g.config, streams,
+                                *gain);
+                }
+            }
+        }
+        // The priced rows, said outright: mtp:3 verifies 4 rows a stream (two streams 8, three 12),
+        // a DFlash drafter drafts a block of 16 rows a stream (two streams 32).
+        {
+            const auto& facts = *pair_of(kQ9, "ad104:60sm").round_facts;
+            const auto mtp    = sp::SpecConfig::parse("mtp:3");
+            expect(sp::load_gain(facts, mtp, k4070, 2.0, 2).has_value() &&
+                       !sp::load_gain(facts, mtp, k4070, 2.0, 3),
+                   "mtp:3 priced at two streams, not at three");
+            expect(!sp::load_gain(facts, sp::SpecConfig::parse("dflash:3"), k4070, 2.0, 2),
+                   "dflash:3 not priced at two streams (its block of 16 rows each)");
+        }
+        // Against measurements on the RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M (2026-11-04). The plain
+        // step (held within 3 %): graph durations of one server, one request then two at once,
+        // 3.964 ms and 4.805 ms, 1.212 one-request steps. The round (reported, not held): spec-tune
+        // then spec-tune --load 2, dflash:3+head 1.884x plain at one request (3.20 tokens a round),
+        // C = 2 bound 3 1.609x (3.12 a round), so R_1 / R_2 = (1.609 / 3.12) / (1.884 / 3.20) =
+        // 0.876, both load cells holding the requests' turnover (the plain one 1.356 a step).
+        // That joint round drafts 32 rows, past the priced rows (load_gain refuses it): the R_1 /
+        // R_2 printed is round_cost outside its measured range. Launches are left out of both
+        // sides here (launch_bytes 0).
+        {
+            const auto& p      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
+            const double k4090 = sp::card_rates_of_board(0x2684).kappa();
+            const auto pass    = [&](std::int32_t streams) {
+                return sp::plain_step_cost(*p.round_facts, k4090, streams);
+            };
+            const auto config = sp::SpecConfig::parse("dflash:3+head");
+            const auto r1 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 1);
+            const auto r2 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 2);
+            std::printf("Qwen3.6-35B-A3B RTX 4090: two-row plain step %.3f one-row steps (measured "
+                        "1.212); dflash:3+head R_1 / R_2 %.3f (measured 0.876 at load)\n",
+                        pass(2) / pass(1), r1 && r2 ? *r1 / *r2 : 0.0);
+            expect(std::abs(pass(2) / pass(1) - 1.212) < 0.03 * 1.212,
+                   "the two-request plain step within 3 % of its graph durations (RTX 4090)");
+        }
+        // Against a measurement (reported, not held: the load cells ran another engine build
+        // and corpus than the pair's one-request rounds): Gemma 4 26B A4B QAT UD-Q4_K_XL with its
+        // MTP on the RTX 5080, C = 2 over plain at C = 2, bound 2 610.0 / 388.0 and bound 3
+        // 645.7 / 388.0 (drafter_registry.json, load_measured_on, 2026-09-28).
+        {
+            const auto& p     = pair_of("unsloth/gemma-4-26B-A4B-it-qat-GGUF", "gb203:70sm");
+            const double k5080 = sp::card_rates_of_board(0x2C02).kappa();
+            for (const char* label : {"mtp:2", "mtp:3"}) {
+                const auto config = sp::SpecConfig::parse(label);
+                const auto ratio  = sp::load_gain(*p.round_facts, config, k5080, 1.0, 2);
+                std::printf("Gemma 26B QAT RTX 5080 %s: R_1 / R_2 %.4f\n", label, ratio ? *ratio : 0.0);
+            }
+        }
     }
     // The draft head over the rows an artifact's proposal head carries (#205: MTP reads its own
     // 57,344-row prefix of the 147,456 rows it read before, Qwen3.5-9B Q4_K_M, Q6_K head). The
