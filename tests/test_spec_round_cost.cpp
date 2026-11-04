@@ -182,6 +182,10 @@ int main() {
                    std::abs(sp::moe_read_fraction(moe, 100000) - (8.0 / 256 + 0.30 * (1 - 8.0 / 256))) <
                        1e-9,
                "routed experts read: k/E a row, 0.30 of independent routing for many");
+        // Requests route apart: two of one row each read the union of two independent picks.
+        expect(std::abs(sp::moe_read_fraction(moe, 1, 2) - (1 - std::pow(1 - 8.0 / 256, 2))) < 1e-12 &&
+                   sp::moe_read_fraction(moe, 3, 1) == sp::moe_read_fraction(moe, 3),
+               "MoE read fraction across requests");
         expect(sp::moe_read_fraction(sp::PassFacts{.bytes = 1, .params = 1}, 8) == 1.0,
                "a dense pass reads all its weights");
     }
@@ -242,7 +246,7 @@ int main() {
         // weights are read once a pass whatever the rows, so the verify's C x (k + 1) rows add
         // only operations, and the plain step of C rows gains as much from sharing that read.
         // An MoE's may rise: its plain step of C rows already reads more experts, and the
-        // verify's read saturates (moe_read_fraction).
+        // verify's read saturates (moe_read_fraction). Two requests read their experts apart.
         for (const auto& g : golden) {
             const auto& p     = full_head_pair(g.repo, g.gpu);
             const auto config = sp::SpecConfig::parse(g.config);
@@ -276,10 +280,10 @@ int main() {
             const auto& p      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
             const auto& t      = p.round_facts->target;
             const double k4090 = sp::card_rates_of_board(0x2684).kappa();
-            const auto pass    = [&](std::int32_t rows) {
+            const auto pass    = [&](std::int32_t streams) {
                 const double active = t.experts > 0 ? double(t.experts_used) / double(t.experts) : 1.0;
-                return t.bytes + t.expert_bytes * sp::moe_read_fraction(t, rows) +
-                       k4090 * 2.0 * rows * (t.params + t.expert_params * active);
+                return t.bytes + t.expert_bytes * sp::moe_read_fraction(t, 1, streams) +
+                       k4090 * 2.0 * streams * (t.params + t.expert_params * active);
             };
             const auto config = sp::SpecConfig::parse("dflash:3+head");
             const auto r1 = sp::round_cost(*p.round_facts, config, k4090, p.tune.proposal_rows, 0, {}, 1);

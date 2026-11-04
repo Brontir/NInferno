@@ -68,10 +68,11 @@ PassFacts parse_pass(const Json& doc) {
     return p;
 }
 
-double pass_cost(const PassFacts& p, std::int32_t rows, double kappa) {
+// A pass over `rows` rows of each of `streams` requests decoded together.
+double pass_cost(const PassFacts& p, std::int32_t rows, double kappa, std::int32_t streams = 1) {
     const double active = p.experts > 0 ? double(p.experts_used) / double(p.experts) : 1.0;
-    const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows);
-    const double ops    = 2.0 * double(rows) * (p.params + p.expert_params * active);
+    const double bytes  = p.bytes + p.expert_bytes * moe_read_fraction(p, rows, streams);
+    const double ops    = 2.0 * double(rows) * double(streams) * (p.params + p.expert_params * active);
     return bytes + kappa * ops;
 }
 
@@ -168,6 +169,11 @@ double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept {
     return pick + kMoeRoutedShare * (apart - pick);
 }
 
+double moe_read_fraction(const PassFacts& pass, std::int32_t rows, std::int32_t streams) noexcept {
+    const double one = moe_read_fraction(pass, rows);
+    return streams <= 1 ? one : 1.0 - std::pow(1.0 - one, double(streams));
+}
+
 CardRates card_rates(int compute_capability, int sms, int sm_clock_khz, double dram_gbps) {
     return rates(compute_capability / 10, compute_capability % 10, sms, sm_clock_khz * 1e3,
                  dram_gbps * 1e9);
@@ -192,17 +198,17 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
     const auto d           = facts.drafters.find(mode);
     if (d == facts.drafters.end()) { return std::nullopt; }
     const DraftFacts& draft_facts = d->second;
-    const double plain            = pass_cost(facts.target, streams, kappa);
-    const double verify           = pass_cost(facts.target, streams * (config.k + 1), kappa);
+    const double plain            = pass_cost(facts.target, 1, kappa, streams);
+    const double verify           = pass_cost(facts.target, config.k + 1, kappa, streams);
     const double passes           = draft_facts.per_draft ? double(config.k) : 1.0;
     double head                   = 0;
     if (draft_facts.head) {
         const PassFacts read = head_over_rows(*draft_facts.head, head_rows.of(mode));
-        head = draft_facts.per_draft ? passes * pass_cost(read, streams * draft_facts.rows, kappa)
-                                     : pass_cost(read, streams * config.k, kappa);
+        head = draft_facts.per_draft ? passes * pass_cost(read, draft_facts.rows, kappa, streams)
+                                     : pass_cost(read, config.k, kappa, streams);
     }
     const double draft =
-        passes * pass_cost(draft_facts.pass, streams * draft_facts.rows, kappa) + head;
+        passes * pass_cost(draft_facts.pass, draft_facts.rows, kappa, streams) + head;
     if (launch_bytes > 0 && launches.known()) {
         return (verify + draft + launch_bytes * launches.round) / (plain + launch_bytes * launches.step);
     }

@@ -109,6 +109,13 @@ struct RoundFacts {
 // any of them routes to (1 - (1 - k/E)^rows) at kMoeRoutedShare (spec/moe_routed_share.h) of
 // independent routing.
 [[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows) noexcept;
+// The same over `streams` requests of `rows` rows each, decoded together (#303): the rows of one
+// request route alike (kMoeRoutedShare, fitted on one request's rows), different requests'
+// independently, so together they read 1 - (1 - f)^streams of the experts, f one request's share.
+// RTX 4090, Qwen3.6-35B-A3B UD-Q4_K_M: a plain step of two requests took 1.356 one-request steps;
+// the one-request rule over two rows gave 1.083.
+[[nodiscard]] double moe_read_fraction(const PassFacts& pass, std::int32_t rows,
+                                       std::int32_t streams) noexcept;
 
 // The share of its int8 tensor peak (the generation row's s8 rate, core/generation.h; dp4a's where
 // it has none) a verify of up to 8 rows reaches, by generation. Fitted per generation on the
