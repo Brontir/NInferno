@@ -1,9 +1,12 @@
 // Gemma 4 decode partials without native BF16 MMA (gemma4_attention_decode_launch). On Volta the
 // split-K kernel's MMA tiles run as shuffle-bound FMA emulation (V100, Gemma 4 26B: 52 us per
 // sliding layer at ~300 keys, 175 us per full layer, ~20 % of the decode step). Here a CTA of four
-// warps folds its split's keys in FP32 on the SIMT path: Q of the KV head's rows in shared memory,
-// a warp per eight keys of a 32-key tile for the scores, a thread per row for the online softmax,
-// and every thread D / 128 head dims of every row for P V. The partials (FP32 unnormalized
+// warps folds its split's keys in FP32 on the SIMT path, Q of the KV head's rows in shared memory.
+// At D = 256 and 512 (gemma4_volta_decode_kernel) a warp takes eight keys of a 32-key tile for the
+// scores, a thread a row for the online softmax, and every thread D / 128 head dims of every row
+// for P V. At D = 64 and 128 (gemma4_volta_decode_tiled_kernel) the tile's keys and values are
+// staged in shared memory first, then a thread takes a (key, row) score, a warp a row's softmax and
+// a thread a (dim, row) of P V. The partials (FP32 unnormalized
 // accumulators, m * scale_log2, l) are those of gemma4_attention_kernel; the split boundaries
 // round to kGemma4VoltaDecodeBc keys, and gemma4_attention_combine_kernel instantiated with it
 // merges them. The sums run in another order than the
@@ -280,6 +283,203 @@ __launch_bounds__(kVoltaThreads) void gemma4_volta_decode_kernel(const Gemma4Att
     }
 }
 
+// D <= 128: the tile's keys and values staged in shared memory as FP32 before any use (one slot
+// read and one K and V read a chunk, all in flight at once), then the scores a thread per (key,
+// row), the softmax a warp per row and P V a thread per (dim, row). The kernel above walks a key
+// a step, a page-table read then the K or V read behind it, and sums each row's score over 5
+// shuffles: on the V100 at ~20K keys (gpt-oss-20b, D = 64, G = 8) that chain set its time, not
+// the 20 MB a full layer reads.
+template <int D, int MaxRows>
+__global__
+__launch_bounds__(kVoltaThreads) void gemma4_volta_decode_tiled_kernel(
+    const Gemma4AttentionArgs args, int bc) {
+    static_assert(D == 64 || D == 128);
+    constexpr int KT     = D == 64 ? 32 : 16; // keys a tile
+    constexpr int KP     = D + 4;             // a staged key's floats (float4 reads conflict-free)
+    constexpr int RS     = kVoltaThreads / KT; // row slots of the scores
+    constexpr int RPT    = (MaxRows + RS - 1) / RS;
+    constexpr int RG     = kVoltaThreads / D; // row groups of P V
+    constexpr int RPV    = (MaxRows + RG - 1) / RG;
+    constexpr int Warps  = kVoltaThreads / 32;
+    constexpr int Chunks = KT * D / 4; // four values a chunk
+    const float NegInf   = -CUDART_INF_F;
+
+    __shared__ __align__(16) float q_s[MaxRows * D];
+    __shared__ __align__(16) float k_t[KT * KP];
+    __shared__ __align__(16) float v_t[KT * D];
+    __shared__ float s_s[MaxRows][KT];
+    __shared__ int slot_s[KT];
+    __shared__ float alpha_s[MaxRows];
+    __shared__ float m_s[MaxRows];
+    __shared__ float l_s[MaxRows];
+
+    const int tid     = static_cast<int>(threadIdx.x);
+    const int lane    = tid & 31;
+    const int warp    = tid >> 5;
+    const int split   = static_cast<int>(blockIdx.x);
+    const int kv_head = static_cast<int>(blockIdx.y) % args.kv_heads;
+    const Gemma4BatchRow row_ =
+        gemma4_batch_row(args, static_cast<int>(blockIdx.y) / args.kv_heads, D);
+    const int G          = args.q_heads / args.kv_heads;
+    const int tokens     = args.tokens;
+    const int rows_total = tokens * G;
+    const float sl       = args.scale_log2;
+
+    int lo = 0, hi = 0, begin = 0, end = 0, active = 0;
+    gemma4_union_range(row_.positions, tokens, args.window, lo, hi);
+    gemma4_split_range(lo, hi, args.splits, bc, split, begin, end, active);
+    if (split >= active) return;
+
+    const int p0     = row_.positions[0];
+    const int p_call = gemma4_call_end(row_.positions, tokens) - 1;
+
+    for (int i = tid; i < rows_total * D; i += kVoltaThreads) {
+        const int r = i / D, d = i - r * D;
+        const int t = r / G, head = kv_head * G + (r - t * G);
+        q_s[i] =
+            __bfloat162float(row_.q[(static_cast<std::int64_t>(t) * args.q_heads + head) * D + d]);
+    }
+    if (tid < MaxRows) {
+        m_s[tid] = NegInf;
+        l_s[tid] = 0.0F;
+    }
+
+    const int binding        = gemma4_kv_binding(args.kv, row_.batch_row);
+    const std::int64_t plane = gemma4_kv_plane_offset(args.kv, binding) +
+                               static_cast<std::int64_t>(kv_head) * args.capacity * D;
+    const bool fp8        = args.k_scale != nullptr;
+    const float* k_scales = fp8 ? args.k_scale + plane / D : nullptr;
+    const float* v_scales = fp8 ? args.v_scale + plane / D : nullptr;
+
+    const int kk_s = tid % KT, rs = tid / KT; // scores: key, row slot
+    const int d_v = tid % D, rg = tid / D;    // P V: dim, row group
+    float acc[RPV];
+#pragma unroll
+    for (int i = 0; i < RPV; ++i) acc[i] = 0.0F;
+
+    for (int k0 = begin; k0 < end; k0 += KT) {
+        const int tile_keys = min(KT, end - k0);
+        __syncthreads(); // the previous tile's P V is done with the slots, k_t, v_t and s_s
+        if (tid < tile_keys) slot_s[tid] = gemma4_kv_slot(args.kv, binding, k0 + tid);
+        __syncthreads();
+        // Stage: every chunk's reads issued before any value is used.
+#pragma unroll
+        for (int c0 = 0; c0 < Chunks; c0 += kVoltaThreads) {
+            const int c = c0 + tid, key = c / (D / 4), d = (c % (D / 4)) * 4;
+            if (key >= tile_keys) continue;
+            const int slot        = slot_s[key];
+            const std::int64_t at = plane + static_cast<std::int64_t>(slot) * D + d;
+            float4 kf, vf;
+            if (fp8) {
+                const unsigned kw = *reinterpret_cast<const unsigned*>(
+                    static_cast<const std::uint8_t*>(args.cache_k) + at);
+                const unsigned vw = *reinterpret_cast<const unsigned*>(
+                    static_cast<const std::uint8_t*>(args.cache_v) + at);
+                const float ks = k_scales[slot], vs = v_scales[slot];
+                const float2 k01 = __half22float2(e4m3x2_to_half2(kw & 0xffffU));
+                const float2 k23 = __half22float2(e4m3x2_to_half2(kw >> 16));
+                const float2 v01 = __half22float2(e4m3x2_to_half2(vw & 0xffffU));
+                const float2 v23 = __half22float2(e4m3x2_to_half2(vw >> 16));
+                kf = make_float4(ks * k01.x, ks * k01.y, ks * k23.x, ks * k23.y);
+                vf = make_float4(vs * v01.x, vs * v01.y, vs * v23.x, vs * v23.y);
+            } else {
+                const uint2 kw = *reinterpret_cast<const uint2*>(
+                    static_cast<const __nv_bfloat16*>(args.cache_k) + at);
+                const uint2 vw = *reinterpret_cast<const uint2*>(
+                    static_cast<const __nv_bfloat16*>(args.cache_v) + at);
+                kf = make_float4(__uint_as_float(kw.x << 16), __uint_as_float(kw.x & 0xffff0000U),
+                                 __uint_as_float(kw.y << 16), __uint_as_float(kw.y & 0xffff0000U));
+                vf = make_float4(__uint_as_float(vw.x << 16), __uint_as_float(vw.x & 0xffff0000U),
+                                 __uint_as_float(vw.y << 16), __uint_as_float(vw.y & 0xffff0000U));
+            }
+            *reinterpret_cast<float4*>(k_t + key * KP + d) = kf;
+            *reinterpret_cast<float4*>(v_t + key * D + d)  = vf;
+        }
+        __syncthreads();
+        // Scores: thread (key kk_s, row slot rs) takes rows rs, rs + RS, ...
+        if (kk_s < tile_keys) {
+            float dot[RPT];
+#pragma unroll
+            for (int i = 0; i < RPT; ++i) dot[i] = 0.0F;
+#pragma unroll 4
+            for (int d = 0; d < D; d += 4) {
+                const float4 kv = *reinterpret_cast<const float4*>(k_t + kk_s * KP + d);
+#pragma unroll
+                for (int i = 0; i < RPT; ++i) {
+                    const int r = rs + i * RS;
+                    if (r < rows_total) {
+                        const float4 qv = *reinterpret_cast<const float4*>(q_s + r * D + d);
+                        dot[i]          = fmaf(qv.x, kv.x, dot[i]);
+                        dot[i]          = fmaf(qv.y, kv.y, dot[i]);
+                        dot[i]          = fmaf(qv.z, kv.z, dot[i]);
+                        dot[i]          = fmaf(qv.w, kv.w, dot[i]);
+                    }
+                }
+            }
+#pragma unroll
+            for (int i = 0; i < RPT; ++i) {
+                const int r = rs + i * RS;
+                if (r < rows_total) s_s[r][kk_s] = dot[i];
+            }
+        }
+        __syncthreads();
+        // Online softmax: a warp per row, a lane per key; masked keys take P = 0.
+        for (int r = warp; r < rows_total; r += Warps) {
+            const int p       = min(p0 + r / G, p_call);
+            const int vis_l   = args.window > 0 ? max(0, p - args.window + 1) : 0;
+            const int vis_h   = args.block != 0 ? p_call : p;
+            const int key     = k0 + lane;
+            const bool vis    = lane < tile_keys && key >= vis_l && key <= vis_h;
+            const float s     = vis ? s_s[r][lane] : NegInf;
+            const float m     = m_s[r];
+            const float m_new = fmaxf(m, warp_max(s));
+            float alpha = 1.0F, l = l_s[r], pv = 0.0F;
+            if (m_new != NegInf) {
+                alpha = m == NegInf ? 0.0F : exp2f((m - m_new) * sl);
+                pv    = vis ? exp2f((s - m_new) * sl) : 0.0F;
+                l     = l * alpha + warp_sum(pv);
+            }
+            if (lane < KT) s_s[r][lane] = pv;
+            if (lane == 0) {
+                m_s[r]     = m_new;
+                l_s[r]     = l;
+                alpha_s[r] = alpha;
+            }
+        }
+        __syncthreads();
+        // P V: thread (dim d_v, row group rg) takes rows rg, rg + RG, ...
+#pragma unroll
+        for (int i = 0; i < RPV; ++i) {
+            const int r = rg + i * RG;
+            if (r < rows_total) acc[i] *= alpha_s[r];
+        }
+#pragma unroll 4
+        for (int kk = 0; kk < tile_keys; ++kk) {
+            const float v = v_t[kk * D + d_v];
+#pragma unroll
+            for (int i = 0; i < RPV; ++i) {
+                const int r = rg + i * RG;
+                if (r < rows_total) acc[i] = fmaf(s_s[r][kk], v, acc[i]);
+            }
+        }
+    }
+
+#pragma unroll
+    for (int i = 0; i < RPV; ++i) {
+        const int r = rg + i * RG;
+        if (r >= rows_total) break;
+        const std::int64_t index =
+            static_cast<std::int64_t>(split * args.kv_heads + kv_head) * rows_total + r;
+        row_.partial_acc[index * D + d_v] = acc[i];
+    }
+    for (int r = tid; r < rows_total; r += kVoltaThreads) {
+        const std::int64_t index =
+            static_cast<std::int64_t>(split * args.kv_heads + kv_head) * rows_total + r;
+        row_.partial_m[index] = m_s[r] == NegInf ? NegInf : m_s[r] * sl;
+        row_.partial_l[index] = l_s[r];
+    }
+}
+
 template <int D>
 constexpr int max_rows() {
     return kVoltaQFloats / D;
@@ -304,18 +504,27 @@ using VoltaDecodeKernel = void (*)(Gemma4AttentionArgs, int);
 
 // The instance holding the fewest rows the call has (T * G): its accumulators and Q tile are
 // sized by MaxRows, and the registers and shared memory they take bound how many CTAs an SM keeps
-// resident (RTX 2080 Ti, D = 128: 32 rows took 128 registers a thread for a call of 4, 72 at 4).
+// resident (the per-key kernel on the RTX 2080 Ti, D = 128: 32 rows took 128 registers a thread
+// for a call of 4, 72 at 4; the tiled kernel at D = 64 and 64 rows holds 42 KB of shared memory,
+// one CTA an SM on Turing). gemma4_volta_decode_resident_ctas asks the instance itself, so the
+// plan's split count follows it.
+template <int D, int MaxRows>
+constexpr VoltaDecodeKernel kernel_instance() {
+    if constexpr (D <= 128) return gemma4_volta_decode_tiled_kernel<D, MaxRows>;
+    else return gemma4_volta_decode_kernel<D, MaxRows>;
+}
+
 template <int D>
 VoltaDecodeKernel kernel_for_rows(std::int32_t rows) {
-    if (rows <= 4) return gemma4_volta_decode_kernel<D, 4>;
-    if (rows <= 8) return gemma4_volta_decode_kernel<D, 8>;
+    if (rows <= 4) return kernel_instance<D, 4>();
+    if (rows <= 8) return kernel_instance<D, 8>();
     if constexpr (max_rows<D>() >= 16) {
-        if (rows <= 16) return gemma4_volta_decode_kernel<D, 16>;
+        if (rows <= 16) return kernel_instance<D, 16>();
     }
     if constexpr (max_rows<D>() >= 32) {
-        if (rows <= 32) return gemma4_volta_decode_kernel<D, 32>;
+        if (rows <= 32) return kernel_instance<D, 32>();
     }
-    return gemma4_volta_decode_kernel<D, max_rows<D>()>;
+    return kernel_instance<D, max_rows<D>()>();
 }
 
 VoltaDecodeKernel kernel_for(std::int32_t head_dim, std::int32_t rows) {
