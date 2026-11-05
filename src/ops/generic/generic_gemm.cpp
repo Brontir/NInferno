@@ -2974,11 +2974,6 @@ std::optional<RouteTile> route_tile(Route route, Epilogue epilogue, std::int32_t
         const auto s = i8_schedule_info(route.schedule);
         return RouteTile{s.block_n / sets, s.block_m, 1};
     }
-    case Family::GgmlMmq: {
-        // 128 weight rows by up to 128 tokens of one prefill slice, in steps of eight.
-        const std::int32_t slice = std::min(std::max(tokens, 1), kMmqPrefillSlice);
-        return RouteTile{128 / sets, std::min(128, (slice + 7) / 8 * 8), 1};
-    }
     default: return std::nullopt;
     }
 }
@@ -2991,8 +2986,7 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
     // The activation in the route's representation: bytes a value, the K and the tokens it holds.
     // BF16 for the A16 tiles; W4A8 one byte a value and an FP16 scale a 32 (and the block sum,
-    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; ggml's q8_1 36 bytes a
-    // 32; I8 an FP32 scale and an int32 sum a 64-value group, tokens padded to whole 256-token
+    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64-value group, tokens padded to whole 256-token
     // tiles.
     double x_bytes = 2.0, x_k = k, x_t = t;
     const QType q  = problem.qtype;
@@ -3001,22 +2995,11 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     if (route.family == Family::W4a8Mma) {
         x_bytes = (has_min ? 40.0 : 36.0) / 32.0;
         x_k     = cdiv(k, 128.0) * 128.0;
-    } else if (route.family == Family::GgmlMmq) {
-        x_bytes = 36.0 / 32.0;
     } else if (route.family == Family::I8Mma) {
         x_bytes = 1.0 + 8.0 / 64.0;
         x_t     = i8_padded_tokens(tokens);
     }
-    // ggml's matrix kernel runs a call in prefill slices, each its own grid over the weight: the
-    // full slices' token columns, then the last slice's own.
-    double weight_reads = cdiv(t, tile->tokens);
-    if (route.family == Family::GgmlMmq) {
-        const double full = std::floor(t / kMmqPrefillSlice);
-        const auto rest   = static_cast<std::int32_t>(t - full * kMmqPrefillSlice);
-        weight_reads      = full * cdiv(kMmqPrefillSlice, tile->tokens) +
-                       (rest > 0 ? cdiv(rest, route_tile(route, problem.epilogue, rest)->tokens)
-                                 : 0.0);
-    }
+    const double weight_reads = cdiv(t, tile->tokens);
     const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
     return RouteTraffic{n * k * bpw * weight_reads, x_t * x_k * x_bytes * cdiv(n, tile->out_rows),
                         n * t * 2.0};
@@ -3105,9 +3088,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         problem.n % ggml_mmq::kRowMultiple == 0 && problem.k % ggml_mmq::kKMultiple == 0) {
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);
-        const auto tile     = *route_tile(Route{Family::GgmlMmq, 0}, problem.epilogue, tokens);
-        const double cols   = tile.tokens;
-        const double tiles  = cdiv(n, tile.out_rows) * cdiv(tt, cols);
+        const double sets   = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+        const double cols   = std::min(128.0, cdiv(tt, 8.0) * 8.0);
+        const double tiles  = cdiv(n * sets, 128.0) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
         const double mma    = tiles / sms * 2.0 * 128.0 * cols * k / peak_sm;
         const double chain  = std::max(1.0, tiles * std::ceil(k / 862.0) / sms) * 4075.0 / clk;

@@ -718,7 +718,9 @@ struct R8Resources {
 // prices it (price_routes, a8_candidates read this): output rows (under SwiGLU each reads its gate
 // and its up row), token columns, and the CTAs K is split over (a register-MMA cluster). Declared
 // geometry of the schedule, not a measurement. nullopt for the families the cost model does not
-// price by a tile (R8, ggml's vector kernel, the FP4 tiles, scalar).
+// price by a declared tile (R8, the FP4 tiles, scalar) and for ggml's kernels, whose matrix
+// kernel picks its tile at launch by device and format (select_launch; route_resources
+// describes that launch).
 struct RouteTile {
     int out_rows = 0;
     int tokens   = 0;
@@ -731,7 +733,8 @@ struct RouteTile {
 // serves them, predicted from route_tile. Every token column of CTAs reads the whole weight
 // (payload_bytes over the call's n rows, as the cost model's bpw), every row block of CTAs reads the
 // whole activation in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
-// byte and their scales: W4A8 and ggml's q8_1 36 bytes a 32-value block, I8 an FP32 scale a 64),
+// byte and their scales: W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in
+// whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64, over tokens padded to 256),
 // and the output is written once in bf16 (a cluster's K split reduces in distributed shared
 // memory). A prediction, not a counter: the caches serve the re-reads (RTX 5090, Qwen3.5-9B
 // shapes: a 16 x 8 register-MMA tile at T = 512 requested 8 TB/s, past the L2's rate, its

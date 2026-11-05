@@ -2,7 +2,7 @@
 // schedule's declared geometry (SwiGLU halves the output rows of a tile that stages gate and up
 // rows together), the families priced without a tile have none, and the traffic follows the tile:
 // the whole weight once for every column of CTAs, the whole activation once for every row block in
-// the route's representation, the output once.
+// the route's representation, the output once. ggml's kernels have no declared tile.
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 
@@ -58,12 +58,8 @@ int main() {
             check(t && t->out_rows * sets == s.block_n && t->tokens == s.block_m,
                   "w4a8 tile " + std::to_string(i));
         }
-        // ggml's matrix kernel: 128 weight rows by the slice's tokens in steps of eight, at most 128.
-        const auto mmq = [&](int tokens) {
-            return g::route_tile(g::Route{F::GgmlMmq, 0}, epilogue, tokens);
-        };
-        check(mmq(20) && mmq(20)->tokens == 24 && mmq(20)->out_rows * sets == 128, "mmq tile T=20");
-        check(mmq(4096) && mmq(4096)->tokens == 128, "mmq tile T=4096");
+        check(!g::route_tile(g::Route{F::GgmlMmq, 0}, epilogue, 64),
+              "ggml's matrix kernel picks its tile at launch");
         check(!g::route_tile(g::Route{F::R8Mma, 0}, epilogue, 4), "R8 has no tile");
         check(!g::route_tile(g::Route{F::GgmlVec, 0}, epilogue, 4), "the vector kernel has no tile");
         check(!g::route_tile(g::Route{F::Scalar, 0}, epilogue, 4), "scalar has no tile");
@@ -93,12 +89,6 @@ int main() {
         check(tr && near(tr->activation_bytes,
                          256.0 * 2048 * 36 / 32 * std::ceil(4096.0 / tile.out_rows)),
               "w4a8 activation traffic");
-    }
-    // ggml's matrix kernel at T = 600: a full 512-token slice of four 128-token columns, then the
-    // last 88 tokens in one column of their own; the weight is read five times.
-    {
-        const auto tr = g::route_traffic(g::Route{F::GgmlMmq, 0}, w, p, 600);
-        check(tr && near(tr->weight_bytes, 4096.0 * 2048 * 5), "mmq weight reads over slices");
     }
     // I8: an FP32 scale and an int32 sum a 64-value group, tokens padded to 256.
     if (g::i8_schedule_count() > 0) {
