@@ -16,6 +16,7 @@ last, once nothing downloads beside them). Nothing is sent anywhere: the kit wri
 FILE.json and FILE.md (a ready PR or issue body) and prints how to submit them yourself.
 """
 import argparse
+import collections
 import concurrent.futures
 import csv
 import datetime
@@ -40,7 +41,7 @@ import gpu  # noqa: E402
 import validate  # noqa: E402
 
 KIT_VERSION = "2"
-SCHEMA = "ninferno-user-run/1.2"
+SCHEMA = "ninferno-user-run/1.3"
 HAYSTACK = ROOT / "examples/cli/messages/long_niah_256k.json"  # perf_matrix.py's long text
 QUESTION = "\n\nSummarize the text above in detail, section by section."
 START_TIMEOUT_S = 900
@@ -118,6 +119,45 @@ class Progress:
 
     def spend(self, seconds):
         self.used += seconds
+
+
+def models_path(args):
+    return Path(args.models_file) if args.models_file else HERE / "models.json"
+
+
+def load_models(path):
+    """The model set at `path`, or the run stops with what it lacks (before any GPU work)."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if "version" not in doc:
+            raise KeyError("version")
+        for m in doc["models"]:
+            for field in ("id", "repo", "quant", "context"):
+                if field not in m:
+                    raise KeyError(f"{field} of {m}")
+            # The id names the run's log and temporary files: one plain file name component.
+            if not isinstance(m["id"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", m["id"]):
+                raise ValueError(f"id {m['id']!r}: letters, digits, '.', '_' and '-' only")
+            # Windows reserves these names whatever the extension (CON.plain.1.server.log is the console).
+            if re.fullmatch(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])", m["id"].split(".")[0].lower()):
+                raise ValueError(f"id {m['id']!r}: a Windows device name")
+            # Room in a 255-byte file name for the longest suffix the run adds.
+            if len(m["id"]) > 120:
+                raise ValueError(f"id {m['id'][:20]!r}...: at most 120 characters")
+            for field in ("repo", "quant"):
+                if not isinstance(m[field], str) or not m[field]:
+                    raise ValueError(f"{field} of {m['id']}: a string")
+            if not isinstance(m["context"], int) or isinstance(m["context"], bool) or m["context"] <= 0:
+                raise ValueError(f"context of {m['id']}: a positive integer")
+        # Two models of one id would write one set of files (and case alone does not tell files
+        # apart on Windows).
+        ids = [m["id"].lower() for m in doc["models"]]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise ValueError(f"ids used twice: {', '.join(dup)}")
+        return doc
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        sys.exit(f"the model set {path}: {e!r} (a version, and id, repo, quant, context a model; an id is one file name)")
 
 
 def plan_json(serve, model, flags):
@@ -374,6 +414,52 @@ def cached_parts(model):
     return source, converted
 
 
+def gguf_cached(model):
+    """Whether the hub cache holds every part of the model's GGUF of its quant (a split
+    name-0000i-of-0000n.gguf needs all n parts), for the measuring order: a sidecar or one part
+    of a split is not the checkpoint."""
+    root = hub_dir() / ("models--" + model["repo"].replace("/", "--"))
+    quant = model["quant"].lower()
+    # A converted artifact of the quant is reused as it is (the UI may have removed the snapshot).
+    if any(re.search(r"(^|[-.])" + re.escape(quant) + r"\.ninferno$", f.name.lower())
+           for f in root.glob("ninferno/*/*.ninferno")):
+        return True
+    parts = collections.defaultdict(set)
+    for f in root.glob("snapshots/*/**/*.gguf"):
+        name = f.name.lower()
+        # A repository's drafter and projector files are not its checkpoint.
+        if name.startswith(("mtp-", "dflash-", "mmproj")):
+            continue
+        # The quant as the name's last label (UD-Q6_K is not Q6_K, Q4_K_M is not Q4_K).
+        if not f.exists() or not re.search(r"(^|[-.])" + re.escape(quant) + r"(-\d{5}-of-\d{5})?\.gguf$", name):
+            continue
+        split = re.search(r"-(\d{5})-of-(\d{5})\.gguf$", name)
+        if not split:
+            return True
+        # Parts of one split count together only inside one snapshot (one revision).
+        snapshot = f.relative_to(root / "snapshots").parts[0]
+        parts[(snapshot, name[:split.start()], int(split.group(2)))].add(int(split.group(1)))
+    return any(have == set(range(1, total + 1)) for (_, _, total), have in parts.items())
+
+
+def drafters_cached(model):
+    """Whether a converted artifact of the quant has its drafter manifest (<artifact>.speculation.json,
+    written by --with-drafters) and every drafter artifact the manifest names is on disk: what a
+    --spec-tune run's prepare would otherwise fetch."""
+    root = hub_dir() / ("models--" + model["repo"].replace("/", "--"))
+    quant = model["quant"].lower()
+    for f in root.glob("ninferno/*/*.ninferno.speculation.json"):
+        if not re.search(r"(^|[-.])" + re.escape(quant) + r"\.ninferno\.speculation\.json$", f.name.lower()):
+            continue
+        try:
+            drafters = json.loads(f.read_text(encoding="utf-8")).get("drafters", [])
+        except (OSError, json.JSONDecodeError):
+            continue
+        if all(Path(d["artifact"]).exists() for d in drafters if d.get("artifact")):
+            return True
+    return False
+
+
 def fetch_need_bytes(model, weights_bytes):
     """The disk a fetch writes: the source weights where they are not cached, and the converted
     artifact (about the weights' bytes again) where it is not, plus FETCH_MARGIN_BYTES."""
@@ -455,7 +541,10 @@ def main():
                                  allow_abbrev=False)  # --full reads the options as spelt
     ap.add_argument("--bin", required=True, help="the directory holding ninferno-serve (and ninferno)")
     ap.add_argument("--budget-minutes", type=float, default=30, help="GPU time (downloads apart)")
-    ap.add_argument("--models", default="auto", help="auto, or ids from tools/kit/models.json")
+    ap.add_argument("--models", default="auto", help="auto, or ids from the models file")
+    ap.add_argument("--models-file", default=None,
+                    help="the model set (default tools/kit/models.json): a lab's own list, e.g. the "
+                         "largest checkpoints and their small quantizations on one card")
     ap.add_argument("--max-models", type=int, default=2)
     ap.add_argument("--device", type=int, default=0, help="the GPU (CUDA ordinal = PCI bus order)")
     ap.add_argument("--passes", type=int, default=2, help="starts per model (a repeat each)")
@@ -481,7 +570,7 @@ def main():
         if "--budget-minutes" not in given:
             args.budget_minutes = 24 * 60
         if "--max-models" not in given:
-            args.max_models = len(json.loads((HERE / "models.json").read_text(encoding="utf-8"))["models"])
+            args.max_models = len(load_models(models_path(args))["models"])
         if "--spec-tune" not in given:
             args.spec_tune = 1200
         args.hard50 = args.routes = True
@@ -491,13 +580,21 @@ def main():
     if os.environ.pop("CUDA_VISIBLE_DEVICES", None) is not None:
         print("CUDA_VISIBLE_DEVICES is ignored by the kit: --device picks the card", flush=True)
 
+    # The kit's data, resolved from the source tree's layout (a release installs that layout under
+    # share/ninferno/kit): a copy of tools/kit alone would time nothing, hours later.
+    needed = [HAYSTACK] + ([HARD_SET, ROOT / "tools/bench/hard_set.py"] if args.hard50 else [])
+    missing = [str(p) for p in needed if not p.is_file()]
+    if missing:
+        sys.exit(f"the kit's data is missing: {', '.join(missing)} (run measure.py from the source "
+                 "tree or the release's bin/ninferno-kit)")
+
     serve = exe(args.bin, "ninferno-serve")
     # A build's own CLI where it is beside ninferno-serve, else the release's `ninferno-serve
     # spec-tune` (the same code, through the dispatcher's engine for this GPU).
     cli_path = Path(args.bin) / ("ninferno" + (".exe" if os.name == "nt" else ""))
     tune_cmd = [str(cli_path), "spec-tune"] if cli_path.exists() else [serve, "spec-tune"]
-    models_file = HERE / "models.json"
-    models_doc = json.loads(models_file.read_text(encoding="utf-8"))
+    models_file = models_path(args)
+    models_doc = load_models(models_file)
     wanted = models_doc["models"] if args.models == "auto" else [
         m for m in models_doc["models"] if m["id"] in args.models.split(",")]
 
@@ -507,7 +604,8 @@ def main():
     card = {"smi": gpu.card_facts(smi_id)}
     wddm = str(card["smi"].get("driver_model.current") or "").upper() == "WDDM"
     doc = {"schema": SCHEMA, "kit": {"version": KIT_VERSION, "models_version": models_doc["version"],
-                                     "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16]},
+                                     "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16],
+                                     "models_file": "custom" if args.models_file else None},
            "created": created, "ninferno": {"version": version.splitlines()[0] if version else None},
            "host": gpu.host_facts(), "card": card, "runs": []}
     print(f"card: {card['smi'].get('name')}, driver {card['smi'].get('driver_version')}, "
@@ -547,11 +645,17 @@ def main():
                   + "; ".join(listed))
             if not args.yes and input("Fetch now? [y/N] ").strip().lower() != "y":
                 sys.exit("Nothing fetched; nothing measured.")
-        # The fetches run one after another in the background, in the set's order: a model is
+        # The fetches run one after another in the background, in that order: a model is
         # measured once its own fetch ended, while the next ones download (--no-prefetch: all
         # first). A conversion is the host's work: each run records whether a fetch ran beside it
         # (validate.py notes it), and the route sweeps, whose small widths time the host's
         # launches, run after the last fetch.
+        # The models whose GGUF the cache already holds whole go first (in the set's order among
+        # themselves): the card measures them while the others download, instead of waiting on
+        # the first fetch (a lab set of a dozen checkpoints is hours of download).
+        # A --spec-tune run fetches the drafters too: a model counts as cached only with them.
+        chosen.sort(key=lambda mp: not (gguf_cached(mp[0])
+                                        and (not args.spec_tune or drafters_cached(mp[0]))))
         fetcher = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fetches = []
         for model, plan in chosen:

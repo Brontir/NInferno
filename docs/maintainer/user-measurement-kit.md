@@ -14,11 +14,11 @@ From a release, one command measures everything this card can run, for hours:
 
     ninferno-kit            # = measure.py --full on the release's own ninferno-serve
 
-`ninferno-kit` passes its options on, and adds `--full` unless one of `--budget-minutes`, `--models` or `--max-models` asks for a shorter run. It is the Linux release's; on Windows, from the unpacked release: `python share\ninferno\kit\tools\kit\measure.py --bin bin --full`.
+`ninferno-kit` passes its options on, and adds `--full` unless one of `--budget-minutes`, `--models` or `--max-models` asks for a shorter run (`--models-file` does not: it names another set). It is the Linux release's; on Windows, from the unpacked release: `python share\ninferno\kit\tools\kit\measure.py --bin bin --full`.
 
 From a source tree or with options:
 
-    python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...]
+    python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...] [--models-file PATH]
         [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--route-passes 2]
         [--no-prefetch] [--out FILE] [--yes]
 
@@ -27,7 +27,7 @@ From a source tree or with options:
 - **`--routes`**: the route sweep, below.
 - **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device N` is the N-th card by PCI bus id. Every `nvidia-smi` call names that card by its bus id, never by nvidia-smi's own index, which can follow another order.
 - **Downloads:**
-  - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order.
+  - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order. They are measured with the ones already in the cache first, so with a finite budget the cache decides which chosen model is left out.
   - A model is measured once its own fetch ended, while the next ones download. `--no-prefetch` fetches all of them first.
   - A conversion is the host's work. Each plain, hard50 and spec run records `fetch_beside`, whether a fetch was running beside it (R8 notes it). The route sweeps run after the last fetch, since their small widths time the host's launches.
   - A fetch needs free on the hub cache's disk what it writes: the source weights where the hub does not hold them, the converted artifact (about the weights' bytes again) where it is not there, and 4 GiB. Else it is not started (a full disk would break the runs beside it).
@@ -47,6 +47,7 @@ From a source tree or with options:
    - The OS, the CPU, the RAM, and AC or battery (Windows `GetSystemPowerStatus`, Linux `/sys/class/power_supply`; a host without a battery is on AC). An unknown power source gives no verdict.
 2. **Model set.**
    - `tools/kit/models.json` (versioned; its hash goes in the result) lists `{id, repo, quant, context}` in priority order. The last entry is small, so every supported card yields a row.
+     A lab run can pass its own set with `--models-file` (the same format; its hash goes in the result, and in place of its file name only `"custom"`), e.g. the largest checkpoints and their small quantizations on one card. Such a set promises neither a small last entry nor lab hard50 references (a model without one is judged "no reference").
    - Each entry is planned on this card with `--plan --no-load --json` and the exact flags of the start (`--max-context C --max-concurrency 1 --spec none`).
    - The first `--max-models` (2) whose plan fits are measured.
 3. **Per model, plain** (`--spec none`): `--passes` starts (2, a restart each, so a pass never reuses another's cache). Each start:
@@ -86,8 +87,8 @@ major 1.
 
 | Field | What |
 |---|---|
-| `schema` | `"ninferno-user-run/1.2"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`) |
-| `kit` | `{version, models_version, models_sha256}` |
+| `schema` | `"ninferno-user-run/1.3"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`; 1.3 `kit.models_file`) |
+| `kit` | `{version, models_version, models_sha256, models_file}`: `models_file` `"custom"` for a `--models-file` set (its name is not recorded: a file name can name the user; `models_sha256` identifies the set), `null` for the built-in set |
 | `created` | UTC time |
 | `ninferno` | `{version}`: the first line of `ninferno-serve --version` |
 | `host` | `{os, machine, cpu, cpus, ram_bytes, on_battery}` |

@@ -616,7 +616,7 @@ class Kit(unittest.TestCase):
 
     def test_fetch_need_counts_what_the_cache_lacks(self):
         import os
-        import tempfile
+        import json, tempfile
         from pathlib import Path
         model = {"repo": "org/m-GGUF", "quant": "Q4_K_M"}
         gib = 1 << 30
@@ -642,7 +642,7 @@ class Kit(unittest.TestCase):
 
     def test_target_identity_hashes_the_snapshot_file(self):
         import hashlib
-        import tempfile
+        import json, tempfile
         with tempfile.TemporaryDirectory() as root:
             rev = "c" * 40
             model = Path(root) / "models--org--m"
@@ -662,6 +662,88 @@ class Kit(unittest.TestCase):
             for name in ("B-Q4_K_M.qwen3_5_bf16.ninferno", "B-Q4_K_M-00001-of-00002.qwen3_5_bf16.ninferno"):
                 got = measure.target_identity(str(model / "ninferno" / rev / name))
                 self.assertEqual(len(got["weights"]), 2, name)
+
+class KitCacheAndIds(unittest.TestCase):
+    def test_split_parts_count_inside_one_snapshot(self):
+        import json, tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "models--o--m-GGUF" / "snapshots"
+            (root / "a").mkdir(parents=True)
+            (root / "b").mkdir()
+            (root / "a" / "m-Q4_K_M-00001-of-00002.gguf").write_bytes(b"x")
+            (root / "b" / "m-Q4_K_M-00002-of-00002.gguf").write_bytes(b"x")
+            model = {"repo": "o/m-GGUF", "quant": "Q4_K_M"}
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertFalse(measure.gguf_cached(model))
+                (root / "b" / "m-Q4_K_M-00001-of-00002.gguf").write_bytes(b"x")
+                self.assertTrue(measure.gguf_cached(model))
+
+    def test_windows_device_names_are_not_ids(self):
+        import json, tempfile
+        for bad in ("CON", "nul.x", "COM1"):
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "set.json"
+                p.write_text(json.dumps({"version": 1, "models": [
+                    {"id": bad, "repo": "o/m", "quant": "Q4_K_M", "context": 4096}]}), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    measure.load_models(p)
+
+    def test_missing_kit_data_stops_before_any_gpu_work(self):
+        from unittest import mock
+        with mock.patch.object(measure, "HAYSTACK", Path("/nonexistent/long_niah_256k.json")),                 mock.patch.object(sys, "argv", ["measure.py", "--bin", "/nonexistent"]):
+            with self.assertRaises(SystemExit) as e:
+                measure.main()
+        self.assertIn("kit's data is missing", str(e.exception))
+
+    def test_set_fields_and_unique_ids(self):
+        import json, tempfile
+        good = {"id": "a", "repo": "o/m", "quant": "Q4_K_M", "context": 4096}
+        for models in ([good, dict(good, id="A")], [dict(good, repo=7)], [dict(good, context="4k")],
+                       [dict(good, id="x" * 121)]):
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "set.json"
+                p.write_text(json.dumps({"version": 1, "models": models}), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    measure.load_models(p)
+
+    def test_drafter_gguf_is_not_the_checkpoint(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            snap = Path(d) / "models--o--m-GGUF" / "snapshots" / "a"
+            snap.mkdir(parents=True)
+            (snap / "mtp-m-Q4_K_M.gguf").write_bytes(b"x")
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertFalse(measure.gguf_cached({"repo": "o/m-GGUF", "quant": "Q4_K_M"}))
+
+    def test_converted_artifact_counts_as_cached(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            art = Path(d) / "models--o--m-GGUF" / "ninferno" / "abc"
+            art.mkdir(parents=True)
+            (art / "m-q4_k_m.ninferno").write_bytes(b"x")
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertTrue(measure.gguf_cached({"repo": "o/m-GGUF", "quant": "Q4_K_M"}))
+
+    def test_drafters_cached_needs_manifest_and_its_artifacts(self):
+        import json, tempfile
+        from unittest import mock
+        model = {"repo": "o/m-GGUF", "quant": "Q4_K_M"}
+        with tempfile.TemporaryDirectory() as d:
+            art = Path(d) / "models--o--m-GGUF" / "ninferno" / "abc"
+            art.mkdir(parents=True)
+            (art / "m-q4_k_m.ninferno").write_bytes(b"x")
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertFalse(measure.drafters_cached(model))
+                drafter = art / "m-dflash.ninferno"
+                (art / "m-q4_k_m.ninferno.speculation.json").write_text(
+                    json.dumps({"drafters": [{"name": "dflash", "artifact": str(drafter)}]}), encoding="utf-8")
+                self.assertFalse(measure.drafters_cached(model))
+                drafter.write_bytes(b"x")
+                self.assertTrue(measure.drafters_cached(model))
+
 
 if __name__ == "__main__":
     unittest.main()
