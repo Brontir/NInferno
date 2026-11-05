@@ -60,6 +60,7 @@ constexpr std::array<std::string_view, 22> kNonDecisionVariables{
     "NINFERNO_UI_KEY",
     "NINFERNO_CATALOG_URL",
     "NINFERNO_UPDATER",
+    "NINFERNO_WARMUP_CACHE",
 };
 
 // The maintainer options' keys in the options section with their release values: one given
