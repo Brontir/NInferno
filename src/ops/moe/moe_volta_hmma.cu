@@ -5,7 +5,8 @@
 // llama.cpp's 2888 (which decodes the experts to f16 and multiplies on cuBLAS / CUTLASS sm70).
 // Here each CTA takes 32 weight rows of one job's expert and 32 of its slots, and multiplies them
 // on mma.m8n8k4 as generic_volta_hmma.cu does for a dense call: the weight codes become exact f16
-// integers in the lane's own A fragments (generic_volta_hmma.cuh, a fragment per format), the
+// integers in the lane's own A fragments (generic_volta_hmma.cuh, a fragment per format; Q4_K also
+// in its fragment-order layout), the
 // slots' activation is staged in shared memory as f16 once a superblock, each scale group's sum
 // is scaled in FP32. No weight is decoded to memory: a row tile reads its expert's codes once for
 // every 32 slots of the job.
@@ -24,6 +25,7 @@ namespace ninferno::ops::detail::moe {
 namespace {
 
 using generic::volta::HK45;
+using generic::volta::HK4Frag;
 using generic::volta::HK6;
 using generic::volta::HQ8;
 using generic::volta::HX4;
@@ -260,11 +262,20 @@ int moe_volta_hmma_k_multiple(generic::WeightCodec codec) {
     return codec == WeightCodec::Q8 || codec == WeightCodec::Mxfp4 ? 64 : 256;
 }
 
-void launch_moe_volta_hmma(generic::WeightCodec codec, Stage stage, const GemmArgs& args,
-                           dim3 grid, cudaStream_t stream) {
+void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
+                           const GemmArgs& args, dim3 grid, cudaStream_t stream) {
     using generic::WeightCodec;
+    if (frag && codec != WeightCodec::GgmlQ4K) {
+        throw std::invalid_argument("moe volta hmma: no fragment-order decoder for this format");
+    }
     switch (codec) {
-    case WeightCodec::GgmlQ4K: launch_format<HK45<4>>(stage, args, grid, stream); return;
+    case WeightCodec::GgmlQ4K:
+        if (frag) {
+            launch_format<HK4Frag>(stage, args, grid, stream);
+        } else {
+            launch_format<HK45<4>>(stage, args, grid, stream);
+        }
+        return;
     case WeightCodec::GgmlQ5K: launch_format<HK45<5>>(stage, args, grid, stream); return;
     case WeightCodec::GgmlQ6K: launch_format<HK6>(stage, args, grid, stream); return;
     case WeightCodec::Q8: launch_format<HQ8>(stage, args, grid, stream); return;

@@ -124,6 +124,28 @@ struct HK45 {
     __device__ static constexpr int dest_run(int src) { return src; }
 };
 
+// Q4_K in fragment order (ggml_frag_v1, core/ggml_frag.cpp): the 16 head bytes as published, each
+// 64-byte half of the codes a 4 x 4 transpose of its 4-byte words (fragment word (w, i) holds the
+// published row i's word w). Quad-pair q's published rows 2 (q % 2) and 2 (q % 2) + 1 of half q / 2
+// come from components 2 (q % 2) and + 1 of the half's four 16-byte words: the same codes in the
+// same order as HK45<4>, so both layouts of a bank give the same sums.
+struct HK4Frag : HK45<4> {
+    __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
+        const std::uint8_t* b =
+            a.codes + (static_cast<std::int64_t>(row) * a.groups_per_row + sb) * kBlockBytes;
+        head          = *reinterpret_cast<const uint4*>(b);
+        const auto* p = reinterpret_cast<const uint4*>(b + 16 + 64 * (q >> 1));
+        const uint4 w0 = p[0], w1 = p[1], w2 = p[2], w3 = p[3];
+        if (q & 1) {
+            qs[0] = make_uint4(w0.z, w1.z, w2.z, w3.z);
+            qs[1] = make_uint4(w0.w, w1.w, w2.w, w3.w);
+        } else {
+            qs[0] = make_uint4(w0.x, w1.x, w2.x, w3.x);
+            qs[1] = make_uint4(w0.y, w1.y, w2.y, w3.y);
+        }
+    }
+};
+
 // Q6_K planes: 128 ql then 64 qh bytes a superblock (codes), 16 int8 scales (high), binary16 d
 // (scales). Quad-pair q: half h = q / 2, ql bytes 64 h + 32 (q % 2) .. + 31 (low nibbles quarter
 // q % 2, high nibbles quarter q % 2 + 2), qh bytes 32 h .. + 31 (bit pairs 2 (q % 2) and

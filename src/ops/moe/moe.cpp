@@ -603,15 +603,16 @@ bool w4a8_bank_admitted(const MoeWeights& w) {
 }
 
 // Whether a call of T >= 17 takes Volta's grouped HMMA stages (MoePlan::volta_hmma): a build
-// without mma.sync, both banks of a format with an f16 A fragment in its own (not fragment) order,
+// without mma.sync, both banks of a format with an f16 A fragment (Q4_K in either layout),
 // K a multiple of the format's step, and x rows of whole 4-value groups at 8-byte alignment.
 bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
     if (build_features().mma_tensor) { return false; }
     const auto admits = [](const Weight& bank) {
         const auto codec = generic::codec_of(bank);
-        // Q4_K has a fragment-order twin (ggml_frag_v1) the stage does not read: the two layouts of
-        // one bank must run one route (their bytes agree, moe_frag_test), so neither takes it.
-        return !is_frag(bank) && !ggml_frag_format(bank.qtype) && moe_volta_hmma_codec(codec) &&
+        // Both layouts of a format with a fragment-order twin run one route (their bytes agree,
+        // moe_frag_test): the stage reads Q4_K's, and no other format's twin.
+        const bool layout = !ggml_frag_format(bank.qtype) || codec == generic::WeightCodec::GgmlQ4K;
+        return layout && moe_volta_hmma_codec(codec) &&
                bank.k % moe_volta_hmma_k_multiple(codec) == 0;
     };
     return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.inter % 4 == 0;
@@ -1445,7 +1446,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.ldo          = g.inter;
         if (p.volta_hmma) {
             args.sub_tiles = p.job_columns / kVoltaHmmaSlots;
-            launch_moe_volta_hmma(generic::codec_of(w.gate_up), first, args,
+            launch_moe_volta_hmma(generic::codec_of(w.gate_up), is_frag(w.gate_up), first, args,
                                   dim3(blocks(g.inter, kVoltaHmmaRows),
                                        static_cast<unsigned>(jobs * args.sub_tiles)),
                                   stream);
@@ -1503,7 +1504,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.pdl         = pdl && !p.w4a8_down;
         if (p.volta_hmma) {
             args.sub_tiles = p.job_columns / kVoltaHmmaSlots;
-            launch_moe_volta_hmma(generic::codec_of(w.down), Stage::Down, args,
+            launch_moe_volta_hmma(generic::codec_of(w.down), is_frag(w.down), Stage::Down, args,
                                   dim3(blocks(g.hidden, kVoltaHmmaRows),
                                        static_cast<unsigned>(jobs * args.sub_tiles)),
                                   stream);

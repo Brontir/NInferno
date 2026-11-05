@@ -432,8 +432,9 @@ inline constexpr int kVoltaHmmaRows  = 32;
 static_assert(kJobColumns % kVoltaHmmaSlots == 0);
 [[nodiscard]] bool moe_volta_hmma_codec(generic::WeightCodec codec);
 [[nodiscard]] int moe_volta_hmma_k_multiple(generic::WeightCodec codec);
-void launch_moe_volta_hmma(generic::WeightCodec codec, Stage stage, const GemmArgs& args,
-                           dim3 grid, cudaStream_t stream);
+// `frag`: a ggml_frag_v1 bank (Q4_K only).
+void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
+                           const GemmArgs& args, dim3 grid, cudaStream_t stream);
 
 // The grouped W4A8 (moe_w4a8.cuh): the experts' gate/up (or up) and down stages of a wide prefill
 // call on int8 tensor cores, the activation quantized per 32 values (int8 codes, a scale and the
