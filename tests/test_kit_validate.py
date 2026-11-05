@@ -696,6 +696,27 @@ class KitCacheAndIds(unittest.TestCase):
                 measure.main()
         self.assertIn("kit's data is missing", str(e.exception))
 
+    def test_set_fields_and_unique_ids(self):
+        import json, tempfile
+        good = {"id": "a", "repo": "o/m", "quant": "Q4_K_M", "context": 4096}
+        for models in ([good, dict(good, id="A")], [dict(good, repo=7)], [dict(good, context="4k")],
+                       [dict(good, id="x" * 121)]):
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "set.json"
+                p.write_text(json.dumps({"version": 1, "models": models}), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    measure.load_models(p)
+
+    def test_drafter_gguf_is_not_the_checkpoint(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            snap = Path(d) / "models--o--m-GGUF" / "snapshots" / "a"
+            snap.mkdir(parents=True)
+            (snap / "mtp-m-Q4_K_M.gguf").write_bytes(b"x")
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertFalse(measure.gguf_cached({"repo": "o/m-GGUF", "quant": "Q4_K_M"}))
+
 
 if __name__ == "__main__":
     unittest.main()

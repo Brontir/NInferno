@@ -141,6 +141,20 @@ def load_models(path):
             # Windows reserves these names whatever the extension (CON.plain.1.server.log is the console).
             if re.fullmatch(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])", m["id"].split(".")[0].lower()):
                 raise ValueError(f"id {m['id']!r}: a Windows device name")
+            # Room in a 255-byte file name for the longest suffix the run adds.
+            if len(m["id"]) > 120:
+                raise ValueError(f"id {m['id'][:20]!r}...: at most 120 characters")
+            for field in ("repo", "quant"):
+                if not isinstance(m[field], str) or not m[field]:
+                    raise ValueError(f"{field} of {m['id']}: a string")
+            if not isinstance(m["context"], int) or isinstance(m["context"], bool) or m["context"] <= 0:
+                raise ValueError(f"context of {m['id']}: a positive integer")
+        # Two models of one id would write one set of files (and case alone does not tell files
+        # apart on Windows).
+        ids = [m["id"].lower() for m in doc["models"]]
+        dup = sorted({i for i in ids if ids.count(i) > 1})
+        if dup:
+            raise ValueError(f"ids used twice: {', '.join(dup)}")
         return doc
     except (OSError, ValueError, KeyError, TypeError) as e:
         sys.exit(f"the model set {path}: {e!r} (a version, and id, repo, quant, context a model; an id is one file name)")
@@ -409,6 +423,9 @@ def gguf_cached(model):
     parts = collections.defaultdict(set)
     for f in root.glob("snapshots/*/**/*.gguf"):
         name = f.name.lower()
+        # A repository's drafter and projector files are not its checkpoint.
+        if name.startswith(("mtp-", "dflash-", "mmproj")):
+            continue
         # The quant as the name's last label (UD-Q6_K is not Q6_K, Q4_K_M is not Q4_K).
         if not f.exists() or not re.search(r"(^|[-.])" + re.escape(quant) + r"(-\d{5}-of-\d{5})?\.gguf$", name):
             continue

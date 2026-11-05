@@ -27,7 +27,7 @@ From a source tree or with options:
 - **`--routes`**: the route sweep, below.
 - **Requirements:** Python 3.9+ standard library only, on Windows or Linux. `CUDA_DEVICE_ORDER=PCI_BUS_ID` is set and `CUDA_VISIBLE_DEVICES` dropped, so `--device N` is the N-th card by PCI bus id. Every `nvidia-smi` call names that card by its bus id, never by nvidia-smi's own index, which can follow another order.
 - **Downloads:**
-  - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order.
+  - The models are fetched through `ninferno-serve --prepare-only` into the user's hub cache, one after another in the set's order. They are measured with the ones already in the cache first, so with a finite budget the cache decides which chosen model is left out.
   - A model is measured once its own fetch ended, while the next ones download. `--no-prefetch` fetches all of them first.
   - A conversion is the host's work. Each plain, hard50 and spec run records `fetch_beside`, whether a fetch was running beside it (R8 notes it). The route sweeps run after the last fetch, since their small widths time the host's launches.
   - A fetch needs free on the hub cache's disk what it writes: the source weights where the hub does not hold them, the converted artifact (about the weights' bytes again) where it is not there, and 4 GiB. Else it is not started (a full disk would break the runs beside it).
