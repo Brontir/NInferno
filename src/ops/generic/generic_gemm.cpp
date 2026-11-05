@@ -3038,11 +3038,11 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
     const auto quant     = [&](double cols) { return 1.7e-6 + cols * k * 4.3 / bw; };
-    // A weight that fits the L2 is read from DRAM once, its re-reads at the L2's rate (price_routes'
-    // rule, the same for both activation classes).
-    const bool weight_in_l2 =
-        d.l2_bytes > 0 && n * k * bpw <= 0.75 * static_cast<double>(d.l2_bytes);
-    const double row_rate = weight_in_l2 ? 64.0 * clk : bw_sm;
+    // The A8 tiles' re-reads stay at the DRAM rate: their efficiencies (kW4a8Eff, kI8Eff) and the
+    // A16 scale were fitted with them priced so. The L2 rule price_routes applies to the A16 tiles
+    // moved the verify widths to W4A8 with them (RTX 4090 Qwen3.5 9B MTP C=8, tables hidden:
+    // -4.8 %, RTX 5070 Ti -3.2 %) until those efficiencies are derived again under it.
+    const double row_rate = bw_sm;
     // Fraction of the int8 peak by kW4a8Schedules index: 32x128, 64x128, 128x128, 128x64, 64x64,
     // 128x64 with producer warps.
     constexpr double kW4a8Eff[6] = {0.31, 0.28, 0.24, 0.47, 0.37, 0.98};
