@@ -4,6 +4,7 @@
 
 #include "core/device_class.h"
 #include "core/tensor.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
