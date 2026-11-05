@@ -439,6 +439,9 @@ int route_tune_main(int argc, char** argv) {
                     entry.bands.push_back({lo, hi, winners[i].second});
                 }
             }
+            // The prefill candidates and bands are timed as the prefill profile runs them (a
+            // register-MMA tile there keeps the MMA with ones for its min-term sums).
+            const ops::ScopedPrefillRoutes prefill_profile(true);
             double best_total = 1e30;
             for (const auto r : routes) {
                 if (!generic::route_is_token_invariant(r)) continue;

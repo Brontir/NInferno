@@ -2403,7 +2403,8 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 // head Q4_K at T = 24: 16.7 cycles per weight MMA against Q6_K's 8.5). One or two
                 // token tiles keep the MMA: they wait on their loads and the shuffles lengthened that
                 // wait (RTX 3060 at T <= 8: +15-23 % with the adds). So do f16 operands (F16Of,
-                // Turing's), which would each take a conversion (rmma_add_sums).
+                // Turing's: act_operands converted act to f16 in place, which the BF16 unpack below
+                // cannot read; the adds lost there anyway, rmma_add_sums).
                 const bool add =
                     NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
                 float sums[NT][4];

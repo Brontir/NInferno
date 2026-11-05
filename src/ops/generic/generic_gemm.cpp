@@ -2799,12 +2799,19 @@ bool route_is_token_invariant(Route route) {
 bool same_summation(Route a, Route b) {
     if (a == b) return true;
     if (a.family == Family::I8Mma && b.family == Family::I8Mma) return true;
+    // 1: the WarpsK == 1 register order; 2: that order with a min-term format's group sums added in
+    // FP32 (rmma_add_sums: tiles of four or more token tiles, outside the invariant and prefill
+    // profiles), which the narrower tiles and the staged MMA do not share. Not knowing the format
+    // here, the tiles that add are kept apart for every format.
     const auto register_order = [](Route r) {
-        return (r.family == Family::RegisterMma && r.schedule < rmma_schedule_count() &&
-                rmma_schedule_info(r.schedule).warps_k == 1 && !rmma_sums_lane_local(r.schedule)) ||
-               (r.family == Family::StagedMma && r.schedule < staged_schedule_count());
+        if (r.family == Family::StagedMma && r.schedule < staged_schedule_count()) return 1;
+        if (r.family != Family::RegisterMma || r.schedule >= rmma_schedule_count()) return 0;
+        const auto info = rmma_schedule_info(r.schedule);
+        if (info.warps_k != 1 || rmma_sums_lane_local(r.schedule)) return 0;
+        return info.n_tiles >= 4 && rmma_add_sums() ? 2 : 1;
     };
-    return register_order(a) && register_order(b);
+    const int order = register_order(a);
+    return order != 0 && order == register_order(b);
 }
 
 namespace {

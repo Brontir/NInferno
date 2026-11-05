@@ -695,6 +695,9 @@ bool rmma_compiled(QType qtype, int schedule, std::int32_t k = 0) {
 int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
                      ops::LinearPolicy policy, std::uint32_t seed,
                      const std::vector<generic::Route>* only = nullptr) {
+    // The prefill profile's promise, so its summation order (no FP32 min-term sums in the wide
+    // register-MMA tiles: rmma_add_sums).
+    const ops::ScopedPrefillRoutes prefill(true);
     const std::int32_t wide  = 300;
     const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
     const HostWeight host    = make_weight(f.qtype, rows_n, k, seed);
