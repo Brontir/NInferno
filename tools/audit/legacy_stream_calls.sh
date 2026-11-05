@@ -29,6 +29,7 @@ src/models/gemma4/target.cu|1|NINFERNO_GEMMA4_DUMP: the first position of a dump
 src/models/dense/target.cu|1|NINFERNO_DENSE_DUMP: the first position of a dumped call (not under capture), after cudaStreamSynchronize
 src/models/speculation/decoder.cu|5|single-stream decoder (moved from gemma4/speculation.cu): each read follows device_.synchronize()
 src/models/gemma4/load_target.cpp|1|router_scale D2H at load, after demands.materialize synchronized its transfer stream and before any Engine stream work
+src/ops/generic/random_weight.h|1|clone_weight (benchmarks only): a D2D copy at setup, settled by cudaStreamSynchronize(nullptr) before the clone is returned
 tests/artifact/materialization_cuda_errors.cpp|1|D2H after materialize, which synchronizes its transfer stream
 tests/artifact/test_materialization.cpp|9|D2H after materialize, which synchronizes its transfer stream
 tests/models/qwen3_5/test_dflash_prefill_real.cpp|3|cache and block-table D2H, every prefill synchronizes device.stream first
