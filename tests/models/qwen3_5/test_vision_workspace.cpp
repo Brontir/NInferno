@@ -1,6 +1,7 @@
 #include "core/device.h"
 #include "models/qwen3_5/load.h"
 #include "models/qwen3_5/execution/parameters.h"
+#include "models/qwen3_5/execution/vision.h"
 #include "models/qwen3_5/program/program.h"
 #include "models/qwen3_5/program/model_family.h"
 #include "real_artifact.h"
