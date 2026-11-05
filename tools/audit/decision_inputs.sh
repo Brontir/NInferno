@@ -39,6 +39,9 @@ decision_patterns=(
   src/runtime/engine/plan_ladder.h
   src/ops/generic/generic_gemm.cpp
   src/ops/generic/generic_gemm.h
+  src/ops/generic/generic_ggml.cpp
+  src/ops/generic/generic_ggml_internal.h
+  src/ops/generic/generic_select_internal.h
   src/ops/softmax_attention/common/causal_partition.h
   src/runtime/engine/admission_policy.cpp
   src/runtime/engine/admission_policy.h
