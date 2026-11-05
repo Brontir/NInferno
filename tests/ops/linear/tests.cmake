@@ -97,6 +97,11 @@ ninferno_add_op_test(ninferno_launch_overlap_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_launch_overlap.cpp"
   LIBRARIES ninferno_linear_test_support)
 
+# A route's tile and logical traffic (#298): the schedules' declared geometry (host only).
+ninferno_add_op_test(ninferno_route_traffic_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_route_traffic.cpp"
+  LIBRARIES ninferno_linear_test_support)
+
 # Route selection on the GPU classes this machine lacks (substituted DeviceClass, one process
 # per board): every choice admitted, no feature the board lacks, its own route table.
 ninferno_add_op_test(ninferno_route_classes_test

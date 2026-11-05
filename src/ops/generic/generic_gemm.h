@@ -714,6 +714,35 @@ struct R8Resources {
                                                              Epilogue epilogue,
                                                              std::int32_t tokens);
 
+// The output tile one CTA of `route` computes for a `tokens`-token call (#298), as the cost model
+// prices it (price_routes, a8_candidates read this): output rows (under SwiGLU each reads its gate
+// and its up row), token columns, and the CTAs K is split over (a register-MMA cluster). Declared
+// geometry of the schedule, not a measurement. nullopt for the families the cost model does not
+// price by a tile (R8, ggml's vector kernel, the FP4 tiles, scalar).
+struct RouteTile {
+    int out_rows = 0;
+    int tokens   = 0;
+    int k_split  = 1;
+};
+[[nodiscard]] std::optional<RouteTile> route_tile(Route route, Epilogue epilogue,
+                                                  std::int32_t tokens);
+
+// The logical traffic of a call on `route` (#298): the bytes its CTAs request, before any cache
+// serves them, predicted from route_tile. Every token column of CTAs reads the whole weight
+// (payload_bytes over the call's n rows, as the cost model's bpw), every row block of CTAs reads the
+// whole activation in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
+// byte and their scales: W4A8 and ggml's q8_1 36 bytes a 32-value block, I8 an FP32 scale a 64),
+// and the output is written once in bf16 (a cluster's K split reduces in distributed shared
+// memory). A prediction, not a counter: an L2 hit rate turns it into DRAM bytes.
+struct RouteTraffic {
+    double weight_bytes     = 0;
+    double activation_bytes = 0;
+    double output_bytes     = 0;
+};
+[[nodiscard]] std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
+                                                        const Problem& problem,
+                                                        std::int32_t tokens);
+
 // What this build holds of the generic GEMM families (#307), read without a device: every declared
 // schedule, whether the binary holds its kernel, and where that depends on the format, which
 // formats. The refusals' NotCompiled and CodecTile read the same predicates: a schedule this build
