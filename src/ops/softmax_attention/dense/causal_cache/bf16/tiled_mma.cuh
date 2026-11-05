@@ -148,6 +148,12 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
         bf16_kv_stage_tile<Geometry, Schedule>(v_s, cache_v, kv_head, k0, max_query_abs,
                                                physical_page, tid);
         ninferno::ops::cp_commit();
+        if constexpr (kBf16KvStagedF16) {
+            // Turing: K(kb), and Q with the first tile, into the MMA's f16 form (tile_io.cuh).
+            if (kb == 0) { bf16_tile_to_mma_form<Br * D, Threads>(q_s, tid); }
+            bf16_tile_to_mma_form<Bc * D, Threads>(k_s, tid);
+            __syncthreads();
+        }
 
         // S = Q Kᵀ for this warp's 16 rows over all Bc keys, in registers.
         // Software-pipelined like cute's gemm: issue the ldmatrix for contraction
@@ -190,8 +196,9 @@ __launch_bounds__(Schedule::kThreads, Schedule::kMinBlocks) __global__
             }
 #pragma unroll
             for (int nt = 0; nt < QKNt; ++nt) {
-                mma_bf16(score[nt][0], score[nt][1], score[nt][2], score[nt][3], af[cur][0],
-                         af[cur][1], af[cur][2], af[cur][3], bf[cur][nt][0], bf[cur][nt][1]);
+                mma_bf16_staged(score[nt][0], score[nt][1], score[nt][2], score[nt][3],
+                                af[cur][0], af[cur][1], af[cur][2], af[cur][3], bf[cur][nt][0],
+                                bf[cur][nt][1]);
             }
         }
 

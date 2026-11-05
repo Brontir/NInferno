@@ -15,6 +15,30 @@ __device__ __forceinline__ std::int64_t bf16_kv_cache_index(int page, int head, 
     return paged_kv_element_offset<G::kHeadDim, G::KVHeads>(page, head, offset, d);
 }
 
+// NINFERNO-SPECIAL(arch:sm75): Turing has no BF16 MMA, and mma_bf16 converts its operands to f16
+// on every call, so a K tile read by every warp and contraction step was converted once per MMA.
+// Turing converts the landed tile in place once (the same bf16x2_to_f16x2, so the same f16 values
+// reach the MMAs, which take it through mma_bf16_staged); the caller synchronizes after it. Every
+// other build stages BF16 and compiles none of it. Elementwise, so the swizzle does not matter.
+inline constexpr bool kBf16KvStagedF16 = NINFERNO_SM75_MMA != 0;
+
+template <int Elements, int Threads>
+__device__ __forceinline__ void bf16_tile_to_mma_form(__nv_bfloat16* tile, int tid) {
+    static_assert(Elements % 8 == 0);
+    if constexpr (kBf16KvStagedF16) {
+        uint4* vectors = reinterpret_cast<uint4*>(tile);
+#pragma unroll 4
+        for (int i = tid; i < Elements / 8; i += Threads) {
+            uint4 v = vectors[i];
+            v.x     = bf16x2_to_f16x2(v.x);
+            v.y     = bf16x2_to_f16x2(v.y);
+            v.z     = bf16x2_to_f16x2(v.z);
+            v.w     = bf16x2_to_f16x2(v.w);
+            vectors[i] = v;
+        }
+    }
+}
+
 // Stage one [Bc, D] K or V tile from the per-kv-head contiguous cache into the
 // swizzled smem buffer. Keys beyond max_query_abs (which the causal mask always
 // drops) are zeroed so the padded/uninitialized cache tail never feeds NaNs into
