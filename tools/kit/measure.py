@@ -124,6 +124,21 @@ def models_path(args):
     return Path(args.models_file) if args.models_file else HERE / "models.json"
 
 
+def load_models(path):
+    """The model set at `path`, or the run stops with what it lacks (before any GPU work)."""
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        if "version" not in doc:
+            raise KeyError("version")
+        for m in doc["models"]:
+            for field in ("id", "repo", "quant", "context"):
+                if field not in m:
+                    raise KeyError(f"{field} of {m}")
+        return doc
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        sys.exit(f"the model set {path}: {e!r} (a version, and id, repo, quant, context a model)")
+
+
 def plan_json(serve, model, flags):
     out = subprocess.run([serve, model["repo"], "--quant", model["quant"], "--plan", "--no-load",
                           "--json"] + flags, capture_output=True, text=True, timeout=900)
@@ -488,7 +503,7 @@ def main():
         if "--budget-minutes" not in given:
             args.budget_minutes = 24 * 60
         if "--max-models" not in given:
-            args.max_models = len(json.loads(models_path(args).read_text(encoding="utf-8"))["models"])
+            args.max_models = len(load_models(models_path(args))["models"])
         if "--spec-tune" not in given:
             args.spec_tune = 1200
         args.hard50 = args.routes = True
@@ -504,7 +519,7 @@ def main():
     cli_path = Path(args.bin) / ("ninferno" + (".exe" if os.name == "nt" else ""))
     tune_cmd = [str(cli_path), "spec-tune"] if cli_path.exists() else [serve, "spec-tune"]
     models_file = models_path(args)
-    models_doc = json.loads(models_file.read_text(encoding="utf-8"))
+    models_doc = load_models(models_file)
     wanted = models_doc["models"] if args.models == "auto" else [
         m for m in models_doc["models"] if m["id"] in args.models.split(",")]
 
@@ -514,7 +529,8 @@ def main():
     card = {"smi": gpu.card_facts(smi_id)}
     wddm = str(card["smi"].get("driver_model.current") or "").upper() == "WDDM"
     doc = {"schema": SCHEMA, "kit": {"version": KIT_VERSION, "models_version": models_doc["version"],
-                                     "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16]},
+                                     "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16],
+                                     "models_file": models_file.name if args.models_file else None},
            "created": created, "ninferno": {"version": version.splitlines()[0] if version else None},
            "host": gpu.host_facts(), "card": card, "runs": []}
     print(f"card: {card['smi'].get('name')}, driver {card['smi'].get('driver_version')}, "

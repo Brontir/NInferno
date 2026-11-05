@@ -14,6 +14,7 @@ kit="$here/../share/ninferno/kit/tools/kit/measure.py"
 command -v python3 > /dev/null || { echo "ninferno-kit: python3 is needed (3.9 or newer)" >&2; exit 1; }
 full=--full
 for a in "$@"; do
-    case "$a" in --budget-minutes*|--models*|--max-models*) full= ;; esac
+    # --models-file names a set, not a shorter run: it keeps --full.
+    case "$a" in --models-file*) ;; --budget-minutes*|--models|--models=*|--max-models*) full= ;; esac
 done
 exec python3 "$kit" --bin "$here" $full "$@"

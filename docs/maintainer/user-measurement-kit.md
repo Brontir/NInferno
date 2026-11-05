@@ -14,11 +14,11 @@ From a release, one command measures everything this card can run, for hours:
 
     ninferno-kit            # = measure.py --full on the release's own ninferno-serve
 
-`ninferno-kit` passes its options on, and adds `--full` unless one of `--budget-minutes`, `--models` or `--max-models` asks for a shorter run. It is the Linux release's; on Windows, from the unpacked release: `python share\ninferno\kit\tools\kit\measure.py --bin bin --full`.
+`ninferno-kit` passes its options on, and adds `--full` unless one of `--budget-minutes`, `--models` or `--max-models` asks for a shorter run (`--models-file` does not: it names another set). It is the Linux release's; on Windows, from the unpacked release: `python share\ninferno\kit\tools\kit\measure.py --bin bin --full`.
 
 From a source tree or with options:
 
-    python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...]
+    python tools/kit/measure.py --bin DIR [--full] [--budget-minutes 30] [--models auto|ID,...] [--models-file PATH]
         [--device N] [--passes 2] [--hard50] [--spec-tune SECONDS] [--routes] [--route-passes 2]
         [--no-prefetch] [--out FILE] [--yes]
 
@@ -47,7 +47,7 @@ From a source tree or with options:
    - The OS, the CPU, the RAM, and AC or battery (Windows `GetSystemPowerStatus`, Linux `/sys/class/power_supply`; a host without a battery is on AC). An unknown power source gives no verdict.
 2. **Model set.**
    - `tools/kit/models.json` (versioned; its hash goes in the result) lists `{id, repo, quant, context}` in priority order. The last entry is small, so every supported card yields a row.
-     A lab run can pass its own set with `--models-file` (the same format; its hash goes in the result instead), e.g. the largest checkpoints and their small quantizations on one card.
+     A lab run can pass its own set with `--models-file` (the same format; its hash and name go in the result instead), e.g. the largest checkpoints and their small quantizations on one card. Such a set promises neither a small last entry nor lab hard50 references (a model without one is judged "no reference").
    - Each entry is planned on this card with `--plan --no-load --json` and the exact flags of the start (`--max-context C --max-concurrency 1 --spec none`).
    - The first `--max-models` (2) whose plan fits are measured.
 3. **Per model, plain** (`--spec none`): `--passes` starts (2, a restart each, so a pass never reuses another's cache). Each start:
