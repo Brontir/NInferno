@@ -33,6 +33,7 @@
 #include <span>
 #include <tuple>
 #include <cmath>
+#include <limits>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
@@ -3123,6 +3124,23 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the facts have no roofline.
 // price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
 // false where the facts have no roofline (nothing priced).
+// The CTAs of a kernel an SM of `d` keeps resident by its registers and shared memory: registers
+// rounded to 8 a thread and allocated 256 a warp, the static and dynamic shared memory of a CTA. At
+// least one.
+static double resident_ctas(const KernelResources& r, const DeviceClass& d) {
+    double occ = std::numeric_limits<double>::infinity();
+    const int warps = (r.threads + 31) / 32;
+    if (r.registers > 0 && warps > 0 && d.registers_per_sm > 0) {
+        const int per_warp = ((r.registers + 7) / 8 * 8 * 32 + 255) / 256 * 256;
+        occ = std::floor(static_cast<double>(d.registers_per_sm) / (per_warp * warps));
+    }
+    const std::size_t smem = r.static_smem + r.dynamic_smem;
+    if (smem > 0 && d.smem_per_sm > 0) {
+        occ = std::min(occ, std::floor(static_cast<double>(d.smem_per_sm) / smem));
+    }
+    return std::max(occ, 1.0);
+}
+
 template <class Take>
 bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
                   const Take& take) {
@@ -3201,7 +3219,23 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         if (!rmma_schedule_launchable(i)) continue;
         if (emulated && s.n_tiles == 8) continue;
         const double threads = 32.0 * s.warps_m * s.warps_k;
-        const double occ     = std::min(std::floor(max_thr / threads), max_cta);
+        // The CTAs an SM keeps resident: its thread and CTA limits, and on the device itself the
+        // kernel's own registers and shared memory (rmma_resources: this build's image for this
+        // device). The wide schedules hold 150-255 registers a thread, so an SM keeps two to four
+        // of their CTAs, not the eight to twelve its thread limit allows: the threads alone priced
+        // them as if their warps hid each other's latency, and at T >= 17 the model took them over
+        // narrower faster tiles (route sweeps of Qwen3.5-9B and Gemma 4 12B, the pick over the
+        // fastest, geomean: RTX 3060 1.22-1.29 -> 1.07, RTX 3090 1.19-1.24 -> 1.08-1.09, RTX
+        // 5070 Ti 1.15-1.19 -> 1.05-1.10, RTX 5090 1.18-1.21 -> 1.10-1.14, RTX 4090 1.17-1.19 ->
+        // 1.15-1.17; RTX 4070 Ti and 4060 Ti 1.05-1.12 -> 1.09-1.14, where the tiled 64 x 128 tile
+        // then reads cheap). A substituted board keeps the thread limit: this build's kernels are
+        // not its kernels.
+        double occ = std::min(std::floor(max_thr / threads), max_cta);
+        if (!substituted_foreign_class()) {
+            if (const auto res = rmma_resources(i, weight, problem.epilogue, tokens)) {
+                occ = std::min(occ, resident_ctas(*res, d));
+            }
+        }
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1));
