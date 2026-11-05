@@ -609,9 +609,10 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
     if (build_features().mma_tensor) { return false; }
     const auto admits = [](const Weight& bank) {
         const auto codec = generic::codec_of(bank);
-        // A bank in fragment order runs here only as Q4_K (HK4Frag); the published layout of every
-        // listed format does (Q4_0 included: its twin is a layout, not the format).
-        const bool layout = !is_frag(bank) || codec == generic::WeightCodec::GgmlQ4K;
+        // Both layouts of a format with a fragment-order twin must run one route (their bytes
+        // agree, moe_frag_test): Q4_K reads both (HK4Frag); Q4_0, whose twin has no decoder here,
+        // keeps the other routes in either layout.
+        const bool layout = !ggml_frag_format(bank.qtype) || codec == generic::WeightCodec::GgmlQ4K;
         return layout && moe_volta_hmma_codec(codec) &&
                bank.k % moe_volta_hmma_k_multiple(codec) == 0;
     };

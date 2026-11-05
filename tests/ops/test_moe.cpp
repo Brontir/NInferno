@@ -650,6 +650,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
         auto p       = moe::select_plan(l.weights, c.config, t, false);
         p.gate_up_r8 = gate_up_r8;
         p.down_r8    = down_r8;
+        p.volta_hmma = false; // the forced stages, not Volta's HMMA plan
         return p;
     };
     const auto reference_plan = forced(both, 0, 0);
@@ -863,6 +864,7 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
     const auto forced = [&](std::int32_t t) {
         auto p = moe::select_plan(l.weights, c.config, t, true);
         p.w4a8_gate_up = p.w4a8_down = true;
+        p.volta_hmma   = false; // the forced stages, not Volta's HMMA plan
         return p;
     };
     const auto wide_plan = forced(wide);
@@ -893,6 +895,7 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
             p.gate_up_r8   = p.down_r8 = -1;
             p.w4a8_gate_up = gate_up;
             p.w4a8_down    = !gate_up;
+            p.volta_hmma   = false;
             const Run run  = run_op(c, l, x, 0, wide, residual, &p);
             failures += compare_run(c, l, x, residual, 0, wide, run, {gate_up, !gate_up},
                                     c.label + " " + moe::plan_name(p) + " T=" + std::to_string(wide));
@@ -905,6 +908,7 @@ int check_w4a8(const Case& base, std::uint32_t seed, const std::vector<std::int3
         const Layer la    = make_layer(a16, seed);
         auto p            = moe::select_plan(la.weights, a16.config, widths.front(), true);
         p.w4a8_gate_up    = p.w4a8_down = true;
+        p.volta_hmma      = false;
         bool refused      = false;
         try {
             (void)run_op(a16, la, x, 0, widths.front(), residual, &p);
@@ -2238,6 +2242,7 @@ int main(int argc, char** argv) {
                         ++failures;
                     }
                     p.w4a8_gate_up = p.w4a8_down = true;
+                    p.volta_hmma   = false;
                     const auto x =
                         random_bf16(static_cast<std::size_t>(96) * c.hidden, 118U, -1.0, 1.0);
                     const auto residual = random_bf16(x.size(), 119U, -2.0, 2.0);
