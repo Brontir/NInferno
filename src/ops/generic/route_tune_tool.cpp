@@ -6,7 +6,7 @@
 //   ninferno-serve route-tune --shapes FILE [--out routes/<key>.json] [--key chip|variant|arch]
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
-//                     [--selected-out FILE.csv]
+//                     [--selected-out FILE.csv] [--select-reps N]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -33,6 +33,9 @@
 // local memory (spills or stack arrays) beside the timing.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
+// --select-reps N adds select_ns, the host time of one select_route of that call (the mean of N,
+// after a first one that fills the selection's caches): an eager call selects its route on the
+// host, so the selection is a share of a host-bound decode step.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
 // and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
 // flush there too, as at the wider widths.
@@ -51,6 +54,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -111,7 +115,7 @@ int route_tune_main(int argc, char** argv) {
             std::cerr << "usage: ninferno-serve route-tune --shapes FILE [--out FILE] "
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
-                         "[--selected-out FILE.csv] [--rotate 0|1]\n";
+                         "[--selected-out FILE.csv] [--select-reps N] [--rotate 0|1]\n";
             return 2;
         }
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
@@ -151,8 +155,9 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--selected-out")) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
-            selected_csv << "format,compute,epilogue,n,k,T,asked,selected\n";
+            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns\n";
         }
+        const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
 
         std::vector<Problem> problems;
         {
@@ -412,6 +417,20 @@ int route_tune_main(int argc, char** argv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
                     const generic::Route asked =
                         generic::select_route(gp, w.weight, t, ops::prefill_routes_active());
+                    double select_ns = 0;
+                    if (select_reps > 0) {
+                        int sink      = 0;
+                        const auto t0 = std::chrono::steady_clock::now();
+                        for (int i = 0; i < select_reps; ++i) {
+                            sink += generic::select_route(gp, w.weight, t,
+                                                          ops::prefill_routes_active())
+                                        .schedule;
+                        }
+                        const auto t1 = std::chrono::steady_clock::now();
+                        select_ns     = std::chrono::duration<double, std::nano>(t1 - t0).count() /
+                                    select_reps;
+                        if (sink == -1) std::fputc(' ', stderr); // keeps the loop
+                    }
                     const generic::CallLayout layout{.x_aligned16    = true,
                                                      .ldx            = p.k,
                                                      .tokens         = t,
@@ -426,7 +445,7 @@ int route_tune_main(int argc, char** argv) {
                                  << generic::compute_class_name(p.compute) << ','
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ','
                                  << p.k << ',' << t << ',' << generic::route_name(asked) << ','
-                                 << generic::route_name(ran) << '\n';
+                                 << generic::route_name(ran) << ',' << select_ns << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),
