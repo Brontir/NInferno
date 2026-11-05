@@ -4,7 +4,6 @@
 
 #include <algorithm>
 #include <array>
-#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -1477,7 +1476,10 @@ int exercise_rewrite_branch(const char* artifact) {
     return 0;
 }
 
-int exercise_vision(ninferno::Engine& engine) {
+// exact: the engine runs --activations exact, whose contract (include/ninferno/types.h,
+// ActivationMode::Exact) makes a request's tokens independent of the prefix cache, where the prompt
+// is cut and speculation; only there may a cached and an uncached prefill be compared token by token.
+int exercise_vision(ninferno::Engine& engine, bool exact) {
     const auto image_bytes = gradient_ppm();
     auto image_part        = [](const std::vector<std::uint8_t>& bytes, std::string name) {
         ninferno::MessagePart image;
@@ -1575,98 +1577,32 @@ int exercise_vision(ninferno::Engine& engine) {
     }
     // The reused continuation prefills a text-only suffix after the cached multimodal prefix: its
     // positions keep the image's RoPE delta, so it decodes what an uncached prefill decodes.
-    // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side).
-    // The two prefills are not byte-identical (the cached suffix is one call, the fresh prompt
-    // its own chunks; hybrid GDN and MoE layers sum in a different order), so greedy tokens may
-    // part at a near-tie, and under speculation the verify widths add their own rounding: RTX
-    // 4060 Ti, Qwen3.5-9B Q8: the MTP runs parted at the 4th token (12904 against 513, 0.125
-    // nats apart) while the distributions matched to 0.05 nats. Both runs ask for log
-    // probabilities (plain decode) and must agree within kSameLogprob at every token until a
-    // near-tie parts them; a lost delta moves the chosen tokens' log probabilities further:
-    // with the suffix's delta dropped on purpose, 0.19 nats at the 2nd token (Qwen3.5-9B Q8,
-    // RTX 4060 Ti) and 0.16 at the 1st (Qwen3.6-35B-A3B UD-Q4_K_M, RTX 5090), against at most
-    // 0.05 and 0.065 between the two correct prefills.
-    {
-        constexpr float kSameLogprob = 0.1F;
-        constexpr float kNearTie     = 0.25F; // a parting choice this close is rounding
+    // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side):
+    // with it the suffix's dropped delta changes the greedy tokens (RTX 4070 Ti, Qwen3.5-4B AWQ:
+    // the old code failed here, while a 512x256 image's -112 still decoded the same 16 tokens).
+    // Under the default activations the two prefills are not byte-identical (the cached suffix
+    // is one call, the fresh prompt its own chunks), and the hybrid layers part their greedy
+    // tokens at a near-tie (#438: Qwen3.6-35B-A3B on the RTX 5090, MTP K=3, at the 1st token; a
+    // cut alone moved its log probabilities by up to 0.1 nats, the dropped delta by 0.16), so
+    // the comparison runs on the exact engine: there the 16 tokens matched, and with the delta
+    // dropped on purpose they parted at the 5th.
+    if (exact) {
         const auto wide = gradient_ppm(1024, 1024);
         ninferno::RequestOptions long_reuse = options(true);
         ninferno::RequestOptions long_fresh = options(false);
-        for (auto* o : {&long_reuse, &long_fresh}) {
-            o->execution.requested_output_tokens = 16;
-            o->execution.sampling.logprobs       = 5;
-        }
+        long_reuse.execution.requested_output_tokens = 16;
+        long_fresh.execution.requested_output_tokens = 16;
         const ninferno::GenerationResult wide_first =
             engine.generate(engine.prepare(first_input(wide)), options(true));
         const ninferno::GenerationResult cached =
             engine.generate(engine.prepare(followup_input(wide, wide_first)), long_reuse);
         const ninferno::GenerationResult fresh =
             engine.generate(engine.prepare(followup_input(wide, wide_first)), long_fresh);
-        const auto logprob_of = [](const ninferno::GeneratedLogprob& entry,
-                                   ninferno::TokenId token) -> std::optional<float> {
-            for (const auto& t : entry.top) {
-                if (t.token == token) { return t.logprob; }
-            }
-            return std::nullopt;
-        };
-        std::string mismatch;
-        bool parted = false;
-        if (cached.logprobs.size() != cached.generated_token_ids.size() ||
-            fresh.logprobs.size() != fresh.generated_token_ids.size() ||
-            cached.logprobs.empty() || fresh.logprobs.empty()) {
-            mismatch = "no log probabilities";
-        }
-        for (std::size_t i = 0; mismatch.empty() && i < cached.logprobs.size() &&
-                                i < fresh.logprobs.size();
-             ++i) {
-            const auto& c = cached.logprobs[i];
-            const auto& f = fresh.logprobs[i];
-            if (c.token == f.token) {
-                if (std::abs(c.logprob - f.logprob) > kSameLogprob) {
-                    mismatch = "token " + std::to_string(i) + " logprob " +
-                               std::to_string(c.logprob) + " against " + std::to_string(f.logprob);
-                }
-                continue;
-            }
-            // They part: only at a near-tie of the fresh distribution, and each run's pick must
-            // have the same log probability in the other's top list (a lost delta that flips a
-            // close choice still moves it); later tokens follow different text and are not
-            // compared.
-            const auto cached_pick = logprob_of(f, c.token);
-            const auto fresh_pick  = logprob_of(c, f.token);
-            if (!cached_pick || !fresh_pick || f.logprob - *cached_pick > kNearTie ||
-                std::abs(c.logprob - *cached_pick) > kSameLogprob ||
-                std::abs(f.logprob - *fresh_pick) > kSameLogprob) {
-                mismatch = "token " + std::to_string(i) + " parted (" + std::to_string(c.token) +
-                           " against " + std::to_string(f.token) + ") beyond a near-tie";
-            }
-            parted = true;
-            break;
-        }
-        if (mismatch.empty() && !parted && cached.logprobs.size() != fresh.logprobs.size()) {
-            mismatch = "the same tokens, " + std::to_string(cached.logprobs.size()) + " against " +
-                       std::to_string(fresh.logprobs.size());
-        }
         if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
-            !mismatch.empty()) {
+            cached.generated_token_ids != fresh.generated_token_ids) {
             std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
                          "uncached prefill (RoPE delta lost?): reused="
-                      << cached.reused_prompt_tokens << ' ' << mismatch << '\n';
-            return 1;
-        }
-        // Log probabilities decode plainly; the same continuation under the artifact's
-        // speculation (MTP drafts and verify after the delta) must run and reuse the prefix.
-        // Its tokens are not compared: verify widths round apart from plain decode.
-        ninferno::RequestOptions spec_reuse          = options(true);
-        spec_reuse.execution.requested_output_tokens = 16;
-        const ninferno::GenerationResult speculated =
-            engine.generate(engine.prepare(followup_input(wide, wide_first)), spec_reuse);
-        if (speculated.reused_prompt_tokens == 0 || speculated.timings.vision_seconds != 0.0 ||
-            speculated.generated_token_ids.size() != 16) {
-            std::cerr << "the speculative continuation after a cached multimodal prefix did not "
-                         "complete: reused="
-                      << speculated.reused_prompt_tokens << " tokens "
-                      << speculated.generated_token_ids.size() << '\n';
+                      << cached.reused_prompt_tokens << '\n';
             return 1;
         }
     }
@@ -2398,6 +2334,18 @@ int verify_loaded_product(const ninferno::Engine& engine, bool with_vision) {
 
 } // namespace
 
+// The vision cases on the default engine, then on an exact one (exercise_vision's exact).
+int exercise_vision_engines(const char* artifact) {
+    {
+        ninferno::Engine engine(engine_options(artifact));
+        if (const int result = exercise_vision(engine, false); result != 0) { return result; }
+    }
+    ninferno::EngineOptions options = engine_options(artifact);
+    options.activations             = ninferno::ActivationMode::Exact;
+    ninferno::Engine engine(std::move(options));
+    return exercise_vision(engine, true);
+}
+
 int exercise_artifact(const char* artifact) {
     // Own engines, independent of the shared-engine cases below.
     if (const int result = exercise_concurrent_wave_host_tier_admission(artifact); result != 0) {
@@ -2431,8 +2379,7 @@ int exercise_artifact(const char* artifact) {
     }
     if (const int result = exercise_rewrite_branch(artifact); result != 0) { return result; }
     if (ninferno::test::real_artifact(artifact).vision) {
-        ninferno::Engine engine(engine_options(artifact));
-        if (const int result = exercise_vision(engine); result != 0) { return result; }
+        if (const int result = exercise_vision_engines(artifact); result != 0) { return result; }
     } else {
         ninferno::test::skip_case("vision prefix cases",
                                   "no vision component (text-only artifact)");
@@ -2603,8 +2550,7 @@ int run_scenarios() {
             std::cout << "skip: no vision component (text-only artifact)\n";
             return 77;
         }
-        ninferno::Engine engine(engine_options(artifact));
-        result = exercise_vision(engine);
+        result = exercise_vision_engines(artifact);
     } else if (scenario == "all") {
         result = exercise_artifact(artifact);
     } else if (scenario == "concurrent") {
