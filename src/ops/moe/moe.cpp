@@ -609,7 +609,9 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
     if (build_features().mma_tensor) { return false; }
     const auto admits = [](const Weight& bank) {
         const auto codec = generic::codec_of(bank);
-        return !is_frag(bank) && moe_volta_hmma_codec(codec) &&
+        // Q4_K has a fragment-order twin (ggml_frag_v1) the stage does not read: the two layouts of
+        // one bank must run one route (their bytes agree, moe_frag_test), so neither takes it.
+        return !is_frag(bank) && !ggml_frag_format(bank.qtype) && moe_volta_hmma_codec(codec) &&
                bank.k % moe_volta_hmma_k_multiple(codec) == 0;
     };
     return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.inter % 4 == 0;
@@ -1118,12 +1120,6 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
     // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
     // measured before the grouped W4A8 was the default, and one would hide it (RTX 5080, gpt-oss
     // MXFP4 experts: the gb203 entry 2950 us at T=1024, the W4A8 2110 us).
-    // Volta from T = 17: its own tensor cores (the int8 tier and the register MMA run emulated).
-    if (tokens >= 17 && volta_hmma_admitted(weights, g)) {
-        MoePlan v    = plan_for(g, tokens, true);
-        v.volta_hmma = true;
-        return v;
-    }
     MoePlan p               = plan_for(g, tokens, prefill);
     const bool w4a8_prefill = prefill && tokens >= 17 &&
                               w4a8_bank_admitted(weights) && p.job_columns % kMoeW4a8BlockM == 0;
@@ -1140,6 +1136,13 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
             }
             return *tuned;
         }
+    }
+    // Volta from T = 17, under a band of no route table: its own tensor cores (the int8 tier and
+    // the register MMA run emulated there).
+    if (tokens >= 17 && volta_hmma_admitted(weights, g)) {
+        MoePlan v    = plan_for(g, tokens, true);
+        v.volta_hmma = true;
+        return v;
     }
     if (prefill && tokens >= 17) { return with_w4a8(p, weights, w4a8_prefill); }
     if (const MoePlan wide = speed_w4a8(p); wide.w4a8()) { return wide; }
