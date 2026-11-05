@@ -279,6 +279,7 @@ int check_a8(const Case& c, std::uint32_t seed) {
             auto p       = dmoe::select_plan(l.published, l.config, t, false);
             p.gate_up_r8 = s;
             p.down_r8    = down_r8 ? s : -1;
+            p.volta_hmma = false;
             failures += compare(c.label + " A8 " + dmoe::plan_name(p) + " T=" + std::to_string(t),
                                 run(c, l, l.published, x, t, &p), run(c, l, l.frag, x, t, &p));
             ++compared;
@@ -287,6 +288,7 @@ int check_a8(const Case& c, std::uint32_t seed) {
     auto p       = dmoe::select_plan(l.published, l.config, 2, false);
     p.gate_up_r8 = 0;
     p.down_r8    = down_r8 ? 0 : -1;
+    p.volta_hmma = false;
     if (run(c, l, l.published, x, 2, &p) == run(c, l, l.control, x, 2, &p)) {
         std::cerr << c.label << ": the fragment-order bytes read as published by R8 gave the "
                      "same output\n";
@@ -311,6 +313,7 @@ int check_w4a8(const Case& c, std::uint32_t seed) {
     if (iquant(c.gate_up) || iquant(c.down)) {
         auto p         = dmoe::select_plan(l.published, l.config, 17, true);
         p.w4a8_gate_up = p.w4a8_down = true;
+        p.volta_hmma   = false; // the forced stages, not Volta's HMMA plan
         bool refused   = false;
         try {
             (void)run(c, l, l.frag, x, 17, &p);
@@ -348,12 +351,14 @@ int check_w4a8(const Case& c, std::uint32_t seed) {
     for (const std::int32_t t : {17, 64, 130}) {
         auto p = dmoe::select_plan(l.published, l.config, t, true);
         p.w4a8_gate_up = p.w4a8_down = true;
+        p.volta_hmma   = false; // the forced stages, not Volta's HMMA plan
         failures += compare(c.label + " W4A8 T=" + std::to_string(t),
                             run(c, l, l.published, x, t, &p), run(c, l, l.frag, x, t, &p));
         ++compared;
     }
     auto p = dmoe::select_plan(l.published, l.config, 17, true);
     p.w4a8_gate_up = p.w4a8_down = true;
+    p.volta_hmma   = false; // the forced stages, not Volta's HMMA plan
     if (run(c, l, l.published, x, 17, &p) == run(c, l, l.control, x, 17, &p)) {
         std::cerr << c.label
                   << ": the fragment-order bytes read as published by W4A8 gave the "
