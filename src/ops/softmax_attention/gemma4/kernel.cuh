@@ -60,6 +60,11 @@ namespace ninferno::ops {
 
 inline constexpr int kGemma4Slice = 128; // head-dim columns owned by one warp column
 
+// NINFERNO-SPECIAL(arch:sm75): Turing's K and V tiles are staged as f16 (the conversion
+// mma_bf16 would make at every MMA, made once per tile), and the MMA loops read them through
+// mma_bf16_staged. Every other build stages BF16 (Volta's own route has its own f16 staging).
+inline constexpr bool kStagedF16 = NINFERNO_SM75_MMA != 0;
+
 // The compile-time part of a layer's geometry: the head width and the GQA group size. The head
 // counts themselves are runtime (Gemma4AttentionArgs), so every model whose group is a power of
 // two up to 16 runs on the same instances. Group 0 is the instance for every other group size
@@ -565,8 +570,9 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                 __nv_bfloat16* d = dst + row * D + ((col ^ (row & 7)) << 3);
                 if (row < valid_rows && row >= dead_rows) {
                     const int slot = slot_of(row);
-                    if constexpr (Volta) {
-                        // Rounded to f16 once here, for every warp's m8n8k4 that reads it.
+                    if constexpr (Volta || kStagedF16) {
+                        // Rounded to f16 once here, for every warp's MMA that reads it (Volta's
+                        // m8n8k4; Turing's m16n8k8, mma_bf16_staged).
                         const uint4 v = __ldcg(reinterpret_cast<const uint4*>(
                             head + static_cast<std::int64_t>(slot) * D + col * 8));
                         store_vec(d, make_uint4(bf16x2_to_f16x2(v.x), bf16x2_to_f16x2(v.y),
@@ -639,7 +645,8 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                 uint2 b           = detail::gemma4_fp8x4_to_bf16(codes[i].y, scale);
                 uint2 c           = detail::gemma4_fp8x4_to_bf16(codes[i].z, scale);
                 uint2 e           = detail::gemma4_fp8x4_to_bf16(codes[i].w, scale);
-                if constexpr (Volta) { // the BF16 widening, then f16 as a BF16 row is staged
+                // The BF16 widening, then f16 as a BF16 row is staged.
+                if constexpr (Volta || kStagedF16) {
                     const auto f16 = [](uint2 w) {
                         return make_uint2(bf16x2_to_f16x2(w.x), bf16x2_to_f16x2(w.y));
                     };
@@ -808,11 +815,11 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                     unsigned b0, b1, b2, b3;
                     ldmatrix_x4(b0, b1, b2, b3,
                                 base + static_cast<unsigned>(nt2 * 16 * RowBytes) + col);
-                    mma_bf16_prepared(s[2 * nt2][0], s[2 * nt2][1], s[2 * nt2][2], s[2 * nt2][3],
-                                      qf[ks][0], qf[ks][1], qf[ks][2], qf[ks][3], b0, b1);
-                    mma_bf16_prepared(s[2 * nt2 + 1][0], s[2 * nt2 + 1][1], s[2 * nt2 + 1][2],
-                                      s[2 * nt2 + 1][3], qf[ks][0], qf[ks][1], qf[ks][2], qf[ks][3],
-                                      b2, b3);
+                    mma_bf16_staged(s[2 * nt2][0], s[2 * nt2][1], s[2 * nt2][2], s[2 * nt2][3],
+                                    qf[ks][0], qf[ks][1], qf[ks][2], qf[ks][3], b0, b1);
+                    mma_bf16_staged(s[2 * nt2 + 1][0], s[2 * nt2 + 1][1], s[2 * nt2 + 1][2],
+                                    s[2 * nt2 + 1][3], qf[ks][0], qf[ks][1], qf[ks][2], qf[ks][3],
+                                    b2, b3);
                 }
             }
             if constexpr (Parts > 1) {
@@ -1018,11 +1025,11 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                 ldmatrix_x4_t(b0, b1, b2, b3,
                               base + static_cast<unsigned>(pk * 16 * RowBytes) +
                                   static_cast<unsigned>(((2 * n2 + v_hi) ^ swz) << 4));
-                mma_bf16_prepared(acc[2 * n2][0], acc[2 * n2][1], acc[2 * n2][2], acc[2 * n2][3],
-                                  pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3], b0, b1);
-                mma_bf16_prepared(acc[2 * n2 + 1][0], acc[2 * n2 + 1][1], acc[2 * n2 + 1][2],
-                                  acc[2 * n2 + 1][3], pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3],
-                                  b2, b3);
+                mma_bf16_staged(acc[2 * n2][0], acc[2 * n2][1], acc[2 * n2][2], acc[2 * n2][3],
+                                pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3], b0, b1);
+                mma_bf16_staged(acc[2 * n2 + 1][0], acc[2 * n2 + 1][1], acc[2 * n2 + 1][2],
+                                acc[2 * n2 + 1][3], pa[pk][0], pa[pk][1], pa[pk][2], pa[pk][3],
+                                b2, b3);
             }
         }
     };

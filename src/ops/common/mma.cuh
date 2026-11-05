@@ -403,6 +403,21 @@ __device__ __forceinline__ void mma_bf16_prepared(float& c0, float& c1, float& c
 #endif
 }
 
+// mma_bf16_staged takes A prepared (mma_a_bf16) and B from a tile staged once in this build's
+// BF16 MMA form, for every MMA that reads it. The sums are those of mma_bf16 on the unconverted
+// operands. NINFERNO-SPECIAL(arch:sm75): Turing stages B as f16 (bf16x2_to_f16x2, the conversion
+// mma_bf16 makes on every call: a K or V tile read by every warp row and k step was converted per
+// MMA, two of its six registers) and runs the f16 MMA on it; every other build stages BF16.
+__device__ __forceinline__ void mma_bf16_staged(float& c0, float& c1, float& c2, float& c3,
+                                                unsigned a0, unsigned a1, unsigned a2, unsigned a3,
+                                                unsigned b0, unsigned b1) {
+#if NINFERNO_SM75_MMA
+    mma_f16(c0, c1, c2, c3, a0, a1, a2, a3, b0, b1);
+#else
+    mma_bf16(c0, c1, c2, c3, a0, a1, a2, a3, b0, b1);
+#endif
+}
+
 // Same shape as mma_f16 but with an FP16 accumulator: two result registers
 // instead of four, and twice the arithmetic throughput of the f32-accumulate
 // form on sm_120a (502.9 vs 253.4 TFLOP/s measured on an RTX 5090). The narrow
