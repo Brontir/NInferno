@@ -134,13 +134,21 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
         const __half* at = act[sb & 1] + q * kQuadStride<kNTok>;
 #    pragma unroll
         for (int gr = 0; gr < kGroups; ++gr) {
-            float part[kSets][kNG][8];
+            // The lane's own row's group scale goes into its A fragments (f16, as llama.cpp's
+            // decode to f16 rounds it): the MMAs accumulate into acc directly, with no per-group
+            // partial sums (gate/up held 64 more registers for them and spilled at 255).
+            __half2 dsh[kSets];
+            float dmr[kSets][2];
 #    pragma unroll
-            for (int s = 0; s < kSets; ++s)
-#    pragma unroll
-                for (int g = 0; g < kNG; ++g)
-#    pragma unroll
-                    for (int i = 0; i < 8; ++i) part[s][g][i] = 0.0F;
+            for (int s = 0; s < kSets; ++s) {
+                float ds, dm;
+                cur[s].scale(q, gr, ds, dm);
+                dsh[s] = __float2half2_rn(ds);
+                if constexpr (F::kMin) {
+                    dmr[s][0] = __shfl_sync(0xffffffffU, dm, src_a);
+                    dmr[s][1] = __shfl_sync(0xffffffffU, dm, src_a + 2);
+                }
+            }
 #    pragma unroll
             for (int st = 0; st < kSteps; ++st) {
                 const int m = gr * kSteps + st;
@@ -154,35 +162,29 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
                 for (int s = 0; s < kSets; ++s) {
                     unsigned a0, a1;
                     cur[s].fragment(m, q, a0, a1);
+                    if constexpr (requires { F::kBias; }) {
+                        const __half2 bias = __float2half2_rn(F::kBias);
+                        a0 = generic::volta::h2_bits(__hsub2(generic::volta::bits_h2(a0), bias));
+                        a1 = generic::volta::h2_bits(__hsub2(generic::volta::bits_h2(a1), bias));
+                    }
+                    a0 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a0), dsh[s]));
+                    a1 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a1), dsh[s]));
 #    pragma unroll
                     for (int g = 0; g < kNG; ++g)
-                        mma_m8n8k4_f16(part[s][g], a0, a1, bf[g].x, bf[g].y);
+                        mma_m8n8k4_f16(acc[s][g], a0, a1, bf[g].x, bf[g].y);
                 }
             }
+            if constexpr (F::kMin) {
 #    pragma unroll
-            for (int s = 0; s < kSets; ++s) {
-                float ds, dm;
-                cur[s].scale(q, gr, ds, dm);
-                if constexpr (requires { F::kBias; }) dm = fmaf(F::kBias, ds, dm);
-                const float ds0 = __shfl_sync(0xffffffffU, ds, src_a);
-                const float ds2 = __shfl_sync(0xffffffffU, ds, src_a + 2);
-                float dm0 = 0.0F, dm2 = 0.0F;
-                if constexpr (F::kMin) {
-                    dm0 = __shfl_sync(0xffffffffU, dm, src_a);
-                    dm2 = __shfl_sync(0xffffffffU, dm, src_a + 2);
-                }
+                for (int s = 0; s < kSets; ++s)
 #    pragma unroll
-                for (int g = 0; g < kNG; ++g)
+                    for (int g = 0; g < kNG; ++g)
 #    pragma unroll
-                    for (int i = 0; i < 8; ++i) {
-                        const float d = (i & 2) ? ds2 : ds0;
-                        acc[s][g][i]  = fmaf(d, part[s][g][i], acc[s][g][i]);
-                        if constexpr (F::kMin) {
+                        for (int i = 0; i < 8; ++i) {
                             const int slot = 8 * g + (i & 4) + (lane & 2) + (i & 1);
                             const float xs = sums[sb & 1][slot * 8 + 2 * q + gr];
-                            acc[s][g][i]   = fmaf(-((i & 2) ? dm2 : dm0), xs, acc[s][g][i]);
+                            acc[s][g][i]   = fmaf(-dmr[s][(i & 2) >> 1], xs, acc[s][g][i]);
                         }
-                    }
             }
         }
         if (more) stage_store<F, kNTok>(act[(sb + 1) & 1], sums[(sb + 1) & 1], xv);
