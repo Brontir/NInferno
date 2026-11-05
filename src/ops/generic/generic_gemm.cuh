@@ -2394,16 +2394,14 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 }
                 act_operands<Decoder, NT, G>(act);
                 // The group's activation sums of the tile's token columns 2 quad and 2 quad + 1
-                // (the accumulator columns of this lane). A tile of four or more token tiles is
-                // tensor-bound, and an MMA with ones there costs as many tensor-pipe cycles as
-                // the tile's own MMAs at MT = 1 (ncu RTX 5090, Gemma 4 head Q4_K 262144x3840 at
-                // T = 24: 16.7 tensor cycles per weight MMA against Q6_K's 8.5): it adds in FP32
-                // instead, the lane's 4G values of its column lane / 4, the quad's four lanes,
-                // then a gather (RTX 5090, that head at T = 24: n4 tiles 0.79-0.86x, n8 0.64x).
-                // One or two token tiles wait on their loads, not the tensor pipe: the shuffles
-                // lengthened that wait (n1 / n2 tiles up to 1.17x), so they keep the MMA. Volta's
-                // build always adds: its MMA is ~100 FP32 FMAs.
-                constexpr bool kAddSums = NT >= 4 || NINFERNO_FMA_MMA;
+                // (the accumulator columns of this lane), by FP32 adds: the lane's 4G values of its
+                // column lane / 4, the quad's four lanes, then a gather. An MMA with ones did this
+                // before, as many tensor-pipe cycles as the tile's own MMAs at MT = 1 (ncu RTX 5090,
+                // Gemma 4 head Q4_K 262144x3840 at T = 24: 16.7 tensor cycles per weight MMA
+                // against Q6_K's 8.5); there n4 tiles run 0.78-0.95x, n8 0.63-0.86x. Every tile
+                // takes the same sums whatever its token tiles, so a token's bytes do not depend
+                // on the tile its call picks (the invariant profile's n1 to n4 / n8 step at T = 9).
+                constexpr bool kAddSums = true;
                 float sums[NT][4];
                 if constexpr (MinTermOf<Decoder>::value && kAddSums) {
 #pragma unroll
