@@ -2365,7 +2365,7 @@ ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes.
+    // A ggml block format's high plane off a 16-byte boundary (generic_refusal), or the codes.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         !aligned_to(w.qdata, 16)) {
         return ScheduleRefusal::Alignment;
@@ -2389,7 +2389,7 @@ ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
         return ScheduleRefusal::Instruction;
     }
     // The classic tiles read a ggml high plane a byte at a time; the producer tiles in vector
-    // words (route_admits), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
+    // words (generic_refusal), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
     const bool high_off = w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr &&
                           !aligned_to(w.qhigh, 16);
     if (!aligned_to(w.qdata, 16) || (producer && high_off) ||
@@ -2413,7 +2413,7 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off a 16-byte boundary (route_admits).
+    // A ggml block format's high plane off a 16-byte boundary (generic_refusal).
     if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) {
         return ScheduleRefusal::Alignment;
     }
@@ -2447,7 +2447,7 @@ ScheduleRefusal tiled_refusal(int index, const Weight& w) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes where
+    // A ggml block format's high plane off a 16-byte boundary (generic_refusal), or the codes where
     // the tiles read them.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         (!cutlass_only && !aligned_to(w.qdata, 16))) {
@@ -2465,7 +2465,7 @@ ScheduleRefusal staged_refusal(int index, const Weight& w) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off 16 bytes (route_admits; a BF16 weight has none), or
+    // A ggml block format's high plane off 16 bytes (generic_refusal; a BF16 weight has none), or
     // the codes.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         !aligned_to(w.qdata, 16)) {
@@ -2486,7 +2486,7 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off 16 bytes (route_admits; a G64 weight has none), the
+    // A ggml block format's high plane off 16 bytes (generic_refusal; a G64 weight has none), the
     // codes or scales off 16 (one 16-byte copy per row), a Q5 / Q6 high plane off 8 / 16.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16) ||
@@ -2498,9 +2498,13 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
 }
 
 namespace {
-// The generic checks route_admits asks of every family but the scalar one: the generic path reads
-// the weight (Format), the device has the route's instructions, and a ggml high plane on 16
-// bytes. NotDeclared stands for none.
+// The checks every family's refusal shares (all but the scalar path's, which route_admits keeps):
+// the generic path reads the weight (Format), the device has the route's instructions, and a ggml
+// block format's high (sign / bit) plane lies on a 16-byte boundary. A view into a packed buffer
+// can leave it off one (a row view stays aligned: 32 bytes a row and 256 values), and the kernels
+// read it in vector words, all but the classic W4A8 tiles (one byte at a time; w4a8_refusal). The
+// 2080 Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4 bytes off once the cost
+// model's pick left the classic tile. NotDeclared stands for none.
 ScheduleRefusal generic_refusal(Route route, const Weight& w) {
     if (!supports(w)) return ScheduleRefusal::Format;
     if (!has_features(current_features(), route_requires(route))) {
@@ -2598,12 +2602,9 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     if (route.family == Family::GgmlMmq || route.family == Family::GgmlVec) {
         return ggml_refusal(route.family, route.schedule, w, policy) == ScheduleRefusal::None;
     }
-    // The scalar path: every other family returned its refusal above. Each of those refuses a ggml
-    // block format's high (sign / bit) plane off a 16-byte boundary (a view into a packed buffer; a
-    // row view of one stays aligned, 32 bytes a row and 256 values) where its kernels read the plane
-    // in vector words, all but the classic W4A8 tiles (one byte at a time; w4a8_refusal). The 2080
-    // Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4 bytes off once the cost
-    // model's pick left the classic tile. The scalar path reads it byte by byte.
+    // The scalar path: every other family returned its refusal above (generic_refusal: a ggml high
+    // plane off 16 bytes among them). The scalar path reads that plane byte by byte. A family with
+    // no refusal of its own is refused here.
     return route.family == Family::Scalar && supports(w) &&
            has_features(current_features(), route_requires(route));
 }
