@@ -2757,6 +2757,20 @@ bool rmma_sums_lane_local(int schedule) {
 }
 } // namespace
 
+// GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
+// order at every T (a call there may change width from one chunk or round to the next), a tensor-core
+// register-MMA tile of four or more token tiles adds a min-term format's group sums in FP32 where
+// the MMA takes BF16 operands: a BF16 pair widens to FP32 by a shift and a mask, while Turing's f16
+// operands (F16Of) each take a conversion. ABBA route sweeps, n4/n8 tiles at T 17..32 against the
+// MMA with ones: RTX 3060 0.70-1.25x, 4060 Ti 0.73-1.40x, 5070 Ti 0.60-1.29x (the fastest route
+// -3..-16 % on wide heads), RTX 2080 Ti 1.01-1.42x everywhere.
+namespace {
+bool rmma_add_sums() {
+    return current_features().mma_tensor && bf16_mma_native() && !invariant_routes_active() &&
+           !prefill_routes_active();
+}
+} // namespace
+
 bool route_is_token_invariant(Route route) {
     switch (route.family) {
     case Family::RegisterMma:
@@ -2785,6 +2799,10 @@ bool route_is_token_invariant(Route route) {
 bool same_summation(Route a, Route b) {
     if (a == b) return true;
     if (a.family == Family::I8Mma && b.family == Family::I8Mma) return true;
+    // The orders of the prefill and invariant profiles, where its users act (the prefill route's
+    // bands, in the route tables, route-tune and auto_route): there no register-MMA tile adds its
+    // min-term sums in FP32 (rmma_add_sums), so the WarpsK == 1 tiles of every width and the staged
+    // MMA sum alike. Outside them the tiles of four or more token tiles do not.
     const auto register_order = [](Route r) {
         return (r.family == Family::RegisterMma && r.schedule < rmma_schedule_count() &&
                 rmma_schedule_info(r.schedule).warps_k == 1 && !rmma_sums_lane_local(r.schedule)) ||
@@ -4467,6 +4485,7 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     args.tokens   = tokens;
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;
+    args.add_sums   = rmma_add_sums() ? 1 : 0;
     args.spread_smem =
         spread_smem(Route{Family::RegisterMma, static_cast<std::uint8_t>(schedule)}, codec, epilogue, args);
     // Without tensor mma.sync run_route hands such calls to Volta's own HMMA and GEMV kernels
@@ -5276,6 +5295,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
+        args.add_sums   = rmma_add_sums() ? 1 : 0;
         if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
             launch_volta_hmma(codec, call.epilogue, args, stream);
             return;

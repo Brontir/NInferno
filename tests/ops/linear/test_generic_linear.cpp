@@ -694,7 +694,11 @@ bool rmma_compiled(QType qtype, int schedule, std::int32_t k = 0) {
 // window's columns of one residual).
 int check_invariance(const Format& f, Op op, std::int32_t out_rows, std::int32_t k,
                      ops::LinearPolicy policy, std::uint32_t seed,
-                     const std::vector<generic::Route>* only = nullptr) {
+                     const std::vector<generic::Route>* only = nullptr, bool in_prefill = true) {
+    // The prefill profile's promise, so its summation order (no FP32 min-term sums in the wide
+    // register-MMA tiles: rmma_add_sums); `in_prefill` false checks one route's own invariance
+    // outside it, where those tiles add.
+    const ops::ScopedPrefillRoutes prefill(in_prefill);
     const std::int32_t wide  = 300;
     const std::int32_t rows_n = gated(op) ? 2 * out_rows : out_rows;
     const HostWeight host    = make_weight(f.qtype, rows_n, k, seed);
@@ -2322,6 +2326,26 @@ int main() {
         const std::int32_t k = f.qtype == QType::NVFP4 ? 1024 : awkward_k(f);
         failures += check_invariance(f, Op::Linear, n, k, ops::LinearPolicy::A16Only, 41U);
         failures += check_invariance(f, Op::SwiGlu, n, k, ops::LinearPolicy::A16Only, 43U);
+    }
+    // Outside the profiles a min-term tile of four or more token tiles adds its group sums
+    // (rmma_add_sums): each such route still gives a token the same bytes at every call size and
+    // start, as route_is_token_invariant claims.
+    for (const Format& f : kFormats) {
+        const bool min_term = f.qtype == QType::GGML_Q4_K || f.qtype == QType::GGML_Q5_K ||
+                              f.qtype == QType::GGML_Q2_K || f.qtype == QType::GGML_Q4_1 ||
+                              f.qtype == QType::GGML_Q5_1;
+        if (!on_build(f) || !min_term) continue;
+        const std::int32_t k = awkward_k(f);
+        for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+            const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)};
+            if (generic::rmma_schedule_info(i).n_tiles < 4 || !rmma_compiled(f.qtype, i, k) ||
+                !generic::route_is_token_invariant(r)) {
+                continue;
+            }
+            const std::vector<generic::Route> one{r};
+            failures += check_invariance(f, Op::Linear, 136, k, ops::LinearPolicy::A16Only, 71U,
+                                         &one, false);
+        }
     }
     // BF16 at a K the staged schedules admit: they join the register-MMA routes' bytes.
     failures += check_invariance(bf16, Op::Linear, 136, 1088, ops::LinearPolicy::A16Only, 59U);

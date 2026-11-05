@@ -380,6 +380,10 @@ Tuned time_problem(const Problem& problem, const Call& model_call, cudaStream_t 
     const auto r8  = candidates(Route{Family::R8Mma, 0}, weight, problem.policy);
     Tuned tuned;
     entry = Json{{"routes", Json::object()}, {"us", Json::object()}};
+    // The decode widths are timed as the speed profile runs them, whatever profile the eager call
+    // that tunes them is in (a min-term register-MMA tile of four or more token tiles adds its
+    // group sums there, rmma_add_sums); the prefill bands below scope their own.
+    const ScopedPrefillRoutes speed_profile(false);
     for (std::int32_t t = 1; t <= t_max; ++t) {
         const auto name  = std::to_string(t);
         const Route base = heuristic_route(problem, weight, t, false);
@@ -544,6 +548,9 @@ void time_prefill_bands(const Problem& problem, const Call& model_call, cudaStre
     TuneTimer timer(stream, kWarm, kReps);
     bench.timer = &timer;
 
+    // The bands are timed as the prefill profile runs them (there a register-MMA tile keeps the
+    // MMA with ones for its min-term sums).
+    const ScopedPrefillRoutes prefill_profile(true);
     for (std::size_t b = 0; b < kPrefillBands && kPrefillBandTokens[b] <= t_max; ++b) {
         const std::int32_t t = kPrefillBandTokens[b];
         const auto name      = std::to_string(t);
