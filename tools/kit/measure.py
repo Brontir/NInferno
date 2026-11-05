@@ -138,6 +138,9 @@ def load_models(path):
             # The id names the run's log and temporary files: one plain file name component.
             if not isinstance(m["id"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", m["id"]):
                 raise ValueError(f"id {m['id']!r}: letters, digits, '.', '_' and '-' only")
+            # Windows reserves these names whatever the extension (CON.plain.1.server.log is the console).
+            if re.fullmatch(r"(con|prn|aux|nul|com[1-9]|lpt[1-9])", m["id"].split(".")[0].lower()):
+                raise ValueError(f"id {m['id']!r}: a Windows device name")
         return doc
     except (OSError, ValueError, KeyError, TypeError) as e:
         sys.exit(f"the model set {path}: {e!r} (a version, and id, repo, quant, context a model; an id is one file name)")
@@ -412,8 +415,10 @@ def gguf_cached(model):
         split = re.search(r"-(\d{5})-of-(\d{5})\.gguf$", name)
         if not split:
             return True
-        parts[(name[:split.start()], int(split.group(2)))].add(int(split.group(1)))
-    return any(len(have) == total for (_, total), have in parts.items())
+        # Parts of one split count together only inside one snapshot (one revision).
+        snapshot = f.relative_to(root / "snapshots").parts[0]
+        parts[(snapshot, name[:split.start()], int(split.group(2)))].add(int(split.group(1)))
+    return any(have == set(range(1, total + 1)) for (_, _, total), have in parts.items())
 
 
 def fetch_need_bytes(model, weights_bytes):

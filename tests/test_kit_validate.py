@@ -616,7 +616,7 @@ class Kit(unittest.TestCase):
 
     def test_fetch_need_counts_what_the_cache_lacks(self):
         import os
-        import tempfile
+        import json, tempfile
         from pathlib import Path
         model = {"repo": "org/m-GGUF", "quant": "Q4_K_M"}
         gib = 1 << 30
@@ -642,7 +642,7 @@ class Kit(unittest.TestCase):
 
     def test_target_identity_hashes_the_snapshot_file(self):
         import hashlib
-        import tempfile
+        import json, tempfile
         with tempfile.TemporaryDirectory() as root:
             rev = "c" * 40
             model = Path(root) / "models--org--m"
@@ -662,6 +662,33 @@ class Kit(unittest.TestCase):
             for name in ("B-Q4_K_M.qwen3_5_bf16.ninferno", "B-Q4_K_M-00001-of-00002.qwen3_5_bf16.ninferno"):
                 got = measure.target_identity(str(model / "ninferno" / rev / name))
                 self.assertEqual(len(got["weights"]), 2, name)
+
+class KitCacheAndIds(unittest.TestCase):
+    def test_split_parts_count_inside_one_snapshot(self):
+        import json, tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d) / "models--o--m-GGUF" / "snapshots"
+            (root / "a").mkdir(parents=True)
+            (root / "b").mkdir()
+            (root / "a" / "m-Q4_K_M-00001-of-00002.gguf").write_bytes(b"x")
+            (root / "b" / "m-Q4_K_M-00002-of-00002.gguf").write_bytes(b"x")
+            model = {"repo": "o/m-GGUF", "quant": "Q4_K_M"}
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertFalse(measure.gguf_cached(model))
+                (root / "b" / "m-Q4_K_M-00001-of-00002.gguf").write_bytes(b"x")
+                self.assertTrue(measure.gguf_cached(model))
+
+    def test_windows_device_names_are_not_ids(self):
+        import json, tempfile
+        for bad in ("CON", "nul.x", "COM1"):
+            with tempfile.TemporaryDirectory() as d:
+                p = Path(d) / "set.json"
+                p.write_text(json.dumps({"version": 1, "models": [
+                    {"id": bad, "repo": "o/m", "quant": "Q4_K_M", "context": 4096}]}), encoding="utf-8")
+                with self.assertRaises(SystemExit):
+                    measure.load_models(p)
+
 
 if __name__ == "__main__":
     unittest.main()
