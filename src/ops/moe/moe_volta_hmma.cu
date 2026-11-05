@@ -1,4 +1,5 @@
-// Volta's grouped expert stages (T >= 17: prefill, wide verify) on its tensor cores. Without
+// Volta's grouped expert stages (T >= 17: prefill, wide verify) on its tensor cores (MXFP4, Q8, the
+// K-quants Q4_K / Q5_K / Q6_K and ggml's Q4_0 / Q4_1 / Q5_0 / Q5_1). Without
 // mma.sync of the shapes the W4A8 and register-MMA tiles issue, sm_70 runs those on dp4a and FP32
 // FMAs over warp shuffles (ops/common/mma.cuh): on the V100, gpt-oss-20b prefill at 26K tokens
 // spent two thirds of its GPU time in the grouped W4A8 MXFP4 stages, 996 tok/s against
@@ -26,6 +27,7 @@ namespace {
 
 using generic::volta::HK45;
 using generic::volta::HK4Frag;
+using generic::volta::HG32;
 using generic::volta::HK6;
 using generic::volta::HQ8;
 using generic::volta::HX4;
@@ -254,12 +256,19 @@ bool moe_volta_hmma_codec(generic::WeightCodec codec) {
     using generic::WeightCodec;
     return codec == WeightCodec::GgmlQ4K || codec == WeightCodec::GgmlQ5K ||
            codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8 ||
-           codec == WeightCodec::Mxfp4;
+           codec == WeightCodec::Mxfp4 || codec == WeightCodec::GgmlQ40 ||
+           codec == WeightCodec::GgmlQ41 || codec == WeightCodec::GgmlQ50 ||
+           codec == WeightCodec::GgmlQ51;
 }
 
 int moe_volta_hmma_k_multiple(generic::WeightCodec codec) {
     using generic::WeightCodec;
-    return codec == WeightCodec::Q8 || codec == WeightCodec::Mxfp4 ? 64 : 256;
+    switch (codec) {
+    case WeightCodec::GgmlQ4K:
+    case WeightCodec::GgmlQ5K:
+    case WeightCodec::GgmlQ6K: return 256;
+    default: return 64; // the 32-value block formats: whole pairs of blocks
+    }
 }
 
 void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
@@ -280,6 +289,10 @@ void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
     case WeightCodec::GgmlQ6K: launch_format<HK6>(stage, args, grid, stream); return;
     case WeightCodec::Q8: launch_format<HQ8>(stage, args, grid, stream); return;
     case WeightCodec::Mxfp4: launch_format<HX4>(stage, args, grid, stream); return;
+    case WeightCodec::GgmlQ40: launch_format<HG32<4, false>>(stage, args, grid, stream); return;
+    case WeightCodec::GgmlQ41: launch_format<HG32<4, true>>(stage, args, grid, stream); return;
+    case WeightCodec::GgmlQ50: launch_format<HG32<5, false>>(stage, args, grid, stream); return;
+    case WeightCodec::GgmlQ51: launch_format<HG32<5, true>>(stage, args, grid, stream); return;
     default: throw std::invalid_argument("moe volta hmma: unsupported expert format");
     }
 }

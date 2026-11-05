@@ -146,6 +146,66 @@ struct HK4Frag : HK45<4> {
     }
 };
 
+// ggml's 32-value blocks (Q4_0, Q4_1, Q5_0, Q5_1) as planes: 16 code bytes a block (byte j: value j
+// low nibble, j + 16 high), Q5's 32 fifth bits a word, a binary16 d (Q4_0, Q5_0) or d and m (Q4_1,
+// Q5_1) a block. Quad-pair q: blocks 8 sb + 2q and + 1 (K a multiple of 64). The operand is 1024 +
+// code (the f16 bit trick, exact): the zero point and the 1024 come off against the run's activation
+// sum (kBias), and a min's m adds against it (w = d q + m: the sum's -dm is -(-m)).
+template <int Bits, bool Min>
+struct HG32 {
+    static constexpr int kGroups = 2;
+    static constexpr bool kMin   = true; // every form takes the run sums
+    static constexpr float kBias = 1024.0F + (Min ? 0.0F : (Bits == 4 ? 8.0F : 16.0F));
+    uint4 c[2];
+    unsigned qh[2];
+    unsigned dm[2];
+
+    __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
+        if (8 * sb + 2 * q >= a.k / 32) {
+            clear();
+            return;
+        }
+        const std::int64_t blk = static_cast<std::int64_t>(row) * a.groups_per_row + 8 * sb + 2 * q;
+        const auto* p          = reinterpret_cast<const uint4*>(a.codes + blk * 16);
+        c[0]                   = p[0];
+        c[1]                   = p[1];
+#pragma unroll
+        for (int b = 0; b < 2; ++b) {
+            qh[b] = Bits == 5 ? reinterpret_cast<const unsigned*>(a.high)[blk + b] : 0U;
+            dm[b] = Min ? reinterpret_cast<const unsigned*>(a.scales)[blk + b]
+                        : reinterpret_cast<const unsigned short*>(a.scales)[blk + b];
+        }
+    }
+
+    __device__ __forceinline__ void clear() {
+        c[0] = c[1] = make_uint4(0, 0, 0, 0);
+        qh[0] = qh[1] = dm[0] = dm[1] = 0;
+    }
+
+    __device__ __forceinline__ void scale(int, int g, float& ds, float& d_min) const {
+        ds    = half_bits_f32(dm[g]);
+        d_min = Min ? -half_bits_f32(dm[g] >> 16) : 0.0F;
+    }
+
+    // MMA m: block m / 8; within it, MMA j = m % 8 takes word j % 4's low (j < 4) or high nibbles:
+    // values 16 (j / 4) + 4 (j % 4) .. + 3, as (v0, v2) and (v1, v3).
+    __device__ __forceinline__ void fragment(int m, int, unsigned& a0, unsigned& a1) const {
+        const int b = m >> 3, j = m & 7, nib = j >> 2;
+        const unsigned words[4] = {c[b].x, c[b].y, c[b].z, c[b].w};
+        const unsigned w        = words[j & 3] >> (4 * nib);
+        unsigned lo = nibbles_h2(w), hi = nibbles_h2(w >> 8);
+        if constexpr (Bits == 5) {
+            const unsigned hb = qh[b] >> (16 * nib + 4 * (j & 3));
+            lo |= ((hb & 1U) << 4) | ((hb & 4U) << 18);
+            hi |= ((hb & 2U) << 3) | ((hb & 8U) << 17);
+        }
+        a0 = lo;
+        a1 = hi;
+    }
+
+    __device__ static constexpr int dest_run(int src) { return src; }
+};
+
 // Q6_K planes: 128 ql then 64 qh bytes a superblock (codes), 16 int8 scales (high), binary16 d
 // (scales). Quad-pair q: half h = q / 2, ql bytes 64 h + 32 (q % 2) .. + 31 (low nibbles quarter
 // q % 2, high nibbles quarter q % 2 + 2), qh bytes 32 h .. + 31 (bit pairs 2 (q % 2) and
