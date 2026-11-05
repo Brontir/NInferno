@@ -8713,6 +8713,6 @@
    "dram_gbps": 936
   }
  },
- "note": "entries from dense-tuner caches (tools/routes/dense_tune_to_table.py)",
+ "note": "entries from dense-tuner caches (tools/routes/dense_tune_to_table.py), and the entries without tuned_on from the kit sweep of Qwen3.5-9B and Gemma 4 12B on the RTX 3090 (05.11), each one both of the kit's passes agreed on. The Q4_K 4096x4096 problems the passes disagreed on are not here: this board borrows them from ga106.json (the RTX 3060).",
  "schema": "ninferno-route-table/1"
 }
