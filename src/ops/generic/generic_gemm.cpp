@@ -2945,35 +2945,34 @@ static double resident_ctas(const KernelResources& r, const DeviceClass& d) {
     return std::max(occ, 1.0);
 }
 
-// resident_ctas of register-MMA schedule `schedule` for the call, once per device, schedule,
-// codec, epilogue, shape and width: describing the launch queries the kernel's attributes, and
-// select_route prices every call at T >= 17 outside a captured graph. nullopt where the schedule
-// is not described or describing it fails (the thread limit alone then stands).
-static std::optional<double> rmma_resident_ctas(int schedule, const Weight& weight,
-                                                const Problem& problem, std::int32_t tokens,
-                                                const DeviceClass& d) {
+// resident_ctas of every register-MMA schedule for the call (nullopt where a schedule is not
+// described or describing it fails: the thread limit alone then stands), once per device, codec,
+// epilogue, shape, width and sum variant: describing a launch queries the kernel's attributes, and
+// select_route prices every call at T >= 17 outside a captured graph. One lookup a call in a cache
+// of the calling thread: a lock and a lookup per schedule cost the eager verify calls of a C8 MTP
+// run 3.6 % of their throughput on the RTX 5090 (kernel time even).
+static const std::vector<std::optional<double>>& rmma_resident_ctas(const Weight& weight,
+                                                                    const Problem& problem,
+                                                                    std::int32_t tokens,
+                                                                    const DeviceClass& d) {
+    static const std::vector<std::optional<double>> none;
     int device = 0;
-    if (cudaGetDevice(&device) != cudaSuccess) return std::nullopt;
-    using Key = std::tuple<int, int, int, int, std::int32_t, std::int32_t, std::int32_t>;
-    static std::mutex mutex;
-    static std::map<Key, std::optional<double>> cache;
-    const Key key{device,        schedule,  static_cast<int>(codec_of(weight)),
-                  static_cast<int>(problem.epilogue), problem.n, problem.k, tokens};
-    {
-        const std::lock_guard lock(mutex);
-        if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    if (cudaGetDevice(&device) != cudaSuccess) return none;
+    using Key = std::tuple<int, int, int, std::int32_t, std::int32_t, std::int32_t, bool>;
+    thread_local std::map<Key, std::vector<std::optional<double>>> cache;
+    const Key key{device, static_cast<int>(codec_of(weight)), static_cast<int>(problem.epilogue),
+                  problem.n, problem.k, tokens, rmma_add_sums()};
+    if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    std::vector<std::optional<double>> occ(static_cast<std::size_t>(rmma_schedule_count()));
+    for (int i = 0; i < rmma_schedule_count(); ++i) {
+        if (!rmma_schedule_launchable(i)) continue;
+        try {
+            if (const auto res = rmma_resources(i, weight, problem.epilogue, tokens)) {
+                occ[static_cast<std::size_t>(i)] = resident_ctas(*res, d);
+            }
+        } catch (const std::exception&) { occ[static_cast<std::size_t>(i)].reset(); }
     }
-    std::optional<double> occ;
-    try {
-        if (const auto res = rmma_resources(schedule, weight, problem.epilogue, tokens)) {
-            occ = resident_ctas(*res, d);
-        }
-    } catch (const std::exception&) {
-        occ.reset();
-    }
-    const std::lock_guard lock(mutex);
-    cache.emplace(key, occ);
-    return occ;
+    return cache.emplace(key, std::move(occ)).first->second;
 }
 
 // The speed-profile route of a call of 17 tokens or more from a cost model of every tile the
@@ -3082,6 +3081,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         }
         take(r, time);
     };
+    static const std::vector<std::optional<double>> thread_limit_only;
+    const auto& resident = substituted_foreign_class()
+                               ? thread_limit_only
+                               : rmma_resident_ctas(weight, problem, tokens, d);
     for (int i = 0; i < rmma_schedule_count(); ++i) {
         const auto s = rmma_schedule_info(i);
         // Cluster schedules exist in the full (sm_12x) build only (rmma_schedule_launchable); a
@@ -3101,10 +3104,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // then reads cheap). A substituted board keeps the thread limit: this build's kernels are
         // not its kernels.
         double occ = std::min(std::floor(max_thr / threads), max_cta);
-        if (!substituted_foreign_class()) {
-            if (const auto res = rmma_resident_ctas(i, weight, problem, tokens, d)) {
-                occ = std::min(occ, *res);
-            }
+        if (static_cast<std::size_t>(i) < resident.size() && resident[i]) {
+            occ = std::min(occ, *resident[i]);
         }
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
