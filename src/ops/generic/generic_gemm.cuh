@@ -2393,14 +2393,19 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
                 }
                 act_operands<Decoder, NT, G>(act);
-                float sums[NT][2];
-                if constexpr (MinTermOf<Decoder>::value) {
-                    // The group's activation sums of the tile's token columns 2 quad and 2 quad + 1
-                    // (the accumulator columns of this lane), by FP32 adds: the lane's 4G values
-                    // of its column lane / 4, the quad's four lanes, then a gather. An MMA with
-                    // ones did this before, as many tensor-pipe cycles as the tile's own MMAs at
-                    // MT = 1 (ncu RTX 5090, Gemma 4 head Q4_K 262144x3840 at T = 24: 16.7 tensor
-                    // cycles per weight MMA against Q6_K's 8.5 without a min term).
+                // The group's activation sums of the tile's token columns 2 quad and 2 quad + 1
+                // (the accumulator columns of this lane). A tile of four or more token tiles is
+                // tensor-bound, and an MMA with ones there costs as many tensor-pipe cycles as
+                // the tile's own MMAs at MT = 1 (ncu RTX 5090, Gemma 4 head Q4_K 262144x3840 at
+                // T = 24: 16.7 tensor cycles per weight MMA against Q6_K's 8.5): it adds in FP32
+                // instead, the lane's 4G values of its column lane / 4, the quad's four lanes,
+                // then a gather (RTX 5090, that head at T = 24: n4 tiles 0.79-0.86x, n8 0.64x).
+                // One or two token tiles wait on their loads, not the tensor pipe: the shuffles
+                // lengthened that wait (n1 / n2 tiles up to 1.17x), so they keep the MMA. Volta's
+                // build always adds: its MMA is ~100 FP32 FMAs.
+                constexpr bool kAddSums = NT >= 4 || NINFERNO_FMA_MMA;
+                float sums[NT][4];
+                if constexpr (MinTermOf<Decoder>::value && kAddSums) {
 #pragma unroll
                     for (int n = 0; n < NT; ++n) {
                         float v = 0.0F;
@@ -2416,8 +2421,20 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                         }
                         v += __shfl_xor_sync(0xffffffffU, v, 1);
                         v += __shfl_xor_sync(0xffffffffU, v, 2);
-                        sums[n][0] = __shfl_sync(0xffffffffU, v, 8 * quad);
-                        sums[n][1] = __shfl_sync(0xffffffffU, v, 8 * quad + 4);
+                        sums[n][0] = sums[n][2] = __shfl_sync(0xffffffffU, v, 8 * quad);
+                        sums[n][1] = sums[n][3] = __shfl_sync(0xffffffffU, v, 8 * quad + 4);
+                    }
+                } else if constexpr (MinTermOf<Decoder>::value) {
+                    // 1.0, twice: BF16, or FP16 for an F16Of decoder.
+                    constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
+#pragma unroll
+                    for (int n = 0; n < NT; ++n) {
+                        sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
+#pragma unroll
+                        for (int i = 0; i < G; ++i)
+                            mma_operands<F16Of<Decoder>::value>(
+                                sums[n][0], sums[n][1], sums[n][2], sums[n][3], kOnes, kOnes, kOnes,
+                                kOnes, act[n][2 * i], act[n][2 * i + 1]);
                     }
                 }
 #pragma unroll
@@ -2458,8 +2475,8 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                             for (int n = 0; n < NT; ++n) {
                                 c[n][0] = fmaf(-sums[n][0], m0, c[n][0]);
                                 c[n][1] = fmaf(-sums[n][1], m0, c[n][1]);
-                                c[n][2] = fmaf(-sums[n][0], m1, c[n][2]);
-                                c[n][3] = fmaf(-sums[n][1], m1, c[n][3]);
+                                c[n][2] = fmaf(-sums[n][2], m1, c[n][2]);
+                                c[n][3] = fmaf(-sums[n][3], m1, c[n][3]);
                             }
                         }
                     }
