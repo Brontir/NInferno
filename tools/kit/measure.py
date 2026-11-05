@@ -40,7 +40,7 @@ import gpu  # noqa: E402
 import validate  # noqa: E402
 
 KIT_VERSION = "2"
-SCHEMA = "ninferno-user-run/1.2"
+SCHEMA = "ninferno-user-run/1.3"
 HAYSTACK = ROOT / "examples/cli/messages/long_niah_256k.json"  # perf_matrix.py's long text
 QUESTION = "\n\nSummarize the text above in detail, section by section."
 START_TIMEOUT_S = 900

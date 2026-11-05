@@ -87,8 +87,8 @@ major 1.
 
 | Field | What |
 |---|---|
-| `schema` | `"ninferno-user-run/1.2"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`) |
-| `kit` | `{version, models_version, models_sha256}` |
+| `schema` | `"ninferno-user-run/1.3"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`; 1.3 `kit.models_file`) |
+| `kit` | `{version, models_version, models_sha256, models_file}`: `models_file` the `--models-file` path as given, `null` for the built-in set |
 | `created` | UTC time |
 | `ninferno` | `{version}`: the first line of `ninferno-serve --version` |
 | `host` | `{os, machine, cpu, cpus, ram_bytes, on_battery}` |
