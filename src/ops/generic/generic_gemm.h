@@ -733,7 +733,9 @@ struct RouteTile {
 // whole activation in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
 // byte and their scales: W4A8 and ggml's q8_1 36 bytes a 32-value block, I8 an FP32 scale a 64),
 // and the output is written once in bf16 (a cluster's K split reduces in distributed shared
-// memory). A prediction, not a counter: an L2 hit rate turns it into DRAM bytes.
+// memory). A prediction, not a counter: the caches serve the re-reads (RTX 5090, Qwen3.5-9B
+// shapes: a 16 x 8 register-MMA tile at T = 512 requested 8 TB/s, past the L2's rate, its
+// activation re-read by every row block from L1), so a hit rate turns it into DRAM bytes.
 struct RouteTraffic {
     double weight_bytes     = 0;
     double activation_bytes = 0;
