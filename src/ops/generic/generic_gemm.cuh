@@ -3101,7 +3101,12 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes (UnpackOf), under
 // SwiGLU the activations staged ahead with cp.async, and where kRmmaAhead holds the activations
 // loaded a step ahead into registers (act_ring; for one row set of Q3_K / Q6_K, which have no
-// load_raw, that ring is the whole variant). Every other instantiation is the plain kernel.
+// load_raw, that ring is the whole variant). AddSums (kRmmaAddVariant: a min-term decoder of
+// four or more token tiles; the launch takes it where GemmArgs::add_sums asks):
+// the group sums by FP32 adds (mma_step). A kernel instance, not a branch on the flag: with the
+// branch inside, the kernel the prefill profile runs (the MMA with ones) compiled unlike master's,
+// and its prefill candidates moved by x0.77-1.21 (RTX 3060; the best route of Q2_K 4096x4096
+// +6 %). Every other instantiation is the plain kernel.
 // The latency kernel's activation ring (rmma_kernel's act_ring): each K step's activations loaded
 // into registers with the step's weights, one step ahead, instead of inside the step. Inside the
 // step a spread decoder loads them group by group, each group's MMAs waiting on its own load, so
@@ -3154,7 +3159,14 @@ inline constexpr int kRmmaMinBlocks =
         ? 65536 / (Schedule::kThreads * 128)
         : Schedule::kMinBlocks;
 
-template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
+// The schedules and decoders with an add-sums instance (rmma_kernel's AddSums). Host-side too, so
+// no architecture condition: the sm_70 and sm_75 passes compile it as their plain kernel (Volta's
+// adds already, Turing's f16 operands keep the MMA), and their launches never ask for it
+// (rmma_add_sums: BF16 tensor-core MMA only).
+template <class Decoder, class Schedule>
+inline constexpr bool kRmmaAddVariant = MinTermOf<Decoder>::value && Schedule::kNTiles >= 4;
+
+template <class Decoder, class Schedule, Epilogue E, bool Latency = false, bool AddSums = false>
 __global__
 __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
@@ -3372,7 +3384,7 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
         } else {
             (void)ahead;
             mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k, nullptr,
-                                                nullptr, a.add_sums != 0);
+                                                nullptr, AddSums);
         }
     };
 

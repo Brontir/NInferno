@@ -160,7 +160,8 @@ struct GemmArgs {
     // token tiles takes a min-term format's group sums by FP32 adds, not an MMA with ones
     // (generic_gemm.cuh mma_step), a sum in another order than a narrower tile's (same_summation).
     // run_route sets it outside the invariant and prefill profiles, whose calls keep one order at
-    // every T; narrower tiles ignore it, and Volta's build always adds.
+    // every T; narrower tiles ignore it, and Volta's build always adds. Host side only: the launch
+    // takes the kernel instance that adds (rmma_kernel's AddSums), the kernel reads none.
     int add_sums = 0;
 };
 
