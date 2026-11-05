@@ -2401,9 +2401,8 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 // against Q6_K's 8.5); there n4 tiles run 0.78-0.95x, n8 0.63-0.86x. Every tile
                 // takes the same sums whatever its token tiles, so a token's bytes do not depend
                 // on the tile its call picks (the invariant profile's n1 to n4 / n8 step at T = 9).
-                constexpr bool kAddSums = true;
                 float sums[NT][4];
-                if constexpr (MinTermOf<Decoder>::value && kAddSums) {
+                if constexpr (MinTermOf<Decoder>::value) {
 #pragma unroll
                     for (int n = 0; n < NT; ++n) {
                         float v = 0.0F;
@@ -2421,18 +2420,6 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                         v += __shfl_xor_sync(0xffffffffU, v, 2);
                         sums[n][0] = sums[n][2] = __shfl_sync(0xffffffffU, v, 8 * quad);
                         sums[n][1] = sums[n][3] = __shfl_sync(0xffffffffU, v, 8 * quad + 4);
-                    }
-                } else if constexpr (MinTermOf<Decoder>::value) {
-                    // 1.0, twice: BF16, or FP16 for an F16Of decoder.
-                    constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
-#pragma unroll
-                    for (int n = 0; n < NT; ++n) {
-                        sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
-#pragma unroll
-                        for (int i = 0; i < G; ++i)
-                            mma_operands<F16Of<Decoder>::value>(
-                                sums[n][0], sums[n][1], sums[n][2], sums[n][3], kOnes, kOnes, kOnes,
-                                kOnes, act[n][2 * i], act[n][2 * i + 1]);
                     }
                 }
 #pragma unroll
