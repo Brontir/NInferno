@@ -2329,7 +2329,7 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                                          const typename Decoder::Run (&runs)[Sets][MT][2],
                                          const __nv_bfloat16* const (&col)[NT], int step_k0,
                                          int quad, int k, const uint2* stage = nullptr,
-                                         const unsigned* ahead = nullptr) {
+                                         const unsigned* ahead = nullptr, bool add_sums = false) {
     static_assert(!Staged || (SpreadOf<Decoder> && NT == 1), "staged: one tile, spread");
     static_assert(!Ahead || (SpreadOf<Decoder> && NT == 1 && !Staged), "ahead: one tile, spread");
     if constexpr (SpreadOf<Decoder>) {
@@ -2393,18 +2393,48 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
                 }
                 act_operands<Decoder, NT, G>(act);
+                // The group's activation sums of the tile's token columns 2 quad and 2 quad + 1
+                // (the accumulator columns of this lane), by FP32 adds (the lane's 4G values of its
+                // column lane / 4, the quad's four lanes, then a gather) or by an MMA with ones.
+                // Volta's build always adds: its MMA is ~100 FP32 FMAs (GV100 Q4_K register-MMA
+                // routes 0.56-0.93x). A tensor-core tile of four or more token tiles adds where the
+                // call asks (GemmArgs::add_sums): it is tensor-bound there, and the ones-MMA cost as
+                // many tensor-pipe cycles as the tile's own MMAs at MT = 1 (ncu RTX 5090, Gemma 4
+                // head Q4_K at T = 24: 16.7 cycles per weight MMA against Q6_K's 8.5). One or two
+                // token tiles keep the MMA: they wait on their loads and the shuffles lengthened that
+                // wait (RTX 3060 at T <= 8: +15-23 % with the adds). So do f16 operands (F16Of,
+                // Turing's: act_operands converted act to f16 in place, which the BF16 unpack below
+                // cannot read; the adds lost there anyway, rmma_add_sums).
+                const bool add =
+                    NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
                 float sums[NT][4];
                 if constexpr (MinTermOf<Decoder>::value) {
-                    // 1.0, twice: BF16, or FP16 for an F16Of decoder.
-                    constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
+                    if (add) {
 #pragma unroll
-                    for (int n = 0; n < NT; ++n) {
-                        sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
+                        for (int n = 0; n < NT; ++n) {
+                            float v = 0.0F;
 #pragma unroll
-                        for (int i = 0; i < G; ++i)
-                            mma_operands<F16Of<Decoder>::value>(
-                                sums[n][0], sums[n][1], sums[n][2], sums[n][3], kOnes, kOnes, kOnes,
-                                kOnes, act[n][2 * i], act[n][2 * i + 1]);
+                            for (int i = 0; i < 2 * G; ++i) {
+                                const unsigned w = act[n][i]; // a BF16 pair
+                                v += __uint_as_float(w << 16) + __uint_as_float(w & 0xffff0000U);
+                            }
+                            v += __shfl_xor_sync(0xffffffffU, v, 1);
+                            v += __shfl_xor_sync(0xffffffffU, v, 2);
+                            sums[n][0] = sums[n][2] = __shfl_sync(0xffffffffU, v, 8 * quad);
+                            sums[n][1] = sums[n][3] = __shfl_sync(0xffffffffU, v, 8 * quad + 4);
+                        }
+                    } else {
+                        // 1.0, twice: BF16, or FP16 for an F16Of decoder.
+                        constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
+#pragma unroll
+                        for (int n = 0; n < NT; ++n) {
+                            sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
+#pragma unroll
+                            for (int i = 0; i < G; ++i)
+                                mma_operands<F16Of<Decoder>::value>(
+                                    sums[n][0], sums[n][1], sums[n][2], sums[n][3], kOnes, kOnes,
+                                    kOnes, kOnes, act[n][2 * i], act[n][2 * i + 1]);
+                        }
                     }
                 }
 #pragma unroll
@@ -3071,7 +3101,12 @@ __device__ __forceinline__ typename Decoder::Run load_run(const GemmArgs& a, int
 // it, generic_gemm_launch.cuh): load_raw() and unpack() when the step computes (UnpackOf), under
 // SwiGLU the activations staged ahead with cp.async, and where kRmmaAhead holds the activations
 // loaded a step ahead into registers (act_ring; for one row set of Q3_K / Q6_K, which have no
-// load_raw, that ring is the whole variant). Every other instantiation is the plain kernel.
+// load_raw, that ring is the whole variant). AddSums (kRmmaAddVariant: a min-term decoder of
+// four or more token tiles; the launch takes it where GemmArgs::add_sums asks):
+// the group sums by FP32 adds (mma_step). A kernel instance, not a branch on the flag: with the
+// branch inside, the kernel the prefill profile runs (the MMA with ones) compiled unlike master's,
+// and its prefill candidates moved by x0.77-1.21 (RTX 3060; the best route of Q2_K 4096x4096
+// +6 %). Every other instantiation is the plain kernel.
 // The latency kernel's activation ring (rmma_kernel's act_ring): each K step's activations loaded
 // into registers with the step's weights, one step ahead, instead of inside the step. Inside the
 // step a spread decoder loads them group by group, each group's MMAs waiting on its own load, so
@@ -3124,7 +3159,14 @@ inline constexpr int kRmmaMinBlocks =
         ? 65536 / (Schedule::kThreads * 128)
         : Schedule::kMinBlocks;
 
-template <class Decoder, class Schedule, Epilogue E, bool Latency = false>
+// The schedules and decoders with an add-sums instance (rmma_kernel's AddSums). Host-side too, so
+// no architecture condition: the sm_70 and sm_75 passes compile it as their plain kernel (Volta's
+// adds already, Turing's f16 operands keep the MMA), and their launches never ask for it
+// (rmma_add_sums: BF16 tensor-core MMA only).
+template <class Decoder, class Schedule>
+inline constexpr bool kRmmaAddVariant = MinTermOf<Decoder>::value && Schedule::kNTiles >= 4;
+
+template <class Decoder, class Schedule, Epilogue E, bool Latency = false, bool AddSums = false>
 __global__
 __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Latency>)) void
     rmma_kernel(
@@ -3341,7 +3383,8 @@ __launch_bounds__(Schedule::kThreads, (kRmmaMinBlocks<Decoder, Schedule, E, Late
                                                              a.k, nullptr, act_ring[slot][0]);
         } else {
             (void)ahead;
-            mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k);
+            mma_step<Decoder, NT, J, kSets, MT>(acc, runs, col, step * KStep, quad, a.k, nullptr,
+                                                nullptr, AddSums);
         }
     };
 

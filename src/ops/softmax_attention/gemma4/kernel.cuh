@@ -142,8 +142,11 @@ inline constexpr bool kGemma4Fp8Hardware = true;
 // whole contraction (four m8n8k4 per 16-wide step), so no partial sums cross quad-pairs. The
 // accumulators keep Volta's layout through a tile: the scores reach the softmax through the score
 // exchange (scattered to the m16n8 lane layout the exchange holds), P and the rescale factors
-// through a per-warp scratch, and the output converts once, through the freed K/V planes. Only the
-// geometries with an exchange (D >= 256, Gemma 4's) take it.
+// through a per-warp scratch, and the output converts once, through the freed K/V planes. A head
+// of one warp column (D = 64, gpt-oss; D = 128) has no exchange: each warp scatters its scores into
+// its own scratch instead, and converts its output there when the planes are too small (gpt-oss's
+// 32-key sliding tile; D = 128 at any tile). The FP32-FMA form held gpt-oss-20b's attention at 1365 ms of a 7.6K-token
+// prefill's 3240 on the GV100 (llama.cpp's f16 flash attention: about 135 ms a request).
 #if defined(NINFERNO_BUILD_ARCH)
 inline constexpr bool kGemma4VoltaHmma = NINFERNO_BUILD_ARCH >= 70 && NINFERNO_BUILD_ARCH < 75;
 #else
@@ -163,12 +166,19 @@ struct Gemma4Tile {
     // Slice-partial score exchange; a 128-wide head (one warp column) needs none.
     static constexpr int RedBytes   = Geo::Parts > 1 ? WR * Geo::Parts * (Bc / 8) * 32 * 16 : 0;
     static constexpr int ScaleBytes = Fp8 ? 2 * Bc * 4 : 0; // FP32 row scales of K and V
-    // Volta's m8n8k4 route where the two planes hold every warp's 16 x Slice FP32 accumulators
-    // for the output conversion (not the wide D = 512 tile, which keeps the FMA form).
-    static constexpr bool Volta =
-        kGemma4VoltaHmma && Geo::Parts > 1 && Warps * 16 * Geo::Slice * 4 <= 2 * PlaneBytes;
-    // Volta's per-warp scratch: P of its 16 rows (f16, Bc keys) and their 16 rescale factors.
-    static constexpr int VoltaWarpBytes = Volta ? 16 * Bc * 2 + 16 * 4 : 0;
+    // Where Volta's output conversion goes: the two planes when they hold every warp's 16 x Slice
+    // FP32 accumulators, else each warp's scratch (a head of one warp column only).
+    static constexpr bool VoltaPlanes = Warps * 16 * Geo::Slice * 4 <= 2 * PlaneBytes;
+    // Volta's m8n8k4 route (not the wide D = 512 tile, which keeps the FMA form).
+    static constexpr bool Volta = kGemma4VoltaHmma && (VoltaPlanes || Geo::Parts == 1);
+    // Volta's per-warp scratch: P of its 16 rows (f16, Bc keys) and their 16 rescale factors; for a
+    // head without an exchange then its scores in the exchange's layout (Bc / 8 float4 per lane),
+    // and room for its output conversion where the planes have none.
+    static constexpr int VoltaScoreBytes = Volta && Geo::Parts == 1 ? (Bc / 8) * 32 * 16 : 0;
+    static constexpr int VoltaPartBytes  = 16 * Bc * 2 + 16 * 4 + VoltaScoreBytes;
+    static constexpr int VoltaOutBytes   = Volta && !VoltaPlanes ? 16 * Geo::Slice * 4 : 0;
+    static constexpr int VoltaWarpBytes =
+        Volta ? (VoltaPartBytes > VoltaOutBytes ? VoltaPartBytes : VoltaOutBytes) : 0;
     static constexpr int SmemBytes  = 2 * PlaneBytes + RedBytes + ScaleBytes + Warps * VoltaWarpBytes;
     static_assert(Bc % 16 == 0 && (Bc * Geo::D / 8) % Threads == 0);
     static_assert(!Fp8 || (Bc * Geo::D / 16) % Threads == 0);
@@ -335,13 +345,16 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
     const int lane = tid & 31;
     // Volta (Tile::Volta): the lane's quad-pair (one 8 x 8 block of a 16 x 16 output pair: rows
     // 8 * (vq & 1), columns 8 * (vq >> 1)), its row of A (vj, as the m8n8k4 fragments index), and
-    // the warp's scratch: P [16][Bc] f16, then 16 rescale factors.
+    // the warp's scratch: P [16][Bc] f16, then 16 rescale factors, then (one warp column, Parts
+    // == 1) its scores in the exchange layout; or its output where the planes are too small.
     [[maybe_unused]] const int vq = (lane >> 2) & 3;
     [[maybe_unused]] const int vj = (lane & 3) + 4 * (lane >> 4);
     [[maybe_unused]] __half* const vp = reinterpret_cast<__half*>(
         gemma4_smem + 2 * Tile::PlaneBytes + Tile::RedBytes + Tile::ScaleBytes +
         warp * Tile::VoltaWarpBytes);
     [[maybe_unused]] float* const valpha = reinterpret_cast<float*>(vp + 16 * Bc);
+    // A head without an exchange: this warp's scores, as `red` would hold them (part 0).
+    [[maybe_unused]] float4* const vs = reinterpret_cast<float4*>(valpha + 16);
     // A decode call's combine is its programmatic dependent: it may launch once every CTA here
     // has started (one row's grid is one resident wave, so its CTAs take only the slots left
     // over; a launch of several rows starts its last wave first) and waits for this grid before
@@ -724,10 +737,10 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
             // pair; B (K^T, col-major) is the lane's key's four dims, one 8-byte read of the f16
             // tile. The 8 x 8 blocks scatter into the exchange as the m16n8 lanes hold them.
             const __half* kt = reinterpret_cast<const __half*>(gemma4_smem);
-            float* redf      = reinterpret_cast<float*>(red);
+            float* redf      = reinterpret_cast<float*>(Parts > 1 ? red : vs);
 #pragma unroll
             for (int j = 0; j < Geo::Sub; ++j) {
-                const int part = wr * Parts + wc * Geo::Sub + j;
+                const int part = Parts > 1 ? wr * Parts + wc * Geo::Sub + j : 0;
 #pragma unroll
                 for (int nt2 = 0; nt2 < QKN / 2; ++nt2) {
                     float c[8] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
@@ -853,6 +866,17 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
                 s[nt][1] = total.y;
                 s[nt][2] = total.z;
                 s[nt][3] = total.w;
+            }
+        } else if constexpr (Volta) {
+            // The warp's own scattered scores (score_tile), in the m16n8 lane layout.
+            __syncwarp();
+#pragma unroll
+            for (int nt = 0; nt < QKN; ++nt) {
+                const float4 v = vs[nt * 32 + lane];
+                s[nt][0]       = v.x;
+                s[nt][1]       = v.y;
+                s[nt][2]       = v.z;
+                s[nt][3]       = v.w;
             }
         }
         float bm0 = NegInf;
@@ -1083,9 +1107,11 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
 
     if constexpr (Volta) {
         // The accumulators to the m16n8 lane layout the stores below read, through this warp's
-        // 16 x Slice of the freed K/V planes.
+        // 16 x Slice of the freed K/V planes, or of its own scratch where they are too small
+        // (Tile::VoltaPlanes).
         __syncthreads();
-        float* o = reinterpret_cast<float*>(gemma4_smem) + warp * 16 * Geo::Slice;
+        float* o = Tile::VoltaPlanes ? reinterpret_cast<float*>(gemma4_smem) + warp * 16 * Geo::Slice
+                                     : reinterpret_cast<float*>(vp);
 #pragma unroll
         for (int n2 = 0; n2 < PVN / 2; ++n2) {
 #pragma unroll

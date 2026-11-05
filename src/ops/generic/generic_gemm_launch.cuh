@@ -22,7 +22,7 @@ namespace ninferno::ops::detail::generic {
 // NINFERNO_GENERIC_RMMA_SCHEDULES: ops/generic/generic_schedules.h (one list for the
 // instantiations here and the host table in generic_gemm.cpp).
 
-template <class Decoder, class Schedule, Epilogue E, bool Latency>
+template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums = false>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream);
 
 // The schedules and decoders with a latency variant (rmma_kernel's Latency): one token tile of a
@@ -146,6 +146,13 @@ bool rmma_wide_pays(const GemmArgs& args) {
 
 template <class Decoder, class Schedule, Epilogue E>
 void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
+    if constexpr (kRmmaAddVariant<Decoder, Schedule>) {
+        // The call's own choice (run_route: rmma_add_sums), not the board's.
+        if (args.add_sums != 0) {
+            launch_rmma_kernel<Decoder, Schedule, E, false, true>(args, stream);
+            return;
+        }
+    }
     if constexpr (kRmmaLatencyVariant<Decoder, Schedule, E>) {
         // The choice reads the device's facts and occupancy; where either fails this launch
         // takes the plain kernel (master's), and the next one asks again.
@@ -175,7 +182,7 @@ void launch_rmma_schedule(const GemmArgs& args, cudaStream_t stream) {
     launch_rmma_kernel<Decoder, Schedule, E, false>(args, stream);
 }
 
-template <class Decoder, class Schedule, Epilogue E, bool Latency>
+template <class Decoder, class Schedule, Epilogue E, bool Latency, bool AddSums>
 void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     const dim3 grid((args.rows + Schedule::kRowsPerCta - 1) / Schedule::kRowsPerCta,
                     (args.tokens + Schedule::kTokensPerCta - 1) / Schedule::kTokensPerCta);
@@ -184,14 +191,15 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
     const auto smem = static_cast<std::size_t>(args.spread_smem);
     if (KernelResources* described = kernel_describe_target()) {
         cudaFuncAttributes attributes{};
-        CUDA_CHECK(cudaFuncGetAttributes(&attributes, rmma_kernel<Decoder, Schedule, E, Latency>));
+        CUDA_CHECK(
+            cudaFuncGetAttributes(&attributes, rmma_kernel<Decoder, Schedule, E, Latency, AddSums>));
         describe_kernel(*described, attributes, dim3(grid.x, grid.y, Schedule::kCluster),
                         Schedule::kThreads, smem, Latency);
         return;
     }
     if (Schedule::kCluster == 1 &&
         ((args.join_previous == 0 && args.pdl_prefetch == 0) || !pdl::supported())) {
-        rmma_kernel<Decoder, Schedule, E, Latency>
+        rmma_kernel<Decoder, Schedule, E, Latency, AddSums>
             <<<grid, Schedule::kThreads, smem, stream>>>(args);
     } else {
         cudaLaunchAttribute attributes[2]{};
@@ -215,7 +223,8 @@ void launch_rmma_kernel(const GemmArgs& args, cudaStream_t stream) {
         config.stream   = stream;
         config.attrs    = attributes;
         config.numAttrs = count;
-        CUDA_CHECK(cudaLaunchKernelEx(&config, rmma_kernel<Decoder, Schedule, E, Latency>, args));
+        CUDA_CHECK(
+            cudaLaunchKernelEx(&config, rmma_kernel<Decoder, Schedule, E, Latency, AddSums>, args));
     }
     CUDA_CHECK(cudaGetLastError());
 }

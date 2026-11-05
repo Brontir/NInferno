@@ -1,6 +1,9 @@
 #include "core/device.h"
 #include "models/qwen3_5/load.h"
 #include "models/qwen3_5/execution/parameters.h"
+#include "models/qwen3_5/execution/vision.h"
+#include "ninferno/ops/linear.h"
+#include "ninferno/ops/weight_input.h"
 #include "models/qwen3_5/program/program.h"
 #include "models/qwen3_5/program/model_family.h"
 #include "real_artifact.h"
@@ -8,6 +11,7 @@
 
 #include "models/qwen3_5/frontend/prepared_prompt.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <iostream>
@@ -25,9 +29,13 @@ int main() {
         return 77;
     }
     static_assert(ninferno::models::qwen3_5::kMaximumVisionItemTokens == 16384);
-    // The current Vision route fits below 827 MiB, including arena alignment and empty-scratch
-    // backing. The context growth check below protects the single-item lifetime bound.
-    constexpr std::size_t kWorkspaceCeiling = 827ULL << 20;
+    // The Vision route's size is a law of its tower, not one number (#429: Qwen3.5-4B 768.5 MiB,
+    // Qwen3.6-35B-A3B and Qwen3.8-27B 916.5 MiB): its widest scope holds the residual, the MLP's up
+    // projection and its norm, (2 H + I) BF16 values a patch, beside the position ids (8 bytes a
+    // patch) and the scratch of the one linear call running (each call's scratch scope closes
+    // before the next opens: an A8 fc1 of a 1152-wide tower adds 90 MiB at 65536 patches). The
+    // MLP scope is the widest while I >= 3 H (the attention scope holds qkv and its norm, 4 H). The
+    // workspace must not grow with the text context past one item's.
     try {
         int devices       = 0;
         const auto status = cudaGetDeviceCount(&devices);
@@ -66,11 +74,56 @@ int main() {
         // Increasing total context cannot exceed the single Vision item's 16K workspace.
         const auto at_item_limit    = capacity(16384);
         const auto above_item_limit = capacity(131072);
-        if (at_item_limit == 0 || at_item_limit > kWorkspaceCeiling ||
-            above_item_limit != at_item_limit) {
-            throw std::runtime_error("Vision workspace exceeded the single-item bound: at=" +
-                                     std::to_string(at_item_limit) +
-                                     " above=" + std::to_string(above_item_limit));
+        // The Vision route alone (no text region beneath its handoff): the item's encode peak and
+        // its handoff.
+        const auto alone = qwen::execution::VisionContext::plan_workspace(
+            *parameters.model.config().vision, *parameters.vision,
+            static_cast<std::uint32_t>(qwen::kMaximumVisionItemTokens), 1);
+        std::cout << "workspace at 16K " << at_item_limit << " at 128K " << above_item_limit
+                  << " | Vision alone: encode peak " << alone.encode_peak_bytes << " handoff at "
+                  << alone.handoff_offset_bytes << " + " << alone.handoff_capacity_bytes
+                  << " capacity " << alone.capacity_bytes << '\n';
+        const auto& vc = *parameters.model.config().vision;
+        const auto& vp = *parameters.vision;
+        const std::uint64_t merge  = std::uint64_t(vc.spatial_merge_size) * vc.spatial_merge_size;
+        const std::uint64_t P      = qwen::kMaximumVisionItemTokens * merge;
+        const std::uint64_t tensors =
+            (2 * std::uint64_t(vc.hidden_size) + vc.intermediate_size) * P * 2;
+        const auto declared = [&](const auto& linear) {
+            return ninferno::ops::linear_workspace_capacity_bytes(
+                linear, static_cast<std::int32_t>(merge), static_cast<std::int32_t>(P));
+        };
+        if (vc.intermediate_size < 3 * vc.hidden_size) {
+            throw std::runtime_error("the law below takes the MLP scope as the widest (I >= 3 H): "
+                                     "this tower needs its attention scope's term");
+        }
+        // One call's scratch at a time: the widest any of them declares.
+        std::uint64_t widest = declared(vp.patch_embedding);
+        for (const auto& layer : vp.layers) {
+            for (const auto* linear : {&layer.qkv, &layer.output, &layer.fc1, &layer.fc2}) {
+                widest = std::max<std::uint64_t>(widest, declared(*linear));
+            }
+        }
+        const std::uint64_t scratch = P * 8 + widest;
+        constexpr std::uint64_t kAlignmentSlack = 1ULL << 20;
+        std::cout << "law: tensors " << tensors << " + position ids and widest declared scratch "
+                  << scratch << " | workspace above the Vision route alone "
+                  << at_item_limit - std::min(at_item_limit, alone.capacity_bytes) << '\n';
+        if (above_item_limit != at_item_limit) {
+            throw std::runtime_error(
+                "Vision workspace grew with the text context: " + std::to_string(at_item_limit) +
+                " bytes at a 16K context, " + std::to_string(above_item_limit) + " at 128K");
+        }
+        if (alone.encode_peak_bytes < tensors ||
+            alone.encode_peak_bytes > tensors + scratch + kAlignmentSlack ||
+            at_item_limit < alone.capacity_bytes) {
+            throw std::runtime_error(
+                "Vision workspace off its law: encode peak " +
+                std::to_string(alone.encode_peak_bytes) + " bytes, tensors " +
+                std::to_string(tensors) + " .. tensors + scratch " +
+                std::to_string(tensors + scratch + kAlignmentSlack) + "; workspace " +
+                std::to_string(at_item_limit) + " (the Vision route alone needs " +
+                std::to_string(alone.capacity_bytes) + ")");
         }
         std::cout << "Vision workspace remains bounded for long text context\n";
         return 0;

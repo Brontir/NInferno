@@ -526,119 +526,6 @@ bool vec_rule(const Weight& w, LinearPolicy policy, std::int32_t tokens) {
     return tokens >= 2 && tokens <= vec_rule_max_tokens() && vec_call(w, policy, tokens);
 }
 
-// Warp instructions a KB of weight payload: the vector kernel's a + b T at T columns (its dp4a and
-// activation loads grow with T, its decode does not) and the one-tile register MMA's (flat: its
-// MMAs take eight columns at any T), store / AddResidual and SwiGLU. Counted, not fitted: ncu
-// smsp__inst_executed.sum over the payload bytes, 4096x4096 store and 12288x4096 SwiGLU at T = 2,
-// 4 and 8 (a and b from T = 2 and 8; T = 4 lies on the line within 3 %), the register MMA the mean
-// of its w1x4 and w1x8 kernels. sm_8x: RTX 3060 (sm_86; the RTX 4090's sm_89 kernels count the
-// same to 1 %); sm_12x: RTX 5070 Ti (sm_120, the RTX 5090's alike). Turing has none: its BF16 MMA is
-// emulated, and from five tokens ggml's matrix kernel, not the register MMA, is the vector kernel's
-// rival there (mmq_verify_rule), so it keeps the band rule.
-struct VerifyCount {
-    double vec_a, vec_b, rmma;
-};
-struct VerifyCounts {
-    QType qtype;
-    VerifyCount store, swiglu;
-};
-constexpr VerifyCounts kVerifyCountsSm8x[] = {
-    {QType::GGML_Q4_K, {111, 59.0, 293}, {89, 51.5, 278}},
-    {QType::GGML_Q5_K, {122, 48.5, 278}, {121, 42.4, 267}},
-    {QType::GGML_Q6_K, {198, 37.4, 212}, {184, 34.2, 206}},
-    {QType::GGML_Q2_K, {183, 113.4, 666}, {169, 101.9, 597}},
-    {QType::GGML_Q3_K, {326, 68.3, 469}, {282, 60.6, 446}},
-    {QType::GGML_IQ4_XS, {216, 54.8, 419}, {202, 49.4, 399}},
-    {QType::GGML_IQ3_XXS, {319, 78.4, 711}, {331, 66.2, 676}},
-    {QType::GGML_IQ3_S, {308, 66.2, 587}, {298, 56.8, 549}},
-    {QType::GGML_IQ2_XXS, {440, 109.1, 1053}, {413, 97.2, 988}},
-    {QType::GGML_IQ2_XS, {379, 109.8, 1004}, {405, 90.7, 930}},
-    {QType::GGML_IQ2_S, {348, 98.7, 925}, {339, 81.7, 862}},
-    {QType::GGML_IQ1_S, {360, 155.1, 1107}, {353, 131.6, 998}},
-    {QType::GGML_IQ1_M, {423, 215.5, 1217}, {416, 190.0, 1115}},
-    {QType::GGML_Q4_0, {208, 52.1, 219}, {213, 43.7, 192}},
-    {QType::GGML_Q4_1, {54, 50.5, 252}, {56, 42.5, 208}},
-    {QType::GGML_Q5_0, {191, 43.3, 239}, {188, 36.4, 213}},
-    {QType::GGML_Q5_1, {89, 42.8, 264}, {90, 36.8, 233}},
-    {QType::GGML_IQ4_NL, {159, 53.3, 350}, {161, 44.9, 321}},
-};
-constexpr VerifyCounts kVerifyCountsSm12x[] = {
-    {QType::GGML_Q4_K, {104, 51.7, 279}, {91, 49.7, 262}},
-    {QType::GGML_Q5_K, {127, 41.9, 258}, {104, 42.8, 249}},
-    {QType::GGML_Q6_K, {176, 34.9, 210}, {167, 33.9, 187}},
-    {QType::GGML_Q2_K, {161, 109.4, 638}, {148, 101.1, 577}},
-    {QType::GGML_Q3_K, {262, 70.3, 455}, {224, 61.4, 428}},
-    {QType::GGML_IQ4_XS, {210, 52.1, 430}, {194, 50.3, 403}},
-    {QType::GGML_IQ3_XXS, {327, 69.4, 739}, {305, 65.2, 693}},
-    {QType::GGML_IQ3_S, {330, 61.6, 596}, {300, 56.7, 557}},
-    {QType::GGML_IQ2_XXS, {434, 103.1, 1076}, {400, 94.7, 1022}},
-    {QType::GGML_IQ2_XS, {413, 98.5, 1012}, {368, 91.5, 943}},
-    {QType::GGML_IQ2_S, {408, 86.7, 939}, {336, 82.4, 871}},
-    {QType::GGML_IQ1_S, {422, 139.9, 1125}, {326, 132.6, 1012}},
-    {QType::GGML_IQ1_M, {460, 194.2, 1170}, {386, 185.9, 1075}},
-    {QType::GGML_Q4_0, {181, 47.6, 215}, {174, 43.3, 181}},
-    {QType::GGML_Q4_1, {48, 47.2, 232}, {41, 43.2, 193}},
-    {QType::GGML_Q5_0, {178, 39.2, 233}, {171, 34.9, 212}},
-    {QType::GGML_Q5_1, {91, 39.6, 244}, {80, 35.6, 223}},
-    {QType::GGML_IQ4_NL, {171, 47.3, 367}, {163, 43.2, 331}},
-};
-std::optional<VerifyCount> verify_count(const DeviceClass& d, QType qtype, Epilogue epilogue) {
-    std::span<const VerifyCounts> table;
-    if (d.major == 8) {
-        table = kVerifyCountsSm8x;
-    } else if (d.major == 12) {
-        table = kVerifyCountsSm12x;
-    }
-    for (const auto& row : table) {
-        if (row.qtype == qtype) return epilogue == Epilogue::SwiGlu ? row.swiglu : row.store;
-    }
-    return std::nullopt;
-}
-
-constexpr double kVerifyDramFraction  = 0.93; // see verify_route_seconds
-constexpr double kVerifyIssueFraction = 0.6;
-constexpr double kVerifyLaunchSeconds = 1.5e-6;
-
-} // namespace
-
-// NOT USED BY THE SELECTOR. The register MMA is priced here as the best one-tile schedule
-// (w1x4 / w1x8 / w1x16 at the bytes and the counted instructions), which is wrong for the
-// schedule heuristic_rmma actually runs: on long-K shapes that schedule streams DRAM at 57..77 %
-// (RTX 4070 Ti, Q6_K 3840x15360 T = 5: w1x4 171 us, w1x8 149, w1x16 121 against 108 priced) for
-// a reason not yet known (its bytes in flight are 13x Little's law). Verify picks stay the band
-// rule until the schedule's own efficiency is a fact.
-//
-// A verify call's time on the vector kernel or on the one-tile register MMA (T = 2..8, the ggml
-// formats both read): the payload's DRAM time tb and its warp instructions' issue time ti (four
-// schedulers a SM issuing one instruction each a clock: every SM from Volta on), combined as
-// sqrt(tb^2 + (ti / u)^2), plus a launch each (the vector kernel two: its activation quantizer).
-// Fitted constants, each on six cards of three generations (RTX 3060; 4060 Ti, 4070 Ti, 4090;
-// 5070 Ti, 5090), 3204 timed calls (vector and one-tile register MMA, T = 2..8, 19 formats):
-// - kVerifyDramFraction (FITTED): the p90 DRAM share of those calls, 0.89..0.94 on every card.
-// - kVerifyIssueFraction, u (FITTED): the best u under this combination per generation is 0.65 on
-//   sm_89 (three cards), 0.60 on sm_120 (two), 0.65 on sm_86 (one card); one 0.6 serves all.
-// - the combination (FITTED form): rms of log(measured / predicted) 0.118 for sqrt(tb^2 + ui^2)
-//   against 0.144 for max (full overlap, under-predicts 5.5 %) and 0.190 for the sum (no overlap,
-//   over-predicts 13 %). The choice's loss over the better kernel is 1.025..1.031 for all three.
-// - kVerifyLaunchSeconds: a launch on a back-to-back stream (RTX 4090 decode graph, no PDL).
-// nullopt where the device has no roofline or its instruction set no counts.
-
-std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
-                                           Epilogue epilogue, double payload_bytes,
-                                           std::int32_t tokens) {
-    if (d.sms <= 0 || !d.facts.has_roofline() || payload_bytes <= 0) return std::nullopt;
-    const auto c = verify_count(d, qtype, epilogue);
-    if (!c) return std::nullopt;
-    const double per_kb = vector ? c->vec_a + c->vec_b * tokens : c->rmma;
-    const double tb     = payload_bytes / (kVerifyDramFraction * d.facts.dram_bytes_per_s());
-    const double ti =
-        per_kb * payload_bytes / 1024.0 / (4.0 * d.sms * d.facts.reference_clock_hz());
-    const double ui = ti / kVerifyIssueFraction;
-    return std::sqrt(tb * tb + ui * ui) + (vector ? 2.0 : 1.0) * kVerifyLaunchSeconds;
-}
-
-namespace {
-
 // What a call of ggml's kernels leaves for the arena's 256-byte alignment of its first buffer: the
 // capacity bound counts it too, or a workspace sized to the bound ran the call A16 (a vector call
 // of 200 rows x 8 tokens: 11520 bytes needed and given).
@@ -2480,7 +2367,7 @@ ScheduleRefusal r8_refusal(int index, const Weight& w, LinearPolicy policy) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes.
+    // A ggml block format's high plane off a 16-byte boundary (generic_refusal), or the codes.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         !aligned_to(w.qdata, 16)) {
         return ScheduleRefusal::Alignment;
@@ -2504,7 +2391,7 @@ ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
         return ScheduleRefusal::Instruction;
     }
     // The classic tiles read a ggml high plane a byte at a time; the producer tiles in vector
-    // words (route_admits), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
+    // words (generic_refusal), and IQ3_XXS's sign plane 8 bytes at a time (w4a8_ws_admits).
     const bool high_off = w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr &&
                           !aligned_to(w.qhigh, 16);
     if (!aligned_to(w.qdata, 16) || (producer && high_off) ||
@@ -2528,7 +2415,7 @@ ScheduleRefusal rmma_refusal(int index, const Weight& w) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off a 16-byte boundary (route_admits).
+    // A ggml block format's high plane off a 16-byte boundary (generic_refusal).
     if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) {
         return ScheduleRefusal::Alignment;
     }
@@ -2562,7 +2449,7 @@ ScheduleRefusal tiled_refusal(int index, const Weight& w) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off a 16-byte boundary (route_admits), or the codes where
+    // A ggml block format's high plane off a 16-byte boundary (generic_refusal), or the codes where
     // the tiles read them.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         (!cutlass_only && !aligned_to(w.qdata, 16))) {
@@ -2580,7 +2467,7 @@ ScheduleRefusal staged_refusal(int index, const Weight& w) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off 16 bytes (route_admits; a BF16 weight has none), or
+    // A ggml block format's high plane off 16 bytes (generic_refusal; a BF16 weight has none), or
     // the codes.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         !aligned_to(w.qdata, 16)) {
@@ -2601,7 +2488,7 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
     }
-    // A ggml block format's high plane off 16 bytes (route_admits; a G64 weight has none), the
+    // A ggml block format's high plane off 16 bytes (generic_refusal; a G64 weight has none), the
     // codes or scales off 16 (one 16-byte copy per row), a Q5 / Q6 high plane off 8 / 16.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
         !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16) ||
@@ -2613,9 +2500,13 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
 }
 
 namespace {
-// The generic checks route_admits asks of every family but the scalar one: the generic path reads
-// the weight (Format), the device has the route's instructions, and a ggml high plane on 16
-// bytes. NotDeclared stands for none.
+// The checks every family's refusal shares (all but the scalar path's, which route_admits keeps):
+// the generic path reads the weight (Format), the device has the route's instructions, and a ggml
+// block format's high (sign / bit) plane lies on a 16-byte boundary. A view into a packed buffer
+// can leave it off one (a row view stays aligned: 32 bytes a row and 256 values), and the kernels
+// read it in vector words, all but the classic W4A8 tiles (one byte at a time; w4a8_refusal). The
+// 2080 Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4 bytes off once the cost
+// model's pick left the classic tile. NotDeclared stands for none.
 ScheduleRefusal generic_refusal(Route route, const Weight& w) {
     if (!supports(w)) return ScheduleRefusal::Format;
     if (!has_features(current_features(), route_requires(route))) {
@@ -2713,41 +2604,11 @@ bool route_admits(Route route, const Weight& w, LinearPolicy policy) {
     if (route.family == Family::GgmlMmq || route.family == Family::GgmlVec) {
         return ggml_refusal(route.family, route.schedule, w, policy) == ScheduleRefusal::None;
     }
-    if (!supports(w)) return false;
-    if (!has_features(current_features(), route_requires(route))) return false;
-    // A ggml block format's high (sign / bit) plane off a 16-byte boundary (a view into a packed
-    // buffer; a row view of one stays aligned, 32 bytes a row and 256 values): the kernels read it
-    // in vector words, all but the classic W4A8 tiles (one byte at a time; w4a8_refusal) and the
-    // scalar path. The 2080 Ti and A100 gates faulted (misaligned address) on an IQ3_XXS plane 4
-    // bytes off once the cost model's pick left the classic tile.
-    if (w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16) &&
-        route.family != Family::Scalar) {
-        return false;
-    }
-    switch (route.family) {
-    case Family::Scalar:
-        return true;
-    case Family::RegisterMma: // rmma_refusal, above
-        return false;
-    case Family::W4a4Mma: // w4a4_refusal, above
-        return false;
-    case Family::TiledMma: // tiled_refusal, above
-        return false;
-    case Family::W4a8Mma: // w4a8_refusal, above
-        return false;
-    case Family::StagedMma: // staged_refusal, above
-        return false;
-    case Family::Nvfp4TiledMma: // nvfp4_tiled_refusal, above
-        return false;
-    case Family::R8Mma: // r8_refusal, above
-        return false;
-    case Family::GgmlMmq: // ggml_refusal, above
-    case Family::GgmlVec:
-        return false;
-    case Family::I8Mma: // i8_refusal, above
-        return false;
-    }
-    return false;
+    // The scalar path: every other family returned its refusal above (generic_refusal: a ggml high
+    // plane off 16 bytes among them). The scalar path reads that plane byte by byte. A family with
+    // no refusal of its own is refused here.
+    return route.family == Family::Scalar && supports(w) &&
+           has_features(current_features(), route_requires(route));
 }
 
 // Without tensor mma.sync a one-tile register-MMA call of at most four tokens sums lane by lane
@@ -2756,6 +2617,20 @@ namespace {
 bool rmma_sums_lane_local(int schedule) {
     return !current_features().mma_tensor && !invariant_routes_active() &&
            rmma_schedule_info(schedule).n_tiles == 1;
+}
+} // namespace
+
+// GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
+// order at every T (a call there may change width from one chunk or round to the next), a tensor-core
+// register-MMA tile of four or more token tiles adds a min-term format's group sums in FP32 where
+// the MMA takes BF16 operands: a BF16 pair widens to FP32 by a shift and a mask, while Turing's f16
+// operands (F16Of) each take a conversion. ABBA route sweeps, n4/n8 tiles at T 17..32 against the
+// MMA with ones: RTX 3060 0.70-1.25x, 4060 Ti 0.73-1.40x, 5070 Ti 0.60-1.29x (the fastest route
+// -3..-16 % on wide heads), RTX 2080 Ti 1.01-1.42x everywhere.
+namespace {
+bool rmma_add_sums() {
+    return current_features().mma_tensor && bf16_mma_native() && !invariant_routes_active() &&
+           !prefill_routes_active();
 }
 } // namespace
 
@@ -2787,6 +2662,10 @@ bool route_is_token_invariant(Route route) {
 bool same_summation(Route a, Route b) {
     if (a == b) return true;
     if (a.family == Family::I8Mma && b.family == Family::I8Mma) return true;
+    // The orders of the prefill and invariant profiles, where its users act (the prefill route's
+    // bands, in the route tables, route-tune and auto_route): there no register-MMA tile adds its
+    // min-term sums in FP32 (rmma_add_sums), so the WarpsK == 1 tiles of every width and the staged
+    // MMA sum alike. Outside them the tiles of four or more token tiles do not.
     const auto register_order = [](Route r) {
         return (r.family == Family::RegisterMma && r.schedule < rmma_schedule_count() &&
                 rmma_schedule_info(r.schedule).warps_k == 1 && !rmma_sums_lane_local(r.schedule)) ||
@@ -3234,15 +3113,15 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
                                           n * k * bpw / bw);
         const double mma   = q * 2.0 * rows * sets * cols * kc / peak_sm;
         // The CTAs the busiest SM runs one residency after another each pay their warps'
-        // dependent chain: the exposed load latency of a K step (register MMA: 16 K per warp, 200
+        // dependent chain: the exposed load latency of a K step (register MMA: 16 K per warp, 150
         // cycles) or of a pipeline stage (64 K, 500 cycles: the barrier and the cp.async wait).
         const double rounds = std::ceil(q / std::max(occ, 1.0));
         if (pipelined) {
             const double chain = rounds * std::ceil(kc / 64.0) * 500.0 / clk;
             return std::max(mem, mma / eff) / std::clamp(warps / 4.0, 0.05, 1.0) + chain;
         }
-        // K split over a cluster (30 cycles per FP32 element) and over the CTA's K warps (2 cycles
-        // per element and extra warp, through shared memory).
+        // K split over a cluster (30 cycles per FP32 element) and over the CTA's K warps (2.75
+        // cycles per element and extra warp, through shared memory).
         const double reduce = q * (cluster - 1) * rows * sets * cols * 30.0 / clk +
                               rounds * (warps_k - 1.0) * rows * sets * cols * 2.75 / clk;
         const double chain  = rounds * std::ceil(kc / (16.0 * warps_k)) * 150.0 / clk;
@@ -4551,6 +4430,7 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     args.tokens   = tokens;
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;
+    args.add_sums   = rmma_add_sums() ? 1 : 0;
     args.spread_smem =
         spread_smem(Route{Family::RegisterMma, static_cast<std::uint8_t>(schedule)}, codec, epilogue, args);
     // Without tensor mma.sync run_route hands such calls to Volta's own HMMA and GEMV kernels
@@ -5360,6 +5240,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
+        args.add_sums   = rmma_add_sums() ? 1 : 0;
         if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
             launch_volta_hmma(codec, call.epilogue, args, stream);
             return;

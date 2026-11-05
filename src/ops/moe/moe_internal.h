@@ -270,6 +270,10 @@ struct MoePlan {
     // fragment order, which the tier does not read, keeps its register MMA beside the other's tier.
     bool w4a8_gate_up = false;
     bool w4a8_down    = false;
+    // Both grouped stages on Volta's tensor cores (moe_volta_hmma.cu) instead of the emulated
+    // int8 tier and register MMA: a call of T >= 17 without mma.sync, every bank's format
+    // admitted (volta_hmma_admitted); job_columns a multiple of kVoltaHmmaSlots.
+    bool volta_hmma = false;
     [[nodiscard]] bool w4a8() const noexcept { return w4a8_gate_up || w4a8_down; }
 };
 // `plan` with each grouped stage on the W4A8 tier where `on` and its own bank is admitted, neither
@@ -346,11 +350,11 @@ struct A8Route {
 // schedule: the R8 or register-MMA schedule (-1 under W4A8; "w4a8.mx8": two plain MXFP4 banks on
 // an sm_120a build, the block-scaled MMA with MXFP8 activations); r8 and w4a8: the bank's refusal of
 // each (None where the bank is admitted, whether or not the plan took it).
-enum class MoeStageKernel { R8, W4a8, RegisterMma };
+enum class MoeStageKernel { R8, W4a8, RegisterMma, VoltaHmma };
 struct MoeStageRoute {
     MoeStageKernel kernel = MoeStageKernel::RegisterMma;
     int schedule          = -1;
-    std::string name;                  // "r8.w..", "rmma.m..", "w4a8", "w4a8.mx8"
+    std::string name;                  // "r8.w..", "rmma.m..", "w4a8", "w4a8.mx8", "volta.hmma"
     BankRefusal r8   = BankRefusal::None;
     BankRefusal w4a8 = BankRefusal::None;
 };
@@ -419,6 +423,18 @@ bool launch_r8_gemm_ggml4(generic::WeightCodec codec, bool frag, Stage stage, in
                           int tokens, const GemmArgs& args, dim3 grid, cudaStream_t stream);
 bool launch_r8_gemm_native(generic::WeightCodec codec, bool frag, Stage stage, int schedule,
                            int tokens, const GemmArgs& args, dim3 grid, cudaStream_t stream);
+
+// Volta's grouped stages on mma.m8n8k4 (moe_volta_hmma.cu): kVoltaHmmaSlots slots a CTA (grid y
+// is the job list's capacity times job_columns / kVoltaHmmaSlots), 32 rows a CTA (grid x). The
+// formats with an f16 A fragment (generic_volta_hmma.cuh), K a multiple of their k_multiple.
+inline constexpr int kVoltaHmmaSlots = 32;
+inline constexpr int kVoltaHmmaRows  = 32;
+static_assert(kJobColumns % kVoltaHmmaSlots == 0);
+[[nodiscard]] bool moe_volta_hmma_codec(generic::WeightCodec codec);
+[[nodiscard]] int moe_volta_hmma_k_multiple(generic::WeightCodec codec);
+// `frag`: a ggml_frag_v1 bank (Q4_K only).
+void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
+                           const GemmArgs& args, dim3 grid, cudaStream_t stream);
 
 // The grouped W4A8 (moe_w4a8.cuh): the experts' gate/up (or up) and down stages of a wide prefill
 // call on int8 tensor cores, the activation quantized per 32 values (int8 codes, a scale and the

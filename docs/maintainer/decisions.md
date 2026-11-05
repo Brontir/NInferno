@@ -293,7 +293,8 @@ the band is consulted, and in fast mode a saved `tuned_dense_route` replaces the
 T = 2..4 where one exists (`generic_gemm.cpp`, `select_route`). Other boards keep their own rules: Volta's vector route extends past T = 4
 for formats `volta_hmma_route` does not take (`vec_rule_max_tokens`), and Turing sends codebook
 formats at T = 5..8 to the MMQ kernel (`mmq_verify_rule`). `verify_route_seconds` (bytes at 0.93 of DRAM and counted warp instructions at
-0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) stays in the code unused.
+0.6 of the issue rate, combined as sqrt(tb^2 + ti^2), plus 1.5 us a launch) was never used and is
+removed; it and its instruction counts are in the history before that removal.
 
 - Variants: pick the cheaper of the vector kernel and the register MMA by that price / the band rule.
 - The price of the vector kernel holds (RTX 4070 Ti, Q6_K 3840x15360, T = 5: 117 us predicted,

@@ -156,6 +156,13 @@ struct GemmArgs {
     // by lane (generic_gemm.cuh mma_step_local), not in the order of a wider call's emulated MMA.
     // run_route sets it outside the invariant profile, whose calls keep one order at every T.
     int lane_local = 0;
+    // Register MMA on tensor cores with BF16 operands (not Turing's f16): a tile of four or more
+    // token tiles takes a min-term format's group sums by FP32 adds, not an MMA with ones
+    // (generic_gemm.cuh mma_step), a sum in another order than a narrower tile's (same_summation).
+    // run_route sets it outside the invariant and prefill profiles, whose calls keep one order at
+    // every T; narrower tiles ignore it, and Volta's build always adds. Host side only: the launch
+    // takes the kernel instance that adds (rmma_kernel's AddSums), the kernel reads none.
+    int add_sums = 0;
 };
 
 // An activation quantized to int8 per 32 values (the W4A8 quantizer's output): what the W4A8
@@ -874,15 +881,6 @@ struct BuildManifest {
 // Whether the dense tuner may time R8 at T tokens: r8_verify_tunable, or a width where the format
 // has R8 but ggml's vector kernel takes it by rule.
 [[nodiscard]] bool r8_tunable(const Weight& w, LinearPolicy policy, std::int32_t tokens);
-// A verify call's time (seconds) on ggml's vector kernel or on the one-tile register MMA (T = 2..8,
-// the ggml K-quant / i-quant / legacy formats), from the device class's bandwidth, SMs and clock and
-// counted instructions (sm_8x takes sm_86's counts, sm_80/87 included uncounted); nullopt without
-// counts (Turing, Volta, sm_9x/10x) or a roofline. The
-// register MMA's price is its best one-tile schedule's, not the schedule heuristic_rmma runs, so the
-// selector does not use it (generic_gemm.cpp).
-[[nodiscard]] std::optional<double> verify_route_seconds(const DeviceClass& d, bool vector, QType qtype,
-                                                         Epilogue epilogue, double payload_bytes,
-                                                         std::int32_t tokens);
 // Whether a call of `rows` rows and T tokens may take ggml's matrix kernel (the dense tuner's
 // candidate at verify widths 5..16).
 [[nodiscard]] bool ggml_mmq_call(const Weight& w, LinearPolicy policy, std::int32_t rows,

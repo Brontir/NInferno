@@ -1476,7 +1476,11 @@ int exercise_rewrite_branch(const char* artifact) {
     return 0;
 }
 
-int exercise_vision(ninferno::Engine& engine) {
+// exact: the engine runs --activations exact, whose contract (include/ninferno/types.h,
+// ActivationMode::Exact) makes a request's tokens independent of the prefix cache, where the prompt
+// is cut and speculation (greedy up to BF16 logit ties); only there may a cached and an uncached
+// prefill be compared token by token.
+int exercise_vision(ninferno::Engine& engine, bool exact) {
     const auto image_bytes = gradient_ppm();
     auto image_part        = [](const std::vector<std::uint8_t>& bytes, std::string name) {
         ninferno::MessagePart image;
@@ -1577,7 +1581,13 @@ int exercise_vision(ninferno::Engine& engine) {
     // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side):
     // with it the suffix's dropped delta changes the greedy tokens (RTX 4070 Ti, Qwen3.5-4B AWQ:
     // the old code failed here, while a 512x256 image's -112 still decoded the same 16 tokens).
-    {
+    // Under the default activations the two prefills are not byte-identical (the cached suffix
+    // is one call, the fresh prompt its own chunks), and the hybrid layers part their greedy
+    // tokens at a near-tie (#438: Qwen3.6-35B-A3B on the RTX 5090, MTP K=3, at the 1st token; a
+    // cut alone moved its log probabilities by up to 0.1 nats, the dropped delta by 0.16), so
+    // the comparison runs on the exact engine: there the 16 tokens matched, and with the delta
+    // dropped on purpose they parted at the 5th.
+    if (exact) {
         const auto wide = gradient_ppm(1024, 1024);
         ninferno::RequestOptions long_reuse = options(true);
         ninferno::RequestOptions long_fresh = options(false);
@@ -1590,6 +1600,7 @@ int exercise_vision(ninferno::Engine& engine) {
         const ninferno::GenerationResult fresh =
             engine.generate(engine.prepare(followup_input(wide, wide_first)), long_fresh);
         if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
+            cached.generated_token_ids.empty() ||
             cached.generated_token_ids != fresh.generated_token_ids) {
             std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
                          "uncached prefill (RoPE delta lost?): reused="
@@ -1644,9 +1655,21 @@ int exercise_vision(ninferno::Engine& engine) {
     stop_options.stop.token_ids.push_back(mtp_baseline.generated_token_ids[1]);
     const ninferno::GenerationResult stopped =
         engine.generate(engine.prepare(first_input(image_bytes)), stop_options);
-    if (stopped.finish_reason != ninferno::FinishReason::StopToken ||
-        stopped.generated_token_ids.empty() || stopped.speculative.rounds == 0 ||
-        stopped.generated_token_ids.back() != stop_options.stop.token_ids.front()) {
+    // The stopped run may reuse the cached prompt, the baseline did not: on the default engine
+    // they can part at a near-tie (#438) before the stop token, which the run then never emits.
+    // Where it does emit it, it must stop there; the exact engine's tokens always reach it.
+    const auto& stop_ids = stopped.generated_token_ids;
+    const bool emitted   = std::find(stop_ids.begin(), stop_ids.end(),
+                                     stop_options.stop.token_ids.front()) != stop_ids.end();
+    // Without the token the run must still end at its output limit, not for another reason.
+    const bool stopped_right =
+        exact || emitted
+            ? stopped.finish_reason == ninferno::FinishReason::StopToken &&
+                  stopped.generated_token_ids.back() == stop_options.stop.token_ids.front()
+            : stopped.finish_reason == ninferno::FinishReason::OutputLimit &&
+                  stopped.generated_token_ids.size() ==
+                      stop_options.execution.requested_output_tokens;
+    if (stopped.generated_token_ids.empty() || stopped.speculative.rounds == 0 || !stopped_right) {
         std::cerr << "multimodal custom stop did not terminate at the selected token\n";
         return 1;
     }
@@ -2325,6 +2348,18 @@ int verify_loaded_product(const ninferno::Engine& engine, bool with_vision) {
 
 } // namespace
 
+// The vision cases on the default engine, then on an exact one (exercise_vision's exact).
+int exercise_vision_engines(const char* artifact) {
+    {
+        ninferno::Engine engine(engine_options(artifact));
+        if (const int result = exercise_vision(engine, false); result != 0) { return result; }
+    }
+    ninferno::EngineOptions options = engine_options(artifact);
+    options.activations             = ninferno::ActivationMode::Exact;
+    ninferno::Engine engine(std::move(options));
+    return exercise_vision(engine, true);
+}
+
 int exercise_artifact(const char* artifact) {
     // Own engines, independent of the shared-engine cases below.
     if (const int result = exercise_concurrent_wave_host_tier_admission(artifact); result != 0) {
@@ -2358,8 +2393,7 @@ int exercise_artifact(const char* artifact) {
     }
     if (const int result = exercise_rewrite_branch(artifact); result != 0) { return result; }
     if (ninferno::test::real_artifact(artifact).vision) {
-        ninferno::Engine engine(engine_options(artifact));
-        if (const int result = exercise_vision(engine); result != 0) { return result; }
+        if (const int result = exercise_vision_engines(artifact); result != 0) { return result; }
     } else {
         ninferno::test::skip_case("vision prefix cases",
                                   "no vision component (text-only artifact)");
@@ -2530,8 +2564,7 @@ int run_scenarios() {
             std::cout << "skip: no vision component (text-only artifact)\n";
             return 77;
         }
-        ninferno::Engine engine(engine_options(artifact));
-        result = exercise_vision(engine);
+        result = exercise_vision_engines(artifact);
     } else if (scenario == "all") {
         result = exercise_artifact(artifact);
     } else if (scenario == "concurrent") {

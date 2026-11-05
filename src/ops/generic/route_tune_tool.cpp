@@ -357,11 +357,14 @@ int route_tune_main(int argc, char** argv) {
                 }
                 return us; // microseconds
             };
-            // One measurement per (route, T): the band sweep, the prefill total and the prefill
-            // bands share them.
-            std::map<std::pair<int, std::int32_t>, double> timed;
+            // One measurement per (route, T, profile): the band sweep, the prefill total and the
+            // prefill bands share them where they run the same kernel. The prefill profile's are
+            // its own: there a min-term register-MMA tile of four or more token tiles keeps the MMA
+            // with ones, outside it adds (rmma_add_sums).
+            std::map<std::tuple<int, std::int32_t, bool>, double> timed;
             const auto time_route = [&](generic::Route r, std::int32_t t) {
-                const std::pair<int, std::int32_t> key{static_cast<int>(r.family) * 256 + r.schedule, t};
+                const std::tuple<int, std::int32_t, bool> key{
+                    static_cast<int>(r.family) * 256 + r.schedule, t, ops::prefill_routes_active()};
                 const auto it = timed.find(key);
                 if (it != timed.end()) return it->second;
                 return timed[key] = measure(r, t);
@@ -439,6 +442,9 @@ int route_tune_main(int argc, char** argv) {
                     entry.bands.push_back({lo, hi, winners[i].second});
                 }
             }
+            // The prefill candidates and bands are timed as the prefill profile runs them (a
+            // register-MMA tile there keeps the MMA with ones for its min-term sums).
+            const ops::ScopedPrefillRoutes prefill_profile(true);
             double best_total = 1e30;
             for (const auto r : routes) {
                 if (!generic::route_is_token_invariant(r)) continue;
