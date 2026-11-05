@@ -86,6 +86,13 @@ void write_warm_up_record(std::string_view key_text, const WarmUpRecord& record)
             if (!out) { return; }
         }
         std::filesystem::rename(partial, path, error);
+        if (error) {
+            // Where the rename cannot replace the record (Windows, while another process has it
+            // open), the old one goes first: a start reading in between misses and runs the loop.
+            error.clear();
+            std::filesystem::remove(path, error);
+            if (!error) { std::filesystem::rename(partial, path, error); }
+        }
         if (error) { std::filesystem::remove(partial, error); }
     } catch (const std::exception&) {}
 }

@@ -74,6 +74,14 @@ int main() {
     std::ofstream(file) << "{ broken";
     check(!rt::read_warm_up_record("key a\n"), "a broken file is a miss");
 
+    // A candidate, then the confirmed record over it (the second start's write): the new one wins.
+    WarmUpRecord candidate = written;
+    candidate.confirmed    = false;
+    rt::write_warm_up_record("key e\n", candidate);
+    rt::write_warm_up_record("key e\n", written);
+    const auto replaced = rt::read_warm_up_record("key e\n");
+    check(replaced && replaced->confirmed, "a confirmed record replaces its candidate");
+
     WarmUpRecord other = written;
     other.loop_bytes += std::size_t{20} << 20;
     check(rt::warm_up_records_agree(written, other), "20 MiB apart agree");

@@ -109,10 +109,12 @@ every resident thread. Neither is given back.
   depends only on what runs: the binary, the GPU and driver, the model file, the probe's options,
   the widths and the route data. So the server keeps it: after a loop it records the stack limit
   it ended at and the memory it took under the cache directory (`warm-up/<sha256>.json`), and a
-  later start with the same inputs skips the loop and reserves the plan's declared warm-up
-  allowance (64 MiB) for what it would have loaded, not the recorded bytes, so the plan never reads
-  a measurement from an earlier start (`kernel warm-up | ... | kept from an earlier start (…
-  reserved): …`). A loop that left more than the allowance is not recorded. The memory is a difference
+  later start with the same inputs skips the loop. Every start prices the warm-up at the plan's
+  declared allowance (64 MiB), whether its loop ran or was kept: a loop that ran reserves the rest
+  of the allowance beside what it left, a kept one the allowance less what its probe left. So the
+  plan never reads a measurement from an earlier start, and does not depend on whether a record
+  exists (`kernel warm-up | ... | kept from an earlier start (… reserved up to its allowance): …`).
+  A loop that left more than the allowance is not recorded. The memory is a difference
   of the GPU's free memory, which another program can move during one loop, so a record is used
   only once two loops measured the same: the third start with the same inputs is the first to
   skip it. The decode-graph probe and the memory check still run. On an RTX 4090 with Gemma 4 12B

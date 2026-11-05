@@ -1284,11 +1284,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
                              "-token context");
             device.synchronize();
-            // A kept loop is reserved at the selection's declared warm-up allowance (plan_ladder.h,
-            // kPlanWarmUpAllowanceBytes), never at the bytes an earlier start measured: what the
-            // plan reads stays the free memory now and declared constants. A record is written
-            // only for a loop that left no more than the allowance, and the stack limit grows from
-            // zero at the first launch of each larger frame, inside the same allowance.
+            // The warm-up is priced at the selection's declared allowance (plan_ladder.h,
+            // kPlanWarmUpAllowanceBytes) on both paths, never at the bytes an earlier start
+            // measured: a loop that ran tops what it left up to the allowance, a kept one reserves
+            // the allowance less what its probe left, so the plan reads the same free memory and
+            // declared constants whether or not a record was confirmed. A record is written only
+            // for a loop that left no more than the allowance, and the stack limit grows from zero
+            // at the first launch of each larger frame, inside the same allowance.
             const bool use_kept = kept && kept->confirmed &&
                                   kept->loop_bytes <= kPlanWarmUpAllowanceBytes;
             if (use_kept) {
@@ -1317,10 +1319,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             const std::size_t free_after_probe = current_free_device_bytes();
             const std::size_t left =
                 free_before_probe > free_after_probe ? free_before_probe - free_after_probe : 0;
-            if (use_kept) {
-                warm_up.kept_loop_bytes =
-                    kPlanWarmUpAllowanceBytes - std::min<std::size_t>(kPlanWarmUpAllowanceBytes, left);
-            } else if (cacheable && left <= kPlanWarmUpAllowanceBytes) {
+            warm_up.allowance_reserve_bytes =
+                kPlanWarmUpAllowanceBytes - std::min<std::size_t>(kPlanWarmUpAllowanceBytes, left);
+            if (!use_kept && cacheable && left <= kPlanWarmUpAllowanceBytes) {
                 WarmUpRecord measured{.stack_limit_bytes  = current_stack_limit_bytes(),
                                       .loop_bytes         = left,
                                       .stack_limit_source = warm_up.stack_limit_source};
@@ -1385,7 +1386,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             // A loop kept from an earlier start has not loaded its kernels' code yet: the bytes it
             // took are reserved here, as if it had run.
             const std::size_t taken    = warm_up.host_pin_device_bytes + returned_graph_bytes +
-                                      graph_shortfall_bytes + warm_up.kept_loop_bytes;
+                                      graph_shortfall_bytes + warm_up.allowance_reserve_bytes;
             const std::uint64_t measured = free_now > taken ? free_now - taken : 0;
             last_measured                = measured;
             // The chosen rung keeps its admission tier (a WarmUp rung: its held bytes and the

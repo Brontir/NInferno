@@ -595,12 +595,12 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                       "{:.1f}s | kept {} ({}) | stack {} B per thread "
                       "(driver default {} B{}) | Host tier pinning takes {} | graphs given back {}",
                       memory.kernel_warm_up_prefill_widths,
-                      memory.kernel_warm_up_from_cache
-                          ? "kept from an earlier start (" +
-                                product::format_pretty_bytes(
-                                    memory.kernel_warm_up_kept_loop_bytes) +
-                                " reserved):"
-                          : std::string("ran"),
+                      (memory.kernel_warm_up_from_cache ? "kept from an earlier start ("
+                                                        : "ran (") +
+                          product::format_pretty_bytes(
+                              memory.kernel_warm_up_allowance_reserve_bytes) +
+                          " reserved up to its allowance)" +
+                          (memory.kernel_warm_up_from_cache ? ":" : ""),
                       memory.kernel_warm_up_from_cache
                           ? std::string("its widths not run")
                           : warm_up_widths_summary(memory.kernel_warm_up_widths_run,
