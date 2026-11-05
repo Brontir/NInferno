@@ -32,9 +32,10 @@ int main() {
     // The Vision route's size is a law of its tower, not one number (#429: Qwen3.5-4B 768.5 MiB,
     // Qwen3.6-35B-A3B and Qwen3.8-27B 916.5 MiB): its widest scope holds the residual, the MLP's up
     // projection and its norm, (2 H + I) BF16 values a patch, beside the position ids (8 bytes a
-    // patch) and the scratch its linear calls declare (their routes' activation planes: an A8
-    // fc1 of a 1152-wide tower adds 90 MiB at 65536 patches). The workspace must not grow with the
-    // text context past one item's.
+    // patch) and the scratch of the one linear call running (each call's scratch scope closes
+    // before the next opens: an A8 fc1 of a 1152-wide tower adds 90 MiB at 65536 patches). The
+    // MLP scope is the widest while I >= 3 H (the attention scope holds qkv and its norm, 4 H). The
+    // workspace must not grow with the text context past one item's.
     try {
         int devices       = 0;
         const auto status = cudaGetDeviceCount(&devices);
@@ -74,7 +75,7 @@ int main() {
         const auto at_item_limit    = capacity(16384);
         const auto above_item_limit = capacity(131072);
         // The Vision route alone (no text region beneath its handoff): the item's encode peak and
-        // its handoff, what the ceiling bounds.
+        // its handoff.
         const auto alone = qwen::execution::VisionContext::plan_workspace(
             *parameters.model.config().vision, *parameters.vision,
             static_cast<std::uint32_t>(qwen::kMaximumVisionItemTokens), 1);
@@ -92,29 +93,33 @@ int main() {
             return ninferno::ops::linear_workspace_capacity_bytes(
                 linear, static_cast<std::int32_t>(merge), static_cast<std::int32_t>(P));
         };
-        std::uint64_t scratch = P * 8 + declared(vp.patch_embedding);
-        std::uint64_t qkv = 0, out = 0, up = 0, down = 0;
-        for (const auto& layer : vp.layers) {
-            qkv  = std::max<std::uint64_t>(qkv, declared(layer.qkv));
-            out  = std::max<std::uint64_t>(out, declared(layer.output));
-            up   = std::max<std::uint64_t>(up, declared(layer.fc1));
-            down = std::max<std::uint64_t>(down, declared(layer.fc2));
+        if (vc.intermediate_size < 3 * vc.hidden_size) {
+            throw std::runtime_error("the law below takes the MLP scope as the widest (I >= 3 H): "
+                                     "this tower needs its attention scope's term");
         }
-        scratch += qkv + out + up + down;
+        // One call's scratch at a time: the widest any of them declares.
+        std::uint64_t widest = declared(vp.patch_embedding);
+        for (const auto& layer : vp.layers) {
+            for (const auto* linear : {&layer.qkv, &layer.output, &layer.fc1, &layer.fc2}) {
+                widest = std::max<std::uint64_t>(widest, declared(*linear));
+            }
+        }
+        const std::uint64_t scratch = P * 8 + widest;
         constexpr std::uint64_t kAlignmentSlack = 1ULL << 20;
-        std::cout << "law: tensors " << tensors << " + declared scratch " << scratch << '\n';
+        std::cout << "law: tensors " << tensors << " + position ids and widest declared scratch "
+                  << scratch << " | workspace above the Vision route alone "
+                  << at_item_limit - std::min(at_item_limit, alone.capacity_bytes) << '\n';
         if (above_item_limit != at_item_limit) {
             throw std::runtime_error(
                 "Vision workspace grew with the text context: " + std::to_string(at_item_limit) +
                 " bytes at a 16K context, " + std::to_string(above_item_limit) + " at 128K");
         }
         if (alone.encode_peak_bytes < tensors ||
-            alone.encode_peak_bytes > tensors + scratch + kAlignmentSlack ||
-            at_item_limit < alone.encode_peak_bytes) {
+            alone.encode_peak_bytes > tensors + scratch + kAlignmentSlack) {
             throw std::runtime_error(
                 "Vision workspace off its law: encode peak " +
                 std::to_string(alone.encode_peak_bytes) + " bytes, tensors " +
-                std::to_string(tensors) + " .. tensors + declared scratch " +
+                std::to_string(tensors) + " .. tensors + scratch " +
                 std::to_string(tensors + scratch + kAlignmentSlack) + "; workspace " +
                 std::to_string(at_item_limit));
         }
