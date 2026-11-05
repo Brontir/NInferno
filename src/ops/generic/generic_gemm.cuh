@@ -2406,9 +2406,13 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                         float v = 0.0F;
 #pragma unroll
                         for (int i = 0; i < 2 * G; ++i) {
-                            const float2 x = F16Of<Decoder>::value ? f16x2_pair(act[n][i])
-                                                                   : bf16x2_pair(act[n][i]);
-                            v += x.x + x.y;
+                            const unsigned w = act[n][i];
+                            if constexpr (F16Of<Decoder>::value) {
+                                const float2 x = __half22float2(*reinterpret_cast<const __half2*>(&w));
+                                v += x.x + x.y;
+                            } else {
+                                v += __uint_as_float(w << 16) + __uint_as_float(w & 0xffff0000U);
+                            }
                         }
                         v += __shfl_xor_sync(0xffffffffU, v, 1);
                         v += __shfl_xor_sync(0xffffffffU, v, 2);
