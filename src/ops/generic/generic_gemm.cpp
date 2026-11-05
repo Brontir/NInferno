@@ -3170,6 +3170,15 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     // SwiGLU: the weight has 2 n rows (gate and up), every output row multiplies both; `bpw` is the
     // payload over the n output rows, so the bytes of a CTA stay rows x K x bpw.
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
+    // A weight that fits the L2 is read from DRAM once: the token-column CTAs that read its rows
+    // again find them there, at the L2's rate (64 bytes a clock an SM). The narrow tiles read their
+    // rows once per 8 or 16 tokens; priced at the DRAM rate they read 1.4x (Ampere, L2 of 3-6 MB:
+    // the 9B / 12B matrices do not fit) to 2.7x (Ada, Blackwell: 32-96 MB, they do) slower than they
+    // run. Three quarters of the L2 for the weight: the activation and the output share it (half to
+    // all of it moves the sweeps' regret below 2 %, the rate 32..128 bytes a clock below 1 %).
+    const bool weight_in_l2 =
+        d.l2_bytes > 0 && n * k * bpw <= 0.75 * static_cast<double>(d.l2_bytes);
+    const double l2_sm = 64.0 * clk;
     // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
     // threads, at most `occ` resident per SM.
     const auto cost = [&](double rows, double cols, double threads, double cluster, double occ,
@@ -3181,7 +3190,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // one, whose bytes are already in `mem` (the fleet-wide fill charged calls of fewer CTAs
         // than SMs up to 20x).
         const double warps = std::min(q, std::max(occ, 1.0)) * threads / 32;
-        const double mem   = std::max(q * rows * kc * bpw / bw_sm, n * k * bpw / bw);
+        const double mem   = std::max(q * rows * kc * bpw / (weight_in_l2 ? l2_sm : bw_sm),
+                                          n * k * bpw / bw);
         const double mma   = q * 2.0 * rows * sets * cols * kc / peak_sm;
         // The CTAs the busiest SM runs one residency after another each pay their warps'
         // dependent chain: the exposed load latency of a K step (register MMA: 16 K per warp, 200
