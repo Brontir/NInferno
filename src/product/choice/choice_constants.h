@@ -429,7 +429,7 @@ inline constexpr double kW4a8KquantRows   = 64;
 // of Qwen3.5 9B's Q3_K_M at 7K, its three grids' rounds within 3 %: 62.2 .. 64.3 us at K 4096).
 inline constexpr double kW4a8Q3kTile     = 64;
 inline constexpr double kW4a8Q3kResident = 2;
-inline constexpr double kMmqSliceTokens = 512; // generic_gemm.cpp kMmqPrefillSlice
+inline constexpr double kMmqSliceTokens = 512; // generic_ggml_internal.h kMmqPrefillSlice
 inline constexpr double kMmqMinTokens   = 17;  // generic_gemm.cpp: MMQ from the prefill band (vector / R8 below)
 inline constexpr double kMmqTile        = 128;
 // Beside the tiles, every grid quantizes its input to q8_1 (a 16-bit element read, 1.125 bytes

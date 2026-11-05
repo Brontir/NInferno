@@ -320,7 +320,7 @@ inline constexpr std::int32_t kR8DecodeTokens = 1;
 // The verify form is compiled for up to eight tokens (kR8VerifyTokens); r8_verify_widest is the
 // widest call a format takes it for by rule.
 inline constexpr std::int32_t kR8VerifyTokens = 8;
-// The narrowest call on the ggml matrix kernel's route (generic_gemm.cpp, kMmqMaxTokens): five
+// The narrowest call on the ggml matrix kernel's route (generic_ggml_internal.h, kMmqMaxTokens): five
 // tokens, past the four R8 verifies for every format but Q8.
 inline constexpr std::int32_t kMmqMinTokens = 5;
 [[nodiscard]] bool r8_verify_supports(QType qtype);
