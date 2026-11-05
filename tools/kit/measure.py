@@ -573,11 +573,15 @@ def main():
                   + "; ".join(listed))
             if not args.yes and input("Fetch now? [y/N] ").strip().lower() != "y":
                 sys.exit("Nothing fetched; nothing measured.")
-        # The fetches run one after another in the background, in the set's order: a model is
+        # The fetches run one after another in the background, in that order: a model is
         # measured once its own fetch ended, while the next ones download (--no-prefetch: all
         # first). A conversion is the host's work: each run records whether a fetch ran beside it
         # (validate.py notes it), and the route sweeps, whose small widths time the host's
         # launches, run after the last fetch.
+        # The models whose source the cache already holds go first (in the set's order among
+        # themselves): the card measures them while the others download, instead of waiting on
+        # the first fetch (a lab set of a dozen checkpoints is hours of download).
+        chosen.sort(key=lambda mp: not cached_parts(mp[0])[0])
         fetcher = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fetches = []
         for model, plan in chosen:
