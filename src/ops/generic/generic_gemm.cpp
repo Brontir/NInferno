@@ -3314,8 +3314,9 @@ std::optional<Route> pinned_route(const Problem& problem, const Weight& weight, 
 std::optional<Route> volta_hmma_route(const Problem& problem, const Weight& weight,
                                       std::int32_t tokens) {
     if (tokens < kVoltaHmmaMinTokens || tokens > kVoltaHmmaMaxTokens ||
-        current_features().mma_tensor || !supports(weight) || (weight.k % 256) != 0 ||
-        !volta_hmma_codec(codec_of(weight))) {
+        current_features().mma_tensor || !supports(weight) ||
+        !volta_hmma_codec(codec_of(weight)) ||
+        (weight.k % volta_hmma_k_multiple(codec_of(weight))) != 0) {
         return std::nullopt;
     }
     if (tokens <= kVecRuleMaxTokens &&

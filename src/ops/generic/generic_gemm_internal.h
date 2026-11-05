@@ -180,6 +180,8 @@ void launch_volta_gemv(WeightCodec codec, Epilogue epilogue, const GemmArgs& arg
 inline constexpr std::int32_t kVoltaHmmaMinTokens = 1;
 inline constexpr std::int32_t kVoltaHmmaMaxTokens = 16;
 bool volta_hmma_codec(WeightCodec codec);
+// The K multiple a row needs: whole superblocks, or for Q8 G32 whole pairs of groups.
+int volta_hmma_k_multiple(WeightCodec codec);
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args);
 void launch_volta_hmma(WeightCodec codec, Epilogue epilogue, const GemmArgs& args,
                        cudaStream_t stream);

@@ -232,8 +232,9 @@ struct HQ8 {
 
     __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
         // A row of K % 256 != 0 (K a multiple of 64: a quad-pair's two groups are both in it or
-        // both past it) ends inside its last superblock: the quad-pairs past it hold zeros.
-        if (8 * sb + 2 * q >= a.groups_per_row) {
+        // both past it) ends inside its last superblock: the quad-pairs past it hold zeros. The
+        // bound is K's groups, not the stored row's (padded to 128 values, its padding never read).
+        if (8 * sb + 2 * q >= a.k / 32) {
             clear();
             return;
         }
@@ -521,6 +522,8 @@ bool volta_hmma_codec(WeightCodec codec) {
            codec == WeightCodec::GgmlQ6K || codec == WeightCodec::Q8;
 }
 
+int volta_hmma_k_multiple(WeightCodec codec) { return codec == WeightCodec::Q8 ? 64 : 256; }
+
 bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
     // join_previous asks for a programmatic dependent launch, which sm_70 does not have: stream
     // order already runs the call after the one before it (a segmented projection's later parts).
@@ -531,8 +534,8 @@ bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
     // Whole superblocks, or for Q8 G32 whole pairs of groups (gpt-oss's K = 2880: its LM head ran
     // the register-MMA tile on FP32 FMAs, 1.9 ms a token on the GV100); the staging reads four
     // bf16 values at a time.
-    const int k_multiple = codec == WeightCodec::Q8 ? 64 : 256;
-    return volta_hmma_codec(codec) && (args.k % k_multiple) == 0 && (args.ldx % 4) == 0 &&
+    return volta_hmma_codec(codec) && (args.k % volta_hmma_k_multiple(codec)) == 0 &&
+           (args.ldx % 4) == 0 &&
            (reinterpret_cast<std::uintptr_t>(args.x) % 8) == 0;
 }
 
