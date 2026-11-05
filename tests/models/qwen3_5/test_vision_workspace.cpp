@@ -67,6 +67,15 @@ int main() {
         // Increasing total context cannot exceed the single Vision item's 16K workspace.
         const auto at_item_limit    = capacity(16384);
         const auto above_item_limit = capacity(131072);
+        // The Vision route alone (no text region beneath its handoff): the item's encode peak and
+        // its handoff, what the ceiling bounds.
+        const auto alone = qwen::execution::VisionContext::plan_workspace(
+            *parameters.model.config().vision, *parameters.vision,
+            static_cast<std::uint32_t>(qwen::kMaximumVisionItemTokens), 1);
+        std::cout << "workspace at 16K " << at_item_limit << " at 128K " << above_item_limit
+                  << " | Vision alone: encode peak " << alone.encode_peak_bytes << " handoff at "
+                  << alone.handoff_offset_bytes << " + " << alone.handoff_capacity_bytes
+                  << " capacity " << alone.capacity_bytes << '\n';
         if (at_item_limit == 0 || at_item_limit > kWorkspaceCeiling ||
             above_item_limit != at_item_limit) {
             throw std::runtime_error("Vision workspace exceeded the single-item bound: at=" +
