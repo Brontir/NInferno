@@ -11446,6 +11446,6 @@
   "class": "ga106",
   "name": "NVIDIA GeForce RTX 3060"
  },
- "note": "RTX 3060 (04.11): the generic entries' bands, prefill and prefill_bands re-tuned on this board with ninferno_route_tune --rotate 1 over weight copies (#405) on ga102's problems, and checked by a second pass (2404 of 2489 band points the same, 83 within 3 %, 2 farther: 99.9 % held). Every other field and section is ga102's (the RTX 3090's), which this board borrowed before.",
+ "note": "RTX 3060 (04.11): the generic entries' bands, prefill and prefill_bands re-tuned on this board with ninferno_route_tune --rotate 1 over weight copies (#405) on ga102's problems, and checked by a second pass (2404 of 2489 band points the same, 83 within 3 %, 2 farther: 99.9 % held). Every other field and section is ga102's (the RTX 3090's), which this board borrowed before. 05.11: + 16 entries from the kit sweep of Qwen3.5-9B and Gemma 4 12B on this board, each one at least three of four passes agreed on (the kit's two and two route-tune passes).",
  "schema": "ninferno-route-table/1"
 }
