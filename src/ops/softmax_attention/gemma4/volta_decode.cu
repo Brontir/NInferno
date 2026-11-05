@@ -1,9 +1,12 @@
 // Gemma 4 decode partials without native BF16 MMA (gemma4_attention_decode_launch). On Volta the
 // split-K kernel's MMA tiles run as shuffle-bound FMA emulation (V100, Gemma 4 26B: 52 us per
 // sliding layer at ~300 keys, 175 us per full layer, ~20 % of the decode step). Here a CTA of four
-// warps folds its split's keys in FP32 on the SIMT path: Q of the KV head's rows in shared memory,
-// a warp per eight keys of a 32-key tile for the scores, a thread per row for the online softmax,
-// and every thread D / 128 head dims of every row for P V. The partials (FP32 unnormalized
+// warps folds its split's keys in FP32 on the SIMT path, Q of the KV head's rows in shared memory.
+// At D = 256 and 512 (gemma4_volta_decode_kernel) a warp takes eight keys of a 32-key tile for the
+// scores, a thread a row for the online softmax, and every thread D / 128 head dims of every row
+// for P V. At D = 64 and 128 (gemma4_volta_decode_tiled_kernel) the tile's keys and values are
+// staged in shared memory first, then a thread takes a (key, row) score, a warp a row's softmax and
+// a thread a (dim, row) of P V. The partials (FP32 unnormalized
 // accumulators, m * scale_log2, l) are those of gemma4_attention_kernel; the split boundaries
 // round to kGemma4VoltaDecodeBc keys, and gemma4_attention_combine_kernel instantiated with it
 // merges them. The sums run in another order than the
@@ -501,7 +504,10 @@ using VoltaDecodeKernel = void (*)(Gemma4AttentionArgs, int);
 
 // The instance holding the fewest rows the call has (T * G): its accumulators and Q tile are
 // sized by MaxRows, and the registers and shared memory they take bound how many CTAs an SM keeps
-// resident (RTX 2080 Ti, D = 128: 32 rows took 128 registers a thread for a call of 4, 72 at 4).
+// resident (the per-key kernel on the RTX 2080 Ti, D = 128: 32 rows took 128 registers a thread
+// for a call of 4, 72 at 4; the tiled kernel at D = 64 and 64 rows holds 42 KB of shared memory,
+// one CTA an SM on Turing). gemma4_volta_decode_resident_ctas asks the instance itself, so the
+// plan's split count follows it.
 template <int D, int MaxRows>
 constexpr VoltaDecodeKernel kernel_instance() {
     if constexpr (D <= 128) return gemma4_volta_decode_tiled_kernel<D, MaxRows>;
