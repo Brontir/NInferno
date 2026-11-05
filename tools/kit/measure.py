@@ -120,6 +120,10 @@ class Progress:
         self.used += seconds
 
 
+def models_path(args):
+    return Path(args.models_file) if args.models_file else HERE / "models.json"
+
+
 def plan_json(serve, model, flags):
     out = subprocess.run([serve, model["repo"], "--quant", model["quant"], "--plan", "--no-load",
                           "--json"] + flags, capture_output=True, text=True, timeout=900)
@@ -455,7 +459,10 @@ def main():
                                  allow_abbrev=False)  # --full reads the options as spelt
     ap.add_argument("--bin", required=True, help="the directory holding ninferno-serve (and ninferno)")
     ap.add_argument("--budget-minutes", type=float, default=30, help="GPU time (downloads apart)")
-    ap.add_argument("--models", default="auto", help="auto, or ids from tools/kit/models.json")
+    ap.add_argument("--models", default="auto", help="auto, or ids from the models file")
+    ap.add_argument("--models-file", default=None,
+                    help="the model set (default tools/kit/models.json): a lab's own list, e.g. the "
+                         "largest checkpoints and their small quantizations on one card")
     ap.add_argument("--max-models", type=int, default=2)
     ap.add_argument("--device", type=int, default=0, help="the GPU (CUDA ordinal = PCI bus order)")
     ap.add_argument("--passes", type=int, default=2, help="starts per model (a repeat each)")
@@ -481,7 +488,7 @@ def main():
         if "--budget-minutes" not in given:
             args.budget_minutes = 24 * 60
         if "--max-models" not in given:
-            args.max_models = len(json.loads((HERE / "models.json").read_text(encoding="utf-8"))["models"])
+            args.max_models = len(json.loads(models_path(args).read_text(encoding="utf-8"))["models"])
         if "--spec-tune" not in given:
             args.spec_tune = 1200
         args.hard50 = args.routes = True
@@ -496,7 +503,7 @@ def main():
     # spec-tune` (the same code, through the dispatcher's engine for this GPU).
     cli_path = Path(args.bin) / ("ninferno" + (".exe" if os.name == "nt" else ""))
     tune_cmd = [str(cli_path), "spec-tune"] if cli_path.exists() else [serve, "spec-tune"]
-    models_file = HERE / "models.json"
+    models_file = models_path(args)
     models_doc = json.loads(models_file.read_text(encoding="utf-8"))
     wanted = models_doc["models"] if args.models == "auto" else [
         m for m in models_doc["models"] if m["id"] in args.models.split(",")]

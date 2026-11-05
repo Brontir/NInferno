@@ -47,6 +47,7 @@ From a source tree or with options:
    - The OS, the CPU, the RAM, and AC or battery (Windows `GetSystemPowerStatus`, Linux `/sys/class/power_supply`; a host without a battery is on AC). An unknown power source gives no verdict.
 2. **Model set.**
    - `tools/kit/models.json` (versioned; its hash goes in the result) lists `{id, repo, quant, context}` in priority order. The last entry is small, so every supported card yields a row.
+     A lab run can pass its own set with `--models-file` (the same format; its hash goes in the result instead), e.g. the largest checkpoints and their small quantizations on one card.
    - Each entry is planned on this card with `--plan --no-load --json` and the exact flags of the start (`--max-context C --max-concurrency 1 --spec none`).
    - The first `--max-models` (2) whose plan fits are measured.
 3. **Per model, plain** (`--spec none`): `--passes` starts (2, a restart each, so a pass never reuses another's cache). Each start:
