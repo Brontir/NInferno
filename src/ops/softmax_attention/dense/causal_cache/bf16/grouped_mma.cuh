@@ -54,6 +54,9 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
     constexpr int D = G::kHeadDim, M = S::kQueryRows, N = S::kKeyRows;
     constexpr int NK = N / S::kWarpsKV, QKNt = NK / 8, QKKs = D / 16;
     constexpr int PVNt = D / 8, PVKs = NK / 16;
+    // Turing converts a K tile in place once when more than one query warp reads it; with one,
+    // each K register reaches one MMA either way, and only Q (held in registers) is prepared.
+    constexpr bool kStageK = kBf16KvStagedF16 && M / 16 > 1;
     // Aligned: one KV warp, and a row's split closes on a key tile boundary.
     static_assert(!Aligned || S::kWarpsKV == 1);
     static_assert((1 << CausalKvPartition::kAlignedMinKeyShift) % N == 0);
@@ -150,6 +153,8 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
         const int d = k * 16 + (lane >> 4) * 8;
         ldmatrix_x4(q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
                     smem_addr(k_s + a_row * D + causal_swizzle(a_row, d)));
+#pragma unroll
+        for (int i = 0; i < 4; ++i) { q_frag[k][i] = mma_a_bf16(q_frag[k][i]); }
     }
     __syncthreads();
     float acc[PVNt][4] = {};
@@ -217,6 +222,11 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
         cp_commit();
         cp_wait<0>();
         __syncthreads();
+        if constexpr (kStageK) {
+            // Turing: the K tile into the MMA's f16 form (tile_io.cuh).
+            bf16_tile_to_mma_form<N * D, S::kThreads>(k_s, tid);
+            __syncthreads();
+        }
         float score[QKNt][4] = {};
         // Q and O already occupy 192 registers per lane at D=256. Keep one
         // K fragment live at a time; double buffering all N fragments spills.
@@ -228,8 +238,15 @@ __launch_bounds__(S::kLaunchBoundThreads, S::kMinBlocks) __global__
                 const int row = warp_kv * NK + n * 8 + (lane & 7);
                 const int d   = k * 16 + ((lane >> 3) & 1) * 8;
                 ldmatrix_x2(bf[0], bf[1], smem_addr(k_s + row * D + causal_swizzle(row, d)));
-                mma_bf16(score[n][0], score[n][1], score[n][2], score[n][3], q_frag[k][0],
-                         q_frag[k][1], q_frag[k][2], q_frag[k][3], bf[0], bf[1]);
+                if constexpr (kStageK) {
+                    mma_bf16_staged(score[n][0], score[n][1], score[n][2], score[n][3],
+                                    q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
+                                    bf[0], bf[1]);
+                } else {
+                    mma_bf16_prepared(score[n][0], score[n][1], score[n][2], score[n][3],
+                                      q_frag[k][0], q_frag[k][1], q_frag[k][2], q_frag[k][3],
+                                      bf[0], bf[1]);
+                }
             }
         }
         float maximum[2] = {-CUDART_INF_F, -CUDART_INF_F};
