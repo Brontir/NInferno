@@ -28,8 +28,9 @@
 // verify widths: the band sweep times it there as the dense tuner does (generic_tune.cpp), and the
 // dispatch takes such a band only where the policy admits it. --points replaces the
 // band sweep's token counts; --routes-out writes every timed (problem, T, route) as CSV, with the
-// cost model's price of the route (route_cost_seconds) and a register-MMA kernel's registers and
-// local bytes beside the timing.
+// cost model's price of the route (route_cost_seconds: the model the selector ranks by at T >= 17
+// outside the prefill profile, applied here at every T) and a register-MMA kernel's registers and
+// local memory (spills or stack arrays) beside the timing.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
@@ -323,9 +324,11 @@ int route_tune_main(int argc, char** argv) {
                                << generic::compute_class_name(p.compute) << ','
                                << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                << ',' << t << ',' << generic::route_name(r) << ',' << us << ',';
-                    // The cost model's time for the route where it prices the call, and the
-                    // register-MMA kernel's compiled registers and local bytes (spills): what a
-                    // timing far from its price is read against. Empty where there is none.
+                    // The cost model's time for the route (at every T, though the selector ranks
+                    // by it only at T >= 17 outside the prefill profile, and not for NVFP4), and
+                    // the register-MMA kernel's compiled registers and local memory (spills or
+                    // stack arrays): what a timing far from its price is read against. Empty
+                    // where the model prices no such route or the route is no register MMA.
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
                     if (const auto s = generic::route_cost_seconds(gp, w.weight, r, t)) {
                         routes_csv << *s * 1e6;
