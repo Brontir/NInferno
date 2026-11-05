@@ -16,6 +16,7 @@ last, once nothing downloads beside them). Nothing is sent anywhere: the kit wri
 FILE.json and FILE.md (a ready PR or issue body) and prints how to submit them yourself.
 """
 import argparse
+import collections
 import concurrent.futures
 import csv
 import datetime
@@ -135,7 +136,7 @@ def load_models(path):
                 if field not in m:
                     raise KeyError(f"{field} of {m}")
             # The id names the run's log and temporary files: one plain file name component.
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(m["id"])):
+            if not isinstance(m["id"], str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", m["id"]):
                 raise ValueError(f"id {m['id']!r}: letters, digits, '.', '_' and '-' only")
         return doc
     except (OSError, ValueError, KeyError, TypeError) as e:
@@ -396,6 +397,25 @@ def cached_parts(model):
     return source, converted
 
 
+def gguf_cached(model):
+    """Whether the hub cache holds every part of the model's GGUF of its quant (a split
+    name-0000i-of-0000n.gguf needs all n parts), for the measuring order: a sidecar or one part
+    of a split is not the checkpoint."""
+    root = hub_dir() / ("models--" + model["repo"].replace("/", "--"))
+    quant = model["quant"].lower()
+    parts = collections.defaultdict(set)
+    for f in root.glob("snapshots/*/**/*.gguf"):
+        name = f.name.lower()
+        # The quant as the name's last label (UD-Q6_K is not Q6_K, Q4_K_M is not Q4_K).
+        if not f.exists() or not re.search(r"(^|[-.])" + re.escape(quant) + r"(-\d{5}-of-\d{5})?\.gguf$", name):
+            continue
+        split = re.search(r"-(\d{5})-of-(\d{5})\.gguf$", name)
+        if not split:
+            return True
+        parts[(name[:split.start()], int(split.group(2)))].add(int(split.group(1)))
+    return any(len(have) == total for (_, total), have in parts.items())
+
+
 def fetch_need_bytes(model, weights_bytes):
     """The disk a fetch writes: the source weights where they are not cached, and the converted
     artifact (about the weights' bytes again) where it is not, plus FETCH_MARGIN_BYTES."""
@@ -578,10 +598,10 @@ def main():
         # first). A conversion is the host's work: each run records whether a fetch ran beside it
         # (validate.py notes it), and the route sweeps, whose small widths time the host's
         # launches, run after the last fetch.
-        # The models whose source the cache already holds go first (in the set's order among
+        # The models whose GGUF the cache already holds whole go first (in the set's order among
         # themselves): the card measures them while the others download, instead of waiting on
         # the first fetch (a lab set of a dozen checkpoints is hours of download).
-        chosen.sort(key=lambda mp: not cached_parts(mp[0])[0])
+        chosen.sort(key=lambda mp: not gguf_cached(mp[0]))
         fetcher = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fetches = []
         for model, plan in chosen:
