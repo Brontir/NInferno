@@ -2393,8 +2393,32 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
                 }
                 act_operands<Decoder, NT, G>(act);
+                // The group's activation sums of the tile's token columns 2 quad and 2 quad + 1
+                // (the accumulator columns of this lane). Volta's build adds them in FP32: the
+                // lane's 4G values of its column lane / 4, the quad's four lanes, then a gather,
+                // where an MMA with ones was ~100 FP32 FMAs per MMA (GV100, Q4_K 4096x12288 and
+                // 12288x4096 at T = 17 / 32: register-MMA routes 0.56-0.82x). Tensor-core builds
+                // keep the MMA with ones: the adds' shuffles lengthen a latency-bound tile's chain
+                // (RTX 5090 Q4_K 4096x12288 at T = 17-32: the fastest route +11-14 %, T = 2-8 +2-4 %)
+                // though they lift a tensor-bound one (n4 0.78-0.95x, n8 0.63-0.86x); one method
+                // for every tile, since a token's bytes must not depend on its call's token tiles
+                // (the invariant profile steps n1 -> n4 / n8 at T = 9).
                 float sums[NT][4];
-                if constexpr (MinTermOf<Decoder>::value) {
+                if constexpr (MinTermOf<Decoder>::value && NINFERNO_FMA_MMA) {
+#pragma unroll
+                    for (int n = 0; n < NT; ++n) {
+                        float v = 0.0F;
+#pragma unroll
+                        for (int i = 0; i < 2 * G; ++i) {
+                            const unsigned w = act[n][i]; // BF16 pairs (F16Of is sm_75's alone)
+                            v += __uint_as_float(w << 16) + __uint_as_float(w & 0xffff0000U);
+                        }
+                        v += __shfl_xor_sync(0xffffffffU, v, 1);
+                        v += __shfl_xor_sync(0xffffffffU, v, 2);
+                        sums[n][0] = sums[n][2] = __shfl_sync(0xffffffffU, v, 8 * quad);
+                        sums[n][1] = sums[n][3] = __shfl_sync(0xffffffffU, v, 8 * quad + 4);
+                    }
+                } else if constexpr (MinTermOf<Decoder>::value) {
                     // 1.0, twice: BF16, or FP16 for an F16Of decoder.
                     constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
 #pragma unroll
