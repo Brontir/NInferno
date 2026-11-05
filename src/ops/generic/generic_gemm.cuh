@@ -2402,8 +2402,10 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                 // many tensor-pipe cycles as the tile's own MMAs at MT = 1 (ncu RTX 5090, Gemma 4
                 // head Q4_K at T = 24: 16.7 cycles per weight MMA against Q6_K's 8.5). One or two
                 // token tiles keep the MMA: they wait on their loads and the shuffles lengthened that
-                // wait (RTX 3060 at T <= 8: +15-23 % with the adds).
-                const bool add = NINFERNO_FMA_MMA || (NT >= 4 && add_sums);
+                // wait (RTX 3060 at T <= 8: +15-23 % with the adds). So do f16 operands (F16Of,
+                // Turing's), which would each take a conversion (rmma_add_sums).
+                const bool add =
+                    NINFERNO_FMA_MMA || (!F16Of<Decoder>::value && NT >= 4 && add_sums);
                 float sums[NT][4];
                 if constexpr (MinTermOf<Decoder>::value) {
                     if (add) {
@@ -2412,13 +2414,8 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                             float v = 0.0F;
 #pragma unroll
                             for (int i = 0; i < 2 * G; ++i) {
-                                const unsigned w = act[n][i];
-                                if constexpr (F16Of<Decoder>::value) {
-                                    const float2 x = __half22float2(*reinterpret_cast<const __half2*>(&w));
-                                    v += x.x + x.y;
-                                } else {
-                                    v += __uint_as_float(w << 16) + __uint_as_float(w & 0xffff0000U);
-                                }
+                                const unsigned w = act[n][i]; // a BF16 pair
+                                v += __uint_as_float(w << 16) + __uint_as_float(w & 0xffff0000U);
                             }
                             v += __shfl_xor_sync(0xffffffffU, v, 1);
                             v += __shfl_xor_sync(0xffffffffU, v, 2);

@@ -2759,10 +2759,15 @@ bool rmma_sums_lane_local(int schedule) {
 
 // GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
 // order at every T (a call there may change width from one chunk or round to the next), a tensor-core
-// register-MMA tile of four or more token tiles adds a min-term format's group sums in FP32.
+// register-MMA tile of four or more token tiles adds a min-term format's group sums in FP32 where
+// the MMA takes BF16 operands: a BF16 pair widens to FP32 by a shift and a mask, while Turing's f16
+// operands (F16Of) each take a conversion. ABBA route sweeps, n4/n8 tiles at T 17..32 against the
+// MMA with ones: RTX 3060 0.70-1.25x, 4060 Ti 0.73-1.40x, 5070 Ti 0.60-1.29x (the fastest route
+// -3..-16 % on wide heads), RTX 2080 Ti 1.01-1.42x everywhere.
 namespace {
 bool rmma_add_sums() {
-    return current_features().mma_tensor && !invariant_routes_active() && !prefill_routes_active();
+    return current_features().mma_tensor && bf16_mma_native() && !invariant_routes_active() &&
+           !prefill_routes_active();
 }
 } // namespace
 
