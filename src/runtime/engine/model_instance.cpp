@@ -91,13 +91,12 @@ constexpr std::size_t kGraphShortfallStepBytes = std::size_t{128} << 20;
 // same record.
 std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tokens,
                              const std::vector<std::uint32_t>& widths) {
-    std::string text = "schema	ninferno-warm-up-key/1
-";
-    const auto add   = [&](std::string_view section, const DecisionSection& lines) {
-        for (const auto& [key, value] : lines) {
-            text += std::string(section) + "." + key + "	" + value + "
-";
-        }
+    std::string text = "schema\tninferno-warm-up-key/1\n";
+    const auto line  = [&](std::string_view key, std::string_view value) {
+        text += std::string(key) + "\t" + std::string(value) + "\n";
+    };
+    const auto add = [&](std::string_view section, const DecisionSection& lines) {
+        for (const auto& [key, value] : lines) { line(std::string(section) + "." + key, value); }
     };
     int driver_version = 0;
     if (cudaDriverGetVersion(&driver_version) != cudaSuccess) {
@@ -105,7 +104,8 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
         driver_version = 0;
     }
     add("build", build_of());
-    add("facts", facts_of(device_class(probe.device), build_features(), driver_version, HostFacts{}));
+    add("facts",
+        facts_of(device_class(probe.device), build_features(), driver_version, HostFacts{}));
     std::error_code error;
     const auto size  = std::filesystem::file_size(probe.artifact_path, error);
     const auto mtime = std::filesystem::last_write_time(probe.artifact_path, error);
@@ -113,23 +113,19 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
     try {
         identity = artifact::source_identity(probe.artifact_path).value_or("none");
     } catch (const std::exception&) { identity = "unreadable"; }
-    text += "artifact.identity	" + identity + "
-artifact.bytes	" + std::to_string(size) +
-            "
-artifact.mtime	" + std::to_string(mtime.time_since_epoch().count()) + "
-";
+    line("artifact.identity", identity);
+    line("artifact.bytes", std::to_string(size));
+    line("artifact.mtime", std::to_string(mtime.time_since_epoch().count()));
     add("probe", options_of(probe, identity, "", drafter_identity(probe.speculative.drafter)));
-    text += "warm_up.round_tokens	" + std::to_string(round_tokens) + "
-warm_up.widths	";
+    line("warm_up.round_tokens", std::to_string(round_tokens));
+    std::string list;
     for (std::size_t i = 0; i < widths.size(); ++i) {
-        text += (i == 0 ? "" : ",") + std::to_string(widths[i]);
+        list += (i == 0 ? "" : ",") + std::to_string(widths[i]);
     }
-    text += "
-";
+    line("warm_up.widths", list);
     const ops::RouteTableStatus routes = ops::route_table_status();
-    text += "sources.route_table	" +
-            (routes.loaded ? routes.content_sha256 + " + " + routes.lender_sha256 : "none") + "
-";
+    line("sources.route_table",
+         routes.loaded ? routes.content_sha256 + " + " + routes.lender_sha256 : "none");
     add("sources", ops::detail::generic::dense_tune_sources());
     return text;
 }
