@@ -14,7 +14,7 @@
 namespace ninferno::runtime {
 namespace {
 
-constexpr std::string_view kSchema = "ninferno-warm-up/3";
+constexpr std::string_view kSchema = "ninferno-warm-up/4";
 
 std::filesystem::path record_path(std::string_view key_text) {
     const auto dir = warm_up_cache_dir();

@@ -29,8 +29,9 @@ namespace ninferno::runtime {
 
 struct WarmUpRecord {
     std::size_t stack_limit_bytes = 0; // the stack limit after the width loop
-    // The Device memory the width requests took and kept beyond the small probe's (the probe is
-    // built either way): their kernels' code and the stack's local memory for larger frames.
+    // The Device memory the warm-up left once its small probe was gone (the kernels' code, the
+    // stack's local memory, the graphs the driver keeps). A kept start, which builds the probe
+    // too, reserves what this exceeds its own by.
     std::size_t loop_bytes        = 0;
     std::string stack_limit_source; // the step that raised the stack limit last
     bool confirmed = false;         // a second loop measured the same

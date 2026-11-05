@@ -114,9 +114,11 @@ every resident thread. Neither is given back.
   of the GPU's free memory, which another program can move during one loop, so a record is used
   only once two loops measured the same: the third start with the same inputs is the first to
   skip it. The decode-graph probe and the memory check still run. On an RTX 4090 with Gemma 4 12B
-  this takes a start from 22.9 s to 14.1 s; the first request then loads the kernels' code, a few
-  milliseconds. A maintainer option that steers the routes runs the loop, as does a build from a
-  changed tree, and `NINFERNO_WARMUP_CACHE=0` (`off`, `no`, `false`) turns the record off.
+  this takes a start from 22.8 s to 13.9 s. The first requests then load the kernels' code once:
+  the first twenty short chats ran 0.4-0.7 % slower (about 40 ms in all), the next twenty as fast
+  as after a full warm-up. Any maintainer option but `--artifact-io` runs the loop, as does a build
+  from a changed tree or from no checkout, and `NINFERNO_WARMUP_CACHE=0` (`off`, `no`, `false`)
+  turns the record off.
 - The warm-up takes longer on larger models (one prefill of every width). Only an automatic choice
   runs it: with `--max-context`, `--kv-capacity`, `--prefill-chunk` and `--device-state-slots` all
   given, the ladder has one rung, which fits or is refused.

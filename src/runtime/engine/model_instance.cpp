@@ -117,6 +117,13 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
     }
     line("driver.build", driver_build);
     line("cuda.module_loading", sys::env("CUDA_MODULE_LOADING"));
+    line("cuda.force_ptx_jit", sys::env("CUDA_FORCE_PTX_JIT"));
+    line("cuda.disable_ptx_jit", sys::env("CUDA_DISABLE_PTX_JIT"));
+#ifdef NDEBUG
+    line("build.type", "release");
+#else
+    line("build.type", "debug");
+#endif
     std::error_code error;
     const auto size  = std::filesystem::file_size(probe.artifact_path, error);
     const auto mtime = std::filesystem::last_write_time(probe.artifact_path, error);
@@ -1241,28 +1248,30 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     : detail::kernel_warm_up_widths(widths);
             // What the loop leaves (the kernels' code, the stack limit) is kept from an earlier
             // start with the same inputs (warmup_cache.h). A maintainer option that steers what
-            // runs (a route pin, a timing tuner, a route directory) always runs it, and so does a
-            // build from a changed tree: its commit does not name the kernels it holds.
+            // runs (any but --artifact-io) always runs it, and so does a build from a changed tree
+            // or from no checkout: its commit does not name the kernels it holds.
             MaintainerOptions steering = options.maintainer;
             steering.artifact_io       = MaintainerOptions{}.artifact_io; // how the file is read
+            const std::string commit   = build_of()["git_commit"];
             const bool cacheable       = steering == MaintainerOptions{} &&
-                                   !build_of()["git_commit"].ends_with("-dirty");
+                                   !commit.ends_with("-dirty") && commit != "unknown";
             const std::string key_text =
                 cacheable ? warm_up_key_text(probe_options(probe_context), round_tokens, width_set)
                           : std::string();
             const std::optional<WarmUpRecord> kept =
                 cacheable ? read_warm_up_record(key_text) : std::nullopt;
-            // The small probe is built either way: its decode graphs, the decode kernels' code and
-            // the stack its frames need are then the same on a start that keeps the loop as on one
-            // that runs it, and the record holds only what the width requests added to them.
+            // The small probe is built either way, and the record compares the two paths' end
+            // states: what the warm-up left in Device memory after the probe is gone (the kernels'
+            // code, the stack's local memory, the graphs the driver keeps), measured from before
+            // the probe. A kept start reserves the difference to what it left itself, so memory
+            // the probe takes and gives back, or a workspace its requests grow, counts on neither.
+            const std::size_t free_before_probe = current_free_device_bytes();
             std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
             note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
                              "-token context");
             device.synchronize();
-            const std::size_t free_with_probe = current_free_device_bytes();
-            if (kept && kept->confirmed) {
-                // Setting the limit reserves the stack's local memory now, which the loop's bytes
-                // hold too: what it took is no longer to come.
+            const bool use_kept = kept && kept->confirmed && kept->stack_limit_bytes >= stack_limit;
+            if (use_kept) {
                 if (const cudaError_t set =
                         cudaDeviceSetLimit(cudaLimitStackSize, kept->stack_limit_bytes);
                     set == cudaErrorMemoryAllocation) {
@@ -1274,13 +1283,8 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 } else {
                     CUDA_CHECK(set);
                 }
-                const std::size_t free_after_limit = current_free_device_bytes();
-                const std::size_t limit_took       = free_with_probe > free_after_limit
-                                                         ? free_with_probe - free_after_limit
-                                                         : 0;
                 note_stack_limit(kept->stack_limit_source);
-                warm_up.kept_loop_bytes = kept->loop_bytes - std::min(kept->loop_bytes, limit_took);
-                warm_up.from_cache      = true;
+                warm_up.from_cache = true;
             } else {
                 const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
                 const std::vector<TokenId> text          = frontend.tokenize_text(kWarmUpText);
@@ -1298,26 +1302,28 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     note_stack_limit("a prefill of " + std::to_string(width) + " tokens");
                     warm_up.widths_run.push_back(width);
                 }
-                device.synchronize();
-                if (cacheable) {
-                    // Measured with the probe still alive, as before the loop: what the requests
-                    // took and kept (their kernels' code, the stack beyond the probe's).
-                    const std::size_t free_after_loop = current_free_device_bytes();
-                    WarmUpRecord measured{
-                        .stack_limit_bytes  = current_stack_limit_bytes(),
-                        .loop_bytes         = free_with_probe > free_after_loop
-                                                  ? free_with_probe - free_after_loop
-                                                  : 0,
-                        .stack_limit_source = warm_up.stack_limit_source};
-                    // Kept once a second loop measured the same (another process can move the
-                    // free memory during one); one that does not agree is the new candidate.
-                    measured.confirmed = kept && warm_up_records_agree(*kept, measured);
-                    write_warm_up_record(key_text, measured);
-                }
             }
             warm_up.prefill_widths = widths;
             program.reset();
             device.synchronize();
+            const std::size_t free_after_probe = current_free_device_bytes();
+            const std::size_t left =
+                free_before_probe > free_after_probe ? free_before_probe - free_after_probe : 0;
+            if (use_kept) {
+                warm_up.kept_loop_bytes = kept->loop_bytes - std::min(kept->loop_bytes, left);
+            } else if (cacheable) {
+                WarmUpRecord measured{.stack_limit_bytes  = current_stack_limit_bytes(),
+                                      .loop_bytes         = left,
+                                      .stack_limit_source = warm_up.stack_limit_source};
+                // Kept once a second loop measured the same (another process can move the free
+                // memory during one), at the larger of the two: one that does not agree is the
+                // new candidate.
+                if (kept && warm_up_records_agree(*kept, measured)) {
+                    measured.confirmed  = true;
+                    measured.loop_bytes = std::max(kept->loop_bytes, measured.loop_bytes);
+                }
+                write_warm_up_record(key_text, measured);
+            }
         }
         // The context cache's Host tier is pinned host memory, and the driver maps every pinned
         // byte for the device: the page tables take device memory (2 MiB per pinned GiB),

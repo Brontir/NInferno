@@ -4,6 +4,7 @@
 // neither reads nor writes. CPU.
 #include "runtime/engine/warmup_cache.h"
 
+#include "support/posix.h"
 #include "support/temp_dir.h"
 
 #include <cstdlib>
@@ -29,7 +30,12 @@ void check(bool ok, const char* what) {
 
 int main() {
     const auto root = unique_temp_dir("ninferno-warm-up-cache");
+    // cache_dir() reads LOCALAPPDATA first on Windows: both point at the test's own directory,
+    // never at the user's cache.
     ::setenv("XDG_CACHE_HOME", root.string().c_str(), 1);
+#ifdef _WIN32
+    ::setenv("LOCALAPPDATA", root.string().c_str(), 1);
+#endif
     ::unsetenv("NINFERNO_WARMUP_CACHE");
     namespace rt = ninferno::runtime;
 
