@@ -27,6 +27,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <mutex>
 #include <optional>
 #include <set>
@@ -3037,6 +3038,11 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
     const auto quant     = [&](double cols) { return 1.7e-6 + cols * k * 4.3 / bw; };
+    // A weight that fits the L2 is read from DRAM once, its re-reads at the L2's rate (price_routes'
+    // rule, the same for both activation classes).
+    const bool weight_in_l2 =
+        d.l2_bytes > 0 && n * k * bpw <= 0.75 * static_cast<double>(d.l2_bytes);
+    const double row_rate = weight_in_l2 ? 64.0 * clk : bw_sm;
     // Fraction of the int8 peak by kW4a8Schedules index: 32x128, 64x128, 128x128, 128x64, 64x64,
     // 128x64 with producer warps.
     constexpr double kW4a8Eff[6] = {0.31, 0.28, 0.24, 0.47, 0.37, 0.98};
@@ -3055,7 +3061,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double ctas  = cdiv(n, rows_o) * cdiv(t, cols);
             const double q     = std::ceil(ctas / sms);
             const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
-            const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
+            const double mem   = std::max(q * rows_o * k * bpw / row_rate, n * k * bpw / bw);
             const double mma   = q * 2.0 * rows_w * cols * k / peak_sm;
             const double cap   = s.producers > 0 ? 1690.0 : 1390.0;
             const double chain = std::ceil(q / occ) * std::ceil(k / 128.0) * cap / clk;
@@ -3080,7 +3086,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
             const double q       = std::ceil(ctas / sms);
             const double warps   = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
-            const double mem     = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
+            const double mem     = std::max(q * rows_o * k * bpw / row_rate, n * k * bpw / bw);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
             const double chain   = std::ceil(q / occ) * std::ceil(k / 64.0) * 250.0 / clk;
             const double eff     = kI8Eff[i] * scale;
@@ -3104,6 +3110,57 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     }
 }
 
+// The CTAs of a kernel an SM of `d` keeps resident by its registers and shared memory, by the
+// occupancy calculator's rules: registers rounded to 8 a thread (256 a warp), allocated per SM
+// sub-partition (a quarter of the file, whole warps each); the static and dynamic shared memory of
+// a CTA plus the 1 KB the runtime reserves per CTA from sm_80 on, in 128-byte units. At least one.
+static double resident_ctas(const KernelResources& r, const DeviceClass& d) {
+    double occ      = std::numeric_limits<double>::infinity();
+    const int warps = (r.threads + 31) / 32;
+    if (r.registers > 0 && warps > 0 && d.registers_per_sm > 0) {
+        const int per_warp = (r.registers + 7) / 8 * 8 * 32;
+        const int sm_warps = d.registers_per_sm / 4 / per_warp * 4;
+        occ                = std::floor(static_cast<double>(sm_warps) / warps);
+    }
+    std::size_t smem = r.static_smem + r.dynamic_smem;
+    if (smem > 0 && d.smem_per_sm > 0) {
+        smem = (smem + (d.major >= 8 ? 1024 : 0) + 127) / 128 * 128;
+        occ  = std::min(occ, std::floor(static_cast<double>(d.smem_per_sm) / smem));
+    }
+    return std::max(occ, 1.0);
+}
+
+// resident_ctas of register-MMA schedule `schedule` for the call, once per device, schedule,
+// codec, epilogue, shape and width: describing the launch queries the kernel's attributes, and
+// select_route prices every call at T >= 17 outside a captured graph. nullopt where the schedule
+// is not described or describing it fails (the thread limit alone then stands).
+static std::optional<double> rmma_resident_ctas(int schedule, const Weight& weight,
+                                                const Problem& problem, std::int32_t tokens,
+                                                const DeviceClass& d) {
+    int device = 0;
+    if (cudaGetDevice(&device) != cudaSuccess) return std::nullopt;
+    using Key = std::tuple<int, int, int, int, std::int32_t, std::int32_t, std::int32_t>;
+    static std::mutex mutex;
+    static std::map<Key, std::optional<double>> cache;
+    const Key key{device,        schedule,  static_cast<int>(codec_of(weight)),
+                  static_cast<int>(problem.epilogue), problem.n, problem.k, tokens};
+    {
+        const std::lock_guard lock(mutex);
+        if (const auto it = cache.find(key); it != cache.end()) return it->second;
+    }
+    std::optional<double> occ;
+    try {
+        if (const auto res = rmma_resources(schedule, weight, problem.epilogue, tokens)) {
+            occ = resident_ctas(*res, d);
+        }
+    } catch (const std::exception&) {
+        occ.reset();
+    }
+    const std::lock_guard lock(mutex);
+    cache.emplace(key, occ);
+    return occ;
+}
+
 // The speed-profile route of a call of 17 tokens or more from a cost model of every tile the
 // build holds for the weight (register MMA, tiled, staged): a tile's time on the busiest SM is its
 // weight bytes over that SM's share of the DRAM bandwidth (or the whole matrix over the whole
@@ -3124,23 +3181,6 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the facts have no roofline.
 // price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
 // false where the facts have no roofline (nothing priced).
-// The CTAs of a kernel an SM of `d` keeps resident by its registers and shared memory: registers
-// rounded to 8 a thread and allocated 256 a warp, the static and dynamic shared memory of a CTA. At
-// least one.
-static double resident_ctas(const KernelResources& r, const DeviceClass& d) {
-    double occ = std::numeric_limits<double>::infinity();
-    const int warps = (r.threads + 31) / 32;
-    if (r.registers > 0 && warps > 0 && d.registers_per_sm > 0) {
-        const int per_warp = ((r.registers + 7) / 8 * 8 * 32 + 255) / 256 * 256;
-        occ = std::floor(static_cast<double>(d.registers_per_sm) / (per_warp * warps));
-    }
-    const std::size_t smem = r.static_smem + r.dynamic_smem;
-    if (smem > 0 && d.smem_per_sm > 0) {
-        occ = std::min(occ, std::floor(static_cast<double>(d.smem_per_sm) / smem));
-    }
-    return std::max(occ, 1.0);
-}
-
 template <class Take>
 bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
                   const Take& take) {
@@ -3242,8 +3282,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // not its kernels.
         double occ = std::min(std::floor(max_thr / threads), max_cta);
         if (!substituted_foreign_class()) {
-            if (const auto res = rmma_resources(i, weight, problem.epilogue, tokens)) {
-                occ = std::min(occ, resident_ctas(*res, d));
+            if (const auto res = rmma_resident_ctas(i, weight, problem, tokens, d)) {
+                occ = std::min(occ, *res);
             }
         }
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
