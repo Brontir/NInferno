@@ -115,13 +115,15 @@ int main() {
                 " bytes at a 16K context, " + std::to_string(above_item_limit) + " at 128K");
         }
         if (alone.encode_peak_bytes < tensors ||
-            alone.encode_peak_bytes > tensors + scratch + kAlignmentSlack) {
+            alone.encode_peak_bytes > tensors + scratch + kAlignmentSlack ||
+            at_item_limit < alone.capacity_bytes) {
             throw std::runtime_error(
                 "Vision workspace off its law: encode peak " +
                 std::to_string(alone.encode_peak_bytes) + " bytes, tensors " +
                 std::to_string(tensors) + " .. tensors + scratch " +
                 std::to_string(tensors + scratch + kAlignmentSlack) + "; workspace " +
-                std::to_string(at_item_limit));
+                std::to_string(at_item_limit) + " (the Vision route alone needs " +
+                std::to_string(alone.capacity_bytes) + ")");
         }
         std::cout << "Vision workspace remains bounded for long text context\n";
         return 0;
