@@ -254,7 +254,8 @@ struct HK6 {
         dm          = 0.0F;
     }
 
-    // As HK45::scale_parts: d and the int8 scale (a code times it is at most 32 x 128).
+    // As HK45::scale_parts: d and the int8 scale. A code times the scale reaches 32 x 128, past f16's
+    // exact integers (2048), so for the largest groups the product rounds once before d does.
     __device__ __forceinline__ void scale_parts(int q, int g, float& dd, float& sc) const {
         const unsigned words[4] = {this->sc.x, this->sc.y, this->sc.z, this->sc.w};
         const int i             = 8 * (q >> 1) + 2 * ((q & 1) + 2 * (g >> 1)) + (g & 1);

@@ -22,6 +22,7 @@
 #include <cuda_fp16.h>
 
 #include <stdexcept>
+#include <type_traits>
 
 namespace ninferno::ops::detail::moe {
 namespace {
@@ -269,21 +270,26 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
 #endif
 }
 
+// The router stage only ever reads BF16 rows and the expert stages never do: each format gets the
+// kernels it can be launched with.
 template <class F>
 void launch_format(Stage stage, const GemmArgs& args, dim3 grid, cudaStream_t stream) {
-    switch (stage) {
-    case Stage::GateUp:
-        moe_volta_hmma_kernel<F, Stage::GateUp><<<grid, kWarps * 32, 0, stream>>>(args);
-        break;
-    case Stage::Up:
-        moe_volta_hmma_kernel<F, Stage::Up><<<grid, kWarps * 32, 0, stream>>>(args);
-        break;
-    case Stage::Down:
-        moe_volta_hmma_kernel<F, Stage::Down><<<grid, kWarps * 32, 0, stream>>>(args);
-        break;
-    case Stage::Router:
+    if constexpr (std::is_same_v<F, HB16>) {
+        if (stage != Stage::Router) throw std::invalid_argument("moe volta hmma: BF16 rows are the router's");
         moe_volta_hmma_kernel<F, Stage::Router><<<grid, kWarps * 32, 0, stream>>>(args);
-        break;
+    } else {
+        switch (stage) {
+        case Stage::GateUp:
+            moe_volta_hmma_kernel<F, Stage::GateUp><<<grid, kWarps * 32, 0, stream>>>(args);
+            break;
+        case Stage::Up:
+            moe_volta_hmma_kernel<F, Stage::Up><<<grid, kWarps * 32, 0, stream>>>(args);
+            break;
+        case Stage::Down:
+            moe_volta_hmma_kernel<F, Stage::Down><<<grid, kWarps * 32, 0, stream>>>(args);
+            break;
+        case Stage::Router: throw std::invalid_argument("moe volta hmma: the router stage reads BF16 rows");
+        }
     }
     CUDA_CHECK(cudaGetLastError());
 }
