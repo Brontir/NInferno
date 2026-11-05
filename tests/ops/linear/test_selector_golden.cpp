@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -96,8 +97,10 @@ constexpr std::int32_t kTokens[] = {1,  2,  3,  4,  5,   8,   12,  16,  17,   24
                                     48, 64, 96, 128, 192, 256, 512, 1024, 2048};
 
 // SpeedC1: the speed profile inside a round of one sequence (ops::ScopedRoundLanes(1): a C1 MTP
-// or copy round), where the verify widths' ggml gate answers otherwise; T <= 16 only.
+// or copy round), where the verify widths' ggml gate answers otherwise; T <= 16 only, and only
+// the widths whose answer differs from the speed profile's are written.
 enum class Profile { Speed, Prefill, Invariant, SpeedC1 };
+constexpr const char* kAsSpeed = "=speed"; // a SpeedC1 width that answers as Speed
 
 const char* profile_name(Profile p) {
     return p == Profile::Speed     ? "speed"
@@ -166,6 +169,7 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                     const std::int32_t rows =
                         epilogue == generic::Epilogue::SwiGlu ? shape.n / 2 : shape.n;
                     const generic::Problem problem{qtype, policy, rows, shape.k, epilogue};
+                    std::vector<std::string> speed_at(std::size(kTokens));
                     for (const Profile profile : {Profile::Speed, Profile::Prefill,
                                                   Profile::Invariant, Profile::SpeedC1}) {
                         std::optional<ops::ScopedInvariantRoutes> invariant;
@@ -175,7 +179,7 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                         std::string last;
                         std::int32_t first_t = 0, last_t = 0;
                         const auto flush = [&] {
-                            if (last.empty()) return;
+                            if (last.empty() || last == kAsSpeed) return;
                             out << generic::qtype_name(qtype) << " p"
                                 << static_cast<int>(policy) << " "
                                 << generic::epilogue_name(epilogue) << " " << rows << "x"
@@ -183,7 +187,8 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                             if (last_t != first_t) out << ".." << last_t;
                             out << " " << last << '\n';
                         };
-                        for (const std::int32_t t : kTokens) {
+                        for (std::size_t ti = 0; ti < std::size(kTokens); ++ti) {
+                            const std::int32_t t = kTokens[ti];
                             const bool prefill = profile == Profile::Prefill;
                             if (prefill && t < 17) continue;
                             if (profile == Profile::SpeedC1 && t > 16) continue;
@@ -237,6 +242,8 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                             } catch (const std::exception& error) {
                                 what = std::string("threw: ") + error.what();
                             }
+                            if (profile == Profile::Speed) speed_at[ti] = what;
+                            if (profile == Profile::SpeedC1 && what == speed_at[ti]) what = kAsSpeed;
                             if (what != last) {
                                 flush();
                                 last    = what;
