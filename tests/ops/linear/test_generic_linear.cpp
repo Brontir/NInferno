@@ -2373,6 +2373,15 @@ int main() {
                 failures += check_volta_hmma_accuracy(f, k, 1.0F, 87U);
                 failures += check_volta_hmma_accuracy(f, k, 0.0F, 89U);
             }
+            // Q8 rows of K % 256 != 0 (gpt-oss's 2880): the last superblock's quad-pairs past K.
+            if (f.qtype == QType::Q8_G32_FP16) {
+                failures += check_volta_hmma_invariance(f, Op::Linear, 72, 2880,
+                                                        ops::LinearPolicy::A16Only, 91U);
+                failures += check_volta_hmma_invariance(f, Op::SwiGlu, 40, 2880,
+                                                        ops::LinearPolicy::A16Only, 93U);
+                failures += check_volta_hmma_accuracy(f, 2880, 1.0F, 95U);
+                failures += check_volta_hmma_accuracy(f, 2880, 0.0F, 97U);
+            }
         }
     }
 
