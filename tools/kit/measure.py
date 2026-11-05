@@ -541,6 +541,14 @@ def main():
     if os.environ.pop("CUDA_VISIBLE_DEVICES", None) is not None:
         print("CUDA_VISIBLE_DEVICES is ignored by the kit: --device picks the card", flush=True)
 
+    # The kit's data, resolved from the source tree's layout (a release installs that layout under
+    # share/ninferno/kit): a copy of tools/kit alone would time nothing, hours later.
+    needed = [HAYSTACK] + ([HARD_SET, ROOT / "tools/bench/hard_set.py"] if args.hard50 else [])
+    missing = [str(p) for p in needed if not p.is_file()]
+    if missing:
+        sys.exit(f"the kit's data is missing: {', '.join(missing)} (run measure.py from the source "
+                 "tree or the release's bin/ninferno-kit)")
+
     serve = exe(args.bin, "ninferno-serve")
     # A build's own CLI where it is beside ninferno-serve, else the release's `ninferno-serve
     # spec-tune` (the same code, through the dispatcher's engine for this GPU).

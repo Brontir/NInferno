@@ -689,6 +689,13 @@ class KitCacheAndIds(unittest.TestCase):
                 with self.assertRaises(SystemExit):
                     measure.load_models(p)
 
+    def test_missing_kit_data_stops_before_any_gpu_work(self):
+        from unittest import mock
+        with mock.patch.object(measure, "HAYSTACK", Path("/nonexistent/long_niah_256k.json")),                 mock.patch.object(sys, "argv", ["measure.py", "--bin", "/nonexistent"]):
+            with self.assertRaises(SystemExit) as e:
+                measure.main()
+        self.assertIn("kit's data is missing", str(e.exception))
+
 
 if __name__ == "__main__":
     unittest.main()
