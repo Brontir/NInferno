@@ -5,15 +5,18 @@
 // effects only: the Device memory the kernels' code takes once loaded (lazy module loading) and
 // the per-thread stack limit, which the driver raises to the largest frame launched. Both depend
 // on what runs, not on the free memory: the same binary, GPU, driver, model, plan and route data
-// launch the same kernels. A later start with the same inputs sets the stack limit it ended at,
-// reserves the bytes it took, and skips the loop (on an RTX 4090, Gemma 4 12B: a 22.9 s start
-// takes 14.1 s; the first request then loads the kernels' code, a few ms). The decode-graph probe
-// still runs, and the plan is still checked on the memory free then.
+// launch the same kernels. A later start with the same inputs skips the loop and reserves the
+// selection's declared warm-up allowance for them instead (64 MiB; the loops measured 2-14 MiB),
+// never what an earlier start measured: the plan reads the free memory now and declared constants
+// only (docs/maintainer/deterministic-decisions.md). On an RTX 4090, Gemma 4 12B: a 22.9 s start
+// takes 14.0 s; the first requests then load the kernels' code and grow the stack limit. The
+// decode-graph probe still runs, and the plan is still checked on the memory free then.
 //
-// The bytes are a difference of the device's free memory, which another process on the GPU can
-// move while the loop runs. So one loop writes a candidate only: a record is used once a second
-// loop with the same inputs measured the same bytes (warm_up_records_agree), and a loop that does
-// not agree replaces the candidate.
+// A record says only that loops with these inputs left no more than the allowance. The bytes are
+// a difference of the device's free memory, which another process on the GPU can move while the
+// loop runs, so one loop writes a candidate only: a record is used once a second loop with the
+// same inputs measured the same (warm_up_records_agree), and a loop that does not agree, or left
+// more than the allowance, replaces it or writes none.
 //
 // The key is the SHA-256 of a text naming every such input (warm_up_key_text in
 // model_instance.cpp); one file per key under cache_dir()/warm-up. NINFERNO_WARMUP_CACHE=0 (off,
@@ -28,7 +31,7 @@
 namespace ninferno::runtime {
 
 struct WarmUpRecord {
-    std::size_t stack_limit_bytes = 0; // the stack limit after the width loop
+    std::size_t stack_limit_bytes = 0; // the stack limit after the width loop (reported only)
     // The Device memory the warm-up left once its small probe was gone (the kernels' code, the
     // stack's local memory, the graphs the driver keeps). A kept start, which builds the probe
     // too, reserves what this exceeds its own by.

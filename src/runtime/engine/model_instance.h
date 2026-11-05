@@ -102,9 +102,8 @@ struct KernelWarmUpResolution {
     std::size_t graph_returned_bytes = 0;
     // Reserve added after a probe's graphs did not fit under the allowance (0 when they did).
     std::size_t graph_shortfall_bytes = 0;
-    // The width loop kept from an earlier start (warmup_cache.h): the stack limit set from its
-    // record, and the bytes its loop left reserved, less what this start's own probe left (0 when
-    // it ran).
+    // The width loop kept from an earlier start (warmup_cache.h): the declared warm-up allowance
+    // reserved for it, less what this start's own probe left (0 when it ran).
     bool from_cache                  = false;
     std::size_t kept_loop_bytes      = 0;
 };

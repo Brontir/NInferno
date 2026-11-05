@@ -35,7 +35,6 @@
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
-#include <fstream>
 #include <limits>
 #include <compare>
 #include <map>
@@ -92,6 +91,26 @@ constexpr std::size_t kGraphShortfallStepBytes = std::size_t{128} << 20;
 // lenders, the dense tuner's file), and CUDA's module loading mode (under eager loading the code
 // is in memory before the loop, which then measures none of it). The free memory is not among
 // them, so the same start keys the same record.
+// The NVIDIA driver's release ("575.57.08"), through NVML as device_class.cpp loads it; empty
+// where NVML is not there.
+std::string nvidia_driver_release() {
+    using Init     = int (*)();
+    using Version  = int (*)(char*, unsigned);
+    using Shutdown = int (*)();
+    void* nvml = sys::load_library("libnvidia-ml.so.1", "nvml.dll");
+    if (nvml == nullptr) { return {}; }
+    const auto init     = reinterpret_cast<Init>(sys::symbol(nvml, "nvmlInit_v2"));
+    const auto version  = reinterpret_cast<Version>(sys::symbol(nvml, "nvmlSystemGetDriverVersion"));
+    const auto shutdown = reinterpret_cast<Shutdown>(sys::symbol(nvml, "nvmlShutdown"));
+    char text[96]       = {};
+    if (init && version && shutdown && init() == 0) {
+        if (version(text, sizeof(text)) != 0) { text[0] = '\0'; }
+        shutdown();
+    }
+    sys::free_library(nvml);
+    return text;
+}
+
 std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tokens,
                              const std::vector<std::uint32_t>& widths) {
     std::string text = "schema\tninferno-warm-up-key/1\n";
@@ -109,13 +128,9 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
     add("build", build_of());
     add("facts",
         facts_of(device_class(probe.device), build_features(), driver_version, HostFacts{}));
-    // The driver's own build, beside its CUDA level: a PTX build is compiled by the driver, and
-    // its frames follow that compiler (Linux; elsewhere the CUDA level only).
-    std::string driver_build;
-    if (std::ifstream version("/proc/driver/nvidia/version"); version) {
-        std::getline(version, driver_build);
-    }
-    line("driver.build", driver_build);
+    // The driver's own release, beside its CUDA level: a PTX build is compiled by the driver, and
+    // its frames follow that compiler.
+    line("driver.build", nvidia_driver_release());
     line("cuda.module_loading", sys::env("CUDA_MODULE_LOADING"));
     line("cuda.force_ptx_jit", sys::env("CUDA_FORCE_PTX_JIT"));
     line("cuda.disable_ptx_jit", sys::env("CUDA_DISABLE_PTX_JIT"));
@@ -1260,30 +1275,23 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                           : std::string();
             const std::optional<WarmUpRecord> kept =
                 cacheable ? read_warm_up_record(key_text) : std::nullopt;
-            // The small probe is built either way, and the record compares the two paths' end
-            // states: what the warm-up left in Device memory after the probe is gone (the kernels'
-            // code, the stack's local memory, the graphs the driver keeps), measured from before
-            // the probe. A kept start reserves the difference to what it left itself, so memory
-            // the probe takes and gives back, or a workspace its requests grow, counts on neither.
+            // The small probe is built either way. What the warm-up left in Device memory once the
+            // probe is gone (the kernels' code, the stack's local memory, the graphs the driver
+            // keeps), measured from before the probe, is what a record compares against the
+            // allowance; memory the probe takes and gives back counts on neither path.
             const std::size_t free_before_probe = current_free_device_bytes();
             std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
             note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
                              "-token context");
             device.synchronize();
-            const bool use_kept = kept && kept->confirmed && kept->stack_limit_bytes >= stack_limit;
+            // A kept loop is reserved at the selection's declared warm-up allowance (plan_ladder.h,
+            // kPlanWarmUpAllowanceBytes), never at the bytes an earlier start measured: what the
+            // plan reads stays the free memory now and declared constants. A record is written
+            // only for a loop that left no more than the allowance, and the stack limit grows from
+            // zero at the first launch of each larger frame, inside the same allowance.
+            const bool use_kept = kept && kept->confirmed &&
+                                  kept->loop_bytes <= kPlanWarmUpAllowanceBytes;
             if (use_kept) {
-                if (const cudaError_t set =
-                        cudaDeviceSetLimit(cudaLimitStackSize, kept->stack_limit_bytes);
-                    set == cudaErrorMemoryAllocation) {
-                    // As the loop's own launches would have failed: a capacity outcome.
-                    (void)cudaGetLastError();
-                    throw CapacityError("the kept kernel warm-up's stack limit of " +
-                                        std::to_string(kept->stack_limit_bytes) +
-                                        " B per thread does not fit the free Device memory");
-                } else {
-                    CUDA_CHECK(set);
-                }
-                note_stack_limit(kept->stack_limit_source);
                 warm_up.from_cache = true;
             } else {
                 const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
@@ -1310,8 +1318,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             const std::size_t left =
                 free_before_probe > free_after_probe ? free_before_probe - free_after_probe : 0;
             if (use_kept) {
-                warm_up.kept_loop_bytes = kept->loop_bytes - std::min(kept->loop_bytes, left);
-            } else if (cacheable) {
+                warm_up.kept_loop_bytes =
+                    kPlanWarmUpAllowanceBytes - std::min<std::size_t>(kPlanWarmUpAllowanceBytes, left);
+            } else if (cacheable && left <= kPlanWarmUpAllowanceBytes) {
                 WarmUpRecord measured{.stack_limit_bytes  = current_stack_limit_bytes(),
                                       .loop_bytes         = left,
                                       .stack_limit_source = warm_up.stack_limit_source};
