@@ -109,7 +109,9 @@ inline RandomWeight random_weight(QType q, std::int32_t rows, std::int32_t k, st
     return out;
 }
 
-// The same bytes at another device address (a benchmark's copies that defeat the L2).
+// The same bytes at another device address (a benchmark's copies that defeat the L2). A device to
+// device cudaMemcpy returns before the copy ends and the legacy stream does not order against the
+// benchmarks' non-blocking streams: the copy settles before the clone is returned.
 inline RandomWeight clone_weight(const RandomWeight& source) {
     RandomWeight out;
     out.parent    = source.parent;
@@ -117,6 +119,7 @@ inline RandomWeight clone_weight(const RandomWeight& source) {
     out.buffer    = DeviceBuffer(source.buffer.bytes);
     CUDA_CHECK(cudaMemcpy(out.buffer.p, source.buffer.p, source.buffer.bytes,
                           cudaMemcpyDeviceToDevice));
+    CUDA_CHECK(cudaStreamSynchronize(nullptr));
     out.parent.data = static_cast<const std::byte*>(out.buffer.p);
     WeightView view{g.shape, {WeightRegion{&out.parent, 0, g.elements}}};
     out.weight = native_weight(view, 4.0F);
