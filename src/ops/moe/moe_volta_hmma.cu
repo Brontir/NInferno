@@ -27,6 +27,7 @@ namespace {
 
 using generic::volta::HK45;
 using generic::volta::HK4Frag;
+using generic::volta::HB16;
 using generic::volta::HG32;
 using generic::volta::HK6;
 using generic::volta::HQ8;
@@ -65,9 +66,9 @@ __device__ __forceinline__ void stage_load_rows(const GemmArgs& a, const int* ro
 template <class F, Stage St>
 __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a) {
 #if NINFERNO_HMMA884
-    static_assert(St != Stage::Router);
-    constexpr bool kGated = St == Stage::GateUp;
-    constexpr bool kFirst = St == Stage::GateUp || St == Stage::Up;
+    constexpr bool kGated  = St == Stage::GateUp;
+    constexpr bool kRouter = St == Stage::Router;
+    constexpr bool kFirst  = St == Stage::GateUp || St == Stage::Up;
     constexpr int kSets   = kGated ? 2 : 1;
     constexpr int kGroups = F::kGroups;
     constexpr int kSteps  = 16 / kGroups; // MMAs a scale group
@@ -75,13 +76,20 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
     __shared__ float sums[2][F::kMin ? kNTok * 8 : 1];
     __shared__ int rows_x[kNTok];
 
-    const int job = static_cast<int>(blockIdx.y) / a.sub_tiles;
-    const int sub = static_cast<int>(blockIdx.y) - job * a.sub_tiles;
-    if (job >= *a.job_total) return;
-    const int col0  = a.job_begin[job] + sub * kNTok;
-    const int count = min(kNTok, a.job_begin[job] + a.job_count[job] - col0);
+    // The router: one dense call, 32 tokens a CTA column; the stages: one job's 32 slots.
+    int col0 = 0, count = 0, row_base = 0;
+    if constexpr (kRouter) {
+        col0  = static_cast<int>(blockIdx.y) * kNTok;
+        count = min(kNTok, a.tokens - col0);
+    } else {
+        const int job = static_cast<int>(blockIdx.y) / a.sub_tiles;
+        const int sub = static_cast<int>(blockIdx.y) - job * a.sub_tiles;
+        if (job >= *a.job_total) return;
+        col0     = a.job_begin[job] + sub * kNTok;
+        count    = min(kNTok, a.job_begin[job] + a.job_count[job] - col0);
+        row_base = a.job_expert[job] * a.expert_rows;
+    }
     if (count <= 0) return;
-    const int row_base = a.job_expert[job] * a.expert_rows;
     if (threadIdx.x < kNTok) {
         const int t = static_cast<int>(threadIdx.x);
         rows_x[t]   = t < count ? (kFirst ? a.packed_token[col0 + t] : col0 + t) : 0;
@@ -213,6 +221,18 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
         if (lr >= a.rows) continue;
         const std::int64_t r0 = static_cast<std::int64_t>(row_base) +
                                 static_cast<std::int64_t>(lr) * a.row_step;
+        if constexpr (kRouter) {
+            const float bias = moe_bias(a, lr);
+#    pragma unroll
+            for (int g = 0; g < kNG; ++g) {
+                const int slot = 8 * g + (i & 4) + (lane & 2) + (i & 1);
+                if (slot < count) {
+                    a.out_f32[static_cast<std::int64_t>(col0 + slot) * a.rows + lr] =
+                        acc[0][g][i] + bias;
+                }
+            }
+            continue;
+        }
         const float bias0 = moe_bias(a, r0);
         const float bias1 = kGated ? moe_bias(a, r0 + a.up_offset) : 0.0F;
 #    pragma unroll
@@ -247,7 +267,8 @@ void launch_format(Stage stage, const GemmArgs& args, dim3 grid, cudaStream_t st
         moe_volta_hmma_kernel<F, Stage::Down><<<grid, kWarps * 32, 0, stream>>>(args);
         break;
     case Stage::Router:
-        throw std::invalid_argument("moe volta hmma: the router is not a grouped stage");
+        moe_volta_hmma_kernel<F, Stage::Router><<<grid, kWarps * 32, 0, stream>>>(args);
+        break;
     }
     CUDA_CHECK(cudaGetLastError());
 }
@@ -278,6 +299,13 @@ void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
     using generic::WeightCodec;
     if (frag && codec != WeightCodec::GgmlQ4K) {
         throw std::invalid_argument("moe volta hmma: no fragment-order decoder for this format");
+    }
+    if (stage == Stage::Router) {
+        if (codec != WeightCodec::Bf16) {
+            throw std::invalid_argument("moe volta hmma: the router stage reads BF16 rows");
+        }
+        launch_format<HB16>(stage, args, grid, stream);
+        return;
     }
     switch (codec) {
     case WeightCodec::GgmlQ4K:

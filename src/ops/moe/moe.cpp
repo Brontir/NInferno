@@ -1394,8 +1394,18 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
             args.xq_lanes  = r8_lanes(w.gate_up);
             args.xq_group  = r8_x_group(w.gate_up);
         }
+        // Volta's HMMA plan takes a BF16 router on the tensor cores too: the register MMA there
+        // runs on the emulation (gpt-oss-20b prefill: 9.3 % of the V100's GPU time, 572 us a
+        // 1024-token chunk).
+        const bool router_hmma = p.volta_hmma && !router_simt && args.xq == nullptr &&
+                                 generic::codec_of(w.router) == generic::WeightCodec::Bf16 &&
+                                 g.hidden % 64 == 0;
         if (router_simt) {
             launch_router_simt(args, stream, route_in_router ? &select : nullptr, &plan);
+        } else if (router_hmma) {
+            launch_moe_volta_hmma(generic::WeightCodec::Bf16, false, Stage::Router, args,
+                                  dim3(blocks(g.experts, kVoltaHmmaRows), blocks(t, kVoltaHmmaSlots)),
+                                  stream);
         } else {
             const auto s = schedule_info(p.router_schedule);
             launch_gemm(generic::codec_of(w.router), false, Stage::Router, p.router_schedule, args,

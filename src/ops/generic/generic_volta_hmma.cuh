@@ -320,6 +320,47 @@ struct HQ8 {
     __device__ static constexpr int dest_run(int src) { return src; }
 };
 
+// BF16 rows (the MoE router): K contiguous. Quad-pair q: values 64q .. 64q + 63 of the superblock
+// (K a multiple of 64), converted to f16 pairs in the fragment; one scale group of 1.
+struct HB16 {
+    static constexpr int kGroups = 1;
+    static constexpr bool kMin   = false;
+    uint4 v[8];
+
+    __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
+        const int k0 = 256 * sb + 64 * q;
+        if (k0 >= a.k) {
+            clear();
+            return;
+        }
+        const auto* p = reinterpret_cast<const uint4*>(a.codes + (static_cast<std::int64_t>(row) * a.k + k0) * 2);
+#pragma unroll
+        for (int i = 0; i < 8; ++i) v[i] = p[i];
+    }
+
+    __device__ __forceinline__ void clear() {
+#pragma unroll
+        for (int i = 0; i < 8; ++i) v[i] = make_uint4(0, 0, 0, 0);
+    }
+
+    __device__ __forceinline__ void scale(int, int, float& ds, float& dm) const {
+        ds = 1.0F;
+        dm = 0.0F;
+    }
+
+    // MMA m: values 4m .. 4m + 3, words 2m (v0, v1) and 2m + 1 (v2, v3) as (v0, v2), (v1, v3).
+    __device__ __forceinline__ void fragment(int m, int, unsigned& a0, unsigned& a1) const {
+        const uint4 u      = v[m >> 1];
+        const unsigned w0  = (m & 1) ? u.z : u.x;
+        const unsigned w1  = (m & 1) ? u.w : u.y;
+        a0 = h2_bits(__floats2half2_rn(__uint_as_float(w0 << 16), __uint_as_float(w1 << 16)));
+        a1 = h2_bits(__floats2half2_rn(__uint_as_float(w0 & 0xffff0000U),
+                                       __uint_as_float(w1 & 0xffff0000U)));
+    }
+
+    __device__ static constexpr int dest_run(int src) { return src; }
+};
+
 // MXFP4: 32-value blocks of 16 code bytes (byte j: value 2j low nibble, 2j + 1 high) with an
 // E8M0 scale byte each. Quad-pair q: blocks 8 sb + 2q and 8 sb + 2q + 1, contiguous (32 bytes). The
 // operand is twice the E2M1 value, an f16 integer (0, 1, 2, 3, 4, 6, 8, 12 and their negatives):
