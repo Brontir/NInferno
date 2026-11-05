@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <iostream>
@@ -1574,26 +1575,69 @@ int exercise_vision(ninferno::Engine& engine) {
     }
     // The reused continuation prefills a text-only suffix after the cached multimodal prefix: its
     // positions keep the image's RoPE delta, so it decodes what an uncached prefill decodes.
-    // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side):
-    // with it the suffix's dropped delta changes the greedy tokens (RTX 4070 Ti, Qwen3.5-4B AWQ:
-    // the old code failed here, while a 512x256 image's -112 still decoded the same 16 tokens).
+    // A 1024x1024 image leaves a delta of -992 (1024 merged tokens over 32 positions a side).
+    // The two prefills are not byte-identical (the cached suffix is one call, the fresh prompt
+    // its own chunks; hybrid GDN and MoE layers sum in a different order), so greedy tokens may
+    // part at a near-tie, and under speculation the verify widths add their own rounding: RTX
+    // 4060 Ti, Qwen3.5-9B Q8: the MTP runs parted at the 4th token (12904 against 513, 0.125
+    // nats apart) while the distributions matched to 0.05 nats. Both runs ask for log
+    // probabilities (plain decode) and must agree within kSameLogprob at every token until a
+    // near-tie parts them; a lost delta moves the distribution from the first token on.
     {
+        constexpr float kSameLogprob = 0.1F;  // measured gap: 0.003..0.05 nats
+        constexpr float kNearTie     = 0.25F; // a parting choice this close is rounding
         const auto wide = gradient_ppm(1024, 1024);
         ninferno::RequestOptions long_reuse = options(true);
         ninferno::RequestOptions long_fresh = options(false);
-        long_reuse.execution.requested_output_tokens = 16;
-        long_fresh.execution.requested_output_tokens = 16;
+        for (auto* o : {&long_reuse, &long_fresh}) {
+            o->execution.requested_output_tokens = 16;
+            o->execution.sampling.logprobs       = 5;
+        }
         const ninferno::GenerationResult wide_first =
             engine.generate(engine.prepare(first_input(wide)), options(true));
         const ninferno::GenerationResult cached =
             engine.generate(engine.prepare(followup_input(wide, wide_first)), long_reuse);
         const ninferno::GenerationResult fresh =
             engine.generate(engine.prepare(followup_input(wide, wide_first)), long_fresh);
+        const auto logprob_of = [](const ninferno::GeneratedLogprob& entry,
+                                   ninferno::TokenId token) -> std::optional<float> {
+            for (const auto& t : entry.top) {
+                if (t.token == token) { return t.logprob; }
+            }
+            return std::nullopt;
+        };
+        std::string mismatch;
+        if (cached.logprobs.size() != cached.generated_token_ids.size() ||
+            fresh.logprobs.size() != fresh.generated_token_ids.size() ||
+            cached.logprobs.empty()) {
+            mismatch = "no log probabilities";
+        }
+        for (std::size_t i = 0; mismatch.empty() && i < cached.logprobs.size() &&
+                                i < fresh.logprobs.size();
+             ++i) {
+            const auto& c = cached.logprobs[i];
+            const auto& f = fresh.logprobs[i];
+            if (c.token == f.token) {
+                if (std::abs(c.logprob - f.logprob) > kSameLogprob) {
+                    mismatch = "token " + std::to_string(i) + " logprob " +
+                               std::to_string(c.logprob) + " against " + std::to_string(f.logprob);
+                }
+                continue;
+            }
+            // They part: only at a near-tie of the fresh distribution, after which the
+            // continuations differ and are not compared.
+            const auto cached_pick = logprob_of(f, c.token);
+            if (!cached_pick || f.logprob - *cached_pick > kNearTie) {
+                mismatch = "token " + std::to_string(i) + " parted (" + std::to_string(c.token) +
+                           " against " + std::to_string(f.token) + ") beyond a near-tie";
+            }
+            break;
+        }
         if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
-            cached.generated_token_ids != fresh.generated_token_ids) {
+            !mismatch.empty()) {
             std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
                          "uncached prefill (RoPE delta lost?): reused="
-                      << cached.reused_prompt_tokens << '\n';
+                      << cached.reused_prompt_tokens << ' ' << mismatch << '\n';
             return 1;
         }
     }
