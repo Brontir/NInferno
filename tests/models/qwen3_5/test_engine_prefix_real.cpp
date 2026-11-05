@@ -1582,9 +1582,12 @@ int exercise_vision(ninferno::Engine& engine) {
     // 4060 Ti, Qwen3.5-9B Q8: the MTP runs parted at the 4th token (12904 against 513, 0.125
     // nats apart) while the distributions matched to 0.05 nats. Both runs ask for log
     // probabilities (plain decode) and must agree within kSameLogprob at every token until a
-    // near-tie parts them; a lost delta moves the distribution from the first token on.
+    // near-tie parts them; a lost delta moves the chosen tokens' log probabilities further:
+    // with the suffix's delta dropped on purpose, 0.19 nats at the 2nd token (Qwen3.5-9B Q8,
+    // RTX 4060 Ti) and 0.16 at the 1st (Qwen3.6-35B-A3B UD-Q4_K_M, RTX 5090), against at most
+    // 0.05 and 0.065 between the two correct prefills.
     {
-        constexpr float kSameLogprob = 0.1F;  // measured gap: 0.003..0.05 nats
+        constexpr float kSameLogprob = 0.1F;
         constexpr float kNearTie     = 0.25F; // a parting choice this close is rounding
         const auto wide = gradient_ppm(1024, 1024);
         ninferno::RequestOptions long_reuse = options(true);
