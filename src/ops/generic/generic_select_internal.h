@@ -26,7 +26,6 @@ namespace ninferno::ops::detail::generic {
 // tile's compute is faster than those bytes. Qwen3.5 9B Q8_0, one 1819-token prompt (nsys, two
 // runs each, the same master): RTX 4060 Ti 0.908 -> 0.551 s, 4070 Ti 0.460 -> 0.315, 4090 0.222 ->
 // 0.164, 5070 Ti 0.299 -> 0.257, RTX 3060 0.927 -> 0.901 (its tile compute-bound at that rate);
-
 // greedy answers byte-identical (4060 Ti, 4070 Ti, 3060).
 inline constexpr bool kW4a8TokenMajor = true;
 
