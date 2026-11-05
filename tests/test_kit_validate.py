@@ -727,6 +727,23 @@ class KitCacheAndIds(unittest.TestCase):
             with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
                 self.assertTrue(measure.gguf_cached({"repo": "o/m-GGUF", "quant": "Q4_K_M"}))
 
+    def test_drafters_cached_needs_manifest_and_its_artifacts(self):
+        import json, tempfile
+        from unittest import mock
+        model = {"repo": "o/m-GGUF", "quant": "Q4_K_M"}
+        with tempfile.TemporaryDirectory() as d:
+            art = Path(d) / "models--o--m-GGUF" / "ninferno" / "abc"
+            art.mkdir(parents=True)
+            (art / "m-q4_k_m.ninferno").write_bytes(b"x")
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertFalse(measure.drafters_cached(model))
+                drafter = art / "m-dflash.ninferno"
+                (art / "m-q4_k_m.ninferno.speculation.json").write_text(
+                    json.dumps({"drafters": [{"name": "dflash", "artifact": str(drafter)}]}), encoding="utf-8")
+                self.assertFalse(measure.drafters_cached(model))
+                drafter.write_bytes(b"x")
+                self.assertTrue(measure.drafters_cached(model))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -442,6 +442,24 @@ def gguf_cached(model):
     return any(have == set(range(1, total + 1)) for (_, _, total), have in parts.items())
 
 
+def drafters_cached(model):
+    """Whether a converted artifact of the quant has its drafter manifest (<artifact>.speculation.json,
+    written by --with-drafters) and every drafter artifact the manifest names is on disk: what a
+    --spec-tune run's prepare would otherwise fetch."""
+    root = hub_dir() / ("models--" + model["repo"].replace("/", "--"))
+    quant = model["quant"].lower()
+    for f in root.glob("ninferno/*/*.ninferno.speculation.json"):
+        if not re.search(r"(^|[-.])" + re.escape(quant) + r"\.ninferno\.speculation\.json$", f.name.lower()):
+            continue
+        try:
+            drafters = json.loads(f.read_text(encoding="utf-8")).get("drafters", [])
+        except (OSError, json.JSONDecodeError):
+            continue
+        if all(Path(d["artifact"]).exists() for d in drafters if d.get("artifact")):
+            return True
+    return False
+
+
 def fetch_need_bytes(model, weights_bytes):
     """The disk a fetch writes: the source weights where they are not cached, and the converted
     artifact (about the weights' bytes again) where it is not, plus FETCH_MARGIN_BYTES."""
@@ -635,7 +653,9 @@ def main():
         # The models whose GGUF the cache already holds whole go first (in the set's order among
         # themselves): the card measures them while the others download, instead of waiting on
         # the first fetch (a lab set of a dozen checkpoints is hours of download).
-        chosen.sort(key=lambda mp: not gguf_cached(mp[0]))
+        # A --spec-tune run fetches the drafters too: a model counts as cached only with them.
+        chosen.sort(key=lambda mp: not (gguf_cached(mp[0])
+                                        and (not args.spec_tune or drafters_cached(mp[0]))))
         fetcher = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         fetches = []
         for model, plan in chosen:
