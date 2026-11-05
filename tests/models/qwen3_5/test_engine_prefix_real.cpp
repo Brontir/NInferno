@@ -1661,10 +1661,15 @@ int exercise_vision(ninferno::Engine& engine, bool exact) {
     const auto& stop_ids = stopped.generated_token_ids;
     const bool emitted   = std::find(stop_ids.begin(), stop_ids.end(),
                                      stop_options.stop.token_ids.front()) != stop_ids.end();
-    if (stopped.generated_token_ids.empty() || stopped.speculative.rounds == 0 ||
-        ((exact || emitted) &&
-         (stopped.finish_reason != ninferno::FinishReason::StopToken ||
-          stopped.generated_token_ids.back() != stop_options.stop.token_ids.front()))) {
+    // Without the token the run must still end at its output limit, not for another reason.
+    const bool stopped_right =
+        exact || emitted
+            ? stopped.finish_reason == ninferno::FinishReason::StopToken &&
+                  stopped.generated_token_ids.back() == stop_options.stop.token_ids.front()
+            : stopped.finish_reason == ninferno::FinishReason::OutputLimit &&
+                  stopped.generated_token_ids.size() ==
+                      stop_options.execution.requested_output_tokens;
+    if (stopped.generated_token_ids.empty() || stopped.speculative.rounds == 0 || !stopped_right) {
         std::cerr << "multimodal custom stop did not terminate at the selected token\n";
         return 1;
     }
