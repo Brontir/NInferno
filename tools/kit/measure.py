@@ -587,7 +587,7 @@ def main():
     wddm = str(card["smi"].get("driver_model.current") or "").upper() == "WDDM"
     doc = {"schema": SCHEMA, "kit": {"version": KIT_VERSION, "models_version": models_doc["version"],
                                      "models_sha256": hashlib.sha256(models_file.read_bytes()).hexdigest()[:16],
-                                     "models_file": models_file.name if args.models_file else None},
+                                     "models_file": "custom" if args.models_file else None},
            "created": created, "ninferno": {"version": version.splitlines()[0] if version else None},
            "host": gpu.host_facts(), "card": card, "runs": []}
     print(f"card: {card['smi'].get('name')}, driver {card['smi'].get('driver_version')}, "

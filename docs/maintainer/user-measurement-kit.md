@@ -88,7 +88,7 @@ major 1.
 | Field | What |
 |---|---|
 | `schema` | `"ninferno-user-run/1.3"` (1.1 added the spec and hard50 runs' fields below and `pci.device_id`; 1.2 the `routes` runs and `fetch_beside`; 1.3 `kit.models_file`) |
-| `kit` | `{version, models_version, models_sha256, models_file}`: `models_file` the file name of the `--models-file` set (its base name only: the directories can name the user), `null` for the built-in set |
+| `kit` | `{version, models_version, models_sha256, models_file}`: `models_file` `"custom"` for a `--models-file` set (its name is not recorded: a file name can name the user; `models_sha256` identifies the set), `null` for the built-in set |
 | `created` | UTC time |
 | `ninferno` | `{version}`: the first line of `ninferno-serve --version` |
 | `host` | `{os, machine, cpu, cpus, ram_bytes, on_battery}` |
