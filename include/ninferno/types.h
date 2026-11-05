@@ -1687,6 +1687,10 @@ struct MemorySummary {
     std::uint32_t kernel_warm_up_graph_passes     = 0;
     double kernel_warm_up_seconds                 = 0.0;
     std::size_t kernel_warm_up_lasting_bytes      = 0;
+    // The width loop kept from an earlier start (runtime/engine/warmup_cache.h): its widths were
+    // not run again, its kernels' bytes reserved instead (kept_loop_bytes).
+    bool kernel_warm_up_from_cache                = false;
+    std::size_t kernel_warm_up_kept_loop_bytes    = 0;
     std::size_t stack_limit_before_bytes          = 0;
     std::size_t stack_limit_bytes                 = 0;
     std::string stack_limit_source;

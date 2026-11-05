@@ -597,6 +597,8 @@ std::string format_server_start_json(
                                      {"graph_passes", memory.kernel_warm_up_graph_passes},
                                      {"seconds", memory.kernel_warm_up_seconds},
                                      {"lasting_bytes", memory.kernel_warm_up_lasting_bytes},
+                                     {"from_cache", memory.kernel_warm_up_from_cache},
+                                     {"kept_loop_bytes", memory.kernel_warm_up_kept_loop_bytes},
                                      {"stack_limit_before_bytes", memory.stack_limit_before_bytes},
                                      {"stack_limit_bytes", memory.stack_limit_bytes},
                                      {"stack_limit_source", memory.stack_limit_source},

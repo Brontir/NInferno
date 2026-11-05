@@ -1,8 +1,11 @@
 #include "core/device_traits.h"
 #include "runtime/engine/model_instance.h"
+#include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/decision_sources.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_ladder.h"
+#include "runtime/engine/warmup_cache.h"
 #include "runtime/engine/warmup_widths.h"
 #include "artifact/reader.h"
 #include "artifact/formats.h"
@@ -79,6 +82,57 @@ constexpr std::uint32_t kMaximumWarmUpPasses = 8;
 // The first step of the reserve a probe whose graphs did not fit adds to the check (doubled per
 // retry).
 constexpr std::size_t kGraphShortfallStepBytes = std::size_t{128} << 20;
+
+// The inputs the kernel warm-up's width loop depends on (warmup_cache.h), as text: the build, the
+// device's facts and driver, the artifact (its source identity, size and modification time: a
+// conversion again is another file), the probe Program's options with its drafter's identity, the
+// decode round, the widths, and the route data the routes are read from (the route table and its
+// lenders, the dense tuner's file). The free memory is not among them, so the same start keys the
+// same record.
+std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tokens,
+                             const std::vector<std::uint32_t>& widths) {
+    std::string text = "schema	ninferno-warm-up-key/1
+";
+    const auto add   = [&](std::string_view section, const DecisionSection& lines) {
+        for (const auto& [key, value] : lines) {
+            text += std::string(section) + "." + key + "	" + value + "
+";
+        }
+    };
+    int driver_version = 0;
+    if (cudaDriverGetVersion(&driver_version) != cudaSuccess) {
+        (void)cudaGetLastError();
+        driver_version = 0;
+    }
+    add("build", build_of());
+    add("facts", facts_of(device_class(probe.device), build_features(), driver_version, HostFacts{}));
+    std::error_code error;
+    const auto size  = std::filesystem::file_size(probe.artifact_path, error);
+    const auto mtime = std::filesystem::last_write_time(probe.artifact_path, error);
+    std::string identity;
+    try {
+        identity = artifact::source_identity(probe.artifact_path).value_or("none");
+    } catch (const std::exception&) { identity = "unreadable"; }
+    text += "artifact.identity	" + identity + "
+artifact.bytes	" + std::to_string(size) +
+            "
+artifact.mtime	" + std::to_string(mtime.time_since_epoch().count()) + "
+";
+    add("probe", options_of(probe, identity, "", drafter_identity(probe.speculative.drafter)));
+    text += "warm_up.round_tokens	" + std::to_string(round_tokens) + "
+warm_up.widths	";
+    for (std::size_t i = 0; i < widths.size(); ++i) {
+        text += (i == 0 ? "" : ",") + std::to_string(widths[i]);
+    }
+    text += "
+";
+    const ops::RouteTableStatus routes = ops::route_table_status();
+    text += "sources.route_table	" +
+            (routes.loaded ? routes.content_sha256 + " + " + routes.lender_sha256 : "none") + "
+";
+    add("sources", ops::detail::generic::dense_tune_sources());
+    return text;
+}
 
 // One request of `prompt` through the Program's request path, as the Engine runs it: admission,
 // the prefill (with its speculative and sampling work), the first token and, with `decode_round`,
@@ -1133,7 +1187,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
         };
         std::size_t probe_buffer_bytes   = 0;
-        const auto probe_program = [&](std::uint32_t max_context) {
+        const auto probe_options = [&](std::uint32_t max_context) {
             const std::uint32_t kv_tokens = std::max(
                 max_context,
                 resolved.max_concurrency * static_cast<std::uint32_t>(kPagedKVPageSize));
@@ -1141,7 +1195,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                                              resolved.prefill_chunk,
                                              KvCapacityPolicy::explicit_capacity(kv_tokens));
             probe.context_cache = ContextCacheOptions{.enabled = false};
-            probe               = normalize_engine_options(std::move(probe));
+            return normalize_engine_options(std::move(probe));
+        };
+        const auto probe_program = [&](std::uint32_t max_context) {
+            EngineOptions probe = probe_options(max_context);
             // Planned as with the graphs held: its reservation is the probe's buffers alone.
             models::qwen3_5::SequencePlanner planner =
                 models::qwen3_5::make_sequence_planner(execution, device, probe, true);
@@ -1163,12 +1220,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
             const std::uint32_t widths =
                 std::min(resolved.prefill_chunk, probe_context - round_tokens - 1U);
-            std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
-            note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
-                             "-token context");
-            const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
-            const std::vector<TokenId> text          = frontend.tokenize_text(kWarmUpText);
-            if (text.empty()) { throw std::logic_error("the kernel warm-up text has no tokens"); }
             // One request per kernel class, not per width: at 1..48 every T is its own class
             // (the per-exact-T schedules); above that the band edges, the full- and partial-tile
             // widths inside each band and the exported plans' classes cover every kernel variant
@@ -1181,17 +1232,57 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                           return all;
                       }()
                     : detail::kernel_warm_up_widths(widths);
-            warm_up.widths_run.reserve(width_set.size());
-            for (const std::uint32_t width : width_set) {
-                std::vector<TokenId> prompt(width);
-                for (std::uint32_t i = 0; i < width; ++i) { prompt[i] = text[i % text.size()]; }
-                warm_up_request(*program, frontend, std::move(prompt), round_tokens, width == 1);
-                note_stack_limit("a prefill of " + std::to_string(width) + " tokens");
-                warm_up.widths_run.push_back(width);
+            // What the loop leaves (the kernels' code, the stack limit) is kept from an earlier
+            // start with the same inputs (warmup_cache.h); a maintainer option (a route pin, a
+            // timing tuner, a route directory) always runs it.
+            const bool cacheable = options.maintainer == MaintainerOptions{};
+            const std::string key_text =
+                cacheable ? warm_up_key_text(probe_options(probe_context), round_tokens, width_set)
+                          : std::string();
+            const std::optional<WarmUpRecord> kept =
+                cacheable ? read_warm_up_record(key_text) : std::nullopt;
+            if (kept) {
+                CUDA_CHECK(cudaDeviceSetLimit(cudaLimitStackSize, kept->stack_limit_bytes));
+                stack_limit                = current_stack_limit_bytes();
+                warm_up.stack_limit_source = kept->stack_limit_source;
+                warm_up.kept_loop_bytes    = kept->loop_bytes;
+                warm_up.from_cache         = true;
+                warm_up.widths_run         = width_set;
+                warm_up.prefill_widths     = widths;
+            } else {
+                const std::size_t free_before_loop = current_free_device_bytes();
+                std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
+                note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
+                                 "-token context");
+                const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
+                const std::vector<TokenId> text          = frontend.tokenize_text(kWarmUpText);
+                if (text.empty()) {
+                    throw std::logic_error("the kernel warm-up text has no tokens");
+                }
+                warm_up.widths_run.reserve(width_set.size());
+                for (const std::uint32_t width : width_set) {
+                    std::vector<TokenId> prompt(width);
+                    for (std::uint32_t i = 0; i < width; ++i) {
+                        prompt[i] = text[i % text.size()];
+                    }
+                    warm_up_request(*program, frontend, std::move(prompt), round_tokens,
+                                    width == 1);
+                    note_stack_limit("a prefill of " + std::to_string(width) + " tokens");
+                    warm_up.widths_run.push_back(width);
+                }
+                warm_up.prefill_widths = widths;
+                program.reset();
+                device.synchronize();
+                if (cacheable) {
+                    const std::size_t free_after_loop = current_free_device_bytes();
+                    write_warm_up_record(
+                        key_text, {.stack_limit_bytes  = current_stack_limit_bytes(),
+                                   .loop_bytes         = free_before_loop > free_after_loop
+                                                             ? free_before_loop - free_after_loop
+                                                             : 0,
+                                   .stack_limit_source = warm_up.stack_limit_source});
+                }
             }
-            warm_up.prefill_widths = widths;
-            program.reset();
-            device.synchronize();
         }
         // The context cache's Host tier is pinned host memory, and the driver maps every pinned
         // byte for the device: the page tables take device memory (2 MiB per pinned GiB),
@@ -1241,8 +1332,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     " of Device memory free beside its reserves)");
             }
             const std::size_t free_now = current_free_device_bytes();
+            // A loop kept from an earlier start has not loaded its kernels' code yet: the bytes it
+            // took are reserved here, as if it had run.
             const std::size_t taken    = warm_up.host_pin_device_bytes + returned_graph_bytes +
-                                      graph_shortfall_bytes;
+                                      graph_shortfall_bytes + warm_up.kept_loop_bytes;
             const std::uint64_t measured = free_now > taken ? free_now - taken : 0;
             last_measured                = measured;
             // The chosen rung keeps its admission tier (a WarmUp rung: its held bytes and the

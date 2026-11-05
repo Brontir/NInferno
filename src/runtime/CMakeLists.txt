@@ -49,6 +49,7 @@ add_library(ninferno_engine STATIC
   engine/prompt_tail.cpp
   engine/plan_workspace.cpp
   engine/model_instance.cpp
+  engine/warmup_cache.cpp
   engine/warmup_widths.cpp
   contract/sampling.cpp
   engine/decision_routes.cpp

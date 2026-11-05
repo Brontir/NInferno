@@ -591,10 +591,16 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         write(*shortfall);
     }
     if (memory.kernel_warm_up) {
-        logger_->info("kernel warm-up | prefill widths 1..{} | ran {} | decode graphs {} {} | "
+        logger_->info("kernel warm-up | prefill widths 1..{} | {} {} | decode graphs {} {} | "
                       "{:.1f}s | kept {} (kernel code, stack, graphs) | stack {} B per thread "
                       "(driver default {} B{}) | Host tier pinning takes {} | graphs given back {}",
                       memory.kernel_warm_up_prefill_widths,
+                      memory.kernel_warm_up_from_cache
+                          ? "kept from an earlier start (" +
+                                product::format_pretty_bytes(
+                                    memory.kernel_warm_up_kept_loop_bytes) +
+                                " reserved):"
+                          : std::string("ran"),
                       warm_up_widths_summary(memory.kernel_warm_up_widths_run,
                                              memory.kernel_warm_up_prefill_widths),
                       memory.kernel_warm_up_graph_passes,
