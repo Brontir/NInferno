@@ -146,13 +146,23 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
             // The lane's own row's group scale goes into its A fragments (f16, as llama.cpp's
             // decode to f16 rounds it): the MMAs accumulate into acc directly, with no per-group
             // partial sums (gate/up held 64 more registers for them and spilled at 255).
-            __half2 dsh[kSets];
+            // K-quants (scale_parts): the integer sub-scale first (exact), then d: one rounding,
+            // where ds = d sc in f16 rounded twice (Gemma 4 26B, KLD against the exact profile:
+            // 0.407 with FP32 group scales, 0.438 with d sc folded).
+            constexpr bool kSplit = requires(const F& f, float& v) { f.scale_parts(0, 0, v, v); };
+            __half2 dsh[kSets], sch[kSets];
             float dmr[kSets][2];
 #    pragma unroll
             for (int s = 0; s < kSets; ++s) {
                 float ds, dm;
                 cur[s].scale(q, gr, ds, dm);
                 dsh[s] = __float2half2_rn(ds);
+                if constexpr (kSplit) {
+                    float dd, sc;
+                    cur[s].scale_parts(q, gr, dd, sc);
+                    dsh[s] = __float2half2_rn(dd);
+                    sch[s] = __float2half2_rn(sc);
+                }
                 if constexpr (F::kMin) {
                     dmr[s][0] = __shfl_sync(0xffffffffU, dm, src_a);
                     dmr[s][1] = __shfl_sync(0xffffffffU, dm, src_a + 2);
@@ -175,6 +185,10 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
                         const __half2 bias = __float2half2_rn(F::kBias);
                         a0 = generic::volta::h2_bits(__hsub2(generic::volta::bits_h2(a0), bias));
                         a1 = generic::volta::h2_bits(__hsub2(generic::volta::bits_h2(a1), bias));
+                    }
+                    if constexpr (kSplit) {
+                        a0 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a0), sch[s]));
+                        a1 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a1), sch[s]));
                     }
                     a0 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a0), dsh[s]));
                     a1 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a1), dsh[s]));

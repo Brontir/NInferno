@@ -103,6 +103,15 @@ struct HK45 {
         dm = half_bits_f32(head.x >> 16) * static_cast<float>(mn);
     }
 
+    // The group scale as its f16 base and integer factor (ds = d sc): a code times sc is exact in
+    // f16 (at most 31 x 63), so a fragment scaled by sc, then by d, rounds once, as an f16 dequant.
+    __device__ __forceinline__ void scale_parts(int q, int g, float& d, float& sc) const {
+        float ds, dm;
+        scale(q, g, ds, dm);
+        d  = half_bits_f32(head.x);
+        sc = d == 0.0F ? 0.0F : ds / d;
+    }
+
     // MMA m: run m / 8 (0: low nibbles, sub-block 2q; 1: high, 2q + 1), code word m % 8.
     __device__ __forceinline__ void fragment(int m, int q, unsigned& a0, unsigned& a1) const {
         const int run = m >> 3, wd = m & 7;
@@ -243,6 +252,14 @@ struct HK6 {
         const int v = static_cast<signed char>((words[i >> 2] >> (8 * (i & 3))) & 0xffU);
         ds          = half_bits_f32(d) * static_cast<float>(v);
         dm          = 0.0F;
+    }
+
+    // As HK45::scale_parts: d and the int8 scale (a code times it is at most 32 x 128).
+    __device__ __forceinline__ void scale_parts(int q, int g, float& dd, float& sc) const {
+        const unsigned words[4] = {this->sc.x, this->sc.y, this->sc.z, this->sc.w};
+        const int i             = 8 * (q >> 1) + 2 * ((q & 1) + 2 * (g >> 1)) + (g & 1);
+        dd = half_bits_f32(d);
+        sc = static_cast<float>(static_cast<signed char>((words[i >> 2] >> (8 * (i & 3))) & 0xffU));
     }
 
     __device__ __forceinline__ void fragment(int m, int q, unsigned& a0, unsigned& a1) const {
