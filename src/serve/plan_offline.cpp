@@ -496,7 +496,7 @@ Planning planning_of(const ServeOptions& options, const ModelRead& model,
 
 } // namespace
 
-OfflinePlan plan_without_load(const ServeOptions& options) {
+OfflinePlan plan_without_load(const ServeOptions& options, std::optional<std::uint64_t> weight_bytes) {
     runtime::PlanDeviceFacts device;
     spec::GpuKey gpu;
     if (!options.plan_device.empty()) {
@@ -522,7 +522,10 @@ OfflinePlan plan_without_load(const ServeOptions& options) {
         }
         gpu = spec::gpu_identity(options.device).key;
     }
-    const ModelRead model = read_model(options);
+    ModelRead model = read_model(options);
+    if (weight_bytes && !model.gguf) {
+        model.facts = product::with_weights(model.facts, *weight_bytes, runtime::WeightBasis::FileSize);
+    }
     // A quantization is chosen on an idle card of this GPU (as the fetch without --quant does:
     // the same card type, the same flags, the same file); the free memory now is reported beside.
     const bool table = model.kind == "hub" && model.gguf && options.quant.empty();

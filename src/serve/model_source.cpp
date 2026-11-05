@@ -13,6 +13,8 @@
 #include <chrono>
 #include <cstdio>
 #include <filesystem>
+#include <map>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 
@@ -46,15 +48,16 @@ namespace fs = std::filesystem;
 // plans the files the fetch chose (a width selector resolved, the commit a moved branch is pinned
 // to) and nothing is asked when the weights are here. A model the plan cannot read is left to the
 // start.
-void check_fits(const ServeOptions& options) {
+void check_fits(const ServeOptions& options, std::optional<std::uint64_t> weight_bytes = {}) {
     OfflinePlan plan;
     try {
-        plan = plan_without_load(options);
+        plan = plan_without_load(options, weight_bytes);
     } catch (const std::exception&) { return; }
     if (plan.fits) { return; }
     throw std::runtime_error(options.model_source + " does not fit GPU " +
                              std::to_string(options.device) + " (nothing was downloaded): " +
                              plan.reason +
+                             (weight_bytes ? " (the least its conversion writes)" : "") +
                              ". Options: a smaller quantization (--quant), a shorter context "
                              "(--max-context), fewer requests (--max-concurrency), or a GPU with "
                              "more free memory.");
@@ -65,6 +68,49 @@ void check_fits(const ServeOptions& options) {
 bool keeps_weights(const std::string& recipe) {
     return recipe == "dense_published" || recipe == "moe_published" || recipe == "dense_bf16" ||
            recipe == "qwen3_5_bf16" || recipe == "qwen3_5_published";
+}
+
+// The official recipes of a published quantization (NVFP4, FP8) keep its encoded matrices as
+// published and quantize the rest themselves (Q8 projections and tables, a Q6 head): their
+// artifact is smaller than the files, by how much the headers tell. nvidia/Qwen3.6-35B-A3B-NVFP4's
+// 21.5 GiB of files were downloaded onto a 16 GB card before the start refused 19.4 GiB of weights.
+bool keeps_encoded(const std::string& recipe) {
+    return recipe == "dense_encoded" || recipe == "gemma4_published" ||
+           recipe == "gemma4_26b_a4b_nvfp4" || recipe == "gemma4_31b_nvfp4" ||
+           recipe == "qwen3_6_27b_nvfp4" || recipe == "qwen3_8_27b_nvfp4" ||
+           recipe == "qwen3_6_35b_a3b_nvfp4";
+}
+
+// The least such a recipe writes: the encoded tensors (U8 codes, FP8, their scales) as they are,
+// and every plain float tensor (16, 32 or 64 bits) at `plain_bits` a weight: 4 for the recipes that
+// quantize them, below the smallest encoding they give one (Q6); 16 for gemma4_published, which
+// quantizes nothing and keeps a plain tensor in BF16 at the least. A text artifact drops the vision
+// and audio towers, so without --vision they are not counted. nullopt when a header cannot be read.
+std::optional<std::uint64_t> encoded_floor_bytes(const convert::FetchPlan& fetch, bool vision,
+                                                 std::uint64_t plain_bits) {
+    std::map<std::string, std::uint64_t> dtypes;
+    try {
+        convert::FetchOptions where;
+        where.cache = fetch.root;
+        dtypes      = convert::safetensors_dtype_bytes(fetch, where, [vision](const std::string& name) {
+            return vision || (name.find("vision") == std::string::npos &&
+                              name.find("visual") == std::string::npos &&
+                              name.find("audio") == std::string::npos);
+        });
+    } catch (const std::exception&) { return std::nullopt; }
+    std::uint64_t bytes = 0;
+    for (const auto& [dtype, size] : dtypes) {
+        if (dtype == "BF16" || dtype == "F16") {
+            bytes += size * plain_bits / 16;
+        } else if (dtype == "F32") {
+            bytes += size * plain_bits / 32;
+        } else if (dtype == "F64") {
+            bytes += size * plain_bits / 64;
+        } else {
+            bytes += size;
+        }
+    }
+    return bytes == 0 ? std::nullopt : std::optional<std::uint64_t>(bytes);
 }
 
 void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
@@ -84,11 +130,17 @@ void check_fits(const ServeOptions& options, const convert::FetchPlan& fetch,
             break;
         }
     }
-    // The plan reads the files' bytes: a recipe that quantizes a checkpoint (the official
-    // Qwen3.6-35B-A3B one takes its BF16 experts to 4-5 bits) makes a smaller artifact, whose
-    // size the start knows.
-    if (!gguf && !keeps_weights(recipe)) { return; }
-    check_fits(asked);
+    if (gguf || keeps_weights(recipe)) {
+        check_fits(asked);
+        return;
+    }
+    // A recipe that quantizes a BF16 checkpoint (the official Qwen3.6-35B-A3B one takes its experts
+    // to 4-5 bits) makes an artifact whose size the start knows.
+    if (!keeps_encoded(recipe)) { return; }
+    const std::uint64_t plain_bits = recipe == "gemma4_published" ? 16 : 4;
+    if (const auto floor = encoded_floor_bytes(fetch, options.enable_vision, plain_bits)) {
+        check_fits(asked, floor);
+    }
 }
 
 } // namespace

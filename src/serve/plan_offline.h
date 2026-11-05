@@ -26,8 +26,10 @@ struct OfflinePlan {
 };
 
 // --plan --no-load. Throws std::runtime_error when the model cannot be read (no listing offline,
-// no header) or the device cannot be (no GPU and no --plan-device).
-[[nodiscard]] OfflinePlan plan_without_load(const ServeOptions& options);
+// no header) or the device cannot be (no GPU and no --plan-device). `weight_bytes`: a safetensors
+// model's weights planned at these bytes instead of its files' (what a conversion writes at least).
+[[nodiscard]] OfflinePlan plan_without_load(const ServeOptions& options,
+                                            std::optional<std::uint64_t> weight_bytes = std::nullopt);
 
 // Before a GGUF hub repository is downloaded without --quant: the largest quantization that fits
 // the asked context x --max-concurrency on an idle card of this GPU's class (the rule logs its

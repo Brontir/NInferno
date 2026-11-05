@@ -164,6 +164,14 @@ struct GgufHead {
                                        std::uint64_t bytes, std::size_t part = 0,
                                        std::uint64_t begin = 0);
 
+// The bytes each dtype ("BF16", "F8_E4M3", "U8", ...) takes in the safetensors files of `plan`, from
+// their headers: read from the cache where a file is there, else by HTTP range requests (a header
+// is a few hundred KiB). `keep`, when given: only the tensors it accepts by name are counted. Throws
+// std::runtime_error when a header cannot be read.
+[[nodiscard]] std::map<std::string, std::uint64_t>
+safetensors_dtype_bytes(const FetchPlan& plan, const FetchOptions& options,
+                        const std::function<bool(const std::string&)>& keep = {});
+
 // Each of `quants`' output head bytes (output.weight of shape [hidden, vocab]; token_embd.weight
 // for a model that ties its head, `tied`), from a 1 MiB window of its header around `table_end`
 // (where another quantization's tensor table ends: a repository's quantizations share their
