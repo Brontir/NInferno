@@ -142,7 +142,7 @@ int route_tune_main(int argc, char** argv) {
             routes_csv.open(opt["--routes-out"]);
             if (!routes_csv) throw std::runtime_error("cannot open " + opt["--routes-out"]);
             routes_csv << "format,compute,epilogue,n,k,T,route,median_us,model_us,registers,"
-                          "local_bytes\n";
+                          "local_bytes,weight_bytes,activation_bytes,output_bytes\n";
         }
         // The route the production path runs at each band point (#301): select_route's choice
         // with the tables this device loads, resolved for the contiguous call and this workspace,
@@ -342,6 +342,16 @@ int route_tune_main(int argc, char** argv) {
                         routes_csv << res->registers << ',' << res->local_bytes;
                     } else {
                         routes_csv << ',';
+                    }
+                    // The route's logical traffic (#298, route_traffic): what its tile requests
+                    // before a cache serves it. Empty where no tile describes the route.
+                    routes_csv << ',';
+                    if (const auto tr = generic::route_traffic(r, w.weight, gp, t)) {
+                        routes_csv << std::llround(tr->weight_bytes) << ','
+                                   << std::llround(tr->activation_bytes) << ','
+                                   << std::llround(tr->output_bytes);
+                    } else {
+                        routes_csv << ",,";
                     }
                     routes_csv << '\n';
                 }
