@@ -609,9 +609,9 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
     if (build_features().mma_tensor) { return false; }
     const auto admits = [](const Weight& bank) {
         const auto codec = generic::codec_of(bank);
-        // Both layouts of a format with a fragment-order twin run one route (their bytes agree,
-        // moe_frag_test): the stage reads Q4_K's, and no other format's twin.
-        const bool layout = !ggml_frag_format(bank.qtype) || codec == generic::WeightCodec::GgmlQ4K;
+        // A bank in fragment order runs here only as Q4_K (HK4Frag); the published layout of every
+        // listed format does (Q4_0 included: its twin is a layout, not the format).
+        const bool layout = !is_frag(bank) || codec == generic::WeightCodec::GgmlQ4K;
         return layout && moe_volta_hmma_codec(codec) &&
                bank.k % moe_volta_hmma_k_multiple(codec) == 0;
     };
@@ -1008,7 +1008,7 @@ std::string plan_name(const MoePlan& plan) {
         plan.down_r8 >= 0 ? r8_schedule_name(plan.down_r8) : schedule_name(plan.down_schedule);
     return (plan.gate_up_r8 >= 0 ? r8_schedule_name(plan.gate_up_r8)
                                  : schedule_name(plan.gate_up_schedule)) +
-           "|" + down + (plan.a16 ? "|a16" : "") +
+           "|" + down + (plan.a16 ? "|a16" : "") + (plan.volta_hmma ? "|volta.hmma" : "") +
            (plan.w4a8_gate_up && plan.w4a8_down ? "|w4a8"
             : plan.w4a8_gate_up                 ? "|w4a8.gate_up"
             : plan.w4a8_down                    ? "|w4a8.down"
@@ -1023,7 +1023,10 @@ MoeStageRoutes stage_routes(const MoeWeights& weights, const MoePlan& plan) {
         MoeStageRoute s;
         s.r8   = r8_bank_refusal(bank);
         s.w4a8 = w4a8;
-        if (on_tier) {
+        if (plan.volta_hmma) {
+            s.kernel = MoeStageKernel::VoltaHmma;
+            s.name   = "volta.hmma";
+        } else if (on_tier) {
             // Two plain MXFP4 banks on an sm_120a build run the block-scaled MMA with MXFP8
             // activations (launch_moe_w4a8_mx) in the tier's place.
             s.kernel = MoeStageKernel::W4a8;
@@ -1229,6 +1232,11 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
          p.gate_up_r8 >= 0 || p.down_r8 >= 0)) {
         fail("a W4A8 stage needs its bank admitted (and no A4 NVFP4 partner), no R8 stage and a "
              "job width of whole W4A8 tiles");
+    }
+    if (p.volta_hmma && (!volta_hmma_admitted(w, g) || p.job_columns % kVoltaHmmaSlots != 0 ||
+                         p.w4a8() || p.gate_up_r8 >= 0 || p.down_r8 >= 0)) {
+        fail("Volta's HMMA stages need a Volta build, both banks admitted, no W4A8 or R8 stage and "
+             "a job width of whole 32-slot tiles");
     }
     const std::int32_t t = x.ne[1];
     // Every plan reads the activation in 16-byte words: the router's BF16 register MMA (and the

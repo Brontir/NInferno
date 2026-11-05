@@ -350,11 +350,11 @@ struct A8Route {
 // schedule: the R8 or register-MMA schedule (-1 under W4A8; "w4a8.mx8": two plain MXFP4 banks on
 // an sm_120a build, the block-scaled MMA with MXFP8 activations); r8 and w4a8: the bank's refusal of
 // each (None where the bank is admitted, whether or not the plan took it).
-enum class MoeStageKernel { R8, W4a8, RegisterMma };
+enum class MoeStageKernel { R8, W4a8, RegisterMma, VoltaHmma };
 struct MoeStageRoute {
     MoeStageKernel kernel = MoeStageKernel::RegisterMma;
     int schedule          = -1;
-    std::string name;                  // "r8.w..", "rmma.m..", "w4a8", "w4a8.mx8"
+    std::string name;                  // "r8.w..", "rmma.m..", "w4a8", "w4a8.mx8", "volta.hmma"
     BankRefusal r8   = BankRefusal::None;
     BankRefusal w4a8 = BankRefusal::None;
 };

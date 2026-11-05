@@ -8,8 +8,8 @@
 // on mma.m8n8k4 as generic_volta_hmma.cu does for a dense call: the weight codes become exact f16
 // integers in the lane's own A fragments (generic_volta_hmma.cuh, a fragment per format; Q4_K also
 // in its fragment-order layout), the
-// slots' activation is staged in shared memory as f16 once a superblock, each scale group's sum
-// is scaled in FP32. No weight is decoded to memory: a row tile reads its expert's codes once for
+// slots' activation is staged in shared memory as f16 once a superblock, and each scale group's
+// scale is applied in the lane's A fragments (f16) before its MMAs. No weight is decoded to memory: a row tile reads its expert's codes once for
 // every 32 slots of the job.
 #include "core/device.h"
 #include "ops/common/mma.cuh"

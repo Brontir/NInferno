@@ -149,12 +149,12 @@ struct HK4Frag : HK45<4> {
 // ggml's 32-value blocks (Q4_0, Q4_1, Q5_0, Q5_1) as planes: 16 code bytes a block (byte j: value j
 // low nibble, j + 16 high), Q5's 32 fifth bits a word, a binary16 d (Q4_0, Q5_0) or d and m (Q4_1,
 // Q5_1) a block. Quad-pair q: blocks 8 sb + 2q and + 1 (K a multiple of 64). The operand is 1024 +
-// code (the f16 bit trick, exact): the zero point and the 1024 come off against the run's activation
-// sum (kBias), and a min's m adds against it (w = d q + m: the sum's -dm is -(-m)).
+// code (the f16 bit trick, exact): the zero point and the 1024 come off the A fragment (kBias), and a
+// min's m adds against the run's activation sum (w = d q + m: the sum's -dm is -(-m)).
 template <int Bits, bool Min>
 struct HG32 {
     static constexpr int kGroups = 2;
-    static constexpr bool kMin   = true; // every form takes the run sums
+    static constexpr bool kMin   = Min; // Q4_1 / Q5_1 take the run sums
     static constexpr float kBias = 1024.0F + (Min ? 0.0F : (Bits == 4 ? 8.0F : 16.0F));
     uint4 c[2];
     unsigned qh[2];
@@ -324,7 +324,7 @@ struct HQ8 {
 // E8M0 scale byte each. Quad-pair q: blocks 8 sb + 2q and 8 sb + 2q + 1, contiguous (32 bytes). The
 // operand is twice the E2M1 value, an f16 integer (0, 1, 2, 3, 4, 6, 8, 12 and their negatives):
 // one PRMT a pair picks the f16 high bytes from a table (the low bytes are zero), the sign bit
-// follows; the group's scale is half its E8M0 value, applied in FP32 as the other formats' are.
+// follows; the group's scale is half its E8M0 value.
 struct HX4 {
     static constexpr int kGroups = 2;
     static constexpr bool kMin   = false;
