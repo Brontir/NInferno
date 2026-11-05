@@ -156,6 +156,11 @@ struct GemmArgs {
     // by lane (generic_gemm.cuh mma_step_local), not in the order of a wider call's emulated MMA.
     // run_route sets it outside the invariant profile, whose calls keep one order at every T.
     int lane_local = 0;
+    // Register MMA on tensor cores: a tile of four or more token tiles takes a min-term format's
+    // group sums by FP32 adds, not an MMA with ones (generic_gemm.cuh mma_step), a sum in another
+    // order than a narrower tile's. run_route sets it outside the invariant and prefill profiles,
+    // whose calls keep one order at every T.
+    int add_sums = 0;
 };
 
 // An activation quantized to int8 per 32 values (the W4A8 quantizer's output): what the W4A8

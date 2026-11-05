@@ -2757,6 +2757,15 @@ bool rmma_sums_lane_local(int schedule) {
 }
 } // namespace
 
+// GemmArgs::add_sums: outside the invariant and prefill profiles, whose calls keep one summation
+// order at every T (a call there may change width from one chunk or round to the next), a tensor-core
+// register-MMA tile of four or more token tiles adds a min-term format's group sums in FP32.
+namespace {
+bool rmma_add_sums() {
+    return current_features().mma_tensor && !invariant_routes_active() && !prefill_routes_active();
+}
+} // namespace
+
 bool route_is_token_invariant(Route route) {
     switch (route.family) {
     case Family::RegisterMma:
@@ -4467,6 +4476,7 @@ std::optional<KernelResources> rmma_resources(int schedule, const Weight& w, Epi
     args.tokens   = tokens;
     args.ldx      = w.k;
     args.lane_local = invariant_routes_active() ? 0 : 1;
+    args.add_sums   = rmma_add_sums() ? 1 : 0;
     args.spread_smem =
         spread_smem(Route{Family::RegisterMma, static_cast<std::uint8_t>(schedule)}, codec, epilogue, args);
     // Without tensor mma.sync run_route hands such calls to Volta's own HMMA and GEMV kernels
@@ -5276,6 +5286,7 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             return;
         }
         args.lane_local = invariant_routes_active() ? 0 : 1;
+        args.add_sums   = rmma_add_sums() ? 1 : 0;
         if (!current_features().mma_tensor && volta_hmma_takes(codec, args)) {
             launch_volta_hmma(codec, call.epilogue, args, stream);
             return;
