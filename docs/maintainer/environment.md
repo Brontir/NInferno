@@ -213,7 +213,8 @@ that steer nothing: a choice belongs in an option.
 The user-facing ones are documented where they belong: `NINFERNO_API_KEY` in
 [Serving](../serving.md), `NINFERNO_UI_KEY`, `NINFERNO_CATALOG_URL`, `NINFERNO_UPDATER`,
 `NINFERNO_UPDATE_URL` and `NINFERNO_UPDATE_CHECK` with the desktop UI and the release tools, and
-`NINFERNO_PDFIUM` (where the PDF library is) with document input. Test programs read
+`NINFERNO_PDFIUM` (where the PDF library is) with document input, and `NINFERNO_WARMUP_CACHE`
+(`0` turns off the kept kernel warm-up) in [Serving](../reference/serving.md#kernel-warm-up). Test programs read
 `NINFERNO_TEST_*`, `NINFERNO_DET_*` and `NINFERNO_PROBE_*` and map them to the options above.
 
 ### Numerics investigation and route recording

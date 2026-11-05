@@ -217,6 +217,19 @@ std::filesystem::path self_exe() {
     return std::filesystem::path(path);
 }
 
+std::filesystem::path module_of(const void* address) {
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            static_cast<LPCWSTR>(address), &module)) {
+        return {};
+    }
+    std::wstring path(32768, L'\0');
+    const DWORD n = GetModuleFileNameW(module, path.data(), static_cast<DWORD>(path.size()));
+    path.resize(n);
+    return std::filesystem::path(path);
+}
+
 bool gmtime(std::time_t t, std::tm& out) { return ::gmtime_s(&out, &t) == 0; }
 bool localtime(std::time_t t, std::tm& out) { return ::localtime_s(&out, &t) == 0; }
 

@@ -40,6 +40,8 @@ template <class Instance>
     out.kernel_warm_up_graph_passes       = warm_up.graph_passes;
     out.kernel_warm_up_seconds            = warm_up.seconds;
     out.kernel_warm_up_lasting_bytes      = warm_up.lasting_bytes;
+    out.kernel_warm_up_from_cache         = warm_up.from_cache;
+    out.kernel_warm_up_allowance_reserve_bytes    = warm_up.allowance_reserve_bytes;
     out.stack_limit_before_bytes          = warm_up.stack_limit_before_bytes;
     out.stack_limit_bytes                 = warm_up.stack_limit_bytes;
     out.stack_limit_source                = warm_up.stack_limit_source;

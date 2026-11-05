@@ -1,8 +1,11 @@
 #include "core/device_traits.h"
 #include "runtime/engine/model_instance.h"
+#include "runtime/engine/decision_fingerprint.h"
+#include "runtime/engine/decision_sources.h"
 #include "runtime/engine/family_registry.h"
 #include "runtime/engine/plan_dry_run.h"
 #include "runtime/engine/plan_ladder.h"
+#include "runtime/engine/warmup_cache.h"
 #include "runtime/engine/warmup_widths.h"
 #include "artifact/reader.h"
 #include "artifact/formats.h"
@@ -14,6 +17,7 @@
 #include "core/host_memory.h"
 #include "core/paged_kv_cache.h"
 #include "core/startup.h"
+#include "core/sys.h"
 #include "models/qwen3_5/execution/parameters.h"
 #include "models/qwen3_5/load.h"
 #include "models/qwen3_5/measurement.h"
@@ -79,6 +83,98 @@ constexpr std::uint32_t kMaximumWarmUpPasses = 8;
 // The first step of the reserve a probe whose graphs did not fit adds to the check (doubled per
 // retry).
 constexpr std::size_t kGraphShortfallStepBytes = std::size_t{128} << 20;
+
+// The inputs the kernel warm-up's width loop depends on (warmup_cache.h), as text: the build, the
+// device's facts and driver, the artifact (its source identity, size and modification time: a
+// conversion again is another file), the probe Program's options with its drafter's identity, the
+// decode round, the widths, and the route data the routes are read from (the route table and its
+// lenders, the dense tuner's file), and CUDA's module loading mode (under eager loading the code
+// is in memory before the loop, which then measures none of it). The free memory is not among
+// them, so the same start keys the same record.
+// The NVIDIA driver's release ("575.57.08"), through NVML as device_class.cpp loads it; empty
+// where NVML is not there.
+std::string nvidia_driver_release() {
+    using Init     = int (*)();
+    using Version  = int (*)(char*, unsigned);
+    using Shutdown = int (*)();
+    void* nvml = sys::load_library("libnvidia-ml.so.1", "nvml.dll");
+    if (nvml == nullptr) { return {}; }
+    const auto init     = reinterpret_cast<Init>(sys::symbol(nvml, "nvmlInit_v2"));
+    const auto version  = reinterpret_cast<Version>(sys::symbol(nvml, "nvmlSystemGetDriverVersion"));
+    const auto shutdown = reinterpret_cast<Shutdown>(sys::symbol(nvml, "nvmlShutdown"));
+    char text[96]       = {};
+    if (init && version && shutdown && init() == 0) {
+        if (version(text, sizeof(text)) != 0) { text[0] = '\0'; }
+        shutdown();
+    }
+    sys::free_library(nvml);
+    return text;
+}
+
+std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tokens,
+                             const std::vector<std::uint32_t>& widths) {
+    std::string text = "schema\tninferno-warm-up-key/1\n";
+    const auto line  = [&](std::string_view key, std::string_view value) {
+        text += std::string(key) + "\t" + std::string(value) + "\n";
+    };
+    const auto add = [&](std::string_view section, const DecisionSection& lines) {
+        for (const auto& [key, value] : lines) { line(std::string(section) + "." + key, value); }
+    };
+    int driver_version = 0;
+    if (cudaDriverGetVersion(&driver_version) != cudaSuccess) {
+        (void)cudaGetLastError();
+        driver_version = 0;
+    }
+    add("build", build_of());
+    add("facts",
+        facts_of(device_class(probe.device), build_features(), driver_version, HostFacts{}));
+    // The driver's own release, beside its CUDA level: a PTX build is compiled by the driver, and
+    // its frames follow that compiler.
+    line("driver.build", nvidia_driver_release());
+    line("cuda.module_loading", sys::env("CUDA_MODULE_LOADING"));
+    line("cuda.force_ptx_jit", sys::env("CUDA_FORCE_PTX_JIT"));
+    line("cuda.disable_ptx_jit", sys::env("CUDA_DISABLE_PTX_JIT"));
+#ifdef NDEBUG
+    line("build.type", "release");
+#else
+    line("build.type", "debug");
+#endif
+    // The file that holds the device code, by path, size and write time: two binaries of one
+    // commit and build type still differ when a compiler release or a CUDA flag does, and so can
+    // their frames. A rebuild or a copy only misses the record.
+    std::error_code binary_error;
+    const auto binary = sys::module_of(
+        reinterpret_cast<const void*>(&ops::detail::generic::build_manifest));
+    const auto binary_bytes = binary.empty() ? 0 : std::filesystem::file_size(binary, binary_error);
+    const auto binary_mtime =
+        binary.empty() ? std::filesystem::file_time_type{}
+                       : std::filesystem::last_write_time(binary, binary_error);
+    line("binary.path", binary.empty() ? "unknown" : binary.string());
+    line("binary.bytes", std::to_string(binary_bytes));
+    line("binary.mtime", std::to_string(binary_mtime.time_since_epoch().count()));
+    std::error_code error;
+    const auto size  = std::filesystem::file_size(probe.artifact_path, error);
+    const auto mtime = std::filesystem::last_write_time(probe.artifact_path, error);
+    std::string identity;
+    try {
+        identity = artifact::source_identity(probe.artifact_path).value_or("none");
+    } catch (const std::exception&) { identity = "unreadable"; }
+    line("artifact.identity", identity);
+    line("artifact.bytes", std::to_string(size));
+    line("artifact.mtime", std::to_string(mtime.time_since_epoch().count()));
+    add("probe", options_of(probe, identity, "", drafter_identity(probe.speculative.drafter)));
+    line("warm_up.round_tokens", std::to_string(round_tokens));
+    std::string list;
+    for (std::size_t i = 0; i < widths.size(); ++i) {
+        list += (i == 0 ? "" : ",") + std::to_string(widths[i]);
+    }
+    line("warm_up.widths", list);
+    const ops::RouteTableStatus routes = ops::route_table_status();
+    line("sources.route_table",
+         routes.loaded ? routes.content_sha256 + " + " + routes.lender_sha256 : "none");
+    add("sources", ops::detail::generic::dense_tune_sources());
+    return text;
+}
 
 // One request of `prompt` through the Program's request path, as the Engine runs it: admission,
 // the prefill (with its speculative and sampling work), the first token and, with `decode_round`,
@@ -1133,7 +1229,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
         };
         std::size_t probe_buffer_bytes   = 0;
-        const auto probe_program = [&](std::uint32_t max_context) {
+        const auto probe_options = [&](std::uint32_t max_context) {
             const std::uint32_t kv_tokens = std::max(
                 max_context,
                 resolved.max_concurrency * static_cast<std::uint32_t>(kPagedKVPageSize));
@@ -1141,7 +1237,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                                              resolved.prefill_chunk,
                                              KvCapacityPolicy::explicit_capacity(kv_tokens));
             probe.context_cache = ContextCacheOptions{.enabled = false};
-            probe               = normalize_engine_options(std::move(probe));
+            return normalize_engine_options(std::move(probe));
+        };
+        const auto probe_program = [&](std::uint32_t max_context) {
+            EngineOptions probe = probe_options(max_context);
             // Planned as with the graphs held: its reservation is the probe's buffers alone.
             models::qwen3_5::SequencePlanner planner =
                 models::qwen3_5::make_sequence_planner(execution, device, probe, true);
@@ -1163,12 +1262,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
             const std::uint32_t widths =
                 std::min(resolved.prefill_chunk, probe_context - round_tokens - 1U);
-            std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
-            note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
-                             "-token context");
-            const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
-            const std::vector<TokenId> text          = frontend.tokenize_text(kWarmUpText);
-            if (text.empty()) { throw std::logic_error("the kernel warm-up text has no tokens"); }
             // One request per kernel class, not per width: at 1..48 every T is its own class
             // (the per-exact-T schedules); above that the band edges, the full- and partial-tile
             // widths inside each band and the exported plans' classes cover every kernel variant
@@ -1181,17 +1274,79 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                           return all;
                       }()
                     : detail::kernel_warm_up_widths(widths);
-            warm_up.widths_run.reserve(width_set.size());
-            for (const std::uint32_t width : width_set) {
-                std::vector<TokenId> prompt(width);
-                for (std::uint32_t i = 0; i < width; ++i) { prompt[i] = text[i % text.size()]; }
-                warm_up_request(*program, frontend, std::move(prompt), round_tokens, width == 1);
-                note_stack_limit("a prefill of " + std::to_string(width) + " tokens");
-                warm_up.widths_run.push_back(width);
+            // What the loop leaves (the kernels' code, the stack limit) is kept from an earlier
+            // start with the same inputs (warmup_cache.h). A maintainer option that steers what
+            // runs (any but --artifact-io) always runs it, and so does a build from a changed tree
+            // or from no checkout: its commit does not name the kernels it holds.
+            MaintainerOptions steering = options.maintainer;
+            steering.artifact_io       = MaintainerOptions{}.artifact_io; // how the file is read
+            const std::string commit   = build_of()["git_commit"];
+            const bool cacheable       = steering == MaintainerOptions{} &&
+                                   !commit.ends_with("-dirty") && commit != "unknown";
+            const std::string key_text =
+                cacheable ? warm_up_key_text(probe_options(probe_context), round_tokens, width_set)
+                          : std::string();
+            const std::optional<WarmUpRecord> kept =
+                cacheable ? read_warm_up_record(key_text) : std::nullopt;
+            // The small probe is built either way. What the warm-up left in Device memory once the
+            // probe is gone (the kernels' code, the stack's local memory, the graphs the driver
+            // keeps), measured from before the probe, is what a record compares against the
+            // allowance; memory the probe takes and gives back counts on neither path.
+            const std::size_t free_before_probe = current_free_device_bytes();
+            std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
+            note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
+                             "-token context");
+            device.synchronize();
+            // The warm-up is priced at the selection's declared allowance (plan_ladder.h,
+            // kPlanWarmUpAllowanceBytes) on both paths, never at the bytes an earlier start
+            // measured: a loop that ran tops what it left up to the allowance, a kept one reserves
+            // the allowance less what its probe left, so the plan reads the same free memory and
+            // declared constants whether or not a record was confirmed. A record is written only
+            // for a loop that left no more than the allowance, and the stack limit grows from zero
+            // at the first launch of each larger frame, inside the same allowance.
+            const bool use_kept = kept && kept->confirmed &&
+                                  kept->loop_bytes <= kPlanWarmUpAllowanceBytes;
+            if (use_kept) {
+                warm_up.from_cache = true;
+            } else {
+                const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
+                const std::vector<TokenId> text          = frontend.tokenize_text(kWarmUpText);
+                if (text.empty()) {
+                    throw std::logic_error("the kernel warm-up text has no tokens");
+                }
+                warm_up.widths_run.reserve(width_set.size());
+                for (const std::uint32_t width : width_set) {
+                    std::vector<TokenId> prompt(width);
+                    for (std::uint32_t i = 0; i < width; ++i) {
+                        prompt[i] = text[i % text.size()];
+                    }
+                    warm_up_request(*program, frontend, std::move(prompt), round_tokens,
+                                    width == 1);
+                    note_stack_limit("a prefill of " + std::to_string(width) + " tokens");
+                    warm_up.widths_run.push_back(width);
+                }
             }
             warm_up.prefill_widths = widths;
             program.reset();
             device.synchronize();
+            const std::size_t free_after_probe = current_free_device_bytes();
+            const std::size_t left =
+                free_before_probe > free_after_probe ? free_before_probe - free_after_probe : 0;
+            warm_up.allowance_reserve_bytes =
+                kPlanWarmUpAllowanceBytes - std::min<std::size_t>(kPlanWarmUpAllowanceBytes, left);
+            if (!use_kept && cacheable && left <= kPlanWarmUpAllowanceBytes) {
+                WarmUpRecord measured{.stack_limit_bytes  = current_stack_limit_bytes(),
+                                      .loop_bytes         = left,
+                                      .stack_limit_source = warm_up.stack_limit_source};
+                // Kept once a second loop measured the same (another process can move the free
+                // memory during one), at the larger of the two: one that does not agree is the
+                // new candidate.
+                if (kept && warm_up_records_agree(*kept, measured)) {
+                    measured.confirmed  = true;
+                    measured.loop_bytes = std::max(kept->loop_bytes, measured.loop_bytes);
+                }
+                write_warm_up_record(key_text, measured);
+            }
         }
         // The context cache's Host tier is pinned host memory, and the driver maps every pinned
         // byte for the device: the page tables take device memory (2 MiB per pinned GiB),
@@ -1241,8 +1396,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     " of Device memory free beside its reserves)");
             }
             const std::size_t free_now = current_free_device_bytes();
+            // A loop kept from an earlier start has not loaded its kernels' code yet: the bytes it
+            // took are reserved here, as if it had run.
             const std::size_t taken    = warm_up.host_pin_device_bytes + returned_graph_bytes +
-                                      graph_shortfall_bytes;
+                                      graph_shortfall_bytes + warm_up.allowance_reserve_bytes;
             const std::uint64_t measured = free_now > taken ? free_now - taken : 0;
             last_measured                = measured;
             // The chosen rung keeps its admission tier (a WarmUp rung: its held bytes and the

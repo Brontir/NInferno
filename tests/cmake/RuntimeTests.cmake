@@ -53,6 +53,12 @@ ninferno_add_test(ninferno_warmup_widths_test NEEDS_SOURCE_DIR
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_warmup_widths.cpp"
   LIBRARIES ninferno_engine ninferno_core ninferno::json)
 
+# The kernel warm-up's record kept across starts: round trip, misses on another key, schema or a
+# broken file, the agreement of two loops, and the switch that turns it off. CPU.
+ninferno_add_test(ninferno_warmup_cache_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_warmup_cache.cpp"
+  LIBRARIES ninferno_engine ninferno_core ninferno::json)
+
 # The decision fingerprint: canonical text, a pinned value, every input reaching it, the SHA-256
 # vectors, the inventory of NINFERNO_* variables read in src/, and the source files it names by
 # content (presets, MoE-tune cache, drafter). CPU.

@@ -86,7 +86,8 @@ struct ContextResolution {
 struct KernelWarmUpResolution {
     bool ran                             = false;
     std::uint32_t prefill_widths         = 0; // the covered range's upper edge (1..N)
-    std::vector<std::uint32_t> widths_run;    // the widths actually run, ascending
+    std::vector<std::uint32_t> widths_run;    // the widths actually run, ascending (none when
+                                              // the loop was kept from an earlier start)
     std::uint32_t graph_passes           = 0;
     double seconds                       = 0.0;
     std::size_t lasting_bytes            = 0;
@@ -101,6 +102,12 @@ struct KernelWarmUpResolution {
     std::size_t graph_returned_bytes = 0;
     // Reserve added after a probe's graphs did not fit under the allowance (0 when they did).
     std::size_t graph_shortfall_bytes = 0;
+    // The width loop kept from an earlier start (warmup_cache.h). Whether it ran or was kept, the
+    // warm-up is priced at the declared allowance (kPlanWarmUpAllowanceBytes): this is the
+    // allowance less what the loop left (or, kept, what the probe left), so a start's plan does
+    // not depend on whether an earlier start confirmed a record.
+    bool from_cache                  = false;
+    std::size_t allowance_reserve_bytes = 0;
 };
 
 // One served model: whatever its family, one execution under the one Program.

@@ -105,6 +105,25 @@ every resident thread. Neither is given back.
 - Pinning the context cache's Host tier takes GPU memory too (the driver's page tables for the
   pinned bytes, about 2 MiB per GiB). The warm-up pins buffers of the Host tier's sizes once,
   measures the cost, and the check reserves it (`Host tier pinning takes ...`).
+- The width loop (one prefill of every width class) is most of the warm-up, and what it leaves
+  depends only on what runs: the binary (its commit and build type, and the file that holds the
+  device code by path, size and write time, so a rebuild with another compiler or flag misses), the GPU and driver, the model file, the probe's options,
+  the widths and the route data. So the server keeps it: after a loop it records the stack limit
+  it ended at and the memory it took under the cache directory (`warm-up/<sha256>.json`), and a
+  later start with the same inputs skips the loop. Every start prices the warm-up at the plan's
+  declared allowance (64 MiB), whether its loop ran or was kept: a loop that ran reserves the rest
+  of the allowance beside what it left, a kept one the allowance less what its probe left. So the
+  plan never reads a measurement from an earlier start, and does not depend on whether a record
+  exists (`kernel warm-up | ... | kept from an earlier start (… reserved up to its allowance): …`).
+  A loop that left more than the allowance is not recorded. The memory is a difference
+  of the GPU's free memory, which another program can move during one loop, so a record is used
+  only once two loops measured the same: the third start with the same inputs is the first to
+  skip it. The decode-graph probe and the memory check still run. On an RTX 4090 with Gemma 4 12B
+  this takes a start from 22.8 s to 13.9 s. The first requests then load the kernels' code once:
+  the first twenty short chats ran 0.4-0.7 % slower (about 40 ms in all), the next twenty as fast
+  as after a full warm-up. Any maintainer option but `--artifact-io` runs the loop, as does a build
+  from a changed tree or from no checkout, and `NINFERNO_WARMUP_CACHE=0` (`off`, `no`, `false`)
+  turns the record off.
 - The warm-up takes longer on larger models (one prefill of every width). Only an automatic choice
   runs it: with `--max-context`, `--kv-capacity`, `--prefill-chunk` and `--device-state-slots` all
   given, the ladder has one rung, which fits or is refused.

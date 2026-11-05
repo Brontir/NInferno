@@ -591,16 +591,27 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
         write(*shortfall);
     }
     if (memory.kernel_warm_up) {
-        logger_->info("kernel warm-up | prefill widths 1..{} | ran {} | decode graphs {} {} | "
-                      "{:.1f}s | kept {} (kernel code, stack, graphs) | stack {} B per thread "
+        logger_->info("kernel warm-up | prefill widths 1..{} | {} {} | decode graphs {} {} | "
+                      "{:.1f}s | kept {} ({}) | stack {} B per thread "
                       "(driver default {} B{}) | Host tier pinning takes {} | graphs given back {}",
                       memory.kernel_warm_up_prefill_widths,
-                      warm_up_widths_summary(memory.kernel_warm_up_widths_run,
-                                             memory.kernel_warm_up_prefill_widths),
+                      (memory.kernel_warm_up_from_cache ? "kept from an earlier start ("
+                                                        : "ran (") +
+                          product::format_pretty_bytes(
+                              memory.kernel_warm_up_allowance_reserve_bytes) +
+                          " reserved up to its allowance)" +
+                          (memory.kernel_warm_up_from_cache ? ":" : ""),
+                      memory.kernel_warm_up_from_cache
+                          ? std::string("its widths not run")
+                          : warm_up_widths_summary(memory.kernel_warm_up_widths_run,
+                                                   memory.kernel_warm_up_prefill_widths),
                       memory.kernel_warm_up_graph_passes,
                       memory.kernel_warm_up_graph_passes == 1 ? "pass" : "passes",
                       memory.kernel_warm_up_seconds,
                       product::format_pretty_bytes(memory.kernel_warm_up_lasting_bytes),
+                      memory.kernel_warm_up_from_cache
+                          ? "stack, graphs; the kernels' code loads at first use"
+                          : "kernel code, stack, graphs",
                       memory.stack_limit_bytes, memory.stack_limit_before_bytes,
                       memory.stack_limit_source.empty()
                           ? std::string()
