@@ -602,6 +602,19 @@ bool w4a8_bank_admitted(const MoeWeights& w) {
     return with_w4a8(MoePlan{}, w, true).w4a8();
 }
 
+// Whether a call of T >= 17 takes Volta's grouped HMMA stages (MoePlan::volta_hmma): a build
+// without mma.sync, both banks of a format with an f16 A fragment in its own (not fragment) order,
+// K a multiple of the format's step, and x rows of whole 4-value groups at 8-byte alignment.
+bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
+    if (build_features().mma_tensor) { return false; }
+    const auto admits = [](const Weight& bank) {
+        const auto codec = generic::codec_of(bank);
+        return !is_frag(bank) && moe_volta_hmma_codec(codec) &&
+               bank.k % moe_volta_hmma_k_multiple(codec) == 0;
+    };
+    return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.inter % 4 == 0;
+}
+
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
 // default (RTX 5090, one MoE layer at T = 64..8192 against the register MMA:
 // Qwen3.6-35B-A3B Q4_K/Q6_K 0.64-0.69, IQ2_S/IQ3_XXS 0.89-0.91, Gemma 4 26B Q4_0 0.80-0.86,
@@ -1105,6 +1118,12 @@ MoePlan untuned_plan(const MoeWeights& weights, const MoeConfig& config, std::in
     // call does (generic_gemm.cpp select_route): the tables' prefill plans are A16 schedules,
     // measured before the grouped W4A8 was the default, and one would hide it (RTX 5080, gpt-oss
     // MXFP4 experts: the gb203 entry 2950 us at T=1024, the W4A8 2110 us).
+    // Volta from T = 17: its own tensor cores (the int8 tier and the register MMA run emulated).
+    if (tokens >= 17 && volta_hmma_admitted(weights, g)) {
+        MoePlan v    = plan_for(g, tokens, true);
+        v.volta_hmma = true;
+        return v;
+    }
     MoePlan p               = plan_for(g, tokens, prefill);
     const bool w4a8_prefill = prefill && tokens >= 17 &&
                               w4a8_bank_admitted(weights) && p.job_columns % kMoeW4a8BlockM == 0;
@@ -1421,7 +1440,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         // A non-gated expert reads its one up row once, not as both sets of a gated one.
         const Stage first = gated ? Stage::GateUp : Stage::Up;
         args.ldo          = g.inter;
-        if (p.w4a8_gate_up) {
+        if (p.volta_hmma) {
+            args.sub_tiles = p.job_columns / kVoltaHmmaSlots;
+            launch_moe_volta_hmma(generic::codec_of(w.gate_up), first, args,
+                                  dim3(blocks(g.inter, kVoltaHmmaRows),
+                                       static_cast<unsigned>(jobs * args.sub_tiles)),
+                                  stream);
+        } else if (p.w4a8_gate_up) {
             const auto xq  = w4a8_buffers(ws.x_codes, ws.x_scales, ws.x_sums);
             const bool mx  = mx8_banks(w);
             args.sub_tiles = p.job_columns / kMoeW4a8BlockM;
@@ -1473,7 +1498,13 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.out_bf16    = ws.y.data;
         args.ldo         = g.hidden;
         args.pdl         = pdl && !p.w4a8_down;
-        if (p.w4a8_down) {
+        if (p.volta_hmma) {
+            args.sub_tiles = p.job_columns / kVoltaHmmaSlots;
+            launch_moe_volta_hmma(generic::codec_of(w.down), Stage::Down, args,
+                                  dim3(blocks(g.hidden, kVoltaHmmaRows),
+                                       static_cast<unsigned>(jobs * args.sub_tiles)),
+                                  stream);
+        } else if (p.w4a8_down) {
             const auto mq  = w4a8_buffers(ws.mid_codes, ws.mid_scales, ws.mid_sums);
             args.sub_tiles = p.job_columns / kMoeW4a8BlockM;
             const dim3 grid(blocks(g.hidden, kMoeW4a8BlockN),
