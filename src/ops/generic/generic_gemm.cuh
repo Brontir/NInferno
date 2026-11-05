@@ -2393,18 +2393,27 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                     load_act<Decoder, NT, G>(act, col, step_k0 + 16 * G * g, quad);
                 }
                 act_operands<Decoder, NT, G>(act);
-                float sums[NT][4];
+                float sums[NT][2];
                 if constexpr (MinTermOf<Decoder>::value) {
-                    // 1.0, twice: BF16, or FP16 for an F16Of decoder.
-                    constexpr unsigned kOnes = F16Of<Decoder>::value ? 0x3c003c00U : 0x3f803f80U;
+                    // The group's activation sums of the tile's token columns 2 quad and 2 quad + 1
+                    // (the accumulator columns of this lane), by FP32 adds: the lane's 4G values
+                    // of its column lane / 4, the quad's four lanes, then a gather. An MMA with
+                    // ones did this before, as many tensor-pipe cycles as the tile's own MMAs at
+                    // MT = 1 (ncu RTX 5090, Gemma 4 head Q4_K 262144x3840 at T = 24: 16.7 tensor
+                    // cycles per weight MMA against Q6_K's 8.5 without a min term).
 #pragma unroll
                     for (int n = 0; n < NT; ++n) {
-                        sums[n][0] = sums[n][1] = sums[n][2] = sums[n][3] = 0.0F;
+                        float v = 0.0F;
 #pragma unroll
-                        for (int i = 0; i < G; ++i)
-                            mma_operands<F16Of<Decoder>::value>(
-                                sums[n][0], sums[n][1], sums[n][2], sums[n][3], kOnes, kOnes, kOnes,
-                                kOnes, act[n][2 * i], act[n][2 * i + 1]);
+                        for (int i = 0; i < 2 * G; ++i) {
+                            const float2 x = F16Of<Decoder>::value ? f16x2_pair(act[n][i])
+                                                                   : bf16x2_pair(act[n][i]);
+                            v += x.x + x.y;
+                        }
+                        v += __shfl_xor_sync(0xffffffffU, v, 1);
+                        v += __shfl_xor_sync(0xffffffffU, v, 2);
+                        sums[n][0] = __shfl_sync(0xffffffffU, v, 8 * quad);
+                        sums[n][1] = __shfl_sync(0xffffffffU, v, 8 * quad + 4);
                     }
                 }
 #pragma unroll
@@ -2445,8 +2454,8 @@ __device__ __forceinline__ void mma_step(float (&acc)[Sets][MT][NT][4],
                             for (int n = 0; n < NT; ++n) {
                                 c[n][0] = fmaf(-sums[n][0], m0, c[n][0]);
                                 c[n][1] = fmaf(-sums[n][1], m0, c[n][1]);
-                                c[n][2] = fmaf(-sums[n][2], m1, c[n][2]);
-                                c[n][3] = fmaf(-sums[n][3], m1, c[n][3]);
+                                c[n][2] = fmaf(-sums[n][0], m1, c[n][2]);
+                                c[n][3] = fmaf(-sums[n][1], m1, c[n][3]);
                             }
                         }
                     }
