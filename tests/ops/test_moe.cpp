@@ -735,8 +735,13 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
             const std::string label = c.label + " A8 default T=" + std::to_string(t) + " (" +
                                       moe::plan_name(p) + ")";
             const int gate_up   = route ? route->gate_up_at(t, l.weights.gate_up) : -1;
-            const bool expected = gate_up >= 0 ? p.gate_up_r8 == gate_up && p.down_r8 < 0 &&
-                                                     (down < 0 || p.down_schedule == down)
+            // Without tensor mma.sync the down stage takes the gate/up's R8 schedule too.
+            const bool down_r8  = gate_up >= 0 && moe::down_r8_rule(l.weights, t);
+            const bool expected = gate_up >= 0 ? p.gate_up_r8 == gate_up &&
+                                                     (down_r8 ? p.down_r8 == gate_up
+                                                              : p.down_r8 < 0 &&
+                                                                    (down < 0 ||
+                                                                     p.down_schedule == down))
                                                : p.gate_up_r8 < 0 && p.down_r8 < 0;
             if (!expected) {
                 std::cerr << label << ": not the class's A8 route\n";
