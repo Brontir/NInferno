@@ -1,7 +1,7 @@
 // The generic projection path's choices, frozen: for each board below (a substituted DeviceClass
 // with the board's SMs, clocks, memory bus, L2 and per-SM limits, core/device_class.h) the route and
 // the workspace it needs for every format, policy, epilogue, shape and width, under the speed,
-// prefill and invariant profiles. The dump is compared with selector_golden/<board>.txt; a change
+// prefill and invariant profiles and in a round of one sequence. The dump is compared with selector_golden/<board>.txt; a change
 // of the selector shows there line by line, and a refactor that means none must leave every file
 // as it was. Regenerate with --update (writes the files) after a change that means to move routes.
 //
@@ -76,6 +76,14 @@ constexpr QType kFormats[] = {
     QType::GGML_Q3_K,      QType::GGML_Q2_K,           QType::GGML_IQ4_XS,
     QType::GGML_IQ3_XXS,   QType::GGML_IQ3_S,          QType::GGML_IQ2_S,
     QType::GGML_Q4_0,      QType::GGML_IQ4_NL,
+    // The rest of the formats the generic path takes (rules of their own: the R8 IQ2 branches,
+    // the producer-warp W4A8 extras, the ggml block formats' vector and MMQ gates).
+    QType::FP8_E4M3FN_ROW_F32, QType::FP8_E4M3FN_B128_F32, QType::U4_G32_ZP_FP16,
+    QType::U4_G64_ZP_FP16,     QType::Q3_G128_FP16,        QType::Q3_G64_FP16,
+    QType::GGML_Q4_1,          QType::GGML_Q5_0,           QType::GGML_Q5_1,
+    QType::GGML_IQ2_XXS,       QType::GGML_IQ2_XS,         QType::GGML_IQ1_S,
+    QType::GGML_IQ1_M,         QType::GGML_TQ1_0,          QType::GGML_TQ2_0,
+    QType::GGML_Q1_0,          QType::GGML_Q2_0,
 };
 
 struct Shape {
@@ -87,10 +95,15 @@ constexpr Shape kShapes[] = {{256, 2048},  {1024, 4096},  {2048, 1024}, {4096, 4
 constexpr std::int32_t kTokens[] = {1,  2,  3,  4,  5,   8,   12,  16,  17,   24,  32,
                                     48, 64, 96, 128, 192, 256, 512, 1024, 2048};
 
-enum class Profile { Speed, Prefill, Invariant };
+// SpeedC1: the speed profile inside a round of one sequence (ops::ScopedRoundLanes(1): a C1 MTP
+// or copy round), where the verify widths' ggml gate answers otherwise; T <= 16 only.
+enum class Profile { Speed, Prefill, Invariant, SpeedC1 };
 
 const char* profile_name(Profile p) {
-    return p == Profile::Speed ? "speed" : p == Profile::Prefill ? "prefill" : "invariant";
+    return p == Profile::Speed     ? "speed"
+           : p == Profile::Prefill ? "prefill"
+           : p == Profile::SpeedC1 ? "speed-c1"
+                                   : "invariant";
 }
 
 // The route set a build compiles decides what a board can pick, so each set keeps its own files:
@@ -153,10 +166,12 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                     const std::int32_t rows =
                         epilogue == generic::Epilogue::SwiGlu ? shape.n / 2 : shape.n;
                     const generic::Problem problem{qtype, policy, rows, shape.k, epilogue};
-                    for (const Profile profile :
-                         {Profile::Speed, Profile::Prefill, Profile::Invariant}) {
+                    for (const Profile profile : {Profile::Speed, Profile::Prefill,
+                                                  Profile::Invariant, Profile::SpeedC1}) {
                         std::optional<ops::ScopedInvariantRoutes> invariant;
                         if (profile == Profile::Invariant) invariant.emplace();
+                        std::optional<ops::ScopedRoundLanes> one_lane;
+                        if (profile == Profile::SpeedC1) one_lane.emplace(1);
                         std::string last;
                         std::int32_t first_t = 0, last_t = 0;
                         const auto flush = [&] {
@@ -171,6 +186,7 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                         for (const std::int32_t t : kTokens) {
                             const bool prefill = profile == Profile::Prefill;
                             if (prefill && t < 17) continue;
+                            if (profile == Profile::SpeedC1 && t > 16) continue;
                             std::string what;
                             try {
                                 const generic::Route r =
