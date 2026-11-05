@@ -114,10 +114,14 @@ public:
             // held above that take the generic MoE: at eight bits (--activations int8) its NVFP4
             // banks have a W4A8 prefill, at sixteen (--activations exact) their A16 routes (#438:
             // Qwen3.6-35B-A3B NVFP4 refused to load under exact on sm_120a).
-            const bool a4_held = generic.gate_up.qtype == QType::NVFP4 &&
-                                 std::any_of(gate_up.begin(), gate_up.end(), [](const auto& in) {
-                                     return !ops::allows_a4(in.policy);
-                                 });
+            // Each input SparseMoe NVFP4 reads needs AllowA4 (prepare_sparse_moe_weights).
+            const auto held = [](const ops::WeightInput& in) { return !ops::allows_a4(in.policy); };
+            const bool a4_held =
+                generic.gate_up.qtype == QType::NVFP4 &&
+                (std::any_of(gate_up.begin(), gate_up.end(), held) ||
+                 std::any_of(down.begin(), down.end(), held) ||
+                 held(model_.input(moe.shared.gate)) || held(model_.input(moe.shared.up)) ||
+                 held(model_.input(moe.shared.down)));
             // --moe-path (ops/route_pins.h): auto takes SparseMoe where it runs the layer, generic
             // never, fused refuses a layer it cannot run.
             const bool fused_ready = top_k == 8 && !a4_held && ops::sparse_moe_admits(generic);

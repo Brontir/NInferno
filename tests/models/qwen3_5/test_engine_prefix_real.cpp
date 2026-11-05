@@ -1600,6 +1600,7 @@ int exercise_vision(ninferno::Engine& engine, bool exact) {
         const ninferno::GenerationResult fresh =
             engine.generate(engine.prepare(followup_input(wide, wide_first)), long_fresh);
         if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
+            cached.generated_token_ids.empty() ||
             cached.generated_token_ids != fresh.generated_token_ids) {
             std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
                          "uncached prefill (RoPE delta lost?): reused="
@@ -1654,9 +1655,16 @@ int exercise_vision(ninferno::Engine& engine, bool exact) {
     stop_options.stop.token_ids.push_back(mtp_baseline.generated_token_ids[1]);
     const ninferno::GenerationResult stopped =
         engine.generate(engine.prepare(first_input(image_bytes)), stop_options);
-    if (stopped.finish_reason != ninferno::FinishReason::StopToken ||
-        stopped.generated_token_ids.empty() || stopped.speculative.rounds == 0 ||
-        stopped.generated_token_ids.back() != stop_options.stop.token_ids.front()) {
+    // The stopped run may reuse the cached prompt, the baseline did not: on the default engine
+    // they can part at a near-tie (#438) before the stop token, which the run then never emits.
+    // Where it does emit it, it must stop there; the exact engine's tokens always reach it.
+    const auto& stop_ids = stopped.generated_token_ids;
+    const bool emitted   = std::find(stop_ids.begin(), stop_ids.end(),
+                                     stop_options.stop.token_ids.front()) != stop_ids.end();
+    if (stopped.generated_token_ids.empty() || stopped.speculative.rounds == 0 ||
+        ((exact || emitted) &&
+         (stopped.finish_reason != ninferno::FinishReason::StopToken ||
+          stopped.generated_token_ids.back() != stop_options.stop.token_ids.front()))) {
         std::cerr << "multimodal custom stop did not terminate at the selected token\n";
         return 1;
     }
