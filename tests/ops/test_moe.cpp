@@ -47,6 +47,14 @@ namespace {
 using namespace ninferno;
 namespace qw = ninferno::test::quantized_weight;
 
+// The Volta down-stage rule from its facts, apart from the production predicate (down_r8_rule):
+// a build without tensor mma.sync, and the down bank admitted to R8 at T and at its widest call.
+bool expect_down_r8(const ops::MoeWeights& w, std::int32_t t) {
+    namespace moe = ops::detail::moe;
+    return !build_features().mma_tensor && moe::r8_admits(w, w.down, t) &&
+           moe::r8_admits(w, w.down, moe::r8_token_limit(w.down));
+}
+
 bool cuda_available() {
     int count = 0;
     return cudaGetDeviceCount(&count) == cudaSuccess && count > 0;
@@ -736,7 +744,7 @@ int check_r8(const Case& base, std::uint32_t seed, const std::vector<std::int32_
                                       moe::plan_name(p) + ")";
             const int gate_up   = route ? route->gate_up_at(t, l.weights.gate_up) : -1;
             // Without tensor mma.sync the down stage takes the gate/up's R8 schedule too.
-            const bool down_r8  = gate_up >= 0 && moe::down_r8_rule(l.weights, t);
+            const bool down_r8  = gate_up >= 0 && expect_down_r8(l.weights, t);
             const bool expected = gate_up >= 0 ? p.gate_up_r8 == gate_up &&
                                                      (down_r8 ? p.down_r8 == gate_up
                                                               : p.down_r8 < 0 &&
@@ -1149,7 +1157,7 @@ int check_r8_k_limit() {
         const bool a8 = route && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
             c.label + " T=" + std::to_string(t) + " (" + moe::plan_name(p) + ")";
-        const int down = a8 && moe::down_r8_rule(l.weights, t) ? p.gate_up_r8 : -1;
+        const int down = a8 && expect_down_r8(l.weights, t) ? p.gate_up_r8 : -1;
         if ((p.gate_up_r8 >= 0) != a8 || p.down_r8 != down) {
             std::cerr << label << ": expected " << (a8 ? "A8 gate/up" : "A16") << '\n';
             ++failures;
@@ -1237,7 +1245,7 @@ int check_expert_policy() {
         for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p = moe::select_plan(w, config, t, false);
             const int expected = a8 && route ? route->gate_up_at(t, w.gate_up) : -1;
-            const int down = expected >= 0 && moe::down_r8_rule(w, t) ? expected : -1;
+            const int down = expected >= 0 && expect_down_r8(w, t) ? expected : -1;
             if (p.gate_up_r8 != expected || p.down_r8 != down) {
                 std::cerr << label << " T=" << t << ": " << moe::plan_name(p) << ", gate/up R8 "
                           << expected << " expected\n";
@@ -1263,7 +1271,7 @@ int check_expert_policy() {
             const auto p       = moe::select_plan(w, config, t, false);
             const bool admits  = t <= limit;
             const int expected = route && admits ? route->gate_up_at(t, w.gate_up) : -1;
-            const int down = expected >= 0 && moe::down_r8_rule(w, t) ? expected : -1;
+            const int down = expected >= 0 && expect_down_r8(w, t) ? expected : -1;
             if (p.gate_up_r8 != expected || p.down_r8 != down ||
                 moe::r8_admits(w, w.gate_up, t) != admits) {
                 std::cerr << "frag " << qname(q) << " T=" << t << ": took " << moe::plan_name(p)
