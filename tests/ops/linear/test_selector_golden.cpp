@@ -1,9 +1,10 @@
 // The generic projection path's choices, frozen: for each board below (a substituted DeviceClass
-// with the board's SMs, clocks, memory bus, L2 and per-SM limits, core/device_class.h) the route and
-// the workspace it needs for every format, policy, epilogue, shape and width, under the speed,
-// prefill and invariant profiles and in a round of one sequence. The dump is compared with selector_golden/<board>.txt; a change
-// of the selector shows there line by line, and a refactor that means none must leave every file
-// as it was. Regenerate with --update (writes the files) after a change that means to move routes.
+// with the board's SMs, clocks, memory bus, L2 and per-SM limits, core/device_class.h) the route
+// and the workspace it needs for every format, policy, epilogue, shape and width, under the speed,
+// prefill and invariant profiles and in a round of one sequence. The dump is compared with
+// selector_golden/<board>.txt; a change of the selector shows there line by line, and a refactor
+// that means none must leave every file as it was. Regenerate with --update (writes the files)
+// after a change that means to move routes.
 //
 // Without arguments the test runs itself once per board, then every board again in one process:
 // the selector's per-device caches keep a substituted board's answers apart by its content, so the
@@ -70,21 +71,45 @@ constexpr GoldenBoard kBoards[] = {
 };
 
 constexpr QType kFormats[] = {
-    QType::BF16,           QType::Q4_G64_FP16,         QType::Q5_G64_FP16,
-    QType::Q6_G64_FP16,    QType::Q8_G32_FP16,         QType::FP8_E4M3FN_ROW_BF16,
-    QType::NVFP4,          QType::MXFP4,               QType::U4_G128_ZP_FP16,
-    QType::GGML_Q4_K,      QType::GGML_Q5_K,           QType::GGML_Q6_K,
-    QType::GGML_Q3_K,      QType::GGML_Q2_K,           QType::GGML_IQ4_XS,
-    QType::GGML_IQ3_XXS,   QType::GGML_IQ3_S,          QType::GGML_IQ2_S,
-    QType::GGML_Q4_0,      QType::GGML_IQ4_NL,
+    QType::BF16,
+    QType::Q4_G64_FP16,
+    QType::Q5_G64_FP16,
+    QType::Q6_G64_FP16,
+    QType::Q8_G32_FP16,
+    QType::FP8_E4M3FN_ROW_BF16,
+    QType::NVFP4,
+    QType::MXFP4,
+    QType::U4_G128_ZP_FP16,
+    QType::GGML_Q4_K,
+    QType::GGML_Q5_K,
+    QType::GGML_Q6_K,
+    QType::GGML_Q3_K,
+    QType::GGML_Q2_K,
+    QType::GGML_IQ4_XS,
+    QType::GGML_IQ3_XXS,
+    QType::GGML_IQ3_S,
+    QType::GGML_IQ2_S,
+    QType::GGML_Q4_0,
+    QType::GGML_IQ4_NL,
     // The rest of the formats the generic path takes (rules of their own: the R8 IQ2 branches,
     // the producer-warp W4A8 extras, the ggml block formats' vector and MMQ gates).
-    QType::FP8_E4M3FN_ROW_F32, QType::FP8_E4M3FN_B128_F32, QType::U4_G32_ZP_FP16,
-    QType::U4_G64_ZP_FP16,     QType::Q3_G128_FP16,        QType::Q3_G64_FP16,
-    QType::GGML_Q4_1,          QType::GGML_Q5_0,           QType::GGML_Q5_1,
-    QType::GGML_IQ2_XXS,       QType::GGML_IQ2_XS,         QType::GGML_IQ1_S,
-    QType::GGML_IQ1_M,         QType::GGML_TQ1_0,          QType::GGML_TQ2_0,
-    QType::GGML_Q1_0,          QType::GGML_Q2_0,
+    QType::FP8_E4M3FN_ROW_F32,
+    QType::FP8_E4M3FN_B128_F32,
+    QType::U4_G32_ZP_FP16,
+    QType::U4_G64_ZP_FP16,
+    QType::Q3_G128_FP16,
+    QType::Q3_G64_FP16,
+    QType::GGML_Q4_1,
+    QType::GGML_Q5_0,
+    QType::GGML_Q5_1,
+    QType::GGML_IQ2_XXS,
+    QType::GGML_IQ2_XS,
+    QType::GGML_IQ1_S,
+    QType::GGML_IQ1_M,
+    QType::GGML_TQ1_0,
+    QType::GGML_TQ2_0,
+    QType::GGML_Q1_0,
+    QType::GGML_Q2_0,
 };
 
 struct Shape {
@@ -170,8 +195,8 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                         epilogue == generic::Epilogue::SwiGlu ? shape.n / 2 : shape.n;
                     const generic::Problem problem{qtype, policy, rows, shape.k, epilogue};
                     std::vector<std::string> speed_at(std::size(kTokens));
-                    for (const Profile profile : {Profile::Speed, Profile::Prefill,
-                                                  Profile::Invariant, Profile::SpeedC1}) {
+                    for (const Profile profile :
+                         {Profile::Speed, Profile::Prefill, Profile::Invariant, Profile::SpeedC1}) {
                         std::optional<ops::ScopedInvariantRoutes> invariant;
                         if (profile == Profile::Invariant) invariant.emplace();
                         std::optional<ops::ScopedRoundLanes> one_lane;
@@ -243,7 +268,8 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
                                 what = std::string("threw: ") + error.what();
                             }
                             if (profile == Profile::Speed) speed_at[ti] = what;
-                            if (profile == Profile::SpeedC1 && what == speed_at[ti]) what = kAsSpeed;
+                            if (profile == Profile::SpeedC1 && what == speed_at[ti])
+                                what = kAsSpeed;
                             if (what != last) {
                                 flush();
                                 last    = what;
