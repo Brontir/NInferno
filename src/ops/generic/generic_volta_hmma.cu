@@ -231,6 +231,12 @@ struct HQ8 {
     unsigned d[2];
 
     __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
+        // A row of K % 256 != 0 (K a multiple of 64: a quad-pair's two groups are both in it or
+        // both past it) ends inside its last superblock: the quad-pairs past it hold zeros.
+        if (8 * sb + 2 * q >= a.groups_per_row) {
+            clear();
+            return;
+        }
         const std::int64_t g = static_cast<std::int64_t>(row) * a.groups_per_row + 8 * sb + 2 * q;
         const auto* p        = reinterpret_cast<const uint4*>(a.codes + g * 32);
         c[0]                 = p[0];
@@ -277,9 +283,11 @@ __device__ __forceinline__ void stage_load(const GemmArgs& a, int sb, uint2 (&v)
         const int task = static_cast<int>(threadIdx.x) + i * kWarps * 32; // NTok * 64 tasks
         const int t    = task >> 6;
         const int g    = task & 63; // four-value group of the superblock
-        v[i]           = t < a.tokens ? *reinterpret_cast<const uint2*>(
-                                  x + static_cast<std::int64_t>(t) * a.ldx + 256 * sb + 4 * g)
-                                      : make_uint2(0, 0);
+        // Zero past K (a Q8 row ends inside its last superblock; HQ8::load).
+        v[i] = t < a.tokens && 256 * sb + 4 * g < a.k
+                   ? *reinterpret_cast<const uint2*>(x + static_cast<std::int64_t>(t) * a.ldx +
+                                                     256 * sb + 4 * g)
+                   : make_uint2(0, 0);
     }
 }
 
@@ -327,7 +335,7 @@ __global__ __launch_bounds__(kWarps * 32) void volta_hmma_kernel(GemmArgs a) {
     const int f     = (lane & 3) + ((lane >> 4) << 2);
     const int l     = static_cast<int>(blockIdx.x) * kCtaRows + warp * kWarpRows + f; // A row
     const bool live = l < a.rows;
-    const int sbs   = a.k >> 8;
+    const int sbs   = (a.k + 255) >> 8;
     // The lanes holding the A rows of this lane's accumulators: rows (lane & 1) + 4 (lane / 16)
     // and that + 2, in this quad-pair.
     const int src_a = 4 * q + (lane & 1) + ((lane >> 4) << 4);
@@ -520,8 +528,11 @@ bool volta_hmma_takes(WeightCodec codec, const GemmArgs& args) {
         args.tokens > kVoltaHmmaMaxTokens) {
         return false;
     }
-    // Whole superblocks; the staging reads four bf16 values at a time.
-    return volta_hmma_codec(codec) && (args.k % 256) == 0 && (args.ldx % 4) == 0 &&
+    // Whole superblocks, or for Q8 G32 whole pairs of groups (gpt-oss's K = 2880: its LM head ran
+    // the register-MMA tile on FP32 FMAs, 1.9 ms a token on the GV100); the staging reads four
+    // bf16 values at a time.
+    const int k_multiple = codec == WeightCodec::Q8 ? 64 : 256;
+    return volta_hmma_codec(codec) && (args.k % k_multiple) == 0 && (args.ldx % 4) == 0 &&
            (reinterpret_cast<std::uintptr_t>(args.x) % 8) == 0;
 }
 
