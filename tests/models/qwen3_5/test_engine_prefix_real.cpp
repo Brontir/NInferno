@@ -1478,7 +1478,8 @@ int exercise_rewrite_branch(const char* artifact) {
 
 // exact: the engine runs --activations exact, whose contract (include/ninferno/types.h,
 // ActivationMode::Exact) makes a request's tokens independent of the prefix cache, where the prompt
-// is cut and speculation; only there may a cached and an uncached prefill be compared token by token.
+// is cut and speculation (greedy up to BF16 logit ties); only there may a cached and an uncached
+// prefill be compared token by token.
 int exercise_vision(ninferno::Engine& engine, bool exact) {
     const auto image_bytes = gradient_ppm();
     auto image_part        = [](const std::vector<std::uint8_t>& bytes, std::string name) {
