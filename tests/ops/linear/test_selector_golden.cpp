@@ -118,8 +118,10 @@ struct Shape {
 
 constexpr Shape kShapes[] = {{256, 2048},  {1024, 4096},  {2048, 1024}, {4096, 4096},
                              {6144, 5120}, {17408, 5120}, {5120, 17408}, {28672, 8192}};
-constexpr std::int32_t kTokens[] = {1,  2,  3,  4,  5,   8,   12,  16,  17,   24,  32,
-                                    48, 64, 96, 128, 192, 256, 512, 1024, 2048};
+// 9: the first width of the verify band 9..16 (kMmqVerifyMinTokens), where the MMQ verify rule
+// starts.
+constexpr std::int32_t kTokens[] = {1,  2,  3,  4,  5,   8,   9,   12,  16,   17,  24,
+                                    32, 48, 64, 96, 128, 192, 256, 512, 1024, 2048};
 
 // SpeedC1: the speed profile inside a round of one sequence (ops::ScopedRoundLanes(1): a C1 MTP
 // or copy round), where the verify widths' ggml gate answers otherwise; T <= 16 only, and only
