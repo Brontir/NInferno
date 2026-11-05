@@ -732,7 +732,7 @@ struct RouteTile {
 // The logical traffic of a call on `route` (#298): the bytes its CTAs request, before any cache
 // serves them, predicted from route_tile. Every token column of CTAs reads the whole weight
 // (payload_bytes over the call's n rows, as the cost model's bpw), every row block of CTAs reads the
-// whole activation in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
+// whole activation (the register MMA's every row warp: no shared memory holds its operands) in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
 // byte and their scales: W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in
 // whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64, over tokens padded to 256),
 // and the output is written once in bf16 (a cluster's K split reduces in distributed shared

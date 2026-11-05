@@ -3000,9 +3000,13 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
         x_t     = i8_padded_tokens(tokens);
     }
     const double weight_reads = cdiv(t, tile->tokens);
+    // The register MMA holds its operands in registers: each of a CTA's row warps loads the
+    // activation slice itself (the shared-memory tiles stage it once for the CTA).
+    const double x_readers =
+        route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
     const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
-    return RouteTraffic{n * k * bpw * weight_reads, x_t * x_k * x_bytes * cdiv(n, tile->out_rows),
-                        n * t * 2.0};
+    return RouteTraffic{n * k * bpw * weight_reads,
+                        x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
 }
 
 template <class Offer>

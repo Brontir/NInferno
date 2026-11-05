@@ -77,7 +77,7 @@ int main() {
         const double cols = std::ceil(100.0 / tile.tokens);
         const double rows = std::ceil(4096.0 / tile.out_rows);
         check(tr && near(tr->weight_bytes, 4096.0 * 2048 * cols) &&
-                  near(tr->activation_bytes, 100.0 * 2048 * 2 * rows) &&
+                  near(tr->activation_bytes, 100.0 * 2048 * 2 * rows * g::rmma_schedule_info(i).warps_m) &&
                   near(tr->output_bytes, 4096.0 * 100 * 2),
               "rmma traffic " + std::to_string(i));
     }
