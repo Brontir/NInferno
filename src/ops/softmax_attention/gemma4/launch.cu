@@ -83,7 +83,8 @@ constexpr int prefill_full_bc() {
 }
 
 // D=128 (DFlash drafter) is one warp column; four warp rows give 64-row CTAs of 128 threads in
-// 16 KiB. The drafter never runs T > 16, so this route is correct but untuned at this width.
+// 16 KiB (on Volta the HMMA warp scratch adds to that, and prefill_bc may halve the key tile).
+// The drafter never runs T > 16, so this route is correct but untuned at this width.
 template <>
 struct PrefillConfig<128> {
     static constexpr int WR = 4;

@@ -145,7 +145,7 @@ inline constexpr bool kGemma4Fp8Hardware = true;
 // through a per-warp scratch, and the output converts once, through the freed K/V planes. A head
 // of one warp column (D = 64, gpt-oss; D = 128) has no exchange: each warp scatters its scores into
 // its own scratch instead, and converts its output there when the planes are too small (gpt-oss's
-// 32-key sliding tile). The FP32-FMA form held gpt-oss-20b's attention at 1365 ms of a 7.6K-token
+// 32-key sliding tile; D = 128 at any tile). The FP32-FMA form held gpt-oss-20b's attention at 1365 ms of a 7.6K-token
 // prefill's 3240 on the GV100 (llama.cpp's f16 flash attention: about 135 ms a request).
 #if defined(NINFERNO_BUILD_ARCH)
 inline constexpr bool kGemma4VoltaHmma = NINFERNO_BUILD_ARCH >= 70 && NINFERNO_BUILD_ARCH < 75;
@@ -345,7 +345,8 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
     const int lane = tid & 31;
     // Volta (Tile::Volta): the lane's quad-pair (one 8 x 8 block of a 16 x 16 output pair: rows
     // 8 * (vq & 1), columns 8 * (vq >> 1)), its row of A (vj, as the m8n8k4 fragments index), and
-    // the warp's scratch: P [16][Bc] f16, then 16 rescale factors.
+    // the warp's scratch: P [16][Bc] f16, then 16 rescale factors, then (one warp column, Parts
+    // == 1) its scores in the exchange layout; or its output where the planes are too small.
     [[maybe_unused]] const int vq = (lane >> 2) & 3;
     [[maybe_unused]] const int vj = (lane & 3) + 4 * (lane >> 4);
     [[maybe_unused]] __half* const vp = reinterpret_cast<__half*>(
@@ -1106,7 +1107,8 @@ __launch_bounds__(Gemma4Tile<Geo, WR, Bc, Fp8>::Threads, 1) __global__
 
     if constexpr (Volta) {
         // The accumulators to the m16n8 lane layout the stores below read, through this warp's
-        // 16 x Slice of the freed K/V planes.
+        // 16 x Slice of the freed K/V planes, or of its own scratch where they are too small
+        // (Tile::VoltaPlanes).
         __syncthreads();
         float* o = Tile::VoltaPlanes ? reinterpret_cast<float*>(gemma4_smem) + warp * 16 * Geo::Slice
                                      : reinterpret_cast<float*>(vp);
