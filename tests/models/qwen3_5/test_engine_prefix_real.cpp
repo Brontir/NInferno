@@ -1610,9 +1610,10 @@ int exercise_vision(ninferno::Engine& engine) {
             return std::nullopt;
         };
         std::string mismatch;
+        bool parted = false;
         if (cached.logprobs.size() != cached.generated_token_ids.size() ||
             fresh.logprobs.size() != fresh.generated_token_ids.size() ||
-            cached.logprobs.empty()) {
+            cached.logprobs.empty() || fresh.logprobs.empty()) {
             mismatch = "no log probabilities";
         }
         for (std::size_t i = 0; mismatch.empty() && i < cached.logprobs.size() &&
@@ -1627,20 +1628,45 @@ int exercise_vision(ninferno::Engine& engine) {
                 }
                 continue;
             }
-            // They part: only at a near-tie of the fresh distribution, after which the
-            // continuations differ and are not compared.
+            // They part: only at a near-tie of the fresh distribution, and each run's pick must
+            // have the same log probability in the other's top list (a lost delta that flips a
+            // close choice still moves it); later tokens follow different text and are not
+            // compared.
             const auto cached_pick = logprob_of(f, c.token);
-            if (!cached_pick || f.logprob - *cached_pick > kNearTie) {
+            const auto fresh_pick  = logprob_of(c, f.token);
+            if (!cached_pick || !fresh_pick || f.logprob - *cached_pick > kNearTie ||
+                std::abs(c.logprob - *cached_pick) > kSameLogprob ||
+                std::abs(f.logprob - *fresh_pick) > kSameLogprob) {
                 mismatch = "token " + std::to_string(i) + " parted (" + std::to_string(c.token) +
                            " against " + std::to_string(f.token) + ") beyond a near-tie";
             }
+            parted = true;
             break;
+        }
+        if (mismatch.empty() && !parted && cached.logprobs.size() != fresh.logprobs.size()) {
+            mismatch = "the same tokens, " + std::to_string(cached.logprobs.size()) + " against " +
+                       std::to_string(fresh.logprobs.size());
         }
         if (cached.reused_prompt_tokens == 0 || cached.timings.vision_seconds != 0.0 ||
             !mismatch.empty()) {
             std::cerr << "a text-only suffix after a cached multimodal prefix decoded unlike an "
                          "uncached prefill (RoPE delta lost?): reused="
                       << cached.reused_prompt_tokens << ' ' << mismatch << '\n';
+            return 1;
+        }
+        // Log probabilities decode plainly; the same continuation under the artifact's
+        // speculation (MTP drafts and verify after the delta) must run and reuse the prefix.
+        // Its tokens are not compared: verify widths round apart from plain decode.
+        ninferno::RequestOptions spec_reuse          = options(true);
+        spec_reuse.execution.requested_output_tokens = 16;
+        const ninferno::GenerationResult speculated =
+            engine.generate(engine.prepare(followup_input(wide, wide_first)), spec_reuse);
+        if (speculated.reused_prompt_tokens == 0 || speculated.timings.vision_seconds != 0.0 ||
+            speculated.generated_token_ids.size() != 16) {
+            std::cerr << "the speculative continuation after a cached multimodal prefix did not "
+                         "complete: reused="
+                      << speculated.reused_prompt_tokens << " tokens "
+                      << speculated.generated_token_ids.size() << '\n';
             return 1;
         }
     }
