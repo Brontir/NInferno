@@ -3099,9 +3099,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         d.l2_bytes > 0 && n * k * bpw <= 0.75 * static_cast<double>(d.l2_bytes);
     const double l2_sm = 64.0 * clk;
     // Time of `ctas` CTAs of `rows` output rows x `cols` (K over `cluster` CTAs) of `threads`
-    // threads, at most `occ` resident per SM.
+    // threads, at most `occ` resident per SM, each warp with `loads` weight row tiles in flight a K
+    // step.
     const auto cost = [&](double rows, double cols, double threads, double cluster, double occ,
-                          double warps_k, bool pipelined, double eff) {
+                          double warps_k, bool pipelined, double eff, double loads = 1) {
         const double ctas  = cdiv(n, rows) * cdiv(tokens, cols) * cluster;
         const double kc    = k / cluster;
         const double q     = std::ceil(ctas / sms);
@@ -3125,7 +3126,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const double reduce = q * (cluster - 1) * rows * sets * cols * 30.0 / clk +
                               rounds * (warps_k - 1.0) * rows * sets * cols * 2.75 / clk;
         const double chain  = rounds * std::ceil(kc / (16.0 * warps_k)) * 150.0 / clk;
-        return (mem + mma + reduce) / std::clamp(warps / 11.0, 0.05, 1.0) + chain;
+        // Eleven loads in flight on an SM hide the latency of the weight's reads. A register-MMA
+        // warp fetches its next K step while it computes this one (rmma_kernel's two-slot ring),
+        // one load per row tile and weight set (fetch): MT x sets of them, whatever its tokens.
+        return (mem + mma + reduce) / std::clamp(warps * loads / 11.0, 0.05, 1.0) + chain;
     };
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
@@ -3167,7 +3171,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         }
         const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
-        offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1));
+        offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1,
+                      s.m_tiles * sets));
     }
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;
