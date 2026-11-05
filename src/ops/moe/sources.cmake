@@ -5,6 +5,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/moe_route.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_router_simt.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_gemm_bf16.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/moe_volta_hmma.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_w4a8_quantize.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_w4a8_ggml32.cu"
   "${CMAKE_CURRENT_LIST_DIR}/moe_w4a8_superblock.cu"

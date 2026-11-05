@@ -335,6 +335,7 @@ int main(int argc, char** argv) {
                 for (const auto gu : candidates(w.gate_up)) {
                     for (const auto dn : candidates(w.down)) {
                         moe::MoePlan p = selected;
+                        p.volta_hmma       = false; // the sweep times register-MMA and R8 stages
                         p.gate_up_schedule = gu.schedule;
                         p.down_schedule    = dn.schedule;
                         p.gate_up_r8       = gu.r8;
