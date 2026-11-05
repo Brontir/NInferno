@@ -933,6 +933,18 @@ constexpr ClassA8Route kA8Routes[] = {
 // of the layers; V100 x3.5..4); ad102's route, w4r1 at every T and the streaming down.
 constexpr A8Route kFallbackA8Route{{}, -1};
 
+} // namespace
+
+bool down_r8_rule(const MoeWeights& w, std::int32_t tokens) {
+    // Admitted at the bank's widest R8 call too, so the down's route (and a token's bytes) is the
+    // same at every T up to the limit: a wide expert (K past the shared memory a CTA's quantized
+    // activation takes at four slots) keeps the register MMA at every T.
+    return !build_features().mma_tensor && r8_admits(w, w.down, tokens) &&
+           r8_admits(w, w.down, r8_token_limit(w.down));
+}
+
+namespace {
+
 // The class's default A8 route on top of plan p: R8 on gate/up where the layer admits it and, on a
 // heuristic plan (not a route-table band's, whose down schedule was measured), the class's down.
 MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int32_t tokens,
@@ -945,7 +957,12 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
         streaming_schedule(g.inter) == 1 && p.down_schedule == 1) {
         p.down_schedule = route->down;
     }
-    return with_r8(p, gate_up, -1);
+    // Without tensor mma.sync (Volta's build) the down stage's register MMA runs on FP32 FMAs
+    // while R8 reads the same bytes with integer dot products: a heuristic plan's down stage takes
+    // R8 wherever the layer admits it (V100, gpt-oss-20b decode: the down's emulated MMA 142 us a
+    // layer, the R8 gate/up, twice its bytes, 72 us). A table band keeps its measured down.
+    const bool down = !tuned && down_r8_rule(w, tokens);
+    return with_r8(p, gate_up, down ? gate_up : -1);
 }
 
 } // namespace
