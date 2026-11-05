@@ -134,9 +134,12 @@ def load_models(path):
             for field in ("id", "repo", "quant", "context"):
                 if field not in m:
                     raise KeyError(f"{field} of {m}")
+            # The id names the run's log and temporary files: one plain file name component.
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", str(m["id"])):
+                raise ValueError(f"id {m['id']!r}: letters, digits, '.', '_' and '-' only")
         return doc
     except (OSError, ValueError, KeyError, TypeError) as e:
-        sys.exit(f"the model set {path}: {e!r} (a version, and id, repo, quant, context a model)")
+        sys.exit(f"the model set {path}: {e!r} (a version, and id, repo, quant, context a model; an id is one file name)")
 
 
 def plan_json(serve, model, flags):
