@@ -936,7 +936,11 @@ constexpr A8Route kFallbackA8Route{{}, -1};
 } // namespace
 
 bool down_r8_rule(const MoeWeights& w, std::int32_t tokens) {
-    return !build_features().mma_tensor && r8_admits(w, w.down, tokens);
+    // Admitted at the bank's widest R8 call too, so the down's route (and a token's bytes) is the
+    // same at every T up to the limit: a wide expert (K past the shared memory a CTA's quantized
+    // activation takes at four slots) keeps the register MMA at every T.
+    return !build_features().mma_tensor && r8_admits(w, w.down, tokens) &&
+           r8_admits(w, w.down, r8_token_limit(w.down));
 }
 
 namespace {

@@ -297,7 +297,8 @@ void moe_with_plan(const Tensor& x, const MoeWeights& weights, const MoeConfig& 
 // moe_with_plan refuses an R8 stage that is not.
 [[nodiscard]] bool r8_admits(const MoeWeights& weights, const Weight& bank, std::int32_t tokens);
 // Whether a heuristic plan's down stage takes R8 at T: on a build without tensor mma.sync
-// (Volta's register MMA runs on FP32 FMAs) wherever the layer admits it; never elsewhere.
+// (Volta's register MMA runs on FP32 FMAs) wherever the layer admits it, at T and at the bank's
+// widest R8 call (the same route at every T); never elsewhere.
 [[nodiscard]] bool down_r8_rule(const MoeWeights& weights, std::int32_t tokens);
 
 // The current GPU class's default A8 route (moe.cpp's per-class table, kFallbackA8Route for a class

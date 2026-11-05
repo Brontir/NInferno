@@ -1263,7 +1263,8 @@ int check_expert_policy() {
             const auto p       = moe::select_plan(w, config, t, false);
             const bool admits  = t <= limit;
             const int expected = route && admits ? route->gate_up_at(t, w.gate_up) : -1;
-            if (p.gate_up_r8 != expected || p.down_r8 != -1 ||
+            const int down = expected >= 0 && moe::down_r8_rule(w, t) ? expected : -1;
+            if (p.gate_up_r8 != expected || p.down_r8 != down ||
                 moe::r8_admits(w, w.gate_up, t) != admits) {
                 std::cerr << "frag " << qname(q) << " T=" << t << ": took " << moe::plan_name(p)
                           << '\n';
