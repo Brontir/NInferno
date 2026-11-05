@@ -945,7 +945,12 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
         streaming_schedule(g.inter) == 1 && p.down_schedule == 1) {
         p.down_schedule = route->down;
     }
-    return with_r8(p, gate_up, -1);
+    // Without tensor mma.sync (Volta's build) the down stage's register MMA runs on FP32 FMAs
+    // while R8 reads the same bytes with integer dot products: the down stage takes R8 wherever
+    // the layer admits it (V100, gpt-oss-20b decode: the down's emulated MMA 142 us a layer, the
+    // R8 gate/up, twice its bytes, 72 us).
+    const bool down = !build_features().mma_tensor && r8_admits(w, w.down, tokens);
+    return with_r8(p, gate_up, down ? gate_up : -1);
 }
 
 } // namespace
