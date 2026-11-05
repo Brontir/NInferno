@@ -1144,7 +1144,8 @@ int check_r8_k_limit() {
         const bool a8 = route && route->gate_up_at(t, l.weights.gate_up) >= 0;
         const std::string label =
             c.label + " T=" + std::to_string(t) + " (" + moe::plan_name(p) + ")";
-        if ((p.gate_up_r8 >= 0) != a8 || p.down_r8 >= 0) {
+        const int down = a8 && moe::down_r8_rule(l.weights, t) ? p.gate_up_r8 : -1;
+        if ((p.gate_up_r8 >= 0) != a8 || p.down_r8 != down) {
             std::cerr << label << ": expected " << (a8 ? "A8 gate/up" : "A16") << '\n';
             ++failures;
             continue;
@@ -1231,7 +1232,8 @@ int check_expert_policy() {
         for (std::int32_t t = 1; t <= moe::r8_token_limit(); ++t) {
             const auto p = moe::select_plan(w, config, t, false);
             const int expected = a8 && route ? route->gate_up_at(t, w.gate_up) : -1;
-            if (p.gate_up_r8 != expected || p.down_r8 >= 0) {
+            const int down = expected >= 0 && moe::down_r8_rule(w, t) ? expected : -1;
+            if (p.gate_up_r8 != expected || p.down_r8 != down) {
                 std::cerr << label << " T=" << t << ": " << moe::plan_name(p) << ", gate/up R8 "
                           << expected << " expected\n";
                 ++failures;
