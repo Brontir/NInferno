@@ -71,6 +71,8 @@ void start_writeback(int fd);
 std::size_t page_size();
 long long pid();
 std::filesystem::path self_exe();
+// The file (executable or shared library) whose code holds `address`; empty when unknown.
+std::filesystem::path module_of(const void* address);
 bool gmtime(std::time_t t, std::tm& out);
 bool localtime(std::time_t t, std::tm& out);
 bool stderr_is_terminal();
@@ -137,6 +139,13 @@ inline std::filesystem::path self_exe() {
     std::error_code ec;
     auto path = std::filesystem::read_symlink("/proc/self/exe", ec);
     return ec ? std::filesystem::path() : path;
+}
+inline std::filesystem::path module_of(const void* address) {
+    Dl_info info{};
+    if (::dladdr(address, &info) == 0 || info.dli_fname == nullptr) { return {}; }
+    std::error_code ec;
+    auto path = std::filesystem::canonical(info.dli_fname, ec);
+    return ec ? std::filesystem::path(info.dli_fname) : path;
 }
 inline bool gmtime(std::time_t t, std::tm& out) { return ::gmtime_r(&t, &out) != nullptr; }
 inline bool localtime(std::time_t t, std::tm& out) { return ::localtime_r(&t, &out) != nullptr; }

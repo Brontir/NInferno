@@ -139,6 +139,19 @@ std::string warm_up_key_text(const EngineOptions& probe, std::uint32_t round_tok
 #else
     line("build.type", "debug");
 #endif
+    // The file that holds the device code, by path, size and write time: two binaries of one
+    // commit and build type still differ when a compiler release or a CUDA flag does, and so can
+    // their frames. A rebuild or a copy only misses the record.
+    std::error_code binary_error;
+    const auto binary = sys::module_of(
+        reinterpret_cast<const void*>(&ops::detail::generic::build_manifest));
+    const auto binary_bytes = binary.empty() ? 0 : std::filesystem::file_size(binary, binary_error);
+    const auto binary_mtime =
+        binary.empty() ? std::filesystem::file_time_type{}
+                       : std::filesystem::last_write_time(binary, binary_error);
+    line("binary.path", binary.empty() ? "unknown" : binary.string());
+    line("binary.bytes", std::to_string(binary_bytes));
+    line("binary.mtime", std::to_string(binary_mtime.time_since_epoch().count()));
     std::error_code error;
     const auto size  = std::filesystem::file_size(probe.artifact_path, error);
     const auto mtime = std::filesystem::last_write_time(probe.artifact_path, error);

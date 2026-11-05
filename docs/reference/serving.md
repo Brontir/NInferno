@@ -106,7 +106,8 @@ every resident thread. Neither is given back.
   pinned bytes, about 2 MiB per GiB). The warm-up pins buffers of the Host tier's sizes once,
   measures the cost, and the check reserves it (`Host tier pinning takes ...`).
 - The width loop (one prefill of every width class) is most of the warm-up, and what it leaves
-  depends only on what runs: the binary, the GPU and driver, the model file, the probe's options,
+  depends only on what runs: the binary (its commit and build type, and the file that holds the
+  device code by path, size and write time, so a rebuild with another compiler or flag misses), the GPU and driver, the model file, the probe's options,
   the widths and the route data. So the server keeps it: after a loop it records the stack limit
   it ended at and the memory it took under the cache directory (`warm-up/<sha256>.json`), and a
   later start with the same inputs skips the loop. Every start prices the warm-up at the plan's
