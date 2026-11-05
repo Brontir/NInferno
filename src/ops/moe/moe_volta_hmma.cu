@@ -73,10 +73,6 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
     constexpr int kSets   = kGated ? 2 : 1;
     constexpr int kGroups = F::kGroups;
     constexpr int kSteps  = 16 / kGroups; // MMAs a scale group
-    // The scales go into the f16 A fragments 2^8 high and the FP32 sums come down by it (exact): a
-    // weight of |w| < 2^-14 would be an f16 subnormal (a few bits) at its own size; at 2^8 times it
-    // keeps all 11. |w| x 2^8 stays far below the f16 range (65504).
-    constexpr float kLift = 256.0F;
     __shared__ __align__(16) __half act[2][4 * kQuadStride<kNTok>];
     __shared__ float sums[2][F::kMin ? kNTok * 8 : 1];
     __shared__ int rows_x[kNTok];
@@ -160,16 +156,16 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
             for (int s = 0; s < kSets; ++s) {
                 float ds, dm;
                 cur[s].scale(q, gr, ds, dm);
-                dsh[s] = __float2half2_rn(ds * kLift);
+                dsh[s] = __float2half2_rn(ds);
                 if constexpr (kSplit) {
                     float dd, sc;
                     cur[s].scale_parts(q, gr, dd, sc);
-                    dsh[s] = __float2half2_rn(dd * kLift);
+                    dsh[s] = __float2half2_rn(dd);
                     sch[s] = __float2half2_rn(sc);
                 }
                 if constexpr (F::kMin) {
-                    dmr[s][0] = __shfl_sync(0xffffffffU, dm, src_a) * kLift;
-                    dmr[s][1] = __shfl_sync(0xffffffffU, dm, src_a + 2) * kLift;
+                    dmr[s][0] = __shfl_sync(0xffffffffU, dm, src_a);
+                    dmr[s][1] = __shfl_sync(0xffffffffU, dm, src_a + 2);
                 }
             }
 #    pragma unroll
@@ -229,7 +225,6 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
             for (int i = 0; i < 8; ++i) {
                 acc[s][g][i] += __shfl_xor_sync(0xffffffffU, acc[s][g][i], 4);
                 acc[s][g][i] += __shfl_xor_sync(0xffffffffU, acc[s][g][i], 8);
-                acc[s][g][i] *= 1.0F / kLift;
             }
     // Quad-pair q stores accumulators 2q and 2q + 1, with the expert row's bias and activation.
     const int row0 = static_cast<int>(blockIdx.x) * kCtaRows + warp * kWarpRows;
