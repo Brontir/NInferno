@@ -3126,10 +3126,11 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const double reduce = q * (cluster - 1) * rows * sets * cols * 30.0 / clk +
                               rounds * (warps_k - 1.0) * rows * sets * cols * 2.75 / clk;
         const double chain  = rounds * std::ceil(kc / (16.0 * warps_k)) * 150.0 / clk;
-        // Eleven loads in flight on an SM hide the latency of the weight's reads. A register-MMA
-        // warp fetches its next K step while it computes this one (rmma_kernel's two-slot ring),
-        // one load per row tile and weight set (fetch): MT x sets of them, whatever its tokens.
-        return (mem + mma + reduce) / std::clamp(warps * loads / 11.0, 0.05, 1.0) + chain;
+        // A register-MMA warp fetches its next K step while it computes this one (rmma_kernel's
+        // two-slot ring): the weight's reads and the MMAs overlap, as the pipelined tiles' do, and
+        // the slower of the two sets the time. One load per row tile and weight set (fetch), MT x
+        // sets of them whatever its tokens; eleven loads in flight on an SM hide their latency.
+        return (std::max(mem, mma) + reduce) / std::clamp(warps * loads / 11.0, 0.05, 1.0) + chain;
     };
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
