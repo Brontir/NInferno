@@ -6,13 +6,15 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <fstream>
+#include <random>
 #include <system_error>
 
 namespace ninferno::runtime {
 namespace {
 
-constexpr std::string_view kSchema = "ninferno-warm-up/1";
+constexpr std::string_view kSchema = "ninferno-warm-up/2";
 
 std::filesystem::path record_path(std::string_view key_text) {
     const auto dir = warm_up_cache_dir();
@@ -46,9 +48,20 @@ std::optional<WarmUpRecord> read_warm_up_record(std::string_view key_text) {
         WarmUpRecord record;
         record.stack_limit_bytes  = json.at("stack_limit_bytes").get<std::size_t>();
         record.loop_bytes         = json.at("loop_bytes").get<std::size_t>();
+        record.probe_bytes        = json.value("probe_bytes", std::size_t{0});
+        record.confirmed          = json.value("confirmed", false);
         record.stack_limit_source = json.value("stack_limit_source", std::string());
         return record;
     } catch (const std::exception&) { return std::nullopt; }
+}
+
+bool warm_up_records_agree(const WarmUpRecord& a, const WarmUpRecord& b) {
+    const auto close = [](std::size_t x, std::size_t y) {
+        const std::size_t gap = x > y ? x - y : y - x;
+        return gap <= std::max<std::size_t>(std::size_t{32} << 20, std::max(x, y) / 50);
+    };
+    return a.stack_limit_bytes == b.stack_limit_bytes && close(a.loop_bytes, b.loop_bytes) &&
+           close(a.probe_bytes, b.probe_bytes);
 }
 
 void write_warm_up_record(std::string_view key_text, const WarmUpRecord& record) {
@@ -62,10 +75,13 @@ void write_warm_up_record(std::string_view key_text, const WarmUpRecord& record)
                                      {"key", std::string(key_text)},
                                      {"stack_limit_bytes", record.stack_limit_bytes},
                                      {"loop_bytes", record.loop_bytes},
+                                     {"probe_bytes", record.probe_bytes},
+                                     {"confirmed", record.confirmed},
                                      {"stack_limit_source", record.stack_limit_source}};
-        // Written beside, then renamed: a concurrent start reads the old record or the new one.
+        // Written beside under a name of its own, then renamed: a concurrent start reads the old
+        // record or the new one, and two writers never share the partial file.
         auto partial = path;
-        partial += ".partial";
+        partial += "." + std::to_string(std::random_device{}()) + ".partial";
         {
             std::ofstream out(partial, std::ios::binary | std::ios::trunc);
             if (!out) { return; }

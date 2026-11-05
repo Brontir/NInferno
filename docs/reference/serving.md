@@ -110,11 +110,13 @@ every resident thread. Neither is given back.
   the widths and the route data. So the server keeps it: after a loop it records the stack limit
   it ended at and the memory it took under the cache directory (`warm-up/<sha256>.json`), and a
   later start with the same inputs sets that stack limit, reserves that memory, and skips the loop
-  (`kernel warm-up | ... | kept from an earlier start (… reserved): …`). The decode-graph probe and
-  the memory check still run. On an RTX 4090 with Gemma 4 12B this takes a start from about 23 s
-  to about 10 s; the first request then loads the kernels' code, a few milliseconds. Any
-  maintainer option runs the loop, and `NINFERNO_WARMUP_CACHE=0` (`off`, `no`, `false`) turns the
-  record off.
+  (`kernel warm-up | ... | kept from an earlier start (… reserved): …`). The memory is a difference
+  of the GPU's free memory, which another program can move during one loop, so a record is used
+  only once two loops measured the same: the third start with the same inputs is the first to
+  skip it. The decode-graph probe and the memory check still run. On an RTX 4090 with Gemma 4 12B
+  this takes a start from 22.9 s to 14.1 s; the first request then loads the kernels' code, a few
+  milliseconds. A maintainer option that steers the routes runs the loop, as does a build from a
+  changed tree, and `NINFERNO_WARMUP_CACHE=0` (`off`, `no`, `false`) turns the record off.
 - The warm-up takes longer on larger models (one prefill of every width). Only an automatic choice
   runs it: with `--max-context`, `--kv-capacity`, `--prefill-chunk` and `--device-state-slots` all
   given, the ladder has one rung, which fits or is refused.
