@@ -420,6 +420,10 @@ def gguf_cached(model):
     of a split is not the checkpoint."""
     root = hub_dir() / ("models--" + model["repo"].replace("/", "--"))
     quant = model["quant"].lower()
+    # A converted artifact of the quant is reused as it is (the UI may have removed the snapshot).
+    if any(re.search(r"(^|[-.])" + re.escape(quant) + r"\.ninferno$", f.name.lower())
+           for f in root.glob("ninferno/*/*.ninferno")):
+        return True
     parts = collections.defaultdict(set)
     for f in root.glob("snapshots/*/**/*.gguf"):
         name = f.name.lower()

@@ -717,6 +717,16 @@ class KitCacheAndIds(unittest.TestCase):
             with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
                 self.assertFalse(measure.gguf_cached({"repo": "o/m-GGUF", "quant": "Q4_K_M"}))
 
+    def test_converted_artifact_counts_as_cached(self):
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            art = Path(d) / "models--o--m-GGUF" / "ninferno" / "abc"
+            art.mkdir(parents=True)
+            (art / "m-q4_k_m.ninferno").write_bytes(b"x")
+            with mock.patch.object(measure, "hub_dir", return_value=Path(d)):
+                self.assertTrue(measure.gguf_cached({"repo": "o/m-GGUF", "quant": "Q4_K_M"}))
+
 
 if __name__ == "__main__":
     unittest.main()
