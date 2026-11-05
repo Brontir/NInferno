@@ -2951,6 +2951,64 @@ std::optional<Route> staged_speed_route(const Problem& problem, const Weight& we
 // 4060 Ti, L4, A10 and A100 (six formats, n 48..28672, T 17..2048, quantizer in the sample; SwiGLU
 // and AddResidual on the A100), constants refit with the board held out: 1.06..1.09 of the best
 // route of either class on the consumer boards (the minor-0 row has one board: 1.13 in sample).
+std::optional<RouteTile> route_tile(Route route, Epilogue epilogue, std::int32_t tokens) {
+    const int sets = epilogue == Epilogue::SwiGlu ? 2 : 1;
+    switch (route.family) {
+    case Family::RegisterMma: {
+        const auto s = rmma_schedule_info(route.schedule);
+        return RouteTile{16 * s.m_tiles * s.warps_m, 8 * s.n_tiles, s.cluster};
+    }
+    case Family::TiledMma: {
+        const auto s = tiled_schedule_info(route.schedule);
+        return RouteTile{s.block_n / sets, s.block_m, 1};
+    }
+    case Family::StagedMma: {
+        const auto s = staged_schedule_info(route.schedule);
+        return RouteTile{s.rows / sets, s.tokens, 1};
+    }
+    case Family::W4a8Mma: {
+        const auto s = w4a8_schedule_info(route.schedule);
+        return RouteTile{s.block_n / sets, s.block_m, 1};
+    }
+    case Family::I8Mma: {
+        const auto s = i8_schedule_info(route.schedule);
+        return RouteTile{s.block_n / sets, s.block_m, 1};
+    }
+    default: return std::nullopt;
+    }
+}
+
+std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
+                                          const Problem& problem, std::int32_t tokens) {
+    const auto tile = route_tile(route, problem.epilogue, tokens);
+    if (!tile || problem.n <= 0 || problem.k <= 0 || tokens <= 0) return std::nullopt;
+    const double n = problem.n, k = problem.k, t = tokens;
+    const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
+    // The activation in the route's representation: bytes a value, the K and the tokens it holds.
+    // BF16 for the A16 tiles; W4A8 one byte a value and an FP16 scale a 32 (and the block sum,
+    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64-value group, tokens padded to whole 256-token
+    // tiles.
+    double x_bytes = 2.0, x_k = k, x_t = t;
+    const QType q  = problem.qtype;
+    const bool has_min = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
+                         q == QType::GGML_Q5_K;
+    if (route.family == Family::W4a8Mma) {
+        x_bytes = (has_min ? 40.0 : 36.0) / 32.0;
+        x_k     = cdiv(k, 128.0) * 128.0;
+    } else if (route.family == Family::I8Mma) {
+        x_bytes = 1.0 + 8.0 / 64.0;
+        x_t     = i8_padded_tokens(tokens);
+    }
+    const double weight_reads = cdiv(t, tile->tokens);
+    // The register MMA holds its operands in registers: each of a CTA's row warps loads the
+    // activation slice itself (the shared-memory tiles stage it once for the CTA).
+    const double x_readers =
+        route.family == Family::RegisterMma ? rmma_schedule_info(route.schedule).warps_m : 1.0;
+    const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
+    return RouteTraffic{n * k * bpw * weight_reads,
+                        x_t * x_k * x_bytes * cdiv(n, tile->out_rows) * x_readers, n * t * 2.0};
+}
+
 template <class Offer>
 void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t tokens,
                    const DeviceClass& d, const Offer& offer) {
@@ -2969,7 +3027,6 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double bw      = d.facts.dram_bytes_per_s();
     const double sms     = d.sms;
     const double n = problem.n, k = problem.k, t = tokens;
-    const double sets    = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
     const double peak_sm = g.s8 * clk;
     const double scale   = fitted->w4a8_eff;
@@ -2985,8 +3042,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     if (allows_w4a8(weight, problem.policy)) {
         for (int i = 0; i < w4a8_schedule_count(); ++i) {
             const auto s         = w4a8_schedule_info(i);
-            const double rows_w  = s.block_n, cols = s.block_m;
-            const double rows_o  = rows_w / sets;
+            const Route r{Family::W4a8Mma, static_cast<std::uint8_t>(i)};
+            const auto tile      = *route_tile(r, problem.epilogue, tokens);
+            const double rows_w  = s.block_n, cols = tile.tokens;
+            const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
             const double smem    = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) * 160.0;
@@ -3000,8 +3059,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double cap   = s.producers > 0 ? 1690.0 : 1390.0;
             const double chain = std::ceil(q / occ) * std::ceil(k / 128.0) * cap / clk;
             const double eff   = kW4a8Eff[std::min(i, 5)] * scale;
-            offer(Route{Family::W4a8Mma, static_cast<std::uint8_t>(i)},
-                  quant(t) + std::max(mem, mma / eff) / std::clamp(warps, 0.05, 1.0) + chain);
+            offer(r, quant(t) + std::max(mem, mma / eff) / std::clamp(warps, 0.05, 1.0) + chain);
         }
     }
     // The I8 tiles (generic_i8.cu): one activation scale per 64 values and the code as the MMA's
@@ -3012,8 +3070,10 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         const double tp = i8_padded_tokens(tokens);
         for (int i = 0; i < i8_schedule_count(); ++i) {
             const auto s         = i8_schedule_info(i);
-            const double rows_w  = s.block_n, cols = s.block_m;
-            const double rows_o  = rows_w / sets;
+            const Route r{Family::I8Mma, static_cast<std::uint8_t>(i)};
+            const auto tile      = *route_tile(r, problem.epilogue, tokens);
+            const double rows_w  = s.block_n, cols = tile.tokens;
+            const double rows_o  = tile.out_rows;
             const double occ     = std::max(1.0, std::min({std::floor(max_thr / s.threads), max_cta,
                                                            std::floor(smem_sm / s.smem_bytes)}));
             const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
@@ -3023,7 +3083,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
             const double chain   = std::ceil(q / occ) * std::ceil(k / 64.0) * 250.0 / clk;
             const double eff     = kI8Eff[i] * scale;
-            offer(Route{Family::I8Mma, static_cast<std::uint8_t>(i)},
+            offer(r,
                   quant(tp) + std::max(mem, mma / eff) / std::clamp(warps / 8.0, 0.05, 1.0) +
                       chain);
         }
@@ -3032,6 +3092,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         problem.n % ggml_mmq::kRowMultiple == 0 && problem.k % ggml_mmq::kKMultiple == 0) {
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);
+        const double sets   = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
         const double cols   = std::min(128.0, cdiv(tt, 8.0) * 8.0);
         const double tiles  = cdiv(n * sets, 128.0) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
@@ -3141,9 +3202,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         if (emulated && s.n_tiles == 8) continue;
         const double threads = 32.0 * s.warps_m * s.warps_k;
         const double occ     = std::min(std::floor(max_thr / threads), max_cta);
-        offer(Route{Family::RegisterMma, static_cast<std::uint8_t>(i)},
-              cost(16.0 * s.m_tiles * s.warps_m, 8.0 * s.n_tiles, threads, s.cluster, occ,
-                   s.warps_k, false, 1));
+        const Route r{Family::RegisterMma, static_cast<std::uint8_t>(i)};
+        const auto tile = *route_tile(r, problem.epilogue, tokens);
+        offer(r, cost(tile.out_rows, tile.tokens, threads, tile.k_split, occ, s.warps_k, false, 1));
     }
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;
@@ -3153,16 +3214,18 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     };
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const auto s = tiled_schedule_info(i);
-        offer(Route{Family::TiledMma, static_cast<std::uint8_t>(i)},
-              cost(s.block_n / sets, s.block_m, 256, 1, pipelined_occ(256, 3, s.block_n, s.block_m),
-                   1.0, true, 0.8));
+        const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
+        const auto tile = *route_tile(r, problem.epilogue, tokens);
+        offer(r, cost(tile.out_rows, tile.tokens, 256, 1,
+                      pipelined_occ(256, 3, s.block_n, s.block_m), 1.0, true, 0.8));
     }
     for (int i = 0; i < staged_schedule_count(); ++i) {
         const auto s         = staged_schedule_info(i);
         const double threads = 32.0 * s.warps_m * s.warps_n;
-        offer(Route{Family::StagedMma, static_cast<std::uint8_t>(i)},
-              cost(s.rows / sets, s.tokens, threads, 1,
-                   pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true, 0.9));
+        const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
+        const auto tile = *route_tile(r, problem.epilogue, tokens);
+        offer(r, cost(tile.out_rows, tile.tokens, threads, 1,
+                      pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true, 0.9));
     }
     return true;
 }

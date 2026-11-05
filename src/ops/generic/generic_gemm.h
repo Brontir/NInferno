@@ -714,6 +714,40 @@ struct R8Resources {
                                                              Epilogue epilogue,
                                                              std::int32_t tokens);
 
+// The output tile one CTA of `route` computes for a `tokens`-token call (#298), as the cost model
+// prices it (price_routes, a8_candidates read this): output rows (under SwiGLU each reads its gate
+// and its up row), token columns, and the CTAs K is split over (a register-MMA cluster). Declared
+// geometry of the schedule, not a measurement. nullopt for the families the cost model does not
+// price by a declared tile (R8, the FP4 tiles, scalar) and for ggml's kernels, whose matrix
+// kernel picks its tile at launch by device and format (select_launch; route_resources
+// describes that launch).
+struct RouteTile {
+    int out_rows = 0;
+    int tokens   = 0;
+    int k_split  = 1;
+};
+[[nodiscard]] std::optional<RouteTile> route_tile(Route route, Epilogue epilogue,
+                                                  std::int32_t tokens);
+
+// The logical traffic of a call on `route` (#298): the bytes its CTAs request, before any cache
+// serves them, predicted from route_tile. Every token column of CTAs reads the whole weight
+// (payload_bytes over the call's n rows, as the cost model's bpw), every row block of CTAs reads the
+// whole activation (the register MMA's every row warp: no shared memory holds its operands) in the route's representation (A16 bf16: 2 bytes a value; the int8 tiers one
+// byte and their scales: W4A8 36 bytes a 32-value block, 40 with a min's block sums, over K in
+// whole 128-value tiles; I8 an FP32 scale and an int32 sum a 64, over tokens padded to 256),
+// and the output is written once in bf16 (a cluster's K split reduces in distributed shared
+// memory). A prediction, not a counter: the caches serve the re-reads (RTX 5090, Qwen3.5-9B
+// shapes: a 16 x 8 register-MMA tile at T = 512 requested 8 TB/s, past the L2's rate, its
+// activation re-read by every row block from L1), so a hit rate turns it into DRAM bytes.
+struct RouteTraffic {
+    double weight_bytes     = 0;
+    double activation_bytes = 0;
+    double output_bytes     = 0;
+};
+[[nodiscard]] std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
+                                                        const Problem& problem,
+                                                        std::int32_t tokens);
+
 // What this build holds of the generic GEMM families (#307), read without a device: every declared
 // schedule, whether the binary holds its kernel, and where that depends on the format, which
 // formats. The refusals' NotCompiled and CodecTile read the same predicates: a schedule this build
