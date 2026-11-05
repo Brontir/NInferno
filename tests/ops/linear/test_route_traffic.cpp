@@ -6,6 +6,7 @@
 #include "core/weight.h"
 #include "ops/generic/generic_gemm.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <iostream>
@@ -92,6 +93,21 @@ int main() {
         check(tr && near(tr->activation_bytes,
                          256.0 * 2048 * 36 / 32 * std::ceil(4096.0 / tile.out_rows)),
               "w4a8 activation traffic");
+    }
+    // ggml's matrix kernel at T = 600: a full 512-token slice of four 128-token columns, then the
+    // last 88 tokens in one column of their own; the weight is read five times.
+    {
+        const auto tr = g::route_traffic(g::Route{F::GgmlMmq, 0}, w, p, 600);
+        check(tr && near(tr->weight_bytes, 4096.0 * 2048 * 5), "mmq weight reads over slices");
+    }
+    // I8: an FP32 scale and an int32 sum a 64-value group, tokens padded to 256.
+    if (g::i8_schedule_count() > 0) {
+        const g::Route r{F::I8Mma, 0};
+        const auto tile = *g::route_tile(r, p.epilogue, 100);
+        const auto tr   = g::route_traffic(r, w, p, 100);
+        check(tr && near(tr->activation_bytes,
+                         256.0 * 2048 * (1.0 + 8.0 / 64.0) * std::ceil(4096.0 / tile.out_rows)),
+              "i8 activation traffic");
     }
     check(!g::route_traffic(g::Route{F::R8Mma, 0}, w, p, 4), "R8 has no traffic description");
 

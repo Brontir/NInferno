@@ -2989,17 +2989,36 @@ std::optional<RouteTraffic> route_traffic(Route route, const Weight& weight,
     if (!tile || problem.n <= 0 || problem.k <= 0 || tokens <= 0) return std::nullopt;
     const double n = problem.n, k = problem.k, t = tokens;
     const auto cdiv = [](double a, double b) { return std::ceil(a / b); };
-    // Bytes a value of the activation takes in the route's representation.
-    double x_bytes = 2.0;
-    if (route.family == Family::W4a8Mma || route.family == Family::GgmlMmq) x_bytes = 36.0 / 32.0;
-    if (route.family == Family::I8Mma) x_bytes = 1.0 + 4.0 / 64.0;
-    // ggml's matrix kernel runs a call in prefill slices, each its own grid over the weight.
-    const double weight_reads = route.family == Family::GgmlMmq
-                                    ? cdiv(t, kMmqPrefillSlice) *
-                                          cdiv(std::min<double>(t, kMmqPrefillSlice), tile->tokens)
-                                    : cdiv(t, tile->tokens);
+    // The activation in the route's representation: bytes a value, the K and the tokens it holds.
+    // BF16 for the A16 tiles; W4A8 one byte a value and an FP16 scale a 32 (and the block sum,
+    // 40 bytes a 32, for a format with a min), K in whole 128-value tiles; ggml's q8_1 36 bytes a
+    // 32; I8 an FP32 scale and an int32 sum a 64-value group, tokens padded to whole 256-token
+    // tiles.
+    double x_bytes = 2.0, x_k = k, x_t = t;
+    const QType q  = problem.qtype;
+    const bool has_min = q == QType::GGML_Q4_1 || q == QType::GGML_Q5_1 || q == QType::GGML_Q4_K ||
+                         q == QType::GGML_Q5_K;
+    if (route.family == Family::W4a8Mma) {
+        x_bytes = (has_min ? 40.0 : 36.0) / 32.0;
+        x_k     = cdiv(k, 128.0) * 128.0;
+    } else if (route.family == Family::GgmlMmq) {
+        x_bytes = 36.0 / 32.0;
+    } else if (route.family == Family::I8Mma) {
+        x_bytes = 1.0 + 8.0 / 64.0;
+        x_t     = i8_padded_tokens(tokens);
+    }
+    // ggml's matrix kernel runs a call in prefill slices, each its own grid over the weight: the
+    // full slices' token columns, then the last slice's own.
+    double weight_reads = cdiv(t, tile->tokens);
+    if (route.family == Family::GgmlMmq) {
+        const double full = std::floor(t / kMmqPrefillSlice);
+        const auto rest   = static_cast<std::int32_t>(t - full * kMmqPrefillSlice);
+        weight_reads      = full * cdiv(kMmqPrefillSlice, tile->tokens) +
+                       (rest > 0 ? cdiv(rest, route_tile(route, problem.epilogue, rest)->tokens)
+                                 : 0.0);
+    }
     const double bpw = static_cast<double>(weight.payload_bytes) / (n * k);
-    return RouteTraffic{n * k * bpw * weight_reads, t * k * x_bytes * cdiv(n, tile->out_rows),
+    return RouteTraffic{n * k * bpw * weight_reads, x_t * x_k * x_bytes * cdiv(n, tile->out_rows),
                         n * t * 2.0};
 }
 

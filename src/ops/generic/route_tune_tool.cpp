@@ -347,8 +347,9 @@ int route_tune_main(int argc, char** argv) {
                     // before a cache serves it. Empty where no tile describes the route.
                     routes_csv << ',';
                     if (const auto tr = generic::route_traffic(r, w.weight, gp, t)) {
-                        routes_csv << tr->weight_bytes << ',' << tr->activation_bytes << ','
-                                   << tr->output_bytes;
+                        routes_csv << std::llround(tr->weight_bytes) << ','
+                                   << std::llround(tr->activation_bytes) << ','
+                                   << std::llround(tr->output_bytes);
                     } else {
                         routes_csv << ",,";
                     }
