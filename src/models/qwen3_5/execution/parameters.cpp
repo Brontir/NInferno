@@ -110,20 +110,25 @@ public:
                 model_.input(moe.router), model_.input(moe.shared_score), gate_up, down,
                 model_.input(moe.shared.gate), model_.input(moe.shared.up),
                 model_.input(moe.shared.down));
-            // --activations int8 holds the experts at eight bits; SparseMoe NVFP4 encodes its
-            // prefill in four (it requires AllowA4), so an expert input allowed only A8 takes the
-            // generic MoE, whose NVFP4 banks have a W4A8 prefill.
-            const bool a8_held = generic.gate_up.qtype == QType::NVFP4 &&
-                                 std::any_of(gate_up.begin(), gate_up.end(), [](const auto& in) {
-                                     return in.policy == ops::LinearPolicy::AllowA8;
-                                 });
+            // SparseMoe NVFP4 encodes its prefill in four bits (it requires AllowA4), so experts
+            // held above that take the generic MoE: at eight bits (--activations int8) its NVFP4
+            // banks have a W4A8 prefill, at sixteen (--activations exact) their A16 routes (#438:
+            // Qwen3.6-35B-A3B NVFP4 refused to load under exact on sm_120a).
+            // Each input SparseMoe NVFP4 reads needs AllowA4 (prepare_sparse_moe_weights).
+            const auto held = [](const ops::WeightInput& in) { return !ops::allows_a4(in.policy); };
+            const bool a4_held =
+                generic.gate_up.qtype == QType::NVFP4 &&
+                (std::any_of(gate_up.begin(), gate_up.end(), held) ||
+                 std::any_of(down.begin(), down.end(), held) ||
+                 held(model_.input(moe.shared.gate)) || held(model_.input(moe.shared.up)) ||
+                 held(model_.input(moe.shared.down)));
             // --moe-path (ops/route_pins.h): auto takes SparseMoe where it runs the layer, generic
             // never, fused refuses a layer it cannot run.
-            const bool fused_ready = top_k == 8 && !a8_held && ops::sparse_moe_admits(generic);
+            const bool fused_ready = top_k == 8 && !a4_held && ops::sparse_moe_admits(generic);
             const std::string why_not =
                 top_k != 8 ? "top-k " + std::to_string(top_k) + ", SparseMoe takes 8"
-                : a8_held  ? "the NVFP4 experts are held at eight bits (--activations int8), "
-                             "SparseMoe encodes its prefill in four"
+                : a4_held  ? "the NVFP4 experts are held above four-bit activations "
+                             "(--activations int8 or exact), SparseMoe encodes its prefill in four"
                            : "SparseMoe does not read these experts' format or shape";
             if (ops::moe_takes_fused(fused_ready, why_not)) {
                 return ops::prepare_sparse_moe_weights(
