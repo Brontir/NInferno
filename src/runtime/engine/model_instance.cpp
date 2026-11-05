@@ -1194,9 +1194,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
         };
         std::size_t probe_buffer_bytes   = 0;
-        // A kept loop's small-probe bytes (warmup_cache.h), until the served context's probe has
-        // taken them again.
-        std::size_t kept_probe_bytes     = 0;
         const auto probe_options = [&](std::uint32_t max_context) {
             const std::uint32_t kv_tokens = std::max(
                 max_context,
@@ -1255,10 +1252,17 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                           : std::string();
             const std::optional<WarmUpRecord> kept =
                 cacheable ? read_warm_up_record(key_text) : std::nullopt;
+            // The small probe is built either way: its decode graphs, the decode kernels' code and
+            // the stack its frames need are then the same on a start that keeps the loop as on one
+            // that runs it, and the record holds only what the width requests added to them.
+            std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
+            note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
+                             "-token context");
+            device.synchronize();
+            const std::size_t free_with_probe = current_free_device_bytes();
             if (kept && kept->confirmed) {
                 // Setting the limit reserves the stack's local memory now, which the loop's bytes
                 // hold too: what it took is no longer to come.
-                const std::size_t free_before_limit = current_free_device_bytes();
                 if (const cudaError_t set =
                         cudaDeviceSetLimit(cudaLimitStackSize, kept->stack_limit_bytes);
                     set == cudaErrorMemoryAllocation) {
@@ -1271,24 +1275,13 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     CUDA_CHECK(set);
                 }
                 const std::size_t free_after_limit = current_free_device_bytes();
-                const std::size_t limit_took       = free_before_limit > free_after_limit
-                                                         ? free_before_limit - free_after_limit
+                const std::size_t limit_took       = free_with_probe > free_after_limit
+                                                         ? free_with_probe - free_after_limit
                                                          : 0;
-                stack_limit                = current_stack_limit_bytes();
-                warm_up.stack_limit_source = kept->stack_limit_source;
+                note_stack_limit(kept->stack_limit_source);
                 warm_up.kept_loop_bytes = kept->loop_bytes - std::min(kept->loop_bytes, limit_took);
-                kept_probe_bytes        = kept->probe_bytes;
                 warm_up.from_cache      = true;
-                warm_up.prefill_widths  = widths;
             } else {
-                const std::size_t free_before_loop = current_free_device_bytes();
-                std::unique_ptr<models::qwen3_5::Program> program = probe_program(probe_context);
-                device.synchronize();
-                const std::size_t free_with_probe = current_free_device_bytes();
-                const std::size_t probe_took =
-                    free_before_loop > free_with_probe ? free_before_loop - free_with_probe : 0;
-                note_stack_limit("the decode graphs at a " + std::to_string(probe_context) +
-                                 "-token context");
                 const models::qwen3_5::Frontend frontend = loaded.make_frontend(probe_context);
                 const std::vector<TokenId> text          = frontend.tokenize_text(kWarmUpText);
                 if (text.empty()) {
@@ -1305,18 +1298,15 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     note_stack_limit("a prefill of " + std::to_string(width) + " tokens");
                     warm_up.widths_run.push_back(width);
                 }
-                warm_up.prefill_widths = widths;
-                program.reset();
                 device.synchronize();
                 if (cacheable) {
+                    // Measured with the probe still alive, as before the loop: what the requests
+                    // took and kept (their kernels' code, the stack beyond the probe's).
                     const std::size_t free_after_loop = current_free_device_bytes();
                     WarmUpRecord measured{
                         .stack_limit_bytes  = current_stack_limit_bytes(),
-                        .loop_bytes         = free_before_loop > free_after_loop
-                                                  ? free_before_loop - free_after_loop
-                                                  : 0,
-                        .probe_bytes        = probe_took > probe_buffer_bytes
-                                                  ? probe_took - probe_buffer_bytes
+                        .loop_bytes         = free_with_probe > free_after_loop
+                                                  ? free_with_probe - free_after_loop
                                                   : 0,
                         .stack_limit_source = warm_up.stack_limit_source};
                     // Kept once a second loop measured the same (another process can move the
@@ -1325,6 +1315,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                     write_warm_up_record(key_text, measured);
                 }
             }
+            warm_up.prefill_widths = widths;
+            program.reset();
+            device.synchronize();
         }
         // The context cache's Host tier is pinned host memory, and the driver maps every pinned
         // byte for the device: the page tables take device memory (2 MiB per pinned GiB),
@@ -1417,19 +1410,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                              "-token context");
             device.synchronize();
             const std::size_t free_with_probe = current_free_device_bytes();
-            if (kept_probe_bytes != 0) {
-                // A start that kept the loop built its first decode graphs and loaded the decode
-                // kernels here; one that ran the loop reused the small probe's for them, and the
-                // kept loop's bytes count those: they are no longer to come.
-                const std::size_t took = free_before_probe > free_with_probe
-                                             ? free_before_probe - free_with_probe
-                                             : 0;
-                const std::size_t again =
-                    std::min(kept_probe_bytes,
-                             took > probe_buffer_bytes ? took - probe_buffer_bytes : 0);
-                warm_up.kept_loop_bytes -= std::min(warm_up.kept_loop_bytes, again);
-                kept_probe_bytes = 0;
-            }
             program.reset();
             device.synchronize();
             const std::size_t free_after_probe = current_free_device_bytes();

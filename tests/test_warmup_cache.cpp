@@ -35,7 +35,6 @@ int main() {
 
     const WarmUpRecord written{.stack_limit_bytes  = 1024,
                                .loop_bytes         = std::size_t{300} << 20,
-                               .probe_bytes        = std::size_t{40} << 20,
                                .stack_limit_source = "a prefill of 512 tokens",
                                .confirmed          = true};
     rt::write_warm_up_record("key a\n", written);
@@ -43,7 +42,6 @@ int main() {
     check(read.has_value(), "a written record reads back");
     if (read) {
         check(read->stack_limit_bytes == 1024 && read->loop_bytes == written.loop_bytes &&
-                  read->probe_bytes == written.probe_bytes &&
                   read->stack_limit_source == written.stack_limit_source && read->confirmed,
               "every field reads back");
     }

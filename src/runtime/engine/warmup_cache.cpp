@@ -14,7 +14,7 @@
 namespace ninferno::runtime {
 namespace {
 
-constexpr std::string_view kSchema = "ninferno-warm-up/2";
+constexpr std::string_view kSchema = "ninferno-warm-up/3";
 
 std::filesystem::path record_path(std::string_view key_text) {
     const auto dir = warm_up_cache_dir();
@@ -48,7 +48,6 @@ std::optional<WarmUpRecord> read_warm_up_record(std::string_view key_text) {
         WarmUpRecord record;
         record.stack_limit_bytes  = json.at("stack_limit_bytes").get<std::size_t>();
         record.loop_bytes         = json.at("loop_bytes").get<std::size_t>();
-        record.probe_bytes        = json.value("probe_bytes", std::size_t{0});
         record.confirmed          = json.value("confirmed", false);
         record.stack_limit_source = json.value("stack_limit_source", std::string());
         return record;
@@ -60,8 +59,7 @@ bool warm_up_records_agree(const WarmUpRecord& a, const WarmUpRecord& b) {
         const std::size_t gap = x > y ? x - y : y - x;
         return gap <= std::max<std::size_t>(std::size_t{32} << 20, std::max(x, y) / 50);
     };
-    return a.stack_limit_bytes == b.stack_limit_bytes && close(a.loop_bytes, b.loop_bytes) &&
-           close(a.probe_bytes, b.probe_bytes);
+    return a.stack_limit_bytes == b.stack_limit_bytes && close(a.loop_bytes, b.loop_bytes);
 }
 
 void write_warm_up_record(std::string_view key_text, const WarmUpRecord& record) {
@@ -75,7 +73,6 @@ void write_warm_up_record(std::string_view key_text, const WarmUpRecord& record)
                                      {"key", std::string(key_text)},
                                      {"stack_limit_bytes", record.stack_limit_bytes},
                                      {"loop_bytes", record.loop_bytes},
-                                     {"probe_bytes", record.probe_bytes},
                                      {"confirmed", record.confirmed},
                                      {"stack_limit_source", record.stack_limit_source}};
         // Written beside under a name of its own, then renamed: a concurrent start reads the old
