@@ -141,6 +141,9 @@ std::optional<std::uint32_t> prompt_tail_calls_of_files_or_warn(const HfTextFile
                                                                 std::string_view what,
                                                                 const std::filesystem::path& chat_template,
                                                                 bool prefix_reuse) {
+    // No template of the files' own and none served in its place: nothing to count, and nothing
+    // wrong to say (the conversion takes the base model's).
+    if (files.chat_template_jinja.empty() && chat_template.empty()) { return std::nullopt; }
     try {
         return prompt_tail_calls_of_files(files, chat_template, prefix_reuse);
     } catch (const std::exception& error) {
