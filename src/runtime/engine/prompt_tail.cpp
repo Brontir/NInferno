@@ -106,7 +106,11 @@ std::uint32_t prompt_tail_calls(const std::filesystem::path& artifact,
         return count_tail_calls(models::qwen3_5::make_frontend(plan.resources(), options),
                                 prefix_reuse);
     }
-    const HfTextFiles files = read_hf_text_files(artifact);
+    return prompt_tail_calls_of_files(read_hf_text_files(artifact), chat_template, prefix_reuse);
+}
+
+std::uint32_t prompt_tail_calls_of_files(const HfTextFiles& files,
+                                         const std::filesystem::path& chat_template, bool prefix_reuse) {
     models::qwen3_5::FrontendResources resources{
         .tokenizer_json         = files.tokenizer_json,
         .tokenizer_config_json  = files.tokenizer_config_json,
@@ -128,6 +132,22 @@ std::optional<std::uint32_t> prompt_tail_calls_or_warn(const std::filesystem::pa
         return prompt_tail_calls(artifact, chat_template, prefix_reuse);
     } catch (const std::exception& error) {
         std::cerr << "ninferno: the prefill's tail calls of " << artifact.string()
+                  << " are not counted (priced as none): " << error.what() << '\n';
+        return std::nullopt;
+    }
+}
+
+std::optional<std::uint32_t> prompt_tail_calls_of_files_or_warn(const HfTextFiles& files,
+                                                                std::string_view what,
+                                                                const std::filesystem::path& chat_template,
+                                                                bool prefix_reuse) {
+    // No template of the files' own and none served in its place: nothing to count, and nothing
+    // wrong to say (the conversion takes the base model's).
+    if (files.chat_template_jinja.empty() && chat_template.empty()) { return std::nullopt; }
+    try {
+        return prompt_tail_calls_of_files(files, chat_template, prefix_reuse);
+    } catch (const std::exception& error) {
+        std::cerr << "ninferno: the prefill's tail calls of " << what
                   << " are not counted (priced as none): " << error.what() << '\n';
         return std::nullopt;
     }

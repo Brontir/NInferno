@@ -1,8 +1,11 @@
 #pragma once
 
+#include "runtime/engine/hf_text_frontend.h"
+
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <string_view>
 
 namespace ninferno::runtime {
 
@@ -20,10 +23,21 @@ namespace ninferno::runtime {
                                               const std::filesystem::path& chat_template = {},
                                               bool prefix_reuse = true);
 
+// The same from a frontend's own files where no artifact holds them yet: a GGUF's, rebuilt from its
+// metadata (convert::gguf_frontend_resources), as its conversion will write them.
+[[nodiscard]] std::uint32_t prompt_tail_calls_of_files(const HfTextFiles& files,
+                                                       const std::filesystem::path& chat_template = {},
+                                                       bool prefix_reuse = true);
+
 // The same for the product's plan (product::set_prompt_tail_calls_source): a frontend that cannot
 // be read is said on stderr, once per artifact, and prices no tail call.
 [[nodiscard]] std::optional<std::uint32_t>
 prompt_tail_calls_or_warn(const std::filesystem::path& artifact,
                           const std::filesystem::path& chat_template = {}, bool prefix_reuse = true);
+// prompt_tail_calls_of_files for the plan (product::set_prompt_tail_calls_files_source); `what`
+// names the files' source in the warning.
+[[nodiscard]] std::optional<std::uint32_t>
+prompt_tail_calls_of_files_or_warn(const HfTextFiles& files, std::string_view what,
+                                   const std::filesystem::path& chat_template = {}, bool prefix_reuse = true);
 
 } // namespace ninferno::runtime
