@@ -658,6 +658,21 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // beside the label's own) is priced only as a Q3_K mix, an IQ4_XS label only as its class's.
     const bool named = std::any_of(model.linears.begin(), model.linears.end(),
                                    [](const LinearShape& l) { return !l.format.empty(); });
+    // A label that names no format (a renamed file: "the model's weights") over named linears: the
+    // format of most of their weights stands for the label's.
+    if (format == nullptr && named) {
+        const std::pair<const char*, const Format*> by_name[] = {
+            {"ggml_q3_k", &formats[0]}, {"ggml_q4_k", &formats[1]}, {"ggml_q5_k", &formats[2]},
+            {"ggml_q6_k", &formats[3]}, {"ggml_iq4_xs", &formats[4]}, {"ggml_q4_1", &formats[5]}};
+        double most = 0;
+        for (const auto& [name, f] : by_name) {
+            double weights = 0;
+            for (const LinearShape& l : model.linears) {
+                if (l.format == name) { weights += l.per_token * l.k * l.n; }
+            }
+            if (weights > most) { most = weights, format = f; }
+        }
+    }
     if (format == nullptr || format->step <= 0 ||
         (!named && (format == iq4xs ? quant.weights != WeightClass::IQ4
                                     : format != q41 && quant.weights != WeightClass::KQuant && format->bits >= 4))) {

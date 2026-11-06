@@ -562,6 +562,11 @@ void prefills_by_format(const json& fixture) {
         check(q41_seconds > 0 && q41_transferred && std::abs(q41_seconds / q4k_seconds - 1) < 0.05 &&
                   ch::prefill_linears_seconds(q41_model, turing, q41, 1024) == 0,
               "Q4_1 on its read step (Ada, near Q4_K's), marked transferred; Turing: the share");
+        // A renamed file's label names no format: its named linears' format stands for it.
+        ch::QuantOption renamed = q41;
+        renamed.label           = "the model's weights";
+        check(ch::prefill_linears_seconds(q41_model, ada, renamed, 1024) == q41_seconds,
+              "a label of no format over named Q4_1 linears prices them as the Q4_1 label");
     }
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";
