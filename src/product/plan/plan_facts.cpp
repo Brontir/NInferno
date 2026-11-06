@@ -9,6 +9,7 @@
 #include "convert/formats.h"
 #include "convert/ggml_quants.h"
 #include "convert/gguf.h"
+#include "convert/gguf_resources.h"
 #include "core/device_class.h"
 #include "core/ggml_frag.h"
 #include "core/machine_facts.h"
@@ -955,6 +956,10 @@ ArtifactFormats artifact_formats(const artifact::Directory& dir) {
 
 } // namespace
 
+namespace {
+std::optional<std::uint32_t> prompt_tail_calls_of_gguf(const convert::GgufFile& head);
+} // namespace
+
 PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t file_bytes) {
     std::set<std::string> names;
     for (const auto& t : head.tensors) { names.insert(t.name); }
@@ -1072,6 +1077,9 @@ PlanSourceFacts plan_facts_of_gguf(const convert::GgufFile& head, std::uint64_t 
     // A split part's table lists its own tensors only: the elements of the whole are not known.
     out.model.weight_elements = whole ? elements : 0;
     if (!whole && !has_output) { out.model.params = 0; }
+    // The prefill's tail calls from the GGUF's own frontend, as plan_facts_of_artifact reads its
+    // conversion's (a part without the vocabulary: none counted).
+    if (const auto calls = prompt_tail_calls_of_gguf(head)) { out.shape.prompt_tail_calls = *calls; }
     return out;
 }
 
@@ -1108,6 +1116,51 @@ std::optional<std::uint32_t> prompt_tail_calls_of(const std::filesystem::path& a
 
 void set_prompt_tail_calls_source(PromptTailCallsSource source) {
     prompt_tail_calls_source() = std::move(source);
+}
+
+namespace {
+PromptTailCallsFilesSource& prompt_tail_calls_files_source() {
+    static PromptTailCallsFilesSource source;
+    return source;
+}
+
+// The counts of the registered reader (a new reader, another template or prefix reuse: cleared).
+std::mutex& tail_calls_mutex() {
+    static std::mutex mutex;
+    return mutex;
+}
+std::map<std::size_t, std::optional<std::uint32_t>>& tail_calls_counted() {
+    static std::map<std::size_t, std::optional<std::uint32_t>> counted;
+    return counted;
+}
+
+// A GGUF's frontend rebuilt from its metadata, counted once per set of files: a plan reads the
+// facts of every listed quantization, whose tokenizer and template are one.
+std::optional<std::uint32_t> prompt_tail_calls_of_gguf(const convert::GgufFile& head) {
+    if (!prompt_tail_calls_files_source() || head.find("tokenizer.ggml.tokens") == nullptr) { return std::nullopt; }
+    const convert::RebuiltResources rebuilt = convert::gguf_frontend_resources(head);
+    const auto file = [&rebuilt](const char* role) {
+        const auto it = rebuilt.files.find(role);
+        return it != rebuilt.files.end() ? it->second : std::string();
+    };
+    PromptFrontendFiles files{file("tokenizer.json"), file("tokenizer_config.json"),
+                              file("chat_template.jinja"), file("generation_config.json")};
+    const std::size_t key = std::hash<std::string>{}(files.tokenizer_json + '\0' + files.tokenizer_config_json +
+                                                      '\0' + files.chat_template_jinja + '\0' +
+                                                      files.generation_config_json);
+    std::lock_guard lock(tail_calls_mutex());
+    auto& counted = tail_calls_counted();
+    if (const auto it = counted.find(key); it != counted.end()) { return it->second; }
+    const std::optional<std::uint32_t> calls = prompt_tail_calls_files_source()(files);
+    counted[key] = calls;
+    return calls;
+}
+} // namespace
+
+void set_prompt_tail_calls_files_source(PromptTailCallsFilesSource source) {
+    std::lock_guard lock(tail_calls_mutex());
+    prompt_tail_calls_files_source() = std::move(source);
+    tail_calls_counted().clear();
 }
 
 PlanSourceFacts plan_facts_of_artifact(const std::filesystem::path& artifact) {

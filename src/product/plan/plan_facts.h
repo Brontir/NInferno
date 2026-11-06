@@ -127,6 +127,14 @@ struct PlanSourceFacts {
 // (runtime::prompt_tail_calls) once at start; unset, the count stays 0.
 using PromptTailCallsSource = std::function<std::optional<std::uint32_t>(const std::filesystem::path&)>;
 void set_prompt_tail_calls_source(PromptTailCallsSource source);
+// The same for a GGUF, which plan_facts_of_gguf reads before any conversion: its frontend's files
+// rebuilt from the GGUF's metadata (convert::gguf_frontend_resources, what the conversion writes),
+// counted by the registered reader (runtime::prompt_tail_calls_of_files); unset, the count stays 0.
+struct PromptFrontendFiles {
+    std::string tokenizer_json, tokenizer_config_json, chat_template_jinja, generation_config_json;
+};
+using PromptTailCallsFilesSource = std::function<std::optional<std::uint32_t>(const PromptFrontendFiles&)>;
+void set_prompt_tail_calls_files_source(PromptTailCallsFilesSource source);
 
 // A DFlash drafter's state from its config.json (a Qwen artifact's dflash / dflash2 component, or a
 // separate drafter's: z-lab's DFlash and DFlash2 checkpoints, a converted gemma4_dflash / dflash

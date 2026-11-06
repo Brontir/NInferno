@@ -182,6 +182,12 @@ int main(int argc, char** argv) {
         ninferno::product::set_prompt_tail_calls_source([](const std::filesystem::path& artifact) {
             return ninferno::runtime::prompt_tail_calls_or_warn(artifact, {}, false);
         });
+        ninferno::product::set_prompt_tail_calls_files_source(
+            [](const ninferno::product::PromptFrontendFiles& f) {
+                return ninferno::runtime::prompt_tail_calls_of_files_or_warn(
+                    {f.tokenizer_json, f.tokenizer_config_json, f.chat_template_jinja, f.generation_config_json},
+                    "the GGUF's frontend", {}, false);
+            });
         ninferno::runtime::register_plan_workspace_queries();
         try {
             return tune ? ninferno::cli::run_spec_tune(argc, argv)
@@ -220,6 +226,13 @@ int main(int argc, char** argv) {
          prefix_reuse  = options.allow_prefix_reuse](const std::filesystem::path& artifact) {
             return ninferno::runtime::prompt_tail_calls_or_warn(artifact, chat_template,
                                                                 prefix_reuse);
+        });
+    ninferno::product::set_prompt_tail_calls_files_source(
+        [chat_template = options.chat_template_path,
+         prefix_reuse  = options.allow_prefix_reuse](const ninferno::product::PromptFrontendFiles& f) {
+            return ninferno::runtime::prompt_tail_calls_of_files_or_warn(
+                {f.tokenizer_json, f.tokenizer_config_json, f.chat_template_jinja, f.generation_config_json},
+                "the GGUF's frontend", chat_template, prefix_reuse);
         });
     // A removed NINFERNO_* decision variable changes nothing: say so once.
     ninferno::warn_removed_environment("ninferno-serve");
