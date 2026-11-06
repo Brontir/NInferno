@@ -549,8 +549,7 @@ int run_summation_orders() {
     }
     int failures    = 0;
     const auto fail = [&](const std::string& what) {
-        if (++failures <= 20) std::cerr << "summation orders: " << what << '
-';
+        if (++failures <= 20) std::cerr << "summation orders: " << what << '\n';
     };
     const auto name = [](generic::Route r) { return generic::route_name(r); };
     for (const generic::Route a : routes) {
@@ -587,8 +586,7 @@ int run_summation_orders() {
         fail("no WarpsK == 1 register-MMA schedule in the staged order");
     }
     std::cout << "summation orders: " << routes.size() << " routes, " << register_one
-              << " register-MMA schedules in the register order, " << failures << " failures
-";
+              << " register-MMA schedules in the register order, " << failures << " failures\n";
     return failures == 0 ? 0 : 1;
 }
 
