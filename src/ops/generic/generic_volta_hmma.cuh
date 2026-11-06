@@ -421,9 +421,11 @@ struct HX4 {
         const unsigned w        = words[m >> 1] >> (16 * (m & 1));
         constexpr unsigned kLo  = 0x42403C00U; // f16 high bytes of 0, 1, 2, 3
         constexpr unsigned kHi  = 0x4A484644U; // of 4, 6, 8, 12
-        a0 = __byte_perm(kLo, kHi, (w << 4) & 0x7070U) | ((w << 12) & 0x8000U) |
-             ((w << 20) & 0x80000000U);
-        a1 = __byte_perm(kLo, kHi, w & 0x7070U) | ((w << 8) & 0x8000U) | ((w << 16) & 0x80000000U);
+        // The two sign bits of a pair to bits 15 and 31 in one multiply (FMA pipe, off the ALU
+        // that the table lookups load): s x (2^12 + 2^20) puts bit 3 at 15 and bit 11 at 31, their
+        // crossed copies meet at bit 23 (a carry into 24), outside the mask.
+        a0 = __byte_perm(kLo, kHi, (w << 4) & 0x7070U) | ((w & 0x0808U) * 0x101000U & 0x80008000U);
+        a1 = __byte_perm(kLo, kHi, w & 0x7070U) | ((w & 0x8080U) * 0x10100U & 0x80008000U);
     }
 
     __device__ static constexpr int dest_run(int src) { return src; }
