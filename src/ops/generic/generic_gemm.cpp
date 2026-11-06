@@ -2593,20 +2593,22 @@ bool route_is_token_invariant(Route route) {
     return false;
 }
 
-bool same_summation(Route a, Route b) {
-    if (a == b) return true;
-    if (a.family == Family::I8Mma && b.family == Family::I8Mma) return true;
+SummationOrder summation_order(Route route) {
     // The orders of the prefill and invariant profiles, where its users act (the prefill route's
     // bands, in the route tables, route-tune and auto_route): there no register-MMA tile adds its
     // min-term sums in FP32 (rmma_add_sums), so the WarpsK == 1 tiles of every width and the staged
     // MMA sum alike. Outside them the tiles of four or more token tiles do not.
-    const auto register_order = [](Route r) {
-        return (r.family == Family::RegisterMma && r.schedule < rmma_schedule_count() &&
-                rmma_schedule_info(r.schedule).warps_k == 1 && !rmma_sums_lane_local(r.schedule)) ||
-               (r.family == Family::StagedMma && r.schedule < staged_schedule_count());
-    };
-    return register_order(a) && register_order(b);
+    if ((route.family == Family::RegisterMma && route.schedule < rmma_schedule_count() &&
+         rmma_schedule_info(route.schedule).warps_k == 1 &&
+         !rmma_sums_lane_local(route.schedule)) ||
+        (route.family == Family::StagedMma && route.schedule < staged_schedule_count())) {
+        return {SummationOrder::Kind::Register, Route{}};
+    }
+    if (route.family == Family::I8Mma) return {SummationOrder::Kind::I8, Route{}};
+    return {SummationOrder::Kind::Own, route};
 }
+
+bool same_summation(Route a, Route b) { return summation_order(a) == summation_order(b); }
 
 namespace {
 // The NVFP4 tiled route in the order of the register MMA with WarpsK = `classes`, for calls of two

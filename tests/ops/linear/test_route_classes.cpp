@@ -38,6 +38,7 @@
 #include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -523,6 +524,71 @@ int run_volta_tiled() {
               << " failures; tiled schedules:";
     for (const auto& [why, count] : counts) std::cout << " " << why << " " << count;
     std::cout << '\n';
+    return failures == 0 ? 0 : 1;
+}
+
+// The summation orders: same_summation is an equivalence over every compiled route of every
+// family (one order key each, summation_order), the register order holds the WarpsK == 1
+// register-MMA and the staged schedules, the I8 tiles one order, and a W4A8 or R8 tile only itself.
+int run_summation_orders() {
+    std::vector<generic::Route> routes;
+    const std::pair<generic::Family, int> families[] = {
+        {generic::Family::RegisterMma, generic::rmma_schedule_count()},
+        {generic::Family::W4a4Mma, generic::w4a4_schedule_count()},
+        {generic::Family::TiledMma, generic::tiled_schedule_count()},
+        {generic::Family::W4a8Mma, generic::w4a8_schedule_count()},
+        {generic::Family::StagedMma, generic::staged_schedule_count()},
+        {generic::Family::R8Mma, generic::r8_schedule_count()},
+        {generic::Family::I8Mma, generic::i8_schedule_count()},
+        {generic::Family::Nvfp4TiledMma, generic::nvfp4_tiled_schedule_count()},
+        {generic::Family::GgmlMmq, 1},
+        {generic::Family::GgmlVec, 1},
+    };
+    for (const auto& [family, count] : families) {
+        for (int i = 0; i < count; ++i) routes.push_back({family, static_cast<std::uint8_t>(i)});
+    }
+    int failures    = 0;
+    const auto fail = [&](const std::string& what) {
+        if (++failures <= 20) std::cerr << "summation orders: " << what << '
+';
+    };
+    const auto name = [](generic::Route r) { return generic::route_name(r); };
+    for (const generic::Route a : routes) {
+        if (!generic::same_summation(a, a)) fail(name(a) + " not its own order");
+        for (const generic::Route b : routes) {
+            const bool same = generic::same_summation(a, b);
+            if (same != generic::same_summation(b, a)) {
+                fail(name(a) + " / " + name(b) + " asymmetric");
+            }
+            if (same != (generic::summation_order(a) == generic::summation_order(b))) {
+                fail(name(a) + " / " + name(b) + " differs from its order keys");
+            }
+            const bool one_family_kind =
+                (a.family == generic::Family::I8Mma && b.family == generic::Family::I8Mma);
+            if (one_family_kind && !same) fail(name(a) + " / " + name(b) + ": two I8 tiles");
+            if ((a.family == generic::Family::W4a8Mma || a.family == generic::Family::R8Mma) &&
+                !(a == b) && same) {
+                fail(name(a) + " / " + name(b) + ": a W4A8 or R8 tile shares an order");
+            }
+        }
+    }
+    const generic::Route staged{generic::Family::StagedMma, 0};
+    int register_one = 0;
+    for (int i = 0; i < generic::rmma_schedule_count(); ++i) {
+        const generic::Route r{generic::Family::RegisterMma, static_cast<std::uint8_t>(i)};
+        if (generic::rmma_schedule_info(i).warps_k == 1 && generic::same_summation(r, staged)) {
+            ++register_one;
+        }
+        if (generic::rmma_schedule_info(i).warps_k > 1 && generic::same_summation(r, staged)) {
+            fail(name(r) + " (K split) in the staged order");
+        }
+    }
+    if (generic::staged_schedule_count() > 0 && register_one == 0) {
+        fail("no WarpsK == 1 register-MMA schedule in the staged order");
+    }
+    std::cout << "summation orders: " << routes.size() << " routes, " << register_one
+              << " register-MMA schedules in the register order, " << failures << " failures
+";
     return failures == 0 ? 0 : 1;
 }
 
@@ -1251,6 +1317,7 @@ int main(int argc, char** argv) {
         }
         if (std::system((std::string(argv[0]) + " --volta-tiled").c_str()) != 0) ++failed;
         if (std::system((std::string(argv[0]) + " --resources").c_str()) != 0) ++failed;
+        if (run_summation_orders() != 0) ++failed;
         if (failed != 0) {
             std::cerr << "route classes: " << failed << " boards failed\n";
             return 1;
