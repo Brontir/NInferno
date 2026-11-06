@@ -633,8 +633,7 @@ bool ring_swiglu_four_warps(QType q) {
     if (q != QType::GGML_Q4_K && q != QType::GGML_Q5_K) return false;
     try {
         const auto& d = device_class();
-        const int cc  = d.major * 10 + d.minor;
-        return cc >= 75 && cc < 80 && dram_bytes_per_sm_cycle() >= kRmmaLatencySwiGluBytes;
+        return turing_cc(d.major, d.minor) && dram_bytes_per_sm_cycle() >= kRmmaLatencySwiGluBytes;
     } catch (const std::exception&) {
         return false;
     }
@@ -905,7 +904,7 @@ bool w4a8_ws_extra(QType q) {
     return on.get([](int) {
         try {
             const auto& d = device_class();
-            return (d.major == 12 && d.minor == 0) || (d.major == 8 && d.minor == 9);
+            return gb20x_cc(d.major, d.minor) || ada_cc(d.major, d.minor);
         } catch (const std::exception&) {
             return false;
         }
@@ -928,9 +927,9 @@ bool w4a8_ws_wins(const Problem& p, const Weight& w) {
     bool blackwell = false, ada = false, ampere = false;
     try {
         const auto& d = device_class();
-        blackwell     = d.major == 12 && d.minor == 0;
-        ada           = d.major == 8 && d.minor == 9;
-        ampere        = d.major == 8 && d.minor < 9;
+        blackwell     = gb20x_cc(d.major, d.minor);
+        ada           = ada_cc(d.major, d.minor);
+        ampere        = ampere_cc(d.major, d.minor);
     } catch (const std::exception&) {
         return false;
     }
@@ -977,7 +976,7 @@ bool w4a8_wide_q4k(const Problem& p, std::int32_t tokens) {
     if (p.qtype != QType::GGML_Q4_K) return false;
     try {
         const auto& d = device_class();
-        if (d.major != 8 || d.minor != 9) return false;
+        if (!ada_cc(d.major, d.minor)) return false;
         const std::int64_t rows_per_block = p.epilogue == Epilogue::SwiGlu ? 64 : 128;
         const std::int64_t ctas =
             ((p.n + rows_per_block - 1) / rows_per_block) * ((tokens + 127) / 128);
@@ -1128,7 +1127,8 @@ int rules_r8(const Problem& p, std::int32_t tokens) {
     }
     if (p.qtype == QType::GGML_Q3_K && p.k >= 8192) return r8_index(4, 1);
     if (p.k >= 8192 || (iq2 && p.n >= 12288)) return r8_index(8, 2);
-    if (p.epilogue != Epilogue::SwiGlu && p.k >= 5120 && device_class().major == 12) {
+    if (p.epilogue != Epilogue::SwiGlu && p.k >= 5120 &&
+        consumer_blackwell_major(device_class().major)) {
         if (iq2 && p.n >= 5120) return r8_index(8, 2);
         // An SM-count rule, its edge between the measured boards: at 96 SMs or fewer (the
         // 5080's 84) IQ3 takes the wider warps; at 170 (the 5090) it keeps four single-row

@@ -136,4 +136,28 @@ struct FittedRouteScales {
     return generation_known(major, minor) && generation_row(major, minor).mmq_candidate;
 }
 
+// The compute capabilities the generic selector's measured rules name (generic_gemm.cpp). A
+// generation row spans minors no board of which was measured (12.1, GB10, lies in gb20x's row),
+// so a rule measured on one capability's boards keeps that capability exactly, as written.
+// sm_75 .. sm_79: Turing's tensor cores, no cp.async (ring_swiglu_four_warps).
+[[nodiscard]] constexpr bool turing_cc(int major, int minor) noexcept {
+    return major == 7 && minor >= 5;
+}
+// sm_80 .. sm_88: Ampere, the A100 (sm_80) and the GA10x boards (sm_86) alike (w4a8_ws_wins).
+[[nodiscard]] constexpr bool ampere_cc(int major, int minor) noexcept {
+    return major == 8 && minor < 9;
+}
+// sm_89: the RTX 40 boards (w4a8_ws_extra, w4a8_ws_wins, w4a8_wide_q4k).
+[[nodiscard]] constexpr bool ada_cc(int major, int minor) noexcept {
+    return major == 8 && minor == 9;
+}
+// sm_120: the RTX 50 boards (w4a8_ws_extra, w4a8_ws_wins).
+[[nodiscard]] constexpr bool gb20x_cc(int major, int minor) noexcept {
+    return major == 12 && minor == 0;
+}
+// Major 12, the consumer Blackwell SM (the R8 rules' SM-count edge between the RTX 5080 and 5090).
+[[nodiscard]] constexpr bool consumer_blackwell_major(int major) noexcept {
+    return major == 12;
+}
+
 } // namespace ninferno
