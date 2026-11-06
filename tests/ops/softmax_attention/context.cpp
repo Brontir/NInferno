@@ -6,6 +6,8 @@
 
 #include <cuda_fp16.h>
 
+#include "ops/softmax_attention/dense/context/launch.h"
+
 #include <algorithm>
 #include <array>
 #include <cmath>
@@ -1044,6 +1046,99 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
                 }
             }
             std::cerr << label << " DIAG q_far batch " << b << " max|err|=" << worst << "\n";
+        }
+    }
+    if (failures != 0 && batch > 1) { // DIAG branch log-sum-exp from the partials
+        const auto plan = ops::detail::context_fold_resolve_plan(
+            ops::detail::ContextAttentionProfile::D128Q32K8, tokens, envelope, window);
+        const auto r256 = [](std::size_t x) { return (x + 255) / 256 * 256; };
+        const std::size_t sw = static_cast<std::size_t>(plan.window.split_capacity);
+        const std::size_t sf = static_cast<std::size_t>(plan.far.split_capacity);
+        const std::size_t bt = static_cast<std::size_t>(batch) * tokens;
+        const std::size_t acc_w = r256(static_cast<std::size_t>(kD) * kQHeads * bt * sw * 2);
+        const std::size_t acc_f = r256(static_cast<std::size_t>(kD) * kQHeads * bt * sf * 2);
+        const std::size_t st_w  = r256(static_cast<std::size_t>(kQHeads) * bt * sw * 4);
+        const std::size_t st_f  = r256(static_cast<std::size_t>(kQHeads) * bt * sf * 4);
+        const std::size_t o_wm = acc_w, o_wl = o_wm + st_w, o_fm = o_wl + st_w + acc_f,
+                          o_fl = o_fm + st_f, o_end = o_fl + st_f + r256(row_q * batch * 2);
+        std::cerr << label << " DIAG plan Sw=" << sw << " kbw=" << plan.window.key_block
+                  << " Sf=" << sf << " kbf=" << plan.far.key_block << " layout_end=" << o_end
+                  << " peak=" << workspace.peak_used() << "\n";
+        const char* base = static_cast<const char*>(workspace.base());
+        const auto wm = from_device<float>(static_cast<const void*>(base + o_wm), st_w / 4);
+        const auto wl = from_device<float>(static_cast<const void*>(base + o_wl), st_w / 4);
+        const auto fm = from_device<float>(static_cast<const void*>(base + o_fm), st_f / 4);
+        const auto fl = from_device<float>(static_cast<const void*>(base + o_fl), st_f / 4);
+        const auto branch_lse = [&](const std::vector<float>& m, const std::vector<float>& l,
+                                    int b, int token, int head, int active, int splits) {
+            // stat index within a batch row: head + Hq * (token + tokens * split)
+            double top = -1e300;
+            for (int s = 0; s < active; ++s) {
+                const std::size_t at = static_cast<std::size_t>(b) * kQHeads * tokens * splits +
+                                       head + static_cast<std::size_t>(kQHeads) * (token + tokens * s);
+                top = std::max(top, static_cast<double>(m[at]));
+            }
+            double sum = 0.0;
+            for (int s = 0; s < active; ++s) {
+                const std::size_t at = static_cast<std::size_t>(b) * kQHeads * tokens * splits +
+                                       head + static_cast<std::size_t>(kQHeads) * (token + tokens * s);
+                if (std::isfinite(m[at])) sum += l[at] * std::exp(static_cast<double>(m[at]) - top);
+            }
+            return top + std::log(sum);
+        };
+        const auto tiles = [](int count, int kb, int cap) {
+            const int t = (count + kb - 1) / kb;
+            return t > 0 ? std::min(t, cap) : 1;
+        };
+        for (int b = 0; b < batch; ++b) {
+            const int length = rows[static_cast<std::size_t>(b)].length;
+            const int valid  = rows[static_cast<std::size_t>(b)].valid;
+            const int shared = length - window - valid;
+            const int ws     = std::max(0, length - window);
+            const int aw = tiles(std::min(length, window), plan.window.key_block, plan.window.split_capacity);
+            const int af = tiles(length, plan.far.key_block, plan.far.split_capacity);
+            double worst_w = 0.0, worst_f = 0.0;
+            for (int head = 0; head < kQHeads; ++head) {
+                const int kv = head / (kQHeads / kKVHeads);
+                std::vector<double> qv(static_cast<std::size_t>(kD)), qf(static_cast<std::size_t>(kD));
+                for (int d = 0; d < kD; ++d) {
+                    qv[static_cast<std::size_t>(d)] = q[b * row_q + q_index(d, head, 0)];
+                }
+                qf = qv;
+                fold_rotate(qf.data(), -static_cast<double>(shared));
+                std::vector<double> sw_s, sf_s;
+                for (int key = ws; key < length + valid; ++key) {
+                    std::vector<double> k(static_cast<std::size_t>(kD));
+                    for (int d = 0; d < kD; ++d) {
+                        k[static_cast<std::size_t>(d)] =
+                            key < length ? ctx_k[b * row_ctx + context_index(d, kv, key, logical_stride)]
+                                         : query_k[b * row_kv + query_kv_index(d, kv, key - length)];
+                    }
+                    if (key < length) fold_rotate(k.data(), static_cast<double>(key));
+                    double dot = 0.0;
+                    for (int d = 0; d < kD; ++d) dot += qv[static_cast<std::size_t>(d)] * k[static_cast<std::size_t>(d)];
+                    sw_s.push_back(dot * kScale);
+                }
+                for (int j = 0; j < ws; ++j) {
+                    double dot = 0.0;
+                    for (int d = 0; d < kD; ++d) {
+                        dot += qf[static_cast<std::size_t>(d)] * ctx_k[b * row_ctx + context_index(d, kv, j, logical_stride)];
+                    }
+                    sf_s.push_back(dot * kScale * alpha);
+                }
+                const auto lse = [](const std::vector<double>& v) {
+                    if (v.empty()) return -1e300;
+                    double t = -1e300;
+                    for (double x : v) t = std::max(t, x);
+                    double s = 0.0;
+                    for (double x : v) s += std::exp(x - t);
+                    return t + std::log(s);
+                };
+                worst_w = std::max(worst_w, std::fabs(branch_lse(wm, wl, b, 0, head, aw, plan.window.split_capacity) - lse(sw_s)));
+                if (ws > 0) worst_f = std::max(worst_f, std::fabs(branch_lse(fm, fl, b, 0, head, af, plan.far.split_capacity) - lse(sf_s)));
+            }
+            std::cerr << label << " DIAG lse batch " << b << " token0 window err=" << worst_w
+                      << " far err=" << worst_f << "\n";
         }
     }
     if (failures != 0 && batch > 1) { // DIAG per batch row
