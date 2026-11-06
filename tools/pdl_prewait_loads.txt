@@ -51,7 +51,7 @@ q5_a16_direct_simt_kernel<.*Q5GdnProjectionEpilogue.*, true>$ 0,8,16,24,40,48,56
 # of the NVFP4 w1x8 kernels: every LDG through x's c[0x0][0x380] follows ACQBULK). The audit
 # cannot tell that path from the one without pdl_prefetch, where the wait is skipped and nothing
 # is a producer's (a plain launch; a joined call as above), so x (0, 8, 12) is listed for every
-# epilogue. 160 and 164 (release_next, pdl_prefetch) reach a table-staging address only through the
+# epilogue. 168 and 172 (release_next, pdl_prefetch) reach a table-staging address only through the
 # thread index the release predicate is combined with. The kernel's last two template arguments are
 # the latency variant (#158) and the add-sums instance (cuobjdump prints them as false / true); the
 # latency kernels' activation ring loads x only after the wait, as the staged SwiGLU copy does
@@ -74,11 +74,11 @@ generic::rmma_kernel<.*Epilogue\)[12], (false|true), (false|true)> 0,8,12,24,32,
 # is listed for every epilogue.
 generic::r8_kernel<.*Epilogue\)[0-2], false> 0,8,12,24,32,40,48,76,80,84,?
 # kPre (the verify-width call on a pre-quantized activation, W4a8Activation after GemmArgs:
-# codes 176, scales 184, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 192) always
+# codes 192, scales 200, and for the codecs with a min - K-quants, Q4_1, Q5_1 - sums 208) always
 # launches in stream order (r8_launch_tokens), so every load reads memory complete before it
 # started; its waits return at once. It reads K (12), the weight planes above and
-# the activation planes. The activation offsets move with sizeof(GemmArgs).
-generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,76,80,84,184,192,200,?
+# the activation planes. The activation offsets move with sizeof(GemmArgs) (192 since #445).
+generic::r8_kernel<.*Epilogue\)[0-2], true> 12,24,32,40,48,76,80,84,192,200,208,?
 
 # Decode A16 GEMVs (nvfp4_a16_gemv.cuh): launched as programmatic dependents where the device has
 # PDL, they fill their code ring - codes (8) and scales (16), this layer's weights - before the
