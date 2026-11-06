@@ -1043,8 +1043,7 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
                     }
                 }
             }
-            std::cerr << label << " DIAG q_far batch " << b << " max|err|=" << worst << '
-';
+            std::cerr << label << " DIAG q_far batch " << b << " max|err|=" << worst << "\n";
         }
     }
     if (failures != 0 && batch > 1) { // DIAG per batch row
