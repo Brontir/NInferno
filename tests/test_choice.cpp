@@ -515,8 +515,9 @@ void prefills_by_format(const json& fixture) {
     // Unsloth's UD-Q4_K_XL (Q4_K, Q5_K, Q6_K, IQ4_XS and Q8_0 linears) by its linears' formats.
     check(xl_rows == 14 && std::sqrt(sq_xl / xl_rows) < 0.07 && worst_xl < 0.12, "UD-Q4_K_XL prefill within 12 %");
     {
-        // What the IQ4 law leaves to the share: an IQ4_NL label, an iq4_nl linear, a K-quant label in
-        // the IQ4 class (a Q4_K_M file with an iq4 tensor).
+        // What the IQ4 law leaves to the share: an IQ4_NL label, a K-quant label in the IQ4 class (a
+        // Q4_K_M file with an iq4 tensor), a file of no linear read; an iq4_nl linear among read ones
+        // takes the share alone, beside the others' tiles.
         const json& qm             = fixture.at("models").at("Qwen3.5-9B");
         const ch::ModelFacts named = model_at(qm, "IQ4_XS");
         const ch::CardFacts ada    = card_of(fixture.at("cards").at("RTX 4060 Ti"));
@@ -534,10 +535,15 @@ void prefills_by_format(const json& fixture) {
         check(ch::prefill_linears_seconds(xl_named, ada, xl, 1024) > 0, "UD-Q4_K_XL in the IQ4 class on its linears");
         ch::ModelFacts unnamed = named;
         for (ch::LinearShape& l : unnamed.linears) { l.format.clear(); }
+        ch::ModelFacts all_nl = named;
+        for (ch::LinearShape& l : all_nl.linears) { l.format = "ggml_iq4_nl"; }
         check(ch::prefill_linears_seconds(named, ada, xs, 1024) > 0 && ch::prefill_linears_seconds(named, ada, xs, 16) == 0 &&
                   ch::prefill_linears_seconds(unnamed, ada, km, 1024) == 0 &&
-                  ch::prefill_linears_seconds(with_nl, ada, xs, 1024) == 0,
-              "IQ4_NL, an iq4_nl linear and an unnamed K label in the IQ4 class keep the share");
+                  ch::prefill_linears_seconds(all_nl, ada, xs, 1024) == 0,
+              "IQ4_NL, an unnamed K label in the IQ4 class and a file of no linear read keep the share");
+        bool nl_transferred = false;
+        const double nl_seconds = ch::prefill_linears_seconds(with_nl, ada, xs, 1024, &nl_transferred);
+        check(nl_seconds > 0 && nl_transferred, "an iq4_nl linear among read ones: the share alone, marked transferred");
     }
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";

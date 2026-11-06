@@ -671,7 +671,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                                       std::pair{"ggml_iq4_xs", &formats[4]}}) {
             if (l.format == name) { return f->step; }
         }
-        // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none.
+        // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none
+        // (the share, with_unread).
         // Q8_0 and 16-bit linears among the named ones take the label's step (open: their own routes).
         if (!l.format.empty() && l.format != "q8_g32_fp16" && l.format != "bf16" && l.format != "ggml_f16") {
             return 0.0;
@@ -679,6 +680,18 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         return named ? format->step : label_step;
     };
     double clocks = 0, bytes = 0;
+    // A linear of a format not read takes the share (the dense int8 prefill rate on its flops) beside
+    // the read ones' tiles: one such tensor no longer drops the whole file's tiles for the share
+    // (Qwen3.8 27B UD-Q6_K, two IQ4_NL ffn_gate of 400 linears: 3975 tokens/s on the RTX 4090 against
+    // 3166 measured; its MMQ tiles 562 ms against the census's 587). None read: 0, the share whole.
+    double unread_flops = 0;
+    const auto with_unread = [&](double seconds) {
+        if (seconds <= 0 || unread_flops <= 0) { return seconds > 0 ? seconds : 0.0; }
+        bool share_transferred = false;
+        const double rate = prefill_eta(false, generation_of(card), Route::Int8, share_transferred) * peak(card, Route::Int8);
+        if (transferred != nullptr) { *transferred = true; }
+        return rate > 0 ? seconds + unread_flops / rate : 0.0;
+    };
     // The W4A8 tiles from 128 tokens (kW4a8WideMinTokens; a narrower call takes the 64-row, 32-row or
     // vector kernels, not read: the share) on sm_120 (sm_121 runs Q4_K / Q6_K on the classic tile).
     // A Q3_K label whose linears are not named: its Q3_K and Q4_K parts take two tiles (the share).
@@ -689,7 +702,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     if (!mmq) { // the W4A8 tiles: a call's grid of 128-token x 64-row tiles, a tile a CTA in rounds
         for (const LinearShape& l : model.linears) {
             const double step = step_of(l);
-            if (step <= 0) { return 0; }
+            if (step <= 0) {
+                unread_flops += 2 * l.per_token * tokens * l.k * l.n;
+                continue;
+            }
             // A Q3_K label's linear of no K format: the label's step is the 64 x 64 tile's (the share).
             const bool k_format = l.format == "ggml_q3_k" || l.format == "ggml_q4_k" || l.format == "ggml_q5_k" ||
                                   l.format == "ggml_q6_k";
@@ -702,12 +718,15 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             const double tiles = std::ceil(l.n / kW4a8KquantRows) * std::ceil(tokens / kW4a8KquantTokens);
             clocks += l.per_token * std::ceil(tiles / sms) * (cost->c0 + l.k * step);
         }
-        return clocks / card.clock_hz;
+        return with_unread(clocks / card.clock_hz);
     }
     for (const LinearShape& l : model.linears) {
         // A gated pair runs as two grids of n / 2 rows; its SwiGLU writes one row of the two.
         const double grids = l.gated ? 2 : 1, n = l.n / grids, step = step_of(l);
-        if (step <= 0) { return 0; }
+        if (step <= 0) {
+            unread_flops += 2 * l.per_token * tokens * l.k * l.n;
+            continue;
+        }
         for (double done = 0; done < tokens; done += kMmqSliceTokens) {
             const double t = std::min(kMmqSliceTokens, tokens - done);
             double columns = kMmqTile; // ggml's narrowest column tile with the fewest tiles
@@ -729,7 +748,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             bytes += l.per_token * t * (grids * l.k * kMmqInputBytes + l.n * kMmqOutputBytes + n * kMmqWrittenBytes);
         }
     }
-    return clocks / card.clock_hz + bytes / card.dram_bytes_per_s;
+    return with_unread(clocks / card.clock_hz + bytes / card.dram_bytes_per_s);
 }
 
 } // namespace
