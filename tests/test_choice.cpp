@@ -543,7 +543,10 @@ void prefills_by_format(const json& fixture) {
               "IQ4_NL, an unnamed K label in the IQ4 class and a file of no linear read keep the share");
         bool nl_transferred = false;
         const double nl_seconds = ch::prefill_linears_seconds(with_nl, ada, xs, 1024, &nl_transferred);
-        check(nl_seconds > 0 && nl_transferred, "an iq4_nl linear among read ones: the share alone, marked transferred");
+        ch::ModelFacts rest = with_nl;
+        rest.linears.erase(rest.linears.begin());
+        check(nl_seconds > ch::prefill_linears_seconds(rest, ada, xs, 1024) && nl_transferred,
+              "an iq4_nl linear among read ones: the share alone, on top of the others' tiles, marked transferred");
     }
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";
