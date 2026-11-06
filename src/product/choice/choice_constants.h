@@ -405,9 +405,15 @@ struct MmqTileCost {
                        // round of two 64 x 64 tiles a SM (kW4a8Q3kTile), not a 128-column tile
     double iq4xs;      // IQ4_XS's (an IQ4_XS file's calls in the census; 0: not read)
     int cards;
+    // Q4_1's (32-value blocks, an f16 scale and min; 0: not read) and the cards it was read on:
+    // Gemma 4 31B Q4_1's 2013-token prefill (nsys, 06.11), predicted beforehand within 10 % of
+    // Q4_K's (its block decodes as Q4_K's without the 6-bit scale unpacking): RTX 4090 41.5
+    // (Q4_K 42.75; at Q4_K's step the law x0.98 of the census), RTX 3090 42.3 (41.5; x1.02).
+    double q41    = 0;
+    int q41_cards = 0;
 };
-inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75, 51.5, 38.3, 2},
-                                               {"ga10x", 4000, 41.5, 43.5, 48.75, 49.25, 36.6, 1},
+inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75, 51.5, 38.3, 2, 41.5, 1},
+                                               {"ga10x", 4000, 41.5, 43.5, 48.75, 49.25, 36.6, 1, 42.3, 1},
                                                {"turing", 0, 71.75, 74.5, 77.75, 91.75, 59.6, 1},
                                                {"gb20x", 3000, 45.5, 49.5, 59, 60.5, 42.9, 1}};
 inline constexpr double kMmqTileFixed = 0.43;

@@ -632,12 +632,17 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     };
     // Q3_K: a Q3_K mix (WeightClass::Other), its K step read on the census's Q3_K_M calls.
     // IQ4_XS: an IQ4_XS file (WeightClass::IQ4), its step read on the census's calls (IQ4_NL: not read).
+    // Q4_1: a Q4_1 file (WeightClass::Other), its step read where the census was (q41; else not read).
     const Format formats[] = {{"Q3", 3.4375, cost->q3},
                               {"Q4", 4.5, cost->q4},
                               {"Q5", 5.5, cost->q5},
                               {"Q6", 6.5625, cost->q6},
-                              {"IQ4", 4.25, cost->iq4xs}};
+                              {"IQ4", 4.25, cost->iq4xs},
+                              {"Q4", 5.0, cost->q41}};
     const Format* const iq4xs = &formats[4];
+    const Format* const q41   = &formats[5];
+    // The second token of a label's format: Q4_K_M's K, IQ4_XS's XS, Q4_1's 1.
+    const auto second = [&](const Format* f) { return f == iq4xs ? "XS" : f == q41 ? "1" : "K"; };
     const std::vector<std::string> tokens_of = label_tokens(quant.label);
     const Format* format = nullptr;
     for (std::size_t i = 0; i + 1 < tokens_of.size(); ++i) {
@@ -645,7 +650,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         const bool repacked = i + 2 < tokens_of.size() && tokens_of[i + 2].size() >= 2 && tokens_of[i + 2][0] == 'R' &&
                               std::isdigit(static_cast<unsigned char>(tokens_of[i + 2][1]));
         for (const Format& f : formats) {
-            if (tokens_of[i] == f.name && tokens_of[i + 1] == (&f == iq4xs ? "XS" : "K") && !repacked) { format = &f; }
+            if (tokens_of[i] == f.name && tokens_of[i + 1] == second(&f) && !repacked) { format = &f; }
         }
     }
     // Where the file names its linears' formats each takes its own (an unread one: the share), whatever
@@ -655,7 +660,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                                    [](const LinearShape& l) { return !l.format.empty(); });
     if (format == nullptr || format->step <= 0 ||
         (!named && (format == iq4xs ? quant.weights != WeightClass::IQ4
-                                    : quant.weights != WeightClass::KQuant && format->bits >= 4))) {
+                                    : format != q41 && quant.weights != WeightClass::KQuant && format->bits >= 4))) {
         return 0;
     }
     const double toward = format->bits < 6.5625
@@ -665,11 +670,15 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // A linear whose file names its format takes that format's step. Else the label's: its bits
     // toward Q6_K stand for the mix where no linear is named; where the file names them (its Q6_K
     // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
+    bool reads_q41 = false; // a Q4_1 linear's step, read on q41_cards cards
     const auto step_of = [&](const LinearShape& l) {
         for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
                                       std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]},
-                                      std::pair{"ggml_iq4_xs", &formats[4]}}) {
-            if (l.format == name) { return f->step; }
+                                      std::pair{"ggml_iq4_xs", &formats[4]}, std::pair{"ggml_q4_1", &formats[5]}}) {
+            if (l.format == name) {
+                reads_q41 = reads_q41 || f == q41;
+                return f->step;
+            }
         }
         // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none
         // (the share, with_unread).
@@ -677,6 +686,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
         if (!l.format.empty() && l.format != "q8_g32_fp16" && l.format != "bf16" && l.format != "ggml_f16") {
             return 0.0;
         }
+        reads_q41 = reads_q41 || format == q41;
         return named ? format->step : label_step;
     };
     double clocks = 0, bytes = 0;
@@ -686,6 +696,7 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // 3166 measured; its MMQ tiles 562 ms against the census's 587). None read: 0, the share whole.
     double unread_flops = 0;
     const auto with_unread = [&](double seconds) {
+        if (transferred != nullptr && seconds > 0 && reads_q41 && cost->q41_cards < 2) { *transferred = true; }
         if (seconds <= 0 || unread_flops <= 0) { return seconds > 0 ? seconds : 0.0; }
         bool share_transferred = false;
         const double rate = prefill_eta(false, generation_of(card), Route::Int8, share_transferred) * peak(card, Route::Int8);
