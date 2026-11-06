@@ -2010,6 +2010,75 @@ void choices_replay(const json& fixture) {
     }
 }
 
+// A one-row step's named low-bit linear on R8 (kR8DecodeIssue): its read takes the longer of its DRAM
+// time and its warp instructions at the generation's issue rate. Against route-tune's fastest T = 1 R8
+// time of a 16384 x 5120 IQ2_XXS store (master 75b7209e, 2026-11-06), less the launch (kKernelCost):
+// Ampere within 10 % on both its cards; Ada, Blackwell and Turing (no rate: kR8IssueRate) and a 4-bit
+// format at the DRAM rate as before; two rows and the exact route (no R8) unchanged.
+void prices_r8_issue() {
+    const double n = 16384, k = 5120, bytes = n * k * 2.0625 / 8;
+    const auto step = [&](const ch::CardFacts& card, const std::string& format, std::uint32_t rows,
+                          ActivationMode activations, bool* transferred = nullptr) {
+        ch::ModelFacts m;
+        m.family        = "qwen3_5_text";
+        m.params        = n * k;
+        m.active_params = n * k;
+        m.linears.push_back({n, k, 1, false, false, format});
+        ch::QuantOption q;
+        q.weights      = ch::WeightClass::Other;
+        q.weight_bytes = bytes;
+        ch::Candidate c;
+        c.activations     = activations;
+        const ch::Speed s = ch::speed_of(m, card, q, c, rows, 1);
+        if (transferred != nullptr) { *transferred = s.transferred; }
+        return 1 / s.decode_per_stream;
+    };
+    struct Census {
+        ch::CardFacts card;
+        double us; // route-tune's fastest R8 schedule
+        double within;
+    };
+    const Census rows[] = {
+        {{.major = 8, .minor = 6, .sms = 82, .clock_hz = 1.695e9, .dram_bytes_per_s = 936e9}, 37.9, 0.10},
+        {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 100.9, 0.10},
+    };
+    for (const Census& r : rows) {
+        const std::string_view gen = ch::generation_of(r.card);
+        double launch              = 0;
+        for (const ch::KernelCost& c : ch::kKernelCost) {
+            if (c.generation == gen) { launch = c.gemv; }
+        }
+        const double excess = step(r.card, "ggml_iq2_xxs", 1, ActivationMode::Fast) - step(r.card, "", 1, ActivationMode::Fast);
+        const double kernel = bytes / (ch::kDramEta * r.card.dram_bytes_per_s) + excess + launch;
+        const double d      = kernel * 1e6 / r.us - 1;
+        std::cout << "R8 IQ2_XXS T=1, " << gen << ' ' << r.card.sms << " SMs: " << kernel * 1e6 << " us against " << r.us
+                  << " (" << d * 100 << " %)\n";
+        check(excess > 0 && std::abs(d) < r.within, "a low-bit linear's R8 read at its instructions' rate");
+        check(step(r.card, "ggml_q4_k", 1, ActivationMode::Fast) == step(r.card, "", 1, ActivationMode::Fast),
+              "a 4-bit linear's R8 read at the DRAM rate");
+        check(step(r.card, "ggml_iq2_xxs", 2, ActivationMode::Fast) == step(r.card, "", 2, ActivationMode::Fast),
+              "two rows: no R8 issue term");
+        check(step(r.card, "ggml_iq2_xxs", 1, ActivationMode::Exact) == step(r.card, "", 1, ActivationMode::Exact),
+              "the exact route reads no R8");
+    }
+    // Every row's generation and format: a generation with an issue rate, a format R8 decodes (a
+    // codec of r8_supports: the IQ1_S..IQ3_S codebooks, Q2_K, Q3_K).
+    for (const ch::R8DecodeIssue& f : ch::kR8DecodeIssue) {
+        const bool rated = std::any_of(std::begin(ch::kR8IssueRate), std::end(ch::kR8IssueRate),
+                                       [&](const ch::R8IssueRate& r) { return r.generation == f.generation; });
+        check(rated && f.bits > 1 && f.bits < 4 && f.warp_inst_per_kib > 0, "an R8 issue row of a rated generation");
+    }
+    const ch::CardFacts unrated[] = {
+        {.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9},
+        {.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.45e9, .dram_bytes_per_s = 896e9},
+        {.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
+    };
+    for (const ch::CardFacts& card : unrated) {
+        check(step(card, "ggml_iq2_xxs", 1, ActivationMode::Fast) == step(card, "", 1, ActivationMode::Fast),
+              "a generation without an issue rate reads at the DRAM rate");
+    }
+}
+
 int main() {
     std::ifstream in(std::string(NINFERNO_SOURCE_DIR) + "/tests/fixtures/choice/speed_measured.json");
     const json fixture = json::parse(in);
@@ -2042,6 +2111,7 @@ int main() {
     prices_dense_prefill_tiles();
     prices_prefill_small_kernels();
     prices_attention_tiles();
+    prices_r8_issue();
     weighs_the_drafters(fixture);
     drafter_order_does_not_decide(fixture);
     load_bounds_the_gain(fixture);

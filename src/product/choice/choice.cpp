@@ -136,6 +136,35 @@ double weight_sm_rate(std::string_view generation, WeightClass weights, double r
     return lo_rate;
 }
 
+// The seconds beyond their time at `share` of the DRAM rate a one-row step's named trunk linears take
+// where their R8 instructions bound them (kR8DecodeIssue at kR8IssueRate); 0 on a generation without
+// a rate, for a linear of no row (its read at the DRAM rate) and an MoE's routed experts.
+double r8_issue_excess(const ModelFacts& model, const CardFacts& card, std::string_view generation,
+                       double share, bool& transferred) noexcept {
+    const R8IssueRate* rate = nullptr;
+    for (const R8IssueRate& r : kR8IssueRate) {
+        if (r.generation == generation) { rate = &r; }
+    }
+    if (rate == nullptr || card.sms <= 0 || card.clock_hz <= 0 || share <= 0) { return 0; }
+    const double issue = card.sms * card.clock_hz * rate->warp_inst_per_sm_clock;
+    double excess      = 0;
+    bool used          = false;
+    for (const LinearShape& l : model.linears) {
+        if (l.expert || l.format.empty()) { continue; }
+        for (const R8DecodeIssue& f : kR8DecodeIssue) {
+            if (f.generation != generation || f.format != l.format) { continue; }
+            const double bytes = l.per_token * l.n * l.k * f.bits / 8;
+            const double extra = bytes / 1024 * f.warp_inst_per_kib / issue - bytes / (share * card.dram_bytes_per_s);
+            if (extra > 0) {
+                excess += extra;
+                used = true;
+            }
+        }
+    }
+    if (used && rate->cards < 2) { transferred = true; }
+    return excess;
+}
+
 // An MoE's routed banks' share of the DRAM rate at `rows` concurrent rows (kMoeRoutedEta: linear
 // in log2 rows from kDramEta at one row), scaled by the generation's own DRAM share; a generation
 // without rows takes Ada's, a row of one card marks it (transferred either way).
@@ -1240,6 +1269,8 @@ Speed speed_of(const ModelFacts& model, const CardFacts& card, const QuantOption
     const double share   = rest_sm > 0 ? std::min(dram_eta(gen), rest_sm) : rows_eta(gen, rest, rows, transferred);
     double reads = weights / (share * card.dram_bytes_per_s) +
                    rows * row_bytes / (dram_eta(gen) * card.dram_bytes_per_s);
+    // One row reads its linears on R8 (int8 activations): a format whose instructions bound it, longer.
+    if (rows == 1 && route != Route::Bf16) { reads += r8_issue_excess(model, card, gen, share, transferred); }
     if (routed_read > 0) {
         // The banks decode on the same SMs: no faster than the class's rate (not measured on Volta).
         double routed_share = moe_routed_eta(gen, rows, transferred);
