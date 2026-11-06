@@ -156,6 +156,14 @@ struct DraftConfig {
                                        : std::numeric_limits<std::uint64_t>::max();
     }
 
+    // Its full-attention layers read its sliding window instead (under YaRN: config.cpp); false,
+    // changing nothing, for a drafter without a window.
+    bool window_full_layers() noexcept {
+        if (!sliding_window) { return false; }
+        std::fill(layer_types.begin(), layer_types.end(), DraftAttentionKind::SlidingAttention);
+        return true;
+    }
+
     [[nodiscard]] std::uint32_t compact_layer_index(std::uint32_t layer) const {
         const auto kind = layer_types.at(layer);
         return static_cast<std::uint32_t>(

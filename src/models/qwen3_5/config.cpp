@@ -369,13 +369,10 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
             // 2610.20392: Qwen3.5-9B's DFlash acceptance length -0.22 at 32K, +0.15 at 122K tokens
             // against its full layer).
             if (yarn_factor != 1.0 && out.draft->full_layer_count() != 0) {
-                if (!out.draft->sliding_window) {
+                if (!out.draft->window_full_layers()) {
                     throw ArtifactError("--rope-yarn-factor runs no drafter of full-attention "
                                         "layers only: their distances outgrow their training "
                                         "(MTP and plain decode run)");
-                }
-                for (DraftAttentionKind& kind : out.draft->layer_types) {
-                    kind = DraftAttentionKind::SlidingAttention;
                 }
             }
         }

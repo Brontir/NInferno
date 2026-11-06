@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <array>
 #include <iostream>
+#include <limits>
 
 namespace {
 
@@ -453,9 +454,30 @@ void text_only_artifact() {
                 .c_str());
 }
 
+// A drafter's positions (#458): one of sliding layers only drafts at any position (its scores read
+// distances within its window); a full-attention layer keeps its trained positions, until it reads the
+// window instead (under YaRN); a drafter without a window keeps its full layers.
+void draft_positions() {
+    qwen::DraftConfig d;
+    d.num_hidden_layers       = 6;
+    d.max_position_embeddings = 262144;
+    d.layer_types.assign(5, qwen::DraftAttentionKind::SlidingAttention);
+    d.layer_types.push_back(qwen::DraftAttentionKind::FullAttention);
+    require(d.position_capacity() == 262144, "a full-attention drafter layer lost its trained positions");
+    qwen::DraftConfig no_window = d;
+    require(!no_window.window_full_layers() && no_window.full_layer_count() == 1,
+            "a drafter without a window lost its full layer");
+    d.sliding_window = 4096;
+    require(d.window_full_layers() && d.full_layer_count() == 0 && d.local_layer_count() == 6,
+            "a full layer did not take the window");
+    require(d.position_capacity() == std::numeric_limits<std::uint64_t>::max(),
+            "a sliding-only drafter kept a position bound");
+}
+
 int main() {
     try {
         text_only_artifact();
+        draft_positions();
         logical_data_and_instances();
         native_uses();
         u4_expert_bank();
