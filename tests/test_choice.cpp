@@ -547,6 +547,26 @@ void prefills_by_format(const json& fixture) {
         rest.linears.erase(rest.linears.begin());
         check(nl_seconds > ch::prefill_linears_seconds(rest, ada, xs, 1024) && nl_transferred,
               "an iq4_nl linear among read ones: the share alone, on top of the others' tiles, marked transferred");
+        // Q4_1 (WeightClass::Other) on its census's step where it was read (Ada, Ampere), one card each:
+        // near Q4_K's tiles; Turing has none read (the share).
+        ch::ModelFacts q41_model = named, q4k_model = named;
+        for (ch::LinearShape& l : q41_model.linears) { l.format = "ggml_q4_1"; }
+        for (ch::LinearShape& l : q4k_model.linears) { l.format = "ggml_q4_k"; }
+        ch::QuantOption q41 = xs;
+        q41.label           = "Q4_1";
+        q41.weights         = ch::WeightClass::Other;
+        bool q41_transferred = false;
+        const double q41_seconds = ch::prefill_linears_seconds(q41_model, ada, q41, 1024, &q41_transferred);
+        const double q4k_seconds = ch::prefill_linears_seconds(q4k_model, ada, km, 1024);
+        const ch::CardFacts turing = card_of(fixture.at("cards").at("RTX 2080 Ti"));
+        check(q41_seconds > 0 && q41_transferred && std::abs(q41_seconds / q4k_seconds - 1) < 0.05 &&
+                  ch::prefill_linears_seconds(q41_model, turing, q41, 1024) == 0,
+              "Q4_1 on its read step (Ada, near Q4_K's), marked transferred; Turing: the share");
+        // A renamed file's label names no format: its named linears' format stands for it.
+        ch::QuantOption renamed = q41;
+        renamed.label           = "the model's weights";
+        check(ch::prefill_linears_seconds(q41_model, ada, renamed, 1024) == q41_seconds,
+              "a label of no format over named Q4_1 linears prices them as the Q4_1 label");
     }
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";
