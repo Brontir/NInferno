@@ -39,4 +39,27 @@ void context_attention_launch(const Tensor& q, const Tensor& query_k, const Tens
                               Tensor& partial_m, Tensor& partial_l, Tensor& out,
                               cudaStream_t stream);
 
+// FOLD (fold.cuh): the window's and the far memory's plans, each split.
+struct ContextFoldPlan {
+    ContextAttentionPlan window;
+    ContextAttentionPlan far;
+};
+
+struct FoldPartials {
+    Tensor acc;
+    Tensor m;
+    Tensor l;
+};
+
+[[nodiscard]] ContextFoldPlan context_fold_resolve_plan(ContextAttentionProfile profile,
+                                                        std::int32_t tokens,
+                                                        ContextAttentionExecutionEnvelope envelope,
+                                                        std::int32_t window);
+
+void context_fold_launch(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                         const Tensor& context_lengths, const Tensor& valid_columns,
+                         const Tensor& table_rows, float scale, ContextFold fold,
+                         const PagedKVBatchLayerView& context, const ContextFoldPlan& plan,
+                         FoldPartials& window, FoldPartials& far, Tensor& out, cudaStream_t stream);
+
 } // namespace ninferno::ops::detail

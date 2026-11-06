@@ -93,38 +93,13 @@ PartialWorkspace allocate_workspace(Allocator& workspace, AttentionHeadGeometry 
     };
 }
 
-} // namespace
-
-std::size_t context_softmax_attention_workspace_capacity_bytes(
-    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope,
-    std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size) {
-    const auto profile = require_profile(geometry, "context_softmax_attention workspace");
-    if (min_tokens < 1 || max_tokens < min_tokens || max_tokens > 16 || batch_size < 1 ||
-        batch_size > 8 || envelope.min_context > envelope.max_context ||
-        envelope.max_context >
-            static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
-        throw std::invalid_argument(
-            "context_softmax_attention workspace: invalid envelope or token interval");
-    }
-    const auto endpoint_capacity = [&](std::int32_t tokens) {
-        const auto plan = detail::context_attention_resolve_plan(profile, tokens, envelope);
-        WorkspaceLayoutBuilder layout;
-        (void)allocate_workspace(layout, geometry, tokens, plan.split_capacity, batch_size);
-        return layout.peak_bytes(1);
-    };
-
-    std::size_t maximum = 0;
-    if (min_tokens <= 8) { maximum = endpoint_capacity(std::min(max_tokens, 8)); }
-    if (max_tokens >= 9) { maximum = std::max(maximum, endpoint_capacity(max_tokens)); }
-    return maximum;
-}
-
-void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
-                               const Tensor& context_lengths, const Tensor& valid_columns,
-                               const Tensor& table_rows, AttentionHeadGeometry geometry,
-                               float scale, const PagedKVBatchLayerView& context,
-                               ContextAttentionExecutionEnvelope envelope,
-                               WorkspaceArena& workspace, Tensor& out, cudaStream_t stream) {
+detail::ContextAttentionProfile validate_call(const Tensor& q, const Tensor& query_k,
+                                              const Tensor& query_v, const Tensor& context_lengths,
+                                              const Tensor& valid_columns, const Tensor& table_rows,
+                                              AttentionHeadGeometry geometry, float scale,
+                                              const PagedKVBatchLayerView& context,
+                                              ContextAttentionExecutionEnvelope envelope,
+                                              const Tensor& out) {
     constexpr const char* op    = "context_softmax_attention";
     const auto profile          = require_profile(geometry, op);
     const std::int32_t head_dim = geometry.head_dim;
@@ -170,6 +145,46 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
         throw std::invalid_argument("context_softmax_attention: scale must be 1/sqrt(head_dim)");
     }
 
+    return profile;
+}
+
+} // namespace
+
+std::size_t context_softmax_attention_workspace_capacity_bytes(
+    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope,
+    std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size) {
+    const auto profile = require_profile(geometry, "context_softmax_attention workspace");
+    if (min_tokens < 1 || max_tokens < min_tokens || max_tokens > 16 || batch_size < 1 ||
+        batch_size > 8 || envelope.min_context > envelope.max_context ||
+        envelope.max_context >
+            static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+        throw std::invalid_argument(
+            "context_softmax_attention workspace: invalid envelope or token interval");
+    }
+    const auto endpoint_capacity = [&](std::int32_t tokens) {
+        const auto plan = detail::context_attention_resolve_plan(profile, tokens, envelope);
+        WorkspaceLayoutBuilder layout;
+        (void)allocate_workspace(layout, geometry, tokens, plan.split_capacity, batch_size);
+        return layout.peak_bytes(1);
+    };
+
+    std::size_t maximum = 0;
+    if (min_tokens <= 8) { maximum = endpoint_capacity(std::min(max_tokens, 8)); }
+    if (max_tokens >= 9) { maximum = std::max(maximum, endpoint_capacity(max_tokens)); }
+    return maximum;
+}
+
+void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                               const Tensor& context_lengths, const Tensor& valid_columns,
+                               const Tensor& table_rows, AttentionHeadGeometry geometry,
+                               float scale, const PagedKVBatchLayerView& context,
+                               ContextAttentionExecutionEnvelope envelope,
+                               WorkspaceArena& workspace, Tensor& out, cudaStream_t stream) {
+    const auto profile = validate_call(q, query_k, query_v, context_lengths, valid_columns,
+                                       table_rows, geometry, scale, context, envelope, out);
+    const std::int32_t tokens = q.ne[2];
+    const std::int32_t batch  = q.ne[3];
+
     auto scope               = workspace.scope();
     const auto plan = detail::context_attention_resolve_plan(profile, tokens, envelope);
     PartialWorkspace partial =
@@ -177,6 +192,54 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
     detail::context_attention_launch(q, query_k, query_v, context_lengths, valid_columns,
                                      table_rows, scale, context, plan, partial.acc, partial.m,
                                      partial.l, out, stream);
+}
+
+std::size_t context_fold_attention_workspace_capacity_bytes(
+    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope, std::int32_t window,
+    std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size) {
+    const auto profile = require_profile(geometry, "context_fold_attention workspace");
+    if (min_tokens < 1 || max_tokens < min_tokens || max_tokens > 16 || batch_size < 1 ||
+        batch_size > 8 || window < 1 || envelope.min_context > envelope.max_context ||
+        envelope.max_context >
+            static_cast<std::uint32_t>(std::numeric_limits<std::int32_t>::max())) {
+        throw std::invalid_argument(
+            "context_fold_attention workspace: invalid envelope, window or token interval");
+    }
+    const auto endpoint_capacity = [&](std::int32_t tokens) {
+        const auto plan = detail::context_fold_resolve_plan(profile, tokens, envelope, window);
+        WorkspaceLayoutBuilder layout;
+        (void)allocate_workspace(layout, geometry, tokens, plan.window.split_capacity, batch_size);
+        (void)allocate_workspace(layout, geometry, tokens, plan.far.split_capacity, batch_size);
+        return layout.peak_bytes(1);
+    };
+    std::size_t maximum = 0;
+    if (min_tokens <= 8) { maximum = endpoint_capacity(std::min(max_tokens, 8)); }
+    if (max_tokens >= 9) { maximum = std::max(maximum, endpoint_capacity(max_tokens)); }
+    return maximum;
+}
+
+void context_fold_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                            const Tensor& context_lengths, const Tensor& valid_columns,
+                            const Tensor& table_rows, AttentionHeadGeometry geometry, float scale,
+                            ContextFold fold, const PagedKVBatchLayerView& context,
+                            ContextAttentionExecutionEnvelope envelope, WorkspaceArena& workspace,
+                            Tensor& out, cudaStream_t stream) {
+    const auto profile = validate_call(q, query_k, query_v, context_lengths, valid_columns,
+                                       table_rows, geometry, scale, context, envelope, out);
+    if (fold.window < 1 || !(fold.alpha >= 1.0F) || !std::isfinite(fold.alpha)) {
+        throw std::invalid_argument("context_fold_attention: window must be positive, alpha >= 1");
+    }
+    const std::int32_t tokens = q.ne[2];
+    const std::int32_t batch  = q.ne[3];
+    auto scope                = workspace.scope();
+    const auto plan = detail::context_fold_resolve_plan(profile, tokens, envelope, fold.window);
+    const PartialWorkspace w =
+        allocate_workspace(workspace, geometry, tokens, plan.window.split_capacity, batch);
+    const PartialWorkspace f =
+        allocate_workspace(workspace, geometry, tokens, plan.far.split_capacity, batch);
+    detail::FoldPartials window{w.acc, w.m, w.l}, far{f.acc, f.m, f.l};
+    detail::context_fold_launch(q, query_k, query_v, context_lengths, valid_columns, table_rows,
+                                scale, fold, context, plan, window, far, out, stream);
 }
 
 } // namespace ninferno::ops

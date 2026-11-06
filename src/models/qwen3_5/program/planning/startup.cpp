@@ -493,11 +493,18 @@ WorkspacePlan build_workspace_plan(const execution::Parameters& parameters,
                                           dimension(draft->attention.num_key_value_heads)},
                                          dimension(draft->sliding_window.value_or(0)),
                                          {0, plan.capacity}, width, width, batch),
-                                     ops::context_softmax_attention_workspace_capacity_bytes(
-                                         {dimension(draft->attention.head_dim),
-                                          dimension(draft->attention.num_attention_heads),
-                                          dimension(draft->attention.num_key_value_heads)},
-                                         {0, plan.capacity}, width, width, batch)));
+                                     draft->fold_window != 0
+                                         ? ops::context_fold_attention_workspace_capacity_bytes(
+                                               {dimension(draft->attention.head_dim),
+                                                dimension(draft->attention.num_attention_heads),
+                                                dimension(draft->attention.num_key_value_heads)},
+                                               {0, plan.capacity}, dimension(draft->fold_window),
+                                               width, width, batch)
+                                         : ops::context_softmax_attention_workspace_capacity_bytes(
+                                               {dimension(draft->attention.head_dim),
+                                                dimension(draft->attention.num_attention_heads),
+                                                dimension(draft->attention.num_key_value_heads)},
+                                               {0, plan.capacity}, width, width, batch)));
                     for (const auto& block : parameters.draft->layers) {
                         add_scratch(layout, block.output, tokens, tokens);
                         // Q/K/V not one RowSplit Q8 parent: the generic bank (draft.cpp).

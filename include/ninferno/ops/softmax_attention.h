@@ -211,4 +211,29 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
     AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope,
     std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size);
 
+/**
+ * FOLD (arXiv 2610.20392) over the same inputs as context_softmax_attention, D128 [32, 8] only:
+ * the last `window` context rows and the query rows at their own positions; the rows before them
+ * (the far memory) with each key turned from its position j to the shared t - window - V (t = L,
+ * the block's first position: every key cached rotated at its own position, theta 1e7), their
+ * scores times `alpha`. The two are normalized apart and merged by their masses: the window's sum
+ * of exponentiated scores, the far memory's l_alpha norm of them. With L <= window it is
+ * context_softmax_attention.
+ */
+struct ContextFold {
+    std::int32_t window = 0; // > 0
+    float alpha         = 2.0F;
+};
+
+void context_fold_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
+                            const Tensor& context_lengths, const Tensor& valid_columns,
+                            const Tensor& table_rows, AttentionHeadGeometry geometry, float scale,
+                            ContextFold fold, const PagedKVBatchLayerView& context,
+                            ContextAttentionExecutionEnvelope envelope, WorkspaceArena& workspace,
+                            Tensor& out, cudaStream_t stream);
+
+[[nodiscard]] std::size_t context_fold_attention_workspace_capacity_bytes(
+    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope,
+    std::int32_t window, std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size);
+
 } // namespace ninferno::ops

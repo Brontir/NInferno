@@ -254,6 +254,26 @@ context_query_stage_v_tile(__half* dst, const VT* context, const __nv_bfloat16* 
     }
 }
 
+// Optional policy traits (FOLD's far memory, fold.cuh): kQueryKeys false reads the context alone,
+// not the query block's own keys; kRerotateKeys turns a staged BF16 K tile before its scores
+// (policy.rerotate). A policy without them reads both and turns nothing.
+template <typename ContextPolicy>
+constexpr bool context_policy_query_keys() {
+    if constexpr (requires { ContextPolicy::kQueryKeys; }) {
+        return ContextPolicy::kQueryKeys;
+    } else {
+        return true;
+    }
+}
+template <typename ContextPolicy>
+constexpr bool context_policy_rerotates() {
+    if constexpr (requires { ContextPolicy::kRerotateKeys; }) {
+        return ContextPolicy::kRerotateKeys;
+    } else {
+        return false;
+    }
+}
+
 template <typename ContextPolicy, int Tokens, int WarpsPerCta, int KeyBlock, bool DirectOutput,
           typename Partial, typename KT = __nv_bfloat16, typename VT = __half>
 __device__ __forceinline__ void context_query_split_partial_body(
@@ -335,7 +355,8 @@ __device__ __forceinline__ void context_query_split_partial_body(
         static_cast<int>((static_cast<std::int64_t>(context_tiles) * split) / active_splits);
     const int tile_end =
         static_cast<int>((static_cast<std::int64_t>(context_tiles) * (split + 1)) / active_splits);
-    const bool owns_query        = split == active_splits - 1;
+    const bool owns_query =
+        context_policy_query_keys<ContextPolicy>() && split == active_splits - 1;
     const int context_tile_count = tile_end - tile_begin;
     const int iterations         = context_tile_count + (owns_query ? 1 : 0);
 
@@ -451,6 +472,12 @@ __device__ __forceinline__ void context_query_split_partial_body(
                                                               current_valid, tid);
             }
             __syncthreads();
+        }
+        if constexpr (context_policy_rerotates<ContextPolicy>()) {
+            if (!current_is_query &&
+                policy.template rerotate<KeyBlock, Threads>(k_s, current_key0, current_valid, tid)) {
+                __syncthreads();
+            }
         }
 
         float score[QKNt][4];

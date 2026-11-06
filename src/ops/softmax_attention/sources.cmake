@@ -18,6 +18,7 @@ ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/dense/packed/launch.cu"
   "${CMAKE_CURRENT_LIST_DIR}/dense/context/context_softmax_attention.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/dense/context/launch.cu"
+  "${CMAKE_CURRENT_LIST_DIR}/dense/context/launch_fold.cu"
   "${CMAKE_CURRENT_LIST_DIR}/sliding_window/sliding_window_attention.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/sliding_window/launch.cu"
   "${CMAKE_CURRENT_LIST_DIR}/gemma4/gemma4_attention.cpp"

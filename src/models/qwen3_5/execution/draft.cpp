@@ -44,6 +44,10 @@ namespace {
 
 using detail::DFlashPersistentState;
 
+// FOLD's concentration factor: its far memory's scores times this, its mass their l_alpha norm
+// (arXiv 2610.20392: 2 on every target-drafter pair).
+constexpr float kFoldAlpha = 2.0F;
+
 void require_dflash_state(const PrefillContext& state) {
     if (state.dflash == nullptr ||
         !qwen3_5::detail::qwen_parameters(state.execution).draft.has_value()) {
@@ -583,6 +587,19 @@ void propose_batch_impl(DFlashBatchContext& state, qwen3_5::DFlashDecodeState& f
                         static_cast<float>(1.0 / std::sqrt(double(config.attention.head_dim))),
                         dflash_state(state).local_layer(config.compact_layer_index(layer)),
                         envelopes.local, state.execution.work, attention_batch,
+                        state.execution.device.stream);
+                } else if (config.fold_window != 0) {
+                    // FOLD: the full layer's window at exact positions and its far memory at one
+                    // shared position (DraftConfig::fold_window).
+                    ops::context_fold_attention(
+                        query_batch, key_batch, value_batch, frontiers, valid_columns, full_rows,
+                        {dimension(config.attention.head_dim),
+                         dimension(config.attention.num_attention_heads),
+                         dimension(config.attention.num_key_value_heads)},
+                        static_cast<float>(1.0 / std::sqrt(double(config.attention.head_dim))),
+                        {.window = dimension(config.fold_window), .alpha = kFoldAlpha},
+                        dflash_state(state).full_batch_layer(config.compact_layer_index(layer)),
+                        envelopes.full, state.execution.work, attention_batch,
                         state.execution.device.stream);
                 } else {
                     ops::context_softmax_attention(
