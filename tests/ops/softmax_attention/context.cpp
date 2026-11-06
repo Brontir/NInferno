@@ -910,8 +910,9 @@ void fold_oracle_row(const std::vector<float>& q, const std::vector<float>& quer
     }
 }
 
+// `int8`: the context in the drafter's Int8Group64 pool (the oracle reads its dequantized values).
 int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, float alpha,
-                  bool compare_plain) {
+                  bool compare_plain, bool int8 = false) {
     const int batch = static_cast<int>(rows.size());
     int max_length  = 1;
     for (const FoldRow& r : rows) max_length = std::max(max_length, r.length);
@@ -945,20 +946,50 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
     round_to_bf16(physical_v);
     std::vector<std::int32_t> tables(static_cast<std::size_t>(logical_pages) * batch);
     std::vector<double> expected(row_q * batch);
-    for (int b = 0; b < batch; ++b) {
+    const auto row_mapping = [&](int b) {
         std::vector<std::int32_t> mapping(static_cast<std::size_t>(logical_pages));
         for (int p = 0; p < logical_pages; ++p) {
-            mapping[static_cast<std::size_t>(p)]                    = p * (batch + 1) + b + 1;
-            tables[static_cast<std::size_t>(b) * logical_pages + p] = p * (batch + 1) + b + 1;
+            mapping[static_cast<std::size_t>(p)] = p * (batch + 1) + b + 1;
         }
+        return mapping;
+    };
+    for (int b = 0; b < batch; ++b) {
+        const std::vector<std::int32_t> mapping = row_mapping(b);
+        std::copy(mapping.begin(), mapping.end(),
+                  tables.begin() + static_cast<std::ptrdiff_t>(b * logical_pages));
+        const auto k0 = ctx_k.begin() + static_cast<std::ptrdiff_t>(b * row_ctx);
+        const auto v0 = ctx_v.begin() + static_cast<std::ptrdiff_t>(b * row_ctx);
+        scatter_context_mapping(physical_k, std::vector<float>(k0, k0 + static_cast<std::ptrdiff_t>(row_ctx)),
+                                logical_stride, logical_pages * kPage, mapping, physical_pages);
+        scatter_context_mapping(physical_v, std::vector<float>(v0, v0 + static_cast<std::ptrdiff_t>(row_ctx)),
+                                logical_stride, logical_pages * kPage, mapping, physical_pages);
+    }
+    Int8Context k8, v8;
+    if (int8) {
+        k8 = quantize_context_int8(physical_k, physical_pages, false);
+        v8 = quantize_context_int8(physical_v, physical_pages, true);
+        // Each row's logical context: the dequantized values at its positions' physical pages.
+        for (int b = 0; b < batch; ++b) {
+            const std::vector<std::int32_t> mapping = row_mapping(b);
+            for (int position = 0; position < logical_pages * kPage; ++position) {
+                const int page = mapping[static_cast<std::size_t>(position / kPage)];
+                for (int kv = 0; kv < kKVHeads; ++kv) {
+                    for (int d = 0; d < kD; ++d) {
+                        const std::size_t from =
+                            physical_context_index(d, kv, position, page, physical_pages);
+                        const std::size_t to = b * row_ctx + context_index(d, kv, position, logical_stride);
+                        ctx_k[to] = k8.dequant[from];
+                        ctx_v[to] = v8.dequant[from];
+                    }
+                }
+            }
+        }
+    }
+    for (int b = 0; b < batch; ++b) {
         const auto k0 = ctx_k.begin() + static_cast<std::ptrdiff_t>(b * row_ctx);
         const auto v0 = ctx_v.begin() + static_cast<std::ptrdiff_t>(b * row_ctx);
         const std::vector<float> row_k(k0, k0 + static_cast<std::ptrdiff_t>(row_ctx));
         const std::vector<float> row_v(v0, v0 + static_cast<std::ptrdiff_t>(row_ctx));
-        scatter_context_mapping(physical_k, row_k, logical_stride, logical_pages * kPage, mapping,
-                                physical_pages);
-        scatter_context_mapping(physical_v, row_v, logical_stride, logical_pages * kPage, mapping,
-                                physical_pages);
         const auto sub = [&](const std::vector<float>& all, std::size_t count) {
             const auto begin = all.begin() + static_cast<std::ptrdiff_t>(b * count);
             return std::vector<float>(begin, begin + static_cast<std::ptrdiff_t>(count));
@@ -981,8 +1012,10 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
     DeviceBuffer d_q          = to_device(bf16_bits(q));
     DeviceBuffer d_query_k    = to_device(bf16_bits(query_k));
     DeviceBuffer d_query_v    = to_device(bf16_bits(query_v));
-    DeviceBuffer d_context_k  = to_device(bf16_bits(physical_k));
-    DeviceBuffer d_context_v  = to_device(fp16_bits(physical_v));
+    DeviceBuffer d_context_k  = int8 ? to_device(k8.codes) : to_device(bf16_bits(physical_k));
+    DeviceBuffer d_context_v  = int8 ? to_device(v8.codes) : to_device(fp16_bits(physical_v));
+    DeviceBuffer d_k_scale    = to_device(int8 ? k8.scales : std::vector<__half>(1));
+    DeviceBuffer d_v_scale    = to_device(int8 ? v8.scales : std::vector<__half>(1));
     DeviceBuffer d_tables     = to_device(tables);
     DeviceBuffer d_lengths    = to_device(lengths);
     DeviceBuffer d_valid      = to_device(valid);
@@ -999,6 +1032,14 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
     Tensor out_tensor(d_out.data(), DType::BF16, {kD, kQHeads, tokens, batch});
     PagedKVBatchLayerView context =
         make_context_view(d_context_k, d_context_v, d_tables, logical_pages, physical_pages, batch);
+    if (int8) {
+        const int groups      = kD / 64;
+        context.k_pages       = Tensor(d_context_k.p, DType::I8, {kD, kPage, physical_pages, kKVHeads});
+        context.v_pages       = Tensor(d_context_v.p, DType::I8, {kD, kPage, physical_pages, kKVHeads});
+        context.k_scale_pages = Tensor(d_k_scale.p, DType::FP16, {groups, kPage, physical_pages, kKVHeads});
+        context.v_scale_pages = Tensor(d_v_scale.p, DType::FP16, {groups, kPage, physical_pages, kKVHeads});
+        context.storage       = KvCacheStorage::Int8Group64;
+    }
     const ops::ContextAttentionExecutionEnvelope envelope{
         0, static_cast<std::uint32_t>(max_length)};
     const std::size_t workspace_bytes = ops::context_fold_attention_workspace_capacity_bytes(
@@ -1010,7 +1051,7 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
                                 out_tensor, nullptr);
     cuda_synchronize();
 
-    std::string label = "context_fold_attention T=" + std::to_string(tokens) +
+    std::string label = std::string(int8 ? "context_fold_attention int8 T=" : "context_fold_attention T=") + std::to_string(tokens) +
                         " B=" + std::to_string(batch) + " W=" + std::to_string(window) +
                         " alpha=" + std::to_string(alpha) + " L=";
     for (int b = 0; b < batch; ++b) {
@@ -1026,7 +1067,7 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
         ++failures;
     }
 
-    if (compare_plain) {
+    if (compare_plain && !int8) {
         // L <= W for every row: FOLD is context_softmax_attention on a context whose keys are
         // pre-rotated at their positions (FOLD itself reads the unrotated copy above).
         std::vector<float> rotated_ctx_k = ctx_k;
@@ -1099,6 +1140,10 @@ int run_fold_cases() {
     failures += run_fold_case(1, {{300, 1}, {300, 1}}, 64, 2.0F, false);
     failures += run_fold_case(1, {{300, 1}, {300, 1}, {300, 1}}, 64, 2.0F, false);
     failures += run_fold_case(1, {{100, 1}, {100, 1}}, 64, 2.0F, false);
+    // The drafter's int8 pool: both branches dequantize before the keys turn.
+    failures += run_fold_case(1, {{50, 1}}, 64, 2.0F, false, true);
+    failures += run_fold_case(4, {{300, 4}, {40, 4}}, 64, 2.0F, false, true);
+    failures += run_fold_case(8, {{1000, 8}, {333, 3}}, 128, 2.0F, false, true);
     // alpha = 1 sanity.
     failures += run_fold_case(4, {{300, 4}}, 64, 1.0F, false);
     failures += run_fold_case(8, {{400, 8}, {250, 8}}, 128, 1.0F, false);
