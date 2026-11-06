@@ -586,7 +586,7 @@ void validate_target_options(const execution::Parameters& parameters, DeviceCont
             "loaded components do not match the requested execution options");
     }
     if (parameters.draft &&
-        options.max_context > parameters.model.config().draft->max_position_embeddings) {
+        options.max_context > parameters.model.config().draft->position_capacity()) {
         throw std::invalid_argument("max_context exceeds the selected draft position capacity");
     }
     validate_state_storage(

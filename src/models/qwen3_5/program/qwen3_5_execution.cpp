@@ -121,7 +121,7 @@ Qwen35Execution::Qwen35Execution(const execution::Parameters& parameters)
           .max_positions = parameters.draft
                                ? std::min<std::uint64_t>(
                                      parameters.model.config().text.max_position_embeddings,
-                                     parameters.model.config().draft->max_position_embeddings)
+                                     parameters.model.config().draft->position_capacity())
                                : parameters.model.config().text.max_position_embeddings,
           .copy_rounds   = family_copy_rounds(models::StateFamily::Qwen35),
       },

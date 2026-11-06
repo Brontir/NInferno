@@ -6,6 +6,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdint>
+#include <limits>
 #include <optional>
 #include <variant>
 #include <vector>
@@ -145,6 +146,14 @@ struct DraftConfig {
 
     [[nodiscard]] std::uint32_t full_layer_count() const noexcept {
         return num_hidden_layers - local_layer_count();
+    }
+
+    // The positions it drafts at: its trained ones where a full-attention layer reads distances up
+    // to them; a drafter of sliding layers only reads distances within its window (its RoPE angles
+    // computed per position, its caches cyclic), at any position.
+    [[nodiscard]] std::uint64_t position_capacity() const noexcept {
+        return full_layer_count() != 0 ? max_position_embeddings
+                                       : std::numeric_limits<std::uint64_t>::max();
     }
 
     [[nodiscard]] std::uint32_t compact_layer_index(std::uint32_t layer) const {
