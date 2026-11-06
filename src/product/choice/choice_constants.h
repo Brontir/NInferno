@@ -246,32 +246,24 @@ struct R8DecodeIssue {
     double warp_inst_per_kib; // warp instructions a KiB of weights
 };
 inline constexpr R8DecodeIssue kR8DecodeIssue[] = {
-    {"gb20x", "ggml_iq1_s", 1.5625, 755},   {"gb20x", "ggml_iq2_xxs", 2.0625, 751},
-    {"gb20x", "ggml_iq2_xs", 2.3125, 642},  {"gb20x", "ggml_iq2_s", 2.5625, 627},
-    {"gb20x", "ggml_iq3_xxs", 3.0625, 498}, {"gb20x", "ggml_iq3_s", 3.4375, 526},
-    {"gb20x", "ggml_q2_k", 2.625, 459},     {"gb20x", "ggml_q3_k", 3.4375, 577},
     {"ga10x", "ggml_iq1_s", 1.5625, 815},   {"ga10x", "ggml_iq2_xxs", 2.0625, 657},
     {"ga10x", "ggml_iq2_xs", 2.3125, 705},  {"ga10x", "ggml_iq2_s", 2.5625, 682},
     {"ga10x", "ggml_iq3_xxs", 3.0625, 542}, {"ga10x", "ggml_iq3_s", 3.4375, 555},
     {"ga10x", "ggml_q2_k", 2.625, 498},     {"ga10x", "ggml_q3_k", 3.4375, 584},
-    {"turing", "ggml_iq1_s", 1.5625, 790},  {"turing", "ggml_iq2_xxs", 2.0625, 726},
-    {"turing", "ggml_iq2_xs", 2.3125, 635}, {"turing", "ggml_iq2_s", 2.5625, 582},
-    {"turing", "ggml_iq3_xxs", 3.0625, 477}, {"turing", "ggml_iq3_s", 3.4375, 528},
-    {"turing", "ggml_q2_k", 2.625, 480},    {"turing", "ggml_q3_k", 3.4375, 434},
 };
 // Warp instructions a SM-clock (reference clock) where kR8DecodeIssue's instructions bound the read:
-// the mean over the formats and cards whose kernel time less the launch exceeds 1.08 x its DRAM time.
-// RTX 3090 2.97 and 3060 2.77 (1.5-3.4 bits; a format 2.45-3.44); RTX 5090 1.92 and 5070 Ti 2.43 (the
-// boards disagree by 27 %: an estimate only); RTX 2080 Ti 2.37 (one card).
+// the mean over the formats and cards whose kernel time less the launch exceeds 1.08 x its DRAM time,
+// RTX 3090 2.97 and 3060 2.77 (a format 2.45-3.44; IQ2_XXS's kernel +4 % and +1 %). Not a law yet where
+// the boards disagree: Blackwell's RTX 5090 1.92 and 5070 Ti 2.43 (with the mean, the 5070 Ti's IQ2_XXS
+// +42 %), Turing's one card a format 1.75-2.85 (its IQ2_XXS +17 %); there the reads stay at the DRAM
+// rate (the RTX 5090's IQ1_S and IQ2 1.4-1.9 x their DRAM time, the 2080 Ti's 1.6-1.9 x: open).
 struct R8IssueRate {
     std::string_view generation;
     double warp_inst_per_sm_clock;
-    int cards; // < 2, or boards that disagree: an estimate (transferred)
+    int cards; // < 2: an estimate (transferred)
 };
 inline constexpr R8IssueRate kR8IssueRate[] = {
     {"ga10x", 2.87, 2},
-    {"gb20x", 2.17, 1},
-    {"turing", 2.37, 1},
 };
 
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,

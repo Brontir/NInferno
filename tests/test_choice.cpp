@@ -2013,9 +2013,8 @@ void choices_replay(const json& fixture) {
 // A one-row step's named low-bit linear on R8 (kR8DecodeIssue): its read takes the longer of its DRAM
 // time and its warp instructions at the generation's issue rate. Against route-tune's fastest T = 1 R8
 // time of a 16384 x 5120 IQ2_XXS store (master 75b7209e, 2026-11-06), less the launch (kKernelCost):
-// Ampere within 10 % on both its cards, the estimates (Blackwell's boards disagree, Turing's one card)
-// within 30 % and marked; Ada and a 4-bit format at the DRAM rate as before; two rows and the exact
-// route (no R8) unchanged.
+// Ampere within 10 % on both its cards; Ada, Blackwell and Turing (no rate: kR8IssueRate) and a 4-bit
+// format at the DRAM rate as before; two rows and the exact route (no R8) unchanged.
 void prices_r8_issue() {
     const double n = 16384, k = 5120, bytes = n * k * 2.0625 / 8;
     const auto step = [&](const ch::CardFacts& card, const std::string& format, std::uint32_t rows,
@@ -2042,9 +2041,6 @@ void prices_r8_issue() {
     const Census rows[] = {
         {{.major = 8, .minor = 6, .sms = 82, .clock_hz = 1.695e9, .dram_bytes_per_s = 936e9}, 37.9, 0.10},
         {{.major = 8, .minor = 6, .sms = 28, .clock_hz = 1.777e9, .dram_bytes_per_s = 360e9}, 100.9, 0.10},
-        {{.major = 12, .minor = 0, .sms = 170, .clock_hz = 2.41e9, .dram_bytes_per_s = 1792e9}, 17.8, 0.30},
-        {{.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.45e9, .dram_bytes_per_s = 896e9}, 31.4, 0.30},
-        {{.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9}, 60.2, 0.30},
     };
     for (const Census& r : rows) {
         const std::string_view gen = ch::generation_of(r.card);
@@ -2072,9 +2068,15 @@ void prices_r8_issue() {
                                        [&](const ch::R8IssueRate& r) { return r.generation == f.generation; });
         check(rated && f.bits > 1 && f.bits < 4 && f.warp_inst_per_kib > 0, "an R8 issue row of a rated generation");
     }
-    const ch::CardFacts ada{.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9};
-    check(step(ada, "ggml_iq2_xxs", 1, ActivationMode::Fast) == step(ada, "", 1, ActivationMode::Fast),
-          "Ada's R8 holds the DRAM rate in every format");
+    const ch::CardFacts unrated[] = {
+        {.major = 8, .minor = 9, .sms = 128, .clock_hz = 2.52e9, .dram_bytes_per_s = 1008e9},
+        {.major = 12, .minor = 0, .sms = 70, .clock_hz = 2.45e9, .dram_bytes_per_s = 896e9},
+        {.major = 7, .minor = 5, .sms = 68, .clock_hz = 1.545e9, .dram_bytes_per_s = 616e9},
+    };
+    for (const ch::CardFacts& card : unrated) {
+        check(step(card, "ggml_iq2_xxs", 1, ActivationMode::Fast) == step(card, "", 1, ActivationMode::Fast),
+              "a generation without an issue rate reads at the DRAM rate");
+    }
 }
 
 int main() {
