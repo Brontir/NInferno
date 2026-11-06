@@ -102,7 +102,8 @@ allowed(p_query, p_key) = abs(p_key - p_query) < S
 Endpoints at distance S−1 are included; distance S is excluded. Populated sequence bounds clip
 the symmetric interval. With a full left context and `p_query=F+i`, the row sees at most `S-1-i`
 context positions, plus all W query rows for the supported widths. A full layer attends all
-populated context and query rows. These masks are specified by
+populated context and query rows; under YaRN (`--rope-yarn-factor`, or an artifact's own factor)
+it takes the local mask with the drafter's S instead (below). These masks are specified by
 [`sliding_window_attention.h`](../../include/ninferno/ops/sliding_window_attention.h) and
 [`softmax_attention.h`](../../include/ninferno/ops/softmax_attention.h).
 
@@ -269,10 +270,23 @@ F while target state advances to F+N. Before the next proposal, or before retain
 fork or Host replica, those features are materialized and context catches up. N=0 cancellation
 commits no new state and releases the sequence; it does not undo earlier adopted commits.
 
+## YaRN
+
+A drafter rotates with its own trained frequencies (theta `1e7`), never the target's YaRN table.
+A local layer's scores depend only on distances below S, which YaRN's longer context leaves as
+trained, so DFlash2 runs unchanged and at any position (its RoPE angles are computed per
+position, its rings are cyclic: `DraftConfig::position_capacity`). A full layer would read
+distances past any the drafter trained on, so under YaRN `parse_config` turns every full layer
+into a local one of the drafter's own S (`DraftConfig::window_full_layers`; FOLD's "window",
+arXiv 2610.20392): the official 35B-A3B DFlash then has six local layers, six rings and no full
+pool. A drafter without S stays refused. Measured (#458): at 75K tokens the window keeps 94 % of
+the full layer's acceptance; past 262K tokens DFlash beats MTP 3 by 1.05-1.19x and DFlash2 by
+1.31x.
+
 ## Backend storage and lifecycle
 
 Local draft layers store K/V in cyclic rings; full draft layers use paged KV. A full pool exists
-only when selected draft config has full-attention layers. The official DFlash2 instance therefore
+only when selected draft config has full-attention layers (none under YaRN, above). The official DFlash2 instance therefore
 has five local rings and no full draft pool. Its ring payload per state image is:
 
 ```text
