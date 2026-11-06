@@ -2,6 +2,7 @@
 # from the per-GPU-class route table (src/ops/route_table.cpp, include/ninferno/ops/route_table.h).
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_describe.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
