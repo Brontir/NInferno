@@ -1134,10 +1134,26 @@ std::map<std::size_t, std::optional<std::uint32_t>>& tail_calls_counted() {
     return counted;
 }
 
-// A GGUF's frontend rebuilt from its metadata, counted once per set of files: a plan reads the
-// facts of every listed quantization, whose tokenizer and template are one.
+// A GGUF's frontend rebuilt from its metadata, counted once per frontend: a plan reads the facts
+// of every listed quantization, whose tokenizer and template are one. The key is the metadata the
+// rebuilt files come from (convert::gguf_frontend_resources), read without rebuilding them.
 std::optional<std::uint32_t> prompt_tail_calls_of_gguf(const convert::GgufFile& head) {
     if (!prompt_tail_calls_files_source() || head.find("tokenizer.ggml.tokens") == nullptr) { return std::nullopt; }
+    std::string metadata;
+    for (const auto& [name, value] : head.metadata.items()) {
+        if (!starts_with(name, "tokenizer.") && !starts_with(name, "general.sampling.")) { continue; }
+        metadata += name;
+        metadata += '\n';
+        metadata += value.is_array() && !value.empty()
+                        ? std::to_string(value.size()) + value.front().dump() + value.back().dump()
+                        : value.dump();
+        metadata += '\n';
+    }
+    const std::size_t key = std::hash<std::string>{}(metadata);
+    {
+        std::lock_guard lock(tail_calls_mutex());
+        if (const auto it = tail_calls_counted().find(key); it != tail_calls_counted().end()) { return it->second; }
+    }
     const convert::RebuiltResources rebuilt = convert::gguf_frontend_resources(head);
     const auto file = [&rebuilt](const char* role) {
         const auto it = rebuilt.files.find(role);
@@ -1145,14 +1161,9 @@ std::optional<std::uint32_t> prompt_tail_calls_of_gguf(const convert::GgufFile& 
     };
     PromptFrontendFiles files{file("tokenizer.json"), file("tokenizer_config.json"),
                               file("chat_template.jinja"), file("generation_config.json")};
-    const std::size_t key = std::hash<std::string>{}(files.tokenizer_json + '\0' + files.tokenizer_config_json +
-                                                      '\0' + files.chat_template_jinja + '\0' +
-                                                      files.generation_config_json);
     std::lock_guard lock(tail_calls_mutex());
-    auto& counted = tail_calls_counted();
-    if (const auto it = counted.find(key); it != counted.end()) { return it->second; }
     const std::optional<std::uint32_t> calls = prompt_tail_calls_files_source()(files);
-    counted[key] = calls;
+    tail_calls_counted()[key] = calls;
     return calls;
 }
 } // namespace
