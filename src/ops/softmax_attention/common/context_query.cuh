@@ -258,7 +258,7 @@ context_query_stage_v_tile(__half* dst, const VT* context, const __nv_bfloat16* 
 // not the query block's own keys; kRerotateKeys turns a staged BF16 K tile before its scores
 // (policy.rerotate). A policy without them reads both and turns nothing.
 template <typename ContextPolicy>
-constexpr bool context_policy_query_keys() {
+__host__ __device__ constexpr bool context_policy_query_keys() {
     if constexpr (requires { ContextPolicy::kQueryKeys; }) {
         return ContextPolicy::kQueryKeys;
     } else {
@@ -266,7 +266,7 @@ constexpr bool context_policy_query_keys() {
     }
 }
 template <typename ContextPolicy>
-constexpr bool context_policy_rerotates() {
+__host__ __device__ constexpr bool context_policy_rerotates() {
     if constexpr (requires { ContextPolicy::kRerotateKeys; }) {
         return ContextPolicy::kRerotateKeys;
     } else {
