@@ -47,8 +47,19 @@ struct FoldWindowPolicy : ContextAttentionPolicy<Geometry> {
     using Geo                           = Geometry;
     static constexpr bool kRerotateKeys = true;
     int window                          = 0;
+    int key_block                       = 32; // the kernel's tile height
+    int first                           = 0;  // the first window entry: max(length - window, 0)
 
-    __device__ __forceinline__ int context_count(int value) const { return min(value, window); }
+    // The window's tiles start at a multiple of the tile height: a tile that straddled a page
+    // boundary would read its second page's rows from the physical page after the first (the
+    // pages of a context are not adjacent), so the leading tile takes the entries below `first`
+    // too and allow_context masks them.
+    __device__ __forceinline__ int context_count(int value) const {
+        const int begin = max(value - window, 0);
+        return value - (begin / key_block) * key_block;
+    }
+
+    __device__ __forceinline__ bool allow_context(int, int key) const { return key >= first; }
 
     template <int KeyBlock, int Threads>
     __device__ __forceinline__ bool rerotate(__nv_bfloat16* k_s, int key0, int valid_keys,
@@ -129,7 +140,9 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_fold_partial_kern
     } else {
         FoldWindowPolicy<Geo> policy{};
         base(policy);
-        policy.window = window;
+        policy.window    = window;
+        policy.key_block = KeyBlock;
+        policy.first     = max(length - window, 0);
         context_query_split_partial_body<FoldWindowPolicy<Geo>, Tokens, WarpsPerCta, KeyBlock, false>(
             q, query_k, query_v, valid_columns, context_k, context_v, policy, length, max_context,
             split_capacity, scale, partial_acc, partial_m, partial_l,
@@ -198,9 +211,12 @@ __launch_bounds__(128) __global__ void context_fold_reduce_kernel(
         return tiles > 0 ? min(tiles, capacity) : 1;
     };
     float window_lse, window_value, far_lse, far_value;
+    // The window's tiles start at a multiple of the tile height (FoldWindowPolicy::context_count).
+    const int window_begin = max(length - window, 0);
+    const int window_count = length - (window_begin / window_key_block) * window_key_block;
     fold_branch<Tokens, Geo>(window_acc, window_m, window_l,
-                             active(min(length, window), window_key_block, window_splits), q_head,
-                             token, d, window_lse, window_value);
+                             active(window_count, window_key_block, window_splits), q_head, token, d,
+                             window_lse, window_value);
     fold_branch<Tokens, Geo>(far_acc, far_m, far_l, active(length, far_key_block, far_splits), q_head,
                              token, d, far_lse, far_value);
     far_lse = far_lse == -CUDART_INF_F ? far_lse : far_lse / alpha;
