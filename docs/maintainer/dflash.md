@@ -279,9 +279,20 @@ position, its rings are cyclic: `DraftConfig::position_capacity`). A full layer 
 distances past any the drafter trained on, so under YaRN `parse_config` turns every full layer
 into a local one of the drafter's own S (`DraftConfig::window_full_layers`; FOLD's "window",
 arXiv 2610.20392): the official 35B-A3B DFlash then has six local layers, six rings and no full
-pool. A drafter without S stays refused. Measured (#458): at 75K tokens the window keeps 94 % of
-the full layer's acceptance; past 262K tokens DFlash beats MTP 3 by 1.05-1.19x and DFlash2 by
-1.31x.
+pool. A drafter without S stays refused.
+
+Measured (#458, 2026-11-06, branch `fix/458-dflash2-yarn`): one request each, concurrency 1,
+greedy (temperature 0), 256 output tokens, thinking off, a chat request to continue the last of
+the repository's C++/CUDA sources concatenated without repetition; YaRN x2; the server log's
+decode rate and accepted drafts. K = 7 for DFlash/DFlash2, 3 for MTP.
+
+| Card, model | Prompt tokens | Drafter | Accepted | Decode tok/s | MTP 3 | Plain |
+|---|---:|---|---:|---:|---:|---:|
+| RTX 4090, Qwen3.5-9B Q4_K_M | 74,880 | DFlash, full layer (no YaRN) | 37.0 % | 314 | | |
+| RTX 4090, Qwen3.5-9B Q4_K_M | 74,880 | DFlash, window | 34.9 % | 307 | | |
+| RTX 4090, Qwen3.5-9B Q4_K_M | 296,395 | DFlash, window | 33.5 % | 220.6 | 184.8 | 87.7 |
+| RTX 5090, Qwen3.6-35B-A3B UD-Q4_K_M | 296,395 | DFlash, window | 31.8 % | 412.8 | 393.5 | 218.6 |
+| RTX 5090, Qwen3.8-27B UD-Q4_K_S | 296,577 | DFlash2 | 49.2 % | 198.0 | 151.6 | 59.5 |
 
 ## Backend storage and lifecycle
 
