@@ -155,6 +155,17 @@ int check_feature_table() {
                            ninferno::generation_row(13, 0).mmq_candidate &&
                            !ninferno::mmq_candidate_measured(13, 0),
                        "ggml's matrix kernel a cost candidate only on a generation of the table's own");
+    // The capabilities the generic selector's measured rules name keep them exactly: GB10 (12.1)
+    // shares gb20x's generation row but none of its boards' rules, Volta none of Turing's, and
+    // sm_80 and sm_86 are Ampere alike.
+    failures += expect(ninferno::turing_cc(7, 5) && !ninferno::turing_cc(7, 0) &&
+                           !ninferno::turing_cc(8, 0) && ninferno::ampere_cc(8, 0) &&
+                           ninferno::ampere_cc(8, 6) && !ninferno::ampere_cc(8, 9) &&
+                           ninferno::ada_cc(8, 9) && !ninferno::ada_cc(9, 0) &&
+                           ninferno::gb20x_cc(12, 0) && !ninferno::gb20x_cc(12, 1) &&
+                           !ninferno::gb20x_cc(10, 0) && ninferno::consumer_blackwell_major(12) &&
+                           !ninferno::consumer_blackwell_major(10),
+                       "the selector's measured capabilities, exactly");
     // Measured data carries by board, not chip: the RTX 5070 Ti (70 SMs, 48 MiB L2, 896 GB/s) is
     // nearest the RTX 5080 of the measured sm_120 boards, and no board of another instruction set
     // is near at all.
