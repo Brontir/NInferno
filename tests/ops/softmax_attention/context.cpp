@@ -1020,6 +1020,17 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
     }
     int failures = verify_reduction(label.c_str(), from_device_bf16(d_out.data(), row_q * batch),
                                     expected, kFoldBf16Criterion);
+    if (failures != 0 && batch > 1) { // DIAG per batch row
+        const std::vector<double> got_all = from_device_bf16(d_out.data(), row_q * batch);
+        for (int b = 0; b < batch; ++b) {
+            const std::vector<double> g(got_all.begin() + static_cast<std::ptrdiff_t>(b * row_q),
+                                        got_all.begin() + static_cast<std::ptrdiff_t>((b + 1) * row_q));
+            const std::vector<double> e(expected.begin() + static_cast<std::ptrdiff_t>(b * row_q),
+                                        expected.begin() + static_cast<std::ptrdiff_t>((b + 1) * row_q));
+            (void)verify_reduction((label + " DIAG batch " + std::to_string(b)).c_str(), g, e,
+                                   kFoldBf16Criterion);
+        }
+    }
     failures += d_out.verify_guards((label + " output guards").c_str());
     if (workspace.used() != 0 || workspace.peak_used() > workspace_bytes) {
         std::cerr << label << ": workspace high-water exceeds the queried capacity\n";
@@ -1095,6 +1106,10 @@ int run_fold_cases() {
     failures += run_fold_case(8, {{1000, 8}}, 128, 2.0F, false);
     failures += run_fold_case(4, {{300, 4}, {300, 4}}, 64, 2.0F, false); // two equal rows
     failures += run_fold_case(4, {{300, 4}, {40, 4}}, 64, 2.0F, false);  // a far row beside a window row
+    failures += run_fold_case(4, {{40, 4}, {300, 4}}, 64, 2.0F, false);  // DIAG
+    failures += run_fold_case(1, {{300, 1}, {300, 1}}, 64, 2.0F, false); // DIAG
+    failures += run_fold_case(1, {{300, 1}, {300, 1}, {300, 1}}, 64, 2.0F, false); // DIAG
+    failures += run_fold_case(1, {{100, 1}, {100, 1}}, 64, 2.0F, false); // DIAG tiny far
     // alpha = 1 sanity.
     failures += run_fold_case(4, {{300, 4}}, 64, 1.0F, false);
     failures += run_fold_case(8, {{400, 8}, {250, 8}}, 128, 1.0F, false);
