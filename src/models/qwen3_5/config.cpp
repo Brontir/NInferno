@@ -364,11 +364,19 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
             // A drafter rotates with its own trained frequencies, never the target's YaRN. A
             // sliding layer's scores depend only on distances within its window, which YaRN's
             // longer context leaves as trained (DFlash2: every layer); a full-attention layer
-            // would read distances past any the drafter saw (DFlash: its last layer).
+            // would read distances past any the drafter saw (DFlash: its last layer), so under
+            // YaRN it reads the drafter's own sliding window instead (FOLD's "window", arXiv
+            // 2610.20392: Qwen3.5-9B's DFlash acceptance length -0.22 at 32K, +0.15 at 122K tokens
+            // against its full layer).
             if (yarn_factor != 1.0 && out.draft->full_layer_count() != 0) {
-                throw ArtifactError("--rope-yarn-factor runs no drafter with a full-attention "
-                                    "layer (DFlash): its distances outgrow its training (DFlash2, "
-                                    "MTP and plain decode run)");
+                if (!out.draft->sliding_window) {
+                    throw ArtifactError("--rope-yarn-factor runs no drafter of full-attention "
+                                        "layers only: their distances outgrow their training "
+                                        "(MTP and plain decode run)");
+                }
+                for (DraftAttentionKind& kind : out.draft->layer_types) {
+                    kind = DraftAttentionKind::SlidingAttention;
+                }
             }
         }
         return out;
