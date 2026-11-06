@@ -230,6 +230,50 @@ inline constexpr WeightSmRate kWeightSmRate[] = {
     {"volta", WeightClass::KQuant, 4, 3.15, 1}, {"volta", WeightClass::KQuant, 8, 2.45, 1},
 };
 
+// A named linear of one row on R8 (its tuned T = 1 schedule) issues more warp instructions a byte the
+// fewer bits a weight its format keeps (a codebook lookup and sign or grid unpack for 32 values of 1.5-3.4
+// bits): its read takes the longer of its time at the DRAM rate and its instructions at SMs x reference
+// clock x the generation's issue rate (kR8IssueRate; the launch apart: kKernelCost). The counts:
+// ncu smsp__inst_executed.sum of each card's fastest T = 1 schedule on a 16384 x 5120 store (route-tune
+// --a8-candidates, master 75b7209e, 2026-11-06), the mean of the generation's cards. Ada's R8 holds the
+// DRAM rate in every format once the launch is apart (RTX 4060 Ti, 4070 Ti, 4090; IQ1_S at most 1.08 x
+// its DRAM time): no row. IQ1_M (no R8 instance timed), IQ4 and the 4- to 8-bit formats (at the DRAM rate
+// on every card but the RTX 5090's IQ4_XS): none.
+struct R8DecodeIssue {
+    std::string_view generation;
+    std::string_view format;
+    double bits;              // bits a weight of the format
+    double warp_inst_per_kib; // warp instructions a KiB of weights
+};
+inline constexpr R8DecodeIssue kR8DecodeIssue[] = {
+    {"gb20x", "ggml_iq1_s", 1.5625, 755},   {"gb20x", "ggml_iq2_xxs", 2.0625, 751},
+    {"gb20x", "ggml_iq2_xs", 2.3125, 642},  {"gb20x", "ggml_iq2_s", 2.5625, 627},
+    {"gb20x", "ggml_iq3_xxs", 3.0625, 498}, {"gb20x", "ggml_iq3_s", 3.4375, 526},
+    {"gb20x", "ggml_q2_k", 2.625, 459},     {"gb20x", "ggml_q3_k", 3.4375, 577},
+    {"ga10x", "ggml_iq1_s", 1.5625, 815},   {"ga10x", "ggml_iq2_xxs", 2.0625, 657},
+    {"ga10x", "ggml_iq2_xs", 2.3125, 705},  {"ga10x", "ggml_iq2_s", 2.5625, 682},
+    {"ga10x", "ggml_iq3_xxs", 3.0625, 542}, {"ga10x", "ggml_iq3_s", 3.4375, 555},
+    {"ga10x", "ggml_q2_k", 2.625, 498},     {"ga10x", "ggml_q3_k", 3.4375, 584},
+    {"turing", "ggml_iq1_s", 1.5625, 790},  {"turing", "ggml_iq2_xxs", 2.0625, 726},
+    {"turing", "ggml_iq2_xs", 2.3125, 635}, {"turing", "ggml_iq2_s", 2.5625, 582},
+    {"turing", "ggml_iq3_xxs", 3.0625, 477}, {"turing", "ggml_iq3_s", 3.4375, 528},
+    {"turing", "ggml_q2_k", 2.625, 480},    {"turing", "ggml_q3_k", 3.4375, 434},
+};
+// Warp instructions a SM-clock (reference clock) where kR8DecodeIssue's instructions bound the read:
+// the mean over the formats and cards whose kernel time less the launch exceeds 1.08 x its DRAM time.
+// RTX 3090 2.97 and 3060 2.77 (1.5-3.4 bits; a format 2.45-3.44); RTX 5090 1.92 and 5070 Ti 2.43 (the
+// boards disagree by 27 %: an estimate only); RTX 2080 Ti 2.37 (one card).
+struct R8IssueRate {
+    std::string_view generation;
+    double warp_inst_per_sm_clock;
+    int cards; // < 2, or boards that disagree: an estimate (transferred)
+};
+inline constexpr R8IssueRate kR8IssueRate[] = {
+    {"ga10x", 2.87, 2},
+    {"gb20x", 2.17, 1},
+    {"turing", 2.37, 1},
+};
+
 // An MoE's routed banks at C concurrent rows (DECISIONS 65): the experts any of the rows routes to,
 // each for a row or two, many small reads apart from the dense GEMVs kRowsEta measures. Their share
 // of the DRAM rate (C = 1: kDramEta; linear in log2 C between points; beyond the last, the last's):
