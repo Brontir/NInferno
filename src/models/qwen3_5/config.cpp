@@ -328,11 +328,7 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
         if (yarn_factor != 1.0) {
             // YaRN over the checkpoint's own context: its rotated pairs blend the original and
             // the stretched frequency ladders, and the model admits factor times the context.
-            if (options.masked_draft()) {
-                throw ArtifactError("--rope-yarn-factor runs no DFlash drafter: they rotate with "
-                                    "their own trained frequencies (MTP and plain decode do)");
-            }
-            RopeConfig& rope    = *out.text.rope_parameters;
+            RopeConfig& rope   = *out.text.rope_parameters;
             const auto original = rope.artifact_yarn_original != 0 ? rope.artifact_yarn_original
                                                                    : out.text.max_position_embeddings;
             const YarnRope yarn = yarn_rope(rope.rope_theta, rope.rotary_dim,
@@ -365,6 +361,20 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
             options.speculative == SpeculativeBackend::DFlash2) {
             out.draft = draft(companion(directory, options.speculative_component()).config,
                               out.text, options.speculative == SpeculativeBackend::DFlash2);
+            // A drafter rotates with its own trained frequencies, never the target's YaRN. A
+            // sliding layer's scores depend only on distances within its window, which YaRN's
+            // longer context leaves as trained (DFlash2: every layer); a full-attention layer
+            // would read distances past any the drafter saw (DFlash: its last layer), so under
+            // YaRN it reads the drafter's own sliding window instead (FOLD's "window", arXiv
+            // 2610.20392: Qwen3.5-9B's DFlash acceptance length -0.22 at 32K, +0.15 at 122K tokens
+            // against its full layer).
+            if (yarn_factor != 1.0 && out.draft->full_layer_count() != 0) {
+                if (!out.draft->window_full_layers()) {
+                    throw ArtifactError("--rope-yarn-factor runs no drafter of full-attention "
+                                        "layers only: their distances outgrow their training "
+                                        "(MTP and plain decode run)");
+                }
+            }
         }
         return out;
     } catch (const std::exception& error) {
