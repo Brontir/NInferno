@@ -781,13 +781,31 @@ int run_int8_cases() {
 }
 
 // ---------------------------------------------------------------------------------------------
-// FOLD (context_fold_attention): the window branch reads the last W context rows plus the query
-// rows with ordinary scores; the far branch reads the rows before them, each stored key (rotated
-// at its own position j) turned by (shared - j) f_i on the NeoX pairs (i, i + 64), shared =
-// L - W - V, scores alpha * scale * q.k''; Z_N = sum exp(s), Z_F = (sum exp(s_F))^(1/alpha); the
-// output merges o_N and o_F by Z_N and Z_F. The oracle is double precision on the stored (BF16)
-// values; the kernel additionally rounds the turned keys to BF16, hence the looser criterion.
+// FOLD (context_fold_attention): the context cache holds UNROTATED keys; the query rows and the
+// query block's own keys arrive rotated at their positions. Window branch: context rows
+// [L-W, L), each key rotated to its position j (NeoX pairs (i, i + 64), angle j f_i), plus the V
+// query keys as given; ordinary scores. Far branch: rows [0, L-W) with keys as stored and the
+// query rotated by -shared f_i, shared = L - W - V, scores alpha * scale * q.k; Z_N = sum exp,
+// Z_F = (sum exp(s_F))^(1/alpha); the output merges o_N and o_F by Z_N and Z_F. The oracle is
+// double precision on the stored (BF16) values; the kernel rounds rotated operands to BF16, hence
+// the looser criterion.
 // ---------------------------------------------------------------------------------------------
+
+double fold_inv_frequency(int pair) { return std::pow(1.0e7, -2.0 * pair / 128.0); }
+
+// NeoX rotate-half of one D128 vector by angle position * f_i, in place (double).
+void fold_rotate(double* x, double position) {
+    const int half = kD / 2;
+    for (int i = 0; i < half; ++i) {
+        const double angle = position * fold_inv_frequency(i);
+        const double c     = std::cos(angle);
+        const double s     = std::sin(angle);
+        const double a     = x[i];
+        const double b     = x[i + half];
+        x[i]               = a * c - b * s;
+        x[i + half]        = b * c + a * s;
+    }
+}
 
 constexpr ReductionCriterion kFoldBf16Criterion{
     .relative_l2                     = 6e-3,
@@ -807,26 +825,8 @@ void fold_oracle_row(const std::vector<float>& q, const std::vector<float>& quer
                      int stride, int window, double alpha, std::vector<double>& out) {
     out.assign(static_cast<std::size_t>(kD) * kQHeads * tokens, 0.0);
     const int group        = kQHeads / kKVHeads;
-    const int half         = kD / 2;
     const int window_start = std::max(0, length - window);
     const int shared       = length - window - valid;
-    // Far keys turned from position j to the shared one, per (kv head, j).
-    std::vector<double> turned(static_cast<std::size_t>(kKVHeads) * window_start * kD);
-    for (int kv = 0; kv < kKVHeads; ++kv) {
-        for (int j = 0; j < window_start; ++j) {
-            double* dst = &turned[(static_cast<std::size_t>(kv) * window_start + j) * kD];
-            for (int i = 0; i < half; ++i) {
-                const double freq  = std::pow(1.0e7, -2.0 * i / 128.0);
-                const double angle = static_cast<double>(shared - j) * freq;
-                const double c     = std::cos(angle);
-                const double s     = std::sin(angle);
-                const double x     = context_k[context_index(i, kv, j, stride)];
-                const double y     = context_k[context_index(i + half, kv, j, stride)];
-                dst[i]             = x * c - y * s;
-                dst[i + half]      = y * c + x * s;
-            }
-        }
-    }
     for (int token = 0; token < valid; ++token) {
         for (int head = 0; head < kQHeads; ++head) {
             const int kv = head / group;
@@ -834,14 +834,16 @@ void fold_oracle_row(const std::vector<float>& q, const std::vector<float>& quer
             // Window branch: context rows [window_start, length) and the `valid` query rows.
             std::vector<double> sw;
             for (int key = window_start; key < length + valid; ++key) {
-                double dot = 0.0;
+                std::vector<double> k(static_cast<std::size_t>(kD));
                 for (int d = 0; d < kD; ++d) {
-                    const double k =
+                    k[static_cast<std::size_t>(d)] =
                         key < length
                             ? static_cast<double>(context_k[context_index(d, kv, key, stride)])
                             : static_cast<double>(query_k[query_kv_index(d, kv, key - length)]);
-                    dot += qd(d) * k;
                 }
+                if (key < length) fold_rotate(k.data(), static_cast<double>(key));
+                double dot = 0.0;
+                for (int d = 0; d < kD; ++d) dot += qd(d) * k[static_cast<std::size_t>(d)];
                 sw.push_back(dot * static_cast<double>(kScale));
             }
             double mw = -std::numeric_limits<double>::infinity();
@@ -868,13 +870,17 @@ void fold_oracle_row(const std::vector<float>& q, const std::vector<float>& quer
                 }
             } else {
                 // Far branch.
+                std::vector<double> qf(static_cast<std::size_t>(kD));
+                for (int d = 0; d < kD; ++d) qf[static_cast<std::size_t>(d)] = qd(d);
+                fold_rotate(qf.data(), -static_cast<double>(shared));
                 std::vector<double> sf(static_cast<std::size_t>(window_start));
                 double mf = -std::numeric_limits<double>::infinity();
                 for (int j = 0; j < window_start; ++j) {
-                    const double* k =
-                        &turned[(static_cast<std::size_t>(kv) * window_start + j) * kD];
                     double dot = 0.0;
-                    for (int d = 0; d < kD; ++d) dot += qd(d) * k[d];
+                    for (int d = 0; d < kD; ++d) {
+                        dot += qf[static_cast<std::size_t>(d)] *
+                               static_cast<double>(context_k[context_index(d, kv, j, stride)]);
+                    }
                     sf[static_cast<std::size_t>(j)] = alpha * dot * static_cast<double>(kScale);
                     mf = std::max(mf, sf[static_cast<std::size_t>(j)]);
                 }
@@ -1021,15 +1027,48 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
     }
 
     if (compare_plain) {
-        // L <= W for every row: FOLD is context_softmax_attention.
+        // L <= W for every row: FOLD is context_softmax_attention on a context whose keys are
+        // pre-rotated at their positions (FOLD itself reads the unrotated copy above).
+        std::vector<float> rotated_ctx_k = ctx_k;
+        for (int b = 0; b < batch; ++b) {
+            for (int kv = 0; kv < kKVHeads; ++kv) {
+                for (int j = 0; j < logical_pages * kPage; ++j) {
+                    std::vector<double> key(static_cast<std::size_t>(kD));
+                    for (int d = 0; d < kD; ++d) {
+                        key[static_cast<std::size_t>(d)] =
+                            ctx_k[b * row_ctx + context_index(d, kv, j, logical_stride)];
+                    }
+                    fold_rotate(key.data(), static_cast<double>(j));
+                    for (int d = 0; d < kD; ++d) {
+                        rotated_ctx_k[b * row_ctx + context_index(d, kv, j, logical_stride)] =
+                            static_cast<float>(key[static_cast<std::size_t>(d)]);
+                    }
+                }
+            }
+        }
+        round_to_bf16(rotated_ctx_k);
+        std::vector<float> rotated_physical_k = physical_k;
+        for (int b = 0; b < batch; ++b) {
+            std::vector<std::int32_t> mapping(static_cast<std::size_t>(logical_pages));
+            for (int p = 0; p < logical_pages; ++p) {
+                mapping[static_cast<std::size_t>(p)] = p * batch + b + 1;
+            }
+            const auto k0 = rotated_ctx_k.begin() + static_cast<std::ptrdiff_t>(b * row_ctx);
+            const std::vector<float> row_k(k0, k0 + static_cast<std::ptrdiff_t>(row_ctx));
+            scatter_context_mapping(rotated_physical_k, row_k, logical_stride,
+                                    logical_pages * kPage, mapping, physical_pages);
+        }
+        DeviceBuffer d_rotated_k = to_device(bf16_bits(rotated_physical_k));
+        PagedKVBatchLayerView plain_context = make_context_view(
+            d_rotated_k, d_context_v, d_tables, logical_pages, physical_pages, batch);
         GuardedDeviceBuffer d_plain(row_q * batch * sizeof(std::uint16_t));
         d_plain.fill(0x7f);
         Tensor plain_tensor(d_plain.data(), DType::BF16, {kD, kQHeads, tokens, batch});
         DeviceArena plain_workspace(ops::context_softmax_attention_workspace_capacity_bytes(
             kGeometry, envelope, tokens, tokens, batch));
         ops::context_softmax_attention(q_tensor, query_k_tensor, query_v_tensor, length_tensor,
-                                       valid_tensor, table_row_tensor, kGeometry, kScale, context,
-                                       envelope, plain_workspace, plain_tensor, nullptr);
+                                       valid_tensor, table_row_tensor, kGeometry, kScale,
+                                       plain_context, envelope, plain_workspace, plain_tensor, nullptr);
         cuda_synchronize();
         failures += verify_reduction((label + " vs context_softmax_attention").c_str(),
                                      from_device_bf16(d_out.data(), row_q * batch),
