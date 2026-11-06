@@ -5,14 +5,17 @@
 #include "core/device_class.h"
 #include "core/tensor.h"
 #include "ninferno/ops/prefill_routes.h"
+#include "ops/common/native_nvfp4.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
+#include "ops/generic/route_table.h"
 #include <algorithm>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
