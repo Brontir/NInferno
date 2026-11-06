@@ -1093,6 +1093,8 @@ int run_fold_cases() {
     failures += run_fold_case(8, {{333, 8}, {129, 3}}, 64, 2.0F, false); // inert columns, mixed L
     failures += run_fold_case(4, {{500, 4}, {70, 4}}, 64, 2.0F, false);  // one row far, one barely
     failures += run_fold_case(8, {{1000, 8}}, 128, 2.0F, false);
+    failures += run_fold_case(4, {{300, 4}, {300, 4}}, 64, 2.0F, false); // two equal rows
+    failures += run_fold_case(4, {{300, 4}, {40, 4}}, 64, 2.0F, false);  // a far row beside a window row
     // alpha = 1 sanity.
     failures += run_fold_case(4, {{300, 4}}, 64, 1.0F, false);
     failures += run_fold_case(8, {{400, 8}, {250, 8}}, 128, 1.0F, false);
