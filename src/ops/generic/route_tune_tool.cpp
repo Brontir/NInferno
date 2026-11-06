@@ -6,7 +6,7 @@
 //   ninferno-serve route-tune --shapes FILE [--out routes/<key>.json] [--key chip|variant|arch]
 //                     [--samples 15] [--prefill-chunk 1024] [--prefill-only 1]
 //                     [--points T,T,...] [--rotate 0|1] [--routes-out FILE.csv]
-//                     [--selected-out FILE.csv]
+//                     [--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1]
 //
 // FILE holds one problem per line, "<format> <compute> <epilogue> <n> <k>", for example
 // "nvfp4 a4 store 3584 1024" (format bf16|fp8|nvfp4|q4|q5|q6|q8, compute a16|a8|a4, epilogue
@@ -33,6 +33,13 @@
 // local memory (spills or stack arrays) beside the timing.
 // --selected-out writes, per problem and band point, the route the production path runs there
 // (select_route resolved for the call), which is timed too: tools/bench/regret_collect.py.
+// --select-reps N adds select_ns, the host time of one select_route of that call (the mean of N,
+// after a first one that fills the selection's caches): an eager call selects its route on the
+// host, so the selection is a share of a host-bound decode step.
+// --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
+// the W4A8 tiles, R8 and ggml's matrix kernel are timed and priced at every width beside the A16
+// routes (--routes-out, --selected-out, whose rows then say a8: the AllowA8 case they time), but
+// the W4A8 tiles and R8 never make the table, its bands or its prefill route.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
 // and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
 // flush there too, as at the wider widths.
@@ -43,6 +50,8 @@
 #include "core/weight_view.h"
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/generic_ggml_internal.h"
+#include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/random_weight.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/route_tune_tool.h"
@@ -51,6 +60,7 @@
 #include <cuda_runtime.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -111,7 +121,8 @@ int route_tune_main(int argc, char** argv) {
             std::cerr << "usage: ninferno-serve route-tune --shapes FILE [--out FILE] "
                          "[--key chip|variant|arch] [--samples N] [--prefill-chunk C] "
                          "[--prefill-only 1] [--points T,...] [--routes-out FILE.csv] "
-                         "[--selected-out FILE.csv] [--rotate 0|1]\n";
+                         "[--selected-out FILE.csv] [--select-reps N] [--a8-candidates 1] "
+                         "[--rotate 0|1]\n";
             return 2;
         }
         const int samples       = opt.count("--samples") ? std::stoi(opt["--samples"]) : 15;
@@ -151,8 +162,10 @@ int route_tune_main(int argc, char** argv) {
         if (opt.count("--selected-out")) {
             selected_csv.open(opt["--selected-out"]);
             if (!selected_csv) throw std::runtime_error("cannot open " + opt["--selected-out"]);
-            selected_csv << "format,compute,epilogue,n,k,T,asked,selected\n";
+            selected_csv << "format,compute,epilogue,n,k,T,asked,selected,select_ns\n";
         }
+        const int select_reps = opt.count("--select-reps") ? std::stoi(opt["--select-reps"]) : 0;
+        const bool a8_candidates = opt.count("--a8-candidates") && opt["--a8-candidates"] == "1";
 
         std::vector<Problem> problems;
         {
@@ -227,8 +240,21 @@ int route_tune_main(int argc, char** argv) {
                     spare.push_back(random_weight(p.qtype, rows, p.k, 7U + p.n + p.k + 977U * c));
                 }
             }
+            // --a8-candidates 1: a GGUF block format keyed a16 is admitted and selected under the
+            // default policy (AllowA8), so the W4A8 tiles and ggml's matrix kernel run beside the
+            // A16 routes at every width, with their prices; the table still takes A16 winners.
+            const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
+                                  generic::ggml_mmq_format(p.qtype);
+            // An a8 sweep's rows (--routes-out, --selected-out) are the AllowA8 case they time:
+            // the collector (tools/bench/regret_collect.py) then judges its int8 picks eligible.
+            const char* row_compute = a8_sweep ? "a8" : generic::compute_class_name(p.compute);
+            // The A8 candidates of an a8 sweep are timed and priced, never tabled.
+            const auto tabled = [&](generic::Route r) {
+                return !(a8_sweep && (r.family == generic::Family::W4a8Mma ||
+                                      r.family == generic::Family::R8Mma));
+            };
             const auto policy = p.compute == generic::ComputeClass::A4 ? ops::LinearPolicy::AllowA4
-                                : p.compute == generic::ComputeClass::A8
+                                : p.compute == generic::ComputeClass::A8 || a8_sweep
                                     ? ops::LinearPolicy::AllowA8
                                     : ops::LinearPolicy::A16Only;
             DeviceBuffer x(static_cast<std::size_t>(p.k) * t_max * 2);
@@ -251,7 +277,9 @@ int route_tune_main(int argc, char** argv) {
                  generic::route_workspace_bytes({generic::Family::W4a8Mma, 0}, p.k, t_max),
                  generic::route_workspace_bytes({generic::Family::R8Mma, 0}, p.k,
                                                 generic::kR8MaxTokens),
-                 generic::ggml_mmq_workspace_bytes(p.k, rows, 16) + 256,
+                 generic::ggml_mmq_workspace_bytes(
+                     p.k, rows, a8_sweep ? std::min(t_max, generic::kMmqPrefillSlice) : 16) +
+                     256,
                  std::size_t{256}}));
 
             std::vector<generic::Route> routes;
@@ -320,8 +348,7 @@ int route_tune_main(int argc, char** argv) {
                     }) /
                     static_cast<double>(over_copies ? 1 + spare.size() : 1);
                 if (routes_csv) {
-                    routes_csv << generic::qtype_name(p.qtype) << ','
-                               << generic::compute_class_name(p.compute) << ','
+                    routes_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
                                << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                << ',' << t << ',' << generic::route_name(r) << ',' << us << ',';
                     // The cost model's time for the route (at every T, though the selector ranks
@@ -394,6 +421,7 @@ int route_tune_main(int argc, char** argv) {
                     // R8 serves decode and verify widths only.
                     if (r.family == generic::Family::R8Mma && t > generic::kR8MaxTokens) continue;
                     const double us = time_route(r, t);
+                    if (!tabled(r)) continue;
                     if (us < best) {
                         best       = us;
                         best_route = r;
@@ -406,12 +434,29 @@ int route_tune_main(int argc, char** argv) {
                         best       = us;
                         best_route = r;
                     }
+                } else if (a8_sweep && t >= 17 && p.n % ops::ggml_mmq::kRowMultiple == 0 &&
+                           generic::ggml_mmq_admits(w.weight, ops::LinearPolicy::AllowA8)) {
+                    time_route({generic::Family::GgmlMmq, 0}, t);
                 }
                 winners.push_back({t, best_route});
                 if (selected_csv) {
                     const generic::Problem gp{p.qtype, policy, p.n, p.k, p.epilogue};
                     const generic::Route asked =
                         generic::select_route(gp, w.weight, t, ops::prefill_routes_active());
+                    double select_ns = 0;
+                    if (select_reps > 0) {
+                        int sink      = 0;
+                        const auto t0 = std::chrono::steady_clock::now();
+                        for (int i = 0; i < select_reps; ++i) {
+                            sink += generic::select_route(gp, w.weight, t,
+                                                          ops::prefill_routes_active())
+                                        .schedule;
+                        }
+                        const auto t1 = std::chrono::steady_clock::now();
+                        select_ns     = std::chrono::duration<double, std::nano>(t1 - t0).count() /
+                                    select_reps;
+                        if (sink == -1) std::fputc(' ', stderr); // keeps the loop
+                    }
                     const generic::CallLayout layout{.x_aligned16    = true,
                                                      .ldx            = p.k,
                                                      .tokens         = t,
@@ -422,11 +467,10 @@ int route_tune_main(int argc, char** argv) {
                     const generic::Route ran =
                         generic::resolve_route(asked, w.weight, layout).executed;
                     time_route(ran, t);
-                    selected_csv << generic::qtype_name(p.qtype) << ','
-                                 << generic::compute_class_name(p.compute) << ','
+                    selected_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ','
                                  << p.k << ',' << t << ',' << generic::route_name(asked) << ','
-                                 << generic::route_name(ran) << '\n';
+                                 << generic::route_name(ran) << ',' << select_ns << '\n';
                 }
                 std::printf("%s %s %s n=%d k=%d T=%d best=%s %.2f us\n",
                             generic::qtype_name(p.qtype), generic::compute_class_name(p.compute),
@@ -447,7 +491,7 @@ int route_tune_main(int argc, char** argv) {
             const ops::ScopedPrefillRoutes prefill_profile(true);
             double best_total = 1e30;
             for (const auto r : routes) {
-                if (!generic::route_is_token_invariant(r)) continue;
+                if (!generic::route_is_token_invariant(r) || !tabled(r)) continue;
                 double total = 0;
                 for (const auto t : prefill_points) total += time_route(r, t);
                 std::printf("  prefill candidate %s %.2f us\n", generic::route_name(r).c_str(), total);
@@ -472,7 +516,10 @@ int route_tune_main(int argc, char** argv) {
                     double best         = base;
                     generic::Route pick = *entry.prefill;
                     for (const auto r : routes) {
-                        if (r == *entry.prefill || !generic::same_summation(r, *entry.prefill)) continue;
+                        if (r == *entry.prefill || !tabled(r) ||
+                            !generic::same_summation(r, *entry.prefill)) {
+                            continue;
+                        }
                         const double us = time_route(r, t);
                         if (us < best && us < base * 0.98) {
                             best = us;
