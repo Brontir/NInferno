@@ -73,6 +73,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -311,6 +312,11 @@ int route_tune_main(int argc, char** argv) {
             const bool mmq = p.compute == generic::ComputeClass::A16 &&
                              generic::ggml_mmq_format(p.qtype);
 
+            // The (route, T) pairs --routes-out holds: a route re-timed at a width under the
+            // prefill profile (the prefill bands from 32 tokens) keeps the speed profile's row, as
+            // the selection at that width runs it, so a pass times each pair once
+            // (tools/bench/regret_collect.py refuses a pair twice).
+            std::set<std::pair<int, std::int32_t>> written;
             const auto measure = [&](generic::Route r, std::int32_t t) {
                 Tensor tx(x.p, DType::BF16, {p.k, t});
                 Tensor ty(y.p, DType::BF16, {p.n, t});
@@ -347,7 +353,8 @@ int route_tune_main(int argc, char** argv) {
                         }
                     }) /
                     static_cast<double>(over_copies ? 1 + spare.size() : 1);
-                if (routes_csv) {
+                if (routes_csv &&
+                    written.insert({static_cast<int>(r.family) * 256 + r.schedule, t}).second) {
                     routes_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
                                << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                << ',' << t << ',' << generic::route_name(r) << ',' << us << ',';
