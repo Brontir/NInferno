@@ -137,11 +137,21 @@ void context_fold_launch(const Tensor& q, const Tensor& query_k, const Tensor& q
                          const Tensor& context_lengths, const Tensor& valid_columns,
                          const Tensor& table_rows, float scale, ContextFold fold,
                          const PagedKVBatchLayerView& context, const ContextFoldPlan& plan,
-                         FoldPartials& window, FoldPartials& far, Tensor& out, cudaStream_t stream) {
+                         FoldPartials& window, FoldPartials& far, Tensor& q_far, Tensor& out,
+                         cudaStream_t stream) {
     fold_branch_launch<false>(q, query_k, query_v, context_lengths, valid_columns, table_rows, scale,
                               fold.window, context, plan.window, window.acc, window.m, window.l,
                               stream);
-    fold_branch_launch<true>(q, query_k, query_v, context_lengths, valid_columns, table_rows,
+    fold_tokens(q.ne[2], [&]<int Tokens, int>() {
+        using Geo = ContextQueryD128;
+        context_fold_query_kernel<Geo, Tokens><<<dim3(Tokens, q.ne[3]), 256, 0, stream>>>(
+            static_cast<const __nv_bfloat16*>(q.data),
+            static_cast<const std::int32_t*>(context_lengths.data),
+            static_cast<const std::int32_t*>(valid_columns.data), fold.window,
+            static_cast<__nv_bfloat16*>(q_far.data));
+        CUDA_CHECK(cudaGetLastError());
+    });
+    fold_branch_launch<true>(q_far, query_k, query_v, context_lengths, valid_columns, table_rows,
                              scale * fold.alpha, fold.window, context, plan.far, far.acc, far.m,
                              far.l, stream);
     fold_tokens(q.ne[2], [&]<int Tokens, int>() {

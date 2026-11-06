@@ -288,9 +288,12 @@ void append_context_impl(Context& state, const Tensor& features, const Tensor& p
                                                    layer_columns});
                 ops::rmsnorm(key_raw, weight.key_norm, config.rms_norm_eps, false, key,
                              state.execution.device.stream);
-                ops::rope(layer_positions.view({layer_columns}),
-                          dimension(config.attention.head_dim), config.rope_theta, key,
-                          state.execution.device.execution_view());
+                // Under FOLD a full layer caches its keys unrotated (context_fold_attention).
+                if (local_layer || config.fold_window == 0) {
+                    ops::rope(layer_positions.view({layer_columns}),
+                              dimension(config.attention.head_dim), config.rope_theta, key,
+                              state.execution.device.execution_view());
+                }
                 Tensor key_batch =
                     key.view({dimension(config.attention.head_dim),
                               dimension(config.attention.num_key_value_heads), layer_width, batch});

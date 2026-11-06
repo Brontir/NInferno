@@ -60,6 +60,7 @@ void context_fold_launch(const Tensor& q, const Tensor& query_k, const Tensor& q
                          const Tensor& context_lengths, const Tensor& valid_columns,
                          const Tensor& table_rows, float scale, ContextFold fold,
                          const PagedKVBatchLayerView& context, const ContextFoldPlan& plan,
-                         FoldPartials& window, FoldPartials& far, Tensor& out, cudaStream_t stream);
+                         FoldPartials& window, FoldPartials& far, Tensor& q_far, Tensor& out,
+                         cudaStream_t stream);
 
 } // namespace ninferno::ops::detail

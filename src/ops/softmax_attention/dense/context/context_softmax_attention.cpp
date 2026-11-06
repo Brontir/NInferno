@@ -210,6 +210,7 @@ std::size_t context_fold_attention_workspace_capacity_bytes(
         WorkspaceLayoutBuilder layout;
         (void)allocate_workspace(layout, geometry, tokens, plan.window.split_capacity, batch_size);
         (void)allocate_workspace(layout, geometry, tokens, plan.far.split_capacity, batch_size);
+        (void)layout.alloc(DType::BF16, {geometry.head_dim, geometry.query_heads, tokens, batch_size});
         return layout.peak_bytes(1);
     };
     std::size_t maximum = 0;
@@ -237,9 +238,10 @@ void context_fold_attention(const Tensor& q, const Tensor& query_k, const Tensor
         allocate_workspace(workspace, geometry, tokens, plan.window.split_capacity, batch);
     const PartialWorkspace f =
         allocate_workspace(workspace, geometry, tokens, plan.far.split_capacity, batch);
+    Tensor q_far = workspace.alloc(DType::BF16, {geometry.head_dim, geometry.query_heads, tokens, batch});
     detail::FoldPartials window{w.acc, w.m, w.l}, far{f.acc, f.m, f.l};
     detail::context_fold_launch(q, query_k, query_v, context_lengths, valid_columns, table_rows,
-                                scale, fold, context, plan, window, far, out, stream);
+                                scale, fold, context, plan, window, far, q_far, out, stream);
 }
 
 } // namespace ninferno::ops

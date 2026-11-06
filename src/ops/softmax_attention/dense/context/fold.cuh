@@ -6,66 +6,96 @@
 // memory: the entries before them, each key turned from its own position j to the shared one
 // t - W - B (t the block's first position, B its width), so a block row r reads every far entry at
 // distance W + B + r; their scores sharpened by alpha, their mass the l_alpha norm of the
-// exponentiated scores. The keys stay as the cache stores them (rotated at their own positions):
-// the turn happens on the staged tile.
+// exponentiated scores. Under FOLD the full layer's cache stores its keys unrotated (draft.cpp):
+// the far memory reads them as they are with each query turned once from its position p to
+// p - shared (= W + B + r); the window turns its staged keys to their own positions.
 
 #include "ops/common/dflash_rope.cuh"
 #include "ops/softmax_attention/dense/context/kernel.cuh"
 
 namespace ninferno::ops {
 
-// The window: the last `window` context entries and the query block.
+// Turns rows [0, rows) of a staged D128 tile by (base + row) f_i on pair (i, i + 64): the base angle
+// in FP64 (dflash_rope.cuh, a large position), the row's in FP32 (row < 64), combined by the angle
+// sum.
+template <int Threads>
+__device__ __forceinline__ void fold_rotate_tile(__nv_bfloat16* tile, int rows, double base, int tid) {
+    constexpr int D    = 128;
+    constexpr int Half = D / 2;
+    for (int item = tid; item < rows * Half; item += Threads) {
+        const int row  = item / Half;
+        const int pair = item - row * Half;
+        float s0, c0;
+        rope_angle_sincos(base * kDflashRopeInvFrequency[pair], &s0, &c0);
+        float s1, c1;
+        sincosf(static_cast<float>(row * kDflashRopeInvFrequency[pair]), &s1, &c1);
+        const float c    = c0 * c1 - s0 * s1; // cos(a + b)
+        const float s    = s0 * c1 + c0 * s1; // sin(a + b)
+        __nv_bfloat16& x = tile[row * D + context_query_swz(row, pair)];
+        __nv_bfloat16& y = tile[row * D + context_query_swz(row, pair + Half)];
+        const float xf   = __bfloat162float(x);
+        const float yf   = __bfloat162float(y);
+        x                = __float2bfloat16(xf * c - yf * s);
+        y                = __float2bfloat16(yf * c + xf * s);
+    }
+}
+
+// The window: the last `window` context entries, each unrotated key turned to its own position,
+// and the query block (rotated as computed).
 template <class Geometry>
 struct FoldWindowPolicy : ContextAttentionPolicy<Geometry> {
-    int window = 0;
+    using Geo                           = Geometry;
+    static constexpr bool kRerotateKeys = true;
+    int window                          = 0;
 
     __device__ __forceinline__ int context_count(int value) const { return min(value, window); }
-};
 
-// The far memory: the context entries before the window, their keys turned to the shared
-// position; no query keys.
-template <class Geometry>
-struct FoldFarPolicy : ContextAttentionPolicy<Geometry> {
-    using Geo                           = Geometry;
-    static constexpr bool kQueryKeys    = false;
-    static constexpr bool kRerotateKeys = true;
-
-    int far_end = 0; // the first window entry: entries [0, far_end) are far
-    int shared  = 0; // the shared position t - W - B
-
-    __device__ __forceinline__ bool allow_context(int, int key) const { return key < far_end; }
-
-    // Turns each live far key of the staged tile (rows key0 ..) by shared - j: a key rotated at j
-    // becomes one rotated at the shared position. The angle of row `row` and pair i is
-    // (shared - key0) f_i - row f_i: the first in FP64 (dflash_rope.cuh, a large position), the
-    // second in FP32 (row < 64), combined by the angle difference. True where it turned a row.
     template <int KeyBlock, int Threads>
     __device__ __forceinline__ bool rerotate(__nv_bfloat16* k_s, int key0, int valid_keys,
                                              int tid) const {
         static_assert(Geo::D == 128, "FOLD turns D128 keys (the DFlash RoPE table)");
-        if (key0 >= far_end) { return false; }
-        constexpr int Half = Geo::D / 2;
-        const int rows     = min(valid_keys, far_end - key0);
-        const double base  = static_cast<double>(shared - key0);
-        for (int item = tid; item < rows * Half; item += Threads) {
-            const int row  = item / Half;
-            const int pair = item - row * Half;
-            float s0, c0;
-            rope_angle_sincos(base * kDflashRopeInvFrequency[pair], &s0, &c0);
-            float s1, c1;
-            sincosf(static_cast<float>(row * kDflashRopeInvFrequency[pair]), &s1, &c1);
-            const float c = c0 * c1 + s0 * s1; // cos(a - b)
-            const float s = s0 * c1 - c0 * s1; // sin(a - b)
-            __nv_bfloat16& x = k_s[row * Geo::D + context_query_swz(row, pair)];
-            __nv_bfloat16& y = k_s[row * Geo::D + context_query_swz(row, pair + Half)];
-            const float xf   = __bfloat162float(x);
-            const float yf   = __bfloat162float(y);
-            x                = __float2bfloat16(xf * c - yf * s);
-            y                = __float2bfloat16(yf * c + xf * s);
-        }
+        fold_rotate_tile<Threads>(k_s, valid_keys, static_cast<double>(key0), tid);
         return true;
     }
 };
+
+// The far memory: the context entries before the window, unrotated, against the turned queries;
+// no query keys.
+template <class Geometry>
+struct FoldFarPolicy : ContextAttentionPolicy<Geometry> {
+    using Geo                        = Geometry;
+    static constexpr bool kQueryKeys = false;
+    int far_end                      = 0; // the first window entry: entries [0, far_end) are far
+
+    __device__ __forceinline__ bool allow_context(int, int key) const { return key < far_end; }
+};
+
+// The far memory's queries: each query row (rotated at its position p) turned by -shared, so it
+// reads an unrotated key at distance p - shared. One CTA a (token, batch), a thread a (head, pair).
+template <class Geo, int Tokens>
+__global__ void context_fold_query_kernel(const __nv_bfloat16* __restrict__ q,
+                                          const std::int32_t* __restrict__ context_length,
+                                          const std::int32_t* __restrict__ valid_columns,
+                                          int window, __nv_bfloat16* __restrict__ q_far) {
+    constexpr int Half = Geo::D / 2;
+    const int token    = static_cast<int>(blockIdx.x);
+    const int batch    = static_cast<int>(blockIdx.y);
+    const std::int64_t base_index =
+        (static_cast<std::int64_t>(batch) * Tokens + token) * Geo::Hq * Geo::D;
+    const double shared =
+        static_cast<double>(context_length[batch] - window - valid_columns[batch]);
+    for (int item = static_cast<int>(threadIdx.x); item < Geo::Hq * Half; item += blockDim.x) {
+        const int head = item / Half;
+        const int pair = item - head * Half;
+        float s, c;
+        rope_angle_sincos(-shared * kDflashRopeInvFrequency[pair], &s, &c);
+        const std::int64_t at = base_index + static_cast<std::int64_t>(head) * Geo::D + pair;
+        const float x         = __bfloat162float(q[at]);
+        const float y         = __bfloat162float(q[at + Half]);
+        q_far[at]             = __float2bfloat16(x * c - y * s);
+        q_far[at + Half]      = __float2bfloat16(y * c + x * s);
+    }
+}
 
 template <class Geo, int Tokens, int WarpsPerCta, int KeyBlock, bool Far, typename KT = __nv_bfloat16,
           typename VT = __half>
@@ -92,7 +122,6 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_fold_partial_kern
         FoldFarPolicy<Geo> policy{};
         base(policy);
         policy.far_end = max(length - window, 0);
-        policy.shared  = length - window - valid_columns[batch];
         context_query_split_partial_body<FoldFarPolicy<Geo>, Tokens, WarpsPerCta, KeyBlock, false>(
             q, query_k, query_v, valid_columns, context_k, context_v, policy, length, max_context,
             split_capacity, scale, partial_acc, partial_m, partial_l,
