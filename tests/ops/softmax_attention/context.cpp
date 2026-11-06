@@ -1020,6 +1020,33 @@ int run_fold_case(int tokens, const std::vector<FoldRow>& rows, int window, floa
     }
     int failures = verify_reduction(label.c_str(), from_device_bf16(d_out.data(), row_q * batch),
                                     expected, kFoldBf16Criterion);
+    if (failures != 0 && batch > 1) { // DIAG q_far (the workspace's last allocation)
+        const std::size_t q_far_count = row_q * static_cast<std::size_t>(batch);
+        const std::size_t q_far_bytes = q_far_count * sizeof(std::uint16_t);
+        const char* arena_end = static_cast<const char*>(workspace.base()) + workspace.peak_used();
+        const std::vector<std::uint16_t> raw =
+            from_device<std::uint16_t>(static_cast<const void*>(arena_end - q_far_bytes), q_far_count);
+        for (int b = 0; b < batch; ++b) {
+            double worst = 0.0;
+            const int shared = rows[static_cast<std::size_t>(b)].length - window -
+                               rows[static_cast<std::size_t>(b)].valid;
+            for (int token = 0; token < tokens; ++token) {
+                for (int head = 0; head < kQHeads; ++head) {
+                    std::vector<double> v(static_cast<std::size_t>(kD));
+                    for (int d = 0; d < kD; ++d) {
+                        v[static_cast<std::size_t>(d)] = q[b * row_q + q_index(d, head, token)];
+                    }
+                    fold_rotate(v.data(), -static_cast<double>(shared));
+                    for (int d = 0; d < kD; ++d) {
+                        const double got = bf16_to_f32(raw[b * row_q + q_index(d, head, token)]);
+                        worst = std::max(worst, std::fabs(got - v[static_cast<std::size_t>(d)]));
+                    }
+                }
+            }
+            std::cerr << label << " DIAG q_far batch " << b << " max|err|=" << worst << '
+';
+        }
+    }
     if (failures != 0 && batch > 1) { // DIAG per batch row
         const std::vector<double> got_all = from_device_bf16(d_out.data(), row_q * batch);
         for (int b = 0; b < batch; ++b) {
