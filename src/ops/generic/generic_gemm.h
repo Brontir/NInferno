@@ -459,10 +459,22 @@ void refuse_frag(const Weight& weight, const char* op);
 // sums in the order of the WarpsK == 1 register-MMA schedules: the two give the same bytes.
 [[nodiscard]] bool route_is_token_invariant(Route route);
 
-// Whether two routes sum every output element in the same order, so give the same bytes: a route
-// and itself, and any two of the WarpsK == 1 register-MMA and staged schedules. A table may pick
-// among such routes by T under the prefill profile ("prefill_bands") without a token's bytes
-// depending on its call's width.
+// The order in which a route sums every output element. Routes of one order give the same bytes:
+// the register order holds the WarpsK == 1 register-MMA schedules (but a lane-local one) and the
+// staged schedules; the I8 tiles share theirs (K groups ascending, never split); every other route
+// has an order of its own. Without tensor mma.sync (Volta) outside the invariant profile, a
+// one-tile register-MMA schedule sums lane by lane (rmma_sums_lane_local): an order of its own.
+struct SummationOrder {
+    enum class Kind : std::uint8_t { Register, I8, Own };
+    Kind kind = Kind::Own;
+    Route own{}; // Kind::Own: the route itself
+    friend bool operator==(const SummationOrder&, const SummationOrder&) = default;
+};
+[[nodiscard]] SummationOrder summation_order(Route route);
+
+// Whether two routes sum every output element in the same order (summation_order), so give the
+// same bytes. A table may pick among such routes by T under the prefill profile ("prefill_bands")
+// without a token's bytes depending on its call's width.
 [[nodiscard]] bool same_summation(Route a, Route b);
 
 struct Problem {
