@@ -1137,9 +1137,16 @@ std::map<std::string, std::optional<std::uint32_t>>& tail_calls_counted() {
 // A GGUF's frontend rebuilt from its metadata, counted once per frontend: a plan reads the facts
 // of every listed quantization, whose tokenizer and template are one. The key is the rebuilt files
 // themselves (rebuilding them costs little beside the count: a frontend and two template renders).
-// Metadata the rebuild cannot read prices no tail call, as an unreadable frontend does.
+// Metadata the rebuild cannot read prices no tail call, as an unreadable frontend does; so does a
+// GGUF that cannot rebuild its tokenizer or template (no tokenizer.chat_template, a tokenizer the
+// rebuild does not know), whose conversion takes the base model's files (convert/acquire.cpp
+// base_tokenizer), not read here: 0, as before the GGUF counted any.
 std::optional<std::uint32_t> prompt_tail_calls_of_gguf(const convert::GgufFile& head) {
-    if (!prompt_tail_calls_files_source() || head.find("tokenizer.ggml.tokens") == nullptr) { return std::nullopt; }
+    {
+        std::lock_guard lock(tail_calls_mutex());
+        if (!prompt_tail_calls_files_source()) { return std::nullopt; }
+    }
+    if (head.find("tokenizer.ggml.tokens") == nullptr) { return std::nullopt; }
     PromptFrontendFiles files;
     try {
         const convert::RebuiltResources rebuilt = convert::gguf_frontend_resources(head);
@@ -1150,6 +1157,7 @@ std::optional<std::uint32_t> prompt_tail_calls_of_gguf(const convert::GgufFile& 
         files = {file("tokenizer.json"), file("tokenizer_config.json"), file("chat_template.jinja"),
                  file("generation_config.json")};
     } catch (const std::exception&) { return std::nullopt; }
+    if (files.tokenizer_json.empty() || files.chat_template_jinja.empty()) { return std::nullopt; }
     std::string key = files.tokenizer_json;
     for (const std::string* part : {&files.tokenizer_config_json, &files.chat_template_jinja, &files.generation_config_json}) {
         key += '\n';
