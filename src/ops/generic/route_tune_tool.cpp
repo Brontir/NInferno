@@ -38,7 +38,8 @@
 // host, so the selection is a share of a host-bound decode step.
 // --a8-candidates 1 admits and selects a GGUF block format under the default policy (AllowA8):
 // the W4A8 tiles, R8 and ggml's matrix kernel are timed and priced at every width beside the A16
-// routes (--routes-out, --selected-out), which alone still make the table.
+// routes (--routes-out, --selected-out, whose rows then say a8: the AllowA8 case they time), but
+// the W4A8 tiles and R8 never make the table, its bands or its prefill route.
 // A decode or verify sample (T <= 16) is one call on each of a set of weight copies spanning 2x L2
 // and 128 MiB, as decode runs its layers back to back; --rotate 0 times one call after the L2
 // flush there too, as at the wider widths.
@@ -50,6 +51,7 @@
 #include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_ggml_internal.h"
+#include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/random_weight.h"
 #include "ops/generic/route_table.h"
 #include "ops/generic/route_tune_tool.h"
@@ -243,6 +245,14 @@ int route_tune_main(int argc, char** argv) {
             // A16 routes at every width, with their prices; the table still takes A16 winners.
             const bool a8_sweep = a8_candidates && p.compute == generic::ComputeClass::A16 &&
                                   generic::ggml_mmq_format(p.qtype);
+            // An a8 sweep's rows (--routes-out, --selected-out) are the AllowA8 case they time:
+            // the collector (tools/bench/regret_collect.py) then judges its int8 picks eligible.
+            const char* row_compute = a8_sweep ? "a8" : generic::compute_class_name(p.compute);
+            // The A8 candidates of an a8 sweep are timed and priced, never tabled.
+            const auto tabled = [&](generic::Route r) {
+                return !(a8_sweep && (r.family == generic::Family::W4a8Mma ||
+                                      r.family == generic::Family::R8Mma));
+            };
             const auto policy = p.compute == generic::ComputeClass::A4 ? ops::LinearPolicy::AllowA4
                                 : p.compute == generic::ComputeClass::A8 || a8_sweep
                                     ? ops::LinearPolicy::AllowA8
@@ -338,8 +348,7 @@ int route_tune_main(int argc, char** argv) {
                     }) /
                     static_cast<double>(over_copies ? 1 + spare.size() : 1);
                 if (routes_csv) {
-                    routes_csv << generic::qtype_name(p.qtype) << ','
-                               << generic::compute_class_name(p.compute) << ','
+                    routes_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
                                << generic::epilogue_name(p.epilogue) << ',' << p.n << ',' << p.k
                                << ',' << t << ',' << generic::route_name(r) << ',' << us << ',';
                     // The cost model's time for the route (at every T, though the selector ranks
@@ -412,11 +421,7 @@ int route_tune_main(int argc, char** argv) {
                     // R8 serves decode and verify widths only.
                     if (r.family == generic::Family::R8Mma && t > generic::kR8MaxTokens) continue;
                     const double us = time_route(r, t);
-                    // The A8 candidates of an a8 sweep are timed and priced, never tabled.
-                    if (a8_sweep && (r.family == generic::Family::W4a8Mma ||
-                                     r.family == generic::Family::R8Mma)) {
-                        continue;
-                    }
+                    if (!tabled(r)) continue;
                     if (us < best) {
                         best       = us;
                         best_route = r;
@@ -429,7 +434,7 @@ int route_tune_main(int argc, char** argv) {
                         best       = us;
                         best_route = r;
                     }
-                } else if (a8_sweep && t >= 17 &&
+                } else if (a8_sweep && t >= 17 && p.n % ops::ggml_mmq::kRowMultiple == 0 &&
                            generic::ggml_mmq_admits(w.weight, ops::LinearPolicy::AllowA8)) {
                     time_route({generic::Family::GgmlMmq, 0}, t);
                 }
@@ -462,8 +467,7 @@ int route_tune_main(int argc, char** argv) {
                     const generic::Route ran =
                         generic::resolve_route(asked, w.weight, layout).executed;
                     time_route(ran, t);
-                    selected_csv << generic::qtype_name(p.qtype) << ','
-                                 << generic::compute_class_name(p.compute) << ','
+                    selected_csv << generic::qtype_name(p.qtype) << ',' << row_compute << ','
                                  << generic::epilogue_name(p.epilogue) << ',' << p.n << ','
                                  << p.k << ',' << t << ',' << generic::route_name(asked) << ','
                                  << generic::route_name(ran) << ',' << select_ns << '\n';
@@ -487,7 +491,7 @@ int route_tune_main(int argc, char** argv) {
             const ops::ScopedPrefillRoutes prefill_profile(true);
             double best_total = 1e30;
             for (const auto r : routes) {
-                if (!generic::route_is_token_invariant(r)) continue;
+                if (!generic::route_is_token_invariant(r) || !tabled(r)) continue;
                 double total = 0;
                 for (const auto t : prefill_points) total += time_route(r, t);
                 std::printf("  prefill candidate %s %.2f us\n", generic::route_name(r).c_str(), total);
@@ -512,7 +516,10 @@ int route_tune_main(int argc, char** argv) {
                     double best         = base;
                     generic::Route pick = *entry.prefill;
                     for (const auto r : routes) {
-                        if (r == *entry.prefill || !generic::same_summation(r, *entry.prefill)) continue;
+                        if (r == *entry.prefill || !tabled(r) ||
+                            !generic::same_summation(r, *entry.prefill)) {
+                            continue;
+                        }
                         const double us = time_route(r, t);
                         if (us < best && us < base * 0.98) {
                             best = us;
