@@ -65,4 +65,23 @@ bool rmma_add_sums();
 
 int spread_smem(Route route, WeightCodec codec, Epilogue epilogue, const GemmArgs& args);
 
+// The formats the producer-warp W4A8 tile is compiled for (w4a8_ws_compiled, generic_w4a8.cuh).
+bool w4a8_ws_supports(QType q);
+
+int heuristic_rmma(const Problem& problem, std::int32_t tokens, bool prefill_band);
+
+int heuristic_w4a8(const Problem& problem, const Weight& weight, std::int32_t tokens);
+
+int heuristic_r8(const Problem& p, std::int32_t tokens);
+
+// The codecs the tiled route takes on this GPU: tiled_supports, and Q8 where tensor mma.sync is
+// missing (Volta): elsewhere Q8 has its own kernels, on Volta those tiles run on FMAs.
+bool tiled_takes(WeightCodec codec);
+
+// The I8 tile of a call: the one with the fewest tile-waves weighted by its tile's work over its
+// share of the int8 peak (kI8Eff), of those that fit the build: the largest tile while its grid
+// fills the SMs, a smaller one where it would leave them idle. Every schedule gives the same
+// bytes, so the choice may vary with T. -1 where none fits.
+int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens);
+
 } // namespace ninferno::ops::detail::generic
