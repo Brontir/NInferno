@@ -3,7 +3,8 @@
 // the range of its kind (a fraction in (0, 1], every other kind positive and finite). `--list`
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
 // instead of deriving them. The header's own text is read too: every constant it defines must be
-// in the descriptor, so a new one cannot bypass the checks by being left out. No GPU.
+// in the descriptor and every listed one defined, so a new one cannot bypass the checks by being
+// left out. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <regex>
 #include <set>
 #include <string>
@@ -32,19 +34,39 @@ const char* provenance_name(rc::Provenance p) {
     return "?";
 }
 
-// The constants the header defines (`inline constexpr Scalar kX{...}` or `Constant<N> kX{...}`).
-std::size_t defined_constants() {
+// The header's text: the constants it defines (`constexpr Scalar kX`, `constexpr Constant<N> kX`
+// or `constexpr auto kX = Scalar{...}`, any spacing or line breaks) and the ones its descriptor
+// lists (`listed(kX, ...)`), as two sets of names. Each defined constant must be listed and each
+// listed one defined: a missing entry is named, not hidden behind a count.
+struct HeaderNames {
+    std::set<std::string> defined, listed;
+    bool read = false;
+};
+
+HeaderNames header_names() {
+    HeaderNames out;
     const std::filesystem::path header =
         std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic/route_cost_constants.h";
     std::ifstream in(header);
     if (!in) {
         std::fprintf(stderr, "cannot read %s\n", header.string().c_str());
-        return 0;
+        return out;
     }
-    const std::regex definition(R"(^inline constexpr (Scalar|Constant<\d+>) k\w+)");
-    std::size_t count = 0;
-    for (std::string line; std::getline(in, line);) count += std::regex_search(line, definition);
-    return count;
+    std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    // Comments may name constants too; drop them first.
+    text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
+    const std::regex definition(
+        R"(constexpr\s+(?:Scalar|Constant\s*<\s*\d+\s*>)\s+(k\w+)\s*[{(=])"
+        R"(|constexpr\s+auto\s+(k\w+)\s*=\s*(?:Scalar|Constant\s*<\s*\d+\s*>)\s*[{(])");
+    for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
+        out.defined.insert((*it)[1].matched ? (*it)[1].str() : (*it)[2].str());
+    }
+    const std::regex listing(R"(\blisted\s*\(\s*(k\w+))");
+    for (std::sregex_iterator it(text.begin(), text.end(), listing), end; it != end; ++it) {
+        out.listed.insert((*it)[1].str());
+    }
+    out.read = true;
+    return out;
 }
 
 bool in_range(rc::Kind kind, double v) {
@@ -56,10 +78,21 @@ bool in_range(rc::Kind kind, double v) {
 
 int main(int argc, char** argv) {
     int failures = 0;
-    const std::size_t defined = defined_constants();
-    if (defined != std::size(rc::kRouteCostConstants)) {
-        std::fprintf(stderr, "the header defines %zu constants, kRouteCostConstants lists %zu\n",
-                     defined, std::size(rc::kRouteCostConstants));
+    const HeaderNames header = header_names();
+    if (!header.read) ++failures;
+    for (const auto& name : header.defined) {
+        if (header.listed.count(name) != 0) continue;
+        std::fprintf(stderr, "%s is defined but not listed in kRouteCostConstants\n", name.c_str());
+        ++failures;
+    }
+    for (const auto& name : header.listed) {
+        if (header.defined.count(name) != 0) continue;
+        std::fprintf(stderr, "%s is listed but not defined as a Scalar or Constant\n", name.c_str());
+        ++failures;
+    }
+    if (header.listed.size() != std::size(rc::kRouteCostConstants)) {
+        std::fprintf(stderr, "the header lists %zu names, kRouteCostConstants holds %zu\n",
+                     header.listed.size(), std::size(rc::kRouteCostConstants));
         ++failures;
     }
     std::set<std::string_view> names;
