@@ -137,6 +137,10 @@ private:
 [[nodiscard]] std::size_t pinned_host_bytes() noexcept;
 // Keeps `buffer` pinned for a later PinnedHostBuffer::claim of its size.
 void hold_pinned_host(PinnedHostBuffer&& buffer);
+// Whether a held buffer of exactly `size_bytes` waits for a claim.
+[[nodiscard]] bool held_pinned_host(std::size_t size_bytes) noexcept;
+// The holds are the process's, not one construction's: two Engines constructed at once in one
+// process would release each other's (serve constructs one at a time).
 // The bytes of the held buffers (pinned already: a check of what more may be pinned leaves them
 // out).
 [[nodiscard]] std::size_t held_pinned_host_bytes() noexcept;

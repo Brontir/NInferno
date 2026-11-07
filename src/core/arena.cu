@@ -277,6 +277,9 @@ PinnedHostBuffer::PinnedHostBuffer(std::size_t size_bytes) {
     void* ptr             = nullptr;
     const cudaError_t err = cudaMallocHost(&ptr, size_bytes);
     if (err != cudaSuccess) {
+        // The runtime keeps a refused pin as its last error; a caller that retries smaller must
+        // not see it at its next launch check (cudaGetLastError after a kernel).
+        (void)cudaGetLastError();
         throw PinnedHostError(cuda_error_message("cudaMallocHost failed", err) + " (pinning " +
                                   gib_of(size_bytes) + "; this process pins " +
                                   gib_of(g_pinned_bytes.load()) + " already)",
@@ -337,6 +340,14 @@ void hold_pinned_host(PinnedHostBuffer&& buffer) {
     if (buffer.data() == nullptr) { return; }
     const std::lock_guard<std::mutex> lock(g_held_mutex);
     held_buffers().push_back(std::move(buffer));
+}
+
+bool held_pinned_host(std::size_t size_bytes) noexcept {
+    const std::lock_guard<std::mutex> lock(g_held_mutex);
+    for (const PinnedHostBuffer& buffer : held_buffers()) {
+        if (buffer.size() == size_bytes) { return true; }
+    }
+    return false;
 }
 
 std::size_t held_pinned_host_bytes() noexcept {

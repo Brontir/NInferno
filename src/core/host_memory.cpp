@@ -18,6 +18,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <initializer_list>
@@ -25,6 +26,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <system_error>
+#include <thread>
 
 namespace ninferno {
 namespace {
@@ -318,23 +320,47 @@ HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
     return out;
 }
 
-HostPinLock::HostPinLock() noexcept {
+HostPinLock::HostPinLock() {
 #ifndef _WIN32
+    // A directory every process of the host sees: /run/lock and /dev/shm are outside a unit's
+    // PrivateTmp, the temporary directory last.
+    std::vector<std::filesystem::path> dirs = {"/run/lock", "/dev/shm"};
     std::error_code error;
-    const std::filesystem::path dir = std::filesystem::temp_directory_path(error);
-    if (error) { return; }
-    const std::string path = (dir / "ninferno-host-pin.lock").string();
-    // Every user may take it: 0666 and no umask's write bits taken away once created.
-    const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
-    if (fd < 0) { return; }
-    (void)::fchmod(fd, 0666);
-    int rc = 0;
-    do { rc = ::flock(fd, LOCK_EX); } while (rc != 0 && errno == EINTR);
-    if (rc != 0) {
-        ::close(fd);
-        return;
+    if (std::filesystem::path tmp = std::filesystem::temp_directory_path(error); !error) {
+        dirs.push_back(std::move(tmp));
     }
-    fd_ = fd;
+    int fd = -1;
+    for (const std::filesystem::path& dir : dirs) {
+        if (!std::filesystem::is_directory(dir, error)) { continue; }
+        const std::string path = (dir / "ninferno-host-pin.lock").string();
+        // Every user may take it (0666). A file another user created in a sticky directory under
+        // fs.protected_regular refuses O_CREAT: read-only is enough for flock.
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+        if (fd >= 0) {
+            (void)::fchmod(fd, 0666);
+        } else {
+            fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        }
+        if (fd >= 0) { break; }
+    }
+    if (fd < 0) { return; }
+    // At most kHostPinLockWaitSeconds: a holder stopped or hung inside its pin must not stall
+    // every other start; past it the start goes on unserialized, as before the lock.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(kHostPinLockWaitSeconds);
+    for (;;) {
+        if (::flock(fd, LOCK_EX | LOCK_NB) == 0) {
+            fd_ = fd;
+            return;
+        }
+        if (errno != EWOULDBLOCK && errno != EINTR) { break; }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            timed_out_ = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ::close(fd);
 #endif
 }
 

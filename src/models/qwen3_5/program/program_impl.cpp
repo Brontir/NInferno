@@ -153,8 +153,13 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
         static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes);
     // What the startup's measurement holds pinned for this tier (PinnedHostBuffer::claim, #473) is
     // pinned already and out of MemAvailable: the check is of what more this pins.
+    // A held buffer counts only where its size is the one the pool claims (an exact match).
+    const std::uint64_t host_state_total = host_image_bytes * plan.context_cache.host_state_slots;
+    const auto host_kv_total =
+        static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes);
     const std::uint64_t to_pin =
-        pinned_host_bytes - std::min<std::uint64_t>(pinned_host_bytes, held_pinned_host_bytes());
+        (host_state_total != 0 && held_pinned_host(host_state_total) ? 0 : host_state_total) +
+        (host_kv_total != 0 && held_pinned_host(host_kv_total) ? 0 : host_kv_total);
     if (to_pin != 0) {
         if (const std::optional<HostMemory> memory = read_host_memory()) {
             require_pinned_host_fits(

@@ -1235,6 +1235,95 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // The free memory the warm-up's last check measured (the plan summary's shortfalls after a
     // move).
     std::uint64_t last_measured = free_after_weights;
+    // The context cache's Host tier is pinned host memory, and the driver maps every pinned
+    // byte for the device: the page tables take device memory (2 MiB per pinned GiB),
+    // after the plan, when the Program pins. The selection declared it; here it is measured by
+    // pinning buffers of the rung's two Host tier sizes (its StateImages, its KV), and a rung
+    // whose sizes differ from the measured ones is checked again.
+    const auto host_tier_sizes = [&]() -> std::pair<std::size_t, std::size_t> {
+        const ContextCacheOptions& tier = resolved.context_cache;
+        const std::size_t states =
+            tier.enabled && tier.host_state_slots != 0
+                ? planner_at(served, served.rungs[chosen.rung], graph_memory_held)
+                          .host_state_image_bytes() *
+                      tier.host_state_slots
+                : 0;
+        return {states, tier.enabled ? tier.host_kv_capacity_bytes : 0};
+    };
+    // The pins are kept (hold_pinned_host) for the Program to claim, so a server started beside
+    // others on one host keeps the memory its plan measured instead of losing it to them before
+    // it pins again (#473: eight one-GPU servers started together, each sizing its automatic
+    // tier from the same MemAvailable; half died on the second pin).
+    // An automatic tier the driver refuses to pin, or that no longer fits what the host can pin
+    // now, is halved and pinned again; an explicit tier fails the start with the buffer named.
+    const auto shrink_automatic_tier = [&](std::uint64_t budget) {
+        ContextCacheOptions& tier = resolved.context_cache;
+        const std::size_t image_bytes =
+            tier.host_state_slots != 0
+                ? planner_at(served, served.rungs[chosen.rung], graph_memory_held)
+                      .host_state_image_bytes()
+                : 0;
+        const HostTierFit fit =
+            fit_host_tier(image_bytes, tier.host_state_slots, tier.host_kv_capacity_bytes, budget);
+        for (ContextCacheOptions* c : {&tier, &unfitted.context_cache}) {
+            c->host_state_slots       = fit.state_slots;
+            c->host_kv_capacity_bytes = static_cast<std::size_t>(fit.kv_bytes);
+        }
+        host_tier.reduced      = true;
+        host_tier.budget_bytes = static_cast<std::size_t>(budget);
+    };
+    // Whether the Host tier's pins are held for the Program (pinning_device_bytes ran).
+    bool host_tier_pinned           = false;
+    const auto pinning_device_bytes = [&]() {
+        release_held_pinned_host();
+        host_tier_pinned = true;
+        // One process of the host at a time reads what it can pin and pins it, so a server
+        // started beside others sees their pins in MemAvailable (HostPinLock); taken only where
+        // there is something to pin.
+        std::optional<HostPinLock> pin_lock;
+        for (;;) {
+            const std::pair<std::size_t, std::size_t> sizes = host_tier_sizes();
+            const std::uint64_t asked = static_cast<std::uint64_t>(sizes.first) + sizes.second;
+            if (asked == 0) { return std::pair{sizes, std::size_t{0}}; }
+            if (!pin_lock) { pin_lock.emplace(); }
+            if (host_tier.automatic && asked != 0) {
+                // What the host can pin now, after the sizing: another process may have pinned
+                // since.
+                if (const std::optional<HostMemory> memory = read_host_memory()) {
+                    const auto budget = static_cast<std::uint64_t>(
+                        static_cast<long double>(pinned_host_limit(*memory)) *
+                        kAutomaticHostTierShare);
+                    if (asked > budget) {
+                        shrink_automatic_tier(budget);
+                        continue;
+                    }
+                }
+            }
+            const std::size_t before = current_free_device_bytes();
+            try {
+                std::optional<PinnedHostBuffer> states;
+                std::optional<PinnedHostBuffer> kv;
+                if (sizes.first != 0) { states.emplace(sizes.first); }
+                if (sizes.second != 0) { kv.emplace(sizes.second); }
+                const std::size_t after = current_free_device_bytes();
+                if (states) { hold_pinned_host(std::move(*states)); }
+                if (kv) { hold_pinned_host(std::move(*kv)); }
+                return std::pair{sizes, before > after ? before - after : std::size_t{0}};
+            } catch (const PinnedHostError& error) {
+                if (!host_tier.automatic) {
+                    throw std::runtime_error(
+                        std::string("pinning the context cache's Host tier (") +
+                        std::to_string(resolved.context_cache.host_state_slots) +
+                        " Host StateImages, " + gib_text(sizes.first) + "; Host KV " +
+                        gib_text(sizes.second) + "): " + error.what() +
+                        ". Ask for fewer Host StateImages or less Host KV "
+                        "(--host-state-slots, --host-kv-mib).");
+                }
+                ++host_tier.pin_refusals;
+                shrink_automatic_tier(asked / 2);
+            }
+        }
+    };
     if (automatic_fit) {
         StartupPhaseScope warming(options.startup_observer, StartupPhase::KernelWarmUp);
         const auto warm_started            = Clock::now();
@@ -1375,89 +1464,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 write_warm_up_record(key_text, measured);
             }
         }
-        // The context cache's Host tier is pinned host memory, and the driver maps every pinned
-        // byte for the device: the page tables take device memory (2 MiB per pinned GiB),
-        // after the plan, when the Program pins. The selection declared it; here it is measured by
-        // pinning buffers of the rung's two Host tier sizes (its StateImages, its KV), and a rung
-        // whose sizes differ from the measured ones is checked again.
-        const auto host_tier_sizes = [&]() -> std::pair<std::size_t, std::size_t> {
-            const ContextCacheOptions& tier = resolved.context_cache;
-            const std::size_t states =
-                tier.enabled && tier.host_state_slots != 0
-                    ? planner_at(served, served.rungs[chosen.rung], graph_memory_held)
-                              .host_state_image_bytes() *
-                          tier.host_state_slots
-                    : 0;
-            return {states, tier.enabled ? tier.host_kv_capacity_bytes : 0};
-        };
-        // The pins are kept (hold_pinned_host) for the Program to claim, so a server started beside
-        // others on one host keeps the memory its plan measured instead of losing it to them before
-        // it pins again (#473: eight one-GPU servers started together, each sizing its automatic
-        // tier from the same MemAvailable; half died on the second pin).
-        // An automatic tier the driver refuses to pin, or that no longer fits what the host can pin
-        // now, is halved and pinned again; an explicit tier fails the start with the buffer named.
-        const auto shrink_automatic_tier = [&](std::uint64_t budget) {
-            ContextCacheOptions& tier = resolved.context_cache;
-            const std::size_t image_bytes =
-                tier.host_state_slots != 0
-                    ? planner_at(served, served.rungs[chosen.rung], graph_memory_held)
-                          .host_state_image_bytes()
-                    : 0;
-            const HostTierFit fit = fit_host_tier(image_bytes, tier.host_state_slots,
-                                                  tier.host_kv_capacity_bytes, budget);
-            for (ContextCacheOptions* c : {&tier, &unfitted.context_cache}) {
-                c->host_state_slots       = fit.state_slots;
-                c->host_kv_capacity_bytes = static_cast<std::size_t>(fit.kv_bytes);
-            }
-            host_tier.reduced      = true;
-            host_tier.budget_bytes = static_cast<std::size_t>(budget);
-        };
-        const auto pinning_device_bytes = [&]() {
-            release_held_pinned_host();
-            // One process of the host at a time reads what it can pin and pins it, so a server
-            // started beside others sees their pins in MemAvailable (HostPinLock).
-            const HostPinLock pin_lock;
-            for (;;) {
-                const std::pair<std::size_t, std::size_t> sizes = host_tier_sizes();
-                const std::uint64_t asked = static_cast<std::uint64_t>(sizes.first) + sizes.second;
-                if (host_tier.automatic && asked != 0) {
-                    // What the host can pin now, after the sizing: another process may have pinned
-                    // since.
-                    if (const std::optional<HostMemory> memory = read_host_memory()) {
-                        const auto budget = static_cast<std::uint64_t>(
-                            static_cast<long double>(pinned_host_limit(*memory)) *
-                            kAutomaticHostTierShare);
-                        if (asked > budget) {
-                            shrink_automatic_tier(budget);
-                            continue;
-                        }
-                    }
-                }
-                const std::size_t before = current_free_device_bytes();
-                try {
-                    std::optional<PinnedHostBuffer> states;
-                    std::optional<PinnedHostBuffer> kv;
-                    if (sizes.first != 0) { states.emplace(sizes.first); }
-                    if (sizes.second != 0) { kv.emplace(sizes.second); }
-                    const std::size_t after = current_free_device_bytes();
-                    if (states) { hold_pinned_host(std::move(*states)); }
-                    if (kv) { hold_pinned_host(std::move(*kv)); }
-                    return std::pair{sizes, before > after ? before - after : std::size_t{0}};
-                } catch (const PinnedHostError& error) {
-                    if (!host_tier.automatic) {
-                        throw std::runtime_error(
-                            std::string("pinning the context cache's Host tier (") +
-                            std::to_string(resolved.context_cache.host_state_slots) +
-                            " Host StateImages, " + gib_text(sizes.first) + "; Host KV " +
-                            gib_text(sizes.second) + "): " + error.what() +
-                            ". Ask for fewer Host StateImages or less Host KV "
-                            "(--host-state-slots, --host-kv-mib).");
-                    }
-                    ++host_tier.pin_refusals;
-                    shrink_automatic_tier(asked / 2);
-                }
-            }
-        };
         std::optional<std::pair<std::size_t, std::size_t>> pinned_sizes;
         std::uint32_t probed = 0;
         // The graph memory the last probe's destruction gave back beyond its buffers: a driver
@@ -1566,6 +1572,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         plan.advice.push_back("--max-concurrency " + std::to_string(fit.max_concurrency) +
                               " fits " + grouped_count(fit.max_context) + " tokens");
     }
+    // A plan without the warm-up (every axis explicit) pins its Host tier here, as the warm-up
+    // would: one process at a time, refitted to what the host can pin now, held for the Program.
+    if (!host_tier_pinned) { (void)pinning_device_bytes(); }
     auto sequence = planner_at(served, served.rungs[chosen.rung], graph_memory_held)
                         .finalize(resolution.main_page_groups);
     if (sequence.device_reservation_bytes() != resolution.runtime_reservation_bytes ||
