@@ -47,9 +47,10 @@ struct Gate {
 // either side, so the distance can understate the difference. None: no donor (the unmeasured
 // default). The answer is the legacy rule's, but for one case: a gate bounded by a distance does
 // not take an Incomplete donor's answer (the unmeasured default instead), since the quantity it
-// could not compare may be what puts the donor out of reach. A missing fact so never promotes a
-// transfer the full facts would refuse; a gate that carries at any distance (the MMQ gate's)
-// admits regardless of the quantities, and keeps its answer.
+// could not compare may be what puts the donor out of reach. So a missing fact never promotes a
+// transfer the full facts would refuse (conservatively: also when the known quantities alone
+// would reach); a gate that carries at any distance (the MMQ gate's) admits regardless of the
+// quantities, and keeps its answer.
 struct GateAnswer {
     enum class Disposition { Measured, Carried, Transferred, Incomplete, None };
     const Gate* donor = nullptr;
@@ -87,8 +88,8 @@ struct GateAnswer {
     return out;
 }
 
-// The current device's answer from `gates`: gate_answer's for the device within `max_distance`,
-// else false (the unmeasured default), as on no device.
+// The current device's answer from `gates`: gate_answer's for the device within `max_distance`
+// (false for an Incomplete donor), else false (the unmeasured default), as on no device.
 [[nodiscard]] inline bool measured_gate(std::span<const Gate> gates,
                                         double max_distance = kCarryDistance) noexcept {
     try {
