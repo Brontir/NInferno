@@ -1264,8 +1264,36 @@ void tool_parameters_contract() {
           "a combinator root is left to its branches");
 }
 
+// Two vendored xgrammar fixes. An optional regex group admits its tail only after its head
+// (xgrammar #1032). The token trie keeps a token under another only when that one is its prefix:
+// a vocabulary sorted "ab", "cab" with nothing between had "cab" masked with the rejected "ab"
+// (xgrammar #1006).
+void xgrammar_fixes_contract(const ConstraintCompiler& compiler) {
+    const auto version = compiler.compile(
+        schema_spec(Json::parse(R"({"type":"string","pattern":"^[0-9]+\\.[0-9]+(-[a-z]+)?$"})")));
+    check(admits(version, "\"1.2\""), "optional group: absent");
+    check(admits(version, "\"1.2-rc\""), "optional group: present");
+    check(!admits(version, "\"1.2rc\""), "optional group: its tail without its head");
+
+    GrammarVocabulary contained;
+    contained.token_domain   = 3;
+    contained.token_bytes    = {"ab", "cab", "<|im_end|>"};
+    contained.special        = {false, false, true};
+    contained.stop_token_ids = {2};
+    const ConstraintCompiler trie(contained);
+    OutputConstraintSpec grammar;
+    grammar.kind       = OutputConstraintKind::Grammar;
+    grammar.definition = R"EBNF(root ::= "cab")EBNF";
+    RequestConstraint request(trie.compile(grammar), false);
+    std::vector<std::uint32_t> row(request.mask_words());
+    request.fill_round({}, row.data(), row.size());
+    check(allowed(row.data(), 1) && !allowed(row.data(), 0),
+          "a token containing a rejected token (not as its prefix) is admitted");
+}
+
 int main() {
     const ConstraintCompiler compiler(vocabulary());
+    xgrammar_fixes_contract(compiler);
     tool_parameters_contract();
     integer_digit_bound_contract(compiler);
     schema_policy_contract();
