@@ -163,7 +163,8 @@ void context_fold_launch(const Tensor& q, const Tensor& query_k, const Tensor& q
             plan.window.split_capacity, static_cast<const __nv_bfloat16*>(far.acc.data),
             static_cast<const float*>(far.m.data), static_cast<const float*>(far.l.data),
             plan.far.split_capacity, static_cast<const std::int32_t*>(context_lengths.data),
-            static_cast<const std::int32_t*>(valid_columns.data), fold.window,
+            static_cast<const std::int32_t*>(valid_columns.data),
+            static_cast<int>(context.block_tables.ne[0] * kPagedKVPageSize), fold.window,
             plan.window.key_block, plan.far.key_block, fold.alpha,
             static_cast<__nv_bfloat16*>(out.data));
         CUDA_CHECK(cudaGetLastError());

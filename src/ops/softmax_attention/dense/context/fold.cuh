@@ -186,7 +186,8 @@ __launch_bounds__(128) __global__ void context_fold_reduce_kernel(
     const float* __restrict__ window_l, int window_splits, const __nv_bfloat16* __restrict__ far_acc,
     const float* __restrict__ far_m, const float* __restrict__ far_l, int far_splits,
     const std::int32_t* __restrict__ context_length, const std::int32_t* __restrict__ valid_columns,
-    int window, int window_key_block, int far_key_block, float alpha, __nv_bfloat16* __restrict__ out) {
+    int max_context, int window, int window_key_block, int far_key_block, float alpha,
+    __nv_bfloat16* __restrict__ out) {
     const int q_head = static_cast<int>(blockIdx.x);
     const int token  = static_cast<int>(blockIdx.y);
     const int batch  = static_cast<int>(blockIdx.z);
@@ -202,7 +203,9 @@ __launch_bounds__(128) __global__ void context_fold_reduce_kernel(
     out += QueryElements * batch;
     if (q_head >= Geo::Hq || token >= Tokens || d >= Geo::D) { return; }
     const int length = context_length[batch];
-    if (token >= valid_columns[batch]) {
+    // As the plain reduce: a frontier the split bodies refused wrote no partials.
+    if (length < 0 || length > max_context || valid_columns[batch] > Tokens ||
+        token >= valid_columns[batch]) {
         out[context_query_q_index<Geo>(q_head, d, token)] = __float2bfloat16(0.0f);
         return;
     }

@@ -369,7 +369,9 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
             // with or without YaRN, so it folds (FOLD, arXiv 2610.20392): its window at their own
             // positions, the rows before at one shared position. Within the window it is plain
             // attention; measured against the full layer (docs/maintainer/dflash.md, #458).
-            if (out.draft->full_layer_count() != 0 && out.draft->sliding_window) {
+            // A drafter of full layers only never trained on a window: plain, refused under YaRN.
+            if (out.draft->full_layer_count() != 0 && out.draft->local_layer_count() != 0 &&
+                out.draft->sliding_window) {
                 out.draft->fold_window = *out.draft->sliding_window;
             } else if (yarn_factor != 1.0 && out.draft->full_layer_count() != 0) {
                 throw ArtifactError("--rope-yarn-factor runs no drafter of full-attention "
