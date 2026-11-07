@@ -57,6 +57,15 @@ rule-level cache frees its memory then (upstream kept it alive until the slot wa
 cache's byte budget). Upstream fixed it after v0.2.8 (mlc-ai/xgrammar#1003); drop the line when
 updating past that fix.
 
+Local change: `cpp/tokenizer_info.cc`, the token trie's subtree ranges, marked "NInferno (xgrammar
+#1006)": a token is in a subtree when the subtree's token is its prefix (upstream tested
+containment, so a rejected "ab" masked "cab" with it). Drop it when updating past mlc-ai/xgrammar#1006.
+
+Local change: `cpp/fsm.cc`, `FSMWithStartEnd::Optional`, marked "NInferno (xgrammar #1032)": the
+skip goes to a fresh end state, so an optional group's tail is not reachable without its head
+(upstream admitted "1.2rc" for `^[0-9]+\.[0-9]+(-[a-z]+)?$`). Drop it when updating past
+mlc-ai/xgrammar#1032.
+
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new
 tag, keep this file and `CMakeLists.txt`, and re-run the structured-output unit tests
 (`ninferno_structured_output_test`).
