@@ -234,10 +234,12 @@ bool allows_w4a4(const Weight& w, LinearPolicy policy) {
 // allows eight bits only (a W4A16 checkpoint under --activations int8). The weight-less
 // nvfp4_prefill_a8_policy and the workspace query decide the same.
 // The policy part, which w4a8_refusal names Policy.
+namespace {
 bool w4a8_policy_allows(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) &&
            (w.qtype != QType::NVFP4 || nvfp4_prefill_a8_policy(w.qtype, policy));
 }
+} // namespace
 
 bool allows_w4a8(const Weight& w, LinearPolicy policy) {
     return w4a8_policy_allows(w, policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
@@ -247,6 +249,7 @@ bool allows_w4a8(const Weight& w, LinearPolicy policy) {
 // I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
 // one 16-byte copy per row), 16-byte code and scale planes.
 // Its parts, which i8_refusal names Format, Alignment and Extent.
+namespace {
 bool i8_format(QType qtype) {
     return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
            qtype == QType::Q6_G64_FP16;
@@ -259,6 +262,7 @@ bool i8_planes_aligned(const Weight& w) {
 }
 
 bool i8_extent(const Weight& w) { return (w.k % 512) == 0 && (w.padded_shape[1] % 512) == 0; }
+} // namespace
 
 bool allows_i8(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) && i8_format(w.qtype) && i8_extent(w) && i8_planes_aligned(w);
