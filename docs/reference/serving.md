@@ -80,7 +80,16 @@ Refusals come before any weight is downloaded. Each says what to do instead:
   board's instances counted; `CUDA_VISIBLE_DEVICES` does not change it), so one server per GPU
   started together leaves room for each. Servers on one host pin their tiers one at a time (a lock
   in `/run/lock`, `/dev/shm` or the temporary directory) and each sees what the earlier ones pinned.
-  The startup line names the share. The state count is `max(8, 2 * private continuations)` (an endpoint
+  The startup line names the share. A pin (`cudaMallocHost`) is served from free pages plus what
+  the kernel reclaims of the page cache that `MemAvailable` counts; how much it reclaims depends on
+  the kernel and the NUMA layout (recent kernels reclaim it for the pin; some older hosts refuse a
+  pin far below `MemAvailable` when the cache is full). An automatic tier that the driver refuses
+  is halved until it pins. For an explicit `--host-kv-mib` / `--host-state-slots`, the pin is the
+  judge: if the driver refuses it, the error names MemFree, Cached and the free pages above the
+  kernel's watermarks at that moment, and how to free the cache (evict the files' pages with
+  `posix_fadvise(DONTNEED)` or `vmtouch -e`, or as root `sync; echo 1 > /proc/sys/vm/drop_caches`).
+  The weights themselves are read with `O_DIRECT` on local disks and leave no page cache. The
+  state count is `max(8, 2 * private continuations)` (an endpoint
   and an edit point for each conversation).
 - **Log lines.** The startup log states each choice (`context | ...`, `plan | rung k of N: ...`,
   `capacity | ...`, `context cache | ...`).
@@ -587,7 +596,11 @@ prefix, with the same behavior, errors, and request IDs.
   reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
   for the caller's next request. A refusal that leaves a body unread (413, 415, a key refused
   before the body was read), every answer while the server drains and `/health`'s 503 of a failed
-  server close it.
+  server close it. A request with ambiguous framing gets 400 and the connection is closed. That covers
+  an HTTP/1.1 request without a `Host` header, more than one `Host` header or an invalid one,
+  `Content-Length` values that disagree or do not parse, and a non-zero `Content-Length` beside
+  `Transfer-Encoding`. A `Transfer-Encoding` other than a single `chunked` gets 501.
+  `Transfer-Encoding` with `Content-Length: 0` is served, and then the connection closes.
 
 ### Request IDs
 
@@ -2219,10 +2232,10 @@ with the context it fits).
   free memory than the start, which may land a rung lower. When nothing fits, the advice is the
   refusal alone, and the exit code is 2.
 
-Examples on a 16 GB card (RTX 5070 Ti, Linux, no display; the 21.10 stand logs, master's continuous
-fit against the ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
+Examples on a 16 GB card (RTX 5070 Ti, Linux, no display). "Measured start" is what a start fitted
+before the plan ladder; "Ladder" is the ladder's byte arithmetic (`tests/test_plan_ladder.cpp`):
 
-| Model | Master | Ladder |
+| Model | Measured start | Ladder |
 |---|---|---|
 | Qwen3.8-27B UD-IQ3_XXS, C=1 (5.21 GiB free) | 144,448 tokens | 142,912 (rung 17), no cached Device state (the Host tier keeps them) |
 | same, C=4 | 126,720, 4 cached states | 131,072 (rung 57), none (the Host tier keeps them) |
@@ -2272,7 +2285,7 @@ A CPU test (`ninferno_plan_bytes_test`) checks the two to the byte over 7,056 ru
 facts do not name the state (a DFlash plan without its drafter's shape). What stays an estimate on
 both bases is the workspace: a start sizes its Op scratch from the bound weights' kernel routes,
 the dry run from the prefill chunk's activations and the decode logits. It is the remaining
-difference (about one rung in the lab's stand checks).
+difference (about one rung in our checks).
 
 The weights are the GGUF tensor table's bytes when one file holds the whole model
 (`weights_basis` `gguf_tensors`), else the listed file sizes (`file_size`: "estimated from file
@@ -2553,6 +2566,17 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 - An appended mid-conversation system message is an ordinary prompt suffix, so an unchanged prior
   history remains eligible for `private_endpoint`. If the client modifies, removes, or moves a
   historical system message, the token prefix genuinely differs and a miss/reset is correct.
+- Reuse starts at a checkpoint the engine records by itself: the previous request's end
+  (`private_endpoint`), the end of a turn, the end of the prior assistant message, a shared
+  stable prefix (the tools, the system prompt, a part marked `cache_control`), a replayed
+  response, or a long anchor inside a long message. A request that grows the previous request's
+  last user message inside that same message (RAG appending passages, an editor resending its
+  buffer, a scratchpad kept in the last message) diverges after the last of these, so it reuses
+  only up to the checkpoint before that message (nothing when it is the only message), even
+  though most of its tokens are cached (#485). Put the growing part in a new message, or end the
+  stable part with a message boundary, to keep it reusable. On models with recurrent or
+  sliding-window layers (GDN, SWA) or a drafter (MTP, DFlash) this stays so: their state cannot
+  be cut back to an arbitrary token.
 
 ### Finish reasons, tools and usage
 

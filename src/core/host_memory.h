@@ -31,8 +31,32 @@ struct HostMemory {
     std::uint64_t available_bytes = 0;
     std::uint64_t meminfo_total_bytes     = 0;
     std::uint64_t meminfo_available_bytes = 0;
+    // MemFree and Cached of /proc/meminfo, for messages only.
+    std::uint64_t meminfo_free_bytes   = 0;
+    std::uint64_t meminfo_cached_bytes = 0;
+    // The free pages of the NUMA nodes this process may allocate on (Mems_allowed_list of
+    // /proc/self/status) above those zones' high watermarks (/proc/zoneinfo), for messages only
+    // (#480): a pin takes these at once and the page cache only as the kernel reclaims it. No
+    // limit reads it; the pin limit rests on MemAvailable. nullopt where the zones cannot be read
+    // (Windows, no /proc/zoneinfo).
+    std::optional<std::uint64_t> free_above_watermark_bytes;
     std::optional<CgroupMemory> cgroup;
 };
+
+// The free pages and the "high" watermark of every zone of the listed NUMA nodes (all nodes when
+// `nodes` is empty) in a /proc/zoneinfo text: sum over zones of max(0, free - high), in bytes
+// (`page_size` per page). nullopt when no zone of those nodes is there.
+[[nodiscard]] std::optional<std::uint64_t>
+zoneinfo_free_above_watermark(std::string_view text, const std::vector<int>& nodes,
+                              std::uint64_t page_size = 4096);
+
+// The NUMA nodes of a cpulist ("0-1,3"), as Mems_allowed_list of /proc/self/status prints them;
+// nullopt when malformed.
+[[nodiscard]] std::optional<std::vector<int>> parse_node_list(std::string_view text);
+
+// The nodes of the "Mems_allowed_list:" line of a /proc/self/status text; nullopt when the line is
+// missing or malformed (the caller then counts every node).
+[[nodiscard]] std::optional<std::vector<int>> mems_allowed_nodes(std::string_view status_text);
 
 // MemTotal and MemAvailable of a /proc/meminfo text; nullopt when either is missing or malformed.
 [[nodiscard]] std::optional<HostMemory> parse_meminfo(std::string_view text);
@@ -81,6 +105,11 @@ read_host_memory(const std::filesystem::path& meminfo      = "/proc/meminfo",
 // `what` names the pinned buffers (and how they add up); `remedy` says how to ask for fewer.
 void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memory,
                               std::string_view what, std::string_view remedy);
+
+// What to tell the user when the driver refused a pin: MemFree, Cached and the free pages above the
+// watermarks as they are now, why a full page cache refuses a pin MemAvailable allows (#480), and
+// what to do. Empty where the host memory cannot be read.
+[[nodiscard]] std::string pin_refusal_hint();
 
 // A Host tier of the context cache within a pinning budget: `state_slots` StateImages of
 // `image_bytes` each and `kv_bytes` of Host KV, both scaled down by the same factor (StateImages
