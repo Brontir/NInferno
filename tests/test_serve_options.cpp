@@ -780,7 +780,7 @@ int main() {
         off.preserve_thinking.reset();
         off.enable_thinking = false;
         ChatTurn assistant;
-        assistant.role = ChatRole::Assistant;
+        assistant.role = ninferno::ChatRole::Assistant;
         off.messages.push_back(assistant);
         failures += check(resolve_prompt_semantics(off, defaults).preserve_thinking == true,
                           "thinking off without history reasoning was not preserved");
