@@ -172,6 +172,32 @@ std::unique_ptr<DeviceClass> query(int device) {
 
 } // namespace
 
+int host_gpu_count() noexcept {
+    static const int count = [] {
+        int n = 0;
+        if (void* nvml = sys::load_library("libnvidia-ml.so.1", "nvml.dll")) {
+            using Init      = int (*)();
+            using Count     = int (*)(unsigned*);
+            using Shutdown  = int (*)();
+            const auto init = reinterpret_cast<Init>(sys::symbol(nvml, "nvmlInit_v2"));
+            const auto get  = reinterpret_cast<Count>(sys::symbol(nvml, "nvmlDeviceGetCount_v2"));
+            const auto shutdown = reinterpret_cast<Shutdown>(sys::symbol(nvml, "nvmlShutdown"));
+            if (init && get && shutdown && init() == 0) {
+                unsigned devices = 0;
+                if (get(&devices) == 0) { n = static_cast<int>(devices); }
+                shutdown();
+            }
+            sys::free_library(nvml);
+        }
+        if (n <= 0) {
+            int cuda = 0;
+            if (cudaGetDeviceCount(&cuda) == cudaSuccess) { n = cuda; }
+        }
+        return std::max(1, n);
+    }();
+    return count;
+}
+
 bool chip_mma_slow(int major, int minor, std::string_view chip) noexcept {
     return major == 7 && minor == 5 && (chip == "tu116" || chip == "tu117");
 }

@@ -706,8 +706,8 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             const std::size_t image_bytes =
                 models::qwen3_5::make_sequence_planner(execution, device, probe)
                     .host_state_image_bytes();
-            const auto budget = static_cast<std::uint64_t>(
-                static_cast<long double>(pinned_host_limit(*memory)) * kAutomaticHostTierShare);
+            host_tier.share_gpus       = host_gpu_count();
+            const std::uint64_t budget = automatic_host_tier_budget(*memory, host_tier.share_gpus);
             const HostTierFit fit = fit_host_tier(image_bytes, cache.host_state_slots,
                                                   cache.host_kv_capacity_bytes, budget);
             cache.host_state_slots       = fit.state_slots;
@@ -1293,9 +1293,8 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 // What the host can pin now, after the sizing: another process may have pinned
                 // since.
                 if (const std::optional<HostMemory> memory = read_host_memory()) {
-                    const auto budget = static_cast<std::uint64_t>(
-                        static_cast<long double>(pinned_host_limit(*memory)) *
-                        kAutomaticHostTierShare);
+                    const std::uint64_t budget =
+                        automatic_host_tier_budget(*memory, host_tier.share_gpus);
                     if (asked > budget) {
                         shrink_automatic_tier(budget);
                         continue;

@@ -720,7 +720,11 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                               product::format_pretty_bytes(memory.host_kv_capacity_default_bytes) +
                               " KV does not fit the " +
                               product::format_pretty_bytes(memory.host_tier_budget_bytes) +
-                              " this host can pin for it)"
+                              " this host can pin for it" +
+                              (memory.host_tier_share_gpus > 1
+                                   ? ", its share of " +
+                                         std::to_string(memory.host_tier_share_gpus) + " GPUs)"
+                                   : std::string(")"))
                         : " (auto)";
             if (memory.host_tier_pin_unserialized) {
                 logger_->warn("context cache | the automatic Host tier was pinned without the "
