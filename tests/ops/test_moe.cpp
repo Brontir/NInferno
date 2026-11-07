@@ -123,7 +123,8 @@ void split_divisors(Matrix& m, std::int32_t rows, std::uint32_t seed) {
     m.weight.weight_divisor_rows = rows;
 }
 
-Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed, double sd = 0.05) {
+Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed,
+                   double sd = 0.05, int mx_shift = 0) {
     Matrix m;
     m.qtype = qtype;
     m.n     = n;
@@ -156,6 +157,7 @@ Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t se
         options.row_split_scale = qw::RowSplitScalePattern::Small;
         options.row_split_codes = qw::RowSplitCodePattern::Hashed;
     }
+    options.mxfp4_exponent_shift = mx_shift;
     m.packed = qw::make_patterned_weight(qtype, n, k, seed, options);
     m.device = DeviceBuffer(m.packed.payload.size());
     m.device.copy_from_host(m.packed.payload.data(), m.device.bytes);
@@ -211,6 +213,8 @@ struct Case {
     // Columns of the gate/up bank past H: a bank zero-padded to a block multiple (moe.h). The
     // test's padded columns hold random codes, so only a zero-widened input leaves them inert.
     std::int32_t input_pad = 0;
+    // MXFP4 banks: added to the E8M0 block scales (see PatternedWeightOptions).
+    int mx_shift = 0;
 };
 
 struct Layer {
@@ -228,8 +232,8 @@ Layer make_layer(const Case& c, std::uint32_t seed) {
     const auto E = c.experts, H = c.hidden, F = c.inter;
     const int sets = relu2(c) ? 1 : 2; // a non-gated expert has up rows only
     l.router  = make_matrix(QType::BF16, E, H, seed + 1, 0.08);
-    l.gate_up               = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2);
-    l.down    = make_matrix(c.down, E * H, F, seed + 3);
+    l.gate_up = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2, 0.05, c.mx_shift);
+    l.down    = make_matrix(c.down, E * H, F, seed + 3, 0.05, c.mx_shift);
     if (c.split_divisors) {
         split_divisors(l.gate_up, F, seed + 12); // gate and up quantized apart
         split_divisors(l.down, H, seed + 13);
@@ -953,7 +957,8 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
         return failures + 1;
     }
     const Run run = run_op(c, l, x, 0, wide, residual, &plan);
-    failures += compare_run(c, l, x, residual, 0, wide, run, {true, true},
+    // MXFP4 banks run the block-scaled MMA on MXFP8 activations where it is built (a8_stages).
+    failures += compare_run(c, l, x, residual, 0, wide, run, a8_stages(c, plan),
                             c.label + " speed-profile W4A8 T=" + std::to_string(wide));
     return failures;
 }
@@ -2151,6 +2156,18 @@ int main(int argc, char** argv) {
             //     with biases.
             {
                 failures += check_w4a8(oss_like(), 111U, {17, 70, 130});
+                // Block scales of 2^-2 .. 2^5 (and 2^7; gpt-oss-20b has blocks up to 2^9, 3.7 % of
+                // them at 4 or more), where the default draws stay at 2^-9 .. 2^-2: a decode that
+                // folds a factor into the f16 group scale (Volta HMMA MXFP4, moe_volta_hmma.cu:
+                // dsh) overflows it there, as E8M0 x 2^14 did (an operand of E2M1 x 2^-14). Today's
+                // fold (twice the code, half the scale) stays far below f16's range. Most gate/up
+                // values clamp (ClampedSwiGlu), which would hide an inf there: the down stage shows
+                // it.
+                Case big = oss_like();
+                big.label += " large E8M0 scales";
+                big.mx_shift = 7;
+                failures += check_w4a8(big, 114U, {17, 70});
+                failures += check_speed_w4a8(big, 115U); // Volta: the HMMA stages themselves
                 Case q;
                 q.label          = "qwen3.6-35b-a3b-like q4_k/q6_k E256 k8";
                 q.experts        = 256;
