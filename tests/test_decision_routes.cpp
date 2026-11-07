@@ -194,8 +194,15 @@ int main() {
     rt::DecisionInputs b        = a;
     b.routes                    = after;
     const auto fa = rt::decision_fingerprint(a), fb = rt::decision_fingerprint(b);
-    check(fa.value == fb.value && fa.manifest != fb.manifest && fa.routes != fb.routes,
+    // Where the table moved nothing (Volta, above) the manifest stays too; the fingerprint never
+    // moves.
+    const bool moved_line = after != before;
+    check(fa.value == fb.value &&
+              (!moved_line || (fa.manifest != fb.manifest && fa.routes != fb.routes)),
           "a moved route moves the manifest, not the fingerprint");
+    if (device_class().features.mma_tensor) check(moved_line, "the table moved a line");
+    check(moved_line || (fa.manifest == fb.manifest && fa.routes == fb.routes),
+          "a table that moved no line moved the manifest");
 
     // Refused: a line that does not parse, or not in its canonical form.
     for (const std::string key :

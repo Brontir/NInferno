@@ -21,6 +21,7 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 
+#include <algorithm>
 #include <stdexcept>
 #include <type_traits>
 
@@ -47,25 +48,58 @@ constexpr int kNTok = 8 * kNG;
 static_assert(kVoltaHmmaSlots == kNTok);
 
 // The activation of superblock `sb` for the CTA's slots: slot t reads row rows[t] of x (gate/up:
-// its token; down: the slot itself), zeros past the job's count and past K.
-template <int NTok>
+// its token; down: the slot itself), zeros past the job's count and past K. Pre: the rows are
+// already f16 in the staged order (volta_x_f16_kernel; the gate/up stage's epilogue writes the
+// down stage's rows the same way), so the CTA only copies them: converting the bf16 rows here
+// (a finite check, two clamps and the pack a value) made every row tile of a job redo the
+// same conversion, about 40 % of the loop's instructions.
+template <int NTok, bool Pre>
 __device__ __forceinline__ void stage_load_rows(const GemmArgs& a, const int* rows, int count,
                                                 int sb, uint2 (&v)[NTok / 2]) {
-    const auto* x = static_cast<const __nv_bfloat16*>(a.x);
-    const int k   = a.w.k;
+    const auto* x  = static_cast<const __nv_bfloat16*>(a.x);
+    const auto* xh = static_cast<const __half*>(a.xh);
+    const int k    = a.w.k;
 #pragma unroll
     for (int i = 0; i < NTok / 2; ++i) {
         const int task = static_cast<int>(threadIdx.x) + i * kWarps * 32;
         const int t    = task >> 6;
         const int g    = task & 63;
-        v[i]           = t < count && 256 * sb + 4 * g < k
-                             ? *reinterpret_cast<const uint2*>(
-                                   x + static_cast<std::int64_t>(rows[t]) * a.ldx + 256 * sb + 4 * g)
-                             : make_uint2(0, 0);
+        if constexpr (Pre) {
+            v[i] = t < count && 256 * sb + 4 * g < k
+                       ? *reinterpret_cast<const uint2*>(
+                             xh + static_cast<std::int64_t>(rows[t]) * a.ldxh + 256 * sb + 4 * g)
+                       : make_uint2(0, 0);
+        } else {
+            v[i] = t < count && 256 * sb + 4 * g < k
+                       ? *reinterpret_cast<const uint2*>(
+                             x + static_cast<std::int64_t>(rows[t]) * a.ldx + 256 * sb + 4 * g)
+                       : make_uint2(0, 0);
+        }
     }
 }
 
-template <class F, Stage St>
+// x as f16 in the staged order: each four values (v0, v1, v2, v3) become the halves (v0, v2, v1,
+// v3), the conversion of generic::volta::stage_store, at row stride k. Columns from `live` to k are
+// zeros (a zero-padded bank's K reads x of the model's width, so x needs no padded copy first).
+__global__ void volta_x_f16_kernel(const __nv_bfloat16* x, int ldx, int rows, int live, int k,
+                                   uint2* dst) {
+    const std::int64_t per_row = k >> 2;
+    const std::int64_t total   = per_row * rows;
+    for (std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < total;
+         i += static_cast<std::int64_t>(gridDim.x) * blockDim.x) {
+        const std::int64_t r = i / per_row;
+        const std::int64_t g = i - r * per_row;
+        if (4 * g >= live) {
+            dst[i] = make_uint2(0, 0);
+            continue;
+        }
+        const uint2 v = *reinterpret_cast<const uint2*>(x + r * ldx + 4 * g);
+        dst[i]        = make_uint2(bf16x2_to_f16x2(__byte_perm(v.x, v.y, 0x5410U)),
+                                   bf16x2_to_f16x2(__byte_perm(v.x, v.y, 0x7632U)));
+    }
+}
+
+template <class F, Stage St, bool Pre>
 __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a) {
 #if NINFERNO_HMMA884
     constexpr bool kGated  = St == Stage::GateUp;
@@ -128,8 +162,8 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
     }
     __syncthreads(); // rows_x
     uint2 xv[kNTok / 2];
-    stage_load_rows<kNTok>(a, rows_x, count, 0, xv);
-    stage_store<F, kNTok>(act[0], sums[0], xv);
+    stage_load_rows<kNTok, Pre>(a, rows_x, count, 0, xv);
+    stage_store<F, kNTok, Pre>(act[0], sums[0], xv);
     __syncthreads();
 
 #    pragma unroll 1
@@ -139,7 +173,7 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
         for (int s = 0; s < kSets; ++s) {
             if (more && live) nx1[s].load(w, wrow[s], sb + 1, q);
         }
-        if (more) stage_load_rows<kNTok>(a, rows_x, count, sb + 1, xv);
+        if (more) stage_load_rows<kNTok, Pre>(a, rows_x, count, sb + 1, xv);
 
         const __half* at = act[sb & 1] + q * kQuadStride<kNTok>;
 #    pragma unroll
@@ -211,7 +245,7 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
                         }
             }
         }
-        if (more) stage_store<F, kNTok>(act[(sb + 1) & 1], sums[(sb + 1) & 1], xv);
+        if (more) stage_store<F, kNTok, Pre>(act[(sb + 1) & 1], sums[(sb + 1) & 1], xv);
         __syncthreads();
 #    pragma unroll
         for (int s = 0; s < kSets; ++s) cur[s] = nx1[s];
@@ -230,6 +264,7 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
     // Quad-pair q stores accumulators 2q and 2q + 1, with the expert row's bias and activation.
     const int row0 = static_cast<int>(blockIdx.x) * kCtaRows + warp * kWarpRows;
     auto* out      = static_cast<__nv_bfloat16*>(a.out_bf16);
+    auto* out_h    = static_cast<__half*>(a.out_bf16);
 #    pragma unroll
     for (int i = 0; i < 8; ++i) {
         if ((i >> 1) != q) continue;
@@ -262,7 +297,17 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
             } else if constexpr (St == Stage::Up) {
                 value = moe_activation(a, v0, v0);
             }
-            out[static_cast<std::int64_t>(col0 + slot) * a.ldo + lr] = __float2bfloat16_rn(value);
+            if constexpr (kFirst) {
+                // The down stage's f16 activation in the staged order (bf16-rounded, then
+                // clamped to the f16 range, as stage_store converted it).
+                const int sw = ((lr >> 1) ^ lr) & 1;
+                out_h[static_cast<std::int64_t>(col0 + slot) * a.ldo + (lr ^ (sw * 3))] =
+                    __float2half_rn(
+                        bf16_value_in_f16_range(__bfloat162float(__float2bfloat16_rn(value))));
+            } else {
+                out[static_cast<std::int64_t>(col0 + slot) * a.ldo + lr] =
+                    __float2bfloat16_rn(value);
+            }
         }
     }
 #else
@@ -270,24 +315,26 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
 #endif
 }
 
+template <class F, Stage St, bool Pre>
+void launch_stage(const GemmArgs& args, dim3 grid, cudaStream_t stream) {
+    moe_volta_hmma_kernel<F, St, Pre><<<grid, kWarps * 32, 0, stream>>>(args);
+}
+
 // The router stage only ever reads BF16 rows and the expert stages never do: each format gets the
-// kernels it can be launched with.
+// kernels it can be launched with. The expert stages read f16 rows (GemmArgs::xh).
 template <class F>
 void launch_format(Stage stage, const GemmArgs& args, dim3 grid, cudaStream_t stream) {
     if constexpr (std::is_same_v<F, HB16>) {
         if (stage != Stage::Router) throw std::invalid_argument("moe volta hmma: BF16 rows are the router's");
-        moe_volta_hmma_kernel<F, Stage::Router><<<grid, kWarps * 32, 0, stream>>>(args);
+        launch_stage<F, Stage::Router, false>(args, grid, stream);
     } else {
+        if (stage != Stage::Router && args.xh == nullptr) {
+            throw std::invalid_argument("moe volta hmma: the expert stages read f16 rows");
+        }
         switch (stage) {
-        case Stage::GateUp:
-            moe_volta_hmma_kernel<F, Stage::GateUp><<<grid, kWarps * 32, 0, stream>>>(args);
-            break;
-        case Stage::Up:
-            moe_volta_hmma_kernel<F, Stage::Up><<<grid, kWarps * 32, 0, stream>>>(args);
-            break;
-        case Stage::Down:
-            moe_volta_hmma_kernel<F, Stage::Down><<<grid, kWarps * 32, 0, stream>>>(args);
-            break;
+        case Stage::GateUp: launch_stage<F, Stage::GateUp, true>(args, grid, stream); break;
+        case Stage::Up: launch_stage<F, Stage::Up, true>(args, grid, stream); break;
+        case Stage::Down: launch_stage<F, Stage::Down, true>(args, grid, stream); break;
         case Stage::Router: throw std::invalid_argument("moe volta hmma: the router stage reads BF16 rows");
         }
     }
@@ -295,6 +342,18 @@ void launch_format(Stage stage, const GemmArgs& args, dim3 grid, cudaStream_t st
 }
 
 } // namespace
+
+void launch_volta_x_f16(const void* x, int ldx, int rows, int live, int k, void* dst,
+                        cudaStream_t stream) {
+    if (live % 4 != 0 || k % 4 != 0 || live > k || ldx < live || ldx % 4 != 0) {
+        throw std::invalid_argument("moe volta hmma: x rows are converted four values at a time");
+    }
+    const std::int64_t total = static_cast<std::int64_t>(rows) * (k >> 2);
+    const int blocks = static_cast<int>(std::min<std::int64_t>((total + 255) / 256, 4096));
+    volta_x_f16_kernel<<<blocks, 256, 0, stream>>>(static_cast<const __nv_bfloat16*>(x), ldx, rows,
+                                                   live, k, static_cast<uint2*>(dst));
+    CUDA_CHECK(cudaGetLastError());
+}
 
 bool moe_volta_hmma_codec(generic::WeightCodec codec) {
     using generic::WeightCodec;
