@@ -2025,10 +2025,24 @@ private:
             if (takeable_unproven(slot)) { unproven_victims.push_back(projected_checkpoints.size()); }
             append_existing(owner, *entry.handle, entry.summary.checkpoint);
         }
-        std::sort(unproven_victims.begin(), unproven_victims.end(),
-                  [&](std::size_t a, std::size_t b) {
-                      return projected_checkpoints[a].rebuild_ns < projected_checkpoints[b].rebuild_ns;
-                  });
+        // Ranked by what losing each costs the portfolio (the fold capture prices a direct victim
+        // by: its recovery, demand and overlap with the other checkpoints), not its rebuild alone.
+        ContextPortfolioValue victim_value;
+        const std::uint64_t kept_value =
+            victim_value.fold(projected_owners, projected_checkpoints).target_public_value;
+        std::vector<std::pair<std::uint64_t, std::size_t>> victim_losses;
+        victim_losses.reserve(unproven_victims.size());
+        for (const std::size_t victim : unproven_victims) {
+            std::vector<ContextPortfolioCheckpointValue> lost = projected_checkpoints;
+            lost[victim].target_recovery_ns = lost[victim].rebuild_ns;
+            const std::uint64_t value =
+                victim_value.fold(projected_owners, lost).target_public_value;
+            victim_losses.emplace_back(kept_value > value ? kept_value - value : 0U, victim);
+        }
+        std::sort(victim_losses.begin(), victim_losses.end());
+        for (std::size_t index = 0; index < victim_losses.size(); ++index) {
+            unproven_victims[index] = victim_losses[index].second;
+        }
 
         std::vector<std::uint32_t> selected_frontiers;
         std::uint64_t selected_gain = 0;
