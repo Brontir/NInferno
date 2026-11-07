@@ -2554,6 +2554,17 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 - An appended mid-conversation system message is an ordinary prompt suffix, so an unchanged prior
   history remains eligible for `private_endpoint`. If the client modifies, removes, or moves a
   historical system message, the token prefix genuinely differs and a miss/reset is correct.
+- Reuse starts at a checkpoint the engine records by itself: the previous request's end
+  (`private_endpoint`), the end of a turn, the end of the prior assistant message, a shared
+  stable prefix (the tools, the system prompt, a part marked `cache_control`), a replayed
+  response, or a long anchor inside a long message. A request that grows the previous request's
+  last user message inside that same message (RAG appending passages, an editor resending its
+  buffer, a scratchpad kept in the last message) diverges after the last of these, so it reuses
+  only up to the checkpoint before that message (nothing when it is the only message), even
+  though most of its tokens are cached (#485). Put the growing part in a new message, or end the
+  stable part with a message boundary, to keep it reusable. On models with recurrent or
+  sliding-window layers (GDN, SWA) or a drafter (MTP, DFlash) this stays so: their state cannot
+  be cut back to an arbitrary token.
 
 ### Finish reasons, tools and usage
 
