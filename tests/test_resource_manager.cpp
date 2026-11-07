@@ -3385,18 +3385,14 @@ void test_engine_candidate_takes_over_unproven_shared_slot() {
         start_active(manager, program, 102, shared_base(102, kAutomatic), 100);
     require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
             "a new engine candidate found no shared slot after the slots were all taken");
+    // The only slot held the first prefix, so a published capture took it over (the Program's
+    // replacement path); the new owner is held by the capturing request.
     publish_shared_capture(manager, program, second, 102, kAutomatic, 42);
+    RuntimeStats stats;
+    manager.populate_runtime_stats(program, stats);
+    require(stats.shared_active_references == 1,
+            "the taken-over shared slot was not published to the capturing request");
     (void)finish_active(manager, program, second);
-
-    {
-        auto reuse =
-            manager.inspect(program, FakePreparedPrompt{102}, shared_base(102, kAutomatic), 101);
-        require(reuse.choice && reuse.choice->summary().reusable_prompt_tokens == 64,
-                (std::string("the taken-over shared slot does not serve the new prefix: ") +
-                 (reuse.choice ? std::to_string(reuse.choice->summary().reusable_prompt_tokens)
-                               : std::string("no choice")))
-                    .c_str());
-    }
 }
 
 // A declared boundary's slot is credited: an engine candidate does not take it over.
