@@ -34,10 +34,11 @@ const char* provenance_name(rc::Provenance p) {
     return "?";
 }
 
-// The header's text: the constants it defines (`constexpr Scalar kX`, `constexpr Constant<N> kX`
-// or `constexpr auto kX = Scalar{...}`, any spacing or line breaks) and the ones its descriptor
-// lists (`listed(kX, ...)`), as two sets of names. Each defined constant must be listed and each
-// listed one defined: a missing entry is named, not hidden behind a count.
+// The header's text: the constants it declares (any `const` or `constexpr` declaration of a name
+// kX, whatever its type is spelled as, over any spacing or line breaks; the descriptor itself
+// aside) and the ones its descriptor lists (`listed(kX, ...)` inside kRouteCostConstants), as two
+// sets of names. Each declared constant must be listed and each listed one declared: a missing
+// entry is named, not hidden behind a count. The header names every constant kX for this.
 struct HeaderNames {
     std::set<std::string> defined, listed;
     bool read = false;
@@ -53,16 +54,23 @@ HeaderNames header_names() {
         return out;
     }
     std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    // Comments may name constants too; drop them first.
+    // Comments may name constants too; drop them first (block comments, then line comments).
+    text = std::regex_replace(text, std::regex(R"(/\*[\s\S]*?\*/)"), "");
     text = std::regex_replace(text, std::regex(R"(//[^\n]*)"), "");
-    const std::regex definition(
-        R"(constexpr\s+(?:Scalar|Constant\s*<\s*\d+\s*>)\s+(k\w+)\s*[{(=])"
-        R"(|constexpr\s+auto\s+(k\w+)\s*=\s*(?:Scalar|Constant\s*<\s*\d+\s*>)\s*[{(])");
+    const std::regex definition(R"(\b(?:constexpr|const)\b[^;{}=()]*?\b(k[A-Z]\w*)\s*[{(=\[])");
     for (std::sregex_iterator it(text.begin(), text.end(), definition), end; it != end; ++it) {
-        out.defined.insert((*it)[1].matched ? (*it)[1].str() : (*it)[2].str());
+        if ((*it)[1] != "kRouteCostConstants") out.defined.insert((*it)[1].str());
+    }
+    const std::string::size_type start = text.find("kRouteCostConstants[]");
+    if (start == std::string::npos) {
+        std::fprintf(stderr, "no kRouteCostConstants[] in %s\n", header.string().c_str());
+        return out;
     }
     const std::regex listing(R"(\blisted\s*\(\s*(k\w+))");
-    for (std::sregex_iterator it(text.begin(), text.end(), listing), end; it != end; ++it) {
+    for (std::sregex_iterator
+             it(text.begin() + static_cast<std::ptrdiff_t>(start), text.end(), listing),
+         end;
+         it != end; ++it) {
         out.listed.insert((*it)[1].str());
     }
     out.read = true;
@@ -87,8 +95,7 @@ int main(int argc, char** argv) {
     }
     for (const auto& name : header.listed) {
         if (header.defined.count(name) != 0) continue;
-        std::fprintf(stderr, "%s is listed but not defined as a Scalar or Constant\n",
-                     name.c_str());
+        std::fprintf(stderr, "%s is listed but not declared in the header\n", name.c_str());
         ++failures;
     }
     if (header.listed.size() != std::size(rc::kRouteCostConstants)) {
