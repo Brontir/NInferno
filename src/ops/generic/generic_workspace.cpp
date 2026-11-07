@@ -116,9 +116,8 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
     std::size_t gather = 0;
     if (u4_zp_group(problem.qtype) && (weight == nullptr || weight->k_order != nullptr)) {
         WorkspaceLayoutBuilder layout;
-        (void)layout.alloc_bytes(static_cast<std::size_t>(max_tokens) *
-                                     static_cast<std::size_t>(problem.k) * 2,
-                                 256);
+        (void)layout.alloc_bytes(
+            static_cast<std::size_t>(max_tokens) * static_cast<std::size_t>(problem.k) * 2, 256);
         gather = layout.peak_bytes(1);
     }
     const auto with_gather = [gather](std::size_t planes) {
@@ -163,8 +162,9 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
         const std::int32_t hi = prefill ? max_tokens : std::min(max_tokens, kMmqMaxTokens);
         const std::int32_t t  = std::min(max_tokens, prefill ? kMmqPrefillSlice : kMmqMaxTokens);
         if (ggml_mmq_format(problem.qtype) && allows_a8(problem.policy) && forced != 0 &&
-            hi >= std::max(min_tokens, kMmqMinTokens) && (problem.n % ggml_mmq::kRowMultiple) == 0 &&
-            (problem.k % ggml_mmq::kKMultiple) == 0 && ggml_mmq::device_supported()) {
+            hi >= std::max(min_tokens, kMmqMinTokens) &&
+            (problem.n % ggml_mmq::kRowMultiple) == 0 && (problem.k % ggml_mmq::kKMultiple) == 0 &&
+            ggml_mmq::device_supported()) {
             const std::int32_t plane_rows =
                 problem.epilogue == Epilogue::SwiGlu ? 2 * problem.n : problem.n;
             mmq = mmq_workspace_bytes(problem.k, plane_rows, t) + kGgmlArenaSlack;
@@ -191,11 +191,11 @@ std::size_t workspace_capacity_bytes(const Problem& problem, const Weight* weigh
             : 0;
     mmq = std::max(mmq, volta);
     if (!a8 && !r8_verify) return with_gather(mmq);
-    const std::size_t i8 = (problem.qtype == QType::Q4_G64_FP16 ||
-                            problem.qtype == QType::Q5_G64_FP16 ||
-                            problem.qtype == QType::Q6_G64_FP16)
-                               ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
-                               : 0;
+    const std::size_t i8 =
+        (problem.qtype == QType::Q4_G64_FP16 || problem.qtype == QType::Q5_G64_FP16 ||
+         problem.qtype == QType::Q6_G64_FP16)
+            ? route_workspace_bytes(Route{Family::I8Mma, 0}, problem.k, max_tokens)
+            : 0;
     return with_gather(std::max(
         {mmq, i8, route_workspace_bytes(Route{Family::W4a8Mma, 0}, problem.k, max_tokens)}));
 }

@@ -241,10 +241,14 @@ bool w4a8_policy_allows(const Weight& w, LinearPolicy policy) {
            (w.qtype != QType::NVFP4 || nvfp4_prefill_a8_policy(w.qtype, policy));
 }
 
+} // namespace
+
 bool allows_w4a8(const Weight& w, LinearPolicy policy) {
     return w4a8_policy_allows(w, policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
            aligned_to(w.qdata, 16);
 }
+
+namespace {
 
 // I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
 // one 16-byte copy per row), 16-byte code and scale planes.
@@ -341,6 +345,8 @@ void validate_call(const Call& call) {
     }
 }
 
+} // namespace
+
 // R8: a format with an R8 codec, whole load groups of K, 16-byte code rows, A8 allowed. A lane
 // strides K by groups, so K need not fill 128-value tiles: Gemma 4 26B's dense down projection
 // (K = 2112) and gpt-oss's hidden (2880) take R8 at decode instead of the A16 register MMA.
@@ -348,6 +354,8 @@ bool allows_r8(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) && r8_supports(w.qtype) && (w.k % r8_k_values(w.qtype)) == 0 &&
            aligned_to(w.qdata, 16);
 }
+
+namespace {
 
 // Whether a call of T tokens takes R8 (decode, T <= kR8DecodeTokens, and the activation fits):
 // r8_call_refusal names why not.

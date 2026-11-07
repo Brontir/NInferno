@@ -97,6 +97,8 @@ ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tok
 
 // Shared by the selection and the workspace queries (generic_gemm.cpp).
 bool allows_w4a4(const Weight& w, LinearPolicy policy);
+bool allows_w4a8(const Weight& w, LinearPolicy policy);
+bool allows_r8(const Weight& w, LinearPolicy policy);
 std::int32_t vec_max_tokens();
 bool volta_tiled_qtype(QType qtype);
 bool volta_cutlass_qtype(QType qtype);
