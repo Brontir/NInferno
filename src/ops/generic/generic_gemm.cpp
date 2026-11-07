@@ -222,6 +222,7 @@ int run_values(WeightCodec codec) {
 
 } // namespace
 
+// W4A4: NVFP4 with A4 allowed and a finite, positive input-scale divisor.
 bool allows_w4a4(const Weight& w, LinearPolicy policy) {
     return w.qtype == QType::NVFP4 && allows_a4(policy) && std::isfinite(w.input_scale_divisor) &&
            w.input_scale_divisor > 0.0F;
@@ -407,13 +408,13 @@ bool ggml_layout_admits(const Weight& w) {
 // (core/measured_boards.h), which the product's estimate reads too.
 bool mmq_prefill_device() { return measured::mmq_prefill_device_pays(); }
 
+} // namespace
+
 // Without tensor mma.sync (Volta) ggml's matrix kernel is out (device_supported: sm_75 on) and the
 // register-MMA tiles run on FP32 FMAs, so a call of 9..16 tokens (a deep speculative verify) runs
 // the vector kernel eight columns at a time (V100, Gemma 4 31B Q4_K_XL MTP, draft window 10: the
 // emulated tiles 1.0..2.6 ms a call, 67 % of the run); Q4_K / Q5_K / Q6_K / Q8 take Volta's HMMA
 // route from five tokens instead (volta_hmma_route).
-} // namespace
-
 std::int32_t vec_max_tokens() {
     try {
         const auto& f = device_class().features;
