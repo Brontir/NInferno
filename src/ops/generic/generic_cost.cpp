@@ -64,9 +64,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const auto fitted = fitted_route_scales(d.major, d.minor);
     if (!fitted) return;
     const GenerationRow& g = generation_row(d.major, d.minor);
-    const double clk       = d.facts.reference_clock_hz();
-    const double bw        = d.facts.dram_bytes_per_s();
-    const double sms       = d.sms;
+    const double clk     = d.facts.reference_clock_hz();
+    const double bw      = d.facts.dram_bytes_per_s();
+    const double sms     = d.sms;
     const double n = problem.n, k = problem.k, t = tokens;
     const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
     const double peak_sm = g.s8 * clk;
@@ -85,18 +85,17 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     constexpr auto kW4a8Eff = route_cost::kW4a8Efficiency;
     if (allows_w4a8(weight, problem.policy)) {
         for (int i = 0; i < w4a8_schedule_count(); ++i) {
-            const auto s = w4a8_schedule_info(i);
+            const auto s         = w4a8_schedule_info(i);
             const Route r{Family::W4a8Mma, static_cast<std::uint8_t>(i)};
-            const auto tile     = *route_tile(r, problem.epilogue, tokens);
-            const double rows_w = s.block_n, cols = tile.tokens;
+            const auto tile      = *route_tile(r, problem.epilogue, tokens);
+            const double rows_w  = s.block_n, cols = tile.tokens;
             const double rows_o  = tile.out_rows;
-            const double threads = s.producers > 0                  ? 384.0
-                                   : rows_w == 64.0 && cols == 64.0 ? 128.0
-                                                                    : 256.0;
-            const double smem    = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) *
+            const double threads =
+                s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
+            const double smem = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) *
                                 route_cost::kW4a8StageBytesPerRow.value();
-            const double occ   = std::max(1.0, std::min({std::floor(max_thr / threads), max_cta,
-                                                         std::floor(smem_sm / smem)}));
+            const double occ     = std::max(
+                1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
             const double ctas  = cdiv(n, rows_o) * cdiv(t, cols);
             const double q     = std::ceil(ctas / sms);
             const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
@@ -106,7 +105,7 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
                                                  : route_cost::kW4a8StepCycles.value();
             const double chain =
                 std::ceil(q / occ) * std::ceil(k / route_cost::kW4a8StepK.value()) * cap / clk;
-            const double eff = kW4a8Eff[std::min(i, 5)] * scale;
+            const double eff   = kW4a8Eff[std::min(i, 5)] * scale;
             offer(r, quant(t) +
                          std::max(mem, mma / eff) /
                              std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
@@ -120,21 +119,21 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     if (allows_i8(weight, problem.policy)) {
         const double tp = i8_padded_tokens(tokens);
         for (int i = 0; i < i8_schedule_count(); ++i) {
-            const auto s = i8_schedule_info(i);
+            const auto s         = i8_schedule_info(i);
             const Route r{Family::I8Mma, static_cast<std::uint8_t>(i)};
-            const auto tile     = *route_tile(r, problem.epilogue, tokens);
-            const double rows_w = s.block_n, cols = tile.tokens;
-            const double rows_o = tile.out_rows;
-            const double occ    = std::max(1.0, std::min({std::floor(max_thr / s.threads), max_cta,
-                                                          std::floor(smem_sm / s.smem_bytes)}));
-            const double ctas   = cdiv(n, rows_o) * cdiv(t, cols);
-            const double q      = std::ceil(ctas / sms);
-            const double warps  = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
-            const double mem    = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
-            const double mma    = q * 2.0 * rows_w * cols * k / peak_sm;
+            const auto tile      = *route_tile(r, problem.epilogue, tokens);
+            const double rows_w  = s.block_n, cols = tile.tokens;
+            const double rows_o  = tile.out_rows;
+            const double occ     = std::max(1.0, std::min({std::floor(max_thr / s.threads), max_cta,
+                                                           std::floor(smem_sm / s.smem_bytes)}));
+            const double ctas    = cdiv(n, rows_o) * cdiv(t, cols);
+            const double q       = std::ceil(ctas / sms);
+            const double warps   = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
+            const double mem     = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
+            const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
             const double chain = std::ceil(q / occ) * std::ceil(k / route_cost::kI8StageK.value()) *
                                  route_cost::kI8StageCycles.value() / clk;
-            const double eff = route_cost::kI8Efficiency[i] * scale;
+            const double eff     = route_cost::kI8Efficiency[i] * scale;
             offer(r, quant(tp) +
                          std::max(mem, mma / eff) /
                              std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
@@ -198,12 +197,12 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         return false;
     }
     const GenerationRow& g = generation_row(d.major, d.minor);
-    const bool emulated    = !d.features.mma_bf16_native;
-    const double clk       = d.facts.reference_clock_hz();
-    const double bw        = d.facts.dram_bytes_per_s();
-    const double sms       = d.sms;
-    const double peak_sm   = g.bf16 * clk;
-    const double bw_sm     = bw / sms;
+    const bool emulated  = !d.features.mma_bf16_native;
+    const double clk     = d.facts.reference_clock_hz();
+    const double bw      = d.facts.dram_bytes_per_s();
+    const double sms     = d.sms;
+    const double peak_sm = g.bf16 * clk;
+    const double bw_sm   = bw / sms;
     const double n = problem.n, k = problem.k;
     const double bpw     = static_cast<double>(weight.payload_bytes) / (n * k);
     const double max_thr = std::max(d.max_threads_per_sm, 1);
@@ -217,9 +216,9 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     // threads, at most `occ` resident per SM.
     const auto cost = [&](double rows, double cols, double threads, double cluster, double occ,
                           double warps_k, bool pipelined, double eff) {
-        const double ctas = cdiv(n, rows) * cdiv(tokens, cols) * cluster;
-        const double kc   = k / cluster;
-        const double q    = std::ceil(ctas / sms);
+        const double ctas  = cdiv(n, rows) * cdiv(tokens, cols) * cluster;
+        const double kc    = k / cluster;
+        const double q     = std::ceil(ctas / sms);
         // The warps resident on a busy SM: SMs left idle by a small grid do not slow the busiest
         // one, whose bytes are already in `mem` (the fleet-wide fill charged calls of fewer CTAs
         // than SMs up to 20x).

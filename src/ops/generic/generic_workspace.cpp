@@ -1,49 +1,19 @@
-// The generic path's workspace (#refactor B1): the planes a quantized activation takes from the
+// The generic path's workspace (refactor B1): the planes a quantized activation takes from the
 // caller's arena (activation_planes, the one description run_route allocates by), a route's bytes
 // (route_workspace_bytes), and the capacity a caller reserves for a token interval
-// (workspace_capacity_bytes, volta_prefill_workspace_bytes).
-#include "ops/generic/generic_gemm.h"
-#include "core/per_device.h"
-#include "ops/common/arch_limits.h"
-#include "ops/common/native_nvfp4.h"
-
-#include "core/device_class.h"
-#include "core/generation.h"
-#include "core/measured_boards.h"
-#include "core/tensor.h"
+// (workspace_capacity_bytes, volta_prefill_workspace_bytes). Declared in generic_gemm.h and
+// generic_select_internal.h.
 #include "core/layout.h"
-#include "ninferno/ops/prefill_routes.h"
 #include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm_internal.h"
-#include "ops/generic/generic_select_internal.h"
-#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
-#include "ops/generic/generic_schedules.h"
+#include "ops/generic/generic_select_internal.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
-#include "ops/generic/r8_decode_table.h"
-#include "ops/generic/route_table.h"
-#include "ops/linear/nvfp4/nvfp4_a4_plan.h"
-#include "ops/route_pins.h"
-
-#include <cuda_bf16.h>
 
 #include <algorithm>
-#include <array>
-#include <atomic>
-#include <bit>
-#include <cstdio>
-#include <cstdlib>
-#include <fstream>
-#include <mutex>
-#include <optional>
-#include <set>
-#include <span>
-#include <tuple>
-#include <cmath>
+#include <cstddef>
 #include <cstdint>
 #include <stdexcept>
-#include <string>
-#include <string_view>
 
 namespace ninferno::ops::detail::generic {
 
