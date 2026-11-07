@@ -690,7 +690,8 @@ llama.cpp-style base URLs.
 - The compatible `top_k` (`0..64`) and `min_p` (`0..1`) sampler extensions.
 - `logit_bias` (Chat Completions): `{"<token id>": offset}` with the model's own token ids and
   offsets in `[-100,100]`, added to the logit before the penalties and the sampler; -100 bans the
-  token outright (it is never sampled, whatever its logit or the penalties). A token id past the model's vocabulary is refused with 400; zero offsets are
+  token: it loses to every token that is not banned, whatever its logit or the penalties (where an
+  output constraint allows only banned tokens, one of those is still picked). A token id past the model's vocabulary is refused with 400; zero offsets are
   dropped. Speculative verification samples from the same biased logits.
 - `logprobs` and `top_logprobs` (Chat Completions; `top_logprobs` in `[0,20]`, nonzero only with
   `logprobs:true`): each output token's log probability, its text and bytes, and its most likely

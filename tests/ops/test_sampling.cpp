@@ -1024,6 +1024,52 @@ int masked_distribution_contract() {
            verify_distribution("sample masked distribution", result.tokens, oracle);
 }
 
+// A constraint that leaves only banned tokens (logit_bias -100 on every allowed one): the ban is a
+// finite floor above the mask's -inf, so the pick stays one the constraint allows, greedy and
+// sampled, instead of a tie among -inf candidates that may land on a disallowed token.
+int banned_only_support_contract() {
+    constexpr int physical_rows = 248320;
+    constexpr int token_domain  = 248077;
+    const int words             = mask_words(token_domain);
+    std::vector<float> column(physical_rows, 4.0f);
+    column[7919]   = 1.0f;
+    column[200003] = 2.0f;
+    round_to_bf16(column);
+    MappedWords masks(static_cast<std::size_t>(words));
+    MappedWords release(1);
+    std::fill(masks.host(), masks.host() + words, 0u);
+    set_allowed(masks.host(), 7919, true);
+    set_allowed(masks.host(), 200003, true);
+    release.store_release(3);
+    std::vector<float> bias(static_cast<std::size_t>(token_domain), 0.0f);
+    bias[7919]               = -100.0f;
+    bias[200003]             = -100.0f;
+    DeviceBuffer device_bias = to_device(bias);
+    int failures             = 0;
+    for (const float temperature : {0.0f, 0.9f}) {
+        ops::SamplingConfig config;
+        config.temperature        = temperature;
+        config.seed               = 11;
+        config.logit_bias         = static_cast<const float*>(device_bias.p);
+        config.token_mask         = masks.device();
+        config.token_mask_release = release.device();
+        config.token_mask_epoch   = 3;
+        config.token_mask_words   = words;
+        const RunResult result =
+            run_repeated(column, token_domain, 64, 8, config, 90, ops::kSamplePurposeDecode);
+        failures += result.integrity_failures;
+        for (const int token : result.tokens) {
+            if (token == 7919 || token == 200003) continue;
+            std::cerr << "banned-only support T=" << temperature << ": picked " << token
+                      << ", which the constraint does not allow
+                         ";
+                ++failures;
+            break;
+        }
+    }
+    return failures;
+}
+
 // All-allowed masks leave greedy and stochastic results bit-identical to the unmasked route.
 int all_allowed_mask_identity_contract() {
     constexpr int physical_rows = 248320;
@@ -1330,6 +1376,7 @@ int main() {
     failures += masked_greedy_contract(248320, 248077);
     failures += masked_greedy_contract(260, 200);
     failures += masked_distribution_contract();
+    failures += banned_only_support_contract();
     failures += all_allowed_mask_identity_contract();
     failures += late_release_contract();
     failures += unreleased_mask_fault_contract();

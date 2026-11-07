@@ -362,6 +362,10 @@ __device__ __forceinline__ bool sampling_token_allowed(const SamplingConfig& c, 
     return ((word >> (v & 31)) & 1u) != 0u;
 }
 
+// A banned token's logit (logit_bias -100): far below any real logit, and finite after division by
+// a temperature down to 1e-18.
+inline constexpr float kBannedLogit = -1.0e20f;
+
 // Applies the allowed-token mask and presence/frequency penalties to a raw logit. A disallowed
 // token becomes -inf. `overlay`/`overlay_len`
 // carry a round-local count overlay: tokens already committed earlier in the
@@ -378,11 +382,14 @@ __device__ __forceinline__ float sampling_penalized_logit(float raw, int v, cons
     float x = raw;
     if (!sampling_has_penalties(c)) { return x; }
     if (c.logit_bias != nullptr) {
-        // -100 (kLogitBiasLimit) is OpenAI's ban: the token cannot be picked, whatever its logit
-        // and whatever a repetition_penalty below 1 would make of a shifted one (the tool-call
-        // opener under tool_choice none is in the prompt, kPromptTokenSeen).
+        // -100 (kLogitBiasLimit) is OpenAI's ban: the token loses to every token that is not
+        // banned, whatever its logit and whatever a repetition_penalty below 1 would make of a
+        // shifted one (the tool-call opener under tool_choice none is in the prompt,
+        // kPromptTokenSeen). It stays finite, above a mask's -inf: where a constraint leaves only
+        // banned tokens, the choice is still one the constraint allows (and a distribution over
+        // them stays defined) rather than a tie of -inf candidates.
         const float bias = c.logit_bias[v];
-        if (bias <= -100.0f) { return -CUDART_INF_F; }
+        if (bias <= -100.0f) { return kBannedLogit; }
         x += bias;
     }
     const int stored = c.token_counts != nullptr ? c.token_counts[v] : 0;
