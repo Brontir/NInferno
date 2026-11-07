@@ -59,12 +59,14 @@ updating past that fix.
 
 Local change: `cpp/tokenizer_info.cc`, the token trie's subtree ranges, marked "NInferno (xgrammar
 #1006)": a token is in a subtree when the subtree's token is its prefix (upstream tested
-containment, so a rejected "ab" masked "cab" with it). Drop it when updating past mlc-ai/xgrammar#1006.
+containment, so a rejected "ab" masked "cab" with it). The same change as the open upstream PR
+mlc-ai/xgrammar#1006 (which also bumps the serialization version; nothing here persists a
+TokenizerInfo); drop it once that is merged and released.
 
-Local change: `cpp/fsm.cc`, `FSMWithStartEnd::Optional`, marked "NInferno (xgrammar #1032)": the
-skip goes to a fresh end state, so an optional group's tail is not reachable without its head
-(upstream admitted "1.2rc" for `^[0-9]+\.[0-9]+(-[a-z]+)?$`). Drop it when updating past
-mlc-ai/xgrammar#1032.
+Local change: `cpp/fsm.cc`, `FSMWithStartEnd::Optional`, marked "NInferno (xgrammar #1032)": a
+fresh accepting start enters the group at its head, so an optional group's tail is not reachable
+without its head (v0.2.7 admitted "1.2rc" for `^[0-9]+\.[0-9]+(-[a-z]+)?$` and "a" for `(a+b)?`).
+The form of the open upstream PR mlc-ai/xgrammar#1032; drop it once that is merged and released.
 
 To update: replace `include/`, `cpp/`, the two bundled headers and the license files from the new
 tag, keep this file and `CMakeLists.txt`, and re-run the structured-output unit tests

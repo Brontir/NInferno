@@ -1274,6 +1274,22 @@ void xgrammar_fixes_contract(const ConstraintCompiler& compiler) {
     check(admits(version, "\"1.2\""), "optional group: absent");
     check(admits(version, "\"1.2-rc\""), "optional group: present");
     check(!admits(version, "\"1.2rc\""), "optional group: its tail without its head");
+    // Groups whose head loops back to their start (upstream #1032's cases).
+    const auto pattern = [&](const char* regex) {
+        return compiler.compile(schema_spec(Json{{"type", "string"}, {"pattern", regex}}));
+    };
+    const auto plus = pattern("^(a+b)?$");
+    check(admits(plus, "\"\"") && admits(plus, "\"aab\""), "(a+b)?: empty and whole");
+    check(!admits(plus, "\"a\"") && !admits(plus, "\"aa\"") && !admits(plus, "\"b\""),
+          "(a+b)?: a partial group");
+    const auto star = pattern("^(a*b)?$");
+    check(admits(star, "\"b\"") && !admits(star, "\"a\""), "(a*b)?: a without b");
+    const auto scheme = pattern("^([a-z]+://)?example\\.com$");
+    check(admits(scheme, "\"https://example.com\"") && !admits(scheme, "\"httpexample.com\""),
+          "an optional scheme without its separator");
+    const auto suffix = pattern("^[A-Z]+(_[0-9]+)?$");
+    check(!admits(suffix, "\"ABC1\"") && !admits(suffix, "\"ABC_\"") && admits(suffix, "\"ABC_1\""),
+          "an optional numbered suffix");
 
     GrammarVocabulary contained;
     contained.token_domain   = 3;
