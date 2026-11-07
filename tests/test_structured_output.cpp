@@ -1283,7 +1283,8 @@ void xgrammar_fixes_contract(const ConstraintCompiler& compiler) {
     const ConstraintCompiler trie(contained);
     OutputConstraintSpec grammar;
     grammar.kind       = OutputConstraintKind::Grammar;
-    grammar.definition = R"EBNF(root ::= "cab")EBNF";
+    // "ab" is visited (its 'a' may start "ac") and rejected at 'b': its subtree is skipped.
+    grammar.definition = R"EBNF(root ::= "ac" | "cab")EBNF";
     RequestConstraint request(trie.compile(grammar), false);
     std::vector<std::uint32_t> row(request.mask_words());
     request.fill_round({}, row.data(), row.size());
