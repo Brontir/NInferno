@@ -852,11 +852,21 @@ public:
                 });
                 break;
             }
-            if (pressure_evidence) {
+            // An engine-proposed candidate (the automatic prompt end, the leading instructions)
+            // has no pressure evidence of its own, so it never moves owners. With every slot
+            // taken it may still take over a slot nothing has vouched for, one held by another
+            // first-seen engine candidate: the conversation's own prompt ends fill the slots one
+            // turn at a time, and a first request that shares only its system prompt otherwise
+            // finds none free (#462).
+            const bool take_unproven_slot =
+                !pressure_evidence && scenarios.empty() &&
+                engine_proposed_shared_candidate(candidate.shared_evidence);
+            if (pressure_evidence || take_unproven_slot) {
                 for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
                     SharedCatalogEntry& entry = shared_catalog_[slot];
                     if (entry.state != SharedCatalogState::Catalogued || !entry.handle ||
-                        entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0) {
+                        entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0 ||
+                        (!pressure_evidence && !shared_entry_unproven(slot))) {
                         continue;
                     }
                     CaptureAssessment assessment = program.inspect_capture(
@@ -1519,6 +1529,34 @@ private:
         return count;
     }
 
+    // Candidates the engine proposes on its own (the automatic prompt end, the leading
+    // instructions), as opposed to a client's boundary or an observed repeat.
+    [[nodiscard]] static bool
+    engine_proposed_shared_candidate(SharedCandidateEvidence evidence) noexcept {
+        return has_shared_candidate_evidence(evidence, SharedCandidateEvidence::DefaultAutomatic) ||
+               has_shared_candidate_evidence(evidence, SharedCandidateEvidence::EngineStructural);
+    }
+
+    // A resident shared prefix nothing has vouched for: no declared boundary's credit, fewer than
+    // two reuse domains in the demand window (counting `provisional`, the request being planned,
+    // when given), and no holder. Such a slot is speculation and may be taken by a new engine
+    // candidate when none is vacant.
+    [[nodiscard]] bool shared_entry_unproven(std::uint32_t slot,
+                                             const PrefixDemandRecord* provisional = nullptr) const
+        noexcept {
+        const SharedCatalogEntry& entry = shared_catalog_[slot];
+        if (entry.state != SharedCatalogState::Catalogued || !entry.handle ||
+            entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0 ||
+            entry.explicit_credit) {
+            return false;
+        }
+        const PrefixShortlistKey& key = entry.summary.checkpoint.shortlist_key;
+        const std::size_t domains     = provisional != nullptr
+                                            ? matching_reuse_domains(key, *provisional)
+                                            : matching_reuse_domains(key);
+        return domains < 2U;
+    }
+
     void reset_active_entry(ActiveEntry& active) noexcept {
         active.occupied         = false;
         active.publication_slot = kInvalidCatalogSlot;
@@ -1890,6 +1928,12 @@ private:
             std::count_if(shared_catalog_.begin(), shared_catalog_.end(), [](const auto& entry) {
                 return entry.state == SharedCatalogState::Vacant;
             }));
+        // What an engine-proposed candidate may occupy: a vacant slot, or a resident entry nothing
+        // has vouched for (capture takes it over, see reserve_active_capture).
+        std::uint32_t surplus_shared_slots = vacant_shared_slots;
+        for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
+            if (shared_entry_unproven(slot, &provisional_demand)) { ++surplus_shared_slots; }
+        }
         for (const auto& opportunity : base.context_cache().opportunities) {
             if (opportunity.kind != PromptCacheMarkerKind::SharedStablePrefix ||
                 opportunity.frontier < selected_summary.reusable_prompt_tokens) {
@@ -1918,12 +1962,8 @@ private:
                                               SharedCandidateEvidence::RequestedAutomatic);
             const bool repeated = matching_reuse_domains(*key, provisional_demand) >= 2U;
             const bool surplus_candidate =
-                vacant_shared_slots != 0 &&
-                (has_shared_candidate_evidence(opportunity.evidence,
-                                               SharedCandidateEvidence::DefaultAutomatic) ||
-                 has_shared_candidate_evidence(opportunity.evidence,
-                                               SharedCandidateEvidence::EngineStructural));
-            std::fprintf(stderr, "[dbg462s] opp frontier=%u evid=%u vacant=%u declared=%d repeated=%d surplus=%d\n", unsigned(opportunity.frontier), unsigned(opportunity.evidence), unsigned(vacant_shared_slots), int(declared), int(repeated), int(surplus_candidate));
+                surplus_shared_slots != 0 && engine_proposed_shared_candidate(opportunity.evidence);
+            std::fprintf(stderr, "[dbg462s] opp frontier=%u evid=%u vacant=%u surplus_slots=%u declared=%d repeated=%d surplus=%d\n", unsigned(opportunity.frontier), unsigned(opportunity.evidence), unsigned(vacant_shared_slots), unsigned(surplus_shared_slots), int(declared), int(repeated), int(surplus_candidate));
             if (!declared && !repeated && !surplus_candidate) { continue; }
             const std::optional<PrefillWork> rebuild =
                 base.shared_candidate_rebuild_work(opportunity.frontier);
@@ -2055,7 +2095,7 @@ private:
                     .target_recovery_ns   = 0,
                 });
             }
-            if (surplus_only_count > vacant_shared_slots) { continue; }
+            if (surplus_only_count > surplus_shared_slots) { continue; }
             std::sort(frontiers.begin(), frontiers.end());
             const ContextPortfolioValueResult value = projected_value.fold(owners, checkpoints);
             const std::uint64_t schedule_cost       = split_cost(frontiers);
