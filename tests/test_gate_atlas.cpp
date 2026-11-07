@@ -135,8 +135,8 @@ int main(int argc, char** argv) {
         // with a fact unknown is never anyone's donor.
         const ninferno::Board own_5090 = m::kRtx5090;
         const ninferno::Board unknown_dram{12, 0, 170, 96, 0};
-        const auto* own = ninferno::nearest_known_measured(std::span(gates), own_5090,
-                                                           m::kCarryDistance);
+        const auto* own =
+            ninferno::nearest_known_measured(std::span(gates), own_5090, m::kCarryDistance);
         expect(own == &gates[0], "a known board lost its own entry");
         expect(ninferno::nearest_known_measured(std::span(gates), unknown_l2, m::kCarryDistance) ==
                    nullptr,

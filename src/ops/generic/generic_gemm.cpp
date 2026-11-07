@@ -978,7 +978,7 @@ const R8DecodeTable* r8_decode_table() {
     try {
         return table.get([](int) {
             return nearest_known_measured(std::span(kR8DecodeTables), board_of(device_class()),
-                                    kR8CarryDistance);
+                                          kR8CarryDistance);
         });
     } catch (const std::exception&) {
         return nullptr;
