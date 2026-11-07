@@ -1285,7 +1285,10 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             const std::pair<std::size_t, std::size_t> sizes = host_tier_sizes();
             const std::uint64_t asked = static_cast<std::uint64_t>(sizes.first) + sizes.second;
             if (asked == 0) { return std::pair{sizes, std::size_t{0}}; }
-            if (!pin_lock) { pin_lock.emplace(); }
+            if (!pin_lock) {
+                pin_lock.emplace();
+                host_tier.pin_unserialized = !pin_lock->held();
+            }
             if (host_tier.automatic && asked != 0) {
                 // What the host can pin now, after the sizing: another process may have pinned
                 // since.
