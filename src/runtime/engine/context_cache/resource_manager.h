@@ -2081,10 +2081,11 @@ private:
                 // automatic prompt end is the one exception: its value is the sibling sessions'
                 // (a request of another domain), which this request's bit cannot show, so in a
                 // vacant slot (no victim) it is worth its own saving; otherwise the prompt end
-                // always won and Chat never shared the head (#316). A subset that displaces an
-                // unproven entry has no vacant slot to spare, and the head is priced as it is.
+                // always won and Chat never shared the head (#316). The same holds in a slot an
+                // unproven entry gives up (its loss priced above): the head is the system prompt a
+                // new conversation's next request reuses (#462).
                 const bool sibling_head =
-                    displaced == 0 && !candidate.pressure_capable &&
+                    !candidate.pressure_capable &&
                     has_shared_candidate_evidence(candidate.evidence,
                                                   SharedCandidateEvidence::DefaultAutomatic) &&
                     candidate.frontier < longest_default;
