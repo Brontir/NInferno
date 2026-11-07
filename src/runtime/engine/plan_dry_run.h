@@ -83,12 +83,34 @@ struct PlanAxes {
 [[nodiscard]] std::uint32_t plan_context_ceiling(const EngineOptions& options,
                                                  std::uint32_t native_context);
 
-// Whether a Host tier keeps StateImages: what the options and the platform configure (an
-// automatic tier's default slots, none on a GPU sharing the host's memory), never what the host can
-// pin now.
-[[nodiscard]] bool plan_host_states_configured(const ContextCacheOptions& cache,
-                                               std::uint32_t default_host_state_slots,
-                                               bool integrated);
+// How the context cache's Host tier is sized (ContextCacheOptions::host_tier_automatic).
+enum class HostTierSizing {
+    Off,       // the context cache is disabled
+    Explicit,  // the options' slots and KV bytes, kept; construction refuses what the host cannot
+               // pin
+    Automatic, // defaults the Engine fits to what the host can pin (zero on a GPU that shares the
+               // host's memory: a Host tier would pin the memory the Device pool draws on)
+};
+
+// The Host tier as the options and the platform configure it, never what the host can pin now
+// (the fit to MemAvailable sizes an automatic tier at construction and moves nothing the plan
+// ladder or the fingerprint reads).
+struct HostTierSpec {
+    HostTierSizing sizing  = HostTierSizing::Off;
+    std::uint32_t slots    = 0; // Host StateImages
+    std::uint64_t kv_bytes = 0; // Host KV capacity
+};
+
+// The private continuations a start keeps without an explicit count: room for eight conversations
+// beside the active ones.
+[[nodiscard]] std::uint32_t default_private_continuations(std::uint32_t concurrency);
+
+// The one resolution of the Host tier, shared by the Engine's construction and the dry run (both
+// normalize the options first; it gives the same answer before and after). An automatic tier keeps
+// two StateImages a conversation (its endpoint and the turn an edit returns to): at least twice
+// the private continuations.
+[[nodiscard]] HostTierSpec resolve_host_tier_spec(const ContextCacheOptions& cache,
+                                                  std::uint32_t concurrency, bool integrated);
 
 // The axes of `options` (normalized: normalize_engine_options) for a model of `native_context`.
 [[nodiscard]] PlanAxes plan_axes(const EngineOptions& options, std::uint32_t native_context,

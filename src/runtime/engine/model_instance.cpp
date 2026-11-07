@@ -413,16 +413,15 @@ EngineOptions normalize_engine_options(EngineOptions options) {
     // requests run at once, and a descriptor costs a catalog entry and an address space, the KV
     // and states staying bounded by their own capacities (four rotating agents at C1 re-prefilled
     // 17 % less with 9 than with 2).
-    const std::uint64_t default_private =
-        std::max<std::uint64_t>(2ULL * concurrency, static_cast<std::uint64_t>(concurrency) + 8U);
     cache.max_private_continuations =
-        cache.max_private_continuations.value_or(static_cast<std::uint32_t>(default_private));
+        cache.max_private_continuations.value_or(default_private_continuations(concurrency));
     // An automatic Host tier keeps two StateImages a conversation (its endpoint and the turn an
     // edit returns to) rather than a fixed eight: with four rotating agents eight states left each
     // only an old anchor between its turns. The Host fit still scales it to what the host pins.
-    if (cache.host_tier_automatic) {
-        cache.host_state_slots = std::max(cache.host_state_slots,
-                                          2U * *cache.max_private_continuations);
+    // (resolve_host_tier_spec: the dry run's too.)
+    if (const HostTierSpec tier = resolve_host_tier_spec(cache, concurrency, false);
+        tier.sizing == HostTierSizing::Automatic) {
+        cache.host_state_slots = tier.slots;
     }
     // A shared prefix is reusable with a complete StateImage (Device or Host) and its KV, each
     // bounded by its own capacity; its descriptor costs a catalog entry and an address space (a
@@ -681,15 +680,17 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // An automatic Host tier is fitted to what the host can pin before anything is planned over it
     // (its KV pages widen the logical page tables).
     ContextCacheOptions& cache = resolved.context_cache;
-    HostTierResolution host_tier{.automatic        = cache.enabled && cache.host_tier_automatic,
+    const HostTierSpec host_spec =
+        resolve_host_tier_spec(cache, resolved.max_concurrency, device.props.integrated != 0);
+    HostTierResolution host_tier{.automatic        = host_spec.sizing == HostTierSizing::Automatic,
                                  .default_slots    = cache.host_state_slots,
                                  .default_kv_bytes = cache.host_kv_capacity_bytes};
-    if (host_tier.automatic && device.props.integrated != 0) {
+    if (host_tier.automatic) {
         // A GPU that shares the host's memory (DGX Spark's GB10, Jetson): a Host tier would pin
         // the memory the Device pool draws on and copy pages within it, so an automatic one is
-        // off; an explicit one is kept.
-        cache.host_state_slots       = 0;
-        cache.host_kv_capacity_bytes = 0;
+        // off (zero here); an explicit one is kept.
+        cache.host_state_slots       = host_spec.slots;
+        cache.host_kv_capacity_bytes = static_cast<std::size_t>(host_spec.kv_bytes);
     }
     // The pinning a rung declares (rung_cost): the Host tier as the options and the platform
     // configure it. The fit below sizes an automatic tier to what the host can pin now
@@ -725,10 +726,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // so the fingerprint does not follow host memory pressure. A host that can pin no StateImage
     // then keeps no cached state beyond the active lanes on a rung without Device states, as
     // --device-state-slots 0 --host-state-slots 0 would.
-    const bool host_states_configured =
-        cache.enabled &&
-        (host_tier.automatic ? host_tier.default_slots != 0 && device.props.integrated == 0
-                             : cache.host_state_slots != 0);
+    const bool host_states_configured  = host_spec.slots != 0;
     const std::uint32_t states_minimum = host_states_configured ? 0U : 1U;
     // The ladder's rungs set these from here on.
     // (A refused or no longer fitting automatic Host tier is halved in it too:
