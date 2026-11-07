@@ -342,8 +342,15 @@ HostPinLock::HostPinLock() {
         // symlink (O_NOFOLLOW), and only a plain file of one link is taken; its mode is set only
         // where this process owns it, so a path another user planted cannot make this process
         // change the mode of a file of theirs or a victim's.
-        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0666);
-        if (fd < 0) { fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW); }
+        // A file another process just created under a restrictive umask is 0600 until its
+        // creator's fchmod: an EACCES is retried for up to a second before the start goes on
+        // unlocked.
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0666);
+            if (fd < 0) { fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW); }
+            if (fd >= 0 || errno != EACCES) { break; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
         if (fd >= 0) {
             struct stat st{};
             if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
