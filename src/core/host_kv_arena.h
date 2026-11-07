@@ -190,7 +190,10 @@ private:
 
 class HostKVArena {
 public:
-    HostKVArena(std::size_t capacity_bytes, std::span<const HostKVPageLayout> supported_layouts);
+    // `backing`: pins made beforehand (HostTierPins::kv), exactly capacity_bytes (else
+    // std::logic_error); none: the arena pins its own.
+    HostKVArena(std::size_t capacity_bytes, std::span<const HostKVPageLayout> supported_layouts,
+                std::optional<PinnedHostBuffer> backing = std::nullopt);
 
     HostKVArena(const HostKVArena&)            = delete;
     HostKVArena& operator=(const HostKVArena&) = delete;

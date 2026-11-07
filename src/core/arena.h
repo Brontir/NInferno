@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -114,10 +115,6 @@ class PinnedHostBuffer {
 public:
     // Throws PinnedHostError when the driver refuses the pin.
     explicit PinnedHostBuffer(std::size_t size_bytes);
-    // A held buffer of exactly `size_bytes` (hold_pinned_host) when there is one, else a new pin:
-    // the pins a startup measured stay pinned until the Program that sizes them takes them, so
-    // another process starting at the same time cannot take the memory in between (#473).
-    [[nodiscard]] static PinnedHostBuffer claim(std::size_t size_bytes);
     ~PinnedHostBuffer();
 
     PinnedHostBuffer(const PinnedHostBuffer&)            = delete;
@@ -133,19 +130,22 @@ private:
     std::size_t size_ = 0;
 };
 
-// Pinned bytes this process holds in PinnedHostBuffers (live ones, held ones included).
+// Pinned bytes this process holds in PinnedHostBuffers (the live ones).
 [[nodiscard]] std::size_t pinned_host_bytes() noexcept;
-// Keeps `buffer` pinned for a later PinnedHostBuffer::claim of its size.
-void hold_pinned_host(PinnedHostBuffer&& buffer);
-// Whether a held buffer of exactly `size_bytes` waits for a claim.
-[[nodiscard]] bool held_pinned_host(std::size_t size_bytes) noexcept;
-// The holds are the process's, not one construction's: two Engines constructed at once in one
-// process would release each other's (serve constructs one at a time).
-// The bytes of the held buffers (pinned already: a check of what more may be pinned leaves them
-// out).
-[[nodiscard]] std::size_t held_pinned_host_bytes() noexcept;
-// Frees every held buffer nobody claimed.
-void release_held_pinned_host() noexcept;
+
+// The pins of the context cache's Host tier, owned by whoever measured them: the engine pins the
+// tier once while it plans (under the host's pin lock) and hands the pins on to the Program, which
+// gives each to the pool that sizes it, so the memory a plan measured stays pinned until it is
+// used (another process starting beside this one cannot take it, #473) and nothing pins a size
+// twice. Move-only; one per construction, never process-global.
+struct HostTierPins {
+    std::optional<PinnedHostBuffer> states; // exactly host slots * StateImage bytes
+    std::optional<PinnedHostBuffer> kv;     // exactly the Host KV capacity
+
+    [[nodiscard]] std::size_t bytes() const noexcept {
+        return (states ? states->size() : 0) + (kv ? kv->size() : 0);
+    }
+};
 
 using WorkspaceArena = DeviceArena;
 

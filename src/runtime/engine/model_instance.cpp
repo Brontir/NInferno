@@ -735,15 +735,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // pinning_device_bytes.)
     EngineOptions unfitted = resolved;
 
-    // The Host tier pins the warm-up holds for the Program (pinning_device_bytes): whatever it
-    // did not claim is freed when construction ends, by a refusal too.
-    struct HeldPinsRelease {
-        HeldPinsRelease()                                  = default;
-        HeldPinsRelease(const HeldPinsRelease&)            = delete;
-        HeldPinsRelease& operator=(const HeldPinsRelease&) = delete;
-
-        ~HeldPinsRelease() { release_held_pinned_host(); }
-    } const held_pins_release;
+    // The pins of the Host tier (pinning_device_bytes), held for the Program that takes them;
+    // freed with this construction when it ends before, a refusal too.
+    HostTierPins host_pins;
     // Whether the driver holds the plan's CUDA graph memory (the kernel warm-up below).
     bool graph_memory_held = false;
     // The longest decode round a request asks for: the widest launch window and its target
@@ -1250,7 +1244,7 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                 : 0;
         return {states, tier.enabled ? tier.host_kv_capacity_bytes : 0};
     };
-    // The pins are kept (hold_pinned_host) for the Program to claim, so a server started beside
+    // The pins are kept (host_pins) for the Program to take, so a server started beside
     // others on one host keeps the memory its plan measured instead of losing it to them before
     // it pins again (#473: eight one-GPU servers started together, each sizing its automatic
     // tier from the same MemAvailable; half died on the second pin).
@@ -1275,7 +1269,6 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     // Whether the Host tier's pins are held for the Program (pinning_device_bytes ran).
     bool host_tier_pinned           = false;
     const auto pinning_device_bytes = [&]() {
-        release_held_pinned_host();
         host_tier_pinned = true;
         // One process of the host at a time reads what it can pin and pins it, so a server
         // started beside others sees their pins in MemAvailable (HostPinLock); taken only where
@@ -1284,10 +1277,16 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         for (;;) {
             const std::pair<std::size_t, std::size_t> sizes = host_tier_sizes();
             const std::uint64_t asked = static_cast<std::uint64_t>(sizes.first) + sizes.second;
-            if (asked == 0) { return std::pair{sizes, std::size_t{0}}; }
+            if (asked == 0) {
+                host_pins = HostTierPins{};
+                return std::pair{sizes, std::size_t{0}};
+            }
             if (!pin_lock) {
                 pin_lock.emplace();
                 host_tier.pin_unserialized = !pin_lock->held();
+                // The rung moved: the old pins go and the new ones are made inside this one lock
+                // scope, so no other process takes the memory between (#473).
+                host_pins = HostTierPins{};
             }
             if (host_tier.automatic && asked != 0) {
                 // What the host can pin now, after the sizing: another process may have pinned
@@ -1303,13 +1302,11 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
             }
             const std::size_t before = current_free_device_bytes();
             try {
-                std::optional<PinnedHostBuffer> states;
-                std::optional<PinnedHostBuffer> kv;
-                if (sizes.first != 0) { states.emplace(sizes.first); }
-                if (sizes.second != 0) { kv.emplace(sizes.second); }
+                HostTierPins made;
+                if (sizes.first != 0) { made.states.emplace(sizes.first); }
+                if (sizes.second != 0) { made.kv.emplace(sizes.second); }
                 const std::size_t after = current_free_device_bytes();
-                if (states) { hold_pinned_host(std::move(*states)); }
-                if (kv) { hold_pinned_host(std::move(*kv)); }
+                host_pins               = std::move(made);
                 return std::pair{sizes, before > after ? before - after : std::size_t{0}};
             } catch (const PinnedHostError& error) {
                 if (!host_tier.automatic) {
@@ -1599,8 +1596,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
     instance->kernel_warm_up         = warm_up;
     instance->plan                   = std::move(plan);
     StartupPhaseScope program(options.startup_observer, StartupPhase::ProgramInitialize);
-    instance->program = models::qwen3_5::create_program(*instance->execution, std::move(sequence),
-                                                        device, options.startup_observer);
+    instance->program =
+        models::qwen3_5::create_program(*instance->execution, std::move(sequence), device,
+                                        options.startup_observer, std::move(host_pins));
     device.synchronize();
     program.complete();
     instance->kv_capacity_resolution.available_after_startup_bytes = current_free_device_bytes();

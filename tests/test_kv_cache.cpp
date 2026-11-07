@@ -12,7 +12,9 @@
 #include <cstring>
 #include <iostream>
 #include <new>
+#include <optional>
 #include <span>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -433,6 +435,34 @@ int exercise_layout_and_transfer(ninferno::DeviceContext& context,
     middle.release();
     std::optional<ninferno::HostKVAllocation> reused = host_arena.allocate(host_layout, 1);
     failures += expect(reused.has_value(), label + " released Host subextent was not reusable");
+
+    // Pins made beforehand (HostTierPins::kv): taken as they are, nothing pinned anew; a backing
+    // of another size is a planning bug and throws, the pins still the caller's.
+    {
+        const std::size_t pinned_before = ninferno::pinned_host_bytes();
+        const std::size_t bytes         = host_layout.page_stride * 8;
+        std::optional<ninferno::PinnedHostBuffer> made(std::in_place, bytes);
+        void* const made_data = made->data();
+        ninferno::HostKVArena backed(bytes, std::span<const ninferno::HostKVPageLayout>(layouts),
+                                     std::move(made));
+        failures += expect_size(ninferno::pinned_host_bytes(), pinned_before + bytes,
+                                label + " a backed Host arena pins nothing new");
+        auto backed_allocation = backed.allocate(host_layout, 1);
+        failures += expect(backed_allocation.has_value() &&
+                               backed.writable_view(*backed_allocation).data() == made_data,
+                           label + " a backed Host arena serves the given pins");
+        backed_allocation.reset();
+
+        bool wrong_size_refused = false;
+        try {
+            ninferno::HostKVArena wrong(bytes, std::span<const ninferno::HostKVPageLayout>(layouts),
+                                        std::optional<ninferno::PinnedHostBuffer>(
+                                            std::in_place, bytes + host_layout.page_stride));
+        } catch (const std::logic_error&) { wrong_size_refused = true; }
+        failures += expect(wrong_size_refused, label + " a Host arena backing of another size");
+        failures += expect_size(ninferno::pinned_host_bytes(), pinned_before + bytes,
+                                label + " the refused backing is freed");
+    }
 
     ninferno::HostKVArena recipe_arena(host_layout.page_stride * 8,
                                      std::span<const ninferno::HostKVPageLayout>(layouts));

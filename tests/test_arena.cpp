@@ -202,31 +202,33 @@ int main() {
     failures += expect_size(pinned.size(), 128, "pinned.size");
     std::memset(pinned.data(), 0x5a, pinned.size());
 
-    // Held pins (#473): a claim of a held buffer's exact size takes that buffer, pinned once; any
-    // other size pins anew; the count of pinned bytes follows; a release frees what is unclaimed.
+    // HostTierPins (#473): each owns its buffers, so the pinned bytes follow its lifetime; two of
+    // them do not touch each other; dropping one unpins exactly its own.
     {
         const std::size_t base = ninferno::pinned_host_bytes();
-        ninferno::PinnedHostBuffer held(4096);
-        void* const held_data = held.data();
-        ninferno::hold_pinned_host(std::move(held));
-        ninferno::hold_pinned_host(ninferno::PinnedHostBuffer(8192));
-        failures += expect_size(ninferno::held_pinned_host_bytes(), 4096 + 8192, "held bytes");
+        ninferno::HostTierPins first;
+        failures += expect_size(first.bytes(), 0, "empty pins");
+        first.states.emplace(4096);
+        first.kv.emplace(8192);
+        failures += expect_size(first.bytes(), 4096 + 8192, "pins bytes");
         failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192, "pinned bytes");
+        void* const states_data = first.states->data();
         {
-            ninferno::PinnedHostBuffer claimed = ninferno::PinnedHostBuffer::claim(4096);
-            failures += expect_ptr(claimed.data(), held_data, "claim takes the held buffer");
-            failures += expect_size(ninferno::held_pinned_host_bytes(), 8192, "held after claim");
-            failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192,
-                                    "a claim pins nothing new");
-            ninferno::PinnedHostBuffer fresh = ninferno::PinnedHostBuffer::claim(1024);
+            ninferno::HostTierPins second;
+            second.states.emplace(1024);
             failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192 + 1024,
-                                    "another size pins anew");
-            failures += expect_size(ninferno::held_pinned_host_bytes(), 8192, "held untouched");
+                                    "a second set pins its own");
+            ninferno::HostTierPins moved = std::move(second);
+            failures += expect_size(second.bytes(), 0, "a moved-from set holds nothing");
+            failures += expect_size(moved.bytes(), 1024, "the moved-to set holds the pins");
+            failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192 + 1024,
+                                    "a move pins nothing new");
+            failures += expect_ptr(first.states->data(), states_data, "the first set is untouched");
         }
-        failures += expect_size(ninferno::pinned_host_bytes(), base + 8192, "freed on destruction");
-        ninferno::release_held_pinned_host();
-        failures += expect_size(ninferno::held_pinned_host_bytes(), 0, "release frees the held");
-        failures += expect_size(ninferno::pinned_host_bytes(), base, "release unpins");
+        failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192,
+                                "the second set unpins only its own");
+        first = ninferno::HostTierPins{};
+        failures += expect_size(ninferno::pinned_host_bytes(), base, "dropping a set unpins it");
     }
 
     return failures == 0 ? 0 : fail("arena test failed");
