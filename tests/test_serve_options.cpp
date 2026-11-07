@@ -773,36 +773,52 @@ int main() {
     failures += check(resolve_prompt_semantics(request, configured).preserve_thinking == false,
                       "request preserve-thinking override did not win");
     {
-        // Thinking off with preservation unset and no reasoning in the history: preserved, so a new
-        // user message re-renders no earlier assistant turn (#463). Reasoning in the history, thinking
-        // left to the template, or an explicit false: the template's own default.
+        // Thinking off with preservation unset and no reasoning in the history: the prompt renders
+        // preserved, so a new user message re-renders no earlier assistant turn (#463), while the
+        // stored and logged value stays unset (a Responses child that thinks inherits nothing).
+        // Reasoning in the history, thinking left to the template, an explicit false or
+        // --no-preserve-thinking: the template's own default.
+        const auto preserved = [](const GenerationRequest& r, const ServeOptions& s) {
+            const ResolvedPromptSemantics semantics = resolve_prompt_semantics(r, s);
+            return semantics.preserve_for_reuse || semantics.preserve_thinking == true;
+        };
         GenerationRequest off = request;
         off.preserve_thinking.reset();
         off.enable_thinking = false;
         ChatTurn assistant;
         assistant.role = ninferno::ChatRole::Assistant;
         off.messages.push_back(assistant);
-        failures += check(resolve_prompt_semantics(off, defaults).preserve_thinking == true,
-                          "thinking off without history reasoning was not preserved");
+        const ResolvedPromptSemantics off_semantics = resolve_prompt_semantics(off, defaults);
+        failures += check(off_semantics.preserve_for_reuse && !off_semantics.preserve_thinking,
+                          "thinking off without history reasoning was not preserved for the prompt "
+                          "alone");
+        GenerationRequest server_off = off;
+        server_off.enable_thinking.reset();
+        failures += check(preserved(server_off, parse({"ninferno-serve", "model.ninferno", "--no-thinking"})),
+                          "--no-thinking without history reasoning was not preserved");
+        GenerationRequest effort_none = server_off;
+        effort_none.reasoning_effort = ninferno::ReasoningEffort::None;
+        failures += check(preserved(effort_none, defaults),
+                          "reasoning effort none without history reasoning was not preserved");
         GenerationRequest reasoned = off;
         reasoned.messages.back().reasoning_content = "earlier thoughts";
-        failures += check(!resolve_prompt_semantics(reasoned, defaults).preserve_thinking,
+        failures += check(!preserved(reasoned, defaults),
                           "history reasoning was preserved without being asked for");
         GenerationRequest inline_think = off;
         ContentPart think;
         think.kind = ContentKind::Text;
         think.text = "<think>\nearlier thoughts\n</think>\n\nanswer";
         inline_think.messages.back().content.push_back(think);
-        failures += check(!resolve_prompt_semantics(inline_think, defaults).preserve_thinking,
+        failures += check(!preserved(inline_think, defaults),
                           "a think block in an assistant turn's text was preserved");
-        GenerationRequest unset = off;
-        unset.enable_thinking.reset();
-        failures += check(!resolve_prompt_semantics(unset, defaults).preserve_thinking,
+        failures += check(!preserved(server_off, defaults),
                           "the template's thinking default was preserved");
         GenerationRequest explicit_off = off;
         explicit_off.preserve_thinking = false;
-        failures += check(resolve_prompt_semantics(explicit_off, defaults).preserve_thinking == false,
+        failures += check(!preserved(explicit_off, defaults),
                           "an explicit preserve_thinking false was overridden");
+        failures += check(!preserved(off, parse({"ninferno-serve", "model.ninferno", "--no-preserve-thinking"})),
+                          "--no-preserve-thinking did not keep the template's default");
     }
 
     {

@@ -68,6 +68,7 @@ std::string serve_usage_text(const char* argv0) {
            "[--repetition-thinking stop|conclude] "
            "[--vision] [--no-cuda-graph] [--no-prefix-reuse] [--concurrent-prefill] "
            "[--chat-template FILE] [--lm-head-draft] [--no-thinking] [--preserve-thinking] "
+           "[--no-preserve-thinking] "
            "[--no-auto-system-shared-prefix] [--trust-cache-hints] [--cache-keep-tokens N] [--cors] [--usage-chunk-choice] "
            "[--temperature F] [--top-p F] [--top-k N] [--min-p F] [--presence-penalty F] "
            "[--frequency-penalty F] [--seed N] [--greedy]\n"
@@ -194,6 +195,8 @@ std::string serve_usage_text(const char* argv0) {
            std::to_string(kRepetitionMinimumRepeats) +
            " or more times (finish_reason length); 0, the default, is off\n"
            "       --preserve-thinking retains closed-turn assistant reasoning in later prompts\n"
+           "       --no-preserve-thinking keeps the template's default even for a thinking-off\n"
+           "       request with no reasoning in its history (which is otherwise preserved)\n"
            "       --usage-chunk-choice gives the streamed usage chunk a zero-delta choice so\n"
            "       strict parsers that reject choices:[] accept the terminal usage record\n"
            "       sampler defaults come from the loaded model and resolved thinking mode; "
@@ -534,6 +537,8 @@ ServeOptions parse_serve_options(int argc, char** argv) {
             options.enable_thinking = false;
         } else if (arg == "--preserve-thinking") {
             options.preserve_thinking = true;
+        } else if (arg == "--no-preserve-thinking") {
+            options.preserve_thinking = false;
         } else if (arg == "--no-auto-system-shared-prefix") {
             options.auto_system_shared_prefix = false;
         } else if (arg == "--trust-cache-hints") {

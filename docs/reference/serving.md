@@ -1010,7 +1010,10 @@ the share of responses in schema order and near-empty objects that stopped early
   preserved. Qwen3.6's template drops the think blocks of the assistant turns before the last user
   message and writes an empty one into the turns after it; preserved, every assistant turn carries
   the same empty block, so an agent's next user message re-renders none of its earlier tool turns
-  and their cached prefix is reused. Pass `preserve_thinking: false` for the template's default.
+  and their cached prefix is reused. Pass `preserve_thinking: false` (or start the server with
+  `--no-preserve-thinking`) for the template's default. The inferred value shapes only that
+  request's prompt: the request log and a stored Responses record keep preservation unset, so a
+  later turn that thinks does not inherit it.
 
 ### Streaming format
 
@@ -1862,6 +1865,7 @@ not take at startup.
 | `--vision` | enable media input and load Vision GPU allocations | off |
 | `--no-thinking` | disable thinking by default | thinking on |
 | `--preserve-thinking` | preserve closed-turn assistant reasoning by default | off |
+| `--no-preserve-thinking` | keep the template's default for a thinking-off request with no reasoning in its history, which is otherwise preserved for prefix reuse | off |
 | `--usage-chunk-choice` | give the streamed usage chunk a zero-delta choice, for strict client parsers that reject the OpenAI-conformant empty `choices` array | off |
 | `--temperature F` | process-level temperature override | unset |
 | `--top-p F` | process-level top-p override | unset |

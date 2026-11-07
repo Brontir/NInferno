@@ -367,10 +367,9 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
                           part.text.find("</think>") != std::string::npos;
                });
     };
-    if (!result.preserve_thinking && result.enable_thinking == false &&
-        std::none_of(request.messages.begin(), request.messages.end(), reasoned)) {
-        result.preserve_thinking = true;
-    }
+    result.preserve_for_reuse =
+        !result.preserve_thinking && result.enable_thinking == false &&
+        std::none_of(request.messages.begin(), request.messages.end(), reasoned);
     result.vision = server.enable_vision;
     return result;
 }
@@ -482,7 +481,8 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
     input.options.continuation                     = request.continuation;
     input.options.enable_thinking                  = semantics.enable_thinking;
     input.options.reasoning_effort                 = semantics.reasoning_effort;
-    input.options.preserve_thinking                = semantics.preserve_thinking;
+    input.options.preserve_thinking =
+        semantics.preserve_for_reuse ? std::optional<bool>(true) : semantics.preserve_thinking;
     input.options.chat_template_kwargs_json        = semantics.chat_template_kwargs_json;
     input.options.add_vision_id                    = false;
     const std::vector<const ToolDefinition*> tools = effective_tools(request);
