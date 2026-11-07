@@ -457,10 +457,12 @@ int test_error_connection_reuse() {
     return failures;
 }
 
-// Request smuggling: a request with two different Content-Length values is refused and its
-// connection closed, so the bytes after it are never read as a second request (cpp-httplib
-// v0.55-v0.65 hardening; v0.54.1 took the first value and served the smuggled GET).
-int test_conflicting_content_length_is_refused() {
+// Request smuggling: a request whose body framing is ambiguous (two Content-Length fields, a list
+// value "5, 5" that v0.54.1 read as no body, a Content-Length beside Transfer-Encoding) is
+// refused with 400 and its connection closed, so its body and the bytes after it are never read
+// as further requests (cpp-httplib v0.55-v0.65 hardening).
+int test_ambiguous_framing_is_refused(const std::string& framing, const std::string& body,
+                                      const char* label) {
     httplib::Server server;
     server.set_read_timeout(3, 0);
     std::atomic<bool> smuggled{false};
@@ -487,8 +489,8 @@ int test_conflicting_content_length_is_refused() {
         ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
         failures += check(false, "test HTTP client could not connect");
     } else {
-        const std::string request = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\n"
-                                    "Content-Length: 5\r\nContent-Length: 6\r\n\r\nhello"
+        const std::string request = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\n" + framing +
+                                    "\r\n" + body +
                                     "GET /smuggled HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
         const bool sent = ::send(fd, request.data(), request.size(), 0) ==
                           static_cast<ssize_t>(request.size());
@@ -499,8 +501,11 @@ int test_conflicting_content_length_is_refused() {
             if (got <= 0) { break; }
             received.append(buffer, static_cast<std::size_t>(got));
         }
-        failures += check(sent && received.find(" 400 ") != std::string::npos,
-                          "conflicting Content-Length values were not refused with 400");
+        const std::string first = received.substr(0, received.find("\r\n"));
+        if (!sent || first.find(" 400 ") == std::string::npos) {
+            std::cerr << label << ": first response \"" << first << "\"\n";
+            failures += check(false, "ambiguous request framing was not refused with 400");
+        }
         failures += check(!smuggled && received.find("smuggled") == std::string::npos,
                           "the bytes after a refused request were served as a second request");
     }
@@ -551,7 +556,13 @@ int main() {
     failures += test_worker_plan_answers_every_connection();
     failures += test_successor_binds_over_time_wait();
     failures += test_error_connection_reuse();
-    failures += test_conflicting_content_length_is_refused();
+    failures += test_ambiguous_framing_is_refused("Content-Length: 5\r\nContent-Length: 6\r\n",
+                                                  "hello", "two Content-Length fields");
+    failures += test_ambiguous_framing_is_refused("Content-Length: 5, 5\r\n", "hello",
+                                                  "a Content-Length list");
+    failures += test_ambiguous_framing_is_refused(
+        "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n", "0\r\n\r\n",
+        "Content-Length beside Transfer-Encoding");
 #endif
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
