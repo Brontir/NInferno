@@ -10,7 +10,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <cstdio>
 #include <limits>
 #include <optional>
 #include <span>
@@ -139,7 +138,6 @@ public:
             projection_work       = saturating_add(projection_work, identity.projection_work);
             const FoldedCost cost = fold_identity(input, identity, machine_cost);
             identity_costs_.push_back(cost);
-            std::fprintf(stderr, "[dbg462m] cand %zu id=%u phys=%d reused=%u now=%llu future=%llu total=%llu expandable=%d src_mode=%d\n", index, unsigned(input.id.value), int(identity.physical_status), unsigned(cost.reused_prompt_tokens), (unsigned long long)cost.now_ns, (unsigned long long)cost.future_loss_ns, (unsigned long long)cost.total_ns, int(identity.expandable), int(identity.source_mode));
             std::optional<LogicalGoal> goal;
             if (identity.physical_status == MaterializationPhysicalStatus::Feasible) {
                 goal = logical_goal(input.id, identity.source_mode,
@@ -272,7 +270,6 @@ public:
             const FoldedCost cost =
                 fold_assessment(candidates[root_candidate_index], assessment, pressure.owner_policy,
                                 pressure.checkpoint_policy, machine_cost);
-            std::fprintf(stderr, "[dbg462m] root-maximal cand=%u now=%llu future=%llu total=%llu deg=%u\n", root_candidate_index, (unsigned long long)cost.now_ns, (unsigned long long)cost.future_loss_ns, (unsigned long long)cost.total_ns, unsigned(assessment.degradation_units));
             incumbent = make_incumbent(root_maximal, root_candidate_index, assessment,
                                        std::move(assessed), cost, *goal);
             mark_target(assessment.stable_target_ordinal, kTargetDiscovered | kTargetAssessed);
@@ -382,7 +379,6 @@ public:
             const FoldedCost cost =
                 fold_assessment(candidates[expected_candidate], assessment, pressure.owner_policy,
                                 pressure.checkpoint_policy, machine_cost);
-            std::fprintf(stderr, "[dbg462m] assess cand=%u ord=%u phys=%d reused=%u now=%llu future=%llu total=%llu deg=%u\n", expected_candidate, expected_ordinal, int(assessment.physical_status), unsigned(cost.reused_prompt_tokens), (unsigned long long)cost.now_ns, (unsigned long long)cost.future_loss_ns, (unsigned long long)cost.total_ns, unsigned(assessment.degradation_units));
             std::optional<LogicalGoal> goal;
             if (assessment.physical_status == MaterializationPhysicalStatus::Feasible) {
                 goal = logical_goal(assessment.candidate, assessment.source_mode,
