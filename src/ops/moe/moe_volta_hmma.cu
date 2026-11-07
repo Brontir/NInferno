@@ -78,8 +78,8 @@ __device__ __forceinline__ void stage_load_rows(const GemmArgs& a, const int* ro
     }
 }
 
-// x as f16 in the staged order: each four values (v0, v1, v2, v3) become the halves (v0, v2, v1, v3),
-// the conversion of generic::volta::stage_store, at row stride k. Columns from `live` to k are
+// x as f16 in the staged order: each four values (v0, v1, v2, v3) become the halves (v0, v2, v1,
+// v3), the conversion of generic::volta::stage_store, at row stride k. Columns from `live` to k are
 // zeros (a zero-padded bank's K reads x of the model's width, so x needs no padded copy first).
 __global__ void volta_x_f16_kernel(const __nv_bfloat16* x, int ldx, int rows, int live, int k,
                                    uint2* dst) {

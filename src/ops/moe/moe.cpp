@@ -619,7 +619,8 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
         return layout && moe_volta_hmma_codec(codec) &&
                bank.k % moe_volta_hmma_k_multiple(codec) == 0;
     };
-    return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.hidden % 4 == 0 && g.inter % 4 == 0;
+    return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.hidden % 4 == 0 &&
+           g.inter % 4 == 0;
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
