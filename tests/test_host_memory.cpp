@@ -142,8 +142,6 @@ void cgroup_checks() {
     }
 }
 
-} // namespace
-
 // The free pages a pin can take (#480): /proc/zoneinfo above the watermarks, on the NUMA nodes the
 // process may use (Mems_allowed_list), not the page cache MemAvailable counts.
 void free_pages_checks() {
@@ -210,6 +208,8 @@ void free_pages_checks() {
           "refusal names MemFree and Cached: " + message);
 }
 
+} // namespace
+
 int main() {
     using namespace ninferno;
     // A 30 GiB host with 20 GiB available, as /proc/meminfo writes it.
@@ -263,6 +263,7 @@ int main() {
     check(!parse_meminfo("MemTotalX: 1 kB\nMemAvailable: 1 kB\n"), "a longer key is not MemTotal");
     check(!read_host_memory("/nonexistent/meminfo"), "no file, no answer");
     cgroup_checks();
+    free_pages_checks();
     // An automatic Host tier: kept when it fits, else both parts scaled by one factor.
     const auto kept = fit_host_tier(kGiB, 8, 8 * kGiB, 16 * kGiB);
     check(!kept.reduced && kept.state_slots == 8 && kept.kv_bytes == 8 * kGiB,

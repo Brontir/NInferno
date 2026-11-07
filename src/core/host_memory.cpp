@@ -419,21 +419,27 @@ void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memo
 }
 
 std::string pin_refusal_hint() {
-    const auto memory = read_host_memory();
-    if (!memory) { return {}; }
-    std::string hint = "At this moment MemFree is " + format_gib(memory->meminfo_free_bytes) +
-                       " and Cached " + format_gib(memory->meminfo_cached_bytes) +
-                       " (MemAvailable " + format_gib(memory->meminfo_available_bytes) + ")";
-    if (memory->free_above_watermark_bytes) {
-        hint += "; free above the zone watermarks on the NUMA nodes this process may use: " +
-                format_gib(*memory->free_above_watermark_bytes);
-    }
-    hint += ". A pin takes free pages and as much page cache as the kernel reclaims for it, which "
-            "can be little: a full page cache (model files just read, a copy, a backup) has "
-            "refused pins that MemAvailable allowed. Free some: evict the files' cache "
-            "(posix_fadvise DONTNEED, `vmtouch -e`, as root `sync; echo 1 > "
-            "/proc/sys/vm/drop_caches`), or ask for less.";
-    return hint;
+#ifdef _WIN32
+    return {};
+#else
+    try {
+        const auto memory = read_host_memory();
+        if (!memory || memory->meminfo_free_bytes == 0) { return {}; }
+        std::string hint = "At this moment MemFree is " + format_gib(memory->meminfo_free_bytes) +
+                           " and Cached " + format_gib(memory->meminfo_cached_bytes) +
+                           " (MemAvailable " + format_gib(memory->meminfo_available_bytes) + ")";
+        if (memory->free_above_watermark_bytes) {
+            hint += "; free above the zone watermarks on the NUMA nodes this process may use: " +
+                    format_gib(*memory->free_above_watermark_bytes);
+        }
+        hint += ". A pin takes free pages and as much page cache as the kernel reclaims for it, "
+                "which can be little: a full page cache (model files just read, a copy, a backup) "
+                "has refused pins that MemAvailable allowed. Evicting the files' cache helps "
+                "(posix_fadvise DONTNEED, `vmtouch -e`, as root `sync; echo 1 > "
+                "/proc/sys/vm/drop_caches`).";
+        return hint;
+    } catch (...) { return {}; }
+#endif
 }
 
 std::uint64_t automatic_host_tier_budget(const HostMemory& memory, int host_gpus) noexcept {

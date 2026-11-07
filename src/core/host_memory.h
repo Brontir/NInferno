@@ -34,11 +34,11 @@ struct HostMemory {
     // MemFree and Cached of /proc/meminfo, for messages only.
     std::uint64_t meminfo_free_bytes   = 0;
     std::uint64_t meminfo_cached_bytes = 0;
-    // The pages a pin can take at once (#480): the free pages of the NUMA nodes this process may
-    // allocate on (Mems_allowed_list of /proc/self/status) above those zones' high watermarks
-    // (/proc/zoneinfo). Page cache is not in it: cudaMallocHost is served from free pages, not from
-    // the file cache MemAvailable counts. nullopt where the zones cannot be read (Windows, no
-    // /proc/zoneinfo): the pin limit then rests on MemAvailable alone.
+    // The free pages of the NUMA nodes this process may allocate on (Mems_allowed_list of
+    // /proc/self/status) above those zones' high watermarks (/proc/zoneinfo), for messages only
+    // (#480): a pin takes these at once and the page cache only as the kernel reclaims it. No
+    // limit reads it; the pin limit rests on MemAvailable. nullopt where the zones cannot be read
+    // (Windows, no /proc/zoneinfo).
     std::optional<std::uint64_t> free_above_watermark_bytes;
     std::optional<CgroupMemory> cgroup;
 };
