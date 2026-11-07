@@ -33,6 +33,7 @@ constexpr BoardFrontier kQ4GroupwiseFrontiers[] = {
     {measured::kRtx4090, kSparseMoePrefillQ4Q5Min},
     {measured::kRtx3090, 17},
 };
+static_assert(measured_boards_known(std::span(kQ4GroupwiseFrontiers)));
 
 std::int32_t q4_groupwise_frontier() noexcept {
     std::int32_t frontier = kSparseMoePrefillQ4Q5Min;

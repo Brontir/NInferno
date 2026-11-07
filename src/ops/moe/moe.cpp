@@ -944,6 +944,7 @@ constexpr ClassA8Route kA8Routes[] = {
     {measured::kRtx5080,
      {{{{0, 0, 1, 1, 1, 1, 1, 1}, {0, 1, 1, 1, 1, 1, 1, 1}, {0, 0, 0, 3, 3, 3, 3, 0}}}, 3}},
 };
+static_assert(measured_boards_known(std::span(kA8Routes)));
 // Every other class. The MoE tuner's choices of eight cards (A100, RTX 2080 Ti, 3090, 4060 Ti,
 // 5060 Ti, V100, and the 4090 and 5090 above) put an R8 schedule on gate/up at T = 1..4 for
 // nearly every A8 layer, mostly w4r1, where the register MMA lost by x1.15..1.36 per card (median
