@@ -3333,7 +3333,7 @@ FakeRequestBasePlan shared_base(std::uint32_t key, ninferno::SharedCandidateEvid
 // Publishes the running request's shared capture at frontier 64 through the manager.
 void publish_shared_capture(FakeManager& manager, FakeProgram& program,
                             const ActiveRequest& active, std::uint32_t key,
-                            ninferno::SharedCandidateEvidence evidence, std::uint64_t offer_id) {
+                            ninferno::SharedCandidateEvidence evidence, std::uint32_t offer_id) {
     program.capture_assessment = FakeCaptureAssessment{
         .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = 64},
         .shared_evidence        = evidence,
@@ -3367,15 +3367,24 @@ void test_engine_candidate_takes_over_unproven_shared_slot() {
     publish_shared_capture(manager, program, first, 101, kAutomatic, 41);
     (void)finish_active(manager, program, first);
 
+    // The capture planner takes the slot only when that costs nothing the demand window still
+    // wants (a tie keeps the incumbent): let the first prefix's demand age out of the window.
+    for (std::uint32_t index = 0; index < 33; ++index) {
+        const ActiveRequest filler =
+            start_active(manager, program, 300 + index, make_base(300 + index), 10 + index);
+        (void)finish_active(manager, program, filler);
+    }
+
     const ActiveRequest second =
-        start_active(manager, program, 102, shared_base(102, kAutomatic), 2);
+        start_active(manager, program, 102, shared_base(102, kAutomatic), 100);
     require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
             "a new engine candidate found no shared slot after the slots were all taken");
     publish_shared_capture(manager, program, second, 102, kAutomatic, 42);
     (void)finish_active(manager, program, second);
 
     {
-        auto reuse = manager.inspect(program, FakePreparedPrompt{102}, shared_base(102, kAutomatic), 3);
+        auto reuse =
+            manager.inspect(program, FakePreparedPrompt{102}, shared_base(102, kAutomatic), 101);
         require(reuse.choice && reuse.choice->summary().reusable_prompt_tokens == 64,
                 "the taken-over shared slot does not serve the new prefix");
     }
