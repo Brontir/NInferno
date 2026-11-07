@@ -7,6 +7,7 @@ the [local page](ui.md) or serve one straight from its Hugging Face checkpoint.
 
 | Document | Purpose |
 |---|---|
+| [Release notes 0.1.0](release-notes/v0.1.0.md) | behaviour changes worth knowing before you upgrade or switch from another server |
 | [Performance](performance/README.md) | measured prefill and decode speed for every GPU × model, with a page per GPU, per model and per GPU × model |
 | [The local page](ui.md) | `ninferno-ui`: pick, download and run models in the browser, its options |
 | [Building from source](building.md) | your own build, Docker images and release archives |
