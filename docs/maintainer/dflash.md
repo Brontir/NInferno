@@ -270,34 +270,72 @@ F while target state advances to F+N. Before the next proposal, or before retain
 fork or Host replica, those features are materialized and context catches up. N=0 cancellation
 commits no new state and releases the sequence; it does not undo earlier adopted commits.
 
-## YaRN
+## Long contexts: YaRN and FOLD
 
 A drafter rotates with its own trained frequencies (theta `1e7`), never the target's YaRN table.
-A local layer's scores depend only on distances below S, which YaRN's longer context leaves as
+A local layer's scores depend only on distances below S, which a longer context leaves as
 trained, so DFlash2 runs unchanged and at any position (its RoPE angles are computed per
-position, its rings are cyclic: `DraftConfig::position_capacity`). A full layer would read
-distances past any the drafter trained on, so under YaRN `parse_config` turns every full layer
-into a local one of the drafter's own S (`DraftConfig::window_full_layers`; FOLD's "window",
-arXiv 2610.20392): the official 35B-A3B DFlash then has six local layers, six rings and no full
-pool. A drafter without S stays refused.
+position, its rings are cyclic: `DraftConfig::position_capacity`).
 
-Measured (#458, 2026-11-06, branch `fix/458-dflash2-yarn`): one request each, concurrency 1,
-greedy (temperature 0), 256 output tokens, thinking off, a chat request to continue the last of
-the repository's C++/CUDA sources concatenated without repetition; YaRN x2; the server log's
-decode rate and accepted drafts. K = 7 for DFlash/DFlash2, 3 for MTP.
+A full layer reads distances past any the drafter trained on long before its configured
+positions: the official DFlash configs say 262144, which is not their training length, and the
+35B-A3B drafter's acceptance falls from 51 % at 2.5K prompt tokens to 22 % at 75K with its full
+layer, with or without YaRN. `parse_config` therefore folds every full layer of a drafter with a
+window (FOLD, arXiv 2610.20392; `DraftConfig::fold_window` = S, `ops::context_fold_attention`):
+
+- the last S context rows at their own positions, as a sliding layer reads them;
+- the rows before at one shared position, `L - S - V` for a context of L rows and V query rows:
+  the query turns back by that position once, the keys are cached unrotated, so the far branch
+  reads every row at the distance S + V the drafter trained on;
+- the far branch's scores sharpened by alpha = 2 (its mass the l_alpha norm, lse / alpha), the
+  two branches merged by their masses.
+
+While the context fits S the far branch is empty and FOLD is the full layer's attention, bit for
+bit in acceptance (3K below). The full layer keeps its paged pool. A drafter of full layers
+without a window stays refused under YaRN and keeps its trained positions without it.
+
+Measured (#458, 2026-11-07, branch `kern/458-fold`): one request each, concurrency 1, greedy
+(temperature 0), 256 output tokens, thinking off, a chat request to continue the last of the
+repository's C++/CUDA sources concatenated without repetition (shorter prompts: the tail of the
+same text); the server log's decode rate and accepted drafts. K = 7 for DFlash/DFlash2, 3 for MTP.
+RTX 5090, Qwen3.6-35B-A3B UD-Q4_K_M with its DFlash drafter, no YaRN:
+
+| Prompt tokens | Full layer: accepted | tok/s | FOLD: accepted | tok/s |
+|---:|---:|---:|---:|---:|
+| 2,531 | 51.0 % | 832 | 51.0 % | 828 |
+| 7,347 | 36.2 % | 641 | 39.8 % | 672 |
+| 15,644 | 31.3 % | 565 | 40.5 % | 668 |
+| 31,891 | 29.0 % | 514 | 36.0 % | 600 |
+| 74,880 | 21.7 % | ~410 | 62.7 % | 821 |
+
+Under YaRN x2, against the full layer replaced by a window of S (the layout of #460):
 
 | Card, model | Prompt tokens | Drafter | Accepted | Decode tok/s | MTP 3 | Plain |
 |---|---:|---|---:|---:|---:|---:|
-| RTX 4090, Qwen3.5-9B Q4_K_M | 74,880 | DFlash, full layer (no YaRN) | 37.0 % | 314 | | |
 | RTX 4090, Qwen3.5-9B Q4_K_M | 74,880 | DFlash, window | 34.9 % | 307 | | |
+| RTX 4090, Qwen3.5-9B Q4_K_M | 74,880 | DFlash, FOLD | 48.4 % | 380 | | |
 | RTX 4090, Qwen3.5-9B Q4_K_M | 296,395 | DFlash, window | 33.5 % | 220.6 | 184.8 | 87.7 |
+| RTX 4090, Qwen3.5-9B Q4_K_M | 296,395 | DFlash, FOLD | 25.2 % | 170 | | |
+| RTX 5090, Qwen3.6-35B-A3B UD-Q4_K_M | 74,880 | DFlash, window | 51.0 % | 751 | | |
+| RTX 5090, Qwen3.6-35B-A3B UD-Q4_K_M | 74,880 | DFlash, FOLD | 59.1 % | 769 | | |
 | RTX 5090, Qwen3.6-35B-A3B UD-Q4_K_M | 296,395 | DFlash, window | 31.8 % | 412.8 | 393.5 | 218.6 |
+| RTX 5090, Qwen3.6-35B-A3B UD-Q4_K_M | 296,395 | DFlash, FOLD | 36.0 % | 402 | | |
 | RTX 5090, Qwen3.8-27B UD-Q4_K_S | 296,577 | DFlash2 | 49.2 % | 198.0 | 151.6 | 59.5 |
+
+The 9B drafter at 296K is the one row where the window wins. Without YaRN the 9B drafter's FOLD
+against its full layer: 34.3 % / 337 against 31.4 % / 318 at 15,644 tokens, 29.9 % / 294 against
+30.6 % / 300 at 31,891, 45.3 % / 363 against 37.0 % / 314 at 74,880.
+
+Tried and not taken: every layer folding (FOLD's own layout, the sliding layers given the far
+memory too) reads six layers' far rows a round, about 1 ms per layer at 296K rows on the 4090. The
+9B drafter's acceptance rose to 43.3 % at 296K (192 tok/s, still below the window's 220.6) and
+61.3 % at 75K (406); the 35B drafter's did not (31.5 % / 250 and 59.8 % / 665). alpha = 4 changed
+acceptance within noise (9B 75K 50.6 %, 296K 25.0 %; 35B 58.1 %, 32.0 %).
 
 ## Backend storage and lifecycle
 
 Local draft layers store K/V in cyclic rings; full draft layers use paged KV. A full pool exists
-only when selected draft config has full-attention layers (none under YaRN, above). The official DFlash2 instance therefore
+only when selected draft config has full-attention layers (folded or not, above). The official DFlash2 instance therefore
 has five local rings and no full draft pool. Its ring payload per state image is:
 
 ```text

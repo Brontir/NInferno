@@ -135,6 +135,9 @@ struct DraftConfig {
     float rope_theta                      = 0;
     std::vector<DraftAttentionKind> layer_types;
     std::optional<std::uint32_t> sliding_window;
+    // FOLD (arXiv 2610.20392): its full-attention layers read a window of these many context rows
+    // at their own positions and the rows before at one shared position (0: plain full attention).
+    std::uint32_t fold_window = 0;
     std::vector<std::uint32_t> target_layer_ids;
     std::uint32_t mask_token_id = 0;
     std::optional<DFlash2Config> dflash2;
@@ -149,19 +152,12 @@ struct DraftConfig {
     }
 
     // The positions it drafts at: its trained ones where a full-attention layer reads distances up
-    // to them; a drafter of sliding layers only reads distances within its window (its RoPE angles
-    // computed per position, its caches cyclic), at any position.
+    // to them; a drafter of sliding layers only, or whose full layers fold, reads distances within
+    // its window (its RoPE angles computed per position, its caches cyclic), at any position.
     [[nodiscard]] std::uint64_t position_capacity() const noexcept {
-        return full_layer_count() != 0 ? max_position_embeddings
-                                       : std::numeric_limits<std::uint64_t>::max();
-    }
-
-    // Its full-attention layers read its sliding window instead (under YaRN: config.cpp); false,
-    // changing nothing, for a drafter without a window.
-    bool window_full_layers() noexcept {
-        if (!sliding_window) { return false; }
-        std::fill(layer_types.begin(), layer_types.end(), DraftAttentionKind::SlidingAttention);
-        return true;
+        return full_layer_count() != 0 && fold_window == 0
+                   ? max_position_embeddings
+                   : std::numeric_limits<std::uint64_t>::max();
     }
 
     [[nodiscard]] std::uint32_t compact_layer_index(std::uint32_t layer) const {
