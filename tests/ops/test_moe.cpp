@@ -123,7 +123,8 @@ void split_divisors(Matrix& m, std::int32_t rows, std::uint32_t seed) {
     m.weight.weight_divisor_rows = rows;
 }
 
-Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed, double sd = 0.05) {
+Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed, double sd = 0.05,
+                   int mx_shift = 0) {
     Matrix m;
     m.qtype = qtype;
     m.n     = n;
@@ -156,6 +157,7 @@ Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t se
         options.row_split_scale = qw::RowSplitScalePattern::Small;
         options.row_split_codes = qw::RowSplitCodePattern::Hashed;
     }
+    options.mxfp4_exponent_shift = mx_shift;
     m.packed = qw::make_patterned_weight(qtype, n, k, seed, options);
     m.device = DeviceBuffer(m.packed.payload.size());
     m.device.copy_from_host(m.packed.payload.data(), m.device.bytes);
@@ -211,6 +213,8 @@ struct Case {
     // Columns of the gate/up bank past H: a bank zero-padded to a block multiple (moe.h). The
     // test's padded columns hold random codes, so only a zero-widened input leaves them inert.
     std::int32_t input_pad = 0;
+    // MXFP4 banks: added to the E8M0 block scales (see PatternedWeightOptions).
+    int mx_shift = 0;
 };
 
 struct Layer {
@@ -228,8 +232,8 @@ Layer make_layer(const Case& c, std::uint32_t seed) {
     const auto E = c.experts, H = c.hidden, F = c.inter;
     const int sets = relu2(c) ? 1 : 2; // a non-gated expert has up rows only
     l.router  = make_matrix(QType::BF16, E, H, seed + 1, 0.08);
-    l.gate_up               = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2);
-    l.down    = make_matrix(c.down, E * H, F, seed + 3);
+    l.gate_up               = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2, 0.05, c.mx_shift);
+    l.down    = make_matrix(c.down, E * H, F, seed + 3, 0.05, c.mx_shift);
     if (c.split_divisors) {
         split_divisors(l.gate_up, F, seed + 12); // gate and up quantized apart
         split_divisors(l.down, H, seed + 13);
@@ -2151,6 +2155,12 @@ int main(int argc, char** argv) {
             //     with biases.
             {
                 failures += check_w4a8(oss_like(), 111U, {17, 70, 130});
+                // Block scales of 2^2 .. 2^5 (gpt-oss-20b has blocks up to 2^9): a scale pre-folded
+                // into the f16 group scale overflows there (Volta HMMA MXFP4).
+                Case big = oss_like();
+                big.label += " large E8M0 scales";
+                big.mx_shift = 7;
+                failures += check_w4a8(big, 114U, {17, 70});
                 Case q;
                 q.label          = "qwen3.6-35b-a3b-like q4_k/q6_k E256 k8";
                 q.experts        = 256;

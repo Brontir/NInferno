@@ -352,6 +352,9 @@ struct PatternedWeightOptions {
     // 16 rows, so without it a [gate; up] plane whose half is a multiple of 16 rows has identical
     // halves and cannot tell silu(gate)*up from silu(up)*gate.
     std::uint32_t upper_half_seed = 0;
+    // MXFP4 only: added to every E8M0 word but the subnormal 0 (large block scales: shift 7 puts
+    // blocks at 2^2 .. 2^5, the range a published gpt-oss checkpoint reaches 2^9 in).
+    int mxfp4_exponent_shift = 0;
 };
 
 // Builds a deterministic full-shape payload without allocating a source or dequantized matrix.
@@ -657,6 +660,7 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
                 std::uint8_t e = static_cast<std::uint8_t>(118 + (h & 7U));
                 if ((h >> 8) % 61 == 0) { e = 127; }
                 if ((h >> 8) % 97 == 1) { e = 0; }
+                if (e != 0) { e = static_cast<std::uint8_t>(e + options.mxfp4_exponent_shift); }
                 packed.payload[packed.scale_plane_offset +
                                static_cast<std::size_t>(row) * (k / 32) + g] = e;
             }
