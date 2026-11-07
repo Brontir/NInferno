@@ -2604,13 +2604,14 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
         return out;
     };
     const auto run = [&](const std::string& text, std::string session, bool reuse) {
+        const ninferno::CacheRetentionHint retention = session.empty()
+                                                           ? ninferno::CacheRetentionHint::Disposable
+                                                           : ninferno::CacheRetentionHint::LiveSession;
         return engine.generate(
-            engine.prepare(
-                pressure_turn(text, std::move(session), ninferno::CacheRetentionHint::LiveSession)),
-            request(reuse));
+            engine.prepare(pressure_turn(text, std::move(session), retention)), request(reuse));
     };
     const std::uint32_t base_tokens = engine.count_tokens(
-        pressure_turn(base_text, "", ninferno::CacheRetentionHint::LiveSession));
+        pressure_turn(base_text, "", ninferno::CacheRetentionHint::Disposable));
 
     int failures      = 0;
     const char* label = mode == ninferno::ActivationMode::Exact ? "exact" : "fast";
