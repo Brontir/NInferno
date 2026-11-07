@@ -1414,6 +1414,9 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
         };
         const auto pinning_device_bytes = [&]() {
             release_held_pinned_host();
+            // One process of the host at a time reads what it can pin and pins it, so a server
+            // started beside others sees their pins in MemAvailable (HostPinLock).
+            const HostPinLock pin_lock;
             for (;;) {
                 const std::pair<std::size_t, std::size_t> sizes = host_tier_sizes();
                 const std::uint64_t asked = static_cast<std::uint64_t>(sizes.first) + sizes.second;

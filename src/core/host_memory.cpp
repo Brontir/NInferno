@@ -8,9 +8,14 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#    include <fcntl.h>
+#    include <sys/file.h>
+#    include <unistd.h>
 #endif
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
 #include <cstdio>
 #include <fstream>
@@ -18,6 +23,7 @@
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
 
 namespace ninferno {
 namespace {
@@ -309,6 +315,35 @@ HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
                    kMiB;
     // Rounding keeps both at or under their scaled shares, so the sum stays within the budget.
     return out;
+}
+
+HostPinLock::HostPinLock() noexcept {
+#ifndef _WIN32
+    std::error_code error;
+    const std::filesystem::path dir = std::filesystem::temp_directory_path(error);
+    if (error) { return; }
+    const std::string path = (dir / "ninferno-host-pin.lock").string();
+    // Every user may take it: 0666 and no umask's write bits taken away once created.
+    const int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+    if (fd < 0) { return; }
+    (void)::fchmod(fd, 0666);
+    int rc = 0;
+    do { rc = ::flock(fd, LOCK_EX); } while (rc != 0 && errno == EINTR);
+    if (rc != 0) {
+        ::close(fd);
+        return;
+    }
+    fd_ = fd;
+#endif
+}
+
+HostPinLock::~HostPinLock() {
+#ifndef _WIN32
+    if (fd_ >= 0) {
+        (void)::flock(fd_, LOCK_UN);
+        ::close(fd_);
+    }
+#endif
 }
 
 std::string format_gib(std::uint64_t bytes) {
