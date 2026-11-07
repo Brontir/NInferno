@@ -458,9 +458,9 @@ int test_error_connection_reuse() {
 }
 
 // Request smuggling: a request whose body framing is ambiguous (two Content-Length fields, a list
-// value "5, 5" that v0.54.1 read as no body, a Content-Length beside Transfer-Encoding) is
-// refused with 400 and its connection closed, so its body and the bytes after it are never read
-// as further requests (cpp-httplib v0.55-v0.65 hardening).
+// value "5, 5", a Content-Length beside Transfer-Encoding) is refused with 400 and its connection
+// closed, so its body and the bytes after it are never read as further requests. A regression
+// guard across cpp-httplib updates: v0.54.1 and v0.65.0 both refuse all three.
 int test_ambiguous_framing_is_refused(const std::string& framing, const std::string& body,
                                       const char* label) {
     httplib::Server server;
