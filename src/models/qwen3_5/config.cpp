@@ -363,19 +363,18 @@ Config parse_config(const artifact::Directory& directory, const LoadOptions& opt
                               out.text, options.speculative == SpeculativeBackend::DFlash2);
             // A drafter rotates with its own trained frequencies, never the target's YaRN. A
             // sliding layer's scores depend only on distances within its window, which YaRN's
-            // longer context leaves as trained (DFlash2: every layer); a full-attention layer
-            // would read distances past any the drafter saw (DFlash: its last layer), so under
-            // YaRN it reads the drafter's own sliding window instead (FOLD's "window", arXiv
-            // 2610.20392: Qwen3.5-9B's DFlash acceptance length -0.22 at 32K, +0.15 at 122K tokens
-            // against its full layer).
-            if (yarn_factor != 1.0 && out.draft->full_layer_count() != 0) {
-                // FOLD (prototype): the full layer reads its window and a far memory.
-                if (!out.draft->sliding_window) {
-                    throw ArtifactError("--rope-yarn-factor runs no drafter of full-attention "
-                                        "layers only: their distances outgrow their training "
-                                        "(MTP and plain decode run)");
-                }
+            // longer context leaves as trained (DFlash2: every layer). A full-attention layer
+            // reads distances past any the drafter trained on long before its configured
+            // positions (DFlash: its last layer; its config's 262144 is not its training length),
+            // with or without YaRN, so it folds (FOLD, arXiv 2610.20392): its window at their own
+            // positions, the rows before at one shared position. Within the window it is plain
+            // attention; measured against the full layer (docs/maintainer/dflash.md, #458).
+            if (out.draft->full_layer_count() != 0 && out.draft->sliding_window) {
                 out.draft->fold_window = *out.draft->sliding_window;
+            } else if (yarn_factor != 1.0 && out.draft->full_layer_count() != 0) {
+                throw ArtifactError("--rope-yarn-factor runs no drafter of full-attention "
+                                    "layers only: their distances outgrow their training "
+                                    "(MTP and plain decode run)");
             }
         }
         return out;

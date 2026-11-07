@@ -455,8 +455,8 @@ void text_only_artifact() {
 }
 
 // A drafter's positions (#458): one of sliding layers only drafts at any position (its scores read
-// distances within its window); a full-attention layer keeps its trained positions, until it reads the
-// window instead (under YaRN); a drafter without a window keeps its full layers.
+// distances within its window); a full-attention layer keeps its trained positions, until it folds
+// (FOLD: its window at their own positions, the rows before at one shared position).
 void draft_positions() {
     qwen::DraftConfig d;
     d.num_hidden_layers       = 6;
@@ -464,13 +464,13 @@ void draft_positions() {
     d.layer_types.assign(5, qwen::DraftAttentionKind::SlidingAttention);
     d.layer_types.push_back(qwen::DraftAttentionKind::FullAttention);
     require(d.position_capacity() == 262144, "a full-attention drafter layer lost its trained positions");
-    qwen::DraftConfig no_window = d;
-    require(!no_window.window_full_layers() && no_window.full_layer_count() == 1,
-            "a drafter without a window lost its full layer");
-    d.sliding_window = 4096;
-    require(d.window_full_layers() && d.full_layer_count() == 0 && d.local_layer_count() == 6,
-            "a full layer did not take the window");
-    require(d.position_capacity() == std::numeric_limits<std::uint64_t>::max(),
+    d.fold_window = 4096;
+    require(d.full_layer_count() == 1 && d.position_capacity() == std::numeric_limits<std::uint64_t>::max(),
+            "a folding full layer kept a position bound");
+    qwen::DraftConfig sliding = d;
+    sliding.fold_window       = 0;
+    sliding.layer_types.assign(6, qwen::DraftAttentionKind::SlidingAttention);
+    require(sliding.position_capacity() == std::numeric_limits<std::uint64_t>::max(),
             "a sliding-only drafter kept a position bound");
 }
 
