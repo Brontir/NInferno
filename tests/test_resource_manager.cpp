@@ -3318,6 +3318,87 @@ void test_default_automatic_system_head_is_captured_beside_the_end() {
     (void)finish_active(manager, program, active);
 }
 
+namespace {
+
+FakeRequestBasePlan shared_base(std::uint32_t key, ninferno::SharedCandidateEvidence evidence) {
+    FakeRequestBasePlan base = make_base(key);
+    base.cache.opportunities.push_back(FakeContextCache::Opportunity{
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = evidence,
+        .frontier = 64,
+    });
+    return base;
+}
+
+// Publishes the running request's shared capture at frontier 64 through the manager.
+void publish_shared_capture(FakeManager& manager, FakeProgram& program,
+                            const ActiveRequest& active, std::uint32_t key,
+                            ninferno::SharedCandidateEvidence evidence, std::uint64_t offer_id) {
+    program.capture_assessment = FakeCaptureAssessment{
+        .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = 64},
+        .shared_evidence        = evidence,
+        .protected_rebuild_work = PrefillWork{.tokens = 64},
+        .publishes_shared       = true,
+        .physically_feasible    = true,
+    };
+    require(manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = offer_id},
+                                           0, 0, {}) ==
+                FakeManager::ActiveCaptureReserveResult::Reserved,
+            "shared capture was not reserved");
+    auto progress = manager.progress_context_transaction(program, {});
+    require(std::get<FakeManager::ActiveCaptureOutcome>(std::move(progress)).status ==
+                ContextTransactionStatus::Published,
+            "shared capture was not published");
+}
+
+} // namespace
+
+// A conversation's prompt ends are engine candidates too, and they fill the shared slots one turn
+// at a time. The next first-seen engine candidate (a new system prompt) takes over a slot nothing
+// has vouched for instead of finding none vacant (#462).
+void test_engine_candidate_takes_over_unproven_shared_slot() {
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    FakeManager manager       = make_manager(1, 3, 1);
+    FakeProgram program;
+
+    const ActiveRequest first = start_active(manager, program, 101, shared_base(101, kAutomatic), 1);
+    require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
+            "the first engine candidate did not take the vacant shared slot");
+    publish_shared_capture(manager, program, first, 101, kAutomatic, 41);
+    (void)finish_active(manager, program, first);
+
+    const ActiveRequest second =
+        start_active(manager, program, 102, shared_base(102, kAutomatic), 2);
+    require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
+            "a new engine candidate found no shared slot after the slots were all taken");
+    publish_shared_capture(manager, program, second, 102, kAutomatic, 42);
+    (void)finish_active(manager, program, second);
+
+    {
+        auto reuse = manager.inspect(program, FakePreparedPrompt{102}, shared_base(102, kAutomatic), 3);
+        require(reuse.choice && reuse.choice->summary().reusable_prompt_tokens == 64,
+                "the taken-over shared slot does not serve the new prefix");
+    }
+}
+
+// A declared boundary's slot is credited: an engine candidate does not take it over.
+void test_engine_candidate_keeps_credited_shared_slot() {
+    constexpr auto kExplicit  = ninferno::SharedCandidateEvidence::ExplicitBoundary;
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    FakeManager manager       = make_manager(1, 3, 1);
+    FakeProgram program;
+
+    const ActiveRequest first = start_active(manager, program, 111, shared_base(111, kExplicit), 1);
+    publish_shared_capture(manager, program, first, 111, kExplicit, 51);
+    (void)finish_active(manager, program, first);
+
+    const ActiveRequest second =
+        start_active(manager, program, 112, shared_base(112, kAutomatic), 2);
+    require(program.selected_shared_capture_frontiers.empty(),
+            "an engine candidate was selected over a credited shared slot");
+    (void)finish_active(manager, program, second);
+}
+
 void test_observed_shared_candidate_requires_independent_domains() {
     const auto observed_base = [](std::optional<FakeCacheSessionKey> session) {
         FakeRequestBasePlan base = make_base(71, session);
@@ -4145,6 +4226,10 @@ int main() {
              test_projected_nested_shared_candidates_use_marginal_value);
     run_test("default-automatic system head beside the end",
              test_default_automatic_system_head_is_captured_beside_the_end);
+    run_test("engine candidate takes an unproven shared slot",
+             test_engine_candidate_takes_over_unproven_shared_slot);
+    run_test("engine candidate keeps a credited shared slot",
+             test_engine_candidate_keeps_credited_shared_slot);
     run_test("observed shared independent domains",
              test_observed_shared_candidate_requires_independent_domains);
     run_test("zero-prefill private promotion",
