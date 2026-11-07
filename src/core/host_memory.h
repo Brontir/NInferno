@@ -99,6 +99,32 @@ struct HostTierFit {
 // loses between the choice and the pinning). An explicit Host tier may take the whole limit.
 inline constexpr double kAutomaticHostTierShare = 0.5;
 
+// Serializes, across the processes of one host, the stretch from reading what the host can pin to
+// pinning it (#473): eight servers started together otherwise each read the same MemAvailable and
+// pin together, and a memory cgroup OOM-kills or refuses the late ones. One process at a time
+// holds it (an exclusive flock on a file in /run/lock, /dev/shm or the temporary directory,
+// which the processes of one host or container share), at most kHostPinLockWaitSeconds; what it
+// pinned is in MemAvailable when the next one reads it. A no-op where the lock cannot be taken (no
+// such directory, a platform without flock) and on Windows: the start then proceeds as before.
+inline constexpr int kHostPinLockWaitSeconds = 120;
+
+class HostPinLock {
+public:
+    HostPinLock();
+    ~HostPinLock();
+    HostPinLock(const HostPinLock&)            = delete;
+    HostPinLock& operator=(const HostPinLock&) = delete;
+
+    [[nodiscard]] bool held() const noexcept { return fd_ >= 0; }
+
+    // Whether the wait ran out (another process held the lock for kHostPinLockWaitSeconds).
+    [[nodiscard]] bool timed_out() const noexcept { return timed_out_; }
+
+private:
+    int fd_         = -1;
+    bool timed_out_ = false;
+};
+
 // "18.00 GiB" and the like, for messages.
 [[nodiscard]] std::string format_gib(std::uint64_t bytes);
 
