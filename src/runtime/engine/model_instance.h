@@ -63,6 +63,12 @@ struct HostTierResolution {
     std::uint32_t default_slots    = 0;
     std::size_t default_kv_bytes   = 0;
     std::size_t budget_bytes       = 0;
+    int share_gpus                 = 1; // the host's GPUs the budget is a share of
+    // Pins of the automatic tier the driver refused at startup, each halving it (#473).
+    std::uint32_t pin_refusals = 0;
+    // The pins ran without the host's lock (HostPinLock not taken: no shared directory, an
+    // inaccessible lock file, or a holder past kHostPinLockWaitSeconds).
+    bool pin_unserialized = false;
 };
 
 // max_context as construction resolved it (EngineOptions::max_context_automatic).

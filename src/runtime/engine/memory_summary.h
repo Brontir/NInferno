@@ -30,6 +30,9 @@ template <class Instance>
     out.host_state_slots_default          = host.default_slots;
     out.host_kv_capacity_default_bytes    = host.default_kv_bytes;
     out.host_tier_budget_bytes            = host.budget_bytes;
+    out.host_tier_share_gpus                      = host.share_gpus;
+    out.host_tier_pin_refusals                    = host.pin_refusals;
+    out.host_tier_pin_unserialized                = host.pin_unserialized;
     out.max_context_automatic             = instance.context.automatic;
     out.max_context_native                = instance.context.native;
     out.lower_concurrency_fits            = instance.context.lower_concurrency_fits;

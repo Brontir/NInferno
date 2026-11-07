@@ -232,6 +232,18 @@ template <class Measured, std::size_t Extent>
     return nearest;
 }
 
+// Whether every entry of a measured table knows its board's L2 and bandwidth: an entry that does
+// not is no one's donor under nearest_known_measured, so the tables assert it where they are
+// defined and a new entry cannot drop out of its lookup silently.
+template <class Measured, std::size_t Extent>
+[[nodiscard]] constexpr bool
+measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
+    for (const Measured& m : measured) {
+        if (!(m.board.l2_mib > 0 && m.board.dram_gbps > 0)) { return false; }
+    }
+    return true;
+}
+
 // "sm<major><minor>".
 [[nodiscard]] std::string gpu_arch_id(int major, int minor);
 
@@ -240,6 +252,12 @@ template <class Measured, std::size_t Extent>
 [[nodiscard]] std::string gpu_chip(std::uint32_t pci_device_id, int major, int minor, int sms);
 // Whether the PCI id's block names a chip of this architecture (gpu_chip then needs no SM count).
 [[nodiscard]] bool gpu_chip_by_pci(std::uint32_t pci_device_id, int major, int minor);
+
+// The NVIDIA GPUs of the host (or of the container, which NVML sees only its own of), whatever
+// CUDA_VISIBLE_DEVICES hides from this process: NVML's count, loaded at run time; else the CUDA
+// devices this process sees; at least 1. Read once. A board in MIG mode counts its instances,
+// which a server each may run on.
+[[nodiscard]] int host_gpu_count() noexcept;
 
 // The facts this class lacks or guessed, each with the conservative choice taken in its place:
 // the chip from the SM count (no PCI id, or one no block lists; the board's clocks may still be

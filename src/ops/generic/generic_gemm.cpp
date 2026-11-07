@@ -3768,10 +3768,12 @@ struct SpreadMeasured {
     Board board;
     bool faster;
 };
+
 constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true},
                                               {measured::kRtx5080, true},
                                               {measured::kRtx5060Ti, false},
                                               {measured::kRtx4080Super, false}};
+static_assert(measured_boards_known(std::span(kSpreadMeasured)));
 
 bool spread_by_board(const DeviceClass& d) {
     const SpreadMeasured* m =
