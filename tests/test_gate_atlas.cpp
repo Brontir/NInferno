@@ -112,6 +112,24 @@ int main(int argc, char** argv) {
         }
     }
 
+    // A missing fact never promotes a bounded transfer (#373's synthetic case): a 170-SM sm_120
+    // board with 8 MiB of L2 is 1.79 from the RTX 5090, out of kCarryDistance; with its L2 unknown
+    // the distance drops to 0, and the bounded gate still refuses the donor's answer. The MMQ gate,
+    // which carries at any distance, keeps its answer.
+    {
+        const m::Gate gates[] = {{m::kRtx5090, true}};
+        const ninferno::Board small_l2{12, 0, 170, 8, 1792};
+        const ninferno::Board unknown_l2{12, 0, 170, 0, 1792};
+        const auto known   = m::gate_answer(gates, small_l2, m::kCarryDistance);
+        const auto missing = m::gate_answer(gates, unknown_l2, m::kCarryDistance);
+        expect(known.donor == nullptr && !known.pays, "the full facts put the donor out of reach");
+        expect(missing.disposition == m::GateAnswer::Disposition::Incomplete && !missing.pays,
+               "a missing L2 promoted a bounded transfer");
+        const auto mmq = m::mmq_prefill_gate(unknown_l2);
+        expect(mmq.disposition == m::GateAnswer::Disposition::Incomplete && mmq.pays,
+               "the MMQ gate lost its answer to a missing L2");
+    }
+
     // Pure: the same table gives the same atlas.
     expect(m::gate_atlas_json(atlas) == m::gate_atlas_json(m::mmq_gate_atlas(table)),
            "the atlas is deterministic");
