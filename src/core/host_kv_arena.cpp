@@ -206,7 +206,7 @@ HostKVArena::HostKVArena(std::size_t capacity_bytes,
         throw std::invalid_argument("Non-empty Host KV arena requires supported page layouts");
     }
 
-    backing_.emplace(capacity_bytes_);
+    backing_.emplace(PinnedHostBuffer::claim(capacity_bytes_));
     const auto smallest = std::min_element(
         layouts_.begin(), layouts_.end(), [](const HostKVPageLayout& a, const HostKVPageLayout& b) {
             return a.page_stride < b.page_stride;

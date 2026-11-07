@@ -3,11 +3,15 @@
 
 #include <cuda_runtime.h>
 
+#include <atomic>
 #include <cstdio>
 #include <limits>
+#include <mutex>
 #include <new>
 #include <stdexcept>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace ninferno {
 namespace {
@@ -247,20 +251,65 @@ std::size_t DeviceArena::peak_used() const noexcept { return peak_; }
 
 void DeviceArena::reset_peak() noexcept { peak_ = off_; }
 
+namespace {
+
+// What this process pins in PinnedHostBuffers, and the buffers held for a later claim.
+std::atomic<std::size_t> g_pinned_bytes{0};
+std::mutex g_held_mutex;
+
+std::vector<PinnedHostBuffer>& held_buffers() {
+    static std::vector<PinnedHostBuffer> held;
+    return held;
+}
+
+std::string gib_of(std::size_t bytes) {
+    char text[32];
+    std::snprintf(text, sizeof(text), "%.2f GiB",
+                  static_cast<double>(bytes) / (1024.0 * 1024.0 * 1024.0));
+    return text;
+}
+
+} // namespace
+
 PinnedHostBuffer::PinnedHostBuffer(std::size_t size_bytes) {
     if (size_bytes == 0) { throw std::invalid_argument("PinnedHostBuffer size must be nonzero"); }
 
     void* ptr             = nullptr;
     const cudaError_t err = cudaMallocHost(&ptr, size_bytes);
     if (err != cudaSuccess) {
-        throw std::runtime_error(cuda_error_message("cudaMallocHost failed", err));
+        // The runtime keeps a refused pin as its last error; a caller that retries smaller must
+        // not see it at its next launch check (cudaGetLastError after a kernel).
+        (void)cudaGetLastError();
+        throw PinnedHostError(cuda_error_message("cudaMallocHost failed", err) + " (pinning " +
+                                  gib_of(size_bytes) + "; this process pins " +
+                                  gib_of(g_pinned_bytes.load()) + " already)",
+                              size_bytes);
     }
 
     data_ = ptr;
     size_ = size_bytes;
+    g_pinned_bytes += size_bytes;
 }
 
-PinnedHostBuffer::~PinnedHostBuffer() { free_pinned(data_); }
+PinnedHostBuffer PinnedHostBuffer::claim(std::size_t size_bytes) {
+    {
+        const std::lock_guard<std::mutex> lock(g_held_mutex);
+        auto& held = held_buffers();
+        for (auto it = held.begin(); it != held.end(); ++it) {
+            if (it->size() == size_bytes) {
+                PinnedHostBuffer out = std::move(*it);
+                held.erase(it);
+                return out;
+            }
+        }
+    }
+    return PinnedHostBuffer(size_bytes);
+}
+
+PinnedHostBuffer::~PinnedHostBuffer() {
+    if (data_ != nullptr) { g_pinned_bytes -= size_; }
+    free_pinned(data_);
+}
 
 PinnedHostBuffer::PinnedHostBuffer(PinnedHostBuffer&& other) noexcept
     : data_(other.data_), size_(other.size_) {
@@ -271,6 +320,7 @@ PinnedHostBuffer::PinnedHostBuffer(PinnedHostBuffer&& other) noexcept
 PinnedHostBuffer& PinnedHostBuffer::operator=(PinnedHostBuffer&& other) noexcept {
     if (this == &other) { return *this; }
 
+    if (data_ != nullptr) { g_pinned_bytes -= size_; }
     free_pinned(data_);
     data_ = other.data_;
     size_ = other.size_;
@@ -283,5 +333,36 @@ PinnedHostBuffer& PinnedHostBuffer::operator=(PinnedHostBuffer&& other) noexcept
 void* PinnedHostBuffer::data() const noexcept { return data_; }
 
 std::size_t PinnedHostBuffer::size() const noexcept { return size_; }
+
+std::size_t pinned_host_bytes() noexcept { return g_pinned_bytes.load(); }
+
+void hold_pinned_host(PinnedHostBuffer&& buffer) {
+    if (buffer.data() == nullptr) { return; }
+    const std::lock_guard<std::mutex> lock(g_held_mutex);
+    held_buffers().push_back(std::move(buffer));
+}
+
+bool held_pinned_host(std::size_t size_bytes) noexcept {
+    const std::lock_guard<std::mutex> lock(g_held_mutex);
+    for (const PinnedHostBuffer& buffer : held_buffers()) {
+        if (buffer.size() == size_bytes) { return true; }
+    }
+    return false;
+}
+
+std::size_t held_pinned_host_bytes() noexcept {
+    const std::lock_guard<std::mutex> lock(g_held_mutex);
+    std::size_t bytes = 0;
+    for (const PinnedHostBuffer& buffer : held_buffers()) { bytes += buffer.size(); }
+    return bytes;
+}
+
+void release_held_pinned_host() noexcept {
+    std::vector<PinnedHostBuffer> released;
+    {
+        const std::lock_guard<std::mutex> lock(g_held_mutex);
+        released.swap(held_buffers());
+    }
+}
 
 } // namespace ninferno
