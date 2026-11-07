@@ -63,6 +63,8 @@ struct HostTierResolution {
     std::uint32_t default_slots    = 0;
     std::size_t default_kv_bytes   = 0;
     std::size_t budget_bytes       = 0;
+    // Pins of the automatic tier the driver refused at startup, each halving it (#473).
+    std::uint32_t pin_refusals = 0;
 };
 
 // max_context as construction resolved it (EngineOptions::max_context_automatic).

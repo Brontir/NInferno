@@ -151,10 +151,14 @@ ProgramImpl::ProgramImpl(const ModelExecution& model_in, const SequencePlanImpl&
     const std::uint64_t pinned_host_bytes =
         host_image_bytes * plan.context_cache.host_state_slots +
         static_cast<std::uint64_t>(plan.context_cache.host_kv_capacity_bytes);
-    if (pinned_host_bytes != 0) {
+    // What the startup's measurement holds pinned for this tier (PinnedHostBuffer::claim, #473) is
+    // pinned already and out of MemAvailable: the check is of what more this pins.
+    const std::uint64_t to_pin =
+        pinned_host_bytes - std::min<std::uint64_t>(pinned_host_bytes, held_pinned_host_bytes());
+    if (to_pin != 0) {
         if (const std::optional<HostMemory> memory = read_host_memory()) {
             require_pinned_host_fits(
-                pinned_host_bytes, *memory,
+                to_pin, *memory,
                 "the context cache's Host tier (" +
                     std::to_string(plan.context_cache.host_state_slots) + " Host StateImages x " +
                     format_gib(host_image_bytes) + " + Host KV " +

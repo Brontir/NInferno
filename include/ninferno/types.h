@@ -1674,6 +1674,9 @@ struct MemorySummary {
     std::uint32_t host_state_slots_default        = 0;
     std::size_t host_kv_capacity_default_bytes    = 0;
     std::size_t host_tier_budget_bytes            = 0;
+    // Pins of the automatic tier the driver refused at startup (another process pinned first),
+    // each halving the tier before it was pinned again.
+    std::uint32_t host_tier_pin_refusals          = 0;
     std::size_t host_kv_occupied_bytes            = 0;
     // The kernel warm-up construction ran before it measured the free memory for an automatic fit
     // (the plan's kernels load their code and grow the per-thread local memory for good at their

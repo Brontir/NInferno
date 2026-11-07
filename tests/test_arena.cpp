@@ -202,5 +202,32 @@ int main() {
     failures += expect_size(pinned.size(), 128, "pinned.size");
     std::memset(pinned.data(), 0x5a, pinned.size());
 
+    // Held pins (#473): a claim of a held buffer's exact size takes that buffer, pinned once; any
+    // other size pins anew; the count of pinned bytes follows; a release frees what is unclaimed.
+    {
+        const std::size_t base = ninferno::pinned_host_bytes();
+        ninferno::PinnedHostBuffer held(4096);
+        void* const held_data = held.data();
+        ninferno::hold_pinned_host(std::move(held));
+        ninferno::hold_pinned_host(ninferno::PinnedHostBuffer(8192));
+        failures += expect_size(ninferno::held_pinned_host_bytes(), 4096 + 8192, "held bytes");
+        failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192, "pinned bytes");
+        {
+            ninferno::PinnedHostBuffer claimed = ninferno::PinnedHostBuffer::claim(4096);
+            failures += expect_ptr(claimed.data(), held_data, "claim takes the held buffer");
+            failures += expect_size(ninferno::held_pinned_host_bytes(), 8192, "held after claim");
+            failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192,
+                                    "a claim pins nothing new");
+            ninferno::PinnedHostBuffer fresh = ninferno::PinnedHostBuffer::claim(1024);
+            failures += expect_size(ninferno::pinned_host_bytes(), base + 4096 + 8192 + 1024,
+                                    "another size pins anew");
+            failures += expect_size(ninferno::held_pinned_host_bytes(), 8192, "held untouched");
+        }
+        failures += expect_size(ninferno::pinned_host_bytes(), base + 8192, "freed on destruction");
+        ninferno::release_held_pinned_host();
+        failures += expect_size(ninferno::held_pinned_host_bytes(), 0, "release frees the held");
+        failures += expect_size(ninferno::pinned_host_bytes(), base, "release unpins");
+    }
+
     return failures == 0 ? 0 : fail("arena test failed");
 }
