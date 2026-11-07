@@ -240,6 +240,7 @@ void ProgramImpl::retire_continuation_slot(std::uint32_t index) noexcept {
     sequence.prefix_digests.clear();
     sequence.rope_delta              = 0;
     sequence.text_kv_valid           = 0;
+    sequence.prefill_exact_frontier  = 0;
     sequence.mtp_kv_valid            = 0;
     sequence.dflash_context_frontier = 0;
     sequence.mtp_draft_count         = 0;
@@ -1803,6 +1804,7 @@ void ProgramImpl::ordered_reset(SequenceState& sequence) {
     set_device_i32(io.rope_delta, 0);
     if (io.mtp) { set_device_i32(io.mtp->position, 0); }
     sequence.text_kv_valid           = 0;
+    sequence.prefill_exact_frontier  = 0;
     sequence.mtp_kv_valid            = 0;
     sequence.dflash_context_frontier = 0;
 }

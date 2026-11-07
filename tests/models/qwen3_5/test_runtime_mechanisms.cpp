@@ -6,6 +6,7 @@
 
 #include "models/qwen3_5/program/prefix_identity.h"
 #include "models/qwen3_5/program/planning/neutral_frontier.h"
+#include "models/qwen3_5/program/planning/prefill_exact.h"
 #include "models/qwen3_5/program/planning/rebuild_work.h"
 #include "models/qwen3_5/program/planning/prefill_unit.h"
 #include "models/qwen3_5/execution/prefill_calls.h"
@@ -610,6 +611,77 @@ void test_dflash_graph_classes_follow_sliding_routes() {
     }
 }
 
+// The prefill-exact frontier follows a sequence from a cold prefill through decode and restores:
+// prefill calls extend it only while they start at its end, a restore keeps the source's exact rows
+// below its base, and decode rows are never counted.
+void test_prefill_exact_frontier_transitions() {
+    namespace rs = q36::runtime_support;
+    // A root prefills 0 -> 192 -> 300 in two calls; decode then writes rows 300..340.
+    std::uint32_t exact = 0;
+    std::uint32_t valid = 0;
+    for (const std::uint32_t end : {192U, 300U}) {
+        exact = rs::prefill_exact_after_call(exact, valid, end);
+        valid = end;
+    }
+    expect(exact == 300, "a root's prefill calls extend the exact region to the prompt end");
+    valid = 340; // decode commits do not call the prefill rule
+    expect(exact == 300, "decode rows stay outside the exact region");
+
+    // A restore inside the exact region: the fork keeps 256 exact rows and its suffix prefill
+    // extends them to the new prompt end.
+    std::uint32_t forked = rs::restored_prefill_exact(exact, 256);
+    expect(forked == 256, "a restore inside the exact region keeps its rows exact");
+    forked = rs::prefill_exact_after_call(forked, 256, 400);
+    expect(forked == 400, "the suffix prefill of a restore inside the region extends it");
+
+    // A restore at the endpoint (past the exact region): the decode rows below the base stay
+    // counted out, and the suffix prefill does not bridge them.
+    std::uint32_t resumed = rs::restored_prefill_exact(exact, 340);
+    expect(resumed == 300, "a restore past the exact region keeps the source's value");
+    resumed = rs::prefill_exact_after_call(resumed, 340, 500);
+    expect(resumed == 300, "a suffix prefill after decode rows does not extend the region");
+
+    // A truncation never raises the value.
+    expect(rs::restored_prefill_exact(300, 128) == 128, "truncation below the region clamps it");
+    expect(rs::restored_prefill_exact(0, 128) == 0, "an empty region stays empty");
+}
+
+// The frontier a truncated endpoint reuse restores at.
+void test_truncated_reuse_frontier() {
+    namespace rs = q36::runtime_support;
+    const std::span<const std::uint32_t> none;
+    // A: a 6000-token prompt, exact to 6000. B shares 5800 tokens and has 7000.
+    auto f = rs::truncated_reuse_frontier(5800, 7000, none, 6000, none, 256);
+    expect(f == std::optional<std::uint32_t>(5760), "the common prefix moves down to the grid");
+    // B diverges past A's last 17 tokens: A's own tail call is not a prefill route, so the
+    // frontier keeps 17 tokens clear of A's exact end.
+    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, none, 256);
+    expect(f == std::optional<std::uint32_t>(5952),
+           "the frontier stays clear of the source's tail");
+    // The exact region ends before the common prefix: decode rows are not reused.
+    f = rs::truncated_reuse_frontier(6500, 7000, none, 6000, none, 256);
+    expect(f == std::optional<std::uint32_t>(5952), "the exact region bounds the frontier");
+    // A prompt which is a prefix of the ledger still has a suffix to prefill.
+    f = rs::truncated_reuse_frontier(5000, 5000, none, 6000, none, 256);
+    expect(f == std::optional<std::uint32_t>(4928), "a suffix remains to produce the tail hidden");
+    // Too short a prefix is not worth a restore.
+    f = rs::truncated_reuse_frontier(200, 7000, none, 6000, none, 256);
+    expect(!f, "a frontier below the minimum is refused");
+    // A static frontier of the source inside its exact region splits its calls. At 5990 the call
+    // before it still covers the grid point 5952 with a long call, so the frontier stays.
+    const std::array<std::uint32_t, 1> far_static{5990};
+    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, far_static, 256);
+    expect(f == std::optional<std::uint32_t>(5952), "a far static frontier leaves the grid point");
+    // At 5960 the source's call [5952, 5960) is 8 tokens long and took a short route, so the grid
+    // point 5952 is not neutral for the source's prefill and the request reuses nothing there.
+    const std::array<std::uint32_t, 1> near_static{5960};
+    f = rs::truncated_reuse_frontier(5995, 7000, none, 6000, near_static, 256);
+    expect(!f, "a source call too short for the prefill routes bounds the frontier");
+    // An empty exact region reuses nothing.
+    expect(!rs::truncated_reuse_frontier(5800, 7000, none, 0, none, 256),
+           "no exact rows, no reuse");
+}
+
 int main() {
     test_dflash_graph_classes_follow_sliding_routes();
     test_decoder_layout();
@@ -622,6 +694,8 @@ int main() {
     test_prefill_calls_on_segment_grid();
     test_neutral_prefill_frontier();
     test_neutral_cache_opportunities();
+    test_prefill_exact_frontier_transitions();
+    test_truncated_reuse_frontier();
     if (failures != 0) {
         std::cerr << failures << " Qwen3.6 runtime mechanism checks failed\n";
         return 1;

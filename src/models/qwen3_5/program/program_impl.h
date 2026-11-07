@@ -22,6 +22,7 @@
 #include "models/qwen3_5/program/storage/state_store.h"
 #include "models/qwen3_5/program/prefix_identity.h"
 #include "models/qwen3_5/program/planning/resource_projection.h"
+#include "models/qwen3_5/program/planning/prefill_exact.h"
 #include "models/qwen3_5/execution/text.h"
 #include "models/qwen3_5/execution/vision.h"
 #include "models/qwen3_5/program/vision_prefill.h"
@@ -410,6 +411,12 @@ struct SequenceState {
     qwen3_5::detail::PrefixShortlistDigests prefix_digests;
     std::int32_t rope_delta               = 0;
     std::uint32_t text_kv_valid           = 0;
+    // The end of the leading Text KV region whose rows a cold prefill wrote (calls of a prompt's
+    // execution, not the T = 1 decode routes, whose bytes differ). Never above text_kv_valid. A
+    // root starts at 0 and grows with its prefill chunks; a restore at `base` keeps
+    // min(source value, base), so the next prefill chunk extends it exactly when `base` lay inside
+    // the exact region; decode and forced-token rows leave it behind text_kv_valid.
+    std::uint32_t prefill_exact_frontier  = 0;
     std::uint32_t mtp_kv_valid            = 0;
     std::uint32_t dflash_context_frontier = 0;
     std::array<TokenId, qwen3_5::kMtpDecodeMaximumDrafts> mtp_drafts{};
@@ -428,7 +435,9 @@ struct SharedPrefixState {
     StateImageHandle state;
     std::shared_ptr<const PreparedCaptureIdentity> identity;
     std::uint32_t frontier         = 0;
-    std::uint32_t backend_frontier = 0;
+    // As SequenceState::prefill_exact_frontier, of the captured rows [0, frontier).
+    std::uint32_t prefill_exact_frontier = 0;
+    std::uint32_t backend_frontier       = 0;
     std::int32_t rope_delta        = 0;
     bool tail_hidden_valid         = false;
     runtime::PrefillWork rebuild_work;

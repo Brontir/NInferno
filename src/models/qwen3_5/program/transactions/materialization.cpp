@@ -588,6 +588,8 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
         target.addresses->set_checkpoint_requirement(target.address, target.frontier);
     }
     source.text_kv_valid = details.reuse_base;
+    source.prefill_exact_frontier =
+        runtime_support::restored_prefill_exact(source.prefill_exact_frontier, details.reuse_base);
     if (speculative_backend == SpeculativeBackend::Mtp) {
         source.mtp_kv_valid = detail::backend_frontier_at(speculative_backend, details.reuse_base);
     } else if (is_masked_draft_backend(speculative_backend)) {

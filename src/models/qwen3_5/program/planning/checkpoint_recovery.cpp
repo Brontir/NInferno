@@ -753,6 +753,8 @@ void ProgramImpl::publish_checkpoint_drop(SequenceState& sequence,
     text_kv_addresses->truncate_inactive_prefix(sequence.kv->text, retained->main_frontier);
     text_kv_addresses->set_checkpoint_requirement(sequence.kv->text, retained->main_frontier);
     sequence.text_kv_valid = retained->main_frontier;
+    sequence.prefill_exact_frontier = runtime_support::restored_prefill_exact(
+        sequence.prefill_exact_frontier, retained->main_frontier);
     if (sequence.kv->backend) {
         backend_kv_addresses->truncate_inactive_prefix(*sequence.kv->backend,
                                                        retained->backend_frontier);
