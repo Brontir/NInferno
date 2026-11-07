@@ -255,7 +255,8 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 
 // The NVIDIA GPUs of the host (or of the container, which NVML sees only its own of), whatever
 // CUDA_VISIBLE_DEVICES hides from this process: NVML's count, loaded at run time; else the CUDA
-// devices this process sees; at least 1. Read once.
+// devices this process sees; at least 1. Read once. A MIG-partitioned board counts once (its
+// instances are not counted): servers per MIG slice still share one GPU's budget.
 [[nodiscard]] int host_gpu_count() noexcept;
 
 // The facts this class lacks or guessed, each with the conservative choice taken in its place:

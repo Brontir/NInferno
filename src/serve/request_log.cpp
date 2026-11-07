@@ -561,6 +561,7 @@ std::string format_server_start_json(
                    {"host_state_slots_default", memory.host_state_slots_default},
                    {"host_kv_capacity_default_bytes", memory.host_kv_capacity_default_bytes},
                    {"host_tier_budget_bytes", memory.host_tier_budget_bytes},
+                   {"host_tier_share_gpus", memory.host_tier_share_gpus},
                    {"max_private_continuations", cache.max_private_continuations.value()},
                    {"max_shared_prefixes", cache.max_shared_prefixes.value()},
                    {"max_long_anchors_per_continuation",

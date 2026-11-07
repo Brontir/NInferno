@@ -722,7 +722,8 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                               product::format_pretty_bytes(memory.host_tier_budget_bytes) +
                               " this host can pin for it" +
                               (memory.host_tier_share_gpus > 1
-                                   ? ", its share of " +
+                                   ? ", 1/" + std::to_string(memory.host_tier_share_gpus) +
+                                         " of it: the host has " +
                                          std::to_string(memory.host_tier_share_gpus) + " GPUs)"
                                    : std::string(")"))
                         : " (auto)";
