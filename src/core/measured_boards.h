@@ -45,8 +45,11 @@ struct Gate {
 // known: the board's facts are a measured board's). Carried: within kCarryDistance, every quantity compared. Transferred: farther, the
 // gate's own rule carrying it (the MMQ gate's: at any distance). Incomplete: a quantity unknown on
 // either side, so the distance can understate the difference. None: no donor (the unmeasured
-// default). The answer is the legacy rule's in every case: the disposition says what it rests on
-// and decides nothing yet.
+// default). The answer is the legacy rule's, but for one case: a gate bounded by a distance does
+// not take an Incomplete donor's answer (the unmeasured default instead), since the quantity it
+// could not compare may be what puts the donor out of reach. A missing fact so never promotes a
+// transfer the full facts would refuse; a gate that carries at any distance (the MMQ gate's)
+// admits regardless of the quantities, and keeps its answer.
 struct GateAnswer {
     enum class Disposition { Measured, Carried, Transferred, Incomplete, None };
     const Gate* donor = nullptr;
@@ -78,6 +81,9 @@ struct GateAnswer {
                       : out.distance == 0              ? D::Measured
                       : out.distance <= kCarryDistance ? D::Carried
                                                        : D::Transferred;
+    if (out.disposition == D::Incomplete && max_distance < std::numeric_limits<double>::max()) {
+        out.pays = false;
+    }
     return out;
 }
 
