@@ -587,9 +587,11 @@ prefix, with the same behavior, errors, and request IDs.
   reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
   for the caller's next request. A refusal that leaves a body unread (413, 415, a key refused
   before the body was read), every answer while the server drains and `/health`'s 503 of a failed
-  server close it. A request that breaks HTTP/1.1 framing is refused with 400 and the connection
-  closed: an HTTP/1.1 request with no `Host` header (or two), conflicting `Content-Length` values, or
-  `Transfer-Encoding` beside `Content-Length`.
+  server close it. A request with ambiguous framing gets 400 and the connection is closed. That covers
+  an HTTP/1.1 request without a `Host` header, more than one `Host` header or an invalid one,
+  `Content-Length` values that disagree or do not parse, and a non-zero `Content-Length` beside
+  `Transfer-Encoding`. A `Transfer-Encoding` other than a single `chunked` gets 501.
+  `Transfer-Encoding` with `Content-Length: 0` is served, and then the connection closes.
 
 ### Request IDs
 
@@ -2213,10 +2215,10 @@ with the context it fits).
   free memory than the start, which may land a rung lower. When nothing fits, the advice is the
   refusal alone, and the exit code is 2.
 
-Examples on a 16 GB card (RTX 5070 Ti, Linux, no display; start logs of 2026-10-21 against the
-ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
+Examples on a 16 GB card (RTX 5070 Ti, Linux, no display). "Measured start" is what a start fitted
+before the plan ladder; "Ladder" is the ladder's byte arithmetic (`tests/test_plan_ladder.cpp`):
 
-| Model | Master | Ladder |
+| Model | Measured start | Ladder |
 |---|---|---|
 | Qwen3.8-27B UD-IQ3_XXS, C=1 (5.21 GiB free) | 144,448 tokens | 142,912 (rung 17), no cached Device state (the Host tier keeps them) |
 | same, C=4 | 126,720, 4 cached states | 131,072 (rung 57), none (the Host tier keeps them) |
@@ -2266,7 +2268,7 @@ A CPU test (`ninferno_plan_bytes_test`) checks the two to the byte over 7,056 ru
 facts do not name the state (a DFlash plan without its drafter's shape). What stays an estimate on
 both bases is the workspace: a start sizes its Op scratch from the bound weights' kernel routes,
 the dry run from the prefill chunk's activations and the decode logits. It is the remaining
-difference (about one rung in the checks on the lab's cards).
+difference (about one rung in our checks).
 
 The weights are the GGUF tensor table's bytes when one file holds the whole model
 (`weights_basis` `gguf_tensors`), else the listed file sizes (`file_size`: "estimated from file
