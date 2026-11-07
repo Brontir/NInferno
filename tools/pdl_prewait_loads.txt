@@ -72,9 +72,9 @@ generic::rmma_kernel<.*Epilogue\)[12], (false|true), (false|true)> 0,8,12,24,32,
 # weight planes above, rows (80) and SwiGLU's up_offset (84); x is quantized after the wait. As for
 # the register MMA, the audit cannot tell that path from a plain or joined launch, so x (0, 8, 12)
 # is listed for every epilogue.
-# The NVFP4 codec (W4a8Nvfp4) also reads its stacked plane's divisor - divisors (64) at the row's
-# divisor_rows (72) - and its E4M3 scales at scale_tiles (52) per row, as the register MMA does:
-# weights too. Only the RDC builds (every architecture but 120a, NInfernoTargets.cmake) schedule
+# The NVFP4 codec (W4a8Nvfp4) also addresses its E4M3 scales (40) with scale_tiles (52), the stride
+# of a 128-row tile, and reads its stacked plane's divisors (64), one per divisor_rows (72) rows,
+# as the register MMA does: weights too. Only the RDC builds (every architecture but 120a, NInfernoTargets.cmake) schedule
 # those loads above the wait; the whole-program 120a build issues them after it.
 generic::r8_kernel<.*Epilogue\)[0-2], false> 0,8,12,24,32,40,48,52,64,72,76,80,84,?
 # kPre (the verify-width call on a pre-quantized activation, W4a8Activation after GemmArgs:
