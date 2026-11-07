@@ -80,6 +80,9 @@ struct ToolMarkup {
     // written there is only cut out of the answer. A frontend bans it only where its tokenizer
     // encodes this text as exactly one token.
     std::string opener;
+    // The text that closes such a call ("</tool_call>"), banned with the opener: a model kept
+    // from opening a call would otherwise write its closer as text. Empty: none.
+    std::string closer;
 };
 
 struct ChatConventions {

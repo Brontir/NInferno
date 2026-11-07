@@ -741,8 +741,9 @@ llama.cpp-style base URLs.
   keeps the declarations in the prompt, as vLLM does by default, so a turn without calls (an
   agent's compaction or summary) reuses the conversation's cached prefix. No output is read back
   as a call then, and the model is kept from opening one: the syntax's call opener (`<tool_call>`,
-  `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`) gets a `logit_bias` of -100 when the template's
-  tokenizer encodes it as one token, so the answer is text. A `logit_bias` of your own for that
+  `<|tool_call>`, `[TOOL_CALLS]`, `<|tool_call|>`) and its closer (`</tool_call>`, `<tool_call|>`)
+  get a `logit_bias` of -100 when the template's tokenizer encodes each as one token, so the answer
+  is text. A `logit_bias` of your own for that
   token is replaced by the ban. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3
   JSON) are not steered; a call they write anyway is cut out of the answer, as is one written as
   plain text (a Qwen model kept from `<tool_call>` can still write a bare `<function=...>`, which

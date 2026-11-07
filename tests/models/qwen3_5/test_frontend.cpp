@@ -1992,18 +1992,21 @@ int test_disabled_tool_calls_keep_the_prompt() {
                  "disabled tool calls changed the prompt or still read calls back");
 }
 
-// tool_choice none with tools declared bans the template's call opener (one token), so the model
-// answers in text; the prompt stays the tool-enabled one. Where the opener is not a token of the
-// vocabulary, or the calls are on, or no tools are declared, nothing is banned.
+// tool_choice none with tools declared bans the template's call opener and closer (one token
+// each), so the model answers in text; the prompt stays the tool-enabled one. Where the opener is
+// not a token of the vocabulary, or the calls are on, or no tools are declared, nothing is banned.
 int test_disabled_tool_calls_ban_the_opener() {
     constexpr int kOpenerId       = 248058;
+    constexpr int kCloserId       = 248059;
     FrontendResources with_opener = resources();
     {
         auto tokenizer = nlohmann::json::parse(with_opener.tokenizer_json);
         tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>"));
+        tokenizer["added_tokens"].push_back(added(kCloserId, "</tool_call>"));
         with_opener.tokenizer_json = tokenizer.dump();
         auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
         config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>");
+        config["added_tokens_decoder"][std::to_string(kCloserId)] = decoder_added("</tool_call>");
         with_opener.tokenizer_config_json                         = config.dump();
     }
     const auto input = [](bool calls, bool discarded, bool tools) {
@@ -2025,9 +2028,9 @@ int test_disabled_tool_calls_ban_the_opener() {
     const Frontend frontend       = make_frontend(with_opener, false);
     const auto none               = frontend.prepare(input(false, true, true));
     const auto automatic          = frontend.prepare(input(true, false, true));
-    const std::vector<int> banned = {kOpenerId};
+    const std::vector<int> banned = {kOpenerId, kCloserId};
     failures += check(none.summary().banned_tokens == banned,
-                      "tool_choice none did not ban the Qwen XML call opener token");
+                      "tool_choice none did not ban the Qwen XML call opener and closer tokens");
     failures += check(FrontendFactory::inspect(none).token_ids ==
                           FrontendFactory::inspect(automatic).token_ids,
                       "banning the opener changed the prompt");

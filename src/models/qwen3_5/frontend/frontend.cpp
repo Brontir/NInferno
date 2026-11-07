@@ -1119,11 +1119,15 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
         // tool_choice none: the prompt keeps the declarations (the cached prefix is the auto
         // request's), and the model is kept from opening a call, so it answers in text. Only an
         // opener that is one token can be banned; the other syntaxes keep the cut alone.
-        const std::string& opener = impl_->chat_template.conventions().tools.opener;
-        if (!opener.empty()) {
-            if (const std::optional<int> id = impl_->tokenizer->token_id(opener);
-                id && impl_->tokenizer->encode(opener) == std::vector<int>{*id}) {
-                result.banned_tokens.push_back(*id);
+        // Its closer goes too: kept from opening, a model may still write the close as text.
+        const auto& tools = impl_->chat_template.conventions().tools;
+        if (!tools.opener.empty()) {
+            for (const std::string* marker : {&tools.opener, &tools.closer}) {
+                if (marker->empty()) continue;
+                if (const std::optional<int> id = impl_->tokenizer->token_id(*marker);
+                    id && impl_->tokenizer->encode(*marker) == std::vector<int>{*id}) {
+                    result.banned_tokens.push_back(*id);
+                }
             }
         }
     }

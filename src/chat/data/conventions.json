@@ -207,6 +207,7 @@
         {
             "format": "qwen_xml",
             "opener": "<tool_call>",
+            "closer": "</tool_call>",
             "detect": [
                 "<tool_call>",
                 "<function="
@@ -218,6 +219,7 @@
         {
             "format": "gemma4",
             "opener": "<|tool_call>",
+            "closer": "<tool_call|>",
             "detect": [
                 "<|tool_call>"
             ],
@@ -228,6 +230,7 @@
         {
             "format": "hermes_json",
             "opener": "<tool_call>",
+            "closer": "</tool_call>",
             "detect": [
                 "<tool_call>"
             ],
@@ -268,6 +271,7 @@
         {
             "format": "pythonic",
             "opener": "<function_calls>",
+            "closer": "</function_calls>",
             "detect": [
                 "<function_calls>",
                 "</function_calls>"
