@@ -232,6 +232,18 @@ template <class Measured, std::size_t Extent>
     return nearest;
 }
 
+// Whether every entry of a measured table knows its board's L2 and bandwidth: an entry that does
+// not is no one's donor under nearest_known_measured, so the tables assert it where they are
+// defined and a new entry cannot drop out of its lookup silently.
+template <class Measured, std::size_t Extent>
+[[nodiscard]] constexpr bool
+measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
+    for (const Measured& m : measured) {
+        if (!(m.board.l2_mib > 0 && m.board.dram_gbps > 0)) { return false; }
+    }
+    return true;
+}
+
 // "sm<major><minor>".
 [[nodiscard]] std::string gpu_arch_id(int major, int minor);
 

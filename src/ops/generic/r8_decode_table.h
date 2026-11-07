@@ -528,5 +528,6 @@ inline constexpr std::array<R8DecodeTable, 9> kR8DecodeTables{{
     {"gb206:36sm", {12, 0, 36, 32, 448}, kR8DecodeGb206_36sm},
     {"tu102:68sm", {7, 5, 68, 5.5, 616}, kR8DecodeTu102_68sm},
 }};
+static_assert(measured_boards_known(std::span(kR8DecodeTables)));
 
 } // namespace ninferno::ops::detail::generic

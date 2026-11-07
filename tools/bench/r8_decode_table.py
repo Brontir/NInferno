@@ -261,6 +261,8 @@ def main():
     for gpu, name, (major, minor, sms, l2, bw) in names:
         lines.append(f'    {{"{gpu}", {{{major}, {minor}, {sms}, {l2:g}, {bw:g}}}, {name}}},')
     lines.append("}};")
+    # nearest_known_measured skips a board without its L2 or bandwidth: the build refuses one.
+    lines.append("static_assert(measured_boards_known(std::span(kR8DecodeTables)));")
     lines.append("")
     lines.append("} // namespace ninferno::ops::detail::generic")
     with open(args.out, "w", newline="\n", encoding="utf-8") as f:
