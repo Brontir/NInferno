@@ -2956,8 +2956,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // ninferno_route_tune's timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4
 // and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
-// without the chain and reduction terms; the optimum of every constant is flat (200 and 500
-// cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the facts have no roofline.
+// without the chain and reduction terms; the optimum of every constant is flat (the register-MMA
+// step's and the pipeline stage's cycles, route_cost_constants.h, at 0.5..1.5x and 0.5..2x of
+// their fit cost under 0.2 %). nullopt where the facts have no roofline.
 // price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
 // false where the facts have no roofline (nothing priced).
 template <class Take>
