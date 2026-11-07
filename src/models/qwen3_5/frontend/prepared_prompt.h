@@ -159,6 +159,8 @@ struct PreparedPromptData {
     bool reasoning_open_allowed = false;
     bool reasoning_declined     = false;
     bool thinking_budget_control = false;
+    // The tool-call opener token a tool_choice none request must not sample (empty: none).
+    std::vector<TokenId> banned_tokens;
     PrepareStats prepare;
 
     [[nodiscard]] std::span<const std::int32_t> position_axis(int axis) const;

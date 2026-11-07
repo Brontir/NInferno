@@ -567,7 +567,9 @@ struct ModelSamplingDefaults {
 };
 
 // OpenAI's logit_bias: an offset in [-100, 100] added to one token's logit before sampling
-// (-100 bans it in practice, 100 forces it). Token ids are the model's.
+// (100 forces it in practice); -100 bans the token (it loses to every token not banned, whatever
+// its logit or the penalties; only where a constraint allows nothing else is one picked). Token
+// ids are the model's.
 struct LogitBias {
     std::int32_t token = 0;
     float bias         = 0.0F;
@@ -1137,6 +1139,11 @@ struct PromptSummary {
     // The chat template defines a thinking-budget control (text that ends reasoning early), so a
     // thinking budget can be enforced; gpt-oss's harmony template defines none.
     bool thinking_budget_control = false;
+    // Tokens this prompt's request must not sample (tool_choice none with tools declared: the
+    // template's tool-call opener, so the model answers in text). The serve layer
+    // (generation_service) adds each as a logit_bias of -100 that replaces the request's own entry
+    // for it; an embedder of the Engine applies them the same way.
+    std::vector<TokenId> banned_tokens;
 
     // The request thinks: its prompt starts the reasoning (Qwen), or leaves the model to open it
     // (Gemma 4 with thinking on, gpt-oss). It selects the thinking sampler preset and speculation.
