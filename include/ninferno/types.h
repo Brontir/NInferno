@@ -1138,8 +1138,9 @@ struct PromptSummary {
     // thinking budget can be enforced; gpt-oss's harmony template defines none.
     bool thinking_budget_control = false;
     // Tokens this prompt's request must not sample (tool_choice none with tools declared: the
-    // template's tool-call opener, so the model answers in text). The Engine adds each as a
-    // logit_bias of -100 after the request's own entries.
+    // template's tool-call opener, so the model answers in text). The serve layer
+    // (generation_service) adds each as a logit_bias of -100 that replaces the request's own entry
+    // for it; an embedder of the Engine applies them the same way.
     std::vector<TokenId> banned_tokens;
 
     // The request thinks: its prompt starts the reasoning (Qwen), or leaves the model to open it
