@@ -2585,6 +2585,22 @@ bool same_generation(const ninferno::GenerationResult& left,
     return true;
 }
 
+// Under the default (Fast) activations a request's bytes depend on how its prompt was cut
+// (ActivationMode), so a reuse is held to the same greedy tokens and logprobs within a rounding
+// step; Exact is held to the same bytes.
+bool close_generation(const ninferno::GenerationResult& left,
+                      const ninferno::GenerationResult& right, float tolerance) {
+    if (left.generated_token_ids != right.generated_token_ids ||
+        left.logprobs.size() != right.logprobs.size()) {
+        return false;
+    }
+    for (std::size_t index = 0; index < left.logprobs.size(); ++index) {
+        const float delta = left.logprobs[index].logprob - right.logprobs[index].logprob;
+        if (delta > tolerance || delta < -tolerance) { return false; }
+    }
+    return true;
+}
+
 int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationMode mode,
                                      bool attention_only, std::uint32_t source_tail_words) {
     ninferno::EngineOptions options;
@@ -2632,6 +2648,12 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
             ++failures;
         }
     };
+    const bool exact_mode = mode == ninferno::ActivationMode::Exact;
+    const auto expect_same = [&](const ninferno::GenerationResult& left,
+                                 const ninferno::GenerationResult& right, const char* what) {
+        expect(exact_mode ? same_generation(left, right) : close_generation(left, right, 5e-3F),
+               what);
+    };
     const auto check_reuse = [&](const ninferno::GenerationResult& result, const char* what) {
         std::cout << "  " << label << ": reused " << result.reused_prompt_tokens
                   << " prompt tokens\n";
@@ -2661,24 +2683,24 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     check_reuse(second, "same-session append did not take the truncated endpoint");
     expect(!attention_only || second.reused_prompt_tokens < base_tokens,
            "the first append reused past the shared message");
-    expect(same_generation(second, cold_longer), "the truncated reuse differs from a cold prefill");
+    expect_same(second, cold_longer, "the truncated reuse differs from a cold prefill");
 
     // Again: the second request's own endpoint serves the same prompt.
     const ninferno::GenerationResult third = run(longer_text, "truncated-a", true);
     expect(third.reused_prompt_tokens > second.reused_prompt_tokens || !attention_only,
            "the repeated request did not reuse more than the first append");
-    expect(same_generation(third, cold_longer), "the repeated request differs from a cold prefill");
+    expect_same(third, cold_longer, "the repeated request differs from a cold prefill");
 
     // Another session retains the source: pages [0, f) are forked and the source is untouched.
     const ninferno::GenerationResult source = run(source_text, "truncated-b", true);
-    expect(source.generated_token_ids == first.generated_token_ids,
+    expect(!exact_mode || same_generation(source, first),
            "the base request changed after truncated reuse");
     const ninferno::GenerationResult forked      = run(longer_text + " end", "truncated-c", true);
     const ninferno::GenerationResult cold_forked = run(longer_text + " end", "", false);
     check_reuse(forked, "another session's append did not take the truncated endpoint");
-    expect(same_generation(forked, cold_forked), "the retained truncated reuse differs from cold");
+    expect_same(forked, cold_forked, "the retained truncated reuse differs from cold");
     const ninferno::GenerationResult after = run(source_text, "truncated-d", true);
-    expect(after.generated_token_ids == first.generated_token_ids,
+    expect(!exact_mode || same_generation(after, first),
            "the source changed after a retained truncated reuse");
     return failures;
 }
