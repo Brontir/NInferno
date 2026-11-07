@@ -62,9 +62,10 @@ inline constexpr Scalar kTiledTensorFraction{{0.8}, Provenance::Fitted, "tiled_t
 inline constexpr Scalar kPipelinedStageBytesPerRow{
     {128.0}, Provenance::Counted, "pipelined_stage_bytes_per_row"};
 // Shared memory one CTA may take: the opt-in cap of sm_86 / sm_89 / sm_12x (99 KiB), which the
-// model takes on every part.
+// model takes on every part (sm_80 allows 163 KiB, sm_90 227 KiB, sm_75 64 KiB): a modelling
+// choice read off those parts, not a fact of every chip.
 inline constexpr Scalar kMaxTileSharedBytes{
-    {99.0 * 1024.0}, Provenance::Fact, "max_tile_shared_bytes"};
+    {99.0 * 1024.0}, Provenance::Counted, "max_tile_shared_bytes"};
 // Every tile: the floor of the warp slowdown factor (a lone warp runs at most 20x slow).
 inline constexpr Scalar kMinWarpFill{{0.05}, Provenance::Fitted, "min_warp_fill"};
 
