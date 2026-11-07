@@ -848,6 +848,15 @@ PreparedRequest GenerationService::prepare_impl(const GenerationRequest& request
             check_preparation_control(prepared.lifetime->deadline, is_cancelled);
         }
         prepared.enable_thinking = prompt.summary().thinking();
+        // A token the prompt bans (the tool-call opener under tool_choice none) is a -100 bias
+        // that wins over the request's own entry for it.
+        for (const ninferno::TokenId banned : prompt.summary().banned_tokens) {
+            auto& biases = request_options.execution.sampling.logit_bias;
+            std::erase_if(biases,
+                          [&](const ninferno::LogitBias& entry) { return entry.token == banned; });
+            biases.push_back(
+                ninferno::LogitBias{.token = banned, .bias = -ninferno::kLogitBiasLimit});
+        }
         // A budget applies where the output thinks: from the prompt's start, or from the opener
         // the model writes itself (Gemma 4). --default-thinking-budget applies where the template
         // can end thinking early; a budget the request itself gives on a template that cannot is

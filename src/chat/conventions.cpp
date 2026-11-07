@@ -155,6 +155,7 @@ ChatConventions resolve_conventions(std::string_view source) {
             .response_open     = entry->at("response_open").get<std::string>(),
             .response_close    = entry->at("response_close").get<std::string>(),
             .response_boundary = entry->at("response_boundary").get<std::string>(),
+            .opener            = entry->value("opener", std::string{}),
         };
     }
     return result;

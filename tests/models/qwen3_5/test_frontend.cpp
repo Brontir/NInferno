@@ -1992,6 +1992,55 @@ int test_disabled_tool_calls_keep_the_prompt() {
                  "disabled tool calls changed the prompt or still read calls back");
 }
 
+// tool_choice none with tools declared bans the template's call opener (one token), so the model
+// answers in text; the prompt stays the tool-enabled one. Where the opener is not a token of the
+// vocabulary, or the calls are on, or no tools are declared, nothing is banned.
+int test_disabled_tool_calls_ban_the_opener() {
+    constexpr int kOpenerId       = 248058;
+    FrontendResources with_opener = resources();
+    {
+        auto tokenizer = nlohmann::json::parse(with_opener.tokenizer_json);
+        tokenizer["added_tokens"].push_back(added(kOpenerId, "<tool_call>"));
+        with_opener.tokenizer_json = tokenizer.dump();
+        auto config                = nlohmann::json::parse(with_opener.tokenizer_config_json);
+        config["added_tokens_decoder"][std::to_string(kOpenerId)] = decoder_added("<tool_call>");
+        with_opener.tokenizer_config_json                         = config.dump();
+    }
+    const auto input = [](bool calls, bool discarded, bool tools) {
+        ninferno::PromptInput result;
+        ninferno::ChatMessage user;
+        user.role = ninferno::ChatRole::User;
+        user.parts.push_back(ninferno::MessagePart{
+            .kind = ninferno::MessagePartKind::Text, .text = "weather?", .media = {}});
+        result.messages.push_back(std::move(user));
+        if (tools) {
+            result.options.tool_jsons.push_back(
+                R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+        }
+        result.options.tool_calls_enabled   = calls;
+        result.options.tool_calls_discarded = discarded;
+        return result;
+    };
+    int failures                  = 0;
+    const Frontend frontend       = make_frontend(with_opener, false);
+    const auto none               = frontend.prepare(input(false, true, true));
+    const auto automatic          = frontend.prepare(input(true, false, true));
+    const std::vector<int> banned = {kOpenerId};
+    failures += check(none.summary().banned_tokens == banned,
+                      "tool_choice none did not ban the Qwen XML call opener token");
+    failures += check(FrontendFactory::inspect(none).token_ids ==
+                          FrontendFactory::inspect(automatic).token_ids,
+                      "banning the opener changed the prompt");
+    failures += check(automatic.summary().banned_tokens.empty(),
+                      "enabled tool calls banned the call opener");
+    failures += check(frontend.prepare(input(false, true, false)).summary().banned_tokens.empty(),
+                      "tool_choice none without tools banned a token");
+    const Frontend plain = make_frontend(resources(), false);
+    failures += check(plain.prepare(input(false, true, true)).summary().banned_tokens.empty(),
+                      "an opener that is not a vocabulary token was banned");
+    return failures;
+}
+
 // OpenAI's automatic boundary after the last message's last part is taken at the closed turn's end,
 // an execution frontier of the prompt: the capture adds no prefill split (DECISIONS 63).
 int test_last_part_boundary_at_turn_end() {
@@ -3405,6 +3454,7 @@ int main() {
     failures += test_template_media_contract();
     failures += test_image_resize_rejection_policy();
     failures += test_disabled_tool_calls_keep_the_prompt();
+    failures += test_disabled_tool_calls_ban_the_opener();
     failures += test_explicit_leading_instruction_cache_boundary();
     failures += test_last_part_boundary_at_turn_end();
     failures += test_media_admission_uses_aggregate_resources(frontend);

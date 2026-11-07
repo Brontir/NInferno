@@ -986,9 +986,10 @@ PromptSummary PreparedPrompt::summary() const {
                          // json_schema opened a thought channel and reasoned to max_tokens).
                          .reasoning_open_allowed =
                              data_->reasoning_open_allowed && !data_->reasoning_declined,
-                         .prompt_tokens = checked_token_count(data_->token_ids.size()),
-                         .has_media     = data_->has_media(),
-                         .thinking_budget_control = data_->thinking_budget_control};
+                         .prompt_tokens           = checked_token_count(data_->token_ids.size()),
+                         .has_media               = data_->has_media(),
+                         .thinking_budget_control = data_->thinking_budget_control,
+                         .banned_tokens           = data_->banned_tokens};
 }
 
 PromptPreparationStats PreparedPrompt::preparation_stats() const noexcept {
@@ -1114,6 +1115,18 @@ PreparedPrompt Frontend::prepare(PromptInput input, const PreparationControl& co
     auto prepared              = std::make_unique<PreparedPromptData>();
     PreparedPromptData& result = *prepared;
     result.tool_call_output    = tool_call_output;
+    if (options.tool_calls_discarded && !options.tool_jsons.empty()) {
+        // tool_choice none: the prompt keeps the declarations (the cached prefix is the auto
+        // request's), and the model is kept from opening a call, so it answers in text. Only an
+        // opener that is one token can be banned; the other syntaxes keep the cut alone.
+        const std::string& opener = impl_->chat_template.conventions().tools.opener;
+        if (!opener.empty()) {
+            if (const std::optional<int> id = impl_->tokenizer->token_id(opener);
+                id && impl_->tokenizer->encode(opener) == std::vector<int>{*id}) {
+                result.banned_tokens.push_back(*id);
+            }
+        }
+    }
     std::vector<std::optional<std::uint32_t>> message_boundaries;
     std::vector<std::optional<std::uint32_t>> cache_boundaries;
     if (has_media) {

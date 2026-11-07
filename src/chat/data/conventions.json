@@ -111,6 +111,7 @@
   "tools": [
     {
       "format": "qwen_xml",
+      "opener": "<tool_call>",
       "detect": ["<tool_call>", "<function="],
       "response_open": "<tool_response>",
       "response_close": "</tool_response>",
@@ -118,6 +119,7 @@
     },
     {
       "format": "gemma4",
+      "opener": "<|tool_call>",
       "detect": ["<|tool_call>"],
       "response_open": "<|tool_response>",
       "response_close": "<tool_response|>",
@@ -125,6 +127,7 @@
     },
     {
       "format": "hermes_json",
+      "opener": "<tool_call>",
       "detect": ["<tool_call>"],
       "response_open": "<tool_response>",
       "response_close": "</tool_response>",
@@ -132,6 +135,7 @@
     },
     {
       "format": "mistral_json",
+      "opener": "[TOOL_CALLS]",
       "detect": ["[TOOL_CALLS]"],
       "response_open": "",
       "response_close": "",
@@ -153,6 +157,7 @@
     },
     {
       "format": "pythonic",
+      "opener": "<function_calls>",
       "detect": ["<function_calls>", "</function_calls>"],
       "response_open": "",
       "response_close": "",
@@ -160,6 +165,7 @@
     },
     {
       "format": "granite_json",
+      "opener": "<|tool_call|>",
       "detect": ["<|tool_call|>"],
       "response_open": "",
       "response_close": "",

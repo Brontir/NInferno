@@ -74,6 +74,12 @@ struct ToolMarkup {
     // The template ends each serialized tool result with this; the byte after it is a message
     // boundary. Empty: no such boundary.
     std::string response_boundary;
+    // The text that opens every call of this syntax when it is one special token of the model's
+    // vocabulary ("<tool_call>", "[TOOL_CALLS]"): tool_choice none bans that token, so the model
+    // writes text. Empty: the syntax has no such opener (harmony, Atem, Llama 3 JSON); a call
+    // written there is only cut out of the answer. A frontend bans it only where its tokenizer
+    // encodes this text as exactly one token.
+    std::string opener;
 };
 
 struct ChatConventions {
