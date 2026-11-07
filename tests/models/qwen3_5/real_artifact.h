@@ -10,6 +10,7 @@
 
 #include <cuda_runtime_api.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -29,6 +30,9 @@ struct RealArtifact {
     bool dflash2  = false;
     bool proposal = false;
     bool moe      = false;
+    // Every layer is full attention (a dense Qwen3 or Llama-like text model): no linear layers,
+    // no sliding rings. Such a model reuses a resident endpoint truncated (#485).
+    bool attention_only = false;
     // The drafters the proposal head serves (a proposal/head Use of their final_hidden): the
     // converter's default head serves MTP and DFlash, never DFlash2.
     std::set<std::string> head_drafters;
@@ -61,6 +65,14 @@ inline const RealArtifact& real_artifact(const char* path) {
         result.dflash2  = components.contains("dflash2");
         result.proposal = reader.directory().component("text").proposal.has_value();
         result.moe      = reader.directory().component("text").config.contains("num_experts");
+        {
+            const auto& config = reader.directory().component("text").config;
+            const auto types   = config.find("layer_types");
+            result.attention_only =
+                types != config.end() && types->is_array() && !types->empty() &&
+                std::all_of(types->begin(), types->end(),
+                            [](const auto& kind) { return kind == "full_attention"; });
+        }
         for (const char* drafter : {"mtp", "dflash", "dflash2"}) {
             if (reader.directory().uses.contains(
                     {"proposal/head", std::string(drafter) + "/final_hidden"})) {

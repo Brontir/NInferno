@@ -9,6 +9,10 @@
 
 namespace ninferno::models::qwen3_5::runtime_support {
 
+// The shortest frontier worth a truncated restore: below it the prefill saved is smaller than the
+// planning work of one more candidate.
+inline constexpr std::uint32_t kTruncatedReuseMinimumTokens = 256;
+
 // A sequence's prefill-exact frontier is the end of the leading KV region written by cold prefill
 // calls. Rows a decode (T = 1) route wrote differ in bytes from those a prefill computes, so a
 // prefix reuse that must equal a cold prefill may keep only rows below it. These are its

@@ -538,7 +538,7 @@ bool ProgramImpl::checkpoint_tail_hidden_valid(const SequenceState& sequence,
 StateImageHandle
 ProgramImpl::selected_state(const SequenceState& sequence, ReusePath reuse,
                             std::optional<runtime::CheckpointRef> checkpoint) const {
-    if (reuse == ReusePath::PrivateEndpoint) {
+    if (is_endpoint_reuse(reuse)) {
         if (!sequence.endpoint_valid || !state_store->valid(sequence.state.read)) {
             throw std::logic_error("private endpoint StateImage is stale");
         }
@@ -577,7 +577,7 @@ ProgramImpl::selected_state_consumed_references(const SequenceState& sequence, R
             throw std::logic_error("selected rewrite StateImage is unavailable");
         }
         consumed_references = 1;
-    } else if (reuse == ReusePath::PrivateEndpoint &&
+    } else if (is_endpoint_reuse(reuse) &&
                rewrite_disposition != RewriteCheckpointDisposition::RetainExisting &&
                sequence.rewrite_state && *sequence.rewrite_state == selected) {
         consumed_references = 1;
@@ -630,6 +630,11 @@ bool ProgramImpl::can_retain_rewrite_checkpoint(const PreparedPromptData& prompt
         !state_store->valid(*sequence.rewrite_state) ||
         !qwen3_5::detail::prefix_matches(prompt, sequence.ledger, sequence.prefix_identity,
                                          sequence.rewrite_checkpoint.frontier)) {
+        return false;
+    }
+    // A truncated endpoint keeps no checkpoint above the frontier it cuts back to.
+    if (reuse == ReusePath::PrivateTruncatedEndpoint &&
+        sequence.rewrite_checkpoint.frontier > reuse_base) {
         return false;
     }
     if (sequence.rewrite_checkpoint.frontier == desired.frontier) { return true; }

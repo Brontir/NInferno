@@ -126,6 +126,7 @@ const char* path_name(ninferno::PrefixReusePath p) {
     case ninferno::PrefixReusePath::PrivateResponseReplay: return "response_replay";
     case ninferno::PrefixReusePath::PrivateLongAnchor: return "long_anchor";
     case ninferno::PrefixReusePath::SharedStablePrefix: return "shared";
+    case ninferno::PrefixReusePath::PrivateTruncatedEndpoint: return "truncated_endpoint";
     }
     return "?";
 }

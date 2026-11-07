@@ -1429,6 +1429,9 @@ enum class PrefixReusePath : std::uint8_t {
     PrivateResponseReplay,
     PrivateLongAnchor,
     SharedStablePrefix,
+    // A resident endpoint of an attention-only model, cut back to a neutral frontier below the
+    // common prefix of its ledger and the prompt (#485).
+    PrivateTruncatedEndpoint,
 };
 
 // Why bounded pressure planning stopped for the materialization decision committed to one request.
@@ -1780,6 +1783,7 @@ struct RuntimeStats {
     std::uint64_t private_response_replay_selections = 0;
     std::uint64_t private_long_anchor_selections     = 0;
     std::uint64_t shared_stable_prefix_selections    = 0;
+    std::uint64_t private_truncated_endpoint_selections = 0;
     std::uint64_t reused_prompt_tokens               = 0;
     std::uint32_t last_selected_frontier_tokens      = 0;
 

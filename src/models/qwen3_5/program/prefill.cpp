@@ -555,7 +555,7 @@ void ProgramImpl::start_sequence(std::uint32_t lane, SequenceState& sequence,
             }
             refresh_state_views(sequence);
             bind_sequence_kv(sequence);
-        } else if (request_plan.reuse == ReusePath::PrivateEndpoint) {
+        } else if (is_endpoint_reuse(request_plan.reuse)) {
             if (!state_store->valid(sequence.state.read) ||
                 sequence.state.read != sequence.state.write || sequence.state.fork_pending ||
                 state_store->role(sequence.state.read) != StateImageRole::CheckpointImmutable) {

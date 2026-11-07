@@ -485,7 +485,9 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
         }
     };
 
-    if (source.endpoint_valid && source.execution_frontier > details.reuse_base) {
+    // The truncated endpoint's StateImage is the one the active sequence takes over.
+    if (source.endpoint_valid && source.execution_frontier > details.reuse_base &&
+        details.reuse != ReusePath::PrivateTruncatedEndpoint) {
         const StateImageHandle endpoint = source.state.read;
         source.endpoint_valid           = false;
         source.state                    = {};
@@ -502,7 +504,7 @@ void ProgramImpl::prepare_consumed_source(MaterializationTransaction& transactio
                                   static_cast<std::ptrdiff_t>(index - 1U));
         release_if_unreferenced(state);
     }
-    if (details.reuse == ReusePath::PrivateEndpoint &&
+    if (is_endpoint_reuse(details.reuse) &&
         details.rewrite_disposition != RewriteCheckpointDisposition::RetainExisting &&
         source.rewrite_state) {
         const StateImageHandle rewrite = *source.rewrite_state;

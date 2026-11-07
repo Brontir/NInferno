@@ -726,6 +726,33 @@ public:
         return plan;
     }
 
+    // An attention-only Program (Program::supports_truncated_reuse): a prompt which diverges below
+    // a catalogued endpoint is served from its KV cut back to `truncated_frontier`, when the
+    // Program finds one (none: its exact frontier or the common prefix is too short).
+    bool supports_truncated = false;
+    std::optional<std::uint32_t> truncated_frontier;
+    std::uint32_t truncated_inspections = 0;
+
+    [[nodiscard]] bool supports_truncated_reuse() const noexcept { return supports_truncated; }
+
+    [[nodiscard]] std::optional<FakeAdmissionCandidate>
+    inspect_truncated_admission(const FakePreparedPrompt& prompt, const FakeRequestBasePlan& base,
+                                LaneId lane, const FakeContinuationHandle& source,
+                                CheckpointRef endpoint, bool must_retain_source) {
+        ++truncated_inspections;
+        if (!supports_truncated || !truncated_frontier ||
+            endpoint.kind != CheckpointKind::SessionEndpoint ||
+            *truncated_frontier >= endpoint.frontier) {
+            return std::nullopt;
+        }
+        CheckpointRef truncated = endpoint;
+        truncated.frontier      = *truncated_frontier;
+        std::optional<FakeAdmissionCandidate> plan =
+            inspect_admission(prompt, base, lane, &source, nullptr, truncated, must_retain_source);
+        if (plan) { plan->value.prefix_reuse_path = PrefixReusePath::PrivateTruncatedEndpoint; }
+        return plan;
+    }
+
     [[nodiscard]] std::optional<FakeResourcePlan>
     seal_identity(const FakeAdmissionCandidate& admission, const FakePreparedPrompt&,
                   ninferno::runtime::FinalScheduleIntent intent) {
@@ -4076,6 +4103,82 @@ void test_shortlist_collision_requires_program_exact_verification() {
             "shortlist collision bypassed Program exact identity verification");
 }
 
+// An attention-only Program offers a catalogued endpoint to a prompt which diverges below it
+// (#485): the digest of the endpoint's frontier does not match, the Program finds the frontier.
+void test_truncated_endpoint_is_offered_when_the_program_supports_it() {
+    FakeManager manager = make_manager(1, 3);
+    FakeProgram program;
+    program.supports_truncated  = true;
+    program.truncated_frontier  = 8;
+    const ActiveRequest seed    = start_active(manager, program, 7, make_base(7), 1);
+    (void)finish_active(manager, program, seed);
+
+    // The request's digest at the endpoint frontier (16) differs: no exact candidate.
+    auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9), 2);
+    require(inspection.readiness == Readiness::Ready && inspection.choice &&
+                inspection.choice->summary().prefix_reuse_path ==
+                    PrefixReusePath::PrivateTruncatedEndpoint &&
+                inspection.choice->summary().reusable_prompt_tokens == 8,
+            "the endpoint was not offered truncated to the Program's frontier");
+    require(program.truncated_inspections == 1, "the endpoint was not inspected once");
+
+    // It is a consumer of the endpoint like a second turn: the source is consumed.
+    program.abort_start = true;
+    const auto status   = manager.reserve_materialization(program, std::move(*inspection.choice),
+                                                          FakePreparedPrompt{7}, {});
+    require(status == FakeManager::MaterializationReserveResult::Stale &&
+                program.started_source_id == seed.sequence.id &&
+                program.started_source_mode == PrivateSourceMode::ConsumeToActive,
+            "a same-session truncated reuse did not consume its endpoint");
+    require(manager.catalog_state(0) == FakeManager::CatalogState::Catalogued,
+            "a failed start did not roll back the truncated source claim");
+}
+
+void test_truncated_endpoint_is_retained_for_another_session() {
+    FakeManager manager = make_manager(2, 3);
+    FakeProgram program;
+    program.supports_truncated = true;
+    program.truncated_frontier = 8;
+    const ActiveRequest seed   = start_active(
+        manager, program, 7, make_base(7, FakeCacheSessionKey{1}, RetentionClass::LiveSession), 1);
+    (void)finish_active(manager, program, seed);
+
+    // Another session forks pages [0, f) and never touches the source.
+    const ActiveRequest fork = start_active(
+        manager, program, 7, make_base(9, FakeCacheSessionKey{2}, RetentionClass::LiveSession), 2);
+    require(program.started_source_mode == PrivateSourceMode::Retain &&
+                program.started_source_id == seed.sequence.id,
+            "a truncated reuse by another session did not retain its source");
+    require(manager.catalog_state(0) == FakeManager::CatalogState::Catalogued,
+            "a retained truncated source left the catalog");
+    (void)finish_active(manager, program, fork, 16);
+}
+
+void test_truncated_endpoint_needs_the_program_to_support_it() {
+    FakeManager manager = make_manager(1, 3);
+    FakeProgram program; // a stateful model: checkpoint-only
+    program.truncated_frontier = 8;
+    const ActiveRequest seed   = start_active(manager, program, 7, make_base(7), 1);
+    (void)finish_active(manager, program, seed);
+    auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9), 2);
+    require(inspection.choice && inspection.choice->summary().reusable_prompt_tokens == 0 &&
+                inspection.choice->summary().prefix_reuse_path == PrefixReusePath::Root &&
+                program.truncated_inspections == 0,
+            "a program without truncated reuse was asked for a truncated candidate");
+}
+
+void test_truncated_endpoint_refused_by_the_program_leaves_the_root() {
+    FakeManager manager = make_manager(1, 3);
+    FakeProgram program;
+    program.supports_truncated = true; // the source's prefill-exact frontier is too short: no frontier
+    const ActiveRequest seed   = start_active(manager, program, 7, make_base(7), 1);
+    (void)finish_active(manager, program, seed);
+    auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9), 2);
+    require(inspection.choice && inspection.choice->summary().reusable_prompt_tokens == 0 &&
+                program.truncated_inspections == 1,
+            "a refused truncated candidate changed the selection");
+}
+
 // Enumerates raw owner choices independently of the search frontier/generator and portfolio fold.
 // Each owner can keep its cache, spill it (one relief unit), or drop it (two relief units).
 void test_complete_search_against_small_exhaustive_oracle() {
@@ -4264,6 +4367,10 @@ int main() {
     run_test("dominating identity fast path",
              test_dominating_identity_does_not_build_pressure_graph);
     run_test("root lifecycle and prefix reuse", test_root_lifecycle_and_prefix_reuse);
+    run_test("truncated endpoint offered", test_truncated_endpoint_is_offered_when_the_program_supports_it);
+    run_test("truncated endpoint retained", test_truncated_endpoint_is_retained_for_another_session);
+    run_test("truncated endpoint needs support", test_truncated_endpoint_needs_the_program_to_support_it);
+    run_test("truncated endpoint refused", test_truncated_endpoint_refused_by_the_program_leaves_the_root);
     run_test("stale revision is retryable", test_stale_revision_is_retryable);
     run_test("materialization abort preserves source", test_materialization_abort_preserves_source);
     run_test("committed victim survives abort", test_committed_victim_survives_transaction_abort);

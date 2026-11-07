@@ -517,7 +517,8 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
 std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
     std::uint32_t lane, const PreparedPromptData& prompt, const RequestBasePlan& base_plan,
     const SequenceState* source, const SharedPrefixState* shared_source,
-    std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source) {
+    std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
+    bool truncated_endpoint) {
     if (lane >= max_concurrency) { throw std::out_of_range("request lane is out of range"); }
     const RequestControl& request = requests[lane];
     if (request.lifecycle != Lifecycle::Empty) {
@@ -539,6 +540,10 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
     if ((source != nullptr && shared_source != nullptr) ||
         ((source == nullptr && shared_source == nullptr) != !checkpoint.has_value())) {
         throw std::invalid_argument("inspection source and checkpoint must be paired");
+    }
+    if (truncated_endpoint &&
+        (source == nullptr || checkpoint->kind != runtime::CheckpointKind::SessionEndpoint)) {
+        throw std::invalid_argument("a truncated reuse names a private endpoint");
     }
     if (shared_source != nullptr) {
         const runtime::CheckpointRef selected = *checkpoint;
@@ -578,12 +583,44 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
             if (selected.frontier == 0 || selected.frontier != source->execution_frontier) {
                 throw std::logic_error("catalog endpoint summary disagrees with Program state");
             }
-            if (!qwen3_5::detail::prefix_matches(prompt, source->ledger, source->prefix_identity,
-                                                 selected.frontier)) {
-                return std::nullopt;
+            if (truncated_endpoint) {
+                // The prompt diverges below the endpoint: the KV rows below the longest neutral
+                // frontier of the common prefix serve it, and the rest is prefilled (the
+                // endpoint's tail hidden belongs to its own frontier). The rows must come from
+                // a prefill of the source for the result to equal a cold prefill's.
+                if (!supports_truncated_reuse() || !source->endpoint_valid) {
+                    return std::nullopt;
+                }
+                const std::uint32_t resident = std::min<std::uint32_t>(
+                    selected.frontier, static_cast<std::uint32_t>(source->ledger.size()));
+                const std::size_t limit = std::min<std::size_t>(resident, prompt.token_ids.size());
+                const auto mismatch     = std::mismatch(prompt.token_ids.begin(),
+                                                        prompt.token_ids.begin() +
+                                                            static_cast<std::ptrdiff_t>(limit),
+                                                        source->ledger.begin());
+                const std::uint32_t common =
+                    static_cast<std::uint32_t>(mismatch.first - prompt.token_ids.begin());
+                const std::optional<std::uint32_t> frontier =
+                    runtime_support::truncated_reuse_frontier(
+                        common, base.summary.prompt_tokens, prompt.identity.rewrite_execution_frontiers,
+                        source->prefill_exact_frontier,
+                        source->prefix_identity.rewrite_execution_frontiers(),
+                        runtime_support::kTruncatedReuseMinimumTokens);
+                if (!frontier || *frontier >= selected.frontier ||
+                    !qwen3_5::detail::prefix_matches(prompt, source->ledger,
+                                                     source->prefix_identity, *frontier)) {
+                    return std::nullopt;
+                }
+                plan->reuse      = ReusePath::PrivateTruncatedEndpoint;
+                plan->reuse_base = *frontier;
+            } else {
+                if (!qwen3_5::detail::prefix_matches(prompt, source->ledger,
+                                                     source->prefix_identity, selected.frontier)) {
+                    return std::nullopt;
+                }
+                plan->reuse      = ReusePath::PrivateEndpoint;
+                plan->reuse_base = selected.frontier;
             }
-            plan->reuse      = ReusePath::PrivateEndpoint;
-            plan->reuse_base = selected.frontier;
         } else if (selected.kind == runtime::CheckpointKind::LongAnchor) {
             const auto anchor =
                 std::find_if(source->long_anchors.begin(), source->long_anchors.end(),
@@ -698,7 +735,7 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
     // of the active lineage entitlement, not additional catalog ownership. If an optional
     // checkpoint aliases the endpoint image, that image must remain immutable and the whole source
     // is preserved through the normal Fork path.
-    if (source != nullptr && plan->reuse == ReusePath::PrivateEndpoint &&
+    if (source != nullptr && is_endpoint_reuse(plan->reuse) &&
         plan->source_mode == runtime::PrivateSourceMode::ConsumeToActive) {
         const StateImageHandle endpoint =
             selected_state(*source, plan->reuse, plan->selected_checkpoint);
@@ -709,6 +746,11 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
             optional_states.push_back(*source->rewrite_state);
         }
         for (const LongAnchorCheckpoint& anchor : source->long_anchors) {
+            // A truncated endpoint drops the anchors above its frontier when it starts.
+            if (anchor.frontier > plan->reuse_base &&
+                plan->reuse == ReusePath::PrivateTruncatedEndpoint) {
+                continue;
+            }
             optional_states.push_back(anchor.state);
         }
         if (std::find(optional_states.begin(), optional_states.end(), endpoint) !=

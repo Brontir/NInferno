@@ -49,6 +49,12 @@ using RewriteCheckpointSpec = qwen3_5::RewriteCheckpointSpec;
 
 using ReusePath = ninferno::PrefixReusePath;
 
+// A restore that consumes (or forks) the resident endpoint's own StateImage: the endpoint itself,
+// or its KV cut back to a frontier below it (supports_truncated_reuse models).
+[[nodiscard]] constexpr bool is_endpoint_reuse(ReusePath path) noexcept {
+    return path == ReusePath::PrivateEndpoint || path == ReusePath::PrivateTruncatedEndpoint;
+}
+
 [[nodiscard]] constexpr bool is_rewrite_checkpoint_restore(ReusePath path) noexcept {
     return path == ReusePath::PrivateTurnClosure || path == ReusePath::PrivateResponseReplay;
 }
@@ -564,7 +570,11 @@ public:
     [[nodiscard]] std::optional<AdmissionCandidate> inspect_admission(
         const PreparedPromptData& prompt, const RequestBasePlan& base, runtime::LaneId destination,
         const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
-        std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source);
+        std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
+        bool truncated_endpoint = false);
+    // Only attention layers keep per-token state: no linear layers, no sliding rings, no DFlash
+    // local state, no drafter. The KV of such a sequence is valid for any shorter prefix.
+    [[nodiscard]] bool supports_truncated_reuse() const noexcept;
     [[nodiscard]] std::optional<AdmissionCandidate> seal_materialization(
         const AdmissionCandidate& admission, const PreparedPromptData& prompt,
         std::span<const ContinuationHandle* const> pressure_owners,
@@ -1081,7 +1091,8 @@ private:
     [[nodiscard]] std::optional<AdmissionCandidate>
     inspect_lane(std::uint32_t lane, const PreparedPromptData& prompt, const RequestBasePlan& base,
                  const SequenceState* source, const SharedPrefixState* shared_source,
-                 std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source);
+                 std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
+                 bool truncated_endpoint = false);
     [[nodiscard]] StartResult start_request(MaterializationTransaction& transaction);
     void prepare_materialization(MaterializationTransaction& transaction);
     void enqueue_materialization_transfers(MaterializationTransaction& transaction);
