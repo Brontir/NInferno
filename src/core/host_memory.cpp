@@ -323,7 +323,11 @@ HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
 HostPinLock::HostPinLock() {
 #ifndef _WIN32
     // A directory every process of the host sees: /run/lock and /dev/shm are outside a unit's
-    // PrivateTmp, the temporary directory last.
+    // PrivateTmp, the temporary directory last. The first that exists is the one, for every
+    // process alike (one that cannot open the file there takes no lock rather than another
+    // directory's, which its neighbours would not share). Processes in separate mount namespaces
+    // (containers) see separate files: they are not serialized (each container usually has its
+    // own memory limit; a refused pin still halves the tier).
     std::vector<std::filesystem::path> dirs = {"/run/lock", "/dev/shm"};
     std::error_code error;
     if (std::filesystem::path tmp = std::filesystem::temp_directory_path(error); !error) {
@@ -340,14 +344,15 @@ HostPinLock::HostPinLock() {
         // change the mode of a file of theirs or a victim's.
         fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0666);
         if (fd < 0) { fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW); }
-        if (fd < 0) { continue; }
-        struct stat st{};
-        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
-            ::close(fd);
-            fd = -1;
-            continue;
+        if (fd >= 0) {
+            struct stat st{};
+            if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
+                ::close(fd);
+                fd = -1;
+            } else if (st.st_uid == ::geteuid()) {
+                (void)::fchmod(fd, 0666);
+            }
         }
-        if (st.st_uid == ::geteuid()) { (void)::fchmod(fd, 0666); }
         break;
     }
     if (fd < 0) { return; }
