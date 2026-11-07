@@ -12,6 +12,7 @@
 #include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
+#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
@@ -2653,8 +2654,8 @@ int i8_schedule_count() { return static_cast<int>(std::size(kI8Schedules)); }
 
 // Each I8 tile's fraction of the int8 peak at a full grid (stage-1 probe, RTX 3090, 4090 and
 // 5070 Ti, 27B shapes): 256x128 0.53, 128x128 0.46, 128x64 0.42.
-constexpr double kI8Eff[] = {0.53, 0.46, 0.42};
-static_assert(std::size(kI8Eff) == std::size(kI8Schedules));
+constexpr auto kI8Eff = route_cost::kI8Efficiency;
+static_assert(kI8Eff.values.size() == std::size(kI8Schedules));
 bool i8_fits(int schedule, QType qtype) {
     // The high plane takes 0 / 8 / 16 bytes a group and weight row in every stage; a tile runs
     // three stages where four do not fit (generic_i8.cu kI8Stages).
@@ -2845,10 +2846,13 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double max_cta = std::max(d.max_blocks_per_sm, 1);
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
-    const auto quant     = [&](double cols) { return 1.7e-6 + cols * k * 4.3 / bw; };
+    const auto quant     = [&](double cols) {
+        return route_cost::kQuantLaunchSeconds.value() +
+               cols * k * route_cost::kQuantBytesPerValue.value() / bw;
+    };
     // Fraction of the int8 peak by kW4a8Schedules index: 32x128, 64x128, 128x128, 128x64, 64x64,
     // 128x64 with producer warps.
-    constexpr double kW4a8Eff[6] = {0.31, 0.28, 0.24, 0.47, 0.37, 0.98};
+    constexpr auto kW4a8Eff = route_cost::kW4a8Efficiency;
     if (allows_w4a8(weight, problem.policy)) {
         for (int i = 0; i < w4a8_schedule_count(); ++i) {
             const auto s         = w4a8_schedule_info(i);
@@ -2858,7 +2862,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
-            const double smem    = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) * 160.0;
+            const double smem = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) *
+                                route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
                 1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
             const double ctas  = cdiv(n, rows_o) * cdiv(t, cols);
@@ -2866,10 +2871,15 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
             const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
             const double mma   = q * 2.0 * rows_w * cols * k / peak_sm;
-            const double cap   = s.producers > 0 ? 1690.0 : 1390.0;
-            const double chain = std::ceil(q / occ) * std::ceil(k / 128.0) * cap / clk;
+            const double cap   = s.producers > 0 ? route_cost::kW4a8ProducerStepCycles.value()
+                                                 : route_cost::kW4a8StepCycles.value();
+            const double chain =
+                std::ceil(q / occ) * std::ceil(k / route_cost::kW4a8StepK.value()) * cap / clk;
             const double eff   = kW4a8Eff[std::min(i, 5)] * scale;
-            offer(r, quant(t) + std::max(mem, mma / eff) / std::clamp(warps, 0.05, 1.0) + chain);
+            offer(r, quant(t) +
+                         std::max(mem, mma / eff) /
+                             std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
+                         chain);
         }
     }
     // The I8 tiles (generic_i8.cu): one activation scale per 64 values and the code as the MMA's
@@ -2891,11 +2901,14 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double warps   = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
             const double mem     = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
-            const double chain   = std::ceil(q / occ) * std::ceil(k / 64.0) * 250.0 / clk;
+            const double chain = std::ceil(q / occ) * std::ceil(k / route_cost::kI8StageK.value()) *
+                                 route_cost::kI8StageCycles.value() / clk;
             const double eff     = kI8Eff[i] * scale;
-            offer(r,
-                  quant(tp) + std::max(mem, mma / eff) / std::clamp(warps / 8.0, 0.05, 1.0) +
-                      chain);
+            offer(r, quant(tp) +
+                         std::max(mem, mma / eff) /
+                             std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
+                                        route_cost::kMinWarpFill.value(), 1.0) +
+                         chain);
         }
     }
     if (mmq_candidate_measured(d.major, d.minor) && ggml_mmq_format(problem.qtype) &&
@@ -2903,13 +2916,18 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);
         const double sets   = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-        const double cols   = std::min(128.0, cdiv(tt, 8.0) * 8.0);
-        const double tiles  = cdiv(n * sets, 128.0) * cdiv(tt, cols);
+        const double rows_t = route_cost::kMmqTileRows.value();
+        const double step   = route_cost::kMmqColumnStep.value();
+        const double cols   = std::min(rows_t, cdiv(tt, step) * step);
+        const double tiles  = cdiv(n * sets, rows_t) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
-        const double mma    = tiles / sms * 2.0 * 128.0 * cols * k / peak_sm;
-        const double chain  = std::max(1.0, tiles * std::ceil(k / 862.0) / sms) * 4075.0 / clk;
+        const double mma    = tiles / sms * 2.0 * rows_t * cols * k / peak_sm;
+        const double chain =
+            std::max(1.0, tiles * std::ceil(k / route_cost::kMmqChainK.value()) / sms) *
+            route_cost::kMmqChainCycles.value() / clk;
         offer(Route{Family::GgmlMmq, 0},
-              slices * (std::max(mem, mma / (0.44 * scale)) + chain + quant(tt) + 18.6e-6));
+              slices * (std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain +
+                        quant(tt) + route_cost::kMmqSliceSeconds.value()));
     }
 }
 
@@ -2980,15 +2998,24 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // cycles) or of a pipeline stage (64 K, 500 cycles: the barrier and the cp.async wait).
         const double rounds = std::ceil(q / std::max(occ, 1.0));
         if (pipelined) {
-            const double chain = rounds * std::ceil(kc / 64.0) * 500.0 / clk;
-            return std::max(mem, mma / eff) / std::clamp(warps / 4.0, 0.05, 1.0) + chain;
+            const double chain = rounds * std::ceil(kc / route_cost::kPipelinedStageK.value()) *
+                                 route_cost::kPipelinedStageCycles.value() / clk;
+            return std::max(mem, mma / eff) /
+                       std::clamp(warps / route_cost::kPipelinedSaturatingWarps.value(),
+                                  route_cost::kMinWarpFill.value(), 1.0) +
+                   chain;
         }
         // K split over a cluster (30 cycles per FP32 element) and over the CTA's K warps (2.75
         // cycles per element and extra warp, through shared memory).
-        const double reduce = q * (cluster - 1) * rows * sets * cols * 30.0 / clk +
-                              rounds * (warps_k - 1.0) * rows * sets * cols * 2.75 / clk;
-        const double chain  = rounds * std::ceil(kc / (16.0 * warps_k)) * 150.0 / clk;
-        return (mem + mma + reduce) / std::clamp(warps / 11.0, 0.05, 1.0) + chain;
+        const double reduce = q * (cluster - 1) * rows * sets * cols *
+                                  route_cost::kClusterReduceCycles.value() / clk +
+                              rounds * (warps_k - 1.0) * rows * sets * cols *
+                                  route_cost::kWarpReduceCycles.value() / clk;
+        const double chain = rounds * std::ceil(kc / (route_cost::kRmmaStepK.value() * warps_k)) *
+                             route_cost::kRmmaStepCycles.value() / clk;
+        return (mem + mma + reduce) / std::clamp(warps / route_cost::kRmmaSaturatingWarps.value(),
+                                                 route_cost::kMinWarpFill.value(), 1.0) +
+               chain;
     };
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
@@ -3019,15 +3046,18 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;
     const auto pipelined_occ = [&](double threads, double stages, double rows, double cols) {
-        const double tile = std::min(stages * (rows + cols) * 128.0, 99.0 * 1024.0);
+        const double tile =
+            std::min(stages * (rows + cols) * route_cost::kPipelinedStageBytesPerRow.value(),
+                     route_cost::kMaxTileSharedBytes.value());
         return std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / tile)});
     };
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const auto s = tiled_schedule_info(i);
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
-        offer(r, cost(tile.out_rows, tile.tokens, 256, 1,
-                      pipelined_occ(256, 3, s.block_n, s.block_m), 1.0, true, 0.8));
+        offer(r,
+              cost(tile.out_rows, tile.tokens, 256, 1, pipelined_occ(256, 3, s.block_n, s.block_m),
+                   1.0, true, route_cost::kTiledTensorFraction.value()));
     }
     for (int i = 0; i < staged_schedule_count(); ++i) {
         const auto s         = staged_schedule_info(i);
@@ -3035,7 +3065,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         offer(r, cost(tile.out_rows, tile.tokens, threads, 1,
-                      pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true, 0.9));
+                      pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true,
+                      route_cost::kStagedTensorFraction.value()));
     }
     return true;
 }
