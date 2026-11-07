@@ -5,6 +5,9 @@
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
 
+#include <cstddef>
+#include <cstdint>
+
 namespace ninferno::ops::detail::generic {
 
 // The token-major grid of the W4A8 tiles (W4a8Activation::token_major), first the 128-token
@@ -83,5 +86,20 @@ bool tiled_takes(WeightCodec codec);
 // fills the SMs, a smaller one where it would leave them idle. Every schedule gives the same
 // bytes, so the choice may vary with T. -1 where none fits.
 int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens);
+
+// The quantized activation's planes a route reads from the caller's workspace, in bytes, in the
+// order run_route allocates them (generic_workspace.cpp; W4A4 has no sums plane: 0).
+struct ActivationPlanes {
+    std::size_t codes = 0, scales = 0, sums = 0;
+};
+
+ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tokens);
+
+// Shared by the selection and the workspace queries (generic_gemm.cpp).
+bool allows_w4a4(const Weight& w, LinearPolicy policy);
+std::int32_t vec_max_tokens();
+bool volta_tiled_qtype(QType qtype);
+bool volta_cutlass_qtype(QType qtype);
+bool volta_cutlass_only_qtype(QType qtype);
 
 } // namespace ninferno::ops::detail::generic
