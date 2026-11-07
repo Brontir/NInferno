@@ -1923,6 +1923,7 @@ private:
                                                SharedCandidateEvidence::DefaultAutomatic) ||
                  has_shared_candidate_evidence(opportunity.evidence,
                                                SharedCandidateEvidence::EngineStructural));
+            std::fprintf(stderr, "[dbg462s] opp frontier=%u evid=%u vacant=%u declared=%d repeated=%d surplus=%d\n", unsigned(opportunity.frontier), unsigned(opportunity.evidence), unsigned(vacant_shared_slots), int(declared), int(repeated), int(surplus_candidate));
             if (!declared && !repeated && !surplus_candidate) { continue; }
             const std::optional<PrefillWork> rebuild =
                 base.shared_candidate_rebuild_work(opportunity.frontier);
@@ -2081,6 +2082,7 @@ private:
                 selected_frontiers = std::move(frontiers);
             }
         }
+        std::fprintf(stderr, "[dbg462s] candidates=%zu selected=%zu\n", shared_candidates.size(), selected_frontiers.size());
         return selected_frontiers;
     }
 
