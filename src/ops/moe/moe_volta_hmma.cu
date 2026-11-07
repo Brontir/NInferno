@@ -170,27 +170,8 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
         if (more) stage_load_rows<kNTok, Pre>(a, rows_x, count, sb + 1, xv);
 
         const __half* at = act[sb & 1] + q * kQuadStride<kNTok>;
-        // kRolled formats (HX4: a scale group is one of the lane's two blocks) run their groups as
-        // a loop of two over the same code: the fully unrolled 16 steps made a 15 KB (down) to
-        // 24 KB (gate/up) loop, past an SM sub-core's instruction cache (ncu: 0.5 - 0.9 of the
-        // 3.5 cycles an instruction waiting for the next instruction).
-        constexpr bool kRoll    = requires { F::kRolled; };
-        constexpr int kGrUnroll = kRoll ? 1 : kGroups;
-#    pragma unroll kGrUnroll
-        for (int gr = 0; gr < kGroups; ++gr) {
-            F pk[kRoll ? kSets : 1];
-            if constexpr (kRoll) {
 #    pragma unroll
-                for (int s = 0; s < kSets; ++s) pk[s] = cur[s].pick(gr);
-            }
-            const auto src = [&](int s) -> const F& {
-                if constexpr (kRoll) {
-                    return pk[s];
-                } else {
-                    return cur[s];
-                }
-            };
-            const int gi = kRoll ? 0 : gr; // the group's index in src(s)
+        for (int gr = 0; gr < kGroups; ++gr) {
             // The lane's own row's group scale goes into its A fragments (f16, as llama.cpp's
             // decode to f16 rounds it): the MMAs accumulate into acc directly, with no per-group
             // partial sums (gate/up held 64 more registers for them and spilled at 255).
@@ -203,11 +184,11 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
 #    pragma unroll
             for (int s = 0; s < kSets; ++s) {
                 float ds, dm;
-                src(s).scale(q, gi, ds, dm);
+                cur[s].scale(q, gr, ds, dm);
                 dsh[s] = __float2half2_rn(ds);
                 if constexpr (kSplit) {
                     float dd, sc;
-                    src(s).scale_parts(q, gi, dd, sc);
+                    cur[s].scale_parts(q, gr, dd, sc);
                     dsh[s] = __float2half2_rn(dd);
                     sch[s] = __float2half2_rn(sc);
                 }
@@ -228,7 +209,7 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
 #    pragma unroll
                 for (int s = 0; s < kSets; ++s) {
                     unsigned a0, a1;
-                    src(s).fragment(kRoll ? st : m, q, a0, a1);
+                    cur[s].fragment(m, q, a0, a1);
                     if constexpr (requires { F::kBias; }) {
                         const __half2 bias = __float2half2_rn(F::kBias);
                         a0 = generic::volta::h2_bits(__hsub2(generic::volta::bits_h2(a0), bias));

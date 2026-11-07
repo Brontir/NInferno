@@ -387,20 +387,8 @@ struct HB16 {
 struct HX4 {
     static constexpr int kGroups = 2;
     static constexpr bool kMin   = false;
-    // The two scale groups differ only in which block they read: pick(g) is the lane's group g as
-    // a one-group copy (fragments 0..7, scale group 0), so a loop of two runs both over one body.
-    static constexpr bool kRolled = true;
     uint4 c[2];
     unsigned e[2];
-
-    __device__ __forceinline__ HX4 pick(int g) const {
-        HX4 r;
-        r.c[0] = g ? c[1] : c[0];
-        r.c[1] = r.c[0];
-        r.e[0] = g ? e[1] : e[0];
-        r.e[1] = r.e[0];
-        return r;
-    }
 
     __device__ __forceinline__ void load(const GemmArgs& a, int row, int sb, int q) {
         // K a multiple of 64: a quad-pair's two blocks are both in the row or both past it.
