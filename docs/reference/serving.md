@@ -587,7 +587,9 @@ prefix, with the same behavior, errors, and request IDs.
   reading the request whole (400, 401 on a request without a body, 429, 503) keeps the connection
   for the caller's next request. A refusal that leaves a body unread (413, 415, a key refused
   before the body was read), every answer while the server drains and `/health`'s 503 of a failed
-  server close it.
+  server close it. A request that breaks HTTP/1.1 framing is refused with 400 and the connection
+  closed: an HTTP/1.1 request with no `Host` header (or two), conflicting `Content-Length` values, or
+  `Transfer-Encoding` beside `Content-Length`.
 
 ### Request IDs
 
