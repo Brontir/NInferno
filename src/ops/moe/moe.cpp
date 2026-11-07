@@ -471,7 +471,10 @@ Workspace allocate(Arena& arena, const Geometry& g, const MoeConfig& c, std::int
     w.job_total    = arena.alloc(DType::I32, {1});
     w.mid          = arena.alloc(DType::BF16, {g.inter, a});
     w.y            = arena.alloc(DType::BF16, {g.hidden, a});
-    if (g.input != g.hidden) { w.padded_x = arena.alloc(DType::BF16, {g.input, tokens}); }
+    // Volta's HMMA stages read x through the f16 pre-pass, which writes the padding zeros itself.
+    if (g.input != g.hidden && !p.volta_hmma) {
+        w.padded_x = arena.alloc(DType::BF16, {g.input, tokens});
+    }
     if (p.volta_hmma) { w.x_h = arena.alloc(DType::FP16, {g.input, tokens}); }
     if (p.w4a8_gate_up || router_quantizes_x(g, p, tokens)) {
         // x at the zero-padded bank's K (g.input): the quantizer writes the tail as zeros (an R8
