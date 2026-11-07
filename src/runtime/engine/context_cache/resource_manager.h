@@ -1537,24 +1537,16 @@ private:
                has_shared_candidate_evidence(evidence, SharedCandidateEvidence::EngineStructural);
     }
 
-    // A resident shared prefix nothing has vouched for: no declared boundary's credit, fewer than
-    // two reuse domains in the demand window (counting `provisional`, the request being planned,
-    // when given), and no holder. Such a slot is speculation and may be taken by a new engine
-    // candidate when none is vacant.
-    [[nodiscard]] bool shared_entry_unproven(std::uint32_t slot,
-                                             const PrefixDemandRecord* provisional = nullptr) const
-        noexcept {
+    // A resident shared prefix that never paid back: no declared boundary's credit, never selected
+    // for a request, and no holder. Such a slot is speculation (an engine candidate published into
+    // a vacant slot) and may be taken by a new engine candidate when none is vacant. Reuse
+    // domains are no evidence of use here: stateless requests of one conversation are
+    // independent domains, and each turn's prompt end is a candidate of its own (#462).
+    [[nodiscard]] bool shared_entry_unproven(std::uint32_t slot) const noexcept {
         const SharedCatalogEntry& entry = shared_catalog_[slot];
-        if (entry.state != SharedCatalogState::Catalogued || !entry.handle ||
-            entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0 ||
-            entry.explicit_credit) {
-            return false;
-        }
-        const PrefixShortlistKey& key = entry.summary.checkpoint.shortlist_key;
-        const std::size_t domains     = provisional != nullptr
-                                            ? matching_reuse_domains(key, *provisional)
-                                            : matching_reuse_domains(key);
-        return domains < 2U;
+        return entry.state == SharedCatalogState::Catalogued && entry.handle &&
+               entry.transaction_pins == 0 && shared_active_edge_count(slot) == 0 &&
+               !entry.explicit_credit && entry.observation.selected_hit_count == 0;
     }
 
     void reset_active_entry(ActiveEntry& active) noexcept {
@@ -1932,7 +1924,7 @@ private:
         // has vouched for (capture takes it over, see reserve_active_capture).
         std::uint32_t surplus_shared_slots = vacant_shared_slots;
         for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
-            if (shared_entry_unproven(slot, &provisional_demand)) { ++surplus_shared_slots; }
+            if (shared_entry_unproven(slot)) { ++surplus_shared_slots; }
         }
         for (const auto& opportunity : base.context_cache().opportunities) {
             if (opportunity.kind != PromptCacheMarkerKind::SharedStablePrefix ||

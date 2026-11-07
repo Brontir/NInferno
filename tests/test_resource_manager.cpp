@@ -3399,6 +3399,25 @@ void test_engine_candidate_keeps_credited_shared_slot() {
     (void)finish_active(manager, program, second);
 }
 
+// A slot that served a request has paid back: an engine candidate does not take it over either.
+void test_engine_candidate_keeps_shared_slot_that_was_reused() {
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    FakeManager manager       = make_manager(1, 3, 1);
+    FakeProgram program;
+
+    const ActiveRequest first = start_active(manager, program, 121, shared_base(121, kAutomatic), 1);
+    publish_shared_capture(manager, program, first, 121, kAutomatic, 61);
+    (void)finish_active(manager, program, first);
+
+    const ActiveRequest reuse = start_active(manager, program, 121, make_base(121), 2);
+    (void)finish_active(manager, program, reuse);
+
+    const ActiveRequest other = start_active(manager, program, 122, shared_base(122, kAutomatic), 3);
+    require(program.selected_shared_capture_frontiers.empty(),
+            "an engine candidate was selected over a shared slot that had served a request");
+    (void)finish_active(manager, program, other);
+}
+
 void test_observed_shared_candidate_requires_independent_domains() {
     const auto observed_base = [](std::optional<FakeCacheSessionKey> session) {
         FakeRequestBasePlan base = make_base(71, session);
@@ -4230,6 +4249,8 @@ int main() {
              test_engine_candidate_takes_over_unproven_shared_slot);
     run_test("engine candidate keeps a credited shared slot",
              test_engine_candidate_keeps_credited_shared_slot);
+    run_test("engine candidate keeps a reused shared slot",
+             test_engine_candidate_keeps_shared_slot_that_was_reused);
     run_test("observed shared independent domains",
              test_observed_shared_candidate_requires_independent_domains);
     run_test("zero-prefill private promotion",
