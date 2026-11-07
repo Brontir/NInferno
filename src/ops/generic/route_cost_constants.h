@@ -12,6 +12,7 @@
 // The board-row scales (core/generation.h: w4a8_eff_scale, a16_cost_scale) are tagged there.
 
 #include <array>
+#include <span>
 #include <cstddef>
 #include <string_view>
 
@@ -102,50 +103,56 @@ inline constexpr Scalar kMmqChainK{{862.0}, Provenance::Fitted, "mmq_chain_k"};
 inline constexpr Scalar kMmqChainCycles{{4075.0}, Provenance::Fitted, "mmq_chain_cycles"};
 inline constexpr Scalar kMmqSliceSeconds{{18.6e-6}, Provenance::Fitted, "mmq_slice_seconds"};
 
+// What a constant measures, for the range its values must lie in: a fraction of a peak or of a
+// fill is in (0, 1]; every other kind is positive.
+enum class Kind { Fraction, Cycles, Count, Bytes, Seconds };
+
 struct Listed {
     std::string_view name;
     Provenance from;
-    std::size_t values;
+    Kind kind;
+    std::span<const double> values;
 };
 
 template <std::size_t N>
-constexpr Listed listed(const Constant<N>& c) {
-    return {c.name, c.from, N};
+constexpr Listed listed(const Constant<N>& c, Kind kind) {
+    return {c.name, c.from, kind, std::span<const double>(c.values)};
 }
 
-// Every constant above, for test_route_cost_constants (names unique, values in range) and its
-// `--list` table of what is fitted.
+// Every constant above with its kind: the one descriptor test_route_cost_constants checks (names
+// unique, each value in its kind's range) and its `--list` table of what is fitted. A constant
+// belongs here when it is defined above.
 inline constexpr Listed kRouteCostConstants[] = {
-    listed(kRmmaStepCycles),
-    listed(kRmmaStepK),
-    listed(kRmmaSaturatingWarps),
-    listed(kClusterReduceCycles),
-    listed(kWarpReduceCycles),
-    listed(kPipelinedStageCycles),
-    listed(kPipelinedStageK),
-    listed(kPipelinedSaturatingWarps),
-    listed(kStagedTensorFraction),
-    listed(kTiledTensorFraction),
-    listed(kPipelinedStageBytesPerRow),
-    listed(kMaxTileSharedBytes),
-    listed(kMinWarpFill),
-    listed(kQuantLaunchSeconds),
-    listed(kQuantBytesPerValue),
-    listed(kW4a8Efficiency),
-    listed(kW4a8StageBytesPerRow),
-    listed(kW4a8StepK),
-    listed(kW4a8StepCycles),
-    listed(kW4a8ProducerStepCycles),
-    listed(kI8Efficiency),
-    listed(kI8StageK),
-    listed(kI8StageCycles),
-    listed(kI8SaturatingWarps),
-    listed(kMmqTileRows),
-    listed(kMmqColumnStep),
-    listed(kMmqEfficiency),
-    listed(kMmqChainK),
-    listed(kMmqChainCycles),
-    listed(kMmqSliceSeconds),
+    listed(kRmmaStepCycles, Kind::Cycles),
+    listed(kRmmaStepK, Kind::Count),
+    listed(kRmmaSaturatingWarps, Kind::Count),
+    listed(kClusterReduceCycles, Kind::Cycles),
+    listed(kWarpReduceCycles, Kind::Cycles),
+    listed(kPipelinedStageCycles, Kind::Cycles),
+    listed(kPipelinedStageK, Kind::Count),
+    listed(kPipelinedSaturatingWarps, Kind::Count),
+    listed(kStagedTensorFraction, Kind::Fraction),
+    listed(kTiledTensorFraction, Kind::Fraction),
+    listed(kPipelinedStageBytesPerRow, Kind::Bytes),
+    listed(kMaxTileSharedBytes, Kind::Bytes),
+    listed(kMinWarpFill, Kind::Fraction),
+    listed(kQuantLaunchSeconds, Kind::Seconds),
+    listed(kQuantBytesPerValue, Kind::Bytes),
+    listed(kW4a8Efficiency, Kind::Fraction),
+    listed(kW4a8StageBytesPerRow, Kind::Bytes),
+    listed(kW4a8StepK, Kind::Count),
+    listed(kW4a8StepCycles, Kind::Cycles),
+    listed(kW4a8ProducerStepCycles, Kind::Cycles),
+    listed(kI8Efficiency, Kind::Fraction),
+    listed(kI8StageK, Kind::Count),
+    listed(kI8StageCycles, Kind::Cycles),
+    listed(kI8SaturatingWarps, Kind::Count),
+    listed(kMmqTileRows, Kind::Count),
+    listed(kMmqColumnStep, Kind::Count),
+    listed(kMmqEfficiency, Kind::Fraction),
+    listed(kMmqChainK, Kind::Count),
+    listed(kMmqChainCycles, Kind::Cycles),
+    listed(kMmqSliceSeconds, Kind::Seconds),
 };
 
 } // namespace ninferno::ops::detail::generic::route_cost
