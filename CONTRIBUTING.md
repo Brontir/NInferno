@@ -81,6 +81,10 @@ C++20 and CUDA, formatted with the repository's [`.clang-format`](.clang-format)
 clang-format -i path/to/changed_file.cpp
 ```
 
+CI checks a pull request's changed lines with clang-format 20.1.8 (`pip install clang-format==20.1.8`);
+format with that version, or only your changed lines with
+`git clang-format $(git merge-base HEAD origin/master)`.
+
 Follow the surrounding code. Python tools target Python 3.11 and run from the repository root.
 Write comments and docs in English. Do not leave dead code, unused options
 or compatibility aliases for names you replaced.

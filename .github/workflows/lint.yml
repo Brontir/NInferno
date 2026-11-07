@@ -5,6 +5,13 @@ on:
   push:
     branches: [master]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: lint-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   check:
     runs-on: ubuntu-latest
@@ -19,18 +26,26 @@ jobs:
         run: bash tools/check_file_modes.sh
       - name: Text files use LF line endings
         run: |
-          crlf=$(git ls-files --eol | awk '$1 == "i/crlf" {print $NF}')
+          crlf=$(git ls-files --eol | awk '$1 == "i/crlf" || $1 == "i/mixed" {print $NF}')
           if [ -n "$crlf" ]; then echo "CRLF line endings:"; echo "$crlf"; exit 1; fi
-      - name: Python tools compile
-        run: python3 -m compileall -q tools
+      - name: Tracked Python files compile
+        run: git ls-files -z '*.py' | xargs -0 python3 -m compileall -q
+      # The version the maintainers format with; vendored code under third_party/ keeps its own.
       - name: Changed C++ and CUDA lines follow .clang-format
         if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          pip install --quiet clang-format==20.1.8
-          base=$(git merge-base HEAD "origin/${{ github.base_ref }}")
+          pip install --quiet --disable-pip-version-check clang-format==20.1.8
+          base=$(git merge-base HEAD "origin/$BASE_REF")
+          set +e
           out=$(git clang-format --binary clang-format --diff "$base" -- \
-                '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.cu' '*.cuh' || true)
-          case "$out" in
-            ""|*"no modified files to format"*|*"did not modify any files"*) echo "formatted" ;;
-            *) echo "$out"; echo "Run: git clang-format \$(git merge-base HEAD origin/master)"; exit 1 ;;
+                '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.cu' '*.cuh' ':(exclude)third_party/**' 2>&1)
+          rc=$?
+          set -e
+          echo "$out"
+          case $rc in
+            0) ;;
+            1) echo "Run: git clang-format \$(git merge-base HEAD origin/$BASE_REF)"; exit 1 ;;
+            *) echo "git clang-format failed (exit $rc)"; exit "$rc" ;;
           esac
