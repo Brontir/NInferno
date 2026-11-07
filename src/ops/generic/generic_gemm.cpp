@@ -3597,37 +3597,58 @@ std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
 }
 
-std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
-    if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
-    if (route.family == Family::I8Mma) {
+// The quantized activation's planes a route reads from the caller's workspace, in bytes and in
+// the order run_route allocates them (each 256-aligned): the codes, the scales and the sums (W4A4
+// has no sums plane: 0). One description for both, so the workspace a query sizes is the one the
+// launch takes. I8 pads tokens (i8_padded_tokens) and groups K by 64; W4A8 reads rows of whole
+// tiles (w4a8_ld), R8's verify rows of K, both in blocks of 32; W4A4 two codes a byte and one
+// scale per 16 values.
+namespace {
+struct ActivationPlanes {
+    std::size_t codes = 0, scales = 0, sums = 0;
+};
+
+ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tokens) {
+    switch (route.family) {
+    case Family::I8Mma: {
         const auto t      = static_cast<std::size_t>(i8_padded_tokens(tokens));
         const auto groups = static_cast<std::size_t>(k / 64);
-        WorkspaceLayoutBuilder layout;
-        (void)layout.alloc_bytes(t * static_cast<std::size_t>(k), 256);
-        (void)layout.alloc_bytes(t * groups * sizeof(float), 256);
-        (void)layout.alloc_bytes(t * groups * sizeof(int), 256);
-        return layout.peak_bytes(1);
+        return {t * static_cast<std::size_t>(k), t * groups * sizeof(float),
+                t * groups * sizeof(int)};
     }
+    case Family::W4a8Mma:
+    case Family::R8Mma: {
+        const std::int32_t ld = route.family == Family::W4a8Mma ? w4a8_ld(k) : k;
+        const auto t          = static_cast<std::size_t>(tokens);
+        const auto blocks     = static_cast<std::size_t>(ld / 32);
+        return {t * static_cast<std::size_t>(ld), t * blocks * sizeof(float),
+                t * blocks * sizeof(float)};
+    }
+    case Family::W4a4Mma: {
+        const auto t = static_cast<std::size_t>(tokens);
+        return {t * static_cast<std::size_t>(k / 2), t * static_cast<std::size_t>(k / 16), 0};
+    }
+    default:
+        return {};
+    }
+}
+} // namespace
+
+std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
+    if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
     // R8 at verify widths reads the W4A8 planes (run_route's r8_pre: every r8_verify_compiled
     // format, whichever device routes to it).
     const bool r8_verify =
         route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens;
-    if (route.family == Family::W4a8Mma || r8_verify) {
-        // R8 reads rows of K, W4A8 of whole tiles (w4a8_ld).
-        const std::int32_t ld = route.family == Family::W4a8Mma ? w4a8_ld(k) : k;
-        const auto t          = static_cast<std::size_t>(tokens);
-        const auto blocks     = static_cast<std::size_t>(ld / 32);
-        WorkspaceLayoutBuilder layout;
-        (void)layout.alloc_bytes(t * static_cast<std::size_t>(ld), 256);
-        (void)layout.alloc_bytes(t * blocks * sizeof(float), 256);
-        (void)layout.alloc_bytes(t * blocks * sizeof(float), 256);
-        return layout.peak_bytes(1);
+    if (route.family != Family::I8Mma && route.family != Family::W4a8Mma &&
+        route.family != Family::W4a4Mma && !r8_verify) {
+        return 0;
     }
-    if (route.family != Family::W4a4Mma) return 0;
+    const ActivationPlanes planes = activation_planes(route, k, tokens);
     WorkspaceLayoutBuilder layout;
-    (void)layout.alloc_bytes(static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k / 2), 256);
-    (void)layout.alloc_bytes(static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k / 16),
-                             256);
+    (void)layout.alloc_bytes(planes.codes, 256);
+    (void)layout.alloc_bytes(planes.scales, 256);
+    if (planes.sums > 0) (void)layout.alloc_bytes(planes.sums, 256);
     return layout.peak_bytes(1);
 }
 
@@ -4482,10 +4503,9 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             throw std::invalid_argument("generic W4A4 requires caller workspace");
         }
         auto scope         = workspace->scope();
-        const auto tokens  = static_cast<std::size_t>(args.tokens);
-        const auto k       = static_cast<std::size_t>(args.k);
-        const DeviceSpan c = workspace->alloc_bytes(tokens * (k / 2), 256);
-        const DeviceSpan s = workspace->alloc_bytes(tokens * (k / 16), 256);
+        const auto planes  = activation_planes(route, args.k, args.tokens);
+        const DeviceSpan c = workspace->alloc_bytes(planes.codes, 256);
+        const DeviceSpan s = workspace->alloc_bytes(planes.scales, 256);
         launch_w4a4(route.schedule, call.epilogue, args, w.input_scale_divisor,
                     static_cast<std::uint8_t*>(c.data), static_cast<std::uint8_t*>(s.data),
                     stream);
@@ -4497,12 +4517,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             throw std::invalid_argument("generic W4A8 requires caller workspace");
         }
         auto scope          = workspace->scope();
-        const auto tokens   = static_cast<std::size_t>(args.tokens);
-        const auto ld       = static_cast<std::size_t>(w4a8_ld(args.k));
-        const auto blocks   = ld / 32;
-        const DeviceSpan c  = workspace->alloc_bytes(tokens * ld, 256);
-        const DeviceSpan sc = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
-        const DeviceSpan su = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
+        const auto planes   = activation_planes(route, args.k, args.tokens);
+        const DeviceSpan c  = workspace->alloc_bytes(planes.codes, 256);
+        const DeviceSpan sc = workspace->alloc_bytes(planes.scales, 256);
+        const DeviceSpan su = workspace->alloc_bytes(planes.sums, 256);
         launch_w4a8(route.schedule, codec, call.epilogue, args, static_cast<std::int8_t*>(c.data),
                     static_cast<float*>(sc.data), static_cast<float*>(su.data), kW4a8TokenMajor,
                     stream);
@@ -4513,11 +4531,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             throw std::invalid_argument("generic I8 requires caller workspace");
         }
         auto scope          = workspace->scope();
-        const auto tokens   = static_cast<std::size_t>(i8_padded_tokens(args.tokens));
-        const auto k        = static_cast<std::size_t>(args.k);
-        const DeviceSpan c  = workspace->alloc_bytes(tokens * k, 256);
-        const DeviceSpan sc = workspace->alloc_bytes(tokens * (k / 64) * sizeof(float), 256);
-        const DeviceSpan su = workspace->alloc_bytes(tokens * (k / 64) * sizeof(int), 256);
+        const auto planes   = activation_planes(route, args.k, args.tokens);
+        const DeviceSpan c  = workspace->alloc_bytes(planes.codes, 256);
+        const DeviceSpan sc = workspace->alloc_bytes(planes.scales, 256);
+        const DeviceSpan su = workspace->alloc_bytes(planes.sums, 256);
         launch_i8(route.schedule, i8_bits(w.qtype), call.epilogue, args,
                   static_cast<std::int8_t*>(c.data),
                   static_cast<float*>(sc.data), static_cast<int*>(su.data), stream);
@@ -4526,11 +4543,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     case Family::R8Mma:
         if (r8_pre) {
             auto scope          = workspace->scope();
-            const auto tokens   = static_cast<std::size_t>(args.tokens);
-            const auto blocks   = static_cast<std::size_t>(args.k / 32);
-            const DeviceSpan c  = workspace->alloc_bytes(tokens * static_cast<std::size_t>(args.k), 256);
-            const DeviceSpan sc = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
-            const DeviceSpan su = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
+            const auto planes   = activation_planes(route, args.k, args.tokens);
+            const DeviceSpan c  = workspace->alloc_bytes(planes.codes, 256);
+            const DeviceSpan sc = workspace->alloc_bytes(planes.scales, 256);
+            const DeviceSpan su = workspace->alloc_bytes(planes.sums, 256);
             auto* codes  = static_cast<std::int8_t*>(c.data);
             auto* scales = static_cast<float*>(sc.data);
             auto* sums   = static_cast<float*>(su.data);
