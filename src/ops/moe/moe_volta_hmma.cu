@@ -120,6 +120,9 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
         row_base = a.job_expert[job] * a.expert_rows;
     }
     if (count <= 0) return;
+    // Token groups of eight past the job's last slot hold zeros and are never stored: a job's last
+    // tile (half full on average) skips their MMAs.
+    const int live_groups = (count + 7) >> 3;
     if (threadIdx.x < kNTok) {
         const int t = static_cast<int>(threadIdx.x);
         rows_x[t]   = t < count ? (kFirst ? a.packed_token[col0 + t] : col0 + t) : 0;
@@ -203,8 +206,10 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
                 uint2 bf[kNG];
 #    pragma unroll
                 for (int g = 0; g < kNG; ++g) {
-                    bf[g] = *reinterpret_cast<const uint2*>(
-                        at + (m * kNTok + token_slot<kNTok>(m, 8 * g + f)) * 4);
+                    if (g < live_groups) {
+                        bf[g] = *reinterpret_cast<const uint2*>(
+                            at + (m * kNTok + token_slot<kNTok>(m, 8 * g + f)) * 4);
+                    }
                 }
 #    pragma unroll
                 for (int s = 0; s < kSets; ++s) {
@@ -222,8 +227,9 @@ __global__ __launch_bounds__(kWarps * 32) void moe_volta_hmma_kernel(GemmArgs a)
                     a0 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a0), dsh[s]));
                     a1 = generic::volta::h2_bits(__hmul2(generic::volta::bits_h2(a1), dsh[s]));
 #    pragma unroll
-                    for (int g = 0; g < kNG; ++g)
-                        mma_m8n8k4_f16(acc[s][g], a0, a1, bf[g].x, bf[g].y);
+                    for (int g = 0; g < kNG; ++g) {
+                        if (g < live_groups) mma_m8n8k4_f16(acc[s][g], a0, a1, bf[g].x, bf[g].y);
+                    }
                 }
             }
             if constexpr (F::kMin) {
