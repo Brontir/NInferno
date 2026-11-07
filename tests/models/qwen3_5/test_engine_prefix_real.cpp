@@ -2586,7 +2586,7 @@ bool same_generation(const ninferno::GenerationResult& left,
 }
 
 int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationMode mode,
-                                     bool attention_only) {
+                                     bool attention_only, std::uint32_t source_tail_words) {
     ninferno::EngineOptions options;
     options.artifact_path                    = artifact;
     options.max_context                      = 12288;
@@ -2605,6 +2605,9 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
 
     const std::string base_text   = random_words(1, 1500);
     const std::string longer_text = base_text + ' ' + random_words(2, 300);
+    // The source request: the shared message, then words of its own after the divergence.
+    const std::string source_text =
+        source_tail_words == 0 ? base_text : base_text + ' ' + random_words(3, source_tail_words);
     const auto request            = [&](bool reuse) {
         ninferno::RequestOptions out    = fixed_output(8, reuse);
         out.execution.sampling.logprobs = 3;
@@ -2652,7 +2655,7 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
            "two cold prefills of one prompt differ");
 
     // The same session appends in its message: the endpoint is consumed, truncated.
-    const ninferno::GenerationResult first = run(base_text, "truncated-a", true);
+    const ninferno::GenerationResult first = run(source_text, "truncated-a", true);
     expect(first.reused_prompt_tokens == 0, "the first request reused a prefix");
     const ninferno::GenerationResult second = run(longer_text, "truncated-a", true);
     check_reuse(second, "same-session append did not take the truncated endpoint");
@@ -2667,14 +2670,14 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     expect(same_generation(third, cold_longer), "the repeated request differs from a cold prefill");
 
     // Another session retains the source: pages [0, f) are forked and the source is untouched.
-    const ninferno::GenerationResult source = run(base_text, "truncated-b", true);
+    const ninferno::GenerationResult source = run(source_text, "truncated-b", true);
     expect(source.generated_token_ids == first.generated_token_ids,
            "the base request changed after truncated reuse");
     const ninferno::GenerationResult forked      = run(longer_text + " end", "truncated-c", true);
     const ninferno::GenerationResult cold_forked = run(longer_text + " end", "", false);
     check_reuse(forked, "another session's append did not take the truncated endpoint");
     expect(same_generation(forked, cold_forked), "the retained truncated reuse differs from cold");
-    const ninferno::GenerationResult after = run(base_text, "truncated-d", true);
+    const ninferno::GenerationResult after = run(source_text, "truncated-d", true);
     expect(after.generated_token_ids == first.generated_token_ids,
            "the source changed after a retained truncated reuse");
     return failures;
@@ -2685,7 +2688,10 @@ int exercise_truncated_endpoint(const char* artifact) {
     int failures              = 0;
     for (const ninferno::ActivationMode mode :
          {ninferno::ActivationMode::Fast, ninferno::ActivationMode::Exact}) {
-        failures += exercise_truncated_endpoint_mode(artifact, mode, attention_only);
+        // The source ends at the shared message, or goes on past the divergence for a few calls.
+        for (const std::uint32_t tail_words : {0U, 400U}) {
+            failures += exercise_truncated_endpoint_mode(artifact, mode, attention_only, tail_words);
+        }
     }
     return failures == 0 ? 0 : 1;
 }
