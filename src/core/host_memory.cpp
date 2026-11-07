@@ -1,6 +1,7 @@
 #include "core/host_memory.h"
 
 #include "core/parse.h"
+#include "core/sys.h"
 #include "core/units.h"
 
 #ifdef _WIN32
@@ -73,7 +74,101 @@ std::optional<HostMemory> parse_meminfo(std::string_view text) {
     return HostMemory{.total_bytes             = *total,
                       .available_bytes         = *available,
                       .meminfo_total_bytes     = *total,
-                      .meminfo_available_bytes = *available};
+                      .meminfo_available_bytes = *available,
+                      .meminfo_free_bytes      = meminfo_value(text, "MemFree").value_or(0),
+                      .meminfo_cached_bytes    = meminfo_value(text, "Cached").value_or(0)};
+}
+
+namespace {
+
+std::string_view trim(std::string_view text) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
+        text.remove_prefix(1);
+    }
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
+        text.remove_suffix(1);
+    }
+
+    return text;
+}
+
+std::optional<std::uint64_t> leading_number(std::string_view text) {
+    text                     = trim(text);
+    std::uint64_t value      = 0;
+    const auto [rest, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+    return error == std::errc{} ? std::optional<std::uint64_t>(value) : std::nullopt;
+}
+
+} // namespace
+
+std::optional<std::vector<int>> parse_node_list(std::string_view text) {
+    std::vector<int> nodes;
+    text = trim(text);
+    if (text.empty()) { return std::nullopt; }
+    std::size_t at = 0;
+    while (at <= text.size()) {
+        const std::size_t comma     = std::min(text.find(',', at), text.size());
+        const std::string_view part = text.substr(at, comma - at);
+        at                          = comma + 1;
+        const std::size_t dash      = part.find('-');
+        const auto first            = leading_number(part.substr(0, dash));
+        const auto last =
+            dash == std::string_view::npos ? first : leading_number(part.substr(dash + 1));
+        if (!first || !last || *last < *first || *last > 1U << 16) { return std::nullopt; }
+        for (std::uint64_t node = *first; node <= *last; ++node) {
+            nodes.push_back(static_cast<int>(node));
+        }
+    }
+    return nodes;
+}
+
+std::optional<std::vector<int>> mems_allowed_nodes(std::string_view status_text) {
+    constexpr std::string_view key = "Mems_allowed_list:";
+    std::size_t at                 = 0;
+    while (at < status_text.size()) {
+        const std::size_t end       = std::min(status_text.find('\n', at), status_text.size());
+        const std::string_view line = status_text.substr(at, end - at);
+        at                          = end + 1;
+        if (line.starts_with(key)) { return parse_node_list(line.substr(key.size())); }
+    }
+    return std::nullopt;
+}
+
+std::optional<std::uint64_t> zoneinfo_free_above_watermark(std::string_view text,
+                                                           const std::vector<int>& nodes,
+                                                           std::uint64_t page_size) {
+    // "Node 0, zone   Normal" opens a zone; in it "  pages free     123" and "        high     45"
+    // (the per-cpu "high:" has a colon and is not this one).
+    bool in_wanted_zone = false, found = false;
+    std::uint64_t free_pages = 0, high_pages = 0, sum = 0;
+    const auto close_zone = [&] {
+        if (in_wanted_zone) {
+            sum += free_pages > high_pages ? free_pages - high_pages : 0;
+            found = true;
+        }
+        free_pages = high_pages = 0;
+    };
+    std::size_t at = 0;
+    while (at < text.size()) {
+        const std::size_t end       = std::min(text.find('\n', at), text.size());
+        const std::string_view line = trim(text.substr(at, end - at));
+        at                          = end + 1;
+        if (line.starts_with("Node ")) {
+            close_zone();
+            const auto node = leading_number(line.substr(5));
+            in_wanted_zone =
+                node && (nodes.empty() || std::find(nodes.begin(), nodes.end(),
+                                                    static_cast<int>(*node)) != nodes.end());
+        } else if (in_wanted_zone && line.starts_with("pages free")) {
+            free_pages = leading_number(line.substr(10)).value_or(0);
+        } else if (in_wanted_zone && line.starts_with("high") && line.size() > 4 &&
+                   line[4] == ' ') {
+            high_pages = leading_number(line.substr(4)).value_or(0);
+        }
+    }
+    close_zone();
+    if (!found) { return std::nullopt; }
+    return sum * page_size;
 }
 
 std::uint64_t CgroupMemory::available_bytes() const noexcept {
@@ -253,6 +348,17 @@ std::optional<HostMemory> read_host_memory(const std::filesystem::path& meminfo,
     for (const CgroupMemory& level : read_cgroup_memory(self_cgroup, cgroup_mount)) {
         *memory = within_cgroup(*memory, level);
     }
+    // The free pages the pin can take: only for the running process's own files (the tests give
+    // theirs, and set the field by hand).
+    if (meminfo == "/proc/meminfo") {
+        if (const auto zones = read_text("/proc/zoneinfo")) {
+            const auto status = read_text("/proc/self/status");
+            const std::vector<int> nodes =
+                (status ? mems_allowed_nodes(*status) : std::nullopt).value_or(std::vector<int>{});
+            memory->free_above_watermark_bytes = zoneinfo_free_above_watermark(
+                *zones, nodes, static_cast<std::uint64_t>(sys::page_size()));
+        }
+    }
     return memory;
 }
 
@@ -300,8 +406,40 @@ void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memo
         " kept for the rest of the host (max(4 GiB, total/8); pinned pages "
         "cannot be reclaimed or swapped), and at most " +
         format_gib(pinned_host_cap(memory)) + " pinned in all (3/5 of the total).";
+    if (memory.free_above_watermark_bytes && *memory.free_above_watermark_bytes < pinned_bytes) {
+        message +=
+            " Free memory above the zone watermarks, on the NUMA nodes this process may use: " +
+            format_gib(*memory.free_above_watermark_bytes) + " (MemFree " +
+            format_gib(memory.meminfo_free_bytes) + ", Cached " +
+            format_gib(memory.meminfo_cached_bytes) +
+            "); a pin takes free pages and what the kernel reclaims of the page cache.";
+    }
     if (!remedy.empty()) { message += " " + std::string(remedy); }
     throw std::runtime_error(message);
+}
+
+std::string pin_refusal_hint() {
+#ifdef _WIN32
+    return {};
+#else
+    try {
+        const auto memory = read_host_memory();
+        if (!memory || memory->meminfo_free_bytes == 0) { return {}; }
+        std::string hint = "At this moment MemFree is " + format_gib(memory->meminfo_free_bytes) +
+                           " and Cached " + format_gib(memory->meminfo_cached_bytes) +
+                           " (MemAvailable " + format_gib(memory->meminfo_available_bytes) + ")";
+        if (memory->free_above_watermark_bytes) {
+            hint += "; free above the zone watermarks on the NUMA nodes this process may use: " +
+                    format_gib(*memory->free_above_watermark_bytes);
+        }
+        hint += ". A pin takes free pages and as much page cache as the kernel reclaims for it, "
+                "which can be little: a full page cache (model files just read, a copy, a backup) "
+                "has refused pins that MemAvailable allowed. Evicting the files' cache helps "
+                "(posix_fadvise DONTNEED, `vmtouch -e`, as root `sync; echo 1 > "
+                "/proc/sys/vm/drop_caches`).";
+        return hint;
+    } catch (...) { return {}; }
+#endif
 }
 
 std::uint64_t automatic_host_tier_budget(const HostMemory& memory, int host_gpus) noexcept {
