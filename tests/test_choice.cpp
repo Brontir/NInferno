@@ -567,9 +567,10 @@ void prefills_by_format(const json& fixture) {
         renamed.label           = "the model's weights";
         check(ch::prefill_linears_seconds(q41_model, ada, renamed, 1024) == q41_seconds,
               "a label of no format over named Q4_1 linears prices them as the Q4_1 label");
-        // The codebook IQ formats on their census's steps where read (Ampere, one card): a file of IQ3_XXS
-        // linears only (no K format among them) above IQ4_XS's tiles by its step; Ada has none read (the
-        // share); an IQ1_M linear (its W4A8 route, not read) the share on top of the others' tiles.
+        // The codebook IQ formats on their census's steps where read (Ampere, Ada: one card each): a file
+        // of IQ3_XXS linears only (no K format among them) above IQ4_XS's tiles by its step; Turing has
+        // none read (the share); an IQ1_M linear (its W4A8 route, not read) the share on top of the
+        // others' tiles.
         const ch::CardFacts ampere = card_of(fixture.at("cards").at("RTX 3060"));
         ch::ModelFacts iq3_model = named, iq4_model = named;
         for (ch::LinearShape& l : iq3_model.linears) { l.format = "ggml_iq3_xxs"; }
@@ -581,8 +582,9 @@ void prefills_by_format(const json& fixture) {
         const double iq3_seconds = ch::prefill_linears_seconds(iq3_model, ampere, iq3, 1024, &iq3_transferred);
         const double iq4_seconds = ch::prefill_linears_seconds(iq4_model, ampere, xs, 1024);
         check(iq3_seconds > iq4_seconds && iq3_seconds < iq4_seconds * 40.7 / 36.6 * 1.02 && iq3_transferred &&
-                  ch::prefill_linears_seconds(iq3_model, ada, iq3, 1024) == 0,
-              "IQ3_XXS linears on their read step (Ampere), marked transferred; Ada: the share");
+                  ch::prefill_linears_seconds(iq3_model, ada, iq3, 1024) > 0 &&
+                  ch::prefill_linears_seconds(iq3_model, turing, iq3, 1024) == 0,
+              "IQ3_XXS linears on their read step (Ampere, Ada), marked transferred; Turing: the share");
         ch::ModelFacts with_iq1m = iq3_model;
         with_iq1m.linears.front().format = "ggml_iq1_m";
         ch::ModelFacts iq3_rest = iq3_model;
