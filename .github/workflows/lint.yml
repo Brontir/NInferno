@@ -1,0 +1,36 @@
+name: lint
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Only scripts are executable
+        run: bash tools/check_file_modes.sh
+      - name: Text files use LF line endings
+        run: |
+          crlf=$(git ls-files --eol | awk '$1 == "i/crlf" {print $NF}')
+          if [ -n "$crlf" ]; then echo "CRLF line endings:"; echo "$crlf"; exit 1; fi
+      - name: Python tools compile
+        run: python3 -m compileall -q tools
+      - name: Changed C++ and CUDA lines follow .clang-format
+        if: github.event_name == 'pull_request'
+        run: |
+          pip install --quiet clang-format==20.1.8
+          base=$(git merge-base HEAD "origin/${{ github.base_ref }}")
+          out=$(git clang-format --binary clang-format --diff "$base" -- \
+                '*.c' '*.cc' '*.cpp' '*.h' '*.hpp' '*.cu' '*.cuh' || true)
+          case "$out" in
+            ""|*"no modified files to format"*|*"did not modify any files"*) echo "formatted" ;;
+            *) echo "$out"; echo "Run: git clang-format \$(git merge-base HEAD origin/master)"; exit 1 ;;
+          esac
