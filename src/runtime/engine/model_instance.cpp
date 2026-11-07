@@ -1317,8 +1317,8 @@ ConstructedModel construct_or_plan(const EngineOptions& options, DeviceContext& 
                         std::string("pinning the context cache's Host tier (") +
                         std::to_string(resolved.context_cache.host_state_slots) +
                         " Host StateImages, " + gib_text(sizes.first) + "; Host KV " +
-                        gib_text(sizes.second) + "): " + error.what() +
-                        ". Ask for fewer Host StateImages or less Host KV "
+                        gib_text(sizes.second) + "): " + error.what() + ". " + pin_refusal_hint() +
+                        " Ask for fewer Host StateImages or less Host KV "
                         "(--host-state-slots, --host-kv-mib).");
                 }
                 ++host_tier.pin_refusals;

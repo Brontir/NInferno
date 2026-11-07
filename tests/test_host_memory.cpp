@@ -144,6 +144,112 @@ void cgroup_checks() {
 
 } // namespace
 
+// The free pages a pin can take (#480): /proc/zoneinfo above the watermarks, on the NUMA nodes the
+// process may use (Mems_allowed_list), not the page cache MemAvailable counts.
+void free_pages_checks() {
+    using namespace ninferno;
+    check(parse_node_list("0-1") == std::vector<int>({0, 1}), "node list range");
+    check(parse_node_list("0,2-3
+") == std::vector<int>({0, 2, 3}), "node list mixed");
+    check(parse_node_list("1") == std::vector<int>({1}), "node list single");
+    check(!parse_node_list("") && !parse_node_list("a") && !parse_node_list("3-1") &&
+              !parse_node_list("0,"),
+          "malformed node lists");
+    check(mems_allowed_nodes("Name:	x
+Mems_allowed:	3
+Mems_allowed_list:	0-1
+") ==
+              std::vector<int>({0, 1}),
+          "Mems_allowed_list of a status text");
+    check(!mems_allowed_nodes("Name:	x
+"), "no Mems_allowed_list line");
+
+    // Two nodes, 4 KiB pages. Node 0 Normal: 10000 free, high 2000 -> 8000; DMA32: 1000 free, high
+    // 2200 -> 0 (below its watermark). Node 1 Normal: 5000 free, high 1000 -> 4000. The per-cpu
+    // "high:" lines and a zone with no pages must not be read as the watermark.
+    const std::string zones =
+        "Node 0, zone      DMA
+  pages free     0
+        min      0
+        low      0
+"
+        "        high     0
+        managed  0
+"
+        "Node 0, zone    DMA32
+  pages free     1000
+        min      1
+        low      2
+"
+        "        high     2200
+        managed  4000
+  pagesets
+    cpu: 0
+"
+        "              count: 1
+              high:  300
+"
+        "Node 0, zone   Normal
+  pages free     10000
+        min      1
+        low      2
+"
+        "        high     2000
+        managed  90000
+  pagesets
+    cpu: 0
+"
+        "              high:  999999
+"
+        "Node 1, zone   Normal
+  pages free     5000
+        min      1
+        low      2
+"
+        "        high     1000
+        managed  50000
+";
+    check(zoneinfo_free_above_watermark(zones, {}) == (8000ULL + 4000ULL) * 4096, "all nodes");
+    check(zoneinfo_free_above_watermark(zones, {0}) == 8000ULL * 4096, "node 0 only");
+    check(zoneinfo_free_above_watermark(zones, {1}) == 4000ULL * 4096, "node 1 only");
+    check(zoneinfo_free_above_watermark(zones, {1}, 65536) == 4000ULL * 65536, "64 KiB pages");
+    check(!zoneinfo_free_above_watermark(zones, {5}), "a node with no zone");
+    check(!zoneinfo_free_above_watermark("", {}), "empty zoneinfo");
+
+    // The issue's host: MemFree 1.0 GiB, MemAvailable 190.6 GiB (page cache), 204.5 GiB total.
+    auto host = parse_meminfo("MemTotal:       214433792 kB
+MemFree:          1048576 kB
+"
+                              "MemAvailable:   199860634 kB
+Cached:         198496256 kB
+");
+    check(host && host->meminfo_free_bytes == kGiB &&
+              host->meminfo_cached_bytes == 198496256ULL * 1024,
+          "MemFree and Cached are parsed");
+    if (!host) {
+        return; }
+    const std::uint64_t by_available = pinned_host_limit(*host);
+    check(by_available > 100 * kGiB, "MemAvailable alone allows a pin of page cache's size");
+    host->free_above_watermark_bytes = kGiB / 2;
+    check(pinned_host_limit(*host) == by_available, "an explicit tier is still judged by MemAvailable");
+    check(pinned_host_free_limit(*host) == kGiB / 2, "the free pages bound the automatic limit");
+    check(automatic_host_tier_budget(*host, 1) == kGiB / 4, "and the automatic budget");
+    host->free_above_watermark_bytes = 500 * kGiB;
+    check(pinned_host_free_limit(*host) == by_available,
+          "plenty of free pages: MemAvailable decides");
+    // The refusal names the free pages and the page cache.
+    host->free_above_watermark_bytes = kGiB;
+    std::string message;
+    try {
+        require_pinned_host_fits(130 * kGiB, *host, "the Host tier", "");
+    } catch (const std::runtime_error& error) {
+        message = error.what(); }
+    check(message.find("Free memory above the zone watermarks") != std::string::npos &&
+              message.find("MemFree 1.00 GiB") != std::string::npos &&
+              message.find("Cached ") != std::string::npos,
+          "refusal names MemFree and Cached: " + message);
+}
+
 int main() {
     using namespace ninferno;
     // A 30 GiB host with 20 GiB available, as /proc/meminfo writes it.
