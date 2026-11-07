@@ -2564,8 +2564,7 @@ bool same_generation(const ninferno::GenerationResult& left,
         for (const ninferno::TokenId token : left.generated_token_ids) { std::cerr << ' ' << token; }
         std::cerr << " |";
         for (const ninferno::TokenId token : right.generated_token_ids) { std::cerr << ' ' << token; }
-        std::cerr << '
-';
+        std::cerr << '\n';
         return false;
     }
     for (std::size_t index = 0; index < left.logprobs.size(); ++index) {
@@ -2573,8 +2572,7 @@ bool same_generation(const ninferno::GenerationResult& left,
         const ninferno::GeneratedLogprob& b = right.logprobs[index];
         if (a.token != b.token || a.logprob != b.logprob || a.top.size() != b.top.size()) {
             std::cerr << "  logprob " << index << " differs: " << a.logprob << " vs " << b.logprob
-                      << '
-';
+                      << '\n';
             return false;
         }
         for (std::size_t alternative = 0; alternative < a.top.size(); ++alternative) {
@@ -2621,8 +2619,7 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     };
     const std::uint32_t base_tokens = engine.count_tokens(
         pressure_turn(base_text, "", ninferno::CacheRetentionHint::Disposable));
-    std::cout << "  base prompt " << base_tokens << " tokens
-";
+    std::cout << "  base prompt " << base_tokens << " tokens\n";
 
     int failures      = 0;
     const char* label = mode == ninferno::ActivationMode::Exact ? "exact" : "fast";
