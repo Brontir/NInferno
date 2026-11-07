@@ -77,7 +77,7 @@ bool in_range(rc::Kind kind, double v) {
 } // namespace
 
 int main(int argc, char** argv) {
-    int failures = 0;
+    int failures             = 0;
     const HeaderNames header = header_names();
     if (!header.read) ++failures;
     for (const auto& name : header.defined) {
@@ -87,7 +87,8 @@ int main(int argc, char** argv) {
     }
     for (const auto& name : header.listed) {
         if (header.defined.count(name) != 0) continue;
-        std::fprintf(stderr, "%s is listed but not defined as a Scalar or Constant\n", name.c_str());
+        std::fprintf(stderr, "%s is listed but not defined as a Scalar or Constant\n",
+                     name.c_str());
         ++failures;
     }
     if (header.listed.size() != std::size(rc::kRouteCostConstants)) {
