@@ -687,6 +687,17 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // beside the label's own) is priced only as a Q3_K mix, an IQ4_XS label only as its class's.
     const bool named = std::any_of(model.linears.begin(), model.linears.end(),
                                    [](const LinearShape& l) { return !l.format.empty(); });
+    // A codebook IQ linear's step on this generation's tile (kMmqIqStep; MMQ only, the W4A8 tiles run
+    // none), nullptr where not read.
+    const auto iq_step = [&](std::string_view name) -> const MmqIqStep* {
+        if (!mmq) { return nullptr; }
+        for (const MmqIqStep& row : kMmqIqStep) {
+            if (row.generation == gen && row.format == name) { return &row; }
+        }
+        return nullptr;
+    };
+    const bool reads_iq = named && std::any_of(model.linears.begin(), model.linears.end(),
+                                               [&](const LinearShape& l) { return iq_step(l.format) != nullptr; });
     // A label that names no format (a renamed file: "the model's weights") over named linears: the
     // format of most of their weights stands for the label's.
     if (format == nullptr && named) {
@@ -702,7 +713,11 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
             if (weights > most) { most = weights, format = f; }
         }
     }
-    if (format == nullptr || format->step <= 0 ||
+    // A file of codebook IQ linears and none of those formats: the IQ steps alone, its Q8_0 and
+    // 16-bit linears at no step (the share).
+    static constexpr Format kNoFormat{"", 0, 0};
+    if (format == nullptr && reads_iq) { format = &kNoFormat; }
+    if (format == nullptr || (format->step <= 0 && !reads_iq) ||
         (!named && (format == iq4xs ? quant.weights != WeightClass::IQ4
                                     : format != q41 && quant.weights != WeightClass::KQuant && format->bits >= 4))) {
         return 0;
@@ -714,7 +729,8 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // A linear whose file names its format takes that format's step. Else the label's: its bits
     // toward Q6_K stand for the mix where no linear is named; where the file names them (its Q6_K
     // parts priced as theirs), the label's format's own step (a Q8_0 or 16-bit linear among them).
-    bool reads_q41 = false; // a Q4_1 linear's step, read on q41_cards cards
+    bool reads_q41            = false; // a Q4_1 linear's step, read on q41_cards cards
+    bool reads_iq_transferred = false; // an IQ linear's step read on one card
     const auto step_of = [&](const LinearShape& l) {
         for (const auto& [name, f] : {std::pair{"ggml_q3_k", &formats[0]}, std::pair{"ggml_q4_k", &formats[1]},
                                       std::pair{"ggml_q5_k", &formats[2]}, std::pair{"ggml_q6_k", &formats[3]},
@@ -723,6 +739,10 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
                 reads_q41 = reads_q41 || f == q41;
                 return f->step;
             }
+        }
+        if (const MmqIqStep* row = iq_step(l.format)) {
+            reads_iq_transferred = reads_iq_transferred || row->cards < 2;
+            return row->step;
         }
         // A format not read (IQ4_NL: a 64 x 64 W4A8 tile; MXFP4, NVFP4: their block-scaled routes): none
         // (the share, with_unread).
@@ -740,7 +760,9 @@ double mmq_linears_seconds(const ModelFacts& model, const CardFacts& card, const
     // 3166 measured; its MMQ tiles 562 ms against the census's 587). None read: 0, the share whole.
     double unread_flops = 0;
     const auto with_unread = [&](double seconds) {
-        if (transferred != nullptr && seconds > 0 && reads_q41 && cost->q41_cards < 2) { *transferred = true; }
+        if (transferred != nullptr && seconds > 0 && ((reads_q41 && cost->q41_cards < 2) || reads_iq_transferred)) {
+            *transferred = true;
+        }
         if (seconds <= 0 || unread_flops <= 0) { return seconds > 0 ? seconds : 0.0; }
         bool share_transferred = false;
         const double rate = prefill_eta(false, generation_of(card), Route::Int8, share_transferred) * peak(card, Route::Int8);

@@ -567,6 +567,35 @@ void prefills_by_format(const json& fixture) {
         renamed.label           = "the model's weights";
         check(ch::prefill_linears_seconds(q41_model, ada, renamed, 1024) == q41_seconds,
               "a label of no format over named Q4_1 linears prices them as the Q4_1 label");
+        // The codebook IQ formats on their census's steps where read (Ampere, Ada: one card each): a file
+        // of IQ3_XXS linears only (no K format among them) above IQ4_XS's tiles by its step; Turing has
+        // none read (the share); an IQ1_M linear (its W4A8 route, not read) the share on top of the
+        // others' tiles.
+        const ch::CardFacts ampere = card_of(fixture.at("cards").at("RTX 3060"));
+        ch::ModelFacts iq3_model = named, iq4_model = named;
+        for (ch::LinearShape& l : iq3_model.linears) { l.format = "ggml_iq3_xxs"; }
+        for (ch::LinearShape& l : iq4_model.linears) { l.format = "ggml_iq4_xs"; }
+        ch::QuantOption iq3 = xs;
+        iq3.label           = "UD-IQ3_XXS";
+        iq3.weights         = ch::WeightClass::Other;
+        bool iq3_transferred = false;
+        const double iq3_seconds = ch::prefill_linears_seconds(iq3_model, ampere, iq3, 1024, &iq3_transferred);
+        const double iq4_seconds = ch::prefill_linears_seconds(iq4_model, ampere, xs, 1024);
+        check(iq3_seconds > iq4_seconds && iq3_seconds < iq4_seconds * 40.7 / 36.6 * 1.02 && iq3_transferred &&
+                  ch::prefill_linears_seconds(iq3_model, turing, iq3, 1024) == 0,
+              "IQ3_XXS linears on their read step (Ampere, Ada), marked transferred; Turing: the share");
+        // Ada's MMQ row reads two cards: the IQ step alone (one) marks its estimate transferred.
+        bool ada_transferred = false;
+        check(ch::prefill_linears_seconds(iq3_model, ada, iq3, 1024, &ada_transferred) > 0 && ada_transferred,
+              "IQ3_XXS linears on Ada's read step, marked transferred by the IQ step's one card");
+        ch::ModelFacts with_iq1m = iq3_model;
+        with_iq1m.linears.front().format = "ggml_iq1_m";
+        ch::ModelFacts iq3_rest = iq3_model;
+        iq3_rest.linears.erase(iq3_rest.linears.begin());
+        const double with_iq1m_seconds = ch::prefill_linears_seconds(with_iq1m, ampere, iq3, 1024);
+        check(with_iq1m_seconds > ch::prefill_linears_seconds(iq3_rest, ampere, iq3, 1024) &&
+                  with_iq1m_seconds != iq3_seconds,
+              "an IQ1_M linear among IQ3_XXS ones: the share on top of their tiles, not a tile step");
     }
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";
