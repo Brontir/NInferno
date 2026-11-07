@@ -3326,24 +3326,26 @@ void test_default_automatic_system_head_is_captured_beside_the_end() {
 
 namespace {
 
-FakeRequestBasePlan shared_base(std::uint32_t key, ninferno::SharedCandidateEvidence evidence) {
+FakeRequestBasePlan shared_base(std::uint32_t key, ninferno::SharedCandidateEvidence evidence,
+                                std::uint32_t frontier = 64) {
     FakeRequestBasePlan base = make_base(key);
     base.cache.opportunities.push_back(FakeContextCache::Opportunity{
         .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
         .evidence = evidence,
-        .frontier = 64,
+        .frontier = frontier,
     });
     return base;
 }
 
-// Publishes the running request's shared capture at frontier 64 through the manager.
+// Publishes the running request's shared capture at the frontier through the manager.
 void publish_shared_capture(FakeManager& manager, FakeProgram& program,
                             const ActiveRequest& active, std::uint32_t key,
-                            ninferno::SharedCandidateEvidence evidence, std::uint32_t offer_id) {
+                            ninferno::SharedCandidateEvidence evidence, std::uint32_t offer_id,
+                            std::uint32_t frontier = 64) {
     program.capture_assessment = FakeCaptureAssessment{
-        .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = 64},
+        .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = frontier},
         .shared_evidence        = evidence,
-        .protected_rebuild_work = PrefillWork{.tokens = 64},
+        .protected_rebuild_work = PrefillWork{.tokens = frontier},
         .publishes_shared       = true,
         .physically_feasible    = true,
     };
@@ -3393,6 +3395,44 @@ void test_engine_candidate_takes_over_unproven_shared_slot() {
     require(stats.shared_active_references == 1,
             "the taken-over shared slot was not published to the capturing request");
     (void)finish_active(manager, program, second);
+}
+
+// The incumbent's demand still in the window: selection prices the unproven entry it displaces
+// as capture does, so an equal candidate is a tie and is not selected (no split paid for a
+// capture that would be refused), while a longer one is worth the slot (#462).
+void test_engine_candidate_prices_the_unproven_slot_it_displaces() {
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    {
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        const ActiveRequest first =
+            start_active(manager, program, 131, shared_base(131, kAutomatic), 1);
+        publish_shared_capture(manager, program, first, 131, kAutomatic, 71);
+        (void)finish_active(manager, program, first);
+        const ActiveRequest second =
+            start_active(manager, program, 132, shared_base(132, kAutomatic), 2);
+        require(program.selected_shared_capture_frontiers.empty(),
+                "an equal engine candidate was selected over an unproven slot still in demand");
+        (void)finish_active(manager, program, second);
+    }
+    {
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        const ActiveRequest first =
+            start_active(manager, program, 141, shared_base(141, kAutomatic, 16), 1);
+        publish_shared_capture(manager, program, first, 141, kAutomatic, 81, 16);
+        (void)finish_active(manager, program, first);
+        const ActiveRequest second =
+            start_active(manager, program, 142, shared_base(142, kAutomatic), 2);
+        require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
+                "a longer engine candidate was not selected over a short unproven slot");
+        publish_shared_capture(manager, program, second, 142, kAutomatic, 82);
+        RuntimeStats stats;
+        manager.populate_runtime_stats(program, stats);
+        require(stats.shared_active_references == 1,
+                "the longer engine candidate did not take over the short unproven slot");
+        (void)finish_active(manager, program, second);
+    }
 }
 
 // A declared boundary's slot is credited: an engine candidate does not take it over.
@@ -4261,6 +4301,8 @@ int main() {
              test_default_automatic_system_head_is_captured_beside_the_end);
     run_test("engine candidate takes an unproven shared slot",
              test_engine_candidate_takes_over_unproven_shared_slot);
+    run_test("engine candidate prices the unproven slot it displaces",
+             test_engine_candidate_prices_the_unproven_slot_it_displaces);
     run_test("engine candidate keeps a credited shared slot",
              test_engine_candidate_keeps_credited_shared_slot);
     run_test("engine candidate keeps a reused shared slot",

@@ -1914,10 +1914,15 @@ private:
                 return entry.state == SharedCatalogState::Vacant;
             }));
         // What an engine-proposed candidate may occupy: a vacant slot, or a resident entry nothing
-        // has vouched for (capture takes it over, see reserve_active_capture).
+        // has vouched for (capture takes it over, see reserve_active_capture). The request's own
+        // shared source is not one: it gains a holder and a hit before any capture.
+        const auto takeable_unproven = [&](std::uint32_t slot) {
+            return shared_entry_unproven(slot) && !(selected_candidate.shared_source &&
+                                                    slot == selected_candidate.shared_source->slot);
+        };
         std::uint32_t surplus_shared_slots = vacant_shared_slots;
         for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
-            if (shared_entry_unproven(slot)) { ++surplus_shared_slots; }
+            if (takeable_unproven(slot)) { ++surplus_shared_slots; }
         }
         for (const auto& opportunity : base.context_cache().opportunities) {
             if (opportunity.kind != PromptCacheMarkerKind::SharedStablePrefix ||
@@ -2005,6 +2010,10 @@ private:
                 append_existing(owner, *entry.handle, checkpoint);
             }
         }
+        // The unproven entries a surplus candidate beyond the vacant slots displaces, cheapest
+        // rebuild first: their checkpoints, priced lost in such a subset as capture prices its
+        // direct victim.
+        std::vector<std::size_t> unproven_victims;
         for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
             const SharedCatalogEntry& entry = shared_catalog_[slot];
             if (entry.state != SharedCatalogState::Catalogued || !entry.handle) { continue; }
@@ -2013,8 +2022,13 @@ private:
                 .owner                  = owner,
                 .explicit_shared_credit = entry.explicit_credit,
             });
+            if (takeable_unproven(slot)) { unproven_victims.push_back(projected_checkpoints.size()); }
             append_existing(owner, *entry.handle, entry.summary.checkpoint);
         }
+        std::sort(unproven_victims.begin(), unproven_victims.end(),
+                  [&](std::size_t a, std::size_t b) {
+                      return projected_checkpoints[a].rebuild_ns < projected_checkpoints[b].rebuild_ns;
+                  });
 
         std::vector<std::uint32_t> selected_frontiers;
         std::uint64_t selected_gain = 0;
@@ -2039,14 +2053,26 @@ private:
             const std::uint32_t selected_count = std::popcount(mask);
             if (selected_count > shared_catalog_count_) { continue; }
             std::uint32_t surplus_only_count = 0;
+            for (std::size_t index = 0; index < shared_candidates.size(); ++index) {
+                if ((mask & (1U << index)) != 0 && !shared_candidates[index].pressure_capable) {
+                    ++surplus_only_count;
+                }
+            }
+            if (surplus_only_count > surplus_shared_slots) { continue; }
+            const std::uint32_t displaced =
+                surplus_only_count > vacant_shared_slots ? surplus_only_count - vacant_shared_slots
+                                                         : 0U;
             std::vector<std::uint32_t> frontiers;
             frontiers.reserve(selected_count);
             std::vector<ContextPortfolioOwnerPolicy> owners          = projected_owners;
             std::vector<ContextPortfolioCheckpointValue> checkpoints = projected_checkpoints;
+            for (std::uint32_t victim = 0; victim < displaced; ++victim) {
+                ContextPortfolioCheckpointValue& lost = checkpoints[unproven_victims[victim]];
+                lost.target_recovery_ns = lost.rebuild_ns;
+            }
             for (std::size_t index = 0; index < shared_candidates.size(); ++index) {
                 if ((mask & (1U << index)) == 0) { continue; }
                 const ProjectedSharedCandidate& candidate = shared_candidates[index];
-                if (!candidate.pressure_capable) { ++surplus_only_count; }
                 frontiers.push_back(candidate.frontier);
                 const PlanningOwnerId owner{.value = next_projected_owner +
                                                      static_cast<std::uint32_t>(index)};
@@ -2055,9 +2081,10 @@ private:
                 // automatic prompt end is the one exception: its value is the sibling sessions'
                 // (a request of another domain), which this request's bit cannot show, so in a
                 // vacant slot (no victim) it is worth its own saving; otherwise the prompt end
-                // always won and Chat never shared the head (#316).
+                // always won and Chat never shared the head (#316). A subset that displaces an
+                // unproven entry has no vacant slot to spare, and the head is priced as it is.
                 const bool sibling_head =
-                    !candidate.pressure_capable &&
+                    displaced == 0 && !candidate.pressure_capable &&
                     has_shared_candidate_evidence(candidate.evidence,
                                                   SharedCandidateEvidence::DefaultAutomatic) &&
                     candidate.frontier < longest_default;
@@ -2079,7 +2106,6 @@ private:
                     .target_recovery_ns   = 0,
                 });
             }
-            if (surplus_only_count > surplus_shared_slots) { continue; }
             std::sort(frontiers.begin(), frontiers.end());
             const ContextPortfolioValueResult value = projected_value.fold(owners, checkpoints);
             const std::uint64_t schedule_cost       = split_cost(frontiers);
