@@ -82,14 +82,14 @@ std::optional<HostMemory> parse_meminfo(std::string_view text) {
 namespace {
 
 std::string_view trim(std::string_view text) {
-    while (!text.empty() && (text.front() == ' ' || text.front() == '	')) {
+    while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) {
         text.remove_prefix(1);
     }
-    while (!text.empty() && (text.back() == ' ' || text.back() == '	' || text.back() == '')) {
+    while (!text.empty() && (text.back() == ' ' || text.back() == '\t' || text.back() == '\r')) {
         text.remove_suffix(1);
-}
+    }
 
-return text;
+    return text;
 }
 
 std::optional<std::uint64_t> leading_number(std::string_view text) {
@@ -126,12 +126,10 @@ std::optional<std::vector<int>> mems_allowed_nodes(std::string_view status_text)
     constexpr std::string_view key = "Mems_allowed_list:";
     std::size_t at                 = 0;
     while (at < status_text.size()) {
-        const std::size_t end = std::min(status_text.find('
-', at), status_text.size());
+        const std::size_t end       = std::min(status_text.find('\n', at), status_text.size());
         const std::string_view line = status_text.substr(at, end - at);
         at                          = end + 1;
-        if (line.starts_with(key)) {
-            return parse_node_list(line.substr(key.size())); }
+        if (line.starts_with(key)) { return parse_node_list(line.substr(key.size())); }
     }
     return std::nullopt;
 }
@@ -152,8 +150,7 @@ std::optional<std::uint64_t> zoneinfo_free_above_watermark(std::string_view text
     };
     std::size_t at = 0;
     while (at < text.size()) {
-        const std::size_t end = std::min(text.find('
-', at), text.size());
+        const std::size_t end       = std::min(text.find('\n', at), text.size());
         const std::string_view line = trim(text.substr(at, end - at));
         at                          = end + 1;
         if (line.starts_with("Node ")) {
@@ -164,7 +161,8 @@ std::optional<std::uint64_t> zoneinfo_free_above_watermark(std::string_view text
                                                     static_cast<int>(*node)) != nodes.end());
         } else if (in_wanted_zone && line.starts_with("pages free")) {
             free_pages = leading_number(line.substr(10)).value_or(0);
-        } else if (in_wanted_zone && line.starts_with("high") && line.size() > 4 && line[4] == ' ') {
+        } else if (in_wanted_zone && line.starts_with("high") && line.size() > 4 &&
+                   line[4] == ' ') {
             high_pages = leading_number(line.substr(4)).value_or(0);
         }
     }
@@ -420,7 +418,7 @@ void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memo
             format_gib(*memory.free_above_watermark_bytes) + " (MemFree " +
             format_gib(memory.meminfo_free_bytes) + ", Cached " +
             format_gib(memory.meminfo_cached_bytes) +
-            "); pinning takes free pages and little of the page cache.";
+            "); a pin takes free pages and what the kernel reclaims of the page cache.";
     }
     if (!remedy.empty()) { message += " " + std::string(remedy); }
     throw std::runtime_error(message);
@@ -436,17 +434,19 @@ std::string pin_refusal_hint() {
         hint += "; free above the zone watermarks on the NUMA nodes this process may use: " +
                 format_gib(*memory->free_above_watermark_bytes);
     }
-    hint += ". The driver pins from free pages and reclaims little page cache, so a page cache "
-            "that is full (model files just read, a copy, a backup) refuses a pin that "
-            "MemAvailable allows. Free some: evict the files' cache (posix_fadvise DONTNEED, "
-            "`vmtouch -e`, as root `sync; echo 1 > /proc/sys/vm/drop_caches`), or ask for less.";
+    hint += ". A pin takes free pages and as much page cache as the kernel reclaims for it, which "
+            "can be little: a full page cache (model files just read, a copy, a backup) has "
+            "refused pins that MemAvailable allowed. Free some: evict the files' cache "
+            "(posix_fadvise DONTNEED, `vmtouch -e`, as root `sync; echo 1 > "
+            "/proc/sys/vm/drop_caches`), or ask for less.";
     return hint;
 }
 
 std::uint64_t automatic_host_tier_budget(const HostMemory& memory, int host_gpus) noexcept {
     const long double share =
         static_cast<long double>(kAutomaticHostTierShare) / std::max(1, host_gpus);
-    return static_cast<std::uint64_t>(static_cast<long double>(pinned_host_free_limit(memory)) * share);
+    return static_cast<std::uint64_t>(static_cast<long double>(pinned_host_free_limit(memory)) *
+                                      share);
 }
 
 HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
