@@ -2211,8 +2211,8 @@ with the context it fits).
   free memory than the start, which may land a rung lower. When nothing fits, the advice is the
   refusal alone, and the exit code is 2.
 
-Examples on a 16 GB card (RTX 5070 Ti, Linux, no display; the 21.10 stand logs, master's continuous
-fit against the ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
+Examples on a 16 GB card (RTX 5070 Ti, Linux, no display; start logs of 2026-10-21 against the
+ladder's byte arithmetic, `tests/test_plan_ladder.cpp`):
 
 | Model | Master | Ladder |
 |---|---|---|
@@ -2264,7 +2264,7 @@ A CPU test (`ninferno_plan_bytes_test`) checks the two to the byte over 7,056 ru
 facts do not name the state (a DFlash plan without its drafter's shape). What stays an estimate on
 both bases is the workspace: a start sizes its Op scratch from the bound weights' kernel routes,
 the dry run from the prefill chunk's activations and the decode logits. It is the remaining
-difference (about one rung in the lab's stand checks).
+difference (about one rung in the checks on the lab's cards).
 
 The weights are the GGUF tensor table's bytes when one file holds the whole model
 (`weights_basis` `gguf_tensors`), else the listed file sizes (`file_size`: "estimated from file
