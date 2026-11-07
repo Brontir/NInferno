@@ -5,6 +5,10 @@
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
 
+#include <cstdint>
+#include <functional>
+#include <optional>
+
 namespace ninferno::ops::detail::generic {
 
 // The token-major grid of the W4A8 tiles (W4a8Activation::token_major), first the 128-token
