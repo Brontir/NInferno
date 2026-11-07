@@ -210,8 +210,9 @@ template <class Measured, std::size_t Extent>
 // nearest_measured among the entries whose distance to `board` compares every quantity (#373):
 // an L2 or bandwidth unknown on either side drops out of board_distance, so a distance without it
 // is no evidence that the boards are near in it (even 0: equal SM counts are not one board). A
-// lookup bounded by a distance takes no such entry and keeps its unmeasured default, as
-// gate_answer refuses an Incomplete donor. Every lab board has both facts, and a running device
+// lookup bounded by a distance skips such an entry and keeps its unmeasured default, as
+// gate_answer refuses an Incomplete donor (here a farther complete entry within the bound may
+// still answer: that is evidence). Every lab board has both facts, and a running device
 // reports its L2 (CUDA) and its bandwidth (the facts table or the driver); what this drops is a
 // GPU that leaves either unreported.
 template <class Measured, std::size_t Extent>

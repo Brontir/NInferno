@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
                "a missing L2 promoted a bounded transfer");
         const auto mmq = m::mmq_prefill_gate(unknown_l2);
         expect(mmq.disposition == m::GateAnswer::Disposition::Incomplete && mmq.pays,
-                  "the MMQ gate lost its answer to a missing L2");
+               "the MMQ gate lost its answer to a missing L2");
         // The bounded table lookups (R8 decode tables, A8 routes, Q4 frontiers, spread, context
         // cost machines) take nearest_known_measured: the same board with every fact finds its
         // entry; with its L2 or bandwidth unknown it finds none and keeps the default; an entry
