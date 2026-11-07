@@ -54,6 +54,14 @@ int main() {
         failures += check(*normalized.context_cache.max_shared_prefixes >= 43U,
                           "default shared-prefix capacity is below the cached StateImages");
     }
+    // ... up to 256: planning grows with the square of the count; beyond, the flag decides.
+    {
+        EngineOptions options;
+        options.context_cache.host_state_slots = 1000;
+        const EngineOptions normalized         = normalize_engine_options(options);
+        failures += check(*normalized.context_cache.max_shared_prefixes == 256U,
+                          "default shared-prefix capacity is not bounded at 256");
+    }
 
     // An explicit override is still respected verbatim, including a deliberately small value.
     {
