@@ -424,8 +424,23 @@ EngineOptions normalize_engine_options(EngineOptions options) {
         cache.host_state_slots = std::max(cache.host_state_slots,
                                           2U * *cache.max_private_continuations);
     }
-    cache.max_shared_prefixes               = cache.max_shared_prefixes.value_or(std::max(
-        concurrency, static_cast<std::uint32_t>(kMaximumPreparedPromptCacheCandidatesPerRequest)));
+    // A shared prefix is reusable with a complete StateImage (Device or Host) and its KV, each
+    // bounded by its own capacity; its descriptor costs a catalog entry and an address space (a
+    // row of page handles in host memory). So the default count covers every StateImage a cached
+    // prefix can hold, and is never the bound that binds first (#462: seven slots filled with a
+    // conversation's prompt ends left a new system prompt none). The counts are the requested ones,
+    // before the Host fit and the plan ladder lower them. The default stops at 256: the selection
+    // folds the portfolio once per unproven shared entry (a request's planning grows with the
+    // square of the count), and a larger catalog stays an explicit --max-shared-prefixes.
+    constexpr std::uint64_t kMaximumDefaultSharedPrefixes = 256;
+    const std::uint64_t cached_state_images =
+        static_cast<std::uint64_t>(
+            cache.device_state_slots.value_or(automatic_cached_device_states(concurrency))) +
+        cache.host_state_slots;
+    cache.max_shared_prefixes = cache.max_shared_prefixes.value_or(
+        static_cast<std::uint32_t>(std::max<std::uint64_t>(
+            {concurrency, kMaximumPreparedPromptCacheCandidatesPerRequest,
+             std::min(cached_state_images, kMaximumDefaultSharedPrefixes)})));
     cache.max_long_anchors_per_continuation = cache.max_long_anchors_per_continuation.value_or(2U);
 
     if (*cache.max_private_continuations < concurrency) {

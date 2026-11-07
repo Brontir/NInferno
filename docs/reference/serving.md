@@ -1832,7 +1832,7 @@ not take at startup.
 | `--host-state-slots N` | pinned Host StateImage capacity | `max(8, 2 * private continuations)`, scaled with Host KV to what the host can pin when neither is given |
 | `--host-kv-mib N` | shared pinned Host Main/Backend KV byte capacity in MiB | `8192`, scaled likewise |
 | `--max-private-continuations N` | private continuation descriptor capacity | `max(2 * max-concurrency, max-concurrency + 8)` |
-| `--max-shared-prefixes N` | Engine-wide shared stable-prefix descriptor capacity | `max(max-concurrency, 7)` |
+| `--max-shared-prefixes N` | Engine-wide shared stable-prefix descriptor capacity | `max(max-concurrency, 7, cached Device states + Host state slots)`, the latter at most 256: every StateImage a cached prefix can hold (the requested counts, before the Host fit), so the count never binds before memory does |
 | `--max-long-anchors-per-continuation N` | private long-anchor limit per continuation | `2` |
 | `--no-auto-system-shared-prefix` | disable the automatic shared-prefix candidate at the leading system/developer frontier ([section 7](#automatic-systemdeveloper-shared-prefix)) | on |
 | `--response-store-max-records N` | maximum locally retained Responses objects | `1024` |
