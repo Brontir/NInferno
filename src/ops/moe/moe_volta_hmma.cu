@@ -79,17 +79,23 @@ __device__ __forceinline__ void stage_load_rows(const GemmArgs& a, const int* ro
 }
 
 // x as f16 in the staged order: each four values (v0, v1, v2, v3) become the halves (v0, v2, v1, v3),
-// the conversion of generic::volta::stage_store, at row stride k.
-__global__ void volta_x_f16_kernel(const __nv_bfloat16* x, int ldx, int rows, int k, uint2* dst) {
+// the conversion of generic::volta::stage_store, at row stride k. Columns from `live` to k are
+// zeros (a zero-padded bank's K reads x of the model's width, so x needs no padded copy first).
+__global__ void volta_x_f16_kernel(const __nv_bfloat16* x, int ldx, int rows, int live, int k,
+                                   uint2* dst) {
     const std::int64_t per_row = k >> 2;
     const std::int64_t total   = per_row * rows;
     for (std::int64_t i = static_cast<std::int64_t>(blockIdx.x) * blockDim.x + threadIdx.x; i < total;
          i += static_cast<std::int64_t>(gridDim.x) * blockDim.x) {
         const std::int64_t r = i / per_row;
         const std::int64_t g = i - r * per_row;
-        const uint2 v        = *reinterpret_cast<const uint2*>(x + r * ldx + 4 * g);
-        dst[i] = make_uint2(bf16x2_to_f16x2(__byte_perm(v.x, v.y, 0x5410U)),
-                            bf16x2_to_f16x2(__byte_perm(v.x, v.y, 0x7632U)));
+        if (4 * g >= live) {
+            dst[i] = make_uint2(0, 0);
+            continue;
+        }
+        const uint2 v = *reinterpret_cast<const uint2*>(x + r * ldx + 4 * g);
+        dst[i]        = make_uint2(bf16x2_to_f16x2(__byte_perm(v.x, v.y, 0x5410U)),
+                                   bf16x2_to_f16x2(__byte_perm(v.x, v.y, 0x7632U)));
     }
 }
 
@@ -337,11 +343,15 @@ void launch_format(Stage stage, const GemmArgs& args, dim3 grid, cudaStream_t st
 
 } // namespace
 
-void launch_volta_x_f16(const void* x, int ldx, int rows, int k, void* dst, cudaStream_t stream) {
+void launch_volta_x_f16(const void* x, int ldx, int rows, int live, int k, void* dst,
+                        cudaStream_t stream) {
+    if (live % 4 != 0 || k % 4 != 0 || live > k || ldx < live || ldx % 4 != 0) {
+        throw std::invalid_argument("moe volta hmma: x rows are converted four values at a time");
+    }
     const std::int64_t total = static_cast<std::int64_t>(rows) * (k >> 2);
     const int blocks = static_cast<int>(std::min<std::int64_t>((total + 255) / 256, 4096));
     volta_x_f16_kernel<<<blocks, 256, 0, stream>>>(static_cast<const __nv_bfloat16*>(x), ldx, rows,
-                                                   k, static_cast<uint2*>(dst));
+                                                   live, k, static_cast<uint2*>(dst));
     CUDA_CHECK(cudaGetLastError());
 }
 

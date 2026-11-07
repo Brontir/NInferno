@@ -619,7 +619,7 @@ bool volta_hmma_admitted(const MoeWeights& w, const Geometry& g) {
         return layout && moe_volta_hmma_codec(codec) &&
                bank.k % moe_volta_hmma_k_multiple(codec) == 0;
     };
-    return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.inter % 4 == 0;
+    return admits(w.gate_up) && admits(w.down) && g.input % 4 == 0 && g.hidden % 4 == 0 && g.inter % 4 == 0;
 }
 
 // Whether the heuristic prefill plan takes the grouped W4A8 where the banks admit it: on by
@@ -1439,7 +1439,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
     grouped.job_total    = static_cast<const int*>(ws.job_total.data);
     // 4. Gate/up and the activation, per slot. A zero-padded bank reads x widened with zeros.
     const void* gate_up_x = x.data;
-    if (g.input != g.hidden && !p.w4a8_gate_up) {
+    // Volta's HMMA stages read x through the f16 pre-pass, which writes the zeros itself.
+    if (g.input != g.hidden && !p.w4a8_gate_up && !p.volta_hmma) {
         const std::size_t row  = sizeof(std::uint16_t) * static_cast<std::size_t>(g.input);
         const std::size_t live = sizeof(std::uint16_t) * static_cast<std::size_t>(g.hidden);
         auto* padded           = static_cast<char*>(ws.padded_x.data);
@@ -1472,7 +1473,7 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         const Stage first = gated ? Stage::GateUp : Stage::Up;
         args.ldo          = g.inter;
         if (p.volta_hmma) {
-            launch_volta_x_f16(gate_up_x, g.input, t, g.input, ws.x_h.data, stream);
+            launch_volta_x_f16(x.data, g.hidden, t, g.hidden, g.input, ws.x_h.data, stream);
             args.xh        = ws.x_h.data;
             args.ldxh      = g.input;
             args.sub_tiles = p.job_columns / kVoltaHmmaSlots;

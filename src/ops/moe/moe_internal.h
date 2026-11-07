@@ -438,9 +438,11 @@ static_assert(kJobColumns % kVoltaHmmaSlots == 0);
 // `frag`: a ggml_frag_v1 bank (Q4_K only).
 void launch_moe_volta_hmma(generic::WeightCodec codec, bool frag, Stage stage,
                            const GemmArgs& args, dim3 grid, cudaStream_t stream);
-// The gate/up stage's x (BF16 [rows, ldx]) as the f16 rows the expert stages stage (dst: rows x k
-// halves). The gate/up stage's output is already in that form (f16 halves in `mid`).
-void launch_volta_x_f16(const void* x, int ldx, int rows, int k, void* dst, cudaStream_t stream);
+// The gate/up stage's x (BF16 [rows, ldx], `live` values a row) as the f16 rows the expert stages
+// stage (dst: rows x k halves, zeros past `live`). The gate/up stage's output is already in that
+// form (f16 halves in `mid`).
+void launch_volta_x_f16(const void* x, int ldx, int rows, int live, int k, void* dst,
+                        cudaStream_t stream);
 
 // The grouped W4A8 (moe_w4a8.cuh): the experts' gate/up (or up) and down stages of a wide prefill
 // call on int8 tensor cores, the activation quantized per 32 values (int8 codes, a scale and the
