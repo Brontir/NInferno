@@ -452,6 +452,24 @@ inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75
                                                {"ga10x", 4000, 41.5, 43.5, 48.75, 49.25, 36.6, 1, 42.3, 1},
                                                {"turing", 0, 71.75, 74.5, 77.75, 91.75, 59.6, 1},
                                                {"gb20x", 3000, 45.5, 49.5, 59, 60.5, 42.9, 1}};
+// The codebook IQ formats' K steps on the same tile (a linear the GGUF names in one of them; else
+// not read: the share), by generation. Read on Qwen3.8 27B's UD-IQ3_XXS and UD-IQ2_XXS 2052-token
+// prefills (nsys, 07.11, mul_mat_q by its ggml type against the GGUF's tensor types), each format's
+// time a weight against IQ4_XS's (36.6) in the same calls' shapes; the two files agree within 3 %
+// (IQ2_XXS 37.2 / 37.0 ms a G weight, IQ1_S 42.8 / 41.8, IQ2_S 48.8 / 48.0, IQ2_XS 49.0 / 48.9,
+// IQ3_XXS 39.2 / 38.8), Q3_K's at 48.6 against its 49.25. Predicted beforehand at Q3_K's (49.25 +-
+// 15 %, IQ3_XXS) and 45 (IQ2_XXS): IQ3_XXS's grid-table decode is cheaper than Q3_K's masks, a miss.
+struct MmqIqStep {
+    std::string_view generation;
+    std::string_view format; // the GGUF tensor format (LinearShape::format)
+    double step;
+    int cards;
+};
+inline constexpr MmqIqStep kMmqIqStep[] = {
+    {"ga10x", "ggml_iq3_xxs", 40.7, 1}, {"ga10x", "ggml_iq3_s", 41.2, 1},
+    {"ga10x", "ggml_iq2_xxs", 38.7, 1}, {"ga10x", "ggml_iq2_xs", 51.1, 1},
+    {"ga10x", "ggml_iq2_s", 50.5, 1},   {"ga10x", "ggml_iq1_s", 44.1, 1},
+};
 inline constexpr double kMmqTileFixed = 0.43;
 // Where MMQ does not pay (measured::kMmqPrefillPays: the RTX 5070 Ti as the 5060 Ti) a dense
 // K-quant prefills on the W4A8 tiles (generic_gemm.cpp: Q4_K and Q6_K the producer-warp 128 x 64
