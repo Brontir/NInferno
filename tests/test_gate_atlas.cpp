@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <span>
 #include <string>
 
 namespace {
@@ -128,6 +129,28 @@ int main(int argc, char** argv) {
         const auto mmq = m::mmq_prefill_gate(unknown_l2);
         expect(mmq.disposition == m::GateAnswer::Disposition::Incomplete && mmq.pays,
                "the MMQ gate lost its answer to a missing L2");
+        // The bounded table lookups (R8 decode tables, A8 routes, Q4 frontiers, spread, context
+        // cost machines) take nearest_known_measured: the same board with every fact finds its
+        // entry; with its L2 or bandwidth unknown it finds none and keeps the default; an entry
+        // with a fact unknown is never anyone's donor.
+        const ninferno::Board own_5090 = m::kRtx5090;
+        const ninferno::Board unknown_dram{12, 0, 170, 96, 0};
+        const auto* own =
+            ninferno::nearest_known_measured(std::span(gates), own_5090, m::kCarryDistance);
+        expect(own == &gates[0], "a known board lost its own entry");
+        expect(ninferno::nearest_known_measured(std::span(gates), unknown_l2, m::kCarryDistance) ==
+                   nullptr,
+               "a missing L2 promoted a bounded table lookup");
+        expect(ninferno::nearest_known_measured(std::span(gates), unknown_dram,
+                                                m::kCarryDistance) == nullptr,
+               "a missing bandwidth promoted a bounded table lookup");
+        const m::Gate partial[] = {{ninferno::Board{12, 0, 170, 0, 1792}, true}};
+        expect(ninferno::nearest_known_measured(std::span(partial), own_5090, m::kCarryDistance) ==
+                   nullptr,
+               "an entry of unknown L2 was taken as a donor");
+        // The unbounded lookup is unchanged: same instruction set, nearest by what is known.
+        expect(ninferno::nearest_measured(std::span(gates), unknown_l2) == &gates[0],
+               "the unbounded lookup changed");
     }
 
     // Pure: the same table gives the same atlas.

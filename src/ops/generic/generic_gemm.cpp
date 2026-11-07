@@ -977,8 +977,8 @@ const R8DecodeTable* r8_decode_table() {
     static PerDevice<const R8DecodeTable*> table;
     try {
         return table.get([](int) {
-            return nearest_measured(std::span(kR8DecodeTables), board_of(device_class()),
-                                    kR8CarryDistance);
+            return nearest_known_measured(std::span(kR8DecodeTables), board_of(device_class()),
+                                          kR8CarryDistance);
         });
     } catch (const std::exception&) {
         return nullptr;
@@ -3775,7 +3775,7 @@ constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true},
 
 bool spread_by_board(const DeviceClass& d) {
     const SpreadMeasured* m =
-        nearest_measured(std::span(kSpreadMeasured), board_of(d), measured::kCarryDistance);
+        nearest_known_measured(std::span(kSpreadMeasured), board_of(d), measured::kCarryDistance);
     return m != nullptr && m->faster;
 }
 

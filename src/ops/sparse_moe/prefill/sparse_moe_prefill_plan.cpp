@@ -37,9 +37,8 @@ constexpr BoardFrontier kQ4GroupwiseFrontiers[] = {
 std::int32_t q4_groupwise_frontier() noexcept {
     std::int32_t frontier = kSparseMoePrefillQ4Q5Min;
     try {
-        const BoardFrontier* f =
-            nearest_measured(std::span(kQ4GroupwiseFrontiers), board_of(device_class()),
-                             measured::kCarryDistance);
+        const BoardFrontier* f = nearest_known_measured(
+            std::span(kQ4GroupwiseFrontiers), board_of(device_class()), measured::kCarryDistance);
         if (f != nullptr) frontier = f->min_tokens;
     } catch (...) {}
     return frontier;

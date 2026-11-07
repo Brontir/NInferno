@@ -985,8 +985,8 @@ MoePlan heuristic_r8(const MoeWeights& w, const Geometry& g, MoePlan p, std::int
 } // namespace
 
 std::optional<A8Route> a8_default_route() {
-    const ClassA8Route* entry = nearest_measured(std::span(kA8Routes), board_of(device_class()),
-                                                 measured::kCarryDistance);
+    const ClassA8Route* entry = nearest_known_measured(
+        std::span(kA8Routes), board_of(device_class()), measured::kCarryDistance);
     return entry != nullptr ? entry->route : kFallbackA8Route;
 }
 
