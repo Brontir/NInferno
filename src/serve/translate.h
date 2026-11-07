@@ -18,7 +18,11 @@ using MediaAcquirer = std::function<ninferno::OwnedMedia(const ContentPart&)>;
 struct ResolvedPromptSemantics {
     std::optional<bool> enable_thinking;
     std::optional<ninferno::ReasoningEffort> reasoning_effort;
-    std::optional<bool> preserve_thinking;
+    std::optional<bool> preserve_thinking; // the request's or the server's, as stored and logged
+    // Preservation unset, thinking off, no reasoning in the history: the template renders
+    // preserved (#463, resolve_prompt_semantics). Only the prompt reads it: a stored response
+    // keeps the unset value, so a later turn that thinks does not inherit it.
+    bool preserve_for_reuse = false;
     std::string chat_template_kwargs_json;
     // The server reads images: a PDF page without a text layer reaches the model as one.
     bool vision = false;
