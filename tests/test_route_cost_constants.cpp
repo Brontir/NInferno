@@ -2,12 +2,16 @@
 // one descriptor, kRouteCostConstants: every entry has a unique name, a provenance and values in
 // the range of its kind (a fraction in (0, 1], every other kind positive and finite). `--list`
 // prints them, the fitted ones first: the numbers the model still takes from route_tune timings
-// instead of deriving them. No GPU.
+// instead of deriving them. The header's own text is read too: every constant it defines must be
+// in the descriptor, so a new one cannot bypass the checks by being left out. No GPU.
 
 #include "ops/generic/route_cost_constants.h"
 
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
+#include <regex>
 #include <set>
 #include <string>
 #include <string_view>
@@ -28,6 +32,21 @@ const char* provenance_name(rc::Provenance p) {
     return "?";
 }
 
+// The constants the header defines (`inline constexpr Scalar kX{...}` or `Constant<N> kX{...}`).
+std::size_t defined_constants() {
+    const std::filesystem::path header =
+        std::filesystem::path(NINFERNO_SOURCE_DIR) / "src/ops/generic/route_cost_constants.h";
+    std::ifstream in(header);
+    if (!in) {
+        std::fprintf(stderr, "cannot read %s\n", header.string().c_str());
+        return 0;
+    }
+    const std::regex definition(R"(^inline constexpr (Scalar|Constant<\d+>) k\w+)");
+    std::size_t count = 0;
+    for (std::string line; std::getline(in, line);) count += std::regex_search(line, definition);
+    return count;
+}
+
 bool in_range(rc::Kind kind, double v) {
     if (!std::isfinite(v) || v <= 0.0) return false;
     return kind != rc::Kind::Fraction || v <= 1.0;
@@ -37,6 +56,12 @@ bool in_range(rc::Kind kind, double v) {
 
 int main(int argc, char** argv) {
     int failures = 0;
+    const std::size_t defined = defined_constants();
+    if (defined != std::size(rc::kRouteCostConstants)) {
+        std::fprintf(stderr, "the header defines %zu constants, kRouteCostConstants lists %zu\n",
+                     defined, std::size(rc::kRouteCostConstants));
+        ++failures;
+    }
     std::set<std::string_view> names;
     std::size_t fitted = 0;
     for (const auto& c : rc::kRouteCostConstants) {
