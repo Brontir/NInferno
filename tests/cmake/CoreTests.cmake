@@ -36,6 +36,11 @@ ninferno_add_test(ninferno_gate_atlas_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_gate_atlas.cpp"
   LIBRARIES ninferno_core)
 
+# The route cost model's constants, each tagged fact / counted / fitted
+# (ops/generic/route_cost_constants.h); `--list` prints them. No GPU.
+ninferno_add_test(ninferno_route_cost_constants_test
+  SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_route_cost_constants.cpp")
+
 ninferno_add_test(ninferno_decode_graph_test SOURCES "${CMAKE_CURRENT_LIST_DIR}/../test_decode_graph.cpp"
   LIBRARIES ninferno_core)
 

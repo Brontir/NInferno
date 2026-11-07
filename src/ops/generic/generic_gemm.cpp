@@ -12,6 +12,7 @@
 #include "ops/common/route_probe.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_select_internal.h"
+#include "ops/generic/route_cost_constants.h"
 #include "ops/generic/generic_ggml_internal.h"
 #include "ops/generic/generic_schedules.h"
 #include "ops/generic/ggml_mmq/ggml_mmq.h"
@@ -230,20 +231,35 @@ bool allows_w4a4(const Weight& w, LinearPolicy policy) {
 // for them (A16 where no divisor lets W4A4 run, as before), W4A8 the one of those whose policy
 // allows eight bits only (a W4A16 checkpoint under --activations int8). The weight-less
 // nvfp4_prefill_a8_policy and the workspace query decide the same.
-bool allows_w4a8(const Weight& w, LinearPolicy policy) {
-    return allows_a8(policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
-           aligned_to(w.qdata, 16) &&
+// The policy part, which w4a8_refusal names Policy.
+bool w4a8_policy_allows(const Weight& w, LinearPolicy policy) {
+    return allows_a8(policy) &&
            (w.qtype != QType::NVFP4 || nvfp4_prefill_a8_policy(w.qtype, policy));
+}
+
+bool allows_w4a8(const Weight& w, LinearPolicy policy) {
+    return w4a8_policy_allows(w, policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
+           aligned_to(w.qdata, 16);
 }
 
 // I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
 // one 16-byte copy per row), 16-byte code and scale planes.
-bool allows_i8(const Weight& w, LinearPolicy policy) {
-    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16,
-               q6 = w.qtype == QType::Q6_G64_FP16;
-    return allows_a8(policy) && (q4 || q5 || q6) && (w.k % 512) == 0 &&
-           (w.padded_shape[1] % 512) == 0 && aligned_to(w.qdata, 16) && aligned_to(w.scales, 16) &&
+// Its parts, which i8_refusal names Format, Alignment and Extent.
+bool i8_format(QType qtype) {
+    return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
+           qtype == QType::Q6_G64_FP16;
+}
+
+bool i8_planes_aligned(const Weight& w) {
+    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16;
+    return aligned_to(w.qdata, 16) && aligned_to(w.scales, 16) &&
            (q4 || aligned_to(w.qhigh, q5 ? 8 : 16));
+}
+
+bool i8_extent(const Weight& w) { return (w.k % 512) == 0 && (w.padded_shape[1] % 512) == 0; }
+
+bool allows_i8(const Weight& w, LinearPolicy policy) {
+    return allows_a8(policy) && i8_format(w.qtype) && i8_extent(w) && i8_planes_aligned(w);
 }
 
 // Whether the producer-warp tile can read the weight: its format, and IQ3_XXS's sign plane (read
@@ -2324,10 +2340,7 @@ ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
     const bool producer = w4a8_schedule_info(index).producers > 0;
     if (producer && !w4a8_ws_supports(w.qtype)) return ScheduleRefusal::NotCompiled;
     if (!w4a8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
-    if (!allows_a8(policy) ||
-        (w.qtype == QType::NVFP4 && !nvfp4_prefill_a8_policy(w.qtype, policy))) {
-        return ScheduleRefusal::Policy;
-    }
+    if (!w4a8_policy_allows(w, policy)) return ScheduleRefusal::Policy;
     const Route route{Family::W4a8Mma, static_cast<std::uint8_t>(index)};
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
@@ -2421,9 +2434,7 @@ ScheduleRefusal staged_refusal(int index, const Weight& w) {
 
 ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
     if (index < 0 || index >= i8_schedule_count()) return ScheduleRefusal::NotDeclared;
-    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16,
-               q6 = w.qtype == QType::Q6_G64_FP16;
-    if (!supports(w) || !(q4 || q5 || q6)) return ScheduleRefusal::Format;
+    if (!supports(w) || !i8_format(w.qtype)) return ScheduleRefusal::Format;
     if (!i8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
     if (!allows_a8(policy)) return ScheduleRefusal::Policy;
     const Route route{Family::I8Mma, static_cast<std::uint8_t>(index)};
@@ -2433,11 +2444,10 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
     // A ggml block format's high plane off 16 bytes (generic_refusal; a G64 weight has none), the
     // codes or scales off 16 (one 16-byte copy per row), a Q5 / Q6 high plane off 8 / 16.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
-        !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16) ||
-        (!q4 && !aligned_to(w.qhigh, q5 ? 8 : 16))) {
+        !i8_planes_aligned(w)) {
         return ScheduleRefusal::Alignment;
     }
-    if ((w.k % 512) != 0 || (w.padded_shape[1] % 512) != 0) return ScheduleRefusal::Extent;
+    if (!i8_extent(w)) return ScheduleRefusal::Extent;
     return ScheduleRefusal::None;
 }
 
@@ -2653,8 +2663,8 @@ int i8_schedule_count() { return static_cast<int>(std::size(kI8Schedules)); }
 
 // Each I8 tile's fraction of the int8 peak at a full grid (stage-1 probe, RTX 3090, 4090 and
 // 5070 Ti, 27B shapes): 256x128 0.53, 128x128 0.46, 128x64 0.42.
-constexpr double kI8Eff[] = {0.53, 0.46, 0.42};
-static_assert(std::size(kI8Eff) == std::size(kI8Schedules));
+constexpr auto kI8Eff = route_cost::kI8Efficiency;
+static_assert(kI8Eff.values.size() == std::size(kI8Schedules));
 bool i8_fits(int schedule, QType qtype) {
     // The high plane takes 0 / 8 / 16 bytes a group and weight row in every stage; a tile runs
     // three stages where four do not fit (generic_i8.cu kI8Stages).
@@ -2845,10 +2855,13 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
     const double max_cta = std::max(d.max_blocks_per_sm, 1);
     const double smem_sm = static_cast<double>(d.smem_per_sm);
     const auto cdiv      = [](double a, double b) { return std::ceil(a / b); };
-    const auto quant     = [&](double cols) { return 1.7e-6 + cols * k * 4.3 / bw; };
+    const auto quant     = [&](double cols) {
+        return route_cost::kQuantLaunchSeconds.value() +
+               cols * k * route_cost::kQuantBytesPerValue.value() / bw;
+    };
     // Fraction of the int8 peak by kW4a8Schedules index: 32x128, 64x128, 128x128, 128x64, 64x64,
     // 128x64 with producer warps.
-    constexpr double kW4a8Eff[6] = {0.31, 0.28, 0.24, 0.47, 0.37, 0.98};
+    constexpr auto kW4a8Eff = route_cost::kW4a8Efficiency;
     if (allows_w4a8(weight, problem.policy)) {
         for (int i = 0; i < w4a8_schedule_count(); ++i) {
             const auto s         = w4a8_schedule_info(i);
@@ -2858,7 +2871,8 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double rows_o  = tile.out_rows;
             const double threads =
                 s.producers > 0 ? 384.0 : rows_w == 64.0 && cols == 64.0 ? 128.0 : 256.0;
-            const double smem    = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) * 160.0;
+            const double smem = (s.producers > 0 ? 3.0 : 2.0) * (rows_w + cols) *
+                                route_cost::kW4a8StageBytesPerRow.value();
             const double occ     = std::max(
                 1.0, std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / smem)}));
             const double ctas  = cdiv(n, rows_o) * cdiv(t, cols);
@@ -2866,10 +2880,15 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double warps = std::min(1.0, ctas / sms) * std::min(q, occ) * threads / 32;
             const double mem   = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
             const double mma   = q * 2.0 * rows_w * cols * k / peak_sm;
-            const double cap   = s.producers > 0 ? 1690.0 : 1390.0;
-            const double chain = std::ceil(q / occ) * std::ceil(k / 128.0) * cap / clk;
+            const double cap   = s.producers > 0 ? route_cost::kW4a8ProducerStepCycles.value()
+                                                 : route_cost::kW4a8StepCycles.value();
+            const double chain =
+                std::ceil(q / occ) * std::ceil(k / route_cost::kW4a8StepK.value()) * cap / clk;
             const double eff   = kW4a8Eff[std::min(i, 5)] * scale;
-            offer(r, quant(t) + std::max(mem, mma / eff) / std::clamp(warps, 0.05, 1.0) + chain);
+            offer(r, quant(t) +
+                         std::max(mem, mma / eff) /
+                             std::clamp(warps, route_cost::kMinWarpFill.value(), 1.0) +
+                         chain);
         }
     }
     // The I8 tiles (generic_i8.cu): one activation scale per 64 values and the code as the MMA's
@@ -2891,11 +2910,14 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
             const double warps   = std::min(1.0, ctas / sms) * std::min(q, occ) * s.threads / 32;
             const double mem     = std::max(q * rows_o * k * bpw / bw_sm, n * k * bpw / bw);
             const double mma     = q * 2.0 * rows_w * cols * k / peak_sm;
-            const double chain   = std::ceil(q / occ) * std::ceil(k / 64.0) * 250.0 / clk;
+            const double chain = std::ceil(q / occ) * std::ceil(k / route_cost::kI8StageK.value()) *
+                                 route_cost::kI8StageCycles.value() / clk;
             const double eff     = kI8Eff[i] * scale;
-            offer(r,
-                  quant(tp) + std::max(mem, mma / eff) / std::clamp(warps / 8.0, 0.05, 1.0) +
-                      chain);
+            offer(r, quant(tp) +
+                         std::max(mem, mma / eff) /
+                             std::clamp(warps / route_cost::kI8SaturatingWarps.value(),
+                                        route_cost::kMinWarpFill.value(), 1.0) +
+                         chain);
         }
     }
     if (mmq_candidate_measured(d.major, d.minor) && ggml_mmq_format(problem.qtype) &&
@@ -2903,13 +2925,18 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
         const double slices = std::ceil(t / kMmqPrefillSlice);
         const double tt     = std::min<double>(t, kMmqPrefillSlice);
         const double sets   = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
-        const double cols   = std::min(128.0, cdiv(tt, 8.0) * 8.0);
-        const double tiles  = cdiv(n * sets, 128.0) * cdiv(tt, cols);
+        const double rows_t = route_cost::kMmqTileRows.value();
+        const double step   = route_cost::kMmqColumnStep.value();
+        const double cols   = std::min(rows_t, cdiv(tt, step) * step);
+        const double tiles  = cdiv(n * sets, rows_t) * cdiv(tt, cols);
         const double mem    = n * k * bpw / bw;
-        const double mma    = tiles / sms * 2.0 * 128.0 * cols * k / peak_sm;
-        const double chain  = std::max(1.0, tiles * std::ceil(k / 862.0) / sms) * 4075.0 / clk;
+        const double mma    = tiles / sms * 2.0 * rows_t * cols * k / peak_sm;
+        const double chain =
+            std::max(1.0, tiles * std::ceil(k / route_cost::kMmqChainK.value()) / sms) *
+            route_cost::kMmqChainCycles.value() / clk;
         offer(Route{Family::GgmlMmq, 0},
-              slices * (std::max(mem, mma / (0.44 * scale)) + chain + quant(tt) + 18.6e-6));
+              slices * (std::max(mem, mma / (route_cost::kMmqEfficiency.value() * scale)) + chain +
+                        quant(tt) + route_cost::kMmqSliceSeconds.value()));
     }
 }
 
@@ -2929,8 +2956,9 @@ void a8_candidates(const Problem& problem, const Weight& weight, std::int32_t to
 // ninferno_route_tune's timings of seven boards (each tile in the engine, L2 flushed; BF16, Q4
 // and Q8, T >= 17), the constants refit with the board held out: 1.095 of the best (geomean;
 // RTX 4090 1.083, RTX 5090 1.068) against 1.110 for the F-lite rule (heuristic_rmma) and 1.137
-// without the chain and reduction terms; the optimum of every constant is flat (200 and 500
-// cycles: 100..300 and 250..1000 cost under 0.2 %). nullopt where the facts have no roofline.
+// without the chain and reduction terms; the optimum of every constant is flat (the register-MMA
+// step's and the pipeline stage's cycles, route_cost_constants.h, at 0.5..1.5x and 0.5..2x of
+// their fit cost under 0.2 %). nullopt where the facts have no roofline.
 // price_routes hands `take` every admitted route it prices with its time (the A16 scale applied);
 // false where the facts have no roofline (nothing priced).
 template <class Take>
@@ -2980,15 +3008,24 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         // cycles) or of a pipeline stage (64 K, 500 cycles: the barrier and the cp.async wait).
         const double rounds = std::ceil(q / std::max(occ, 1.0));
         if (pipelined) {
-            const double chain = rounds * std::ceil(kc / 64.0) * 500.0 / clk;
-            return std::max(mem, mma / eff) / std::clamp(warps / 4.0, 0.05, 1.0) + chain;
+            const double chain = rounds * std::ceil(kc / route_cost::kPipelinedStageK.value()) *
+                                 route_cost::kPipelinedStageCycles.value() / clk;
+            return std::max(mem, mma / eff) /
+                       std::clamp(warps / route_cost::kPipelinedSaturatingWarps.value(),
+                                  route_cost::kMinWarpFill.value(), 1.0) +
+                   chain;
         }
         // K split over a cluster (30 cycles per FP32 element) and over the CTA's K warps (2.75
         // cycles per element and extra warp, through shared memory).
-        const double reduce = q * (cluster - 1) * rows * sets * cols * 30.0 / clk +
-                              rounds * (warps_k - 1.0) * rows * sets * cols * 2.75 / clk;
-        const double chain  = rounds * std::ceil(kc / (16.0 * warps_k)) * 150.0 / clk;
-        return (mem + mma + reduce) / std::clamp(warps / 11.0, 0.05, 1.0) + chain;
+        const double reduce = q * (cluster - 1) * rows * sets * cols *
+                                  route_cost::kClusterReduceCycles.value() / clk +
+                              rounds * (warps_k - 1.0) * rows * sets * cols *
+                                  route_cost::kWarpReduceCycles.value() / clk;
+        const double chain = rounds * std::ceil(kc / (route_cost::kRmmaStepK.value() * warps_k)) *
+                             route_cost::kRmmaStepCycles.value() / clk;
+        return (mem + mma + reduce) / std::clamp(warps / route_cost::kRmmaSaturatingWarps.value(),
+                                                 route_cost::kMinWarpFill.value(), 1.0) +
+               chain;
     };
     // The A16 model reads 11 % slow against the A8 one (fitted with it, 0.81..0.89 with any board
     // held out); on the minor-0 row (A100) it reads 39 % fast (one board); a constant factor leaves
@@ -3019,15 +3056,18 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     a8_candidates(problem, weight, tokens, d, offer);
     if (emulated) return true;
     const auto pipelined_occ = [&](double threads, double stages, double rows, double cols) {
-        const double tile = std::min(stages * (rows + cols) * 128.0, 99.0 * 1024.0);
+        const double tile =
+            std::min(stages * (rows + cols) * route_cost::kPipelinedStageBytesPerRow.value(),
+                     route_cost::kMaxTileSharedBytes.value());
         return std::min({std::floor(max_thr / threads), max_cta, std::floor(smem_sm / tile)});
     };
     for (int i = 0; i < tiled_schedule_count(); ++i) {
         const auto s = tiled_schedule_info(i);
         const Route r{Family::TiledMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
-        offer(r, cost(tile.out_rows, tile.tokens, 256, 1,
-                      pipelined_occ(256, 3, s.block_n, s.block_m), 1.0, true, 0.8));
+        offer(r,
+              cost(tile.out_rows, tile.tokens, 256, 1, pipelined_occ(256, 3, s.block_n, s.block_m),
+                   1.0, true, route_cost::kTiledTensorFraction.value()));
     }
     for (int i = 0; i < staged_schedule_count(); ++i) {
         const auto s         = staged_schedule_info(i);
@@ -3035,7 +3075,8 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
         const Route r{Family::StagedMma, static_cast<std::uint8_t>(i)};
         const auto tile = *route_tile(r, problem.epilogue, tokens);
         offer(r, cost(tile.out_rows, tile.tokens, threads, 1,
-                      pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true, 0.9));
+                      pipelined_occ(threads, s.stages, s.rows, s.tokens), 1.0, true,
+                      route_cost::kStagedTensorFraction.value()));
     }
     return true;
 }
@@ -3557,37 +3598,58 @@ std::uint64_t route_demotion_count() noexcept {
     return route_demotions.load(std::memory_order_relaxed);
 }
 
-std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
-    if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
-    if (route.family == Family::I8Mma) {
+// The quantized activation's planes a route reads from the caller's workspace, in bytes and in
+// the order run_route allocates them (each 256-aligned): the codes, the scales and the sums (W4A4
+// has no sums plane: 0). One description for both, so the workspace a query sizes is the one the
+// launch takes. I8 pads tokens (i8_padded_tokens) and groups K by 64; W4A8 reads rows of whole
+// tiles (w4a8_ld), R8's verify rows of K, both in blocks of 32; W4A4 two codes a byte and one
+// scale per 16 values.
+namespace {
+struct ActivationPlanes {
+    std::size_t codes = 0, scales = 0, sums = 0;
+};
+
+ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tokens) {
+    switch (route.family) {
+    case Family::I8Mma: {
         const auto t      = static_cast<std::size_t>(i8_padded_tokens(tokens));
         const auto groups = static_cast<std::size_t>(k / 64);
-        WorkspaceLayoutBuilder layout;
-        (void)layout.alloc_bytes(t * static_cast<std::size_t>(k), 256);
-        (void)layout.alloc_bytes(t * groups * sizeof(float), 256);
-        (void)layout.alloc_bytes(t * groups * sizeof(int), 256);
-        return layout.peak_bytes(1);
+        return {t * static_cast<std::size_t>(k), t * groups * sizeof(float),
+                t * groups * sizeof(int)};
     }
+    case Family::W4a8Mma:
+    case Family::R8Mma: {
+        const std::int32_t ld = route.family == Family::W4a8Mma ? w4a8_ld(k) : k;
+        const auto t          = static_cast<std::size_t>(tokens);
+        const auto blocks     = static_cast<std::size_t>(ld / 32);
+        return {t * static_cast<std::size_t>(ld), t * blocks * sizeof(float),
+                t * blocks * sizeof(float)};
+    }
+    case Family::W4a4Mma: {
+        const auto t = static_cast<std::size_t>(tokens);
+        return {t * static_cast<std::size_t>(k / 2), t * static_cast<std::size_t>(k / 16), 0};
+    }
+    default:
+        return {};
+    }
+}
+} // namespace
+
+std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
+    if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
     // R8 at verify widths reads the W4A8 planes (run_route's r8_pre: every r8_verify_compiled
     // format, whichever device routes to it).
     const bool r8_verify =
         route.family == Family::R8Mma && tokens >= 2 && tokens <= kR8VerifyTokens;
-    if (route.family == Family::W4a8Mma || r8_verify) {
-        // R8 reads rows of K, W4A8 of whole tiles (w4a8_ld).
-        const std::int32_t ld = route.family == Family::W4a8Mma ? w4a8_ld(k) : k;
-        const auto t          = static_cast<std::size_t>(tokens);
-        const auto blocks     = static_cast<std::size_t>(ld / 32);
-        WorkspaceLayoutBuilder layout;
-        (void)layout.alloc_bytes(t * static_cast<std::size_t>(ld), 256);
-        (void)layout.alloc_bytes(t * blocks * sizeof(float), 256);
-        (void)layout.alloc_bytes(t * blocks * sizeof(float), 256);
-        return layout.peak_bytes(1);
+    if (route.family != Family::I8Mma && route.family != Family::W4a8Mma &&
+        route.family != Family::W4a4Mma && !r8_verify) {
+        return 0;
     }
-    if (route.family != Family::W4a4Mma) return 0;
+    const ActivationPlanes planes = activation_planes(route, k, tokens);
     WorkspaceLayoutBuilder layout;
-    (void)layout.alloc_bytes(static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k / 2), 256);
-    (void)layout.alloc_bytes(static_cast<std::size_t>(tokens) * static_cast<std::size_t>(k / 16),
-                             256);
+    (void)layout.alloc_bytes(planes.codes, 256);
+    (void)layout.alloc_bytes(planes.scales, 256);
+    if (planes.sums > 0) (void)layout.alloc_bytes(planes.sums, 256);
     return layout.peak_bytes(1);
 }
 
@@ -3782,27 +3844,31 @@ bool spread_by_board(const DeviceClass& d) {
 }
 
 // The current device's gates, once per ordinal: a process may drive boards of different classes
-// (an RTX 5090 beside a 4090), and each launch takes its own device's.
+// (an RTX 5090 beside a 4090), and each launch takes its own device's. Through PerDevice, so a
+// substituted DeviceClass (ScopedDeviceClass: the selector goldens, route_query) reads its own
+// board's gates, not the ones the host's GPU cached first. A device whose class cannot be read
+// throws and is asked again next time (caching "none" would turn PDL and the spread off for the
+// process on one transient failure).
 struct DeviceGates {
     bool spread = false; // spread_smem measured faster on the nearest measured board
     bool pdl    = false; // programmatic dependent launch (pdl_prefetch)
 };
 
 const DeviceGates& device_gates() {
-    constexpr int kOrdinals = 64;
-    static std::array<std::once_flag, kOrdinals> once;
-    static std::array<DeviceGates, kOrdinals> gates;
+    static PerDevice<DeviceGates> gates;
     static const DeviceGates none{};
-    int device = 0;
-    if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kOrdinals) return none;
-    const auto slot = static_cast<std::size_t>(device);
-    // A device whose class cannot be read throws (call_once then stays open): caching "none"
-    // would turn PDL and the spread off for the process on one transient failure.
-    std::call_once(once[slot], [&] {
-        const DeviceClass& d = device_class(device);
-        gates[slot]          = {spread_by_board(d), d.features.pdl};
+    // No current device (a host-only process without a substitute): no gates, as before.
+    if (substituted_device_class_key() == nullptr) {
+        int device = 0;
+        if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) {
+            (void)cudaGetLastError();
+            return none;
+        }
+    }
+    return gates.get([](int) {
+        const DeviceClass& d = device_class();
+        return DeviceGates{spread_by_board(d), d.features.pdl};
     });
-    return gates[slot];
 }
 
 bool spread_measured() { return device_gates().spread; }
@@ -4438,10 +4504,9 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             throw std::invalid_argument("generic W4A4 requires caller workspace");
         }
         auto scope         = workspace->scope();
-        const auto tokens  = static_cast<std::size_t>(args.tokens);
-        const auto k       = static_cast<std::size_t>(args.k);
-        const DeviceSpan c = workspace->alloc_bytes(tokens * (k / 2), 256);
-        const DeviceSpan s = workspace->alloc_bytes(tokens * (k / 16), 256);
+        const auto planes  = activation_planes(route, args.k, args.tokens);
+        const DeviceSpan c = workspace->alloc_bytes(planes.codes, 256);
+        const DeviceSpan s = workspace->alloc_bytes(planes.scales, 256);
         launch_w4a4(route.schedule, call.epilogue, args, w.input_scale_divisor,
                     static_cast<std::uint8_t*>(c.data), static_cast<std::uint8_t*>(s.data),
                     stream);
@@ -4453,12 +4518,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             throw std::invalid_argument("generic W4A8 requires caller workspace");
         }
         auto scope          = workspace->scope();
-        const auto tokens   = static_cast<std::size_t>(args.tokens);
-        const auto ld       = static_cast<std::size_t>(w4a8_ld(args.k));
-        const auto blocks   = ld / 32;
-        const DeviceSpan c  = workspace->alloc_bytes(tokens * ld, 256);
-        const DeviceSpan sc = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
-        const DeviceSpan su = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
+        const auto planes   = activation_planes(route, args.k, args.tokens);
+        const DeviceSpan c  = workspace->alloc_bytes(planes.codes, 256);
+        const DeviceSpan sc = workspace->alloc_bytes(planes.scales, 256);
+        const DeviceSpan su = workspace->alloc_bytes(planes.sums, 256);
         launch_w4a8(route.schedule, codec, call.epilogue, args, static_cast<std::int8_t*>(c.data),
                     static_cast<float*>(sc.data), static_cast<float*>(su.data), kW4a8TokenMajor,
                     stream);
@@ -4469,11 +4532,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
             throw std::invalid_argument("generic I8 requires caller workspace");
         }
         auto scope          = workspace->scope();
-        const auto tokens   = static_cast<std::size_t>(i8_padded_tokens(args.tokens));
-        const auto k        = static_cast<std::size_t>(args.k);
-        const DeviceSpan c  = workspace->alloc_bytes(tokens * k, 256);
-        const DeviceSpan sc = workspace->alloc_bytes(tokens * (k / 64) * sizeof(float), 256);
-        const DeviceSpan su = workspace->alloc_bytes(tokens * (k / 64) * sizeof(int), 256);
+        const auto planes   = activation_planes(route, args.k, args.tokens);
+        const DeviceSpan c  = workspace->alloc_bytes(planes.codes, 256);
+        const DeviceSpan sc = workspace->alloc_bytes(planes.scales, 256);
+        const DeviceSpan su = workspace->alloc_bytes(planes.sums, 256);
         launch_i8(route.schedule, i8_bits(w.qtype), call.epilogue, args,
                   static_cast<std::int8_t*>(c.data),
                   static_cast<float*>(sc.data), static_cast<int*>(su.data), stream);
@@ -4482,11 +4544,10 @@ void run_route(Route route, const Call& ordered, WorkspaceArena* workspace, cuda
     case Family::R8Mma:
         if (r8_pre) {
             auto scope          = workspace->scope();
-            const auto tokens   = static_cast<std::size_t>(args.tokens);
-            const auto blocks   = static_cast<std::size_t>(args.k / 32);
-            const DeviceSpan c  = workspace->alloc_bytes(tokens * static_cast<std::size_t>(args.k), 256);
-            const DeviceSpan sc = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
-            const DeviceSpan su = workspace->alloc_bytes(tokens * blocks * sizeof(float), 256);
+            const auto planes   = activation_planes(route, args.k, args.tokens);
+            const DeviceSpan c  = workspace->alloc_bytes(planes.codes, 256);
+            const DeviceSpan sc = workspace->alloc_bytes(planes.scales, 256);
+            const DeviceSpan su = workspace->alloc_bytes(planes.sums, 256);
             auto* codes  = static_cast<std::int8_t*>(c.data);
             auto* scales = static_cast<float*>(sc.data);
             auto* sums   = static_cast<float*>(su.data);
