@@ -880,6 +880,8 @@ public:
             }
             if (result.status == ContextTransactionStatus::Published) {
                 result.active_summary = capture_summary;
+                result.capacity_preparation_committed =
+                    pending_capture_publish_shared_ && pending_capture_replaces_shared_;
                 if (pending_capture_publish_shared_) {
                     FakeSharedPrefixHandle handle;
                     handle.id          = next_shared_id_++;
@@ -1069,16 +1071,19 @@ public:
             return ContextTransactionReserveStatus::Aborted;
         }
         pending_plan_.reset();
-        pending_capture_publish_shared_ = false;
-        transaction_kind_               = TransactionKind::Capture;
+        pending_capture_publish_shared_  = false;
+        pending_capture_replaces_shared_ = false;
+        transaction_kind_                = TransactionKind::Capture;
         advance_revision();
         return ContextTransactionReserveStatus::Reserved;
     }
 
     [[nodiscard]] ContextTransactionReserveStatus reserve_active_capture_with_pressure(
-        FakeCaptureOffer&&, const FakeSharedPrefixHandle*, const FakeSharedPrefixHandle*,
-        std::optional<CheckpointRef>, bool publish_shared, std::uint32_t waiting_admissions,
-        FakeResourcePlan&& pressure, CancellationFlagView cancellation) {
+        FakeCaptureOffer&&, const FakeSharedPrefixHandle*,
+        const FakeSharedPrefixHandle* replacement, std::optional<CheckpointRef>,
+        bool publish_shared, std::uint32_t waiting_admissions, FakeResourcePlan&& pressure,
+        CancellationFlagView cancellation) {
+        pending_capture_replaces_shared_ = replacement != nullptr;
         pressured_capture_waiting = waiting_admissions;
         if (cancellation.requested() || abort_capture_start || pressure.revision != revision_) {
             return ContextTransactionReserveStatus::Aborted;
@@ -1223,6 +1228,7 @@ private:
     std::optional<FakeResourcePlan> pending_plan_;
     std::unique_ptr<FakeAdmissionCandidate> capture_pressure_candidate_;
     bool pending_capture_publish_shared_ = false;
+    bool pending_capture_replaces_shared_ = false;
 };
 
 FakePressurePlanningSession::FakePressurePlanningSession(
