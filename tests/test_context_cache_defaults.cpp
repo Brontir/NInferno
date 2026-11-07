@@ -43,6 +43,18 @@ int main() {
                   "default shared-prefix catalog capacity did not cover active concurrency");
     }
 
+    // The default count covers every cached StateImage (Device beyond the active ones, and Host):
+    // the descriptors never bind before the states and KV a prefix needs do (#462).
+    for (const std::uint32_t concurrency : {1U, 4U}) {
+        EngineOptions options;
+        options.max_concurrency                 = concurrency;
+        options.context_cache.host_state_slots  = 40;
+        options.context_cache.device_state_slots = 3;
+        const EngineOptions normalized          = normalize_engine_options(options);
+        failures += check(*normalized.context_cache.max_shared_prefixes >= 43U,
+                          "default shared-prefix capacity is below the cached StateImages");
+    }
+
     // An explicit override is still respected verbatim, including a deliberately small value.
     {
         EngineOptions options;
