@@ -334,14 +334,21 @@ HostPinLock::HostPinLock() {
         if (!std::filesystem::is_directory(dir, error)) { continue; }
         const std::string path = (dir / "ninferno-host-pin.lock").string();
         // Every user may take it (0666). A file another user created in a sticky directory under
-        // fs.protected_regular refuses O_CREAT: read-only is enough for flock.
-        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC, 0666);
-        if (fd >= 0) {
-            (void)::fchmod(fd, 0666);
-        } else {
-            fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+        // fs.protected_regular refuses O_CREAT: read-only is enough for flock. Never through a
+        // symlink (O_NOFOLLOW), and only a plain file of one link is taken; its mode is set only
+        // where this process owns it, so a path another user planted cannot make this process
+        // change the mode of a file of theirs or a victim's.
+        fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0666);
+        if (fd < 0) { fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW); }
+        if (fd < 0) { continue; }
+        struct stat st{};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
+            ::close(fd);
+            fd = -1;
+            continue;
         }
-        if (fd >= 0) { break; }
+        if (st.st_uid == ::geteuid()) { (void)::fchmod(fd, 0666); }
+        break;
     }
     if (fd < 0) { return; }
     // At most kHostPinLockWaitSeconds: a holder stopped or hung inside its pin must not stall
