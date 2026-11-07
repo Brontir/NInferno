@@ -1061,9 +1061,8 @@ int banned_only_support_contract() {
         for (const int token : result.tokens) {
             if (token == 7919 || token == 200003) continue;
             std::cerr << "banned-only support T=" << temperature << ": picked " << token
-                      << ", which the constraint does not allow
-                         ";
-                ++failures;
+                      << ", which the constraint does not allow\n";
+            ++failures;
             break;
         }
     }
