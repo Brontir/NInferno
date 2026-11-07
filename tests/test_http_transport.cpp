@@ -456,6 +456,64 @@ int test_error_connection_reuse() {
     listener.join();
     return failures;
 }
+
+// Request smuggling: a request whose body framing is ambiguous (two Content-Length fields, a list
+// value "5, 5", a Content-Length beside Transfer-Encoding) is refused with 400 and its connection
+// closed, so its body and the bytes after it are never read as further requests. A regression
+// guard across cpp-httplib updates: v0.54.1 and v0.65.0 both refuse all three.
+int test_ambiguous_framing_is_refused(const std::string& framing, const std::string& body,
+                                      const char* label) {
+    httplib::Server server;
+    server.set_read_timeout(3, 0);
+    std::atomic<bool> smuggled{false};
+    server.Post("/echo", [](const httplib::Request& request, httplib::Response& response) {
+        response.set_content(request.body, "text/plain");
+    });
+    server.Get("/smuggled", [&](const httplib::Request&, httplib::Response& response) {
+        smuggled = true;
+        response.set_content("smuggled", "text/plain");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    if (port <= 0) { return check(false, "test HTTP server could not bind"); }
+    std::thread listener([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
+
+    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in address{};
+    address.sin_family      = AF_INET;
+    address.sin_port        = htons(static_cast<std::uint16_t>(port));
+    address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    timeval timeout{3, 0};
+    int failures = 0;
+    if (fd < 0 || ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) != 0 ||
+        ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+        failures += check(false, "test HTTP client could not connect");
+    } else {
+        const std::string request = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\n" + framing +
+                                    "\r\n" + body +
+                                    "GET /smuggled HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n";
+        const bool sent = ::send(fd, request.data(), request.size(), 0) ==
+                          static_cast<ssize_t>(request.size());
+        std::string received;
+        char buffer[512];
+        for (;;) {
+            const ssize_t got = ::recv(fd, buffer, sizeof(buffer), 0);
+            if (got <= 0) { break; }
+            received.append(buffer, static_cast<std::size_t>(got));
+        }
+        const std::string first = received.substr(0, received.find("\r\n"));
+        if (!sent || first.find(" 400 ") == std::string::npos) {
+            std::cerr << label << ": first response \"" << first << "\"\n";
+            failures += check(false, "ambiguous request framing was not refused with 400");
+        }
+        failures += check(!smuggled && received.find("smuggled") == std::string::npos,
+                          "the bytes after a refused request were served as a second request");
+    }
+    if (fd >= 0) { ::close(fd); }
+    server.stop();
+    listener.join();
+    return failures;
+}
 #endif
 
 // /health reports a stalled executor. Busy without progress for the threshold is a stall;
@@ -498,6 +556,13 @@ int main() {
     failures += test_worker_plan_answers_every_connection();
     failures += test_successor_binds_over_time_wait();
     failures += test_error_connection_reuse();
+    failures += test_ambiguous_framing_is_refused("Content-Length: 5\r\nContent-Length: 6\r\n",
+                                                  "hello", "two Content-Length fields");
+    failures += test_ambiguous_framing_is_refused("Content-Length: 5, 5\r\n", "hello",
+                                                  "a Content-Length list");
+    failures += test_ambiguous_framing_is_refused(
+        "Content-Length: 5\r\nTransfer-Encoding: chunked\r\n", "0\r\n\r\n",
+        "Content-Length beside Transfer-Encoding");
 #endif
     if (failures == 0) { std::cout << "ok\n"; }
     return failures == 0 ? 0 : 1;
