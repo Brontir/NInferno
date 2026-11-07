@@ -2161,6 +2161,7 @@ int main(int argc, char** argv) {
                 big.label += " large E8M0 scales";
                 big.mx_shift = 7;
                 failures += check_w4a8(big, 114U, {17, 70});
+                failures += check_speed_w4a8(big, 115U); // Volta: the HMMA stages themselves
                 Case q;
                 q.label          = "qwen3.6-35b-a3b-like q4_k/q6_k E256 k8";
                 q.experts        = 256;
