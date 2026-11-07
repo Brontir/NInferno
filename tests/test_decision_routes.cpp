@@ -201,6 +201,8 @@ int main() {
               (!moved_line || (fa.manifest != fb.manifest && fa.routes != fb.routes)),
           "a moved route moves the manifest, not the fingerprint");
     if (device_class().features.mma_tensor) check(moved_line, "the table moved a line");
+    check(moved_line || (fa.manifest == fb.manifest && fa.routes == fb.routes),
+          "a table that moved no line moved the manifest");
 
     // Refused: a line that does not parse, or not in its canonical form.
     for (const std::string key :
