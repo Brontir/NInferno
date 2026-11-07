@@ -101,13 +101,6 @@ read_host_memory(const std::filesystem::path& meminfo      = "/proc/meminfo",
 // available memory is within the headroom.
 [[nodiscard]] std::uint64_t pinned_host_limit(const HostMemory& memory) noexcept;
 
-// What an automatic Host tier may count on (#480): pinned_host_limit, within the free pages above
-// the watermarks (HostMemory::free_above_watermark_bytes). The pin is served from free pages and
-// reclaims only part of the page cache MemAvailable counts (how much depends on the kernel and
-// the NUMA layout), so a tier nobody asked for by size must not rest on that cache. An explicit
-// tier is judged by pinned_host_limit and by the pin itself.
-[[nodiscard]] std::uint64_t pinned_host_free_limit(const HostMemory& memory) noexcept;
-
 // Throws std::runtime_error, with every number, when `pinned_bytes` exceed pinned_host_limit.
 // `what` names the pinned buffers (and how they add up); `remedy` says how to ask for fewer.
 void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memory,
@@ -135,7 +128,7 @@ struct HostTierFit {
 // loses between the choice and the pinning). An explicit Host tier may take the whole limit.
 inline constexpr double kAutomaticHostTierShare = 0.5;
 
-// The pinning budget of an automatic Host tier: kAutomaticHostTierShare of pinned_host_free_limit,
+// The pinning budget of an automatic Host tier: kAutomaticHostTierShare of pinned_host_limit,
 // shared by the host's GPUs (#473). A host of G GPUs commonly runs one server per GPU, started
 // together; taking half of what is left each, they pinned nearly the whole limit and left their
 // own unpinned memory (weights staging, the CUDA context: ~2-3 GiB each) the headroom alone, and

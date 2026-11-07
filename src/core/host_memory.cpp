@@ -378,12 +378,6 @@ std::uint64_t pinned_host_limit(const HostMemory& memory) noexcept {
     return std::min(available, pinned_host_cap(memory));
 }
 
-std::uint64_t pinned_host_free_limit(const HostMemory& memory) noexcept {
-    const std::uint64_t limit = pinned_host_limit(memory);
-    return memory.free_above_watermark_bytes ? std::min(limit, *memory.free_above_watermark_bytes)
-                                             : limit;
-}
-
 namespace {
 
 // "MemAvailable 20.00 GiB of MemTotal 30.00 GiB", within the memory cgroup when one lowers either.
@@ -445,8 +439,7 @@ std::string pin_refusal_hint() {
 std::uint64_t automatic_host_tier_budget(const HostMemory& memory, int host_gpus) noexcept {
     const long double share =
         static_cast<long double>(kAutomaticHostTierShare) / std::max(1, host_gpus);
-    return static_cast<std::uint64_t>(static_cast<long double>(pinned_host_free_limit(memory)) *
-                                      share);
+    return static_cast<std::uint64_t>(static_cast<long double>(pinned_host_limit(memory)) * share);
 }
 
 HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,

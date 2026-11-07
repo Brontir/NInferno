@@ -80,15 +80,16 @@ Refusals come before any weight is downloaded. Each says what to do instead:
   board's instances counted; `CUDA_VISIBLE_DEVICES` does not change it), so one server per GPU
   started together leaves room for each. Servers on one host pin their tiers one at a time (a lock
   in `/run/lock`, `/dev/shm` or the temporary directory) and each sees what the earlier ones pinned.
-  The startup line names the share. What the host can pin is also bounded by its free pages: the
-  free memory of the NUMA nodes the process may use, above the kernel's watermarks, because pinning
-  (`cudaMallocHost`) is served from free pages and not from the page cache that `MemAvailable`
-  counts. A host whose cache is full (model files just read, a copy, a backup) gets a smaller
-  automatic tier; the kernel may reclaim part of that cache for a pin, so an explicit tier can still be pinned. An explicit `--host-kv-mib` / `--host-state-slots` is not cut by this: the pin is
-  the judge, and if the driver refuses it the error names MemFree and Cached at that moment and how
-  to free the cache (evict the files' pages with `posix_fadvise(DONTNEED)` or `vmtouch -e`, or as
-  root `sync; echo 1 > /proc/sys/vm/drop_caches`). The weights themselves are read with `O_DIRECT`
-  on local disks and leave no page cache. The state count is `max(8, 2 * private continuations)` (an endpoint
+  The startup line names the share. A pin (`cudaMallocHost`) is served from free pages plus what
+  the kernel reclaims of the page cache that `MemAvailable` counts; how much it reclaims depends on
+  the kernel and the NUMA layout (recent kernels reclaim it for the pin; some older hosts refuse a
+  pin far below `MemAvailable` when the cache is full). An automatic tier that the driver refuses
+  is halved until it pins. For an explicit `--host-kv-mib` / `--host-state-slots`, the pin is the
+  judge: if the driver refuses it, the error names MemFree, Cached and the free pages above the
+  kernel's watermarks at that moment, and how to free the cache (evict the files' pages with
+  `posix_fadvise(DONTNEED)` or `vmtouch -e`, or as root `sync; echo 1 > /proc/sys/vm/drop_caches`).
+  The weights themselves are read with `O_DIRECT` on local disks and leave no page cache. The
+  state count is `max(8, 2 * private continuations)` (an endpoint
   and an edit point for each conversation).
 - **Log lines.** The startup log states each choice (`context | ...`, `plan | rung k of N: ...`,
   `capacity | ...`, `context cache | ...`).

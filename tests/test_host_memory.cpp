@@ -192,11 +192,12 @@ void free_pages_checks() {
     host->free_above_watermark_bytes = kGiB / 2;
     check(pinned_host_limit(*host) == by_available,
           "an explicit tier is still judged by MemAvailable");
-    check(pinned_host_free_limit(*host) == kGiB / 2, "the free pages bound the automatic limit");
-    check(automatic_host_tier_budget(*host, 1) == kGiB / 4, "and the automatic budget");
-    host->free_above_watermark_bytes = 500 * kGiB;
-    check(pinned_host_free_limit(*host) == by_available,
-          "plenty of free pages: MemAvailable decides");
+    // The automatic tier stays on MemAvailable: modern kernels reclaim page cache for a pin
+    // (l1080, l4070: 10 / 30 GiB pinned with 1-7 GiB free), and a refused pin halves it (#476).
+    check(automatic_host_tier_budget(*host, 1) ==
+              static_cast<std::uint64_t>(static_cast<long double>(by_available) *
+                                         kAutomaticHostTierShare),
+          "the free pages do not cut the automatic budget");
     // The refusal names the free pages and the page cache.
     host->free_above_watermark_bytes = kGiB;
     std::string message;
