@@ -312,7 +312,10 @@ TokenizerInfo::Impl::Impl(
   std::stack<std::pair<std::string, int32_t>> prefix_stack;
   for (size_t i = 0; i < sorted_decoded_vocab_.size(); ++i) {
     const auto& token = sorted_decoded_vocab_[i].second;
-    while ((!prefix_stack.empty()) && (token.find(prefix_stack.top().first) == std::string::npos)) {
+    // NInferno (xgrammar #1006): a subtree holds the tokens the top is a prefix of, not every
+    // token that contains it (upstream's find() kept "cab" under "ab" and masked it with it).
+    while ((!prefix_stack.empty()) &&
+           (token.compare(0, prefix_stack.top().first.size(), prefix_stack.top().first) != 0)) {
       const auto& top_pair = prefix_stack.top();
       trie_subtree_nodes_range_[top_pair.second] = i;
       prefix_stack.pop();

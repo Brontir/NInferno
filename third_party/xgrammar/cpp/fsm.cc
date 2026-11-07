@@ -1062,11 +1062,17 @@ FSMWithStartEnd FSMWithStartEnd::Plus() const {
 }
 
 FSMWithStartEnd FSMWithStartEnd::Optional() const {
+  // NInferno (xgrammar #1032, an open upstream PR): a fresh accepting start that enters the group
+  // at its head, as Repeat's allow_zero_repetitions does. v0.2.7's epsilon edge from the start to
+  // an existing end left that end's outgoing edges reachable without the head ("(-[a-z]+)?"
+  // admitted "rc"), and a start the group loops back to could skip after input ("(a+b)?"
+  // admitted "a"); the fresh start has no incoming edges.
   FSM fsm = fsm_.Copy();
-  if (!ends_.empty()) {
-    fsm.AddEpsilonEdge(start_, ends_.front());
-  }
-  return FSMWithStartEnd(fsm, start_, ends_);
+  const auto new_start = fsm.AddState();
+  fsm.AddEpsilonEdge(new_start, start_);
+  FSMWithStartEnd result(fsm, new_start, ends_);
+  result.AddEndState(new_start);
+  return result;
 }
 
 Result<FSMWithStartEnd> FSMWithStartEnd::Not(int max_result_num_states) const {
