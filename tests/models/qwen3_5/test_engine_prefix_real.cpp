@@ -2592,13 +2592,20 @@ bool close_generation(const ninferno::GenerationResult& left,
                       const ninferno::GenerationResult& right, float tolerance) {
     if (left.generated_token_ids != right.generated_token_ids ||
         left.logprobs.size() != right.logprobs.size()) {
+        std::cerr << "  tokens differ:";
+        for (const ninferno::TokenId token : left.generated_token_ids) { std::cerr << ' ' << token; }
+        std::cerr << " |";
+        for (const ninferno::TokenId token : right.generated_token_ids) { std::cerr << ' ' << token; }
+        std::cerr << '\n';
         return false;
     }
+    float worst = 0.0F;
     for (std::size_t index = 0; index < left.logprobs.size(); ++index) {
         const float delta = left.logprobs[index].logprob - right.logprobs[index].logprob;
-        if (delta > tolerance || delta < -tolerance) { return false; }
+        worst             = std::max(worst, delta < 0 ? -delta : delta);
     }
-    return true;
+    std::cerr << "  largest logprob difference " << worst << '\n';
+    return worst <= tolerance;
 }
 
 int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationMode mode,
