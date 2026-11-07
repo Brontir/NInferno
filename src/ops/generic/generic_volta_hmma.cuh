@@ -431,7 +431,8 @@ struct HX4 {
     __device__ static constexpr int dest_run(int src) { return src; }
 };
 
-template <class F, int NTok>
+// Pre: v holds the staged f16 halves (lo, hi) already, no conversion.
+template <class F, int NTok, bool Pre = false>
 __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint2 (&v)[NTok / 2]) {
 #pragma unroll
     for (int i = 0; i < NTok / 2; ++i) {
@@ -442,8 +443,10 @@ __device__ __forceinline__ void stage_store(__half* act, float* sums, const uint
         const int dst  = run * 8 + (g & 7); // destination group, 0..63
         const int q = dst >> 4, s = dst & 15;
         // bf16 (v0, v1), (v2, v3) -> f16 (v0, v2), (v1, v3)
-        const unsigned lo = bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x5410U)); // v0, v2
-        const unsigned hi = bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x7632U)); // v1, v3
+        const unsigned lo =
+            Pre ? v[i].x : bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x5410U)); // v0, v2
+        const unsigned hi =
+            Pre ? v[i].y : bf16x2_to_f16x2(__byte_perm(v[i].x, v[i].y, 0x7632U)); // v1, v3
         *reinterpret_cast<uint2*>(act + q * kQuadStride<NTok> +
                                   (s * NTok + token_slot<NTok>(s, t)) * 4) = make_uint2(lo, hi);
         if constexpr (F::kMin) {

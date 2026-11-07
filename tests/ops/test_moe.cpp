@@ -945,7 +945,7 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
     }
     const auto plan = moe::select_plan(l.weights, c.config, wide, false);
     // Volta has no tensor W4A8 (it runs on dp4a there): its wide calls take the HMMA stages, which
-    // read the BF16 activation (moe_volta_hmma.cu).
+    // read the activation as f16 rows converted once (moe_volta_hmma.cu).
     if (plan.volta_hmma) {
         const Run run = run_op(c, l, x, 0, wide, residual, &plan);
         return failures + compare_run(c, l, x, residual, 0, wide, run, {false, false},
