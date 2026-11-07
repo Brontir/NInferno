@@ -557,8 +557,7 @@ public:
         // A capture is optional: it yields to an open transaction and to another lane's open
         // StateImage Fork, which the Program refuses to reserve against.
         if (program_transaction || program.has_unsettled_state_fork()) {
-            std::fprintf(stderr, "[dbg462] capture skipped: open transaction=%d unsettled_fork=%d
-", int(program_transaction), int(program.has_unsettled_state_fork()));
+            std::fprintf(stderr, "[dbg462] capture skipped: open transaction=%d unsettled_fork=%d\n", int(program_transaction), int(program.has_unsettled_state_fork()));
             program.skip_capture(std::move(offer));
             return ActiveCaptureReserveResult::Skipped;
         }
@@ -584,8 +583,7 @@ public:
         CaptureAssessment candidate =
             program.inspect_capture(offer, nullptr, nullptr, private_replacement, true,
                                     waiting_admissions);
-        std::fprintf(stderr, "[dbg462] capture offer: frontier=%u cand{pub_priv=%d pub_shared=%d feas=%d evid=%u} baseline{pub_priv=%d feas=%d} shared_cat=%u priv_cat=%u
-", unsigned(candidate.frontier), int(candidate.publishes_private), int(candidate.publishes_shared), int(candidate.physically_feasible), unsigned(candidate.shared_evidence), int(private_baseline.publishes_private), int(private_baseline.physically_feasible), unsigned(shared_catalog_count_), unsigned(catalog_count_));
+        std::fprintf(stderr, "[dbg462] capture offer: frontier=%u cand{pub_priv=%d pub_shared=%d feas=%d evid=%u} baseline{pub_priv=%d feas=%d} shared_cat=%u priv_cat=%u\n", unsigned(candidate.frontier), int(candidate.publishes_private), int(candidate.publishes_shared), int(candidate.physically_feasible), unsigned(candidate.shared_evidence), int(private_baseline.publishes_private), int(private_baseline.physically_feasible), unsigned(shared_catalog_count_), unsigned(catalog_count_));
         const SharedPrefixHandle* exact_shared = nullptr;
         if (candidate.publishes_shared) {
             for (const PrefixIndexEntry& index : prefix_index_) {
@@ -878,8 +876,7 @@ public:
 
             build_portfolio();
             portfolio_built = true;
-            std::fprintf(stderr, "[dbg462] scenarios=%zu pressure_evidence=%d
-", scenarios.size(), int(pressure_evidence));
+            std::fprintf(stderr, "[dbg462] scenarios=%zu pressure_evidence=%d\n", scenarios.size(), int(pressure_evidence));
             const std::uint32_t scenario_budget =
                 scenarios.empty()
                     ? 0
@@ -896,8 +893,7 @@ public:
                     std::min(shared_left, capture_planner_.last_targets_evaluated());
                 shared_left -= used;
                 decision_targets_left -= used;
-                std::fprintf(stderr, "[dbg462] scenario slot=%u repl=%llu planned=%d targets=%u gain=%llu
-", unsigned(scenario.publication_slot), (unsigned long long)scenario.replacement_id, int(planned.has_value()), unsigned(capture_planner_.last_targets_evaluated()), (unsigned long long)(planned ? planned->net_gain : 0));
+                std::fprintf(stderr, "[dbg462] scenario slot=%u repl=%llu planned=%d targets=%u gain=%llu\n", unsigned(scenario.publication_slot), (unsigned long long)scenario.replacement_id, int(planned.has_value()), unsigned(capture_planner_.last_targets_evaluated()), (unsigned long long)(planned ? planned->net_gain : 0));
                 if (!planned) { continue; }
                 const bool better =
                     !selected || planned->net_gain > selected->plan.net_gain ||
@@ -934,8 +930,7 @@ public:
             }
         }
 
-        std::fprintf(stderr, "[dbg462] selected=%d fallback=%d fits=%d
-", int(selected.has_value()), int(private_fallback), int(private_baseline_fits));
+        std::fprintf(stderr, "[dbg462] selected=%d fallback=%d fits=%d\n", int(selected.has_value()), int(private_fallback), int(private_baseline_fits));
         if (!selected) {
             if (!private_baseline_fits) {
                 program.skip_capture(std::move(offer));
