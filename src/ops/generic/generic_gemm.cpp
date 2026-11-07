@@ -231,20 +231,34 @@ bool allows_w4a4(const Weight& w, LinearPolicy policy) {
 // for them (A16 where no divisor lets W4A4 run, as before), W4A8 the one of those whose policy
 // allows eight bits only (a W4A16 checkpoint under --activations int8). The weight-less
 // nvfp4_prefill_a8_policy and the workspace query decide the same.
-bool allows_w4a8(const Weight& w, LinearPolicy policy) {
-    return allows_a8(policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
-           aligned_to(w.qdata, 16) &&
+// The policy part, which w4a8_refusal names Policy.
+bool w4a8_policy_allows(const Weight& w, LinearPolicy policy) {
+    return allows_a8(policy) &&
            (w.qtype != QType::NVFP4 || nvfp4_prefill_a8_policy(w.qtype, policy));
+}
+bool allows_w4a8(const Weight& w, LinearPolicy policy) {
+    return w4a8_policy_allows(w, policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
+           aligned_to(w.qdata, 16);
 }
 
 // I8: Q4 G64 with A8 allowed, K in whole 512-value runs (the weight scales of eight groups are
 // one 16-byte copy per row), 16-byte code and scale planes.
-bool allows_i8(const Weight& w, LinearPolicy policy) {
-    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16,
-               q6 = w.qtype == QType::Q6_G64_FP16;
-    return allows_a8(policy) && (q4 || q5 || q6) && (w.k % 512) == 0 &&
-           (w.padded_shape[1] % 512) == 0 && aligned_to(w.qdata, 16) && aligned_to(w.scales, 16) &&
+// Its parts, which i8_refusal names Format, Alignment and Extent.
+bool i8_format(QType qtype) {
+    return qtype == QType::Q4_G64_FP16 || qtype == QType::Q5_G64_FP16 ||
+           qtype == QType::Q6_G64_FP16;
+}
+
+bool i8_planes_aligned(const Weight& w) {
+    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16;
+    return aligned_to(w.qdata, 16) && aligned_to(w.scales, 16) &&
            (q4 || aligned_to(w.qhigh, q5 ? 8 : 16));
+}
+
+bool i8_extent(const Weight& w) { return (w.k % 512) == 0 && (w.padded_shape[1] % 512) == 0; }
+
+bool allows_i8(const Weight& w, LinearPolicy policy) {
+    return allows_a8(policy) && i8_format(w.qtype) && i8_extent(w) && i8_planes_aligned(w);
 }
 
 // Whether the producer-warp tile can read the weight: its format, and IQ3_XXS's sign plane (read
@@ -2325,10 +2339,7 @@ ScheduleRefusal w4a8_refusal(int index, const Weight& w, LinearPolicy policy) {
     const bool producer = w4a8_schedule_info(index).producers > 0;
     if (producer && !w4a8_ws_supports(w.qtype)) return ScheduleRefusal::NotCompiled;
     if (!w4a8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
-    if (!allows_a8(policy) ||
-        (w.qtype == QType::NVFP4 && !nvfp4_prefill_a8_policy(w.qtype, policy))) {
-        return ScheduleRefusal::Policy;
-    }
+    if (!w4a8_policy_allows(w, policy)) return ScheduleRefusal::Policy;
     const Route route{Family::W4a8Mma, static_cast<std::uint8_t>(index)};
     if (!has_features(current_features(), route_requires(route))) {
         return ScheduleRefusal::Instruction;
@@ -2422,9 +2433,7 @@ ScheduleRefusal staged_refusal(int index, const Weight& w) {
 
 ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
     if (index < 0 || index >= i8_schedule_count()) return ScheduleRefusal::NotDeclared;
-    const bool q4 = w.qtype == QType::Q4_G64_FP16, q5 = w.qtype == QType::Q5_G64_FP16,
-               q6 = w.qtype == QType::Q6_G64_FP16;
-    if (!supports(w) || !(q4 || q5 || q6)) return ScheduleRefusal::Format;
+    if (!supports(w) || !i8_format(w.qtype)) return ScheduleRefusal::Format;
     if (!i8_fits(index, w.qtype)) return ScheduleRefusal::Resource;
     if (!allows_a8(policy)) return ScheduleRefusal::Policy;
     const Route route{Family::I8Mma, static_cast<std::uint8_t>(index)};
@@ -2434,11 +2443,10 @@ ScheduleRefusal i8_refusal(int index, const Weight& w, LinearPolicy policy) {
     // A ggml block format's high plane off 16 bytes (generic_refusal; a G64 weight has none), the
     // codes or scales off 16 (one 16-byte copy per row), a Q5 / Q6 high plane off 8 / 16.
     if ((w.layout == QuantLayout::GgmlPlanes && w.qhigh != nullptr && !aligned_to(w.qhigh, 16)) ||
-        !aligned_to(w.qdata, 16) || !aligned_to(w.scales, 16) ||
-        (!q4 && !aligned_to(w.qhigh, q5 ? 8 : 16))) {
+        !i8_planes_aligned(w)) {
         return ScheduleRefusal::Alignment;
     }
-    if ((w.k % 512) != 0 || (w.padded_shape[1] % 512) != 0) return ScheduleRefusal::Extent;
+    if (!i8_extent(w)) return ScheduleRefusal::Extent;
     return ScheduleRefusal::None;
 }
 
