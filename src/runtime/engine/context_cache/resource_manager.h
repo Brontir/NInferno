@@ -851,10 +851,9 @@ public:
             }
             // An engine-proposed candidate (the automatic prompt end, the leading instructions)
             // has no pressure evidence of its own, so it never moves owners. With every slot
-            // taken it may still take over a slot nothing has vouched for, one held by another
-            // first-seen engine candidate: the conversation's own prompt ends fill the slots one
-            // turn at a time, and a first request that shares only its system prompt otherwise
-            // finds none free (#462).
+            // taken it may still take over a slot that never paid back (shared_entry_unproven):
+            // a conversation's own prompt ends fill the slots one turn at a time, and the first
+            // request of a new system prompt otherwise finds none free (#462).
             const bool take_unproven_slot =
                 !pressure_evidence && scenarios.empty() &&
                 engine_proposed_shared_candidate(candidate.shared_evidence);
