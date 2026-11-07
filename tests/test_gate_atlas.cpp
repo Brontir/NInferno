@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <span>
 #include <string>
 
 namespace {
@@ -110,6 +111,46 @@ int main(int argc, char** argv) {
                        r.alternative_distance >= r.answer.distance,
                    r.name + ": the alternative donor answers the other way, no nearer");
         }
+    }
+
+    // A missing fact never promotes a bounded transfer (#373's synthetic case): a 170-SM sm_120
+    // board with 8 MiB of L2 is 1.79 from the RTX 5090, out of kCarryDistance; with its L2 unknown
+    // the distance drops to 0, and the bounded gate still refuses the donor's answer. The MMQ gate,
+    // which carries at any distance, keeps its answer.
+    {
+        const m::Gate gates[] = {{m::kRtx5090, true}};
+        const ninferno::Board small_l2{12, 0, 170, 8, 1792};
+        const ninferno::Board unknown_l2{12, 0, 170, 0, 1792};
+        const auto known   = m::gate_answer(gates, small_l2, m::kCarryDistance);
+        const auto missing = m::gate_answer(gates, unknown_l2, m::kCarryDistance);
+        expect(known.donor == nullptr && !known.pays, "the full facts put the donor out of reach");
+        expect(missing.disposition == m::GateAnswer::Disposition::Incomplete && !missing.pays,
+               "a missing L2 promoted a bounded transfer");
+        const auto mmq = m::mmq_prefill_gate(unknown_l2);
+        expect(mmq.disposition == m::GateAnswer::Disposition::Incomplete && mmq.pays,
+               "the MMQ gate lost its answer to a missing L2");
+        // The bounded table lookups (R8 decode tables, A8 routes, Q4 frontiers, spread, context
+        // cost machines) take nearest_known_measured: the same board with every fact finds its
+        // entry; with its L2 or bandwidth unknown it finds none and keeps the default; an entry
+        // with a fact unknown is never anyone's donor.
+        const ninferno::Board own_5090 = m::kRtx5090;
+        const ninferno::Board unknown_dram{12, 0, 170, 96, 0};
+        const auto* own =
+            ninferno::nearest_known_measured(std::span(gates), own_5090, m::kCarryDistance);
+        expect(own == &gates[0], "a known board lost its own entry");
+        expect(ninferno::nearest_known_measured(std::span(gates), unknown_l2, m::kCarryDistance) ==
+                   nullptr,
+               "a missing L2 promoted a bounded table lookup");
+        expect(ninferno::nearest_known_measured(std::span(gates), unknown_dram,
+                                                m::kCarryDistance) == nullptr,
+               "a missing bandwidth promoted a bounded table lookup");
+        const m::Gate partial[] = {{ninferno::Board{12, 0, 170, 0, 1792}, true}};
+        expect(ninferno::nearest_known_measured(std::span(partial), own_5090, m::kCarryDistance) ==
+                   nullptr,
+               "an entry of unknown L2 was taken as a donor");
+        // The unbounded lookup is unchanged: same instruction set, nearest by what is known.
+        expect(ninferno::nearest_measured(std::span(gates), unknown_l2) == &gates[0],
+               "the unbounded lookup changed");
     }
 
     // Pure: the same table gives the same atlas.

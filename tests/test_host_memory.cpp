@@ -213,6 +213,15 @@ int main() {
     const auto none = fit_host_tier(image, 8, 8 * kGiB, 0);
     check(none.reduced && none.state_slots == 0 && none.kv_bytes == 0,
           "no budget, no Host tier");
+    // The automatic budget is half the pinning limit, shared by the host's GPUs (#473): a 64 GiB
+    // host with 60 GiB available can pin min(60 - 8, 38.4) = 38.4 GiB.
+    HostMemory host;
+    host.total_bytes = host.meminfo_total_bytes = 64 * kGiB;
+    host.available_bytes = host.meminfo_available_bytes = 60 * kGiB;
+    const std::uint64_t limit                           = pinned_host_limit(host);
+    check(automatic_host_tier_budget(host, 1) == limit / 2, "one GPU: half the limit");
+    check(automatic_host_tier_budget(host, 8) == limit / 16, "eight GPUs: a sixteenth");
+    check(automatic_host_tier_budget(host, 0) == limit / 2, "no count: as one GPU");
     if (failures == 0) { std::cout << "host memory: all checks passed\n"; }
     return failures == 0 ? 0 : 1;
 }

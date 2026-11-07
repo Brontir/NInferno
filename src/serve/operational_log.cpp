@@ -720,8 +720,25 @@ void OperationalLog::engine_capacity(const GenerationService& service) const {
                               product::format_pretty_bytes(memory.host_kv_capacity_default_bytes) +
                               " KV does not fit the " +
                               product::format_pretty_bytes(memory.host_tier_budget_bytes) +
-                              " this host can pin for it)"
+                              " this host can pin for it" +
+                              (memory.host_tier_share_gpus > 1
+                                   ? ", 1/" + std::to_string(memory.host_tier_share_gpus) +
+                                         " of it: the host has " +
+                                         std::to_string(memory.host_tier_share_gpus) + " GPUs)"
+                                   : std::string(")"))
                         : " (auto)";
+            if (memory.host_tier_pin_unserialized) {
+                logger_->warn("context cache | the automatic Host tier was pinned without the "
+                              "host's pin lock (ninferno-host-pin.lock in /run/lock, /dev/shm or "
+                              "the temporary directory could not be taken): servers started "
+                              "together may overcommit pinned memory");
+            }
+            if (memory.host_tier_pin_refusals != 0) {
+                logger_->warn("context cache | the host refused {} pin(s) of the automatic Host "
+                              "tier at startup (other processes pinned first); halved each time, "
+                              "to {}",
+                              memory.host_tier_pin_refusals, host);
+            }
         }
         logger_->info(
             "context cache | {} active + {} cached device states | host {} | "

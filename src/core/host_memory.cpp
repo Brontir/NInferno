@@ -8,16 +8,25 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#    include <fcntl.h>
+#    include <sys/file.h>
+#    include <sys/stat.h>
+#    include <unistd.h>
 #endif
 
 #include <algorithm>
+#include <cerrno>
 #include <charconv>
+#include <chrono>
 #include <cstdio>
 #include <fstream>
 #include <initializer_list>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
+#include <system_error>
+#include <thread>
 
 namespace ninferno {
 namespace {
@@ -295,6 +304,12 @@ void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memo
     throw std::runtime_error(message);
 }
 
+std::uint64_t automatic_host_tier_budget(const HostMemory& memory, int host_gpus) noexcept {
+    const long double share =
+        static_cast<long double>(kAutomaticHostTierShare) / std::max(1, host_gpus);
+    return static_cast<std::uint64_t>(static_cast<long double>(pinned_host_limit(memory)) * share);
+}
+
 HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
                           std::uint64_t kv_bytes, std::uint64_t budget) noexcept {
     const std::uint64_t images = image_bytes * state_slots;
@@ -309,6 +324,78 @@ HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
                    kMiB;
     // Rounding keeps both at or under their scaled shares, so the sum stays within the budget.
     return out;
+}
+
+HostPinLock::HostPinLock() {
+#ifndef _WIN32
+    // A directory every process of the host sees: /run/lock and /dev/shm are outside a unit's
+    // PrivateTmp, the temporary directory last. The first that exists is the one, for every
+    // process alike (one that cannot open the file there takes no lock rather than another
+    // directory's, which its neighbours would not share). Processes in separate mount namespaces
+    // (containers) see separate files: they are not serialized (each container usually has its
+    // own memory limit; a refused pin still halves the tier).
+    std::vector<std::filesystem::path> dirs = {"/run/lock", "/dev/shm"};
+    std::error_code error;
+    if (std::filesystem::path tmp = std::filesystem::temp_directory_path(error); !error) {
+        dirs.push_back(std::move(tmp));
+    }
+    int fd = -1;
+    for (const std::filesystem::path& dir : dirs) {
+        if (!std::filesystem::is_directory(dir, error)) { continue; }
+        const std::string path = (dir / "ninferno-host-pin.lock").string();
+        // Every user may take it (0666). A file another user created in a sticky directory under
+        // fs.protected_regular refuses O_CREAT: read-only is enough for flock. Never through a
+        // symlink (O_NOFOLLOW), and only a plain file of one link is taken; its mode is set only
+        // where this process owns it, so a path another user planted cannot make this process
+        // change the mode of a file of theirs or a victim's.
+        // A file another process just created under a restrictive umask is 0600 until its
+        // creator's fchmod: an EACCES is retried for up to a second before the start goes on
+        // unlocked.
+        for (int attempt = 0; attempt < 100; ++attempt) {
+            fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0666);
+            if (fd < 0) { fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW); }
+            if (fd >= 0 || errno != EACCES) { break; }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        if (fd >= 0) {
+            struct stat st{};
+            if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_nlink != 1) {
+                ::close(fd);
+                fd = -1;
+            } else if (st.st_uid == ::geteuid()) {
+                (void)::fchmod(fd, 0666);
+            }
+        }
+        break;
+    }
+    if (fd < 0) { return; }
+    // At most kHostPinLockWaitSeconds: a holder stopped or hung inside its pin must not stall
+    // every other start; past it the start goes on unserialized, as before the lock.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(kHostPinLockWaitSeconds);
+    for (;;) {
+        if (::flock(fd, LOCK_EX | LOCK_NB) == 0) {
+            fd_ = fd;
+            return;
+        }
+        if (errno != EWOULDBLOCK && errno != EINTR) { break; }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            timed_out_ = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    ::close(fd);
+#endif
+}
+
+HostPinLock::~HostPinLock() {
+#ifndef _WIN32
+    if (fd_ >= 0) {
+        (void)::flock(fd_, LOCK_UN);
+        ::close(fd_);
+    }
+#endif
 }
 
 std::string format_gib(std::uint64_t bytes) {

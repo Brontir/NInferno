@@ -76,7 +76,11 @@ Refusals come before any weight is downloaded. Each says what to do instead:
   overrides the factor. Attention reads at most 1,048,576 keys, so a longer `--max-context` is
   refused at startup.
 - **Host tier.** Without `--host-state-slots` and `--host-kv-mib`, the Host tier defaults are scaled
-  down to half of what the host can pin; the state count is `max(8, 2 * private continuations)` (an endpoint
+  down to half of what the host can pin, divided by the host's NVIDIA GPUs (NVML's count, a MIG
+  board's instances counted; `CUDA_VISIBLE_DEVICES` does not change it), so one server per GPU
+  started together leaves room for each. Servers on one host pin their tiers one at a time (a lock
+  in `/run/lock`, `/dev/shm` or the temporary directory) and each sees what the earlier ones pinned.
+  The startup line names the share. The state count is `max(8, 2 * private continuations)` (an endpoint
   and an edit point for each conversation).
 - **Log lines.** The startup log states each choice (`context | ...`, `plan | rung k of N: ...`,
   `capacity | ...`, `context cache | ...`).
