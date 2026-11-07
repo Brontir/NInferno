@@ -304,6 +304,12 @@ void require_pinned_host_fits(std::uint64_t pinned_bytes, const HostMemory& memo
     throw std::runtime_error(message);
 }
 
+std::uint64_t automatic_host_tier_budget(const HostMemory& memory, int host_gpus) noexcept {
+    const long double share =
+        static_cast<long double>(kAutomaticHostTierShare) / std::max(1, host_gpus);
+    return static_cast<std::uint64_t>(static_cast<long double>(pinned_host_limit(memory)) * share);
+}
+
 HostTierFit fit_host_tier(std::uint64_t image_bytes, std::uint32_t state_slots,
                           std::uint64_t kv_bytes, std::uint64_t budget) noexcept {
     const std::uint64_t images = image_bytes * state_slots;

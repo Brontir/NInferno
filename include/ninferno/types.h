@@ -1674,6 +1674,8 @@ struct MemorySummary {
     std::uint32_t host_state_slots_default        = 0;
     std::size_t host_kv_capacity_default_bytes    = 0;
     std::size_t host_tier_budget_bytes            = 0;
+    // The host's GPUs that budget is a share of (automatic_host_tier_budget).
+    int host_tier_share_gpus = 1;
     // Pins of the automatic tier the driver refused at startup (another process pinned first),
     // each halving the tier before it was pinned again.
     std::uint32_t host_tier_pin_refusals = 0;

@@ -253,6 +253,12 @@ measured_boards_known(std::span<const Measured, Extent> measured) noexcept {
 // Whether the PCI id's block names a chip of this architecture (gpu_chip then needs no SM count).
 [[nodiscard]] bool gpu_chip_by_pci(std::uint32_t pci_device_id, int major, int minor);
 
+// The NVIDIA GPUs of the host (or of the container, which NVML sees only its own of), whatever
+// CUDA_VISIBLE_DEVICES hides from this process: NVML's count, loaded at run time; else the CUDA
+// devices this process sees; at least 1. Read once. A board in MIG mode counts its instances,
+// which a server each may run on.
+[[nodiscard]] int host_gpu_count() noexcept;
+
 // The facts this class lacks or guessed, each with the conservative choice taken in its place:
 // the chip from the SM count (no PCI id, or one no block lists; the board's clocks may still be
 // the PCI-ID table's), the clocks or bus width a virtualized or MIG GPU leaves unreported (the

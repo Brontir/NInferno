@@ -99,6 +99,16 @@ struct HostTierFit {
 // loses between the choice and the pinning). An explicit Host tier may take the whole limit.
 inline constexpr double kAutomaticHostTierShare = 0.5;
 
+// The pinning budget of an automatic Host tier: kAutomaticHostTierShare of pinned_host_limit,
+// shared by the host's GPUs (#473). A host of G GPUs commonly runs one server per GPU, started
+// together; taking half of what is left each, they pinned nearly the whole limit and left their
+// own unpinned memory (weights staging, the CUDA context: ~2-3 GiB each) the headroom alone, and
+// a memory cgroup OOM-killed them. A share per GPU leaves every server room; a host whose budget
+// covers the default tier anyway (8 GiB of KV and the StateImages) is unchanged. `host_gpus`: the
+// host's NVIDIA GPUs (host_gpu_count), at least 1.
+[[nodiscard]] std::uint64_t automatic_host_tier_budget(const HostMemory& memory,
+                                                       int host_gpus) noexcept;
+
 // Serializes, across the processes of one host, the stretch from reading what the host can pin to
 // pinning it (#473): eight servers started together otherwise each read the same MemAvailable and
 // pin together, and a memory cgroup OOM-kills or refuses the late ones. One process at a time
