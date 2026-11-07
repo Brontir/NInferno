@@ -352,8 +352,9 @@ struct PatternedWeightOptions {
     // 16 rows, so without it a [gate; up] plane whose half is a multiple of 16 rows has identical
     // halves and cannot tell silu(gate)*up from silu(up)*gate.
     std::uint32_t upper_half_seed = 0;
-    // MXFP4 only: added to every E8M0 word but the subnormal 0 (large block scales: shift 7 puts
-    // blocks at 2^2 .. 2^5, the range a published gpt-oss checkpoint reaches 2^9 in).
+    // MXFP4 only: added to every E8M0 word but the zero word (large block scales: shift 7 puts the
+    // drawn 2^-9 .. 2^-2 at 2^-2 .. 2^5, the rare 2^0 at 2^7; a published gpt-oss checkpoint
+    // reaches 2^9). 0..127, so no word reaches 255 (NaN) or wraps.
     int mxfp4_exponent_shift = 0;
 };
 
@@ -363,6 +364,10 @@ inline PackedWeight make_patterned_weight(QType qtype, std::int32_t n, std::int3
                                           std::uint32_t seed, PatternedWeightOptions options = {}) {
     if (n <= 0 || k <= 0) {
         throw std::invalid_argument("quantized-weight fixture: shape must be positive");
+    }
+    if (options.mxfp4_exponent_shift < 0 || options.mxfp4_exponent_shift > 127) {
+        throw std::invalid_argument(
+            "quantized-weight fixture: mxfp4_exponent_shift outside 0..127");
     }
     if (qtype == QType::FP8_E4M3FN_ROW_BF16) {
         if (options.weight_scale_divisor != 0.0F || options.input_scale_divisor != 0.0F) {

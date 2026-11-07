@@ -957,7 +957,8 @@ int check_speed_w4a8(const Case& base, std::uint32_t seed) {
         return failures + 1;
     }
     const Run run = run_op(c, l, x, 0, wide, residual, &plan);
-    failures += compare_run(c, l, x, residual, 0, wide, run, {true, true},
+    // MXFP4 banks run the block-scaled MMA on MXFP8 activations where it is built (a8_stages).
+    failures += compare_run(c, l, x, residual, 0, wide, run, a8_stages(c, plan),
                             c.label + " speed-profile W4A8 T=" + std::to_string(wide));
     return failures;
 }
@@ -2155,8 +2156,13 @@ int main(int argc, char** argv) {
             //     with biases.
             {
                 failures += check_w4a8(oss_like(), 111U, {17, 70, 130});
-                // Block scales of 2^2 .. 2^5 (gpt-oss-20b has blocks up to 2^9): a scale pre-folded
-                // into the f16 group scale overflows there (Volta HMMA MXFP4).
+                // Block scales of 2^-2 .. 2^5 (and 2^7; gpt-oss-20b has blocks up to 2^9, 3.7 % of
+                // them at 4 or more), where the default draws stay at 2^-9 .. 2^-2: a decode that
+                // folds a factor into the f16 group scale (Volta HMMA MXFP4, moe_volta_hmma.cu:
+                // dsh) overflows it there, as E8M0 x 2^14 did (an operand of E2M1 x 2^-14). Today's
+                // fold (twice the code, half the scale) stays far below f16's range. Most gate/up
+                // values clamp (ClampedSwiGlu), which would hide an inf there: the down stage shows
+                // it.
                 Case big = oss_like();
                 big.label += " large E8M0 scales";
                 big.mx_shift = 7;
