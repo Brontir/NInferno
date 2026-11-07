@@ -236,6 +236,7 @@ bool w4a8_policy_allows(const Weight& w, LinearPolicy policy) {
     return allows_a8(policy) &&
            (w.qtype != QType::NVFP4 || nvfp4_prefill_a8_policy(w.qtype, policy));
 }
+
 bool allows_w4a8(const Weight& w, LinearPolicy policy) {
     return w4a8_policy_allows(w, policy) && w4a8_supports(w.qtype) && w4a8_k_admits(w.qtype, w.k) &&
            aligned_to(w.qdata, 16);
@@ -3821,27 +3822,31 @@ bool spread_by_board(const DeviceClass& d) {
 }
 
 // The current device's gates, once per ordinal: a process may drive boards of different classes
-// (an RTX 5090 beside a 4090), and each launch takes its own device's.
+// (an RTX 5090 beside a 4090), and each launch takes its own device's. Through PerDevice, so a
+// substituted DeviceClass (ScopedDeviceClass: the selector goldens, route_query) reads its own
+// board's gates, not the ones the host's GPU cached first. A device whose class cannot be read
+// throws and is asked again next time (caching "none" would turn PDL and the spread off for the
+// process on one transient failure).
 struct DeviceGates {
     bool spread = false; // spread_smem measured faster on the nearest measured board
     bool pdl    = false; // programmatic dependent launch (pdl_prefetch)
 };
 
 const DeviceGates& device_gates() {
-    constexpr int kOrdinals = 64;
-    static std::array<std::once_flag, kOrdinals> once;
-    static std::array<DeviceGates, kOrdinals> gates;
+    static PerDevice<DeviceGates> gates;
     static const DeviceGates none{};
-    int device = 0;
-    if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kOrdinals) return none;
-    const auto slot = static_cast<std::size_t>(device);
-    // A device whose class cannot be read throws (call_once then stays open): caching "none"
-    // would turn PDL and the spread off for the process on one transient failure.
-    std::call_once(once[slot], [&] {
-        const DeviceClass& d = device_class(device);
-        gates[slot]          = {spread_by_board(d), d.features.pdl};
+    // No current device (a host-only process without a substitute): no gates, as before.
+    if (substituted_device_class_key() == nullptr) {
+        int device = 0;
+        if (cudaGetDevice(&device) != cudaSuccess || device < 0 || device >= kMaxDevices) {
+            (void)cudaGetLastError();
+            return none;
+        }
+    }
+    return gates.get([](int) {
+        const DeviceClass& d = device_class();
+        return DeviceGates{spread_by_board(d), d.features.pdl};
     });
-    return gates[slot];
 }
 
 bool spread_measured() { return device_gates().spread; }
