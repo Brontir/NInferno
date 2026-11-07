@@ -123,8 +123,7 @@ void split_divisors(Matrix& m, std::int32_t rows, std::uint32_t seed) {
     m.weight.weight_divisor_rows = rows;
 }
 
-Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed,
-                   double sd = 0.05) {
+Matrix make_matrix(QType qtype, std::int32_t n, std::int32_t k, std::uint32_t seed, double sd = 0.05) {
     Matrix m;
     m.qtype = qtype;
     m.n     = n;
@@ -229,8 +228,8 @@ Layer make_layer(const Case& c, std::uint32_t seed) {
     const auto E = c.experts, H = c.hidden, F = c.inter;
     const int sets = relu2(c) ? 1 : 2; // a non-gated expert has up rows only
     l.router  = make_matrix(QType::BF16, E, H, seed + 1, 0.08);
-    l.gate_up      = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2);
-    l.down         = make_matrix(c.down, E * H, F, seed + 3);
+    l.gate_up               = make_matrix(c.gate_up, E * sets * F, H + c.input_pad, seed + 2);
+    l.down    = make_matrix(c.down, E * H, F, seed + 3);
     if (c.split_divisors) {
         split_divisors(l.gate_up, F, seed + 12); // gate and up quantized apart
         split_divisors(l.down, H, seed + 13);
