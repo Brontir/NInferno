@@ -2560,12 +2560,21 @@ bool same_generation(const ninferno::GenerationResult& left,
                      const ninferno::GenerationResult& right) {
     if (left.generated_token_ids != right.generated_token_ids ||
         left.logprobs.size() != right.logprobs.size()) {
+        std::cerr << "  tokens differ:";
+        for (const ninferno::TokenId token : left.generated_token_ids) { std::cerr << ' ' << token; }
+        std::cerr << " |";
+        for (const ninferno::TokenId token : right.generated_token_ids) { std::cerr << ' ' << token; }
+        std::cerr << '
+';
         return false;
     }
     for (std::size_t index = 0; index < left.logprobs.size(); ++index) {
         const ninferno::GeneratedLogprob& a = left.logprobs[index];
         const ninferno::GeneratedLogprob& b = right.logprobs[index];
         if (a.token != b.token || a.logprob != b.logprob || a.top.size() != b.top.size()) {
+            std::cerr << "  logprob " << index << " differs: " << a.logprob << " vs " << b.logprob
+                      << '
+';
             return false;
         }
         for (std::size_t alternative = 0; alternative < a.top.size(); ++alternative) {
@@ -2612,6 +2621,8 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     };
     const std::uint32_t base_tokens = engine.count_tokens(
         pressure_turn(base_text, "", ninferno::CacheRetentionHint::Disposable));
+    std::cout << "  base prompt " << base_tokens << " tokens
+";
 
     int failures      = 0;
     const char* label = mode == ninferno::ActivationMode::Exact ? "exact" : "fast";
@@ -2627,9 +2638,8 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
         if (attention_only) {
             expect(result.prefix_reuse_path == ninferno::PrefixReusePath::PrivateTruncatedEndpoint,
                    what);
-            expect(result.reused_prompt_tokens >= 256 && result.reused_prompt_tokens % 64 == 0 &&
-                       result.reused_prompt_tokens < base_tokens,
-                   "the truncated frontier is not a grid point inside the shared message");
+            expect(result.reused_prompt_tokens >= 256 && result.reused_prompt_tokens % 64 == 0,
+                   "the truncated frontier is not a grid point of at least 256 tokens");
         } else {
             expect(result.reused_prompt_tokens == 0 &&
                        result.prefix_reuse_path == ninferno::PrefixReusePath::Root,
@@ -2640,12 +2650,17 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     // Cold references (no prefix reuse at all).
     const ninferno::GenerationResult cold_longer = run(longer_text, "", false);
     expect(cold_longer.reused_prompt_tokens == 0, "the cold reference reused a prefix");
+    // The cold prefill is itself reproducible (the control for the comparisons below).
+    expect(same_generation(run(longer_text, "", false), cold_longer),
+           "two cold prefills of one prompt differ");
 
     // The same session appends in its message: the endpoint is consumed, truncated.
     const ninferno::GenerationResult first = run(base_text, "truncated-a", true);
     expect(first.reused_prompt_tokens == 0, "the first request reused a prefix");
     const ninferno::GenerationResult second = run(longer_text, "truncated-a", true);
     check_reuse(second, "same-session append did not take the truncated endpoint");
+    expect(!attention_only || second.reused_prompt_tokens < base_tokens,
+           "the first append reused past the shared message");
     expect(same_generation(second, cold_longer), "the truncated reuse differs from a cold prefill");
 
     // Again: the second request's own endpoint serves the same prompt.
