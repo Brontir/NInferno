@@ -207,6 +207,30 @@ template <class Measured, std::size_t Extent>
     return nearest;
 }
 
+// nearest_measured among the entries whose distance to `board` compares every quantity (#373):
+// an L2 or bandwidth unknown on either side drops out of board_distance, so a distance without it
+// is no evidence that the boards are near in it (even 0: equal SM counts are not one board). A
+// lookup bounded by a distance takes no such entry and keeps its unmeasured default, as
+// gate_answer refuses an Incomplete donor. Every lab board has both facts, and a running device
+// reports its L2 (CUDA) and its bandwidth (the facts table or the driver); what this drops is a
+// GPU that leaves either unreported.
+template <class Measured, std::size_t Extent>
+[[nodiscard]] const Measured* nearest_known_measured(std::span<const Measured, Extent> measured,
+                                                     const Board& board,
+                                                     double max_distance) noexcept {
+    const Measured* nearest = nullptr;
+    double nearest_distance = 0;
+    for (const Measured& m : measured) {
+        if (board_unknowns(board, m.board).any()) { continue; }
+        const double d = board_distance(board, m.board);
+        if (d <= max_distance && (nearest == nullptr || d < nearest_distance)) {
+            nearest          = &m;
+            nearest_distance = d;
+        }
+    }
+    return nearest;
+}
+
 // "sm<major><minor>".
 [[nodiscard]] std::string gpu_arch_id(int major, int minor);
 

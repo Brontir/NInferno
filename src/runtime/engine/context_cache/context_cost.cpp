@@ -234,7 +234,7 @@ MachineChoice choose_machine(const std::vector<ContextCostMachinePreset>& preset
         return {.machine = own};
     }
     const ContextCostMachinePreset* nearest =
-        nearest_measured(std::span<const ContextCostMachinePreset>(presets), identity.board,
+        nearest_known_measured(std::span<const ContextCostMachinePreset>(presets), identity.board,
                          measured::kCarryDistance);
     if (nearest == nullptr) { return {}; }
     return {.machine  = nearest,
