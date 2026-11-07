@@ -44,7 +44,14 @@
    "format": "bf16",
    "k": 2048,
    "n": 1024,
-   "prefill": "staged.64x64.w2x2.s3"
+   "prefill": "staged.64x64.w2x2.s3",
+   "prefill_bands": [
+    [
+     2048,
+     4095,
+     "rmma.m1.n8.w8x1"
+    ]
+   ]
   },
   {
    "bands": [
@@ -89,7 +96,7 @@
     [
      2048,
      4095,
-     "staged.128x128.w2x4.s2"
+     "staged.128x128.w2x4.s3"
     ]
    ]
   },
@@ -136,7 +143,7 @@
    "format": "bf16",
    "k": 2048,
    "n": 2048,
-   "prefill": "staged.128x64.w2x2.s2",
+   "prefill": "staged.64x128.w1x4.s2",
    "prefill_bands": [
     [
      17,
@@ -180,6 +187,11 @@
     ],
     [
      128,
+     191,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     192,
      16777216,
      "staged.64x64.w2x2.s3"
     ]
@@ -189,15 +201,20 @@
    "format": "bf16",
    "k": 6144,
    "n": 2048,
-   "prefill": "staged.64x128.w1x4.s2",
+   "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
      17,
      127,
-     "staged.64x64.w2x2.s4"
+     "staged.64x64.w2x2.s3"
     ],
     [
      128,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
      1023,
      "staged.64x64.w2x2.s3"
     ],
@@ -206,7 +223,8 @@
      4095,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -227,16 +245,6 @@
     ],
     [
      128,
-     255,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     256,
-     511,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     512,
      16777216,
      "staged.64x64.w2x2.s3"
     ]
@@ -250,35 +258,21 @@
    "prefill_bands": [
     [
      17,
-     63,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     64,
-     255,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     256,
-     511,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     512,
      1023,
      "staged.64x64.w2x2.s3"
     ],
     [
      1024,
      2047,
-     "staged.128x128.w2x4.s2"
+     "staged.128x128.w2x4.s3"
     ],
     [
      2048,
      4095,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -294,6 +288,11 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
      95,
      "rmma.m1.n4.w1x4"
     ],
@@ -305,7 +304,7 @@
     [
      512,
      16777216,
-     "staged.128x128.w2x4.s2"
+     "staged.128x128.w2x4.s3"
     ]
    ],
    "compute": "a16",
@@ -331,23 +330,8 @@
    "bands": [
     [
      1,
-     31,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     32,
-     63,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     64,
-     511,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     512,
      16777216,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x16"
     ]
    ],
    "compute": "a16",
@@ -403,11 +387,11 @@
    "bands": [
     [
      1,
-     511,
+     255,
      "rmma.m1.n1.w1x8.c8"
     ],
     [
-     512,
+     256,
      16777216,
      "rmma.m1.n1.w1x8.c2"
     ]
@@ -417,7 +401,14 @@
    "format": "bf16",
    "k": 4096,
    "n": 32,
-   "prefill": "staged.64x64.w2x2.s3"
+   "prefill": "staged.64x64.w2x2.s3",
+   "prefill_bands": [
+    [
+     8192,
+     16777216,
+     "staged.64x64.w2x2.s4"
+    ]
+   ]
   },
   {
    "bands": [
@@ -434,7 +425,7 @@
     [
      24,
      31,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n1.w1x4"
     ],
     [
      32,
@@ -453,11 +444,11 @@
     ],
     [
      96,
-     127,
+     191,
      "staged.64x64.w2x2.s4"
     ],
     [
-     128,
+     192,
      511,
      "staged.64x64.w2x2.s3"
     ],
@@ -476,11 +467,11 @@
    "prefill_bands": [
     [
      17,
-     127,
+     255,
      "staged.64x64.w2x2.s4"
     ],
     [
-     128,
+     256,
      511,
      "staged.64x64.w2x2.s3"
     ],
@@ -544,7 +535,7 @@
     [
      512,
      1023,
-     "staged.128x128.w2x4.s3"
+     "rmma.m1.n8.w8x1"
     ],
     [
      1024,
@@ -563,16 +554,6 @@
     ],
     [
      12,
-     15,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     16,
-     23,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     24,
      47,
      "rmma.m1.n2.w1x4"
     ],
@@ -583,13 +564,13 @@
     ],
     [
      96,
-     255,
+     191,
      "staged.64x64.w2x2.s3"
     ],
     [
-     256,
+     192,
      511,
-     "rmma.m1.n8.w8x1"
+     "rmma.m2.n4.w4x1"
     ],
     [
      512,
@@ -602,7 +583,7 @@
    "format": "bf16",
    "k": 1024,
    "n": 8192,
-   "prefill": "staged.128x64.w2x2.s2",
+   "prefill": "staged.64x128.w1x4.s2",
    "prefill_bands": [
     [
      17,
@@ -640,6 +621,11 @@
     ],
     [
      48,
+     63,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     64,
      95,
      "staged.64x64.w2x2.s4"
     ],
@@ -683,10 +669,11 @@
     ],
     [
      512,
-     1023,
+     2047,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -697,11 +684,11 @@
     ],
     [
      12,
-     23,
+     15,
      "rmma.m1.n2.w1x4"
     ],
     [
-     24,
+     16,
      47,
      "rmma.m1.n4.w1x8"
     ],
@@ -718,7 +705,7 @@
     [
      256,
      511,
-     "staged.128x128.w2x4.s3"
+     "staged.128x128.w2x4.s2"
     ],
     [
      512,
@@ -746,14 +733,15 @@
     [
      256,
      511,
-     "staged.128x128.w2x4.s3"
+     "staged.128x128.w2x4.s2"
     ],
     [
      512,
      2047,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -764,16 +752,21 @@
     ],
     [
      3,
-     5,
+     4,
      "rmma.m1.n1.w1x8"
     ],
     [
-     6,
-     7,
+     5,
+     5,
      "rmma.m1.n1.w1x16"
     ],
     [
-     8,
+     6,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -784,6 +777,11 @@
     ],
     [
      48,
+     63,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     64,
      95,
      "staged.64x64.w2x2.s4"
     ],
@@ -823,11 +821,11 @@
     [
      256,
      511,
-     "staged.128x128.w2x4.s3"
+     "staged.128x128.w2x4.s2"
     ],
     [
      512,
-     4095,
+     2047,
      "staged.256x128.w4x2.s2"
     ]
    ]
@@ -898,11 +896,11 @@
     ],
     [
      96,
-     191,
+     255,
      "staged.64x128.w1x4.s2"
     ],
     [
-     192,
+     256,
      16777216,
      "staged.256x128.w4x2.s2"
     ]
@@ -919,32 +917,18 @@
      127,
      "staged.128x64.w2x2.s2"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     2,
-     2,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     3,
-     3,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
      4,
-     5,
      "rmma.m1.n1.w1x4"
     ],
     [
-     6,
+     5,
      6,
      "rmma.m1.n1.w1x8"
     ],
@@ -961,7 +945,7 @@
     [
      24,
      31,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n2.w2x2"
     ],
     [
      32,
@@ -994,7 +978,7 @@
    "format": "bf16",
    "k": 1024,
    "n": 3584,
-   "prefill": "staged.64x128.w1x4.s2",
+   "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
      17,
@@ -1027,18 +1011,13 @@
     ],
     [
      2,
-     2,
+     7,
      "rmma.m1.n1.w1x4"
     ],
     [
-     3,
-     5,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     6,
+     8,
      11,
-     "rmma.m1.n1.w1x4"
+     "rmma.m1.n1.w1x8"
     ],
     [
      12,
@@ -1073,7 +1052,7 @@
     [
      512,
      16777216,
-     "staged.128x64.w2x2.s2"
+     "staged.64x128.w1x4.s2"
     ]
    ],
    "compute": "a16",
@@ -1088,7 +1067,8 @@
      511,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -1104,8 +1084,13 @@
     ],
     [
      24,
-     47,
+     31,
      "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n1.w1x16"
     ],
     [
      48,
@@ -1238,11 +1223,11 @@
     ],
     [
      128,
-     191,
+     255,
      "rmma.m1.n2.w4x1"
     ],
     [
-     192,
+     256,
      511,
      "rmma.m1.n4.w4x1"
     ],
@@ -1315,11 +1300,11 @@
     ],
     [
      128,
-     191,
+     255,
      "rmma.m1.n2.w4x1"
     ],
     [
-     192,
+     256,
      511,
      "rmma.m1.n4.w4x1"
     ],
@@ -1421,7 +1406,7 @@
     [
      17,
      63,
-     "rmma.m1.n1.w4x1"
+     "rmma.m2.n1.w4x1"
     ],
     [
      64,
@@ -1432,6 +1417,11 @@
      128,
      255,
      "rmma.m1.n4.w4x1"
+    ],
+    [
+     512,
+     1023,
+     "rmma.m2.n4.w4x1"
     ]
    ]
   },
@@ -1440,15 +1430,10 @@
     [
      1,
      1,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     2,
-     2,
      "rmma.m1.n1.w1x4"
     ],
     [
-     3,
+     2,
      11,
      "rmma.m1.n1.w1x8"
     ],
@@ -1469,11 +1454,21 @@
     ],
     [
      128,
-     255,
+     191,
      "rmma.m2.n8.w4x1"
     ],
     [
+     192,
+     255,
+     "rmma.m2.n8.w2x1"
+    ],
+    [
      256,
+     511,
+     "rmma.m2.n8.w4x1"
+    ],
+    [
+     512,
      16777216,
      "rmma.m2.n8.w2x1"
     ]
@@ -1483,12 +1478,12 @@
    "format": "nvfp4",
    "k": 3840,
    "n": 30720,
-   "prefill": "rmma.m2.n8.w4x1",
+   "prefill": "rmma.m2.n8.w2x1",
    "prefill_bands": [
     [
      17,
      63,
-     "rmma.m2.n2.w4x1"
+     "rmma.m1.n2.w4x1"
     ],
     [
      64,
@@ -1556,11 +1551,6 @@
     ],
     [
      96,
-     127,
-     "rmma.m1.n1.w2x2"
-    ],
-    [
-     128,
      511,
      "w4a4.32x64"
     ],
@@ -1581,11 +1571,11 @@
    "bands": [
     [
      1,
-     6,
+     7,
      "rmma.m1.n1.w1x16"
     ],
     [
-     7,
+     8,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -1611,6 +1601,16 @@
     ],
     [
      128,
+     191,
+     "w4a4.32x64"
+    ],
+    [
+     192,
+     255,
+     "w4a4.32x128"
+    ],
+    [
+     256,
      511,
      "w4a4.32x64"
     ],
@@ -1816,11 +1816,11 @@
     ],
     [
      12,
-     47,
+     31,
      "rmma.m1.n4.w1x8"
     ],
     [
-     48,
+     32,
      95,
      "w4a4.32x64"
     ],
@@ -2036,8 +2036,13 @@
     ],
     [
      96,
-     191,
+     127,
      "w4a4.64x128"
+    ],
+    [
+     128,
+     191,
+     "w4a4.32x128"
     ],
     [
      192,
@@ -2216,6 +2221,11 @@
     ],
     [
      24,
+     31,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     32,
      47,
      "rmma.m1.n4.w1x4"
     ],
@@ -2346,16 +2356,11 @@
    "bands": [
     [
      1,
-     3,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     4,
-     4,
+     2,
      "rmma.m1.n1.w1x4"
     ],
     [
-     5,
+     3,
      11,
      "rmma.m1.n1.w1x8"
     ],
@@ -2402,7 +2407,7 @@
     [
      32,
      47,
-     "rmma.m1.n1.w2x2"
+     "rmma.m1.n2.w1x4"
     ],
     [
      48,
@@ -2456,11 +2461,11 @@
     ],
     [
      128,
-     511,
+     255,
      "w4a4.64x128"
     ],
     [
-     512,
+     256,
      16777216,
      "w4a4.128x128"
     ]
@@ -2705,8 +2710,13 @@
     ],
     [
      24,
-     63,
+     31,
      "rmma.m1.n1.w1x4"
+    ],
+    [
+     32,
+     63,
+     "rmma.m1.n1.w1x8"
     ],
     [
      64,
@@ -2767,11 +2777,6 @@
     ],
     [
      24,
-     31,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     32,
      47,
      "rmma.m1.n1.w1x4"
     ],
@@ -2834,16 +2839,6 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     96,
      127,
      "rmma.m1.n2.w2x2"
     ],
@@ -2921,11 +2916,6 @@
     ],
     [
      192,
-     255,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     256,
      16777216,
      "rmma.m1.n4.w4x1"
     ]
@@ -3064,7 +3054,7 @@
    "format": "q4",
    "k": 4096,
    "n": 5120,
-   "prefill": "rmma.m2.n8.w4x1",
+   "prefill": "rmma.m1.n8.w4x1",
    "prefill_bands": [
     [
      17,
@@ -3080,11 +3070,6 @@
      256,
      1023,
      "rmma.m1.n4.w4x1"
-    ],
-    [
-     1024,
-     2047,
-     "rmma.m1.n8.w4x1"
     ]
    ]
   },
@@ -3102,6 +3087,11 @@
     ],
     [
      32,
+     47,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     48,
      63,
      "rmma.m1.n1.w2x2"
     ],
@@ -3257,7 +3247,7 @@
     [
      512,
      16777216,
-     "rmma.m1.n8.w8x1"
+     "rmma.m1.n8.w4x1"
     ]
    ],
    "compute": "a16",
@@ -3271,6 +3261,11 @@
      17,
      127,
      "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n8.w8x1"
     ]
    ]
   },
@@ -3283,13 +3278,8 @@
     ],
     [
      24,
-     127,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     128,
      191,
-     "rmma.m1.n4.w4x1"
+     "rmma.m1.n2.w1x4"
     ],
     [
      192,
@@ -3423,7 +3413,7 @@
     [
      96,
      127,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n4.w1x4"
     ],
     [
      128,
@@ -3447,16 +3437,31 @@
    "bands": [
     [
      1,
-     4,
+     1,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     2,
+     2,
      "rmma.m1.n1.w1x8.c2"
     ],
     [
-     5,
+     3,
      6,
      "rmma.m1.n1.w1x16"
     ],
     [
      7,
+     11,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     12,
+     15,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     16,
      23,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -3602,6 +3607,11 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
      95,
      "rmma.m1.n4.w1x4"
     ],
@@ -3697,6 +3707,11 @@
     ],
     [
      96,
+     127,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     128,
      191,
      "rmma.m1.n2.w2x2"
     ],
@@ -3858,13 +3873,23 @@
    "bands": [
     [
      1,
-     11,
+     7,
      "rmma.m1.n1.w1x8"
     ],
     [
+     8,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
      12,
-     47,
+     31,
      "rmma.m1.n4.w1x8"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n1.w1x4"
     ],
     [
      48,
@@ -3922,7 +3947,7 @@
     [
      8192,
      16777216,
-     "rmma.m2.n8.w2x1"
+     "rmma.m2.n8.w4x1"
     ]
    ]
   },
@@ -3945,13 +3970,8 @@
     ],
     [
      256,
-     511,
-     "tiled.64x128"
-    ],
-    [
-     512,
      16777216,
-     "tiled.128x128"
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -4030,7 +4050,7 @@
     ],
     [
      128,
-     511,
+     1023,
      "rmma.m1.n4.w4x1"
     ]
    ]
@@ -4074,6 +4094,11 @@
     ],
     [
      256,
+     511,
+     "tiled.128x128"
+    ],
+    [
+     512,
      16777216,
      "rmma.m1.n4.w4x1"
     ]
@@ -4083,7 +4108,7 @@
    "format": "q5",
    "k": 2560,
    "n": 8192,
-   "prefill": "rmma.m2.n8.w2x1",
+   "prefill": "rmma.m2.n8.w4x1",
    "prefill_bands": [
     [
      17,
@@ -4106,13 +4131,8 @@
    "bands": [
     [
      1,
-     11,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     12,
      23,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n1.w1x4"
     ],
     [
      24,
@@ -4136,8 +4156,13 @@
     ],
     [
      192,
-     16777216,
+     511,
      "rmma.m1.n4.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n4.w4x1"
     ]
    ],
    "compute": "a16",
@@ -4194,12 +4219,12 @@
     [
      96,
      127,
-     "tiled.128x64"
+     "tiled.128x128"
     ],
     [
      128,
      191,
-     "tiled.128x128"
+     "tiled.128x64"
     ],
     [
      192,
@@ -4363,7 +4388,7 @@
     [
      96,
      127,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n4.w1x4"
     ],
     [
      128,
@@ -4591,18 +4616,18 @@
    "prefill_bands": [
     [
      17,
-     127,
+     63,
      "rmma.m1.n1.w4x1"
     ],
     [
-     128,
-     255,
-     "rmma.m1.n4.w4x1"
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
     ],
     [
-     256,
+     128,
      511,
-     "rmma.m1.n8.w8x1"
+     "rmma.m1.n4.w4x1"
     ],
     [
      512,
@@ -4716,12 +4741,17 @@
     [
      17,
      63,
-     "rmma.m1.n2.w4x1"
+     "rmma.m1.n1.w4x1"
     ],
     [
      64,
-     255,
+     127,
      "rmma.m1.n4.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n8.w8x1"
     ]
    ]
   },
@@ -4791,16 +4821,6 @@
     ],
     [
      12,
-     15,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     16,
-     23,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     24,
      127,
      "rmma.m1.n4.w1x4"
     ],
@@ -4844,7 +4864,7 @@
     ],
     [
      512,
-     2047,
+     4095,
      "rmma.m1.n8.w4x1"
     ]
    ]
@@ -4853,11 +4873,31 @@
    "bands": [
     [
      1,
-     2,
+     1,
      "rmma.m1.n2.w1x4"
     ],
     [
+     2,
+     2,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
      3,
+     3,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     4,
+     4,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     5,
+     6,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     7,
      7,
      "rmma.m1.n1.w1x4"
     ],
@@ -4950,11 +4990,11 @@
    "bands": [
     [
      1,
-     3,
+     2,
      "rmma.m1.n1.w1x4"
     ],
     [
-     4,
+     3,
      11,
      "rmma.m1.n1.w1x8"
     ],
@@ -5035,8 +5075,13 @@
     ],
     [
      24,
-     16777216,
+     511,
      "rmma.m1.n4.w1x4"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n8.w4x1"
     ]
    ],
    "compute": "a16",
@@ -5053,7 +5098,7 @@
     ],
     [
      64,
-     255,
+     511,
      "rmma.m1.n8.w4x1"
     ]
    ]
@@ -5092,11 +5137,11 @@
     ],
     [
      192,
-     255,
+     511,
      "rmma.m1.n4.w4x1"
     ],
     [
-     256,
+     512,
      16777216,
      "rmma.m1.n8.w8x1"
     ]
@@ -5110,11 +5155,11 @@
    "prefill_bands": [
     [
      17,
-     127,
+     63,
      "rmma.m1.n1.w4x1"
     ],
     [
-     128,
+     64,
      255,
      "rmma.m1.n2.w4x1"
     ]
@@ -5124,16 +5169,11 @@
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     2,
-     4,
+     3,
      "rmma.m1.n2.w1x4"
     ],
     [
-     5,
+     4,
      5,
      "rmma.m1.n1.w1x4"
     ],
@@ -5228,8 +5268,8 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5282,8 +5322,8 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5300,7 +5340,7 @@
     [
      48,
      63,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n2.w1x4"
     ],
     [
      64,
@@ -5335,7 +5375,9 @@
      2047,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5368,13 +5410,23 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
     [
      1,
+     2,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     3,
+     3,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     4,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -5436,7 +5488,9 @@
      2047,
      "staged.128x128.w2x4.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5588,13 +5642,8 @@
     ],
     [
      12,
-     15,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     16,
      23,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n1.w1x4"
     ],
     [
      24,
@@ -5603,13 +5652,13 @@
     ],
     [
      32,
-     63,
-     "rmma.m1.n2.w2x2"
+     47,
+     "rmma.m1.n2.w1x4"
     ],
     [
-     64,
+     48,
      95,
-     "rmma.m2.n1.w4x1"
+     "rmma.m1.n2.w2x2"
     ],
     [
      96,
@@ -5637,7 +5686,7 @@
     [
      64,
      127,
-     "rmma.m2.n1.w4x1"
+     "rmma.m1.n2.w4x1"
     ],
     [
      128,
@@ -5649,17 +5698,28 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
     [
      1,
-     4,
+     3,
      "rmma.m1.n1.w1x8"
     ],
     [
+     4,
+     4,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
      5,
+     5,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     6,
      11,
      "rmma.m1.n1.w1x16"
     ],
@@ -5731,7 +5791,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5805,16 +5866,16 @@
    "bands": [
     [
      1,
-     11,
+     7,
      "rmma.m1.n1.w1x8"
     ],
     [
-     12,
-     15,
+     8,
+     23,
      "rmma.m1.n1.w1x4"
     ],
     [
-     16,
+     24,
      47,
      "rmma.m1.n2.w1x4"
     ],
@@ -5861,7 +5922,8 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -5872,11 +5934,11 @@
     ],
     [
      12,
-     15,
+     23,
      "rmma.m1.n1.w1x8"
     ],
     [
-     16,
+     24,
      47,
      "rmma.m1.n4.w1x8"
     ],
@@ -5924,11 +5986,17 @@
      "rmma.m2.n2.w4x1"
     ],
     [
+     512,
+     1023,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
      1024,
      2047,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6002,6 +6070,11 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
      95,
      "rmma.m1.n4.w1x4"
     ],
@@ -6048,7 +6121,8 @@
      511,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6167,6 +6241,11 @@
     ],
     [
      256,
+     511,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     512,
      16777216,
      "rmma.m1.n8.w8x1"
     ]
@@ -6193,7 +6272,8 @@
      8191,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6287,13 +6367,8 @@
     ],
     [
      24,
-     31,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     32,
      47,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n1.w1x4"
     ],
     [
      48,
@@ -6307,6 +6382,11 @@
     ],
     [
      96,
+     127,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     128,
      255,
      "rmma.m1.n2.w2x2"
     ],
@@ -6326,7 +6406,7 @@
    "format": "nvfp4",
    "k": 2048,
    "n": 2048,
-   "prefill": "rmma.m2.n4.w4x1",
+   "prefill": "rmma.m1.n4.w4x1",
    "prefill_bands": [
     [
      17,
@@ -6339,11 +6419,12 @@
      "rmma.m1.n2.w4x1"
     ],
     [
-     1024,
-     4095,
-     "rmma.m1.n4.w4x1"
+     8192,
+     16777216,
+     "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6359,6 +6440,16 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n1.w2x2"
+    ],
+    [
+     96,
      191,
      "rmma.m1.n2.w2x2"
     ],
@@ -6390,7 +6481,8 @@
      511,
      "rmma.m1.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6401,6 +6493,11 @@
     ],
     [
      12,
+     15,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     16,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -6452,7 +6549,8 @@
      1023,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6468,13 +6566,8 @@
     ],
     [
      32,
-     47,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     48,
      63,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n2.w1x4"
     ],
     [
      64,
@@ -6511,10 +6604,16 @@
     ],
     [
      512,
+     1023,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     1024,
      2047,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6531,15 +6630,15 @@
     [
      48,
      63,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n2.w1x4"
     ],
     [
      64,
-     127,
+     191,
      "rmma.m1.n2.w2x2"
     ],
     [
-     128,
+     192,
      255,
      "rmma.m1.n2.w4x1"
     ],
@@ -6581,7 +6680,8 @@
      2047,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6623,7 +6723,7 @@
     [
      512,
      16777216,
-     "rmma.m1.n8.w4x1"
+     "rmma.m2.n4.w4x1"
     ]
    ],
    "compute": "a16",
@@ -6646,14 +6746,15 @@
     [
      512,
      1023,
-     "rmma.m1.n8.w4x1"
+     "rmma.m2.n4.w4x1"
     ],
     [
      2048,
      4095,
      "rmma.m2.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -6737,26 +6838,6 @@
    "bands": [
     [
      1,
-     3,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     4,
-     4,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     5,
-     5,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     6,
-     6,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     7,
      7,
      "rmma.m1.n1.w1x8"
     ],
@@ -6828,7 +6909,8 @@
      1023,
      "rmma.m1.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7013,11 +7095,11 @@
    "bands": [
     [
      1,
-     4,
+     3,
      "rmma.m1.n1.w1x8"
     ],
     [
-     5,
+     4,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -7052,7 +7134,8 @@
    "format": "nvfp4",
    "k": 14336,
    "n": 4096,
-   "prefill": "w4a4.128x128"
+   "prefill": "w4a4.128x128",
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7276,23 +7359,8 @@
     ],
     [
      5,
-     5,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     6,
-     6,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     7,
-     7,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     8,
      11,
-     "rmma.m1.n1.w1x8"
+     "rmma.m1.n1.w1x4"
     ],
     [
      12,
@@ -7310,7 +7378,8 @@
    "format": "q8",
    "k": 2048,
    "n": 128256,
-   "prefill": "rmma.m1.n8.w8x1"
+   "prefill": "rmma.m1.n8.w8x1",
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7370,7 +7439,7 @@
     [
      17,
      63,
-     "rmma.m1.n1.w4x1"
+     "rmma.m1.n2.w4x1"
     ],
     [
      64,
@@ -7445,16 +7514,6 @@
     ],
     [
      128,
-     191,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     192,
-     255,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     256,
      511,
      "rmma.m1.n4.w1x8"
     ],
@@ -7486,7 +7545,8 @@
      511,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7580,6 +7640,11 @@
     ],
     [
      64,
+     95,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     96,
      127,
      "rmma.m1.n4.w1x4"
     ],
@@ -7621,7 +7686,8 @@
      255,
      "rmma.m1.n4.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7675,13 +7741,8 @@
    "prefill": "rmma.m1.n8.w8x1",
    "prefill_bands": [
     [
-     17,
-     63,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
      128,
-     1023,
+     511,
      "rmma.m1.n8.w4x1"
     ]
    ],
@@ -7719,11 +7780,6 @@
     ],
     [
      64,
-     127,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     256,
      1023,
      "rmma.m1.n8.w4x1"
     ]
@@ -7772,11 +7828,11 @@
     ],
     [
      12,
-     23,
+     31,
      "rmma.m1.n1.w1x8"
     ],
     [
-     24,
+     32,
      47,
      "rmma.m1.n4.w1x8"
     ],
@@ -7838,7 +7894,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -7917,16 +7974,6 @@
     ],
     [
      96,
-     127,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     128,
-     191,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     192,
      255,
      "rmma.m1.n4.w1x8"
     ],
@@ -7965,7 +8012,7 @@
     ],
     [
      512,
-     2047,
+     4095,
      "rmma.m1.n8.w4x1"
     ],
     [
@@ -7973,7 +8020,8 @@
      16777216,
      "rmma.m2.n8.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -8027,11 +8075,11 @@
    "bands": [
     [
      1,
-     1,
+     3,
      "rmma.m1.n2.w1x4"
     ],
     [
-     2,
+     4,
      11,
      "rmma.m1.n1.w1x4"
     ],
@@ -8073,7 +8121,8 @@
      127,
      "rmma.m1.n2.w4x1"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -8124,33 +8173,11 @@
    "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     24,
-     95,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     96,
-     16777216,
-     "staged.64x64.w2x2.s3"
-    ]
-   ],
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "add",
-   "format": "bf16",
+   "n": 2560,
    "k": 9216,
-   "n": 2560,
    "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
@@ -8165,31 +8192,56 @@
     ],
     [
      2048,
-     8191,
+     4095,
      "staged.256x128.w4x2.s2"
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     24,
+     95,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     96,
+     16777216,
+     "staged.64x64.w2x2.s3"
     ]
    ],
    "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 12288,
+   "k": 2560,
+   "prefill": "staged.128x64.w2x2.s2",
+   "prefill_bands": [
+    [
+     17,
+     511,
+     "staged.64x64.w2x2.s3"
+    ]
+   ],
    "bands": [
     [
      1,
-     4,
+     2,
      "rmma.m1.n1.w1x16"
     ],
     [
-     5,
-     6,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     7,
-     7,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     8,
+     3,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -8224,144 +8276,76 @@
      "staged.128x64.w2x2.s2"
     ]
    ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "bf16",
-   "k": 2560,
-   "n": 12288,
-   "prefill": "staged.128x64.w2x2.s2",
-   "prefill_bands": [
-    [
-     17,
-     511,
-     "staged.64x64.w2x2.s3"
-    ]
-   ]
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     12,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     95,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     96,
-     127,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     128,
-     255,
-     "staged.256x128.w4x2.s2"
-    ],
-    [
-     256,
-     511,
-     "staged.128x128.w2x4.s3"
-    ],
-    [
-     512,
-     16777216,
-     "staged.256x128.w4x2.s2"
-    ]
-   ],
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 2560,
    "n": 248320,
+   "k": 2560,
    "prefill": "staged.256x128.w4x2.s2",
    "prefill_bands": [
     [
      17,
-     127,
+     63,
      "staged.64x64.w2x2.s3"
+    ],
+    [
+     64,
+     127,
+     "staged.128x64.w2x2.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     2,
-     4,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     5,
-     6,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     7,
      11,
-     "rmma.m1.n1.w1x16"
+     "rmma.m1.n1.w1x8.c2"
     ],
     [
      12,
-     23,
-     "rmma.m1.n2.w2x2"
+     47,
+     "rmma.m1.n4.w1x8"
     ],
     [
-     24,
-     31,
+     48,
+     63,
      "staged.64x64.w2x2.s3"
     ],
     [
-     32,
+     64,
      95,
-     "staged.64x64.w2x2.s4"
+     "staged.128x64.w2x2.s2"
     ],
     [
      96,
-     191,
-     "staged.128x128.w2x4.s3"
-    ],
-    [
-     192,
      255,
-     "staged.128x64.w2x2.s2"
+     "staged.64x128.w1x4.s2"
     ],
     [
      256,
      511,
-     "staged.256x128.w4x2.s2"
+     "staged.128x128.w2x4.s3"
     ],
     [
      512,
      16777216,
-     "staged.64x128.w1x4.s2"
+     "staged.256x128.w4x2.s2"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "swiglu",
-   "format": "bf16",
-   "k": 2560,
    "n": 9216,
+   "k": 2560,
    "prefill": "staged.256x128.w4x2.s2",
    "prefill_bands": [
     [
      17,
-     63,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     64,
      127,
      "staged.64x64.w2x2.s4"
     ],
@@ -8380,41 +8364,73 @@
      2047,
      "staged.128x64.w2x2.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
+     2,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     3,
+     5,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     6,
+     7,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     8,
+     11,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     12,
      23,
-     "rmma.m1.n2.w1x4"
+     "rmma.m1.n2.w2x2"
     ],
     [
      24,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     63,
+     31,
      "staged.64x64.w2x2.s3"
     ],
     [
-     64,
+     32,
      95,
-     "staged.128x64.w2x2.s2"
+     "staged.64x64.w2x2.s4"
     ],
     [
      96,
-     16777216,
+     191,
+     "staged.128x128.w2x4.s3"
+    ],
+    [
+     192,
+     255,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     256,
+     511,
      "staged.256x128.w4x2.s2"
+    ],
+    [
+     512,
+     16777216,
+     "staged.64x128.w1x4.s2"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)",
+   "prefill_tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 2048,
    "n": 128256,
+   "k": 2048,
    "prefill": "staged.256x128.w4x2.s2",
    "prefill_bands": [
     [
@@ -8422,9 +8438,55 @@
      127,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "bands": [
+    [
+     1,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     95,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     96,
+     16777216,
+     "staged.256x128.w4x2.s2"
+    ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 2048,
+   "k": 11008,
+   "prefill": "staged.128x64.w2x2.s2",
+   "prefill_bands": [
+    [
+     17,
+     1023,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     1024,
+     2047,
+     "staged.128x128.w2x4.s3"
+    ],
+    [
+     2048,
+     4095,
+     "staged.64x64.w2x2.s3"
+    ]
+   ],
    "bands": [
     [
      1,
@@ -8447,27 +8509,27 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 11008,
    "n": 2048,
+   "k": 2048,
    "prefill": "staged.64x64.w2x2.s3",
    "prefill_bands": [
     [
      1024,
      2047,
-     "staged.128x128.w2x4.s3"
+     "rmma.m1.n8.w8x1"
     ],
     [
      8192,
      16777216,
-     "staged.64x128.w1x4.s2"
+     "staged.128x64.w2x2.s2"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
-  },
-  {
    "bands": [
     [
      1,
@@ -8495,64 +8557,14 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "bf16",
-   "k": 2048,
-   "n": 2048,
-   "prefill": "staged.64x64.w2x2.s3",
-   "prefill_bands": [
-    [
-     1024,
-     2047,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     8192,
-     16777216,
-     "staged.64x128.w1x4.s2"
-    ]
-   ],
    "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     24,
-     95,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     96,
-     127,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     128,
-     255,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     256,
-     16777216,
-     "staged.64x64.w2x2.s3"
-    ]
-   ],
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 2048,
    "n": 3072,
+   "k": 2048,
    "prefill": "staged.64x64.w2x2.s3",
    "prefill_bands": [
     [
@@ -8563,85 +8575,121 @@
     [
      8192,
      16777216,
-     "staged.128x64.w2x2.s2"
+     "staged.64x128.w1x4.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
-     4,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     5,
-     5,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     6,
      11,
      "rmma.m1.n1.w1x16"
     ],
     [
      12,
      23,
-     "rmma.m1.n2.w2x2"
+     "rmma.m1.n1.w1x8"
     ],
     [
      24,
-     47,
+     127,
      "rmma.m1.n4.w1x8"
     ],
     [
-     48,
-     95,
-     "staged.128x64.w2x2.s2"
-    ],
-    [
-     96,
-     127,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
      128,
-     191,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     192,
      255,
-     "staged.128x64.w2x2.s2"
+     "staged.64x64.w2x2.s4"
     ],
     [
      256,
      16777216,
-     "staged.64x128.w1x4.s2"
+     "staged.64x64.w2x2.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "swiglu",
-   "format": "bf16",
+   "n": 11008,
    "k": 2048,
-   "n": 11008,
    "prefill": "staged.128x64.w2x2.s2",
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
-  },
-  {
    "bands": [
     [
      1,
-     2,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     3,
-     3,
+     4,
      "rmma.m1.n1.w1x16"
     ],
     [
-     4,
+     5,
+     5,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     6,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     95,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     128,
+     191,
+     "staged.64x128.w1x4.s2"
+    ],
+    [
+     192,
+     255,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     256,
+     16777216,
+     "staged.64x128.w1x4.s2"
+    ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 100352,
+   "k": 2560,
+   "prefill": "staged.256x128.w4x2.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     128,
+     255,
+     "staged.64x128.w1x4.s2"
+    ]
+   ],
+   "bands": [
+    [
+     1,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -8657,73 +8705,19 @@
     ],
     [
      96,
-     511,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     512,
      16777216,
-     "staged.128x128.w2x4.s3"
+     "staged.64x128.w1x4.s2"
     ]
    ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "bf16",
-   "k": 2560,
-   "n": 100352,
-   "prefill": "staged.256x128.w4x2.s2",
-   "prefill_bands": [
-    [
-     17,
-     127,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     128,
-     255,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     512,
-     1023,
-     "staged.128x128.w2x4.s3"
-    ]
-   ]
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     24,
-     127,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     128,
-     511,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     512,
-     16777216,
-     "staged.64x64.w2x2.s3"
-    ]
-   ],
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 2560,
    "n": 2560,
-   "prefill": "staged.128x64.w2x2.s2",
+   "k": 2560,
+   "prefill": "staged.64x128.w1x4.s2",
    "prefill_bands": [
     [
      17,
@@ -8738,17 +8732,14 @@
     [
      1024,
      2047,
-     "staged.128x128.w2x4.s2"
+     "staged.128x128.w2x4.s3"
     ],
     [
      2048,
-     16777216,
+     8191,
      "staged.256x128.w4x2.s2"
     ]
    ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
-  },
-  {
    "bands": [
     [
      1,
@@ -8762,21 +8753,11 @@
     ],
     [
      24,
-     95,
+     127,
      "rmma.m1.n4.w1x8"
     ],
     [
-     96,
-     127,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
      128,
-     255,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     256,
      511,
      "staged.64x64.w2x2.s4"
     ],
@@ -8786,141 +8767,110 @@
      "staged.64x64.w2x2.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
+   "n": 2560,
    "k": 8192,
-   "n": 2560,
-   "prefill": "staged.64x128.w1x4.s2",
+   "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
      17,
-     255,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     256,
-     511,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     512,
      1023,
      "staged.64x64.w2x2.s3"
     ],
     [
      1024,
      2047,
-     "staged.128x128.w2x4.s3"
+     "staged.128x128.w2x4.s2"
     ],
     [
      2048,
      16777216,
      "staged.256x128.w4x2.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
      11,
-     "rmma.m1.n1.w1x16"
+     "rmma.m1.n1.w1x8.c2"
     ],
     [
      12,
+     23,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     24,
      95,
      "rmma.m1.n4.w1x8"
     ],
     [
      96,
-     191,
-     "staged.64x64.w2x2.s4"
+     127,
+     "rmma.m1.n4.w1x4"
     ],
     [
-     192,
+     128,
      16777216,
      "staged.64x64.w2x2.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 2560,
    "n": 3584,
-   "prefill": "staged.64x128.w1x4.s2",
-   "prefill_bands": [
-    [
-     17,
-     255,
-     "staged.64x64.w2x2.s4"
-    ],
-    [
-     256,
-     1023,
-     "staged.64x64.w2x2.s3"
-    ]
-   ],
-   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
-  },
-  {
-   "bands": [
-    [
-     1,
-     6,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     7,
-     7,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     8,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     24,
-     95,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     96,
-     127,
-     "staged.128x128.w2x4.s2"
-    ],
-    [
-     128,
-     191,
-     "staged.128x128.w2x4.s3"
-    ],
-    [
-     192,
-     255,
-     "staged.128x64.w2x2.s2"
-    ],
-    [
-     256,
-     511,
-     "staged.256x128.w4x2.s2"
-    ],
-    [
-     512,
-     16777216,
-     "staged.64x128.w1x4.s2"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "format": "bf16",
    "k": 2560,
+   "prefill": "staged.64x128.w1x4.s2",
+   "prefill_bands": [
+    [
+     17,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
+     1023,
+     "staged.64x64.w2x2.s3"
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     95,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     96,
+     191,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     192,
+     16777216,
+     "staged.64x64.w2x2.s3"
+    ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "swiglu",
    "n": 8192,
+   "k": 2560,
    "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
@@ -8938,29 +8888,75 @@
      511,
      "staged.256x128.w4x2.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
-     2,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     3,
-     3,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     4,
-     7,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     8,
      11,
      "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     24,
+     95,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     96,
+     127,
+     "staged.128x128.w2x4.s2"
+    ],
+    [
+     128,
+     191,
+     "staged.128x128.w2x4.s3"
+    ],
+    [
+     192,
+     255,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     256,
+     511,
+     "staged.256x128.w4x2.s2"
+    ],
+    [
+     512,
+     16777216,
+     "staged.128x64.w2x2.s2"
+    ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 100278,
+   "k": 4096,
+   "prefill": "staged.256x128.w4x2.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     128,
+     255,
+     "staged.64x128.w1x4.s2"
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n4.w1x8"
     ],
     [
      12,
@@ -8979,11 +8975,11 @@
     ],
     [
      96,
-     191,
+     255,
      "staged.64x128.w1x4.s2"
     ],
     [
-     192,
+     256,
      511,
      "staged.256x128.w4x2.s2"
     ],
@@ -8993,39 +8989,45 @@
      "staged.128x128.w2x4.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
+   "n": 12288,
    "k": 4096,
-   "n": 100278,
-   "prefill": "staged.256x128.w4x2.s2",
+   "prefill": "staged.64x128.w1x4.s2",
    "prefill_bands": [
     [
      17,
-     127,
+     511,
      "staged.64x64.w2x2.s3"
     ],
     [
-     128,
-     255,
-     "staged.64x128.w1x4.s2"
+     2048,
+     4095,
+     "staged.256x128.w4x2.s2"
     ],
     [
-     512,
-     1023,
-     "staged.128x128.w2x4.s3"
+     8192,
+     16777216,
+     "staged.256x128.w4x2.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
-     4,
+     1,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     2,
+     3,
      "rmma.m1.n1.w1x4"
     ],
     [
-     5,
+     4,
      23,
      "rmma.m1.n2.w1x4"
     ],
@@ -9065,12 +9067,15 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 4096,
-   "n": 12288,
-   "prefill": "staged.256x128.w4x2.s2",
+   "n": 4096,
+   "k": 11008,
+   "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
      17,
@@ -9079,40 +9084,23 @@
     ],
     [
      512,
+     1023,
+     "staged.128x128.w2x4.s3"
+    ],
+    [
+     1024,
      2047,
-     "staged.64x128.w1x4.s2"
+     "staged.256x128.w4x2.s2"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
-     2,
+     3,
      "rmma.m1.n4.w1x8"
     ],
     [
-     3,
-     3,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
      4,
-     4,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     5,
-     5,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     6,
-     6,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     7,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -9137,31 +9125,37 @@
      "staged.128x128.w2x4.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 11008,
    "n": 4096,
+   "k": 4096,
    "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
      17,
+     255,
+     "staged.64x64.w2x2.s4"
+    ],
+    [
+     256,
      511,
      "staged.64x64.w2x2.s3"
     ],
     [
      512,
      1023,
-     "staged.128x128.w2x4.s3"
+     "staged.128x128.w2x4.s2"
     ],
     [
      1024,
      2047,
-     "staged.256x128.w4x2.s2"
+     "staged.64x64.w2x2.s3"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
@@ -9180,6 +9174,11 @@
     ],
     [
      96,
+     127,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     128,
      191,
      "staged.64x64.w2x2.s4"
     ],
@@ -9194,36 +9193,32 @@
      "staged.128x128.w2x4.s2"
     ]
    ],
-   "compute": "a16",
-   "epilogue": "store",
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
    "format": "bf16",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 11008,
    "k": 4096,
-   "n": 4096,
-   "prefill": "staged.64x128.w1x4.s2",
+   "prefill": "staged.256x128.w4x2.s2",
    "prefill_bands": [
     [
      17,
-     255,
-     "staged.64x64.w2x2.s4"
+     127,
+     "staged.128x64.w2x2.s2"
     ],
     [
-     256,
-     511,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     512,
+     128,
      1023,
-     "staged.128x128.w2x4.s3"
+     "staged.64x128.w1x4.s2"
     ],
     [
      1024,
      2047,
-     "staged.64x64.w2x2.s3"
+     "staged.128x128.w2x4.s3"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
@@ -9232,23 +9227,18 @@
     ],
     [
      2,
+     4,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
      5,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     6,
-     6,
+     7,
      "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     7,
-     7,
-     "rmma.m1.n1.w1x16"
     ],
     [
      8,
      11,
-     "rmma.m1.n1.w1x8.c2"
+     "rmma.m1.n1.w1x16"
     ],
     [
      12,
@@ -9281,31 +9271,27 @@
      "staged.64x128.w1x4.s2"
     ]
    ],
-   "compute": "a16",
-   "epilogue": "swiglu",
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
    "format": "bf16",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 100352,
    "k": 4096,
-   "n": 11008,
    "prefill": "staged.256x128.w4x2.s2",
    "prefill_bands": [
     [
      17,
      127,
-     "staged.128x64.w2x2.s2"
+     "staged.64x64.w2x2.s3"
     ],
     [
      128,
-     1023,
+     255,
      "staged.64x128.w1x4.s2"
-    ],
-    [
-     1024,
-     2047,
-     "staged.128x128.w2x4.s3"
     ]
-   ]
-  },
-  {
+   ],
    "bands": [
     [
      1,
@@ -9343,27 +9329,148 @@
      "staged.128x128.w2x4.s3"
     ]
    ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 4096,
-   "n": 100352,
-   "prefill": "staged.256x128.w4x2.s2",
+   "n": 4096,
+   "k": 12800,
+   "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
      17,
-     127,
+     511,
      "staged.64x64.w2x2.s3"
-    ],
-    [
-     128,
-     255,
-     "staged.64x128.w1x4.s2"
     ],
     [
      512,
      1023,
      "staged.128x128.w2x4.s3"
+    ],
+    [
+     1024,
+     2047,
+     "staged.256x128.w4x2.s2"
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     12,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     511,
+     "staged.64x64.w2x2.s3"
+    ],
+    [
+     512,
+     16777216,
+     "staged.128x128.w2x4.s3"
+    ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "store",
+   "n": 6144,
+   "k": 4096,
+   "prefill": "staged.128x64.w2x2.s2",
+   "prefill_bands": [
+    [
+     17,
+     1023,
+     "staged.64x64.w2x2.s3"
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     2,
+     7,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     8,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
+     16777216,
+     "staged.64x64.w2x2.s3"
+    ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
+  },
+  {
+   "format": "bf16",
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "n": 12800,
+   "k": 4096,
+   "prefill": "staged.256x128.w4x2.s2",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     128,
+     1023,
+     "staged.64x128.w1x4.s2"
+    ]
+   ],
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     24,
+     95,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     96,
+     191,
+     "staged.64x128.w1x4.s2"
+    ],
+    [
+     192,
+     255,
+     "staged.128x64.w2x2.s2"
+    ],
+    [
+     256,
+     16777216,
+     "staged.64x128.w1x4.s2"
     ]
    ],
    "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
@@ -9373,50 +9480,60 @@
     [
      1,
      11,
-     "rmma.m1.n1.w1x8.c2"
+     "rmma.m1.n1.w1x16"
     ],
     [
      12,
+     23,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     24,
      47,
      "rmma.m1.n4.w1x8"
     ],
     [
      48,
-     63,
-     "rmma.m1.n2.w1x4"
+     95,
+     "rmma.m1.n4.w1x4"
     ],
     [
-     64,
+     96,
+     255,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     256,
      511,
-     "staged.64x64.w2x2.s3"
+     "rmma.m2.n4.w4x1"
     ],
     [
      512,
      16777216,
-     "staged.128x128.w2x4.s2"
+     "rmma.m2.n8.w4x1"
     ]
    ],
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
-   "k": 12800,
-   "n": 4096,
-   "prefill": "staged.64x128.w1x4.s2",
+   "format": "fp8r32",
+   "k": 6656,
+   "n": 4608,
+   "prefill": "rmma.m2.n8.w4x1",
    "prefill_bands": [
     [
      17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     256,
      511,
-     "staged.64x64.w2x2.s3"
-    ],
-    [
-     512,
-     1023,
-     "staged.128x128.w2x4.s2"
-    ],
-    [
-     1024,
-     2047,
-     "staged.256x128.w4x2.s2"
+     "rmma.m2.n4.w4x1"
     ]
    ]
   },
@@ -9424,56 +9541,267 @@
    "bands": [
     [
      1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     192,
+     511,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n8.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8r32",
+   "k": 6656,
+   "n": 4096,
+   "prefill": "rmma.m2.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
      1,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     2,
-     2,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     3,
-     3,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     4,
-     4,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     5,
-     6,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     7,
      11,
      "rmma.m1.n1.w1x8"
     ],
     [
      12,
-     63,
+     15,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     16,
+     47,
      "rmma.m1.n2.w1x4"
     ],
     [
-     64,
+     48,
+     95,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     96,
+     191,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     192,
      16777216,
-     "staged.64x64.w2x2.s3"
+     "rmma.m2.n4.w4x1"
     ]
    ],
    "compute": "a16",
    "epilogue": "store",
-   "format": "bf16",
+   "format": "fp8r32",
    "k": 4096,
-   "n": 6144,
-   "prefill": "staged.128x64.w2x2.s2",
+   "n": 6656,
+   "prefill": "rmma.m2.n8.w4x1",
    "prefill_bands": [
     [
      17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     256,
      1023,
-     "staged.64x64.w2x2.s3"
+     "rmma.m2.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     1,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     2,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     15,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     16,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n8.w8x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n8.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "nvfp4",
+   "k": 6656,
+   "n": 19968,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     96,
+     127,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     128,
+     191,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n8.w8x1"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "nvfp4",
+   "k": 19968,
+   "n": 6656,
+   "prefill": "rmma.m2.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     256,
+     1023,
+     "rmma.m2.n4.w4x1"
     ]
    ]
   },
@@ -9482,12 +9810,652 @@
     [
      1,
      6,
-     "rmma.m1.n1.w1x8.c2"
+     "rmma.m1.n1.w1x8"
     ],
     [
      7,
      7,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     8,
+     11,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     63,
      "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     96,
+     191,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     192,
+     511,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n8.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8r32",
+   "k": 19968,
+   "n": 6656,
+   "prefill": "rmma.m2.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m2.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     512,
+     1023,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     23,
+     "rmma.m1.n1.w1x8.c8"
+    ],
+    [
+     24,
+     63,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     96,
+     255,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8r32",
+   "k": 6656,
+   "n": 256,
+   "prefill": "rmma.m2.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     1023,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     1024,
+     4095,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     4096,
+     8191,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     8192,
+     16777216,
+     "rmma.m2.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     23,
+     "rmma.m1.n1.w1x8.c8"
+    ],
+    [
+     24,
+     63,
+     "rmma.m1.n1.w1x8.c2"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     96,
+     255,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m1.n4.w1x8"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8",
+   "k": 6656,
+   "n": 256,
+   "prefill": "rmma.m2.n2.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     1023,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     1024,
+     4095,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     4096,
+     8191,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     8192,
+     16777216,
+     "rmma.m2.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     96,
+     191,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     192,
+     511,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n8.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8",
+   "k": 6656,
+   "n": 4096,
+   "prefill": "rmma.m2.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n2.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     15,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     16,
+     23,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     24,
+     31,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     96,
+     191,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     192,
+     16777216,
+     "rmma.m2.n4.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8",
+   "k": 4096,
+   "n": 6656,
+   "prefill": "rmma.m2.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m2.n2.w4x1"
+    ],
+    [
+     256,
+     1023,
+     "rmma.m2.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     15,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     16,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     96,
+     191,
+     "rmma.m2.n8.w2x1"
+    ],
+    [
+     192,
+     255,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m2.n8.w2x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "swiglu",
+   "format": "fp8r32",
+   "k": 6656,
+   "n": 19968,
+   "prefill": "rmma.m2.n8.w2x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     24,
+     47,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     48,
+     95,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     96,
+     127,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     256,
+     16777216,
+     "rmma.m1.n8.w8x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 6656,
+   "n": 4608,
+   "prefill": "rmma.m2.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     1023,
+     "rmma.m1.n8.w8x1"
+    ],
+    [
+     1024,
+     4095,
+     "rmma.m1.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     12,
+     23,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     24,
+     63,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     96,
+     255,
+     "rmma.m1.n4.w1x8"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m1.n8.w4x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "q8",
+   "k": 6656,
+   "n": 4096,
+   "prefill": "rmma.m1.n8.w4x1",
+   "prefill_bands": [
+    [
+     17,
+     127,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     128,
+     255,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     256,
+     511,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     8192,
+     16777216,
+     "rmma.m2.n8.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     128,
+     511,
+     "rmma.m2.n8.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n8.w2x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8r32",
+   "k": 6656,
+   "n": 19968,
+   "prefill": "rmma.m2.n8.w2x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     3,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
+     4,
+     11,
+     "rmma.m1.n1.w1x8"
+    ],
+    [
+     12,
+     47,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     48,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     95,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     96,
+     127,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     128,
+     511,
+     "rmma.m2.n8.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "rmma.m2.n8.w2x1"
+    ]
+   ],
+   "compute": "a16",
+   "epilogue": "store",
+   "format": "fp8",
+   "k": 6656,
+   "n": 19968,
+   "prefill": "rmma.m2.n8.w2x1",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     64,
+     127,
+     "rmma.m1.n4.w4x1"
+    ]
+   ]
+  },
+  {
+   "bands": [
+    [
+     1,
+     7,
+     "rmma.m1.n1.w1x8"
     ],
     [
      8,
@@ -9496,1048 +10464,6 @@
     ],
     [
      12,
-     23,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     24,
-     95,
-     "staged.128x64.w2x2.s2"
-    ],
-    [
-     96,
-     191,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     192,
-     255,
-     "staged.128x64.w2x2.s2"
-    ],
-    [
-     256,
-     16777216,
-     "staged.64x128.w1x4.s2"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "format": "bf16",
-   "k": 4096,
-   "n": 12800,
-   "prefill": "staged.256x128.w4x2.s2",
-   "prefill_bands": [
-    [
-     17,
-     127,
-     "staged.128x64.w2x2.s2"
-    ],
-    [
-     128,
-     511,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     512,
-     1023,
-     "staged.128x128.w2x4.s3"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     96,
-     255,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     512,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8r32",
-   "k": 6656,
-   "n": 4608,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     512,
-     1023,
-     "rmma.m2.n8.w2x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     96,
-     127,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     128,
-     191,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     192,
-     511,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     512,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8r32",
-   "k": 6656,
-   "n": 4096,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     127,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m2.n2.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     24,
-     31,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     32,
-     47,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     96,
-     191,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     192,
-     16777216,
-     "rmma.m2.n4.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8r32",
-   "k": 4096,
-   "n": 6656,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     256,
-     1023,
-     "rmma.m2.n4.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     31,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     32,
-     47,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     48,
-     63,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     96,
-     127,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     128,
-     255,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     512,
-     16777216,
-     "rmma.m1.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "format": "nvfp4",
-   "k": 6656,
-   "n": 19968,
-   "prefill": "rmma.m1.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n4.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     96,
-     127,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     128,
-     191,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     192,
-     255,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     256,
-     16777216,
-     "rmma.m2.n4.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "nvfp4",
-   "k": 19968,
-   "n": 6656,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     256,
-     1023,
-     "rmma.m2.n4.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     5,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     6,
-     11,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     48,
-     63,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     64,
-     95,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     96,
-     191,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     192,
-     511,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     512,
-     16777216,
-     "rmma.m1.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8r32",
-   "k": 19968,
-   "n": 6656,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     512,
-     1023,
-     "rmma.m1.n8.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     23,
-     "rmma.m1.n1.w1x8.c8"
-    ],
-    [
-     24,
-     63,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     96,
-     255,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     256,
-     16777216,
-     "rmma.m1.n4.w1x8"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8r32",
-   "k": 6656,
-   "n": 256,
-   "prefill": "rmma.m2.n2.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     1023,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     1024,
-     4095,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     4096,
-     8191,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     8192,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     23,
-     "rmma.m1.n1.w1x8.c8"
-    ],
-    [
-     24,
-     95,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     96,
-     255,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     256,
-     16777216,
-     "rmma.m1.n4.w1x8"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8",
-   "k": 6656,
-   "n": 256,
-   "prefill": "rmma.m2.n2.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     1023,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     1024,
-     4095,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     4096,
-     8191,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     8192,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     96,
-     127,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     128,
-     191,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     192,
-     511,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     512,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8",
-   "k": 6656,
-   "n": 4096,
-   "prefill": "rmma.m2.n8.w2x1",
-   "prefill_bands": [
-    [
-     17,
-     127,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m2.n2.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     96,
-     191,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     192,
-     16777216,
-     "rmma.m2.n4.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8",
-   "k": 4096,
-   "n": 6656,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     256,
-     1023,
-     "rmma.m2.n4.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     15,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     16,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     63,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     64,
-     95,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     96,
-     191,
-     "rmma.m2.n8.w2x1"
-    ],
-    [
-     192,
-     255,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     256,
-     16777216,
-     "rmma.m2.n8.w2x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "swiglu",
-   "format": "fp8r32",
-   "k": 6656,
-   "n": 19968,
-   "prefill": "rmma.m2.n8.w2x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m1.n8.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     24,
-     47,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     48,
-     95,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     96,
-     127,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     128,
-     255,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     256,
-     16777216,
-     "rmma.m1.n8.w8x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "q8",
-   "k": 6656,
-   "n": 4608,
-   "prefill": "rmma.m2.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     127,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     128,
-     255,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     256,
-     1023,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     1024,
-     4095,
-     "rmma.m1.n8.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     11,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     12,
-     23,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     24,
-     63,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     96,
-     255,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     256,
-     511,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     512,
-     16777216,
-     "rmma.m1.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "q8",
-   "k": 6656,
-   "n": 4096,
-   "prefill": "rmma.m1.n8.w4x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n1.w4x1"
-    ],
-    [
-     64,
-     255,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     256,
-     511,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     8192,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     1,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     2,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     47,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     48,
-     63,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     96,
-     127,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     128,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8r32",
-   "k": 6656,
-   "n": 19968,
-   "prefill": "rmma.m2.n8.w2x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m1.n4.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     2,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     3,
-     11,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     12,
-     47,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     48,
-     63,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     96,
-     127,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     128,
-     191,
-     "rmma.m2.n8.w4x1"
-    ],
-    [
-     192,
-     255,
-     "rmma.m2.n8.w2x1"
-    ],
-    [
-     256,
-     16777216,
-     "rmma.m2.n8.w4x1"
-    ]
-   ],
-   "compute": "a16",
-   "epilogue": "store",
-   "format": "fp8",
-   "k": 6656,
-   "n": 19968,
-   "prefill": "rmma.m2.n8.w2x1",
-   "prefill_bands": [
-    [
-     17,
-     63,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     64,
-     127,
-     "rmma.m1.n4.w4x1"
-    ]
-   ]
-  },
-  {
-   "bands": [
-    [
-     1,
-     6,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     7,
-     11,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     12,
      15,
      "rmma.m1.n1.w1x4"
     ],
@@ -10669,7 +10595,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "rmma.m1.n8.w4x1"
     ]
    ]
   },
@@ -10703,7 +10629,7 @@
     [
      256,
      511,
-     "rmma.m1.n8.w4x1"
+     "rmma.m2.n4.w4x1"
     ],
     [
      512,
@@ -10759,21 +10685,11 @@
     ],
     [
      96,
-     127,
+     191,
      "rmma.m1.n2.w4x1"
     ],
     [
-     128,
-     191,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
      192,
-     255,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     256,
      16777216,
      "rmma.m2.n4.w4x1"
     ]
@@ -10889,7 +10805,7 @@
     [
      96,
      127,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      128,
@@ -10899,7 +10815,7 @@
     [
      192,
      255,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      256,
@@ -10909,7 +10825,7 @@
     [
      512,
      16777216,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -10954,7 +10870,7 @@
     [
      96,
      127,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      128,
@@ -10964,7 +10880,7 @@
     [
      192,
      255,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      256,
@@ -10974,7 +10890,7 @@
     [
      512,
      16777216,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -11019,12 +10935,12 @@
     [
      256,
      511,
-     "rmma.m1.n1.w2x2"
+     "rmma.m1.n1.w4x1"
     ],
     [
      512,
      16777216,
-     "rmma.m1.n4.w4x1"
+     "rmma.m1.n2.w2x2"
     ]
    ],
    "compute": "a16",
@@ -11135,18 +11051,13 @@
     ],
     [
      128,
-     191,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     192,
      255,
      "rmma.m1.n2.w2x2"
     ],
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -11190,23 +11101,13 @@
     ],
     [
      64,
-     95,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     96,
-     127,
-     "rmma.m2.n2.w4x1"
-    ],
-    [
-     128,
      191,
      "rmma.m1.n2.w2x2"
     ],
     [
      192,
      255,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      256,
@@ -11216,7 +11117,7 @@
     [
      512,
      16777216,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -11230,6 +11131,11 @@
    "bands": [
     [
      1,
+     1,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     2,
      11,
      "rmma.m1.n1.w2x2"
     ],
@@ -11250,11 +11156,6 @@
     ],
     [
      96,
-     127,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     128,
      191,
      "tiled.128x128"
     ],
@@ -11285,11 +11186,11 @@
     ],
     [
      2,
-     2,
+     3,
      "rmma.m1.n1.w1x16"
     ],
     [
-     3,
+     4,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -11305,11 +11206,11 @@
     ],
     [
      32,
-     47,
+     63,
      "rmma.m1.n2.w4x1"
     ],
     [
-     48,
+     64,
      95,
      "rmma.m2.n2.w4x1"
     ],
@@ -11400,13 +11301,8 @@
     ],
     [
      512,
-     1023,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     1024,
      2047,
-     "rmma.m1.n8.w4x1"
+     "rmma.m1.n4.w4x1"
     ]
    ]
   },
@@ -11424,6 +11320,11 @@
     ],
     [
      96,
+     191,
+     "rmma.m1.n4.w1x4"
+    ],
+    [
+     192,
      511,
      "rmma.m1.n2.w2x2"
     ],
@@ -11475,7 +11376,14 @@
    "format": "bf16",
    "k": 2048,
    "n": 1,
-   "prefill": "staged.64x64.w2x2.s4"
+   "prefill": "staged.64x64.w2x2.s4",
+   "prefill_bands": [
+    [
+     17,
+     63,
+     "staged.64x64.w2x2.s3"
+    ]
+   ]
   },
   {
    "bands": [
@@ -11521,18 +11429,8 @@
     ],
     [
      192,
-     255,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     256,
-     511,
-     "tiled.128x128"
-    ],
-    [
-     512,
      16777216,
-     "rmma.m2.n4.w4x1"
+     "tiled.128x128"
     ]
    ],
    "compute": "a16",
@@ -11576,11 +11474,6 @@
     ],
     [
      192,
-     255,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     256,
      16777216,
      "rmma.m2.n4.w4x1"
     ]
@@ -11664,7 +11557,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -11714,17 +11607,12 @@
     [
      128,
      191,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      192,
-     255,
-     "tiled.64x128"
-    ],
-    [
-     256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -11753,8 +11641,13 @@
     ],
     [
      24,
-     47,
+     31,
      "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n4.w1x4"
     ],
     [
      48,
@@ -11774,17 +11667,12 @@
     [
      128,
      191,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      192,
-     255,
-     "tiled.64x128"
-    ],
-    [
-     256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -11890,11 +11778,6 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     64,
      95,
      "tiled.64x128"
     ],
@@ -11935,6 +11818,11 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w1x4"
+    ],
+    [
+     64,
      191,
      "staged.64x64.w2x2.s4"
     ],
@@ -11954,6 +11842,13 @@
    "format": "bf16",
    "k": 2880,
    "n": 5120,
+   "evidence_decode_us": [
+    [
+     1,
+     26.62,
+     24.58
+    ]
+   ],
    "prefill": "staged.128x64.w2x2.s2",
    "prefill_bands": [
     [
@@ -11973,10 +11868,11 @@
     ],
     [
      1024,
-     4095,
+     8191,
      "staged.256x128.w4x2.s2"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -11987,11 +11883,11 @@
     ],
     [
      12,
-     23,
+     15,
      "rmma.m1.n1.w1x8"
     ],
     [
-     24,
+     16,
      47,
      "rmma.m1.n4.w1x8"
     ],
@@ -12021,6 +11917,13 @@
    "format": "bf16",
    "k": 4096,
    "n": 2880,
+   "evidence_decode_us": [
+    [
+     1,
+     26.62,
+     20.48
+    ]
+   ],
    "prefill": "staged.64x128.w1x4.s2",
    "prefill_bands": [
     [
@@ -12033,37 +11936,18 @@
      4095,
      "staged.64x64.w2x2.s3"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     2,
-     2,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
      3,
+     "rmma.m1.n1.w1x16"
+    ],
+    [
      4,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     5,
-     5,
-     "rmma.m1.n1.w1x8.c2"
-    ],
-    [
-     6,
-     6,
-     "rmma.m1.n1.w1x16"
-    ],
-    [
-     7,
      11,
      "rmma.m1.n1.w1x8.c2"
     ],
@@ -12079,16 +11963,6 @@
     ],
     [
      96,
-     127,
-     "staged.64x128.w1x4.s2"
-    ],
-    [
-     128,
-     191,
-     "staged.256x128.w4x2.s2"
-    ],
-    [
-     192,
      255,
      "staged.64x128.w1x4.s2"
     ],
@@ -12103,6 +11977,13 @@
    "format": "bf16",
    "k": 2880,
    "n": 201088,
+   "evidence_decode_us": [
+    [
+     1,
+     722.94,
+     706.53
+    ]
+   ],
    "prefill": "staged.256x128.w4x2.s2",
    "prefill_bands": [
     [
@@ -12110,7 +11991,8 @@
      127,
      "staged.64x64.w2x2.s4"
     ]
-   ]
+   ],
+   "tuned_on": "route_tune --rotate 1 on the RTX 5090 (format-correct random weights)"
   },
   {
    "bands": [
@@ -12131,11 +12013,6 @@
     ],
     [
      32,
-     47,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     48,
      63,
      "rmma.m1.n2.w4x1"
     ],
@@ -12209,7 +12086,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12264,7 +12141,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12303,13 +12180,8 @@
     ],
     [
      32,
-     63,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     64,
      95,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n2.w2x2"
     ],
     [
      96,
@@ -12319,12 +12191,12 @@
     [
      128,
      191,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n4.w4x1"
     ],
     [
      192,
      511,
-     "rmma.m1.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12406,11 +12278,6 @@
     ],
     [
      256,
-     511,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     1024,
      4095,
      "rmma.m2.n4.w4x1"
     ]
@@ -12527,8 +12394,18 @@
     ],
     [
      192,
-     16777216,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     511,
      "rmma.m2.n4.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -12567,18 +12444,18 @@
     ],
     [
      96,
-     127,
+     191,
      "rmma.m1.n2.w2x2"
     ],
     [
-     128,
-     191,
-     "rmma.m1.n4.w4x1"
+     192,
+     255,
+     "rmma.m1.n2.w4x1"
     ],
     [
-     192,
+     256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12612,18 +12489,13 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     64,
      95,
-     "rmma.m1.n4.w4x1"
+     "rmma.m1.n2.w2x2"
     ],
     [
      96,
      191,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      192,
@@ -12668,7 +12540,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12779,13 +12651,8 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     64,
      95,
-     "rmma.m1.n4.w4x1"
+     "rmma.m1.n2.w2x2"
     ],
     [
      96,
@@ -12795,7 +12662,7 @@
     [
      128,
      191,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      192,
@@ -12835,7 +12702,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12884,18 +12751,13 @@
     ],
     [
      128,
-     255,
-     "rmma.m2.n4.w4x1"
+     191,
+     "tiled.64x128"
     ],
     [
-     256,
-     511,
-     "tiled.128x128"
-    ],
-    [
-     512,
+     192,
      16777216,
-     "rmma.m2.n4.w4x1"
+     "tiled.128x128"
     ]
    ],
    "compute": "a16",
@@ -12940,7 +12802,7 @@
     [
      256,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -12970,15 +12832,10 @@
     [
      24,
      47,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n4.w4x1"
     ],
     [
      48,
-     63,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     64,
      95,
      "tiled.64x128"
     ],
@@ -13148,21 +13005,11 @@
    "bands": [
     [
      1,
-     3,
+     11,
      "rmma.m1.n1.w1x4"
     ],
     [
-     4,
-     4,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     5,
-     7,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     8,
+     12,
      63,
      "rmma.m1.n2.w1x4"
     ],
@@ -13225,16 +13072,6 @@
     ],
     [
      24,
-     31,
-     "rmma.m1.n4.w1x4"
-    ],
-    [
-     32,
-     47,
-     "rmma.m1.n2.w1x4"
-    ],
-    [
-     48,
      191,
      "rmma.m1.n4.w1x4"
     ],
@@ -13268,6 +13105,11 @@
     ],
     [
      64,
+     127,
+     "rmma.m1.n2.w4x1"
+    ],
+    [
+     128,
      255,
      "rmma.m1.n4.w4x1"
     ]
@@ -13397,13 +13239,8 @@
     ],
     [
      64,
-     255,
-     "rmma.m1.n2.w4x1"
-    ],
-    [
-     256,
      511,
-     "rmma.m1.n4.w4x1"
+     "rmma.m1.n2.w4x1"
     ],
     [
      512,
@@ -13544,7 +13381,7 @@
     [
      96,
      127,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      128,
@@ -13554,7 +13391,7 @@
     [
      192,
      255,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      256,
@@ -13578,8 +13415,13 @@
    "bands": [
     [
      1,
-     11,
+     6,
      "rmma.m1.n1.w1x4"
+    ],
+    [
+     7,
+     11,
+     "rmma.m1.n1.w2x2"
     ],
     [
      12,
@@ -13589,7 +13431,7 @@
     [
      24,
      31,
-     "rmma.m1.n1.w1x4"
+     "rmma.m1.n2.w1x4"
     ],
     [
      32,
@@ -13603,16 +13445,6 @@
     ],
     [
      64,
-     95,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     96,
-     127,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     128,
      16777216,
      "rmma.m1.n8.w8x1"
     ]
@@ -13635,26 +13467,6 @@
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     2,
-     3,
-     "rmma.m1.n1.w2x2"
-    ],
-    [
-     4,
-     4,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     5,
-     7,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     8,
      11,
      "rmma.m1.n1.w2x2"
     ],
@@ -13670,6 +13482,11 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n8.w4x1"
+    ],
+    [
+     64,
      95,
      "rmma.m2.n4.w4x1"
     ],
@@ -13717,13 +13534,8 @@
     ],
     [
      32,
-     47,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     48,
      63,
-     "rmma.m1.n2.w4x1"
+     "rmma.m1.n2.w2x2"
     ],
     [
      64,
@@ -13732,18 +13544,23 @@
     ],
     [
      96,
-     127,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     128,
      191,
      "tiled.128x128"
     ],
     [
      192,
-     16777216,
+     255,
      "rmma.m2.n4.w4x1"
+    ],
+    [
+     256,
+     511,
+     "tiled.128x128"
+    ],
+    [
+     512,
+     16777216,
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -13767,13 +13584,8 @@
     ],
     [
      24,
-     31,
-     "rmma.m1.n1.w2x2"
-    ],
-    [
-     32,
      47,
-     "rmma.m1.n1.w4x1"
+     "rmma.m1.n1.w2x2"
     ],
     [
      48,
@@ -13782,23 +13594,13 @@
     ],
     [
      96,
-     127,
+     191,
      "rmma.m2.n2.w4x1"
     ],
     [
-     128,
-     191,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
      192,
-     255,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     256,
      16777216,
-     "rmma.m1.n8.w8x1"
+     "rmma.m2.n4.w4x1"
     ]
    ],
    "compute": "a16",
@@ -13821,7 +13623,7 @@
     [
      128,
      255,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ]
    ]
   },
@@ -13849,13 +13651,8 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     64,
      95,
-     "rmma.m2.n4.w4x1"
+     "rmma.m1.n8.w8x1"
     ],
     [
      96,
@@ -13906,16 +13703,6 @@
     ],
     [
      96,
-     127,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     128,
-     191,
-     "rmma.m1.n8.w8x1"
-    ],
-    [
-     192,
      511,
      "rmma.m1.n4.w4x1"
     ],
@@ -13938,7 +13725,7 @@
      "rmma.m1.n4.w4x1"
     ],
     [
-     256,
+     128,
      511,
      "rmma.m1.n4.w4x1"
     ]
@@ -13968,6 +13755,11 @@
     ],
     [
      64,
+     95,
+     "rmma.m1.n1.w1x4"
+    ],
+    [
+     96,
      191,
      "rmma.m1.n4.w1x4"
     ],
@@ -14041,7 +13833,7 @@
     [
      512,
      16777216,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ]
    ],
    "compute": "a16",
@@ -14065,13 +13857,8 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     64,
      95,
-     "rmma.m1.n4.w1x8"
+     "rmma.m1.n1.w1x4"
     ],
     [
      96,
@@ -14096,7 +13883,7 @@
     [
      512,
      16777216,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ]
    ],
    "compute": "a16",
@@ -14130,8 +13917,13 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
      95,
-     "rmma.m1.n8.w4x1"
+     "tiled.64x128"
     ],
     [
      96,
@@ -14145,13 +13937,8 @@
     ],
     [
      192,
-     255,
-     "tiled.64x128"
-    ],
-    [
-     256,
      511,
-     "rmma.m1.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -14247,8 +14034,13 @@
     ],
     [
      24,
-     47,
+     31,
      "rmma.m1.n1.w2x2"
+    ],
+    [
+     32,
+     47,
+     "rmma.m1.n4.w1x4"
     ],
     [
      48,
@@ -14268,12 +14060,12 @@
     [
      128,
      191,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      192,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -14302,23 +14094,23 @@
     ],
     [
      24,
-     31,
+     47,
      "rmma.m1.n1.w4x1"
     ],
     [
-     32,
+     48,
      63,
      "rmma.m1.n2.w4x1"
     ],
     [
      64,
      95,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      96,
      191,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      192,
@@ -14348,12 +14140,12 @@
     [
      24,
      31,
-     "rmma.m1.n1.w2x2"
+     "rmma.m1.n1.w1x4"
     ],
     [
      32,
      47,
-     "rmma.m1.n4.w1x4"
+     "rmma.m1.n1.w4x1"
     ],
     [
      48,
@@ -14372,13 +14164,8 @@
     ],
     [
      256,
-     511,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     512,
      16777216,
-     "rmma.m1.n8.w4x1"
+     "rmma.m1.n4.w4x1"
     ]
    ],
    "compute": "a16",
@@ -14400,13 +14187,8 @@
     ],
     [
      128,
-     511,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     512,
      1023,
-     "rmma.m1.n8.w4x1"
+     "rmma.m1.n4.w4x1"
     ]
    ]
   },
@@ -14506,13 +14288,8 @@
     ],
     [
      192,
-     511,
-     "rmma.m1.n8.w4x1"
-    ],
-    [
-     512,
      16777216,
-     "rmma.m1.n8.w8x1"
+     "rmma.m1.n8.w4x1"
     ]
    ],
    "compute": "a16",
@@ -14599,7 +14376,7 @@
     [
      512,
      16777216,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ]
    ],
    "compute": "a16",
@@ -14622,7 +14399,7 @@
     [
      512,
      1023,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ]
    ]
   },
@@ -14668,11 +14445,6 @@
    "prefill_bands": [
     [
      17,
-     127,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     256,
      511,
      "rmma.m1.n4.w4x1"
     ]
@@ -14697,11 +14469,11 @@
     ],
     [
      48,
-     63,
+     95,
      "rmma.m1.n2.w2x2"
     ],
     [
-     64,
+     96,
      127,
      "rmma.m1.n2.w4x1"
     ],
@@ -14769,6 +14541,11 @@
     ],
     [
      24,
+     31,
+     "rmma.m1.n1.w4x1"
+    ],
+    [
+     32,
      127,
      "rmma.m1.n4.w1x4"
     ],
@@ -14802,16 +14579,11 @@
    "prefill_bands": [
     [
      17,
-     63,
-     "rmma.m2.n1.w4x1"
-    ],
-    [
-     64,
      127,
      "rmma.m1.n1.w4x1"
     ],
     [
-     128,
+     256,
      511,
      "rmma.m1.n8.w8x1"
     ]
@@ -14831,11 +14603,6 @@
     ],
     [
      24,
-     31,
-     "rmma.m1.n4.w1x8"
-    ],
-    [
-     32,
      47,
      "rmma.m1.n4.w1x4"
     ],
@@ -14852,12 +14619,12 @@
     [
      128,
      191,
-     "rmma.m1.n4.w4x1"
+     "rmma.m2.n2.w4x1"
     ],
     [
      192,
      511,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      512,
@@ -14914,6 +14681,11 @@
     ],
     [
      64,
+     127,
+     "rmma.m1.n4.w4x1"
+    ],
+    [
+     128,
      255,
      "rmma.m1.n8.w8x1"
     ]
@@ -14980,16 +14752,6 @@
    "bands": [
     [
      1,
-     1,
-     "rmma.m1.n1.w2x2"
-    ],
-    [
-     2,
-     2,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     3,
      11,
      "rmma.m1.n1.w2x2"
     ],
@@ -15010,8 +14772,13 @@
     ],
     [
      48,
+     63,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     64,
      95,
-     "rmma.m2.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      96,
@@ -15025,13 +14792,8 @@
     ],
     [
      256,
-     511,
-     "tiled.128x128"
-    ],
-    [
-     512,
      16777216,
-     "rmma.m1.n8.w4x1"
+     "tiled.128x128"
     ]
    ],
    "compute": "a16",
@@ -15061,7 +14823,7 @@
     [
      48,
      95,
-     "rmma.m1.n8.w4x1"
+     "tiled.64x128"
     ],
     [
      96,
@@ -15115,16 +14877,6 @@
     ],
     [
      48,
-     95,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     96,
-     127,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     128,
      511,
      "rmma.m2.n4.w4x1"
     ],
@@ -15149,11 +14901,6 @@
     [
      64,
      127,
-     "rmma.m2.n4.w4x1"
-    ],
-    [
-     256,
-     511,
      "rmma.m2.n4.w4x1"
     ]
    ]
@@ -15234,28 +14981,18 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     64,
      95,
      "tiled.64x128"
     ],
     [
      96,
-     127,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     128,
      191,
-     "rmma.m1.n8.w4x1"
+     "tiled.128x128"
     ],
     [
      192,
      255,
-     "rmma.m1.n4.w4x1"
+     "tiled.64x128"
     ],
     [
      256,
@@ -15265,7 +15002,7 @@
     [
      512,
      16777216,
-     "rmma.m1.n4.w4x1"
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
@@ -15344,11 +15081,6 @@
      256,
      511,
      "rmma.m1.n4.w4x1"
-    ],
-    [
-     1024,
-     4095,
-     "rmma.m1.n8.w8x1"
     ]
    ]
   },
@@ -15371,33 +15103,18 @@
     ],
     [
      48,
-     63,
-     "rmma.m1.n2.w2x2"
-    ],
-    [
-     64,
-     95,
-     "rmma.m1.n4.w4x1"
-    ],
-    [
-     96,
      127,
      "rmma.m1.n2.w2x2"
     ],
     [
      128,
-     255,
-     "rmma.m2.n4.w4x1"
+     191,
+     "tiled.64x128"
     ],
     [
-     256,
-     511,
-     "tiled.128x128"
-    ],
-    [
-     512,
+     192,
      16777216,
-     "rmma.m2.n4.w4x1"
+     "tiled.128x128"
     ]
    ],
    "compute": "a16",
@@ -15416,8 +15133,13 @@
     ],
     [
      6,
-     11,
+     7,
      "rmma.m1.n1.w1x8"
+    ],
+    [
+     8,
+     11,
+     "rmma.m1.n1.w1x16"
     ],
     [
      12,
@@ -15431,16 +15153,6 @@
     ],
     [
      24,
-     31,
-     "rmma.m1.n1.w1x4"
-    ],
-    [
-     32,
-     47,
-     "rmma.m1.n1.w1x8"
-    ],
-    [
-     48,
      63,
      "rmma.m1.n1.w1x4"
     ],
@@ -15513,8 +15225,28 @@
     ],
     [
      96,
-     16777216,
+     127,
      "rmma.m2.n4.w4x1"
+    ],
+    [
+     128,
+     191,
+     "rmma.m1.n2.w2x2"
+    ],
+    [
+     192,
+     255,
+     "tiled.64x128"
+    ],
+    [
+     256,
+     511,
+     "rmma.m2.n4.w4x1"
+    ],
+    [
+     512,
+     16777216,
+     "tiled.64x128"
     ]
    ],
    "compute": "a16",
