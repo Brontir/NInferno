@@ -582,16 +582,20 @@ void prefills_by_format(const json& fixture) {
         const double iq3_seconds = ch::prefill_linears_seconds(iq3_model, ampere, iq3, 1024, &iq3_transferred);
         const double iq4_seconds = ch::prefill_linears_seconds(iq4_model, ampere, xs, 1024);
         check(iq3_seconds > iq4_seconds && iq3_seconds < iq4_seconds * 40.7 / 36.6 * 1.02 && iq3_transferred &&
-                  ch::prefill_linears_seconds(iq3_model, ada, iq3, 1024) > 0 &&
                   ch::prefill_linears_seconds(iq3_model, turing, iq3, 1024) == 0,
               "IQ3_XXS linears on their read step (Ampere, Ada), marked transferred; Turing: the share");
+        // Ada's MMQ row reads two cards: the IQ step alone (one) marks its estimate transferred.
+        bool ada_transferred = false;
+        check(ch::prefill_linears_seconds(iq3_model, ada, iq3, 1024, &ada_transferred) > 0 && ada_transferred,
+              "IQ3_XXS linears on Ada's read step, marked transferred by the IQ step's one card");
         ch::ModelFacts with_iq1m = iq3_model;
         with_iq1m.linears.front().format = "ggml_iq1_m";
         ch::ModelFacts iq3_rest = iq3_model;
         iq3_rest.linears.erase(iq3_rest.linears.begin());
-        check(ch::prefill_linears_seconds(with_iq1m, ampere, iq3, 1024) >
-                  ch::prefill_linears_seconds(iq3_rest, ampere, iq3, 1024),
-              "an IQ1_M linear among IQ3_XXS ones: the share on top of their tiles");
+        const double with_iq1m_seconds = ch::prefill_linears_seconds(with_iq1m, ampere, iq3, 1024);
+        check(with_iq1m_seconds > ch::prefill_linears_seconds(iq3_rest, ampere, iq3, 1024) &&
+                  with_iq1m_seconds != iq3_seconds,
+              "an IQ1_M linear among IQ3_XXS ones: the share on top of their tiles, not a tile step");
     }
     std::cout << "long prompts: " << long_rows << " points rms " << std::sqrt(sq_long / std::max(long_rows, 1)) * 100
               << " % (worst " << worst_long * 100 << " %)\n";

@@ -457,7 +457,7 @@ inline constexpr MmqTileCost kMmqTileCost[] = {{"ada", 2000, 42.75, 45.25, 50.75
 // prefills on the RTX 3090 (nsys, 07.11, mul_mat_q by its ggml type against the GGUF's tensor types), each format's
 // time a weight against IQ4_XS's (36.6) in the same calls' shapes; the two files agree within 3 %
 // (IQ2_XXS 37.2 / 37.0 ms a G weight, IQ1_S 42.8 / 41.8, IQ2_S 48.8 / 48.0, IQ2_XS 49.0 / 48.9,
-// IQ3_XXS 39.2 / 38.8), Q3_K's at 48.6 against its 49.25. Predicted beforehand at Q3_K's (49.25 +-
+// IQ3_XXS 39.2 / 38.8; IQ3_S 39.5, read in the IQ3_XXS file only), Q3_K's at 48.6 against its 49.25. Predicted beforehand at Q3_K's (49.25 +-
 // 15 %, IQ3_XXS) and 45 (IQ2_XXS): IQ3_XXS's grid-table decode is cheaper than Q3_K's masks, a miss.
 struct MmqIqStep {
     std::string_view generation;
@@ -470,7 +470,8 @@ inline constexpr MmqIqStep kMmqIqStep[] = {
     {"ga10x", "ggml_iq2_xxs", 38.7, 1}, {"ga10x", "ggml_iq2_xs", 51.1, 1},
     {"ga10x", "ggml_iq2_s", 50.5, 1},   {"ga10x", "ggml_iq1_s", 44.1, 1},
     // The RTX 4090's census of the same files (stream-k: its fixups counted with their calls), IQ4_XS
-    // at 38.3; Q3_K's 51.0 against its 51.5.
+    // at 38.3 (15.69 ms a G weight): IQ2_XXS 16.43 / 16.21, IQ1_S 18.1 / 18.27, IQ2_S 21.57 / 21.36,
+    // IQ2_XS 21.18 / 21.9, IQ3_XXS 17.29 / 17.4, IQ3_S 18.08 (one file); Q3_K's 51.0 against its 51.5.
     {"ada", "ggml_iq3_xxs", 42.3, 1},   {"ada", "ggml_iq3_s", 44.1, 1},
     {"ada", "ggml_iq2_xxs", 39.8, 1},   {"ada", "ggml_iq2_xs", 52.6, 1},
     {"ada", "ggml_iq2_s", 52.4, 1},     {"ada", "ggml_iq1_s", 44.4, 1},
