@@ -689,8 +689,8 @@ llama.cpp-style base URLs.
   48 repeats; none with `--no-prefix-reuse`).
 - The compatible `top_k` (`0..64`) and `min_p` (`0..1`) sampler extensions.
 - `logit_bias` (Chat Completions): `{"<token id>": offset}` with the model's own token ids and
-  offsets in `[-100,100]`, added to the logit before the penalties and the sampler (-100 bans a
-  token in practice). A token id past the model's vocabulary is refused with 400; zero offsets are
+  offsets in `[-100,100]`, added to the logit before the penalties and the sampler; -100 bans the
+  token outright (it is never sampled, whatever its logit or the penalties). A token id past the model's vocabulary is refused with 400; zero offsets are
   dropped. Speculative verification samples from the same biased logits.
 - `logprobs` and `top_logprobs` (Chat Completions; `top_logprobs` in `[0,20]`, nonzero only with
   `logprobs:true`): each output token's log probability, its text and bytes, and its most likely
@@ -745,7 +745,8 @@ llama.cpp-style base URLs.
   tokenizer encodes it as one token, so the answer is text. A `logit_bias` of your own for that
   token is replaced by the ban. Syntaxes without such an opener (gpt-oss harmony, Atem, Llama 3
   JSON) are not steered; a call they write anyway is cut out of the answer, as is one written as
-  plain text.
+  plain text (a Qwen model kept from `<tool_call>` can still write a bare `<function=...>`, which
+  is cut too).
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.

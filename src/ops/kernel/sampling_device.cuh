@@ -377,7 +377,14 @@ __device__ __forceinline__ float sampling_penalized_logit(float raw, int v, cons
                                                           int overlay_len) {
     float x = raw;
     if (!sampling_has_penalties(c)) { return x; }
-    if (c.logit_bias != nullptr) { x += c.logit_bias[v]; }
+    if (c.logit_bias != nullptr) {
+        // -100 (kLogitBiasLimit) is OpenAI's ban: the token cannot be picked, whatever its logit
+        // and whatever a repetition_penalty below 1 would make of a shifted one (the tool-call
+        // opener under tool_choice none is in the prompt, kPromptTokenSeen).
+        const float bias = c.logit_bias[v];
+        if (bias <= -100.0f) { return -CUDART_INF_F; }
+        x += bias;
+    }
     const int stored = c.token_counts != nullptr ? c.token_counts[v] : 0;
     int cnt          = stored & ~kPromptTokenSeen;
     for (int j = 0; j < overlay_len; ++j) {

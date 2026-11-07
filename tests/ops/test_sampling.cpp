@@ -429,13 +429,14 @@ int repetition_penalty_contract(int physical_rows, int token_domain) {
     return failures;
 }
 
-// logit_bias (#297): -100 removes the leading token, +5 lifts a lower one over the rest.
+// logit_bias (#297): -100 bans the leading token outright (150 - 100 = 50 would still lead), +5
+// lifts a lower one over the rest.
 int logit_bias_contract(int physical_rows, int token_domain) {
     constexpr int batch = 4;
     std::vector<float> logits(static_cast<std::size_t>(physical_rows) * batch, -9.0f);
     for (int row = 0; row < batch; ++row) {
         const std::size_t base = static_cast<std::size_t>(row) * physical_rows;
-        logits[base + 3]       = 9.0f; // banned: 9 - 100
+        logits[base + 3]       = 150.0f; // banned, not 150 - 100
         logits[base + 4]       = 6.0f; // stays 6
         logits[base + 9]       = 2.0f; // lifted: 2 + 5 = 7, the greedy pick
     }

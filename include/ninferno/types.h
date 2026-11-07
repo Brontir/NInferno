@@ -567,7 +567,8 @@ struct ModelSamplingDefaults {
 };
 
 // OpenAI's logit_bias: an offset in [-100, 100] added to one token's logit before sampling
-// (-100 bans it in practice, 100 forces it). Token ids are the model's.
+// (100 forces it in practice); -100 bans the token outright (it is never sampled, whatever its
+// logit or the penalties). Token ids are the model's.
 struct LogitBias {
     std::int32_t token = 0;
     float bias         = 0.0F;
