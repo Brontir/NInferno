@@ -178,13 +178,47 @@ int host_gpu_count() noexcept {
         if (void* nvml = sys::load_library("libnvidia-ml.so.1", "nvml.dll")) {
             using Init      = int (*)();
             using Count     = int (*)(unsigned*);
+            using ByIndex   = int (*)(unsigned, void**);
+            using MigMode   = int (*)(void*, unsigned*, unsigned*);
+            using MigMax    = int (*)(void*, unsigned*);
+            using MigHandle = int (*)(void*, unsigned, void**);
             using Shutdown  = int (*)();
             const auto init = reinterpret_cast<Init>(sys::symbol(nvml, "nvmlInit_v2"));
             const auto get  = reinterpret_cast<Count>(sys::symbol(nvml, "nvmlDeviceGetCount_v2"));
+            const auto by_index =
+                reinterpret_cast<ByIndex>(sys::symbol(nvml, "nvmlDeviceGetHandleByIndex_v2"));
+            const auto mig_mode =
+                reinterpret_cast<MigMode>(sys::symbol(nvml, "nvmlDeviceGetMigMode"));
+            const auto mig_max =
+                reinterpret_cast<MigMax>(sys::symbol(nvml, "nvmlDeviceGetMaxMigDeviceCount"));
+            const auto mig_handle = reinterpret_cast<MigHandle>(
+                sys::symbol(nvml, "nvmlDeviceGetMigDeviceHandleByIndex"));
             const auto shutdown = reinterpret_cast<Shutdown>(sys::symbol(nvml, "nvmlShutdown"));
             if (init && get && shutdown && init() == 0) {
                 unsigned devices = 0;
-                if (get(&devices) == 0) { n = static_cast<int>(devices); }
+                if (get(&devices) == 0) {
+                    // A board in MIG mode (NVML_DEVICE_MIG_ENABLE, 1) counts its instances: a
+                    // server may run on each (CUDA_VISIBLE_DEVICES=MIG-<uuid>). A driver without
+                    // the MIG calls, or a board without instances, counts as one GPU.
+                    for (unsigned d = 0; d < devices; ++d) {
+                        int units      = 1;
+                        void* board    = nullptr;
+                        unsigned mode  = 0;
+                        unsigned spare = 0;
+                        unsigned slots = 0;
+                        if (by_index && mig_mode && mig_max && mig_handle &&
+                            by_index(d, &board) == 0 && mig_mode(board, &mode, &spare) == 0 &&
+                            mode == 1 && mig_max(board, &slots) == 0) {
+                            int instances = 0;
+                            for (unsigned i = 0; i < slots; ++i) {
+                                void* instance = nullptr;
+                                if (mig_handle(board, i, &instance) == 0) { ++instances; }
+                            }
+                            units = std::max(1, instances);
+                        }
+                        n += units;
+                    }
+                }
                 shutdown();
             }
             sys::free_library(nvml);
