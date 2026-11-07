@@ -849,11 +849,20 @@ public:
                 });
                 break;
             }
-            if (pressure_evidence) {
+            // An engine-proposed candidate (the automatic prompt end, the leading instructions)
+            // has no pressure evidence of its own, so it never moves owners. With every slot
+            // taken it may still take over a slot that never paid back (shared_entry_unproven):
+            // a conversation's own prompt ends fill the slots one turn at a time, and the first
+            // request of a new system prompt otherwise finds none free (#462).
+            const bool take_unproven_slot =
+                !pressure_evidence && scenarios.empty() &&
+                engine_proposed_shared_candidate(candidate.shared_evidence);
+            if (pressure_evidence || take_unproven_slot) {
                 for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
                     SharedCatalogEntry& entry = shared_catalog_[slot];
                     if (entry.state != SharedCatalogState::Catalogued || !entry.handle ||
-                        entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0) {
+                        entry.transaction_pins != 0 || shared_active_edge_count(slot) != 0 ||
+                        (!pressure_evidence && !shared_entry_unproven(slot))) {
                         continue;
                     }
                     CaptureAssessment assessment = program.inspect_capture(
@@ -1513,6 +1522,26 @@ private:
         return count;
     }
 
+    // Candidates the engine proposes on its own (the automatic prompt end, the leading
+    // instructions), as opposed to a client's boundary or an observed repeat.
+    [[nodiscard]] static bool
+    engine_proposed_shared_candidate(SharedCandidateEvidence evidence) noexcept {
+        return has_shared_candidate_evidence(evidence, SharedCandidateEvidence::DefaultAutomatic) ||
+               has_shared_candidate_evidence(evidence, SharedCandidateEvidence::EngineStructural);
+    }
+
+    // A resident shared prefix that never paid back: no declared boundary's credit, never selected
+    // for a request, and no holder. Such a slot is speculation (an engine candidate published into
+    // a vacant slot) and may be taken by a new engine candidate when none is vacant. Reuse
+    // domains are no evidence of use here: stateless requests of one conversation are
+    // independent domains, and each turn's prompt end is a candidate of its own (#462).
+    [[nodiscard]] bool shared_entry_unproven(std::uint32_t slot) const noexcept {
+        const SharedCatalogEntry& entry = shared_catalog_[slot];
+        return entry.state == SharedCatalogState::Catalogued && entry.handle &&
+               entry.transaction_pins == 0 && shared_active_edge_count(slot) == 0 &&
+               !entry.explicit_credit && entry.observation.selected_hit_count == 0;
+    }
+
     void reset_active_entry(ActiveEntry& active) noexcept {
         active.occupied         = false;
         active.publication_slot = kInvalidCatalogSlot;
@@ -1884,6 +1913,17 @@ private:
             std::count_if(shared_catalog_.begin(), shared_catalog_.end(), [](const auto& entry) {
                 return entry.state == SharedCatalogState::Vacant;
             }));
+        // What an engine-proposed candidate may occupy: a vacant slot, or a resident entry nothing
+        // has vouched for (capture takes it over, see reserve_active_capture). The request's own
+        // shared source is not one: it gains a holder and a hit before any capture.
+        const auto takeable_unproven = [&](std::uint32_t slot) {
+            return shared_entry_unproven(slot) && !(selected_candidate.shared_source &&
+                                                    slot == selected_candidate.shared_source->slot);
+        };
+        std::uint32_t surplus_shared_slots = vacant_shared_slots;
+        for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
+            if (takeable_unproven(slot)) { ++surplus_shared_slots; }
+        }
         for (const auto& opportunity : base.context_cache().opportunities) {
             if (opportunity.kind != PromptCacheMarkerKind::SharedStablePrefix ||
                 opportunity.frontier < selected_summary.reusable_prompt_tokens) {
@@ -1912,11 +1952,7 @@ private:
                                               SharedCandidateEvidence::RequestedAutomatic);
             const bool repeated = matching_reuse_domains(*key, provisional_demand) >= 2U;
             const bool surplus_candidate =
-                vacant_shared_slots != 0 &&
-                (has_shared_candidate_evidence(opportunity.evidence,
-                                               SharedCandidateEvidence::DefaultAutomatic) ||
-                 has_shared_candidate_evidence(opportunity.evidence,
-                                               SharedCandidateEvidence::EngineStructural));
+                surplus_shared_slots != 0 && engine_proposed_shared_candidate(opportunity.evidence);
             if (!declared && !repeated && !surplus_candidate) { continue; }
             const std::optional<PrefillWork> rebuild =
                 base.shared_candidate_rebuild_work(opportunity.frontier);
@@ -1974,6 +2010,10 @@ private:
                 append_existing(owner, *entry.handle, checkpoint);
             }
         }
+        // The unproven entries a surplus candidate beyond the vacant slots displaces, cheapest
+        // rebuild first: their checkpoints, priced lost in such a subset as capture prices its
+        // direct victim.
+        std::vector<std::size_t> unproven_victims;
         for (std::uint32_t slot = 0; slot < shared_catalog_count_; ++slot) {
             const SharedCatalogEntry& entry = shared_catalog_[slot];
             if (entry.state != SharedCatalogState::Catalogued || !entry.handle) { continue; }
@@ -1982,7 +2022,26 @@ private:
                 .owner                  = owner,
                 .explicit_shared_credit = entry.explicit_credit,
             });
+            if (takeable_unproven(slot)) { unproven_victims.push_back(projected_checkpoints.size()); }
             append_existing(owner, *entry.handle, entry.summary.checkpoint);
+        }
+        // Ranked by what losing each costs the portfolio (the fold capture prices a direct victim
+        // by: its recovery, demand and overlap with the other checkpoints), not its rebuild alone.
+        ContextPortfolioValue victim_value;
+        const std::uint64_t kept_value =
+            victim_value.fold(projected_owners, projected_checkpoints).target_public_value;
+        std::vector<std::pair<std::uint64_t, std::size_t>> victim_losses;
+        victim_losses.reserve(unproven_victims.size());
+        for (const std::size_t victim : unproven_victims) {
+            std::vector<ContextPortfolioCheckpointValue> lost = projected_checkpoints;
+            lost[victim].target_recovery_ns = lost[victim].rebuild_ns;
+            const std::uint64_t value =
+                victim_value.fold(projected_owners, lost).target_public_value;
+            victim_losses.emplace_back(kept_value > value ? kept_value - value : 0U, victim);
+        }
+        std::sort(victim_losses.begin(), victim_losses.end());
+        for (std::size_t index = 0; index < victim_losses.size(); ++index) {
+            unproven_victims[index] = victim_losses[index].second;
         }
 
         std::vector<std::uint32_t> selected_frontiers;
@@ -2008,14 +2067,26 @@ private:
             const std::uint32_t selected_count = std::popcount(mask);
             if (selected_count > shared_catalog_count_) { continue; }
             std::uint32_t surplus_only_count = 0;
+            for (std::size_t index = 0; index < shared_candidates.size(); ++index) {
+                if ((mask & (1U << index)) != 0 && !shared_candidates[index].pressure_capable) {
+                    ++surplus_only_count;
+                }
+            }
+            if (surplus_only_count > surplus_shared_slots) { continue; }
+            const std::uint32_t displaced =
+                surplus_only_count > vacant_shared_slots ? surplus_only_count - vacant_shared_slots
+                                                         : 0U;
             std::vector<std::uint32_t> frontiers;
             frontiers.reserve(selected_count);
             std::vector<ContextPortfolioOwnerPolicy> owners          = projected_owners;
             std::vector<ContextPortfolioCheckpointValue> checkpoints = projected_checkpoints;
+            for (std::uint32_t victim = 0; victim < displaced; ++victim) {
+                ContextPortfolioCheckpointValue& lost = checkpoints[unproven_victims[victim]];
+                lost.target_recovery_ns = lost.rebuild_ns;
+            }
             for (std::size_t index = 0; index < shared_candidates.size(); ++index) {
                 if ((mask & (1U << index)) == 0) { continue; }
                 const ProjectedSharedCandidate& candidate = shared_candidates[index];
-                if (!candidate.pressure_capable) { ++surplus_only_count; }
                 frontiers.push_back(candidate.frontier);
                 const PlanningOwnerId owner{.value = next_projected_owner +
                                                      static_cast<std::uint32_t>(index)};
@@ -2024,7 +2095,9 @@ private:
                 // automatic prompt end is the one exception: its value is the sibling sessions'
                 // (a request of another domain), which this request's bit cannot show, so in a
                 // vacant slot (no victim) it is worth its own saving; otherwise the prompt end
-                // always won and Chat never shared the head (#316).
+                // always won and Chat never shared the head (#316). The same holds in a slot an
+                // unproven entry gives up (its loss priced above): the head is the system prompt a
+                // new conversation's next request reuses (#462).
                 const bool sibling_head =
                     !candidate.pressure_capable &&
                     has_shared_candidate_evidence(candidate.evidence,
@@ -2048,7 +2121,6 @@ private:
                     .target_recovery_ns   = 0,
                 });
             }
-            if (surplus_only_count > vacant_shared_slots) { continue; }
             std::sort(frontiers.begin(), frontiers.end());
             const ContextPortfolioValueResult value = projected_value.fold(owners, checkpoints);
             const std::uint64_t schedule_cost       = split_cost(frontiers);

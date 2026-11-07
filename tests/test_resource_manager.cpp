@@ -880,6 +880,8 @@ public:
             }
             if (result.status == ContextTransactionStatus::Published) {
                 result.active_summary = capture_summary;
+                result.capacity_preparation_committed =
+                    pending_capture_publish_shared_ && pending_capture_replaces_shared_;
                 if (pending_capture_publish_shared_) {
                     FakeSharedPrefixHandle handle;
                     handle.id          = next_shared_id_++;
@@ -1069,16 +1071,19 @@ public:
             return ContextTransactionReserveStatus::Aborted;
         }
         pending_plan_.reset();
-        pending_capture_publish_shared_ = false;
-        transaction_kind_               = TransactionKind::Capture;
+        pending_capture_publish_shared_  = false;
+        pending_capture_replaces_shared_ = false;
+        transaction_kind_                = TransactionKind::Capture;
         advance_revision();
         return ContextTransactionReserveStatus::Reserved;
     }
 
     [[nodiscard]] ContextTransactionReserveStatus reserve_active_capture_with_pressure(
-        FakeCaptureOffer&&, const FakeSharedPrefixHandle*, const FakeSharedPrefixHandle*,
-        std::optional<CheckpointRef>, bool publish_shared, std::uint32_t waiting_admissions,
-        FakeResourcePlan&& pressure, CancellationFlagView cancellation) {
+        FakeCaptureOffer&&, const FakeSharedPrefixHandle*,
+        const FakeSharedPrefixHandle* replacement, std::optional<CheckpointRef>,
+        bool publish_shared, std::uint32_t waiting_admissions, FakeResourcePlan&& pressure,
+        CancellationFlagView cancellation) {
+        pending_capture_replaces_shared_ = replacement != nullptr;
         pressured_capture_waiting = waiting_admissions;
         if (cancellation.requested() || abort_capture_start || pressure.revision != revision_) {
             return ContextTransactionReserveStatus::Aborted;
@@ -1223,6 +1228,7 @@ private:
     std::optional<FakeResourcePlan> pending_plan_;
     std::unique_ptr<FakeAdmissionCandidate> capture_pressure_candidate_;
     bool pending_capture_publish_shared_ = false;
+    bool pending_capture_replaces_shared_ = false;
 };
 
 FakePressurePlanningSession::FakePressurePlanningSession(
@@ -3318,6 +3324,154 @@ void test_default_automatic_system_head_is_captured_beside_the_end() {
     (void)finish_active(manager, program, active);
 }
 
+namespace {
+
+FakeRequestBasePlan shared_base(std::uint32_t key, ninferno::SharedCandidateEvidence evidence,
+                                std::uint32_t frontier = 64) {
+    FakeRequestBasePlan base = make_base(key);
+    base.cache.opportunities.push_back(FakeContextCache::Opportunity{
+        .kind     = ninferno::PromptCacheMarkerKind::SharedStablePrefix,
+        .evidence = evidence,
+        .frontier = frontier,
+    });
+    return base;
+}
+
+// Publishes the running request's shared capture at the frontier through the manager.
+void publish_shared_capture(FakeManager& manager, FakeProgram& program,
+                            const ActiveRequest& active, std::uint32_t key,
+                            ninferno::SharedCandidateEvidence evidence, std::uint32_t offer_id,
+                            std::uint32_t frontier = 64) {
+    program.capture_assessment = FakeCaptureAssessment{
+        .shortlist_key          = FakeShortlistKey{.digest = key, .frontier = frontier},
+        .shared_evidence        = evidence,
+        .protected_rebuild_work = PrefillWork{.tokens = frontier},
+        .publishes_shared       = true,
+        .physically_feasible    = true,
+    };
+    require(manager.reserve_active_capture(program, active.lane, FakeCaptureOffer{.id = offer_id},
+                                           0, 0, {}) ==
+                FakeManager::ActiveCaptureReserveResult::Reserved,
+            "shared capture was not reserved");
+    auto progress = manager.progress_context_transaction(program, {});
+    require(std::get<FakeManager::ActiveCaptureOutcome>(std::move(progress)).status ==
+                ContextTransactionStatus::Published,
+            "shared capture was not published");
+}
+
+} // namespace
+
+// A conversation's prompt ends are engine candidates too, and they fill the shared slots one turn
+// at a time. The next first-seen engine candidate (a new system prompt) takes over a slot nothing
+// has vouched for instead of finding none vacant (#462).
+void test_engine_candidate_takes_over_unproven_shared_slot() {
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    FakeManager manager       = make_manager(1, 3, 1);
+    FakeProgram program;
+
+    const ActiveRequest first = start_active(manager, program, 101, shared_base(101, kAutomatic), 1);
+    require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
+            "the first engine candidate did not take the vacant shared slot");
+    publish_shared_capture(manager, program, first, 101, kAutomatic, 41);
+    (void)finish_active(manager, program, first);
+
+    // The capture planner takes the slot only when that costs nothing the demand window still
+    // wants (a tie keeps the incumbent): let the first prefix's demand age out of the window.
+    for (std::uint32_t index = 0; index < 33; ++index) {
+        const ActiveRequest filler =
+            start_active(manager, program, 300 + index, make_base(300 + index), 10 + index);
+        (void)finish_active(manager, program, filler);
+    }
+
+    const ActiveRequest second =
+        start_active(manager, program, 102, shared_base(102, kAutomatic), 100);
+    require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
+            "a new engine candidate found no shared slot after the slots were all taken");
+    // The only slot held the first prefix, so a published capture took it over (the Program's
+    // replacement path); the new owner is held by the capturing request.
+    publish_shared_capture(manager, program, second, 102, kAutomatic, 42);
+    RuntimeStats stats;
+    manager.populate_runtime_stats(program, stats);
+    require(stats.shared_active_references == 1,
+            "the taken-over shared slot was not published to the capturing request");
+    (void)finish_active(manager, program, second);
+}
+
+// The incumbent's demand still in the window: selection prices the unproven entry it displaces
+// as capture does, so an equal candidate is a tie and is not selected (no split paid for a
+// capture that would be refused), while a longer one is worth the slot (#462).
+void test_engine_candidate_prices_the_unproven_slot_it_displaces() {
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    {
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        const ActiveRequest first =
+            start_active(manager, program, 131, shared_base(131, kAutomatic), 1);
+        publish_shared_capture(manager, program, first, 131, kAutomatic, 71);
+        (void)finish_active(manager, program, first);
+        const ActiveRequest second =
+            start_active(manager, program, 132, shared_base(132, kAutomatic), 2);
+        require(program.selected_shared_capture_frontiers.empty(),
+                "an equal engine candidate was selected over an unproven slot still in demand");
+        (void)finish_active(manager, program, second);
+    }
+    {
+        FakeManager manager = make_manager(1, 3, 1);
+        FakeProgram program;
+        const ActiveRequest first =
+            start_active(manager, program, 141, shared_base(141, kAutomatic, 16), 1);
+        publish_shared_capture(manager, program, first, 141, kAutomatic, 81, 16);
+        (void)finish_active(manager, program, first);
+        const ActiveRequest second =
+            start_active(manager, program, 142, shared_base(142, kAutomatic), 2);
+        require(program.selected_shared_capture_frontiers == std::vector<std::uint32_t>{64},
+                "a longer engine candidate was not selected over a short unproven slot");
+        publish_shared_capture(manager, program, second, 142, kAutomatic, 82);
+        RuntimeStats stats;
+        manager.populate_runtime_stats(program, stats);
+        require(stats.shared_active_references == 1,
+                "the longer engine candidate did not take over the short unproven slot");
+        (void)finish_active(manager, program, second);
+    }
+}
+
+// A declared boundary's slot is credited: an engine candidate does not take it over.
+void test_engine_candidate_keeps_credited_shared_slot() {
+    constexpr auto kExplicit  = ninferno::SharedCandidateEvidence::ExplicitBoundary;
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    FakeManager manager       = make_manager(1, 3, 1);
+    FakeProgram program;
+
+    const ActiveRequest first = start_active(manager, program, 111, shared_base(111, kExplicit), 1);
+    publish_shared_capture(manager, program, first, 111, kExplicit, 51);
+    (void)finish_active(manager, program, first);
+
+    const ActiveRequest second =
+        start_active(manager, program, 112, shared_base(112, kAutomatic), 2);
+    require(program.selected_shared_capture_frontiers.empty(),
+            "an engine candidate was selected over a credited shared slot");
+    (void)finish_active(manager, program, second);
+}
+
+// A slot that served a request has paid back: an engine candidate does not take it over either.
+void test_engine_candidate_keeps_shared_slot_that_was_reused() {
+    constexpr auto kAutomatic = ninferno::SharedCandidateEvidence::DefaultAutomatic;
+    FakeManager manager       = make_manager(1, 3, 1);
+    FakeProgram program;
+
+    const ActiveRequest first = start_active(manager, program, 121, shared_base(121, kAutomatic), 1);
+    publish_shared_capture(manager, program, first, 121, kAutomatic, 61);
+    (void)finish_active(manager, program, first);
+
+    const ActiveRequest reuse = start_active(manager, program, 121, make_base(121), 2);
+    (void)finish_active(manager, program, reuse);
+
+    const ActiveRequest other = start_active(manager, program, 122, shared_base(122, kAutomatic), 3);
+    require(program.selected_shared_capture_frontiers.empty(),
+            "an engine candidate was selected over a shared slot that had served a request");
+    (void)finish_active(manager, program, other);
+}
+
 void test_observed_shared_candidate_requires_independent_domains() {
     const auto observed_base = [](std::optional<FakeCacheSessionKey> session) {
         FakeRequestBasePlan base = make_base(71, session);
@@ -4145,6 +4299,14 @@ int main() {
              test_projected_nested_shared_candidates_use_marginal_value);
     run_test("default-automatic system head beside the end",
              test_default_automatic_system_head_is_captured_beside_the_end);
+    run_test("engine candidate takes an unproven shared slot",
+             test_engine_candidate_takes_over_unproven_shared_slot);
+    run_test("engine candidate prices the unproven slot it displaces",
+             test_engine_candidate_prices_the_unproven_slot_it_displaces);
+    run_test("engine candidate keeps a credited shared slot",
+             test_engine_candidate_keeps_credited_shared_slot);
+    run_test("engine candidate keeps a reused shared slot",
+             test_engine_candidate_keeps_shared_slot_that_was_reused);
     run_test("observed shared independent domains",
              test_observed_shared_candidate_requires_independent_domains);
     run_test("zero-prefill private promotion",
