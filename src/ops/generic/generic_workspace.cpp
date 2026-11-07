@@ -77,7 +77,6 @@ ActivationPlanes activation_planes(Route route, std::int32_t k, std::int32_t tok
         return {};
     }
 }
-} // namespace
 
 std::size_t route_workspace_bytes(Route route, std::int32_t k, std::int32_t tokens) {
     if (route.family == Family::GgmlVec) return vec_workspace_bytes(k, tokens);
