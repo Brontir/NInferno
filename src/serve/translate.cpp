@@ -352,6 +352,25 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
         invalid_prompt_option("assistant prefill cannot be combined with enabled thinking",
                               "messages", "assistant_prefill_not_supported");
     }
+    // Thinking off, preservation unset by the request and the server, no reasoning in the history:
+    // preserved. A template that drops the think blocks of the assistant turns before the last user
+    // message (Qwen3.6) then writes the same empty block into every assistant turn, as it already
+    // does after that message, so a new user message no longer re-renders an agent's earlier tool
+    // turns and their cached prefix stays (#463). With reasoning in the history (its own field, or a
+    // closed think block in an assistant turn's text, which the template splits out), preserving
+    // would put that text back into the prompt: left to the template.
+    const auto reasoned = [](const ChatTurn& turn) {
+        if (!turn.reasoning_content.empty()) { return true; }
+        return turn.role == ChatRole::Assistant &&
+               std::any_of(turn.content.begin(), turn.content.end(), [](const ContentPart& part) {
+                   return part.kind == ContentKind::Text &&
+                          part.text.find("</think>") != std::string::npos;
+               });
+    };
+    if (!result.preserve_thinking && result.enable_thinking == false &&
+        std::none_of(request.messages.begin(), request.messages.end(), reasoned)) {
+        result.preserve_thinking = true;
+    }
     result.vision = server.enable_vision;
     return result;
 }

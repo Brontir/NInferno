@@ -1005,7 +1005,12 @@ the share of responses in schema order and near-empty objects that stopped early
 - **Preserve.** `preserve_thinking` controls reasoning retention according to the selected
   template. Request options override server defaults set with `--no-thinking` and
   `--preserve-thinking`. Unspecified thinking, effort and preservation options use the template's
-  defaults.
+  defaults, with one exception: a request whose thinking is off (`enable_thinking` false, from the
+  request or `--no-thinking`), with preservation unset and no reasoning in its history, is
+  preserved. Qwen3.6's template drops the think blocks of the assistant turns before the last user
+  message and writes an empty one into the turns after it; preserved, every assistant turn carries
+  the same empty block, so an agent's next user message re-renders none of its earlier tool turns
+  and their cached prefix is reused. Pass `preserve_thinking: false` for the template's default.
 
 ### Streaming format
 

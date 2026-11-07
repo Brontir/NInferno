@@ -772,6 +772,38 @@ int main() {
     request.preserve_thinking = false;
     failures += check(resolve_prompt_semantics(request, configured).preserve_thinking == false,
                       "request preserve-thinking override did not win");
+    {
+        // Thinking off with preservation unset and no reasoning in the history: preserved, so a new
+        // user message re-renders no earlier assistant turn (#463). Reasoning in the history, thinking
+        // left to the template, or an explicit false: the template's own default.
+        GenerationRequest off = request;
+        off.preserve_thinking.reset();
+        off.enable_thinking = false;
+        ChatTurn assistant;
+        assistant.role = ChatRole::Assistant;
+        off.messages.push_back(assistant);
+        failures += check(resolve_prompt_semantics(off, defaults).preserve_thinking == true,
+                          "thinking off without history reasoning was not preserved");
+        GenerationRequest reasoned = off;
+        reasoned.messages.back().reasoning_content = "earlier thoughts";
+        failures += check(!resolve_prompt_semantics(reasoned, defaults).preserve_thinking,
+                          "history reasoning was preserved without being asked for");
+        GenerationRequest inline_think = off;
+        ContentPart think;
+        think.kind = ContentKind::Text;
+        think.text = "<think>\nearlier thoughts\n</think>\n\nanswer";
+        inline_think.messages.back().content.push_back(think);
+        failures += check(!resolve_prompt_semantics(inline_think, defaults).preserve_thinking,
+                          "a think block in an assistant turn's text was preserved");
+        GenerationRequest unset = off;
+        unset.enable_thinking.reset();
+        failures += check(!resolve_prompt_semantics(unset, defaults).preserve_thinking,
+                          "the template's thinking default was preserved");
+        GenerationRequest explicit_off = off;
+        explicit_off.preserve_thinking = false;
+        failures += check(resolve_prompt_semantics(explicit_off, defaults).preserve_thinking == false,
+                          "an explicit preserve_thinking false was overridden");
+    }
 
     {
         // Every option the help describes (a line opening with it) is in the synopsis too.
