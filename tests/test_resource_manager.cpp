@@ -4108,9 +4108,9 @@ void test_shortlist_collision_requires_program_exact_verification() {
 void test_truncated_endpoint_is_offered_when_the_program_supports_it() {
     FakeManager manager = make_manager(1, 3);
     FakeProgram program;
-    program.supports_truncated  = true;
-    program.truncated_frontier  = 8;
-    const ActiveRequest seed    = start_active(manager, program, 7, make_base(7), 1);
+    program.supports_truncated = true;
+    program.truncated_frontier = 8;
+    const ActiveRequest seed   = start_active(manager, program, 7, make_base(7), 1);
     (void)finish_active(manager, program, seed);
 
     // The request's digest at the endpoint frontier (16) differs: no exact candidate.
@@ -4170,8 +4170,9 @@ void test_truncated_endpoint_needs_the_program_to_support_it() {
 void test_truncated_endpoint_refused_by_the_program_leaves_the_root() {
     FakeManager manager = make_manager(1, 3);
     FakeProgram program;
-    program.supports_truncated = true; // the source's prefill-exact frontier is too short: no frontier
-    const ActiveRequest seed   = start_active(manager, program, 7, make_base(7), 1);
+    program.supports_truncated =
+        true; // the source's prefill-exact frontier is too short: no frontier
+    const ActiveRequest seed = start_active(manager, program, 7, make_base(7), 1);
     (void)finish_active(manager, program, seed);
     auto inspection = manager.inspect(program, FakePreparedPrompt{7}, make_base(9), 2);
     require(inspection.choice && inspection.choice->summary().reusable_prompt_tokens == 0 &&
@@ -4367,10 +4368,14 @@ int main() {
     run_test("dominating identity fast path",
              test_dominating_identity_does_not_build_pressure_graph);
     run_test("root lifecycle and prefix reuse", test_root_lifecycle_and_prefix_reuse);
-    run_test("truncated endpoint offered", test_truncated_endpoint_is_offered_when_the_program_supports_it);
-    run_test("truncated endpoint retained", test_truncated_endpoint_is_retained_for_another_session);
-    run_test("truncated endpoint needs support", test_truncated_endpoint_needs_the_program_to_support_it);
-    run_test("truncated endpoint refused", test_truncated_endpoint_refused_by_the_program_leaves_the_root);
+    run_test("truncated endpoint offered",
+             test_truncated_endpoint_is_offered_when_the_program_supports_it);
+    run_test("truncated endpoint retained",
+             test_truncated_endpoint_is_retained_for_another_session);
+    run_test("truncated endpoint needs support",
+             test_truncated_endpoint_needs_the_program_to_support_it);
+    run_test("truncated endpoint refused",
+             test_truncated_endpoint_refused_by_the_program_leaves_the_root);
     run_test("stale revision is retryable", test_stale_revision_is_retryable);
     run_test("materialization abort preserves source", test_materialization_abort_preserves_source);
     run_test("committed victim survives abort", test_committed_victim_survives_transaction_abort);

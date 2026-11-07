@@ -340,9 +340,8 @@ public:
                 const std::optional<PrefixShortlistKey> incoming =
                     base.prefix_shortlist_key(index.key.frontier);
                 const bool exact_digest = incoming && *incoming == index.key;
-                const bool truncated =
-                    !exact_digest && truncated_reuse && !index.shared &&
-                    index.checkpoint.kind == CheckpointKind::SessionEndpoint;
+                const bool truncated    = !exact_digest && truncated_reuse && !index.shared &&
+                                       index.checkpoint.kind == CheckpointKind::SessionEndpoint;
                 if (!exact_digest && !truncated) { continue; }
 
                 if (!index.shared) {
@@ -356,12 +355,12 @@ public:
                                           *entry.session != *base.context_cache().session_key ||
                                           !base.context_cache().update_session_index);
                     std::optional<AdmissionCandidate> plan =
-                        truncated ? program.inspect_truncated_admission(
-                                        prompt, base, *destination, *entry.handle,
-                                        index.checkpoint, retain)
-                                  : program.inspect_admission(prompt, base, *destination,
-                                                              &*entry.handle, nullptr,
-                                                              index.checkpoint, retain);
+                        truncated
+                            ? program.inspect_truncated_admission(prompt, base, *destination,
+                                                                  *entry.handle, index.checkpoint,
+                                                                  retain)
+                            : program.inspect_admission(prompt, base, *destination, &*entry.handle,
+                                                        nullptr, index.checkpoint, retain);
                     if (!plan) { continue; }
                     if (plan->summary().reusable_prompt_tokens == 0 ||
                         (retain &&

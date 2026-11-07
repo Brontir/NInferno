@@ -567,11 +567,12 @@ public:
                                                   std::uint32_t first_target,
                                                   const ScoreDetailRequest& request,
                                                   ScoreDetail& detail);
-    [[nodiscard]] std::optional<AdmissionCandidate> inspect_admission(
-        const PreparedPromptData& prompt, const RequestBasePlan& base, runtime::LaneId destination,
-        const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
-        std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
-        bool truncated_endpoint = false);
+    [[nodiscard]] std::optional<AdmissionCandidate>
+    inspect_admission(const PreparedPromptData& prompt, const RequestBasePlan& base,
+                      runtime::LaneId destination, const ContinuationHandle* source,
+                      const SharedPrefixHandle* shared_source,
+                      std::optional<runtime::CheckpointRef> checkpoint,
+                      bool must_retain_private_source, bool truncated_endpoint = false);
     // Only attention layers keep per-token state: no linear layers, no sliding rings, no DFlash
     // local state, no drafter. The KV of such a sequence is valid for any shorter prefix.
     [[nodiscard]] bool supports_truncated_reuse() const noexcept;

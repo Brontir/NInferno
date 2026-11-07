@@ -311,11 +311,12 @@ detail::PhysicalResources pressure_residual(detail::PhysicalResources deficit,
 
 } // namespace
 
-std::optional<AdmissionCandidate> ProgramImpl::inspect_admission(
-    const PreparedPromptData& prompt, const RequestBasePlan& base, runtime::LaneId destination,
-    const ContinuationHandle* source, const SharedPrefixHandle* shared_source,
-    std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
-    bool truncated_endpoint) {
+std::optional<AdmissionCandidate>
+ProgramImpl::inspect_admission(const PreparedPromptData& prompt, const RequestBasePlan& base,
+                               runtime::LaneId destination, const ContinuationHandle* source,
+                               const SharedPrefixHandle* shared_source,
+                               std::optional<runtime::CheckpointRef> checkpoint,
+                               bool must_retain_private_source, bool truncated_endpoint) {
     const std::uint32_t lane = destination.value;
     if (lane >= max_concurrency) { throw std::out_of_range("admission lane is out of range"); }
     if (requests[lane].lifecycle != Lifecycle::Empty ||

@@ -514,11 +514,12 @@ RequestBasePlan ProgramImpl::plan_request(const PreparedPromptData& prompt,
     return RequestBasePlan(std::move(base));
 }
 
-std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
-    std::uint32_t lane, const PreparedPromptData& prompt, const RequestBasePlan& base_plan,
-    const SequenceState* source, const SharedPrefixState* shared_source,
-    std::optional<runtime::CheckpointRef> checkpoint, bool must_retain_private_source,
-    bool truncated_endpoint) {
+std::optional<AdmissionCandidate>
+ProgramImpl::inspect_lane(std::uint32_t lane, const PreparedPromptData& prompt,
+                          const RequestBasePlan& base_plan, const SequenceState* source,
+                          const SharedPrefixState* shared_source,
+                          std::optional<runtime::CheckpointRef> checkpoint,
+                          bool must_retain_private_source, bool truncated_endpoint) {
     if (lane >= max_concurrency) { throw std::out_of_range("request lane is out of range"); }
     const RequestControl& request = requests[lane];
     if (request.lifecycle != Lifecycle::Empty) {
@@ -588,22 +589,20 @@ std::optional<AdmissionCandidate> ProgramImpl::inspect_lane(
                 // frontier of the common prefix serve it, and the rest is prefilled (the
                 // endpoint's tail hidden belongs to its own frontier). The rows must come from
                 // a prefill of the source for the result to equal a cold prefill's.
-                if (!supports_truncated_reuse() || !source->endpoint_valid) {
-                    return std::nullopt;
-                }
+                if (!supports_truncated_reuse() || !source->endpoint_valid) { return std::nullopt; }
                 const std::uint32_t resident = std::min<std::uint32_t>(
                     selected.frontier, static_cast<std::uint32_t>(source->ledger.size()));
                 const std::size_t limit = std::min<std::size_t>(resident, prompt.token_ids.size());
-                const auto mismatch     = std::mismatch(prompt.token_ids.begin(),
-                                                        prompt.token_ids.begin() +
-                                                            static_cast<std::ptrdiff_t>(limit),
-                                                        source->ledger.begin());
+                const auto mismatch =
+                    std::mismatch(prompt.token_ids.begin(),
+                                  prompt.token_ids.begin() + static_cast<std::ptrdiff_t>(limit),
+                                  source->ledger.begin());
                 const std::uint32_t common =
                     static_cast<std::uint32_t>(mismatch.first - prompt.token_ids.begin());
                 const std::optional<std::uint32_t> frontier =
                     runtime_support::truncated_reuse_frontier(
-                        common, base.summary.prompt_tokens, prompt.identity.rewrite_execution_frontiers,
-                        source->prefill_exact_frontier,
+                        common, base.summary.prompt_tokens,
+                        prompt.identity.rewrite_execution_frontiers, source->prefill_exact_frontier,
                         source->prefix_identity.rewrite_execution_frontiers(),
                         runtime_support::kTruncatedReuseMinimumTokens);
                 if (!frontier || *frontier >= selected.frontier ||

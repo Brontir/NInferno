@@ -2544,7 +2544,7 @@ std::string random_words(std::uint64_t seed, std::uint32_t count) {
     std::string text;
     std::uint64_t state = seed * 6364136223846793005ULL + 1442695040888963407ULL;
     for (std::uint32_t index = 0; index < count; ++index) {
-        state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+        state                      = state * 6364136223846793005ULL + 1442695040888963407ULL;
         const std::uint32_t length = 3U + static_cast<std::uint32_t>((state >> 33U) % 5U);
         if (!text.empty()) { text.push_back(' '); }
         for (std::uint32_t letter = 0; letter < length; ++letter) {
@@ -2581,16 +2581,16 @@ bool same_generation(const ninferno::GenerationResult& left,
 int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationMode mode,
                                      bool attention_only) {
     ninferno::EngineOptions options;
-    options.artifact_path                                   = artifact;
-    options.max_context                                     = 12288;
-    options.kv_capacity               = ninferno::KvCapacityPolicy::explicit_capacity(12288);
-    options.prefill_chunk                                   = 1024;
-    options.activations                                     = mode;
-    options.speculative.backend                             = ninferno::SpeculativeBackend::None;
-    options.enable_vision                                   = false;
-    options.max_concurrency                                 = 1;
-    options.max_pending_requests                            = 1;
-    options.context_cache.device_state_slots                = 4;
+    options.artifact_path                    = artifact;
+    options.max_context                      = 12288;
+    options.kv_capacity                      = ninferno::KvCapacityPolicy::explicit_capacity(12288);
+    options.prefill_chunk                    = 1024;
+    options.activations                      = mode;
+    options.speculative.backend              = ninferno::SpeculativeBackend::None;
+    options.enable_vision                    = false;
+    options.max_concurrency                  = 1;
+    options.max_pending_requests             = 1;
+    options.context_cache.device_state_slots = 4;
     options.context_cache.max_private_continuations         = 3;
     options.context_cache.max_shared_prefixes               = 0;
     options.context_cache.max_long_anchors_per_continuation = 0;
@@ -2622,8 +2622,7 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     };
     const auto check_reuse = [&](const ninferno::GenerationResult& result, const char* what) {
         std::cout << "  " << label << ": reused " << result.reused_prompt_tokens
-                  << " prompt tokens
-";
+                  << " prompt tokens\n";
         if (attention_only) {
             expect(result.prefix_reuse_path == ninferno::PrefixReusePath::PrivateTruncatedEndpoint,
                    what);

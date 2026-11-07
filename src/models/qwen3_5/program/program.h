@@ -913,10 +913,10 @@ public:
     // inspect_admission of a private source's endpoint checkpoint for a prompt which diverges
     // below the endpoint (PrefixReusePath::PrivateTruncatedEndpoint); none when no frontier
     // qualifies.
-    [[nodiscard]] std::optional<AdmissionCandidate> inspect_truncated_admission(
-        const PreparedPrompt& prompt, const RequestBasePlan& base, runtime::LaneId destination,
-        const ContinuationHandle& source, runtime::CheckpointRef endpoint,
-        bool must_retain_private_source);
+    [[nodiscard]] std::optional<AdmissionCandidate>
+    inspect_truncated_admission(const PreparedPrompt& prompt, const RequestBasePlan& base,
+                                runtime::LaneId destination, const ContinuationHandle& source,
+                                runtime::CheckpointRef endpoint, bool must_retain_private_source);
     [[nodiscard]] std::optional<ResourcePlan> seal_identity(const AdmissionCandidate& candidate,
                                                             const PreparedPrompt& prompt,
                                                             runtime::FinalScheduleIntent intent);

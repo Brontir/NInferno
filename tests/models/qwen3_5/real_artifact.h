@@ -66,12 +66,12 @@ inline const RealArtifact& real_artifact(const char* path) {
         result.proposal = reader.directory().component("text").proposal.has_value();
         result.moe      = reader.directory().component("text").config.contains("num_experts");
         {
-            const auto& config = reader.directory().component("text").config;
-            const auto types   = config.find("layer_types");
-            result.attention_only =
-                types != config.end() && types->is_array() && !types->empty() &&
-                std::all_of(types->begin(), types->end(),
-                            [](const auto& kind) { return kind == "full_attention"; });
+            const auto& config    = reader.directory().component("text").config;
+            const auto types      = config.find("layer_types");
+            result.attention_only = types != config.end() && types->is_array() && !types->empty() &&
+                                    std::all_of(types->begin(), types->end(), [](const auto& kind) {
+                                        return kind == "full_attention";
+                                    });
         }
         for (const char* drafter : {"mtp", "dflash", "dflash2"}) {
             if (reader.directory().uses.contains(
