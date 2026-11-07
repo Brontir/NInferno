@@ -3768,6 +3768,7 @@ struct SpreadMeasured {
     Board board;
     bool faster;
 };
+
 constexpr SpreadMeasured kSpreadMeasured[] = {{measured::kRtx5090, true},
                                               {measured::kRtx5080, true},
                                               {measured::kRtx5060Ti, false},
