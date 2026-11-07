@@ -5,6 +5,10 @@
 #include "core/device_class.h"
 #include "ops/generic/generic_gemm.h"
 
+#include <cstdint>
+#include <functional>
+#include <optional>
+
 namespace ninferno::ops::detail::generic {
 
 // The token-major grid of the W4A8 tiles (W4a8Activation::token_major), first the 128-token
@@ -83,5 +87,17 @@ bool tiled_takes(WeightCodec codec);
 // fills the SMs, a smaller one where it would leave them idle. Every schedule gives the same
 // bytes, so the choice may vary with T. -1 where none fits.
 int i8_pick(const Problem& problem, QType qtype, std::int32_t tokens);
+
+// The route cost model (generic_cost.cpp). price_routes hands `take` every admitted route it
+// prices with its time (the A16 scale applied); false where the facts have no roofline (nothing
+// priced). cost_route: the cheapest of them.
+using PricedRoute = std::function<void(Route, double)>;
+bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tokens,
+                  const PricedRoute& take);
+std::optional<Route> cost_route(const Problem& problem, const Weight& weight, std::int32_t tokens);
+
+// The weight-side admission of the A8 tiles (generic_gemm.cpp; their refusals name the reason).
+bool allows_w4a8(const Weight& w, LinearPolicy policy);
+bool allows_i8(const Weight& w, LinearPolicy policy);
 
 } // namespace ninferno::ops::detail::generic

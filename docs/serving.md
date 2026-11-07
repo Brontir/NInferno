@@ -286,7 +286,7 @@ Notes that often matter:
 
 - **Plan.** Without `--max-context`, the free GPU memory picks the first rung that fits of a
   declared plan ladder: the model's own context for every request at the top, then the second
-  cached state of each request, the KV pool, the cached Device states (with the Host tier, on by
+  cached state of each request, the KV pool, the cached Device states (with the Host tier, a second level of the context cache in pinned system RAM, on by
   default on Linux, WSL 2 and Windows; without it one per request stays down to 8,192 tokens), the
   context (steps of about 4.2 % down to 8,192 tokens at chunk 1024), then survival rungs with a
   warning and without the desktop reserve (8,192 tokens at chunk 1024, then narrower chunks, fewer

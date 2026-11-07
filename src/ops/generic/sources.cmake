@@ -3,6 +3,7 @@
 ninferno_target_sources(ninferno_ops PRIVATE
   "${CMAKE_CURRENT_LIST_DIR}/generic_gemm.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_coverage.cpp"
+  "${CMAKE_CURRENT_LIST_DIR}/generic_cost.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_describe.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/generic_ggml.cpp"
   "${CMAKE_CURRENT_LIST_DIR}/build_manifest.cpp"
