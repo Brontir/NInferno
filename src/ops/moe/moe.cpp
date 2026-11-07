@@ -442,6 +442,8 @@ MoePlan plan_for(const Geometry& g, std::int32_t tokens, bool prefill) {
 struct Workspace {
     Tensor logits, ids, weights, packed_token, slot_of, job_expert, job_begin, job_count, job_total,
         mid, y, shared_mid, shared_out, shared_gate, padded_x;
+    // MoePlan::volta_hmma: x as f16 rows (launch_volta_x_f16); `mid` then holds f16 halves.
+    Tensor x_h;
     // MoePlan::w4a8: the quantized x ([T] rows) and intermediate ([T * top_k] slot rows).
     Tensor x_codes, x_scales, x_sums, mid_codes, mid_scales, mid_sums;
 };
@@ -470,6 +472,7 @@ Workspace allocate(Arena& arena, const Geometry& g, const MoeConfig& c, std::int
     w.mid          = arena.alloc(DType::BF16, {g.inter, a});
     w.y            = arena.alloc(DType::BF16, {g.hidden, a});
     if (g.input != g.hidden) { w.padded_x = arena.alloc(DType::BF16, {g.input, tokens}); }
+    if (p.volta_hmma) { w.x_h = arena.alloc(DType::FP16, {g.input, tokens}); }
     if (p.w4a8_gate_up || router_quantizes_x(g, p, tokens)) {
         // x at the zero-padded bank's K (g.input): the quantizer writes the tail as zeros (an R8
         // gate/up's x, quantized by the router, takes the same rows).
@@ -712,6 +715,11 @@ std::size_t moe_workspace_bytes(const MoeWeights& weights, const MoeConfig& conf
         return layout.peak_bytes(256);
     };
     std::size_t bytes = bound(max_tokens, narrowest);
+    if (volta_hmma_admitted(weights, g)) {
+        MoePlan v    = narrowest;
+        v.volta_hmma = true;
+        bytes        = std::max(bytes, bound(max_tokens, v));
+    }
     // An R8 gate/up of at most kR8Tokens tokens reads x as the router's CTAs quantized it
     // (router_quantizes_x): planes the bound above holds only when its banks take W4A8. The
     // widest T the bank admits R8 at (a wide K admits it at T = 1 only) sizes them.
@@ -1464,6 +1472,9 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         const Stage first = gated ? Stage::GateUp : Stage::Up;
         args.ldo          = g.inter;
         if (p.volta_hmma) {
+            launch_volta_x_f16(gate_up_x, g.input, t, g.input, ws.x_h.data, stream);
+            args.xh        = ws.x_h.data;
+            args.ldxh      = g.input;
             args.sub_tiles = p.job_columns / kVoltaHmmaSlots;
             launch_moe_volta_hmma(generic::codec_of(w.gate_up), is_frag(w.gate_up), first, args,
                                   dim3(blocks(g.inter, kVoltaHmmaRows),
@@ -1522,6 +1533,8 @@ void run(const Tensor& x, const MoeWeights& w, const MoeConfig& c, MoeEpilogue e
         args.ldo         = g.hidden;
         args.pdl         = pdl && !p.w4a8_down;
         if (p.volta_hmma) {
+            args.xh        = ws.mid.data; // f16 halves, as the gate/up stage wrote them
+            args.ldxh      = g.inter;
             args.sub_tiles = p.job_columns / kVoltaHmmaSlots;
             launch_moe_volta_hmma(generic::codec_of(w.down), is_frag(w.down), Stage::Down, args,
                                   dim3(blocks(g.hidden, kVoltaHmmaRows),
