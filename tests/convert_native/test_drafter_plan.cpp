@@ -10,6 +10,7 @@
 // all of it at the same shape, only the choices of its own MTP layers at a nearby one; a
 // checkpoint the dense converter reads (gpt-oss) is described as the dense engine's; attaching
 // is still to do while the manifest is missing or lists a published drafter as failed.
+#include "convert/acquire.h"
 #include "convert/drafters.h"
 
 #include "spec/manifest.h"
@@ -22,6 +23,7 @@
 #include <fstream>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace cv   = ninferno::convert;
 namespace spec = ninferno::spec;
@@ -30,6 +32,8 @@ using Json     = nlohmann::json;
 namespace {
 
 int failures = 0;
+
+bool line_starts_warning(const std::string& line) { return line.starts_with("warning: "); }
 
 void expect(bool condition, const std::string& what, const std::string& detail = "") {
     if (!condition) {
@@ -467,6 +471,67 @@ void retry_failed_drafter() {
     expect(with("{"), "an unreadable manifest: attaching is to do");
 }
 
+// A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning
+// for a start whose automatic choice drafts: served without it, the line naming the drafter, the
+// reason, how to get it and what it costs. A drafter that is fine says nothing.
+void automatic_drafter_missing() {
+    cv::DrafterPlan plan;
+    cv::PlannedDrafter missing;
+    missing.decl.name = "dflash";
+    missing.decl.repo = "z-lab/Qwen3.5-4B-DFlash";
+    missing.status    = "failed: HF_HUB_OFFLINE is set; no snapshot in the cache";
+    cv::PlannedDrafter odd;
+    odd.decl.name = "assistant";
+    odd.decl.repo = "google/gemma-4-12B-it-assistant";
+    odd.status    = "incompatible: vocabulary differs";
+    cv::PlannedDrafter fine;
+    fine.decl.name = "mtp";
+    fine.status    = "embedded";
+    plan.drafters  = {fine, missing, odd};
+
+    std::vector<std::string> lines;
+    cv::AcquireOptions options;
+    options.log = [&](const std::string& line) { lines.push_back(line); };
+
+    options.drafters = cv::Drafters::Require;
+    bool threw       = false;
+    try {
+        cv::check_attached_drafters(plan, options);
+    } catch (const std::exception& error) {
+        threw = std::string(error.what()).find("dflash") != std::string::npos;
+    }
+    expect(threw && lines.empty(), "--with-drafters: the missing drafter is an error");
+
+    options.drafters = cv::Drafters::Attach;
+    try {
+        cv::check_attached_drafters(plan, options);
+    } catch (const std::exception& error) {
+        expect(false, "the automatic choice's missing drafter threw", error.what());
+    }
+    expect(lines.size() == 2, "one warning per drafter left out", std::to_string(lines.size()));
+    if (lines.size() == 2) {
+        const auto has = [&](const std::string& line, const std::string& part) {
+            return line.find(part) != std::string::npos;
+        };
+        expect(line_starts_warning(lines[0]) && has(lines[0], "drafter dflash") &&
+                   has(lines[0], "HF_HUB_OFFLINE") &&
+                   has(lines[0], "hf download z-lab/Qwen3.5-4B-DFlash") &&
+                   has(lines[0], "plain decoding") && has(lines[0], "Go online"),
+               "the fetch failure's warning names the drafter, the reason, the cure and the cost",
+               lines[0]);
+        expect(line_starts_warning(lines[1]) && has(lines[1], "incompatible") &&
+                   !has(lines[1], "hf download"),
+               "an incompatible drafter's warning offers no download", lines[1]);
+    }
+
+    lines.clear();
+    options.drafters = cv::Drafters::Default;
+    cv::check_attached_drafters(plan, options);
+    options.drafters = cv::Drafters::Off;
+    cv::check_attached_drafters(plan, options);
+    expect(lines.empty(), "a checkpoint's default and --no-drafters say nothing here");
+}
+
 } // namespace
 
 int main() {
@@ -479,6 +544,7 @@ int main() {
     checkpoint_engine();
     checkpoint_mtp();
     retry_failed_drafter();
+    automatic_drafter_missing();
     if (failures == 0) { std::cout << "drafter plan: ok\n"; }
     return failures == 0 ? 0 : 1;
 }

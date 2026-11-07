@@ -516,7 +516,9 @@ int main(int argc, char** argv) {
             acquire.fetch                = fetch;
             acquire.convert              = options;
             acquire.components_given     = components_given;
-            acquire.with_drafters        = with_drafters;
+            if (with_drafters.has_value()) {
+                acquire.drafters = *with_drafters ? cv::Drafters::Require : cv::Drafters::Off;
+            }
             if (moved_ref) { acquire.moved_ref = *moved_ref; }
             acquire.model_id             = model_id;
             acquire.drafter_artifacts    = drafter_artifacts;

@@ -46,6 +46,16 @@ enum class MovedRef {
     Refetch, // download the commit the ref names now, convert it, then remove the old conversion
 };
 
+// What a start does with a model's separate drafters. One setting, so "attach them" and "fail
+// without them" cannot disagree.
+enum class Drafters {
+    Default, // a checkpoint's are attached, a GGUF model's are not
+    Attach,  // attached because the automatic choice drafts: one that cannot be fetched, converted
+             // or attached is a warning, and the model is served without it
+    Require, // --with-drafters: every drafter is required, or the start fails
+    Off,     // --no-drafters
+};
+
 struct AcquireOptions {
     FetchOptions fetch;
     // The conversion: recipe ("" for the official one), out ("" for
@@ -53,7 +63,7 @@ struct AcquireOptions {
     // model is filled in here.
     ConvertOptions convert;
     bool components_given = false;    // convert.components was named by the caller
-    std::optional<bool> with_drafters; // default: a checkpoint's, not a GGUF model's
+    Drafters drafters     = Drafters::Default;
     std::string model_id;             // the registry's id of the model (default: the repository)
     std::map<std::string, std::filesystem::path> drafter_artifacts;
     std::filesystem::path repository; // source tree for shortlist rankings
@@ -150,6 +160,12 @@ void accept_converted(const std::filesystem::path& commit_dir, const std::string
 
 // `spec` is org/name[@revision] on the options' hub, or an http(s) URL of one file. Throws naming
 // what failed and what to do about it.
+// What acquire_model does with the drafters of `plan` after attaching them: under
+// Drafters::Require a drafter that failed, is incompatible or is not in the artifact throws;
+// under Drafters::Attach each is a warning line (options.log, marked "warning: ") that says how to
+// get it and what the start costs; otherwise nothing.
+void check_attached_drafters(const DrafterPlan& plan, const AcquireOptions& options);
+
 [[nodiscard]] AcquiredModel acquire_model(const std::string& spec, AcquireOptions options);
 
 // Of a repository's file names, the Vision projector a start takes under --vision (mmproj-*.gguf):

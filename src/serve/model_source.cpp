@@ -225,7 +225,13 @@ ModelSource resolve_model_source(const ServeOptions& options,
     acquire.reuse          = true;
     acquire.repository     = fs::current_path();
     acquire.log            = log;
-    if (drafters) { acquire.with_drafters = true; }
+    // Named by the user: required. Only the automatic choice drafts: attached when it can be,
+    // else the model is served without the drafter, with a warning.
+    if (options.with_drafters) {
+        acquire.drafters = convert::Drafters::Require;
+    } else if (drafters) {
+        acquire.drafters = convert::Drafters::Attach;
+    }
     acquire.keep_replaced = options.keep_replaced;
     // Also for the quantization chosen above: that choice is for an idle card of this class,
     // this check for the memory free now.
