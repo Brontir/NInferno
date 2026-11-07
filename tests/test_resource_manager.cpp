@@ -3392,7 +3392,10 @@ void test_engine_candidate_takes_over_unproven_shared_slot() {
         auto reuse =
             manager.inspect(program, FakePreparedPrompt{102}, shared_base(102, kAutomatic), 101);
         require(reuse.choice && reuse.choice->summary().reusable_prompt_tokens == 64,
-                "the taken-over shared slot does not serve the new prefix");
+                (std::string("the taken-over shared slot does not serve the new prefix: ") +
+                 (reuse.choice ? std::to_string(reuse.choice->summary().reusable_prompt_tokens)
+                               : std::string("no choice")))
+                    .c_str());
     }
 }
 
