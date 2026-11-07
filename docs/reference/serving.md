@@ -2545,6 +2545,12 @@ Compatible prefixes are reused for both text and multimodal histories unless the
 - An appended mid-conversation system message is an ordinary prompt suffix, so an unchanged prior
   history remains eligible for `private_endpoint`. If the client modifies, removes, or moves a
   historical system message, the token prefix genuinely differs and a miss/reset is correct.
+- Reuse starts at a checkpoint: the previous request's end (`private_endpoint`), a turn boundary,
+  a long anchor, or the shared prefix at a message's end. A request that grows the previous
+  request's last user message inside that same message (RAG appending passages, an editor
+  resending its buffer, a scratchpad kept in the last message) diverges before every checkpoint
+  and reuses nothing today, even though most of its tokens are cached (#485). Put the growing part
+  in a new message, or end the stable part with a message boundary, to keep it reusable.
 
 ### Finish reasons, tools and usage
 
