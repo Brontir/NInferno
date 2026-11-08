@@ -1085,19 +1085,34 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
         // geometry it taps), against the target described once (only when a drafter changed) and
         // the declaration the manifest's entry holds: a bundle's or a given name's, which no plan
         // made from the artifact again would name, too.
-        std::optional<DrafterTarget> target;
+        // The registry's view of a drafter (its entry geometry: a converted GGUF DFlash drafter's
+        // config holds no num_target_layers) comes from the target's plan, made once; a bundle's
+        // drafter or a given one, which that plan does not name, is checked by its taps alone, as
+        // its attach was.
+        std::optional<DrafterPlan> plan;
+        const bool bundle = manifest.value("matched_by", std::string()) == "declaration";
         const DrafterCheck attach_checks = [&](const Json& entry, const fs::path& drafter) {
-            if (!target) {
-                target = describe_artifact(target_artifact,
-                                           manifest.value("target", Json::object()).value("repo", ""));
+            if (!plan) {
+                const auto target = manifest.value("target", Json::object());
+                auto described    = describe_artifact(target_artifact, target.value("repo", ""));
+                if (described.lineage.empty() && target.contains("lineage")) {
+                    described.lineage = target.at("lineage").get<std::vector<std::string>>();
+                }
+                plan = plan_drafters(std::move(described));
             }
-            PlannedDrafter d;
-            d.decl = spec::parse_drafter(entry);
-            if (entry.value("status", std::string()) == "attached") {
-                d.taps_only = true; // given, as attach_drafters takes it
+            const auto name    = entry.value("name", std::string());
+            const auto planned = std::find_if(plan->drafters.begin(), plan->drafters.end(),
+                                              [&](const PlannedDrafter& p) { return p.decl.name == name; });
+            PlannedDrafter d   = planned != plan->drafters.end() ? *planned : PlannedDrafter();
+            d.decl             = spec::parse_drafter(entry);
+            d.checks.clear();
+            if (planned == plan->drafters.end() || bundle ||
+                entry.value("status", std::string()) == "attached") {
+                d.taps_only   = true;  // a bundle's or a given drafter, as its attach took it
+                d.unvalidated = false; // attached once: the engine runs it
             }
             const auto fp = spec::artifact_vocab_fingerprint(drafter);
-            check_drafter(*target, artifact_config(drafter), fp ? fp->value : "", d);
+            check_drafter(plan->target, artifact_config(drafter), fp ? fp->value : "", d);
             return d.compatible;
         };
         const DrafterCheck& compatible = check ? check : attach_checks;
