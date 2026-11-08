@@ -1071,7 +1071,7 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                     write_file_atomic(convert_options.out.string() + ".options", identity);
                 } catch (const std::exception&) {} // a record only; none keeps the drafter
             }
-            d.artifact    = convert_options.out.string();
+            d.artifact    = fs::absolute(convert_options.out).string(); // as a local drafter's
             d.artifact_id = spec::artifact_id_hex(convert_options.out);
             if (const auto fp = spec::artifact_vocab_fingerprint(convert_options.out);
                 fp && !plan.target.fingerprint.empty()) {
