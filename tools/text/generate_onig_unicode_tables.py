@@ -126,6 +126,7 @@ def main() -> int:
         f"// tokenizers 0.23) differs from Unicode {new_version} (bundled utf8proc 2.11), with the",
         f"// category they have in {old_version}. Sources: UnicodeData.txt of both versions from",
         f"// https://www.unicode.org/Public/<version>/ucd/.",
+        "// clang-format off",
         "#pragma once",
         "",
         "#include <cstddef>",
@@ -143,12 +144,11 @@ def main() -> int:
         "    std::uint8_t category;  // utf8proc_category_t value",
         "};",
         "",
-        "// clang-format off",
         "inline constexpr CategoryRange kOnigCategoryRanges[] = {",
     ]
     for first, last, category in ranges:
         lines.append(f"    {{0x{first:X}, 0x{last:X}, {CATEGORIES.index(category)}}},  // {category}")
-    lines += ["};", "// clang-format on", "", "} // namespace ninferno::text::onig_unicode", ""]
+    lines += ["};", "", "} // namespace ninferno::text::onig_unicode", ""]
     args.output.write_text("\n".join(lines), encoding="utf-8", newline="\n")
     print(f"{len(ranges)} ranges, {count} code points -> {args.output}", file=sys.stderr)
     return 0
