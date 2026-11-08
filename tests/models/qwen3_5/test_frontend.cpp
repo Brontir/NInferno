@@ -2172,6 +2172,59 @@ int test_none_ends_at_structural_tokens() {
     return failures;
 }
 
+Frontend gemma4_thinking_frontend();
+ninferno::PromptInput gemma4_prompt(std::optional<bool> thinking);
+
+// The Gemma 4 head-token path end to end: <|channel> is the special token of the reasoning opener
+// "<|channel>thought". Thinking off, a first <|channel> is markup where the answer begins and ends
+// the turn; thinking on, it opens the model's reasoning, and one after the reasoning ends the turn.
+int test_none_gemma_channel_head_token() {
+    const Frontend frontend = gemma4_thinking_frontend();
+    ninferno::StopPolicy stop;
+    constexpr ninferno::TokenId kChannel = 102;
+    constexpr ninferno::TokenId kClosed  = 103;
+    const auto input                     = [](bool thinking) {
+        ninferno::PromptInput result = gemma4_prompt(thinking);
+        result.options.tool_jsons.push_back(
+            R"({"type":"function","function":{"name":"inspect","parameters":{"type":"object"}}})");
+        result.options.tool_calls_discarded = true;
+        return result;
+    };
+    int failures = 0;
+    {
+        auto prompt  = frontend.prepare(input(false));
+        auto session = frontend.make_output_session(prompt, stop);
+        const auto decision = session.preview_model(std::array<ninferno::TokenId, 2>{kChannel, 1},
+                                                    64, ninferno::FinishReason::OutputLimit);
+        const auto output = session.commit_preview();
+        failures += check(decision.accepted_tokens == 1 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              channel_text(output, ninferno::OutputChannel::Content).empty(),
+                          "thinking off: a first <|channel> did not end the turn");
+    }
+    {
+        std::vector<ninferno::TokenId> tokens = {};
+        for (const int id : frontend.tokenize_text("<|channel>thought\nweigh it")) {
+            tokens.push_back(id);
+        }
+        const std::size_t reasoning_tokens = tokens.size();
+        tokens.push_back(kClosed);
+        tokens.push_back(kChannel);
+        tokens.push_back(1);
+        auto prompt   = frontend.prepare(input(true));
+        auto session  = frontend.make_output_session(prompt, stop);
+        const auto decision = session.preview_model(tokens, 64, ninferno::FinishReason::OutputLimit);
+        const auto output   = session.commit_preview();
+        failures += check(decision.accepted_tokens == reasoning_tokens + 2 &&
+                              decision.finish_reason == ninferno::FinishReason::StopToken &&
+                              channel_text(output, ninferno::OutputChannel::Content).empty() &&
+                              channel_text(output, ninferno::OutputChannel::Reasoning)
+                                      .find("weigh it") != std::string::npos,
+                          "thinking on: the opener or the second <|channel> was mishandled");
+    }
+    return failures;
+}
+
 // OpenAI's automatic boundary after the last message's last part is taken at the closed turn's end,
 // an execution frontier of the prompt: the capture adds no prefill split (DECISIONS 63).
 int test_last_part_boundary_at_turn_end() {
@@ -3587,6 +3640,7 @@ int main() {
     failures += test_disabled_tool_calls_keep_the_prompt();
     failures += test_disabled_tool_calls_ban_the_opener();
     failures += test_none_ends_at_structural_tokens();
+    failures += test_none_gemma_channel_head_token();
     failures += test_explicit_leading_instruction_cache_boundary();
     failures += test_last_part_boundary_at_turn_end();
     failures += test_media_admission_uses_aggregate_resources(frontend);

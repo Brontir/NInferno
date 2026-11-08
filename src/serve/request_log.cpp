@@ -580,6 +580,7 @@ std::string format_server_start_json(
              {"greedy", options.greedy}};
     // It changes the rendered prompt, so a replay from the log needs it.
     record["tool_order"] = options.sort_tools ? "sorted" : "request";
+    record["tool_choice_none"] = options.drop_tools_under_none ? "drop-tools" : "steer";
     record["memory"] =
         Json{{"weights", arena_json(memory.weights)},
              {"sequence", arena_json(memory.sequence)},

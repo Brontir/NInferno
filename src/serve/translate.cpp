@@ -348,9 +348,14 @@ ResolvedPromptSemantics resolve_prompt_semantics(const GenerationRequest& reques
         !result.preserve_thinking && result.enable_thinking == false &&
         std::none_of(request.messages.begin(), request.messages.end(), reasoned);
     result.vision     = server.enable_vision;
-    result.sort_tools = server.sort_tools;
+    result.sort_tools            = server.sort_tools;
+    result.drop_tools_under_none = server.drop_tools_under_none;
     return result;
 }
+
+// The line a tool_choice none prompt ends with (documented in serving.md).
+constexpr std::string_view kToolsUnavailableLine =
+    "Tools are unavailable for this reply; answer in plain text.";
 
 ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
                                     const ResolvedPromptSemantics& semantics,
@@ -463,10 +468,32 @@ ninferno::PromptInput to_prompt_input(const GenerationRequest& request,
         semantics.preserve_for_reuse ? std::optional<bool>(true) : semantics.preserve_thinking;
     input.options.chat_template_kwargs_json        = semantics.chat_template_kwargs_json;
     input.options.add_vision_id                    = false;
-    const std::vector<const ToolDefinition*> tools = effective_tools(request, semantics.sort_tools);
+    std::vector<const ToolDefinition*> tools = effective_tools(request, semantics.sort_tools);
+    const bool tools_refused                 = !tools.empty() && !request.uses_tools();
+    if (tools_refused && semantics.drop_tools_under_none) {
+        // vLLM's none: the model is not told about tools at all.
+        tools.clear();
+    } else if (tools_refused && !request.continuation && !input.messages.empty()) {
+        // The declarations stay (the cached prefix), and the model is told once more, where it
+        // answers, that they cannot be used: both templates that declare tools in the system
+        // prompt otherwise lead the model to a call it is then refused.
+        ninferno::ChatMessage& last = input.messages.back();
+        const ninferno::MessagePart line{.kind  = ninferno::MessagePartKind::Text,
+                                         .text  = std::string(kToolsUnavailableLine),
+                                         .media = {}};
+        if (last.role == ChatRole::User) {
+            last.parts.push_back(line);
+            last.parts.back().text.insert(0, "\n\n");
+        } else if (last.role == ChatRole::Tool) {
+            ninferno::ChatMessage steer;
+            steer.role = ChatRole::User;
+            steer.parts.push_back(line);
+            input.messages.push_back(std::move(steer));
+        }
+    }
     input.options.tool_calls_enabled               = request.uses_tools();
     // tool_choice none: a call written anyway is cut out of the answer, not shown as markup.
-    input.options.tool_calls_discarded = !tools.empty() && !request.uses_tools();
+    input.options.tool_calls_discarded = tools_refused && !tools.empty();
     input.options.cut_bare_calls       = !request.output_constraint;
     input.options.tool_jsons.reserve(tools.size());
     for (std::size_t index = 0; index < tools.size(); ++index) {

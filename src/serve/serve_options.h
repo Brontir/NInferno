@@ -185,6 +185,10 @@ struct ServeOptions {
     // --tool-order sorted: render a request's tools sorted by name, so that a client that sends
     // one set in varying order keeps its cached prefix (default: the request's order).
     bool sort_tools = false;
+    // --tool-choice-none drop-tools: tool_choice none removes the tool declarations from the
+    // prompt (vLLM's behaviour; the conversation's cached prefix is lost). Default (steer): they
+    // stay, and the last user turn ends with a line saying that tools are unavailable.
+    bool drop_tools_under_none = false;
     DecodePacingOptions pacing;          // --decode-steps, --decode-wait, --cuda-sync
     MaintainerOptions maintainer;        // --route-table ... --debug-poison-skip
     // --drafter-registry FILE: the drafter registry instead of the compiled-in one

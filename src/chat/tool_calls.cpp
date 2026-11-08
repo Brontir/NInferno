@@ -1108,7 +1108,7 @@ namespace {
 
 // The keys of the object's top level, those whose value has begun included, in an object that may
 // be cut off anywhere.
-std::vector<std::string> top_level_keys(std::string_view object) {
+std::vector<std::string> top_level_keys(std::string_view object, std::string* partial = nullptr) {
     std::vector<std::string> keys;
     std::size_t depth = 0;
     for (std::size_t at = 0; at < object.size(); ++at) {
@@ -1123,6 +1123,9 @@ std::vector<std::string> top_level_keys(std::string_view object) {
             while (after < object.size() && is_format_whitespace(object[after])) { ++after; }
             if (depth == 1 && after < object.size() && object[after] == ':') {
                 keys.push_back(std::move(text));
+            } else if (depth == 1 && after >= object.size() && partial != nullptr) {
+                // A string at the end of the cut-off object: a key whose colon has not come.
+                *partial = std::move(text);
             }
         } else if (byte == '{' || byte == '[') {
             ++depth;
@@ -1229,6 +1232,23 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
 std::string ToolCallOutputDecoder::settle_bare() {
     const std::string_view body = std::string_view(tool_region_).substr(syntax_->open().size());
     const bool json             = syntax_->bare_call_header().front() == "{";
+    if (!json) {
+        // Gemma 4 writes the arguments right after the name: anything else there ("call:x is a
+        // function") was prose.
+        const auto cut = cut_name_after_header(body, syntax_->bare_call_header());
+        if (cut && cut->complete) {
+            const std::size_t name_end =
+                static_cast<std::size_t>(cut->name.data() - body.data()) + cut->name.size();
+            if (body[name_end] != '{') {
+                std::string text(body);
+                saw_tool_marker_ = false;
+                bare_region_     = false;
+                emitted_text_    = true;
+                tool_region_.clear();
+                return text;
+            }
+        }
+    }
     std::size_t start           = 0;
     skip_format_whitespace(body, start);
     const std::optional<std::size_t> end = json ? json_value_end(body, start) : bare_call_end(body);
@@ -1285,12 +1305,16 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish_region(bool cut_of
         const bool json = syntax_->bare_call_header().front() == "{";
         bool call       = !json;
         if (json) {
-            for (const std::string& key : top_level_keys(body)) {
+            std::string partial;
+            for (const std::string& key : top_level_keys(body, &partial)) {
                 call = call || key == "arguments" || key == "parameters";
             }
+            // A cut inside the key itself ("argu") is a call that had begun its arguments.
+            call = call || (!partial.empty() && (std::string_view("arguments").starts_with(partial) ||
+                                                 std::string_view("parameters").starts_with(partial)));
         }
         ToolCallParseDiagnostics diagnostics;
-        if (call && (cut_off || !json)) {
+        if (call) {
             diagnostics.cut_calls_dropped = 1;
             return Terminal{.content = {}, .tool_calls = {}, .diagnostics = diagnostics};
         }

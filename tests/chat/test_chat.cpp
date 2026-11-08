@@ -774,10 +774,29 @@ int test_bare_json_call_dropped() {
         failures += check(live == "\nAfter the call.",
                           "the text after a bare call waited for the end: " + live);
         (void)streaming.finish();
+        // An unclosed call ended by EOS (not cut) is dropped as well, and a cut inside the key
+        // "arguments" itself is a call that had begun.
+        const auto unclosed = run(call.substr(0, call.size() - 12), false);
+        failures += check(unclosed.first.empty() && unclosed.second == 0,
+                          "an unclosed bare call ended by EOS was shown: " + unclosed.first);
+        const auto in_key = run(R"({"name": "weather", "argu)", true);
+        failures += check(in_key.first.empty() && in_key.second == 0,
+                          "a bare call cut inside its arguments key was shown: " + in_key.first);
         // A second bare call after the first stays text.
         const auto twice = run(call + "\n" + call, false);
         failures += check(twice.first == "\n" + call && twice.second == 1,
                           "a second bare call was cut: " + twice.first);
+    }
+    {
+        // "call:NAME" with no brace after the name is prose, released once the byte after the name
+        // shows it, not held for the whole stream.
+        const auto discarded = ninferno::chat::build_tool_call_output_contract(
+            tools, true, ToolCallFormat::Gemma4, true);
+        ninferno::chat::ToolCallOutputDecoder decoder(discarded, 64);
+        std::string visible = decoder.feed("call:weather is the function to use");
+        failures += check(visible == "call:weather is the function to use",
+                          "prose after call:NAME was held: " + visible);
+        (void)decoder.finish();
     }
     // Gemma 4's bare call, "call:NAME{...}" with no opener, under none: nothing of it is shown.
     {
