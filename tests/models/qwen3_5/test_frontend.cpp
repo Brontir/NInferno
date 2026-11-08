@@ -2172,7 +2172,6 @@ int test_none_ends_at_structural_tokens() {
     return failures;
 }
 
-
 // The Gemma 4 head-token path end to end: <|channel> is the special token of the reasoning opener
 // "<|channel>thought". Thinking off, a first <|channel> is markup where the answer begins and ends
 // the turn; thinking on, it opens the model's reasoning, and one after the reasoning ends the turn.
