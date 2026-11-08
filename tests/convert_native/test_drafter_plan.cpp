@@ -489,6 +489,15 @@ void retry_failed_drafter() {
     expect(!with("{" + registry + R"("drafters": [{"name": "mine", "status": "attached",
                 "artifact": ")" + gone + R"(", "artifact_id": "00"}]})"),
            "a given drafter whose file is gone keeps its entry: nothing to plan");
+    // ... and is named for a start that requires its drafters, which stops on it; a drafter the
+    // registry planned is not (it is planned and attached again).
+    const auto given_gone = cv::given_drafters_changed(artifact);
+    expect(given_gone.size() == 1 && given_gone[0] == "mine",
+           "a given drafter whose file is gone is named for a required start");
+    with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" + gone + R"(", "artifact_id": "00"}]})");
+    expect(cv::given_drafters_changed(artifact).empty(),
+           "a planned drafter whose file is gone is not a given one");
     const auto other = dir / "other.ninferno";
     std::ofstream(other) << "not an artifact";
     expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",

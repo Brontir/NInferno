@@ -248,11 +248,29 @@ bool wants_drafters(const AcquireOptions& options) {
 
 // A reused artifact's drafters whose file here was written again since attach take its new id
 // (drafters.h, refresh_changed_drafters): nothing is fetched, whatever the start asks of drafters.
+std::string required_text(const AcquireOptions& options);
+
 void refresh_drafters(const AcquireOptions& options, const fs::path& artifact) {
     if (options.drafters == Drafters::Off) { return; }
     for (const auto& name : refresh_changed_drafters(artifact)) {
         say(options, "drafter " + name + ": its file was written again since attach; the "
                                          "manifest takes it as it is now");
+    }
+    // A drafter the user gave that the refresh could not take (its file gone, unreadable or
+    // refused by the checks) is served without, and no plan restores it: a start that requires
+    // its drafters stops instead. (Another drafter is planned and attached again.)
+    if (options.drafters == Drafters::Require) {
+        auto changed = given_drafters_changed(artifact);
+        // Given again now (--drafter-artifact NAME=FILE): the attach takes the new file.
+        std::erase_if(changed, [&](const std::string& name) {
+            return options.drafter_artifacts.contains(name);
+        });
+        if (!changed.empty()) {
+            throw std::runtime_error("drafter " + changed.front() + " of " + artifact.string() +
+                                     " (given with --drafter-artifact) is gone or no longer "
+                                     "passes the checks since it was attached (" +
+                                     required_text(options) + ")");
+        }
     }
 }
 

@@ -1103,6 +1103,21 @@ bool changed_since_attach(const Json& d, bool gone) {
 
 } // namespace
 
+std::vector<std::string> given_drafters_changed(const fs::path& target_artifact) {
+    std::vector<std::string> out;
+    const auto path = spec::manifest_path(target_artifact);
+    if (!fs::exists(path)) { return out; }
+    try {
+        const auto manifest = Json::parse(read_file(path));
+        for (const auto& d : manifest.at("drafters")) {
+            if (d.value("status", std::string()) == "attached" && changed_since_attach(d, true)) {
+                out.push_back(d.value("name", std::string()));
+            }
+        }
+    } catch (const std::exception&) {}
+    return out;
+}
+
 std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact,
                                                   const DrafterCheck& check) {
     std::vector<std::string> refreshed;

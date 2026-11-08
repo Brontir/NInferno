@@ -178,6 +178,12 @@ DrafterPlan attach_drafters(DrafterPlan plan, const std::filesystem::path& targe
 // listing a published drafter as failed (its own quantizations do not count).
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
+// The manifest's drafters the user gave (--drafter-artifact) whose file is gone, unreadable or no
+// longer the one recorded (one the refresh did not take): no plan restores them, and a start
+// serves without them.
+[[nodiscard]] std::vector<std::string>
+given_drafters_changed(const std::filesystem::path& target_artifact);
+
 // Whether a manifest entry's drafter file passes the checks an attach runs on it.
 using DrafterCheck =
     std::function<bool(const nlohmann::json& entry, const std::filesystem::path& drafter)>;
