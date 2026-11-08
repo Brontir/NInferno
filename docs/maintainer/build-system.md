@@ -1,6 +1,7 @@
 # Build system
 
-NInferno builds from its source tree with CMake 3.28+ and C++/CUDA 20.
+NInferno builds from its source tree with CMake 3.28+ (3.31.8 / 4.0.2+ for `120f`, whose family suffix
+older CMake rejects) and C++/CUDA 20.
 Each build targets one architecture: `120a` (Blackwell, with NVFP4 kernels; `121a` and `120f`
 too), `89`, `86`, `80`, `75` or `70`; any other number from 70 on builds the generic engine
 (the release archives carry `100` and `90` this way). CUDA 12.8, 13.2 and 13.4 are the validated
