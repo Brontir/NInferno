@@ -86,19 +86,16 @@ int run_bf16_moe_projection() {
                 if (std::abs(got - expected) > 1e-2 * std::abs(expected) + 1e-2) { ++bad; }
             }
         }
-        if (bad != 0) {
-            std::cerr << "FAIL: BF16 MoE MTP " << name << ": " << bad
-                      << " values\n";
-        }
-                failures += bad != 0;
-        };
-        // Parent row order: query, key, gate, value.
-        check_part("query", query, q_rows, 0);
-        check_part("key", key, kv_rows, q_rows);
-        check_part("gate", gate, q_rows, q_rows + kv_rows);
-        check_part("value", value, kv_rows, 2 * q_rows + kv_rows);
-        return failures;
-    }
+        if (bad != 0) { std::cerr << "FAIL: BF16 MoE MTP " << name << ": " << bad << " values\n"; }
+        failures += bad != 0;
+    };
+    // Parent row order: query, key, gate, value.
+    check_part("query", query, q_rows, 0);
+    check_part("key", key, kv_rows, q_rows);
+    check_part("gate", gate, q_rows, q_rows + kv_rows);
+    check_part("value", value, kv_rows, 2 * q_rows + kv_rows);
+    return failures;
+}
 
 } // namespace
 

@@ -49,8 +49,8 @@ std::string make_model_object(const std::string& model_id, std::int64_t created,
 // carries no configuration.
 [[nodiscard]] nlohmann::json speculation_summary_json(const GenerationMetrics& metrics);
 // GET /props: llama.cpp's server properties, as clients read them for the context and slots.
-std::string make_props(const std::string& model_id, std::uint32_t max_context,
-                       std::uint32_t slots, const ninferno::ModelMetadata& metadata);
+std::string make_props(const std::string& model_id, std::uint32_t max_context, std::uint32_t slots,
+                       const ninferno::ModelMetadata& metadata);
 // GET /metrics: Prometheus text exposition under llama.cpp's metric names (dashboards made for it
 // read ours), plus ninferno's own counters and the decision fingerprint's info gauge
 // (ninferno_decision_fingerprint_info{fingerprint,manifest,schema} 1, when metadata carries one).
