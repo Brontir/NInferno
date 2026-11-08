@@ -245,10 +245,10 @@ bool price_routes(const Problem& problem, const Weight& weight, std::int32_t tok
     const double sets = problem.epilogue == Epilogue::SwiGlu ? 2.0 : 1.0;
     // The register-MMA terms below are verified for the decoders with per-sub-block scales (the
     // K-quants and the codebook i-quants, has_subblock_scales) on the generations where two or
-    // more lab cards confirm them (rmma_terms_measured: Ada and consumer Blackwell sm_120). Every
+    // more lab cards confirm them (rmma_terms_measured: sm_86, Ada and consumer Blackwell sm_120). Every
     // other part keeps its old price: Turing and Volta (emulated BF16 MMA) got worse with the
-    // terms (Quadro GV100 geomean 1.108 -> 1.155, worst 1.57 -> 1.80), and the datacenter parts and
-    // sm_86 have no second card. OPEN: the plain decoders (BF16, Q8_0, Q4_0 .. IQ4_NL, TQ1_0 /
+    // terms (Quadro GV100 geomean 1.108 -> 1.155, worst 1.57 -> 1.80), and the datacenter parts have no
+    // card of their own. OPEN: the plain decoders (BF16, Q8_0, Q4_0 .. IQ4_NL, TQ1_0 /
     // TQ2_0, the group-scaled, FP8 and FP4 formats) want their own measurement.
     const bool heavy_decoder =
         has_subblock_scales(problem.qtype) && rmma_terms_measured(d.major, d.minor);
