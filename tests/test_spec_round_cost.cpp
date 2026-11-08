@@ -325,7 +325,7 @@ int main() {
             std::printf(
                 "plain step at two requests / one: Qwen3.5-9B RTX 5070 Ti %.4f (weights only "
                 "%.4f), RTX 4060 Ti %.4f (%.4f); Qwen3.6-35B-A3B RTX 4090 %.4f (%.4f)
-                ",
+",
                 ratio(*d.round_facts, k5070, q9),
                 ratio(*d.round_facts, k5070, {}), ratio(*d.round_facts, k4060, q9),
                 ratio(*d.round_facts, k4060, {}), ratio(*m.round_facts, k4090, q35),
@@ -336,9 +336,12 @@ int main() {
             expect(near(ratio(*d.round_facts, k5070, {}),
                         ratio(*d.round_facts, k5070, sp::StreamBytes{0, 0}), 1e-12),
                    "no per-stream bytes: the weights-only price");
-            expect(ratio(*d.round_facts, k5070, q9) > ratio(*d.round_facts, k5070, {}) ||
-                       ratio(*d.round_facts, k5070, {}) > 2,
-                   "a request's own bytes raise a dense step's price at two requests");
+            expect(ratio(*d.round_facts, k5070, q9) > ratio(*d.round_facts, k5070, {}) &&
+                       ratio(*d.round_facts, k5070, q9) < 2,
+                   "a request's own bytes raise the step's price at two requests, short of two");
+            expect(ratio(*m.round_facts, k4090, q35) > ratio(*m.round_facts, k4090, {}) &&
+                       ratio(*m.round_facts, k4090, q35) < 2,
+                   "the same for an MoE target");
             const auto g0 =
                 sp::load_gain(*d.round_facts, sp::SpecConfig::parse("mtp:3"), k5070, 2.0, 2);
             const auto g1 = sp::load_gain(*d.round_facts, sp::SpecConfig::parse("mtp:3"), k5070,
@@ -346,7 +349,7 @@ int main() {
             expect(g0 && g1 && *g1 != *g0, "per-stream bytes move the load gain");
             std::printf(
                 "mtp:3 load gain at C=2 of 2.0: Qwen3.5-9B RTX 5070 Ti %.4f (weights only %.4f)
-                ",
+",
                     g1
                     ? *g1
                     : 0.0,
