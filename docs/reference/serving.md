@@ -1837,7 +1837,15 @@ not take at startup.
   (the GGUF block formats Q4_0/Q4_1/Q5_0/Q5_1, Q8_0, the K-quants Q2_K..Q6_K, IQ4_NL/IQ4_XS and
   the codebook i-quants IQ3_XXS/IQ3_S/IQ2_XXS/IQ2_XS/IQ2_S/IQ1_S/IQ1_M; MXFP4; u4; not the output
   head; `kept_block_policy`), int8 activations. The ternary and two-bit TQ1_0, TQ2_0, Q1_0 and
-  Q2_0 keep BF16 activations. The answer can depend on the load.
+  Q2_0 keep BF16 activations. The answer can depend on the load, and on where a prompt was cut.
+  For the GGUF block formats, ggml's int8 matrix kernel runs a prefill call 512 tokens at a time and
+  can split each sum across SMs by how many tokens that piece has (stream-k), so a token in a piece
+  of another size or start can get other last bits. Two cold prefills of the same prompt with the
+  same `--prefill-chunk` cut it alike; a prefill resumed from the cache at another point (a turn
+  boundary, a long anchor, the end of an earlier answer) does not, and a resumed piece under 17
+  tokens takes the decode kernels for every format. In our checks the chosen tokens stayed the
+  same and the logprobs moved by up to 0.13 (#492). `--activations exact` gives the same bytes at
+  any cut.
 - `int8` (Qwen; other families refuse it at startup): eight bits. Every quantized linear may take
   int8 activations where its route has them and none takes four, whatever the artifact recorded:
   the sites it kept BF16 (heads and embeddings recorded BF16 excepted) and the NVFP4 weights
@@ -1846,7 +1854,8 @@ not take at startup.
   NVFP4 with BF16 activations on its tiled route); on RTX 50 (FP4 tensor cores) decode stays BF16,
   and so does speculative verify on the layers with native NVFP4 kernels (generic-path shapes take
   int8 from 17 tokens), while GPUs without FP4 tensor cores use int8 there too. Qwen 3.5/3.6 MoE
-  NVFP4 experts held at eight bits run the generic MoE.
+  NVFP4 experts held at eight bits run the generic MoE. GGUF block weights depend on where a
+  prompt was cut, as under `fast` (#492).
 
 ### Context cache
 
