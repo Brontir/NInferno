@@ -112,8 +112,8 @@ std::optional<ChainPrice> fused_chain(const Weight& first_weight, std::int32_t t
     const double n = first_weight.n, k = first_weight.k, t = tokens;
     const double weight_bytes = 2.0 * (n * k + n * (k / 32.0) * 2.0);
     const double passes       = std::ceil(t / geometry->tile_cols);
-    return ChainPrice{weight_bytes * passes + k * t * 2.0 * geometry->x_row_blocks *
-                                                  geometry->launches +
+    return ChainPrice{weight_bytes * passes +
+                          k * t * 2.0 * geometry->x_row_blocks * geometry->launches +
                           2.0 * n * t * 2.0,
                       geometry->launches};
 }
@@ -132,7 +132,7 @@ std::optional<ChainPrice> separate_chain(const Weight& first_weight, const Weigh
 // the shape's own table does; a tie keeps the fused kernel (one launch where it fuses).
 bool fused_pair(const Weight& first_weight, const Weight& second_weight, std::int32_t tokens) {
     if (!fused_domain(first_weight, second_weight)) { return false; }
-    const auto fused = fused_chain(first_weight, tokens);
+    const auto fused    = fused_chain(first_weight, tokens);
     const auto separate = separate_chain(first_weight, second_weight, tokens);
     if (!fused || !separate) { return true; }
     if (separate->requested_bytes != fused->requested_bytes) {

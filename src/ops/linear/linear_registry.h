@@ -108,6 +108,7 @@ struct LinearPairCandidate {
     std::string why;
     std::vector<LinearCandidate> parts;
 };
+
 // The bytes the CTAs of each alternative request for a call of `tokens` columns (its chain price,
 // ops/wrapper/linear_pair.cpp): the fused kernel's and the two linear() calls', nullopt where the
 // tiling of that alternative is not known (then the fused kernel keeps the call).
@@ -115,9 +116,9 @@ struct LinearPairRequested {
     std::optional<double> fused;
     std::optional<double> separate;
 };
-[[nodiscard]] LinearPairRequested linear_pair_requested_bytes(const Weight& first,
-                                                              const Weight& second,
-                                                              std::int32_t tokens);
+
+[[nodiscard]] LinearPairRequested
+linear_pair_requested_bytes(const Weight& first, const Weight& second, std::int32_t tokens);
 [[nodiscard]] std::vector<LinearPairCandidate> linear_pair_candidates(const Weight& first,
                                                                       const Weight& second,
                                                                       std::int32_t tokens);

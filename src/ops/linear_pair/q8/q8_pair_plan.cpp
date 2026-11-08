@@ -521,7 +521,9 @@ void launch_exact_tail(Q8PairScheduleId exact_schedule, const Q8PairProblem& pro
 std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem) {
     const Q8PairScheduleId schedule = q8_pair_resolve_plan(problem).schedule;
     if (is_exact_tail_schedule(schedule)) { return std::nullopt; }
-    const auto blocks = [](std::int32_t rows, std::int32_t tile) { return (rows + tile - 1) / tile; };
+    const auto blocks = [](std::int32_t rows, std::int32_t tile) {
+        return (rows + tile - 1) / tile;
+    };
     if (schedule == Q8PairScheduleId::TwoSimtR8C4) {
         // One single-weight launch per weight, 8 rows by 4 columns a CTA.
         return Q8PairGeometry{2, blocks(problem.rows, schedule_rows(schedule)),

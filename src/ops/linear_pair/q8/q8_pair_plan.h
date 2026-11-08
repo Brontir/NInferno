@@ -91,6 +91,7 @@ struct Q8PairGeometry {
     std::int32_t x_row_blocks; // row tiles that each request the whole activation, per launch
     std::int32_t tile_cols;    // token columns of one CTA
 };
+
 [[nodiscard]] std::optional<Q8PairGeometry> q8_pair_geometry(const Q8PairProblem& problem);
 Q8PairPlan q8_pair_resolve_plan(const Q8PairProblem& problem);
 
