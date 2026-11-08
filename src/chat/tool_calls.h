@@ -55,6 +55,9 @@ struct ToolCallOutputContract {
     std::vector<Tool> tools;
     bool enforce_declared_names = false;
     ToolCallFormat format       = ToolCallFormat::QwenXml;
+    // tool_choice required or named: the answer is the calls alone. A call that a stop string cut
+    // off is then dropped, as one the output limit cut off is, not returned as text.
+    bool forced_calls = false;
 
     [[nodiscard]] bool declares(std::string_view name) const noexcept;
 };
@@ -68,7 +71,8 @@ struct ParsedToolCallOutput {
 
 [[nodiscard]] std::shared_ptr<const ToolCallOutputContract>
 build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool enabled,
-                                ToolCallFormat format = ToolCallFormat::QwenXml);
+                                ToolCallFormat format = ToolCallFormat::QwenXml,
+                                bool forced_calls     = false);
 
 // Whether held output bytes begin a tool-call region: not at all, possibly (a prefix of one), or
 // for certain (the region starts at the held bytes).
@@ -165,7 +169,8 @@ public:
                           std::size_t max_tool_name_length);
 
     [[nodiscard]] std::string feed(std::string_view text);
-    // `cut_off`: the output limit ended the output. When the call region does not parse, the
+    // `cut_off`: the output limit, the context capacity or (for a forced call) a stop string ended
+    // the output. When the call region does not parse, the
     // complete calls before its last open marker are then the turn's calls, and that last,
     // unfinished call's markup is dropped (diagnostics.cut_calls_dropped).
     [[nodiscard]] Terminal finish(bool cut_off = false);

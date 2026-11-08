@@ -835,11 +835,12 @@ bool ToolCallOutputContract::declares(std::string_view name) const noexcept {
 
 std::shared_ptr<const ToolCallOutputContract>
 build_tool_call_output_contract(std::span<const std::string> tool_jsons, bool enabled,
-                                ToolCallFormat format) {
+                                ToolCallFormat format, bool forced_calls) {
     if (!enabled || format == ToolCallFormat::None) { return {}; }
     auto contract                    = std::make_shared<ToolCallOutputContract>();
     contract->enforce_declared_names = true;
     contract->format                 = format;
+    contract->forced_calls           = forced_calls;
     contract->tools.reserve(tool_jsons.size());
     for (const std::string& tool_json : tool_jsons) {
         const Json definition = Json::parse(tool_json, nullptr, false);
