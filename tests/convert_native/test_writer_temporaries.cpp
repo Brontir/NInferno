@@ -51,7 +51,8 @@ std::vector<fs::path> temporaries(const fs::path& dir) {
     return out;
 }
 
-// Forks a child that opens a writer on `target` and waits (it has the parent's signal actions). Returns its pid once the temporary exists.
+// Forks a child that opens a writer on `target` and waits (it has the parent's signal actions).
+// Returns its pid once the temporary exists.
 pid_t spawn_writer(const fs::path& target) {
     int ready[2];
     if (pipe(ready) != 0) { std::exit(2); }
@@ -97,7 +98,8 @@ int main() {
     std::signal(SIGTERM, SIG_DFL);
 
     // SIGINT and SIGTERM (first: no writer of this process has installed the handler yet, so the
-    // children start with the default actions): the temporary is removed and the process still dies of the signal.
+    // children start with the default actions): the temporary is removed and the process still dies
+    // of the signal.
     for (const int number : {SIGINT, SIGTERM}) {
         const auto dir = root / ("signal" + std::to_string(number));
         fs::create_directories(dir);
