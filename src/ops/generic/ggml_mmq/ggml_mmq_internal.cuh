@@ -120,12 +120,13 @@ Launch select_launch(int rows, int columns, int k) {
     Launch best;
     double best_cost      = 1e300;
     const bool work_table = mmq_columns::uses_work_table(device.cc / 100, device.cc / 10 % 10);
+    const double tile_fixed = mmq_tile_fixed_of(device.cc / 100, device.cc / 10 % 10);
     for (const int J : mmq_columns::tiles(device.cc / 100, device.cc / 10 % 10)) {
         const ggml_cuda_mmq_config config = ggml_cuda_mmq_get_config(type, J, false, device.cc);
         if (config.type == GGML_TYPE_COUNT) continue;
         const std::size_t shared = mmq_get_nbytes_shared(config, device.cc);
         if (shared > device.shared_per_block_optin) continue;
-        const double cost = mmq_columns::launch_cost(columns, J, work_table);
+        const double cost = mmq_columns::launch_cost(columns, J, work_table, tile_fixed);
         if (cost < best_cost) {
             best_cost     = cost;
             best.k_vram   = config.K_vram;

@@ -81,6 +81,7 @@ struct GenerationRow {
     bool mmq_candidate     = false;
     bool attention_chain   = false;
     bool mmq_work_tiles    = false;
+    double mmq_tile_fixed  = 0.43; // with mmq_work_tiles: the fixed share of a column tile's step
 };
 
 inline constexpr GenerationRow kGenerations[] = {
@@ -88,7 +89,7 @@ inline constexpr GenerationRow kGenerations[] = {
     {7, 0, 4, "volta", 1536.0, 0.0, false, 1.0, 1.11, true},
     {7, 5, 9, "turing", 1536.0, 2048.0, false, 1.0, 1.11, true},
     {8, 0, 0, "ga100", 2048.0, 4096.0, true, 0.46, 1.64, false},
-    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true},
+    {8, 1, 8, "ga10x", 512.0, 2048.0, false, 1.0, 1.11, true, false, true, 0.25},
     {8, 9, 9, "ada", 512.0, 2048.0, false, 1.0, 1.11, true},
     {9, 0, 9, "hopper", 2048.0, 4096.0, true, 0.46, 1.64, false},
     {10, 0, 9, "gb100", 2048.0, 4096.0, true, 0.46, 1.64, false},
@@ -154,6 +155,12 @@ struct FittedRouteScales {
 // major.minor (mmq_work_tiles, a measured preference): only on a generation of the table's own.
 [[nodiscard]] constexpr bool mmq_work_tiles_measured(int major, int minor) noexcept {
     return generation_known(major, minor) && generation_row(major, minor).mmq_work_tiles;
+}
+// The fixed share of a column tile's K step on that generation (mmq_tile_fixed): the part that does
+// not scale with the tile's columns; DECISIONS 69's 0.43 where the row has none of its own.
+[[nodiscard]] constexpr double mmq_tile_fixed_of(int major, int minor) noexcept {
+    return mmq_work_tiles_measured(major, minor) ? generation_row(major, minor).mmq_tile_fixed
+                                                 : 0.43;
 }
 
 // The compute capabilities the generic selector's measured rules name (generic_gemm.cpp). A

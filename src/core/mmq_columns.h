@@ -38,8 +38,8 @@ inline constexpr double kTileFixed      = 0.43;
 }
 
 // A J-column tile's K step against a 128-column tile's.
-[[nodiscard]] constexpr double step_share(int j) noexcept {
-    return kTileFixed + (1 - kTileFixed) * j / kTile;
+[[nodiscard]] constexpr double step_share(int j, double fixed = kTileFixed) noexcept {
+    return fixed + (1 - fixed) * j / kTile;
 }
 
 [[nodiscard]] constexpr int tile_count(int columns, int j) noexcept {
@@ -48,17 +48,19 @@ inline constexpr double kTileFixed      = 0.43;
 
 // The cost the launch choice minimises for covering `columns` tokens with tiles of width j on the
 // card's table: the least work (GA10x), else the fewest tiles.
-[[nodiscard]] constexpr double launch_cost(int columns, int j, bool work_table) noexcept {
-    return work_table ? tile_count(columns, j) * step_share(j) : tile_count(columns, j);
+[[nodiscard]] constexpr double launch_cost(int columns, int j, bool work_table,
+                                           double fixed = kTileFixed) noexcept {
+    return work_table ? tile_count(columns, j) * step_share(j, fixed) : tile_count(columns, j);
 }
 
 // The width the card's table takes for `columns` tokens (every width available).
 [[nodiscard]] constexpr int pick(int columns, int major, int minor) noexcept {
-    const bool work = uses_work_table(major, minor);
-    int best        = 0;
+    const bool work    = uses_work_table(major, minor);
+    const double fixed = mmq_tile_fixed_of(major, minor);
+    int best           = 0;
     double least    = 1e300;
     for (const int j : tiles(major, minor)) {
-        if (const double c = launch_cost(columns, j, work); c < least) {
+        if (const double c = launch_cost(columns, j, work, fixed); c < least) {
             least = c;
             best  = j;
         }
