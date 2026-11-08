@@ -1137,9 +1137,8 @@ std::string ToolCallOutputDecoder::feed(std::string_view text) {
             start = held_.empty() ? CallStart::Partial : match(held_);
         }
         if (!emitted_text_) {
-            emitted_text_ = std::any_of(visible.begin(), visible.end(), [](char byte) {
-                return !is_format_whitespace(byte);
-            });
+            emitted_text_ = std::any_of(visible.begin(), visible.end(),
+                                        [](char byte) { return !is_format_whitespace(byte); });
         }
         if (start == CallStart::Complete) {
             // A bare call is read as the call the syntax's opener would have opened.
@@ -1190,9 +1189,9 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
             std::size_t pos = 0;
             skip_format_whitespace(body, pos);
             if (const auto end = json_value_end(body, pos)) {
-                ParsedToolCallOutput one = syntax_->parse(
-                    std::string(syntax_->open()) + std::string(body.substr(0, *end)),
-                    max_tool_name_length_, *contract_);
+                ParsedToolCallOutput one =
+                    syntax_->parse(std::string(syntax_->open()) + std::string(body.substr(0, *end)),
+                                   max_tool_name_length_, *contract_);
                 if (one.is_tool_call_response) {
                     std::string trailing(body.substr(*end));
                     held_.clear();

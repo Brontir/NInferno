@@ -2076,11 +2076,11 @@ int test_disabled_tool_calls_ban_the_opener() {
 int test_none_ends_at_structural_tokens() {
     const Frontend frontend = make_frontend(resources_with_opener(), false);
     ninferno::StopPolicy stop;
-    constexpr ninferno::TokenId kHello = 1;  // "helloST"
+    constexpr ninferno::TokenId kHello = 1; // "helloST"
     constexpr ninferno::TokenId kThink = 248068;
     constexpr ninferno::TokenId kClose = 248069;
     int failures                       = 0;
-    const auto run = [&](const ninferno::PromptInput& input,
+    const auto run                     = [&](const ninferno::PromptInput& input,
                          std::vector<ninferno::TokenId> tokens) {
         auto prompt   = frontend.prepare(input);
         auto session  = frontend.make_output_session(prompt, stop);
