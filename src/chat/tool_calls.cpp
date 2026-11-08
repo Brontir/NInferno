@@ -1171,6 +1171,19 @@ ToolCallOutputDecoder::Terminal ToolCallOutputDecoder::finish(bool cut_off) {
         }
     }
 
+    if (bare_region_ && saw_tool_marker_ && !cut_off &&
+        syntax_->bare_call_header().front() == "{" &&
+        tool_region_.find("\"arguments\"") == std::string::npos &&
+        tool_region_.find("\"parameters\"") == std::string::npos) {
+        // A call carries its arguments: {"name": ..., "reason": ...} is some other object, text.
+        tool_region_.erase(0, syntax_->open().size());
+        std::string text = std::move(held_);
+        held_.clear();
+        text += tool_region_;
+        tool_region_.clear();
+        return Terminal{.content = std::move(text), .tool_calls = {}, .diagnostics = {}};
+    }
+
     ParsedToolCallOutput parsed =
         tool_call_syntax(contract_->format).parse(tool_region_, max_tool_name_length_, *contract_);
     if (saw_tool_marker_ && parsed.is_tool_call_response) {
