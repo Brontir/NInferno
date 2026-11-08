@@ -1299,7 +1299,7 @@ response contains typed `output` Items.
 | `reasoning.summary` | omitted, `null`, or any string; every string requests the same fixed protocol placeholder without changing model execution, and the original value is echoed in the response |
 | `chat_template_kwargs` | template parameters as a JSON object; standard options merge with typed fields |
 | `preserve_thinking` | alias for `chat_template_kwargs.preserve_thinking`; conflicting values are rejected |
-| `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", ...}` (strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns the parsed object |
+| `text.format` | omitted, `{"type":"text"}`, `{"type":"json_object"}` or `{"type":"json_schema", "name", "schema", ...}` (`name` required; strict or not), enforced as Chat Completions' `response_format` is ([constrained output](#constrained-output)); `client.responses.parse(text_format=...)` returns the parsed object |
 | `tools` | direct function definitions or namespace groups containing function definitions; see [Function tools](#function-tools) |
 | `tool_choice` | `auto`, `none`, `required`, a named `{"type":"function","name"}` or `{"type":"custom","name"}`, or function-only `allowed_tools` with mode `auto` or `required`; `required` and a named tool are enforced by a constraint; a namespaced selection carries both `namespace` and `name` |
 | `parallel_tool_calls` | `true` by default; `false` is enforced: the output stops after the first call |
@@ -1320,9 +1320,10 @@ and its location in the request. The location appears both in the error `param` 
 
 Unsupported Create fields include Conversations, prompt templates, context management, hosted
 moderation, `include` values other than `reasoning.encrypted_content` and
-`message.output_text.logprobs`, background execution, compaction, files/audio, and OpenAI-hosted and MCP tools. Except for the two
-explicitly documented placeholders (`reasoning.summary` and the local raw-reasoning mirror), these
-are compatibility boundaries rather than silently accepted approximations.
+`message.output_text.logprobs`, background execution, compaction, files/audio, and OpenAI-hosted
+and MCP tools. Except for the two explicitly documented placeholders (`reasoning.summary` and the
+local raw-reasoning mirror), these are compatibility boundaries rather than silently accepted
+approximations.
 
 ### Input Items
 
@@ -1414,7 +1415,8 @@ They may also be grouped in a Responses namespace:
   would end the agent's turn and lose the parallel calls beside it. Declared names pick the call
   region first, so a quoted example of an undeclared call does not displace a declared call after
   it. Llama 3's JSON form, whose call opens like any JSON answer, still needs a declared name.
-- `allowed_tools` with mode `auto` filters that set without changing declaration order.
+- `allowed_tools` with mode `auto` filters that set without changing declaration order; mode
+  `required` also forces a call among them.
   `tool_choice:"none"` disables structured tool output even when the history contains earlier calls.
 - Function definitions are request configuration rather than conversation Items. They must be sent
   again on tool-result turns.
