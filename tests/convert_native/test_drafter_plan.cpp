@@ -469,6 +469,17 @@ void retry_failed_drafter() {
     expect(with(R"({"drafters": [{"name": "mtp", "status": "embedded"}]})"),
            "a manifest that names no registry: attaching is to do");
     expect(with("{"), "an unreadable manifest: attaching is to do");
+    // An attached drafter whose artifact is gone, or is no longer the artifact the manifest
+    // recorded, is attached again (otherwise every start serves plain: "changed since attach").
+    const auto gone = (dir / "gone.ninferno").string();
+    expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" + gone + R"(", "artifact_id": "00"}]})"),
+           "an attached drafter whose artifact is gone: attaching is to do");
+    const auto other = dir / "other.ninferno";
+    std::ofstream(other) << "not an artifact";
+    expect(with("{" + registry + R"("drafters": [{"name": "assistant", "status": "converted",
+                "artifact": ")" + other.string() + R"(", "artifact_id": "00"}]})"),
+           "an attached drafter whose artifact cannot be read: attaching is to do");
 }
 
 // A drafter that cannot be had stops a start that asked for it (--with-drafters) and is a warning

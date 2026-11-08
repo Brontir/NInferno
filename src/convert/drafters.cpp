@@ -1065,11 +1065,24 @@ bool drafters_incomplete(const fs::path& target_artifact) {
         const auto& drafters = manifest.at("drafters");
         const bool gguf      = manifest.value("target", Json::object()).value("gguf_source", false);
         return std::any_of(drafters.begin(), drafters.end(), [&](const Json& d) {
+            const auto status = d.value("status", std::string());
+            // An attached drafter whose artifact is gone or was written again (another conversion
+            // of it, a newer revision) no longer matches the id the manifest recorded: the start
+            // would serve plain on every run ("changed since attach"), so it is attached again.
+            const auto artifact = d.value("artifact", std::string());
+            const bool attached = status == "embedded" || status == "converted" ||
+                                  status == "cached" || status == "attached";
+            if (attached && !artifact.empty()) {
+                try {
+                    if (spec::artifact_id_hex(artifact) != d.value("artifact_id", std::string())) {
+                        return true;
+                    }
+                } catch (const std::exception&) { return true; }
+            }
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
             // quantization its kind gives it, and so is a companion a checkpoint's artifact lacks
             // (the target is converted again with it while its download is there; a GGUF's never
             // holds one).
-            const auto status = d.value("status", std::string());
             return d.value("name", std::string()).find('.') == std::string::npos &&
                    (status.starts_with("failed") ||
                     (!gguf && status.starts_with("not in the artifact")));
