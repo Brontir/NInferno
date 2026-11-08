@@ -842,6 +842,26 @@ void carry_failures(DrafterPlan& plan, const std::vector<PlannedDrafter>& failed
     }
 }
 
+namespace {
+
+// The id of the file the refresh refused for drafter `name` of the target's manifest, "" where
+// none was refused (or there is no manifest to say).
+std::string refused_id(const fs::path& target_artifact, const std::string& name) {
+    try {
+        const auto path = spec::manifest_path(target_artifact);
+        if (!fs::exists(path)) { return {}; }
+        const auto manifest = Json::parse(read_file(path));
+        for (const auto& d : manifest.at("drafters")) {
+            if (d.value("name", std::string()) == name) {
+                return d.value("refused_artifact_id", std::string());
+            }
+        }
+    } catch (const std::exception&) {}
+    return {};
+}
+
+} // namespace
+
 DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
                             const AttachOptions& options) {
     const auto components = artifact_components(target_artifact);
@@ -1008,10 +1028,19 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
             const std::string quant =
                 convert_options.drafter_quant.empty() ? "" : "." + convert_options.drafter_quant;
             convert_options.out = dir / (stem + "." + d.decl.recipe + quant + suffix + ".ninferno");
-            if (fs::exists(convert_options.out) &&
+            // A file the refresh refused (refresh_changed_drafters: another drafter written at this
+            // path) is no cache: converted again from the checkpoint just fetched.
+            const std::string refused_file = refused_id(target_artifact, d.decl.name);
+            const bool refused = !refused_file.empty() && fs::exists(convert_options.out) &&
+                                 refused_file == spec::artifact_id_hex(convert_options.out);
+            if (!refused && fs::exists(convert_options.out) &&
                 fs::exists(convert_options.out.string() + ".conversion.json")) {
                 d.status = "cached";
             } else {
+                if (refused) {
+                    log_line(options.log, "  " + convert_options.out.string() +
+                                              " failed the drafter checks: converted again");
+                }
                 // A conversion that stopped half way left the output in place without its report
                 // (convert() renames it in first): removed, or every start would fail on it.
                 if (fs::exists(convert_options.out)) { remove_artifact(convert_options.out); }
@@ -1048,6 +1077,32 @@ DrafterPlan attach_drafters(DrafterPlan plan, const fs::path& target_artifact,
     // drafter) has drafters_incomplete() plan them again.
     manifest["registry_sha256"] = spec::Registry::builtin().source_sha256();
     const auto path = spec::manifest_path(target_artifact);
+    // A drafter the user gave on an earlier start (--drafter-artifact, "attached") is kept unless
+    // this start gives that name again: a plan made again (another drafter's retry, a registry
+    // update) is made without the flag and would drop it, or put the registry's drafter of that
+    // name in its place.
+    try {
+        if (fs::exists(path)) {
+            const auto before = Json::parse(read_file(path));
+            auto& drafters    = manifest["drafters"];
+            for (const auto& old : before.value("drafters", Json::array())) {
+                const auto name = old.value("name", std::string());
+                if (old.value("status", std::string()) != "attached" || name.empty() ||
+                    options.drafter_artifacts.contains(name)) {
+                    continue;
+                }
+                const auto same =
+                    std::find_if(drafters.begin(), drafters.end(), [&](const Json& d) {
+                        return d.value("name", std::string()) == name;
+                    });
+                if (same == drafters.end()) {
+                    drafters.push_back(old);
+                } else {
+                    *same = old;
+                }
+            }
+        }
+    } catch (const std::exception&) {} // an unreadable earlier manifest holds nothing to keep
     write_file_atomic(path, manifest.dump(1) + '\n');
     log_line(options.log, "speculation manifest " + path.string());
     return plan;
@@ -1062,8 +1117,8 @@ namespace {
 bool changed_since_attach(const Json& d, bool gone) {
     const auto status   = d.value("status", std::string());
     const auto artifact = d.value("artifact", std::string());
-    const bool attached = status == "embedded" || status == "converted" || status == "cached" ||
-                          status == "attached";
+    const bool attached =
+        status == "embedded" || status == "converted" || status == "cached" || status == "attached";
     if (!attached || artifact.empty()) { return false; }
     std::error_code error;
     if (!fs::is_regular_file(artifact, error)) { return gone; }
@@ -1074,14 +1129,68 @@ bool changed_since_attach(const Json& d, bool gone) {
 
 } // namespace
 
-std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact) {
+std::vector<std::string> given_drafters_changed(const fs::path& target_artifact) {
+    std::vector<std::string> out;
+    const auto path = spec::manifest_path(target_artifact);
+    if (!fs::exists(path)) { return out; }
+    try {
+        const auto manifest = Json::parse(read_file(path));
+        for (const auto& d : manifest.at("drafters")) {
+            if (d.value("status", std::string()) == "attached" && changed_since_attach(d, true)) {
+                out.push_back(d.value("name", std::string()));
+            }
+        }
+    } catch (const std::exception&) {}
+    return out;
+}
+
+std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifact,
+                                                  const DrafterCheck& check) {
     std::vector<std::string> refreshed;
     const auto path = spec::manifest_path(target_artifact);
     if (!fs::exists(path)) { return refreshed; }
     try {
         auto manifest = Json::parse(read_file(path));
-        const auto target_fingerprint =
-            manifest.value("target", Json::object()).value("vocab_fingerprint", std::string());
+        // The checks an attach runs (check_drafter: architecture, kind, engine, vocabulary, the
+        // geometry it taps), against the target described once (only when a drafter changed) and
+        // the declaration the manifest's entry holds: a bundle's or a given name's, which no plan
+        // made from the artifact again would name, too.
+        // The registry's view of a drafter (its entry geometry: a converted GGUF DFlash drafter's
+        // config holds no num_target_layers) comes from the target's plan, made once; a bundle's
+        // drafter or a given one, which that plan does not name, is checked by its taps alone, as
+        // its attach was.
+        std::optional<DrafterPlan> plan;
+        const bool bundle = manifest.value("matched_by", std::string()) == "declaration";
+        const DrafterCheck attach_checks = [&](const Json& entry, const fs::path& drafter) {
+            if (!plan) {
+                const auto target = manifest.value("target", Json::object());
+                auto described    = describe_artifact(target_artifact, target.value("repo", ""));
+                if (described.lineage.empty() && target.contains("lineage")) {
+                    described.lineage = target.at("lineage").get<std::vector<std::string>>();
+                }
+                plan = plan_drafters(std::move(described));
+            }
+            const auto name = entry.value("name", std::string());
+            const auto planned =
+                std::find_if(plan->drafters.begin(), plan->drafters.end(),
+                             [&](const PlannedDrafter& p) { return p.decl.name == name; });
+            // A bundle's drafter is its declaration's, never the registry's (whose stale-target
+            // refusal the bundle's plan bypassed): a fresh one, checked by its taps.
+            PlannedDrafter d =
+                planned != plan->drafters.end() && !bundle ? *planned : PlannedDrafter();
+            d.decl = spec::parse_drafter(entry);
+            d.checks.clear();
+            if (planned == plan->drafters.end() || bundle ||
+                entry.value("status", std::string()) == "attached") {
+                d.taps_only   = true;  // a bundle's or a given drafter, as its attach took it
+                d.unvalidated = false; // attached once: the engine runs it
+            }
+            const auto fp = spec::artifact_vocab_fingerprint(drafter);
+            check_drafter(plan->target, artifact_config(drafter), fp ? fp->value : "", d);
+            return d.compatible;
+        };
+        const DrafterCheck& compatible = check ? check : attach_checks;
+        bool refused_any               = false;
         for (auto& d : manifest.at("drafters")) {
             if (!changed_since_attach(d, false)) { continue; }
             // As attach_drafters takes a cached drafter: the file and its conversion report at
@@ -1090,24 +1199,35 @@ std::vector<std::string> refresh_changed_drafters(const fs::path& target_artifac
             const auto artifact = d.at("artifact").get<std::string>();
             const bool given    = d.value("status", std::string()) == "attached";
             if (!given && !fs::exists(artifact + ".conversion.json")) { continue; }
-            const auto name = d.value("name", std::string());
+            // A file the checks refuse, or cannot read, is left as it is: the start serves without
+            // it ("changed since attach") and the next one looks at the file again, so a later
+            // replacement that passes is taken.
+            // The refused file's id is kept on the entry (refused_artifact_id), so an attach does
+            // not take that file for a cache of the drafter (attach_drafters converts it again).
+            // A file whose id cannot be read is left to an attach (it is no cache either).
+            std::string id;
             try {
-                if (const auto fp = spec::artifact_vocab_fingerprint(artifact);
-                    fp && !target_fingerprint.empty() && fp->value != target_fingerprint) {
-                    d["compatible"] = false;
-                    d["reason"]     = "the drafter's vocabulary " + fp->value +
-                                  " differs from the target's " + target_fingerprint;
-                    d["status"]     = "incompatible: " + d["reason"].get<std::string>();
-                } else {
-                    // Its status (converted, cached, attached) is kept: only the file changed.
-                    d["artifact_id"] = spec::artifact_id_hex(artifact);
+                id = spec::artifact_id_hex(artifact);
+            } catch (const std::exception&) { continue; }
+            // Checks that refuse the file or cannot run on it (no text component, a malformed
+            // config) refuse it alike.
+            bool passes = false;
+            try {
+                passes = compatible(d, artifact);
+            } catch (const std::exception&) { passes = false; }
+            if (!passes) {
+                if (d.value("refused_artifact_id", std::string()) != id) {
+                    d["refused_artifact_id"] = id;
+                    refused_any              = true;
                 }
-            } catch (const std::exception&) {
-                continue; // its vocabulary cannot be read: left to an attach, the others go on
+                continue;
             }
-            refreshed.push_back(name);
+            // Its status (converted, cached, attached) is kept: only the file changed.
+            d["artifact_id"] = id;
+            d.erase("refused_artifact_id");
+            refreshed.push_back(d.value("name", std::string()));
         }
-        if (!refreshed.empty()) { write_file_atomic(path, manifest.dump(1) + '\n'); }
+        if (!refreshed.empty() || refused_any) { write_file_atomic(path, manifest.dump(1) + '\n'); }
     } catch (const std::exception&) {} // an unreadable manifest: drafters_incomplete() plans again
     return refreshed;
 }
@@ -1128,8 +1248,10 @@ ManifestState read_manifest_state(const fs::path& artifact) {
             if (base.is_string()) { state.lineage.push_back(base.get<std::string>()); }
         }
         for (const auto& d : manifest.at("drafters")) {
-            if (changed_since_attach(d, true)) { state.changed = true; }
             const auto status = d.value("status", std::string());
+            // A file the user gave (--drafter-artifact) is not planned again: a plan made without
+            // that flag would drop the entry, which the refresh takes back once its file passes.
+            if (status != "attached" && changed_since_attach(d, true)) { state.changed = true; }
             // A variant ("<name>.<variant>") is optional; a drafter itself is retried, whatever
             // quantization its kind gives it.
             if (d.value("name", std::string()).find('.') != std::string::npos) { continue; }

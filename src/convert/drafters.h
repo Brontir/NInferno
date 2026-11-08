@@ -181,7 +181,8 @@ struct ManifestState {
     // Planned from this build's drafter registry (an update may name a new drafter).
     bool registry_current = false;
     // A drafter attached from a file that is gone, unreadable or written again since (its id is no
-    // longer the recorded one).
+    // longer the recorded one); a file the user gave (status "attached") does not count, as no
+    // plan restores it.
     bool changed = false;
     // A published drafter listed as failed: a variant ("<name>.<variant>", its own quantization)
     // is optional and does not count.
@@ -214,14 +215,26 @@ struct ManifestState {
 // in the artifact), as a start with the download present knows it.
 [[nodiscard]] DrafterTarget reused_target(DrafterTarget described, const ManifestState& manifest);
 
+// The manifest's drafters the user gave (--drafter-artifact) whose file is gone, unreadable or no
+// longer the one recorded (one the refresh did not take): no plan restores them, and a start
+// serves without them.
+[[nodiscard]] std::vector<std::string>
+given_drafters_changed(const std::filesystem::path& target_artifact);
+
+// Whether a manifest entry's drafter file passes the checks an attach runs on it.
+using DrafterCheck =
+    std::function<bool(const nlohmann::json& entry, const std::filesystem::path& drafter)>;
+
 // The manifest's drafters attached from a file here that was written again since (another
 // conversion of the same drafter at the same path: its id is no longer the recorded one) take the
-// file's new id, as attach_drafters takes a cached one, or are marked incompatible when its
-// vocabulary no longer matches the target's. Nothing is fetched or converted and the other entries
-// are kept as they are. Every start reuses an artifact through this, whatever it asks of drafters:
-// the choice reads the manifest, and a drafter dropped as changed would keep it plain for good.
-// Returns the names refreshed.
-std::vector<std::string> refresh_changed_drafters(const std::filesystem::path& target_artifact);
+// file's new id, as attach_drafters takes a cached one, once the file passes `check` (empty: the
+// checks an attach runs, check_drafter against the target and the drafter's declaration). A file
+// that does not pass is left as it is, and looked at again by the next start. Nothing is fetched or
+// converted and the other entries are kept as they are. Every start reuses an artifact through
+// this, whatever it asks of drafters: the choice reads the manifest, and a drafter dropped as
+// changed would keep it plain for good. Returns the names refreshed.
+std::vector<std::string> refresh_changed_drafters(const std::filesystem::path& target_artifact,
+                                                  const DrafterCheck& check = {});
 
 // A shortlist ranking by file name: tools/spec/rankings (and tools/freq_corpus/fixtures/ranking) of
 // `repository`, then the rankings installed beside this binary, then the tree it was built from.
