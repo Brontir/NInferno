@@ -768,12 +768,8 @@ std::string content_options_key(const AcquireOptions& options, std::string* desc
     std::string identity;
     std::string text;
     for (const auto& part : parts) {
-        identity += part.name + "=" + part.value +
-                    "
-                    ";
-                    text += part.name + (part.shown.empty() ? "" : " " + part.shown) +
-                            "
-                            ";
+        identity += part.name + "=" + part.value + '\n';
+        text += part.name + (part.shown.empty() ? "" : " " + part.shown) + '\n';
     }
     if (described) { *described = text; }
     return sha256_hex(identity).substr(0, 12);
@@ -1142,20 +1138,20 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
     // conversion its own, for the log and for <artifact>.options.
     std::string options_line;
     for (const char c : options_described) {
-        if (c == '
-') {
+        if (c == '\n') {
             options_line += ", ";
+        } else {
+            options_line += c;
+        }
     }
-    else { options_line += c; }
-}
-
-if (options_line.size() >= 2) { options_line.resize(options_line.size() - 2); }
-const std::string converted_earlier =
-    options_key.empty() ? " (converted earlier)" : " (converted earlier with " + options_line + ")";
-if (!options_key.empty()) {
-    say(options,
-        "conversion options of their own, kept apart from the default conversion: " + options_line);
-}
+    if (options_line.size() >= 2) { options_line.resize(options_line.size() - 2); }
+    const std::string converted_earlier =
+        options_key.empty() ? " (converted earlier)"
+                            : " (converted earlier with " + options_line + ")";
+    if (!options_key.empty()) {
+        say(options, "conversion options of their own, kept apart from the default conversion: " +
+                         options_line);
+    }
     // A GGUF model carries no checkpoint to plan from: its drafters are planned for the converted
     // artifact (its text component's architecture and geometry, its tokenizer), once converted.
     // They are attached when asked for (a separate download, 1.6 GB for Muse Glimmer's DFlash);
