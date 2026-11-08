@@ -27,6 +27,7 @@
 #include "ops/common/native_nvfp4.h"
 #include "ops/generic/build_manifest.h"
 #include "ops/generic/generic_gemm.h"
+#include "ops/generic/ggml_mmq/ggml_mmq.h"
 #include "ops/generic/route_table.h"
 
 #include <cuda_runtime.h>
