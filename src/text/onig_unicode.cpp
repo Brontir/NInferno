@@ -41,14 +41,20 @@ const CaseMap* find_case(char32_t cp) noexcept {
     return it != last && it->cp == cp ? it : nullptr;
 }
 
+// Unassigned in the old version: no case maps there, whatever utf8proc says.
+bool unassigned_in_old(char32_t cp) noexcept {
+    const CategoryRange* range = find_range(cp);
+    return range != nullptr && range->category == UTF8PROC_CATEGORY_CN;
+}
+
 char32_t to_lower(char32_t cp) noexcept {
-    if (find_range(cp) != nullptr) { return cp; }
+    if (unassigned_in_old(cp)) { return cp; }
     if (const CaseMap* map = find_case(cp)) { return map->lower; }
     return static_cast<char32_t>(utf8proc_tolower(static_cast<utf8proc_int32_t>(cp)));
 }
 
 char32_t to_upper(char32_t cp) noexcept {
-    if (find_range(cp) != nullptr) { return cp; }
+    if (unassigned_in_old(cp)) { return cp; }
     if (const CaseMap* map = find_case(cp)) { return map->upper; }
     return static_cast<char32_t>(utf8proc_toupper(static_cast<utf8proc_int32_t>(cp)));
 }

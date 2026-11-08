@@ -12,7 +12,7 @@ namespace ninferno::text::onig_unicode {
 // every one newly assigned.
 utf8proc_category_t category(char32_t cp) noexcept;
 
-// Simple case mappings as of Unicode 16.0.0: a code point added after 16.0.0 has no case
+// Simple case mappings as of Unicode 16.0.0: a code point unassigned in 16.0.0 has no case
 // variants, and one whose mapping changed (U+A7D3 and U+A7D5 gained capitals in 17) keeps its
 // 16.0.0 mapping (kOnigCaseMaps).
 char32_t to_lower(char32_t cp) noexcept;

@@ -350,7 +350,12 @@ bool check_unicode_tables() {
     for (const char32_t cp : {0xA7D3, 0xA7D5}) {
         ok &= onig::to_upper(cp) == cp && onig::to_lower(cp) == cp;
     }
-    ok &= onig::to_upper(0xA7D2) == 0xA7D2 && onig::to_lower(0xA7D2) == 0xA7D2;
+    // New in 17, so without case maps in 16: capitals A7D2/A7D4, A7CE/A7CF, 16EA0/16EBB.
+    for (const char32_t cp : {0xA7D2, 0xA7D4, 0xA7CE, 0xA7CF, 0x16EA0, 0x16EBB}) {
+        ok &= onig::to_upper(cp) == cp && onig::to_lower(cp) == cp;
+    }
+    // The table's one old code point, U+0295, has no case maps either way.
+    ok &= onig::to_upper(0x295) == 0x295 && onig::to_lower(0x295) == 0x295;
     ok &= onig::to_upper('a') == 'A' && onig::to_lower(0x10D) == 0x10D &&
           onig::to_upper(0x10D) == 0x10C;
     if (!ok) { std::cout << "  UNICODE TABLE boundary categories wrong\n"; }
@@ -369,6 +374,27 @@ bool check_unicode_tables() {
     const std::vector<Case> cases = {
 #include "pretokenizer_unicode_cases.inc"
     };
+    // (?i) over non-ASCII literals, as tokenizers 0.23.3 matches them: U+00E9 folds with
+    // U+00C9; U+A7D3 does not fold with U+A7D2, nor U+A7CF with U+A7CE (unassigned in 16).
+    struct Fold {
+        const char* regex;
+        std::string text;
+        bool matches;
+    };
+    const std::vector<Fold> folds = {
+        {R"((?i:\x{E9}))", "\xC3\x89", true},
+        {R"((?i:\x{A7D3}))", "\xEA\x9F\x93", true},
+        {R"((?i:\x{A7D3}))", "\xEA\x9F\x92", false},
+        {R"((?i:\x{A7CF}))", "\xEA\x9F\x8E", false},
+    };
+    for (const Fold& f : folds) {
+        const bool matched = !Pattern(f.regex).find_all(f.text).empty();
+        if (matched != f.matches) {
+            std::cout << "  UNICODE (?i) " << f.regex << " on " << escaped(f.text) << " gave "
+                      << matched << "\n";
+            ok = false;
+        }
+    }
     for (const Case& c : cases) {
         const Pattern pattern(c.regex);
         std::vector<std::string> got;
