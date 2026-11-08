@@ -250,17 +250,22 @@ bool wants_drafters(const AcquireOptions& options) {
 // choice drafts, the user gave no flag) this is a warning that says what it costs and how to get
 // the drafter; otherwise a plain line, as a checkpoint's drafters always were.
 void not_attached(const AcquireOptions& options, const std::string& what, const std::string& why,
-                  const std::string& repo = std::string()) {
+                  bool fetch_helps = true, const std::string& repo = std::string()) {
     if (options.drafters != Drafters::Attach) {
         say(options, what + ": " + why);
         return;
     }
-    const std::string fetch = repo.empty() ? "the drafter's repository" : repo;
-    say(options, "warning: " + what + ": " + why +
-                     ". The model is served without it: plain decoding, slower on one stream. "
-                     "Go online and start again, or fetch " +
-                     fetch + " ahead of time (hf download " +
-                     (repo.empty() ? std::string("REPO_ID") : repo) + ")");
+    std::string line = "warning: " + what + ": " + why +
+                       ". The model is served without it: plain decoding, slower on one stream.";
+    // A failed fetch is cured by the network or a copy in the cache; a drafter that does not fit
+    // the model is not.
+    if (fetch_helps) {
+        line += " Go online and start again, or fetch " +
+                (repo.empty() ? std::string("the drafter's repository") : repo) +
+                " ahead of time (hf download " + (repo.empty() ? std::string("REPO_ID") : repo) +
+                ").";
+    }
+    say(options, line);
 }
 
 // Every drafter planned for the model that failed to be fetched, converted or attached, or that
@@ -278,10 +283,8 @@ void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
                                      " (--with-drafters requires every drafter; without the "
                                      "flag the model is served without it)");
         }
-        // A failed fetch is cured by the network or a copy in the cache; an incompatible drafter
-        // is not, so its line names no repository to fetch.
-        not_attached(options, "drafter " + d.decl.name, d.status,
-                     d.status.starts_with("failed") ? d.decl.repo : std::string());
+        not_attached(options, "drafter " + d.decl.name, d.status, d.status.starts_with("failed"),
+                     d.decl.repo);
     }
 }
 
