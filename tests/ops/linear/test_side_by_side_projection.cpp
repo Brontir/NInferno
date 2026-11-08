@@ -161,8 +161,9 @@ int check(const std::vector<Slice>& slices, std::int32_t k, std::int32_t t,
     ops::segmented_projection(tx, segmented, outputs, workspace, nullptr);
     cuda_check(cudaDeviceSynchronize(), "run");
     // The chain joins exactly where the launches release (the rule, not a flag of its own).
-    const std::uint64_t launched = ops::detail::generic::instrumentation_joined_launches() - joins_before;
-    const std::uint64_t grants   = granted_joins(weights, policy, t);
+    const std::uint64_t launched =
+        ops::detail::generic::instrumentation_joined_launches() - joins_before;
+    const std::uint64_t grants = granted_joins(weights, policy, t);
     if (launched != grants) {
         std::cerr << "FAIL " << label << ": " << launched << " joined launches, the rule grants "
                   << grants << std::endl;
@@ -253,17 +254,16 @@ int main() {
     // asked every later call to join before #309's chain rule, whatever the launches granted), and
     // wherever it runs the joins are the rule's.
     {
-        std::uint32_t seed = 901;
-        int unused         = 0;
+        std::uint32_t seed                           = 901;
+        int unused                                   = 0;
         const std::vector<std::vector<Slice>> chains = {
             {{f32, 1024}, {f32, 256}, {b16, 256}, {f32, 1024}},
             {{q8, 1536}, {q8, 768}},
             {{k4, 1024}, {k4, 256}, {k6, 256}},
         };
         for (const auto& chain : chains) {
-            const bool runs = std::ranges::all_of(chain, [](const Slice& slice) {
-                return qtype_runs(slice.qtype, "direct chain");
-            });
+            const bool runs = std::ranges::all_of(
+                chain, [](const Slice& slice) { return qtype_runs(slice.qtype, "direct chain"); });
             if (!runs) continue;
             for (const std::int32_t t : {1, 3, 4}) {
                 failures += check(chain, 2048, t, ops::LinearPolicy::A16Only, seed++, unused, true);

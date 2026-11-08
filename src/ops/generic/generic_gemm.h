@@ -1160,15 +1160,15 @@ struct PreparedRule {
 [[nodiscard]] bool prepared_rules_match(const PreparedRule& a, const PreparedRule& b) noexcept;
 // The overlap a launch allows its neighbours (#309), run_route's one rule. Three events apart:
 // join (this launch starts under the call before it, which it waits for before exiting:
-// Call::join_previous), release (the next launch may begin once every CTA of this one has triggered,
-// after its own wait under prefetch, or exited: the next call may then read this launch's inputs,
-// not yet its output; release is not completion,
-// and this launch's scratch stays in use until it finishes), prefetch (its weight stream starts
-// under the previous kernel, GemmArgs::pdl_prefetch). Each refused names why: the call did not
-// ask, the family or epilogue does not join, the pre-quantized R8 form (it neither joins, its
-// quantizer and kernel launching in stream order, nor releases: the next call's quantizer could
-// take the workspace it still reads), no programmatic
-// dependent launch on the device, a call wider than the prefetch's tokens, or a joined call.
+// Call::join_previous), release (the next launch may begin once every CTA of this one has
+// triggered, after its own wait under prefetch, or exited: the next call may then read this
+// launch's inputs, not yet its output; release is not completion, and this launch's scratch stays
+// in use until it finishes), prefetch (its weight stream starts under the previous kernel,
+// GemmArgs::pdl_prefetch). Each refused names why: the call did not ask, the family or epilogue
+// does not join, the pre-quantized R8 form (it neither joins, its quantizer and kernel launching in
+// stream order, nor releases: the next call's quantizer could take the workspace it still reads),
+// no programmatic dependent launch on the device, a call wider than the prefetch's tokens, or a
+// joined call.
 enum class OverlapRefusal { None, NotAsked, Family, Epilogue, PrequantizedR8, NoPdl, Wide, Joined };
 [[nodiscard]] std::string_view overlap_refusal_name(OverlapRefusal why) noexcept;
 struct LaunchOverlap {

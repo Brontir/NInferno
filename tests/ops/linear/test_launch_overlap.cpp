@@ -39,7 +39,8 @@ int main() {
         const auto pre = g::launch_overlap(route(F::R8Mma, true), g::Epilogue::Store, 4, false, true, true);
         check(pre.release == R::PrequantizedR8 && pre.prefetch == R::PrequantizedR8,
               "the pre-quantized R8 form neither releases nor prefetches");
-        const auto pre_join = g::launch_overlap(route(F::R8Mma, true), g::Epilogue::Store, 4, true, false, true);
+        const auto pre_join =
+            g::launch_overlap(route(F::R8Mma, true), g::Epilogue::Store, 4, true, false, true);
         check(pre_join.join == R::PrequantizedR8 && !pre_join.joins(),
               "the pre-quantized R8 form does not join (its launches run in stream order)");
         const auto r8 = g::launch_overlap(route(F::R8Mma, false), g::Epilogue::Store, 4, false, true, true);
@@ -76,7 +77,8 @@ int main() {
                                                                  release, pdl);
                                 const bool joinable = (family == F::RegisterMma || family == F::R8Mma) &&
                                                       epilogue == g::Epilogue::Store;
-                                const bool old_join     = join && joinable && !(family == F::R8Mma && pre);
+                                const bool old_join =
+                                    join && joinable && !(family == F::R8Mma && pre);
                                 const bool old_flag     = release && joinable;
                                 const bool old_released = old_flag && !(family == F::R8Mma && pre) && pdl;
                                 const bool old_prefetch =
