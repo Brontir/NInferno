@@ -6,6 +6,7 @@
 #include "core/generation.h"
 #include "core/per_device.h"
 #include "core/weight.h"
+#include "ninferno/ops/prefill_routes.h"
 #include "ops/generic/generic_gemm.h"
 #include "ops/generic/generic_gemm_internal.h"
 #include "ops/generic/generic_ggml_internal.h"
@@ -147,7 +148,8 @@ namespace {
 // register file holds, its local memory is the spill. It rests on the build's kernels, so the
 // answer belongs to the build (each golden set is a build); a process without a device, or a
 // schedule the build does not hold for the weight, has none and is priced by threads alone.
-// Kept per (schedule, format, epilogue) and device, since a substituted board's launch variants
+// Kept per launch and device: the kernel variant the launch picks (latency, wide, add-sums) follows
+// the shape, the token count and the active route profile, and a substituted board's variants
 // follow its facts.
 struct RmmaKept {
     int registers;
@@ -156,7 +158,7 @@ struct RmmaKept {
 
 struct RmmaKeptCache {
     std::mutex mutex;
-    std::map<std::tuple<int, int, int>, std::optional<RmmaKept>> kept;
+    std::map<std::tuple<int, int, int, int, int, int, bool, bool>, std::optional<RmmaKept>> kept;
 };
 
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
@@ -166,8 +168,10 @@ std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue e
     try {
         cache = &caches.get([](int) { return std::make_shared<RmmaKeptCache>(); });
     } catch (const std::exception&) { return std::nullopt; }
-    const auto key =
-        std::make_tuple(schedule, static_cast<int>(weight.qtype), static_cast<int>(epilogue));
+    const auto key = std::make_tuple(schedule, static_cast<int>(weight.qtype),
+                                     static_cast<int>(epilogue), static_cast<int>(weight.n),
+                                     static_cast<int>(weight.k), static_cast<int>(tokens),
+                                     invariant_routes_active(), rmma_add_sums());
     {
         std::lock_guard lock((*cache)->mutex);
         const auto it = (*cache)->kept.find(key);
