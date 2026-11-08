@@ -671,7 +671,7 @@ int test_overloaded_pool_still_answers() {
     for (int i = 0; i < 3; ++i) {
         // A request that stops in its headers: it holds its worker until the read timeout. (A
         // connection that sent nothing is not even accepted, see TCP_DEFER_ACCEPT.)
-        const int fd = connect_to();
+        const int fd              = connect_to();
         const std::string partial = "GET /slow HTTP/1.1\r\nHo";
         (void)::send(fd, partial.data(), partial.size(), MSG_NOSIGNAL);
         silent.push_back(fd);

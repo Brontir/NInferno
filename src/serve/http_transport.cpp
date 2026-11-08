@@ -90,12 +90,14 @@ bool SseTransport::poll(Clock::time_point now) {
 
 void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health) {
 #if defined(__linux__)
-    // The listening socket defers accept until the request has arrived (configure_http_server_socket),
-    // so the request line is there; what is not buffered is a connection that sent nothing for the
-    // deferral time, and that is answered like any other. The peek costs the accepting thread no wait.
+    // The listening socket defers accept until the request has arrived
+    // (configure_http_server_socket), so the request line is there; what is not buffered is a
+    // connection that sent nothing for the deferral time, and that is answered like any other. The
+    // peek costs the accepting thread no wait.
     std::array<char, 16> head{};
     const ssize_t peeked_bytes = ::recv(socket, head.data(), head.size(), MSG_PEEK | MSG_DONTWAIT);
-    const std::string_view line(head.data(), peeked_bytes > 0 ? static_cast<std::size_t>(peeked_bytes) : 0);
+    const std::string_view line(head.data(),
+                                peeked_bytes > 0 ? static_cast<std::size_t>(peeked_bytes) : 0);
     const bool is_health =
         line.starts_with("GET /health") && line.size() > 11 && (line[11] == ' ' || line[11] == '?');
     std::string status_line;
@@ -111,7 +113,8 @@ void answer_overloaded_connection(socket_t socket, const std::function<HealthRep
     }
     std::string answer = "HTTP/1.1 " + status_line + "\r\nContent-Type: application/json\r\n";
     if (status_line[0] != '2') { answer += "Retry-After: 5\r\n"; }
-    answer += "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    answer +=
+        "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
     // The socket is fresh: the answer fits its send buffer, and a full one drops it.
     (void)::send(socket, answer.data(), answer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
     // Closing with unread data sends a reset that can destroy the answer at the client: read what

@@ -89,9 +89,9 @@ RequestJson parse_json_body(const httplib::Request& request);
 // 429/503. The pool therefore must never close an accepted connection without a response. It keeps
 // a worker for every request the Engine may hold, headroom for requests the Engine rejects at once
 // and for idle keep-alive connections (each holds a worker until its keep-alive timeout), and it
-// queues some accepted sockets beyond that (Linux; elsewhere all of them). A socket past the queue is answered 503 by
-// answer_overloaded_connection, never dropped, and never left waiting without bound behind
-// workers that slow senders hold.
+// queues some accepted sockets beyond that (Linux; elsewhere all of them). A socket past the queue
+// is answered 503 by answer_overloaded_connection, never dropped, and never left waiting without
+// bound behind workers that slow senders hold.
 struct HttpWorkerPlan {
     std::size_t threads    = 0;
     std::size_t max_queued = 0; // accepted sockets that wait for a free worker; more are refused
