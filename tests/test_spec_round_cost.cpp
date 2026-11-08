@@ -315,6 +315,7 @@ int main() {
             // plan_state_bytes: elements x 4 plus the BF16 convolution window (3 rows x 8192
             // channels a layer).
             const sp::StreamBytes q9{24.0 * (32 * 128 * 128 * 4 + 3 * 8192 * 2), 32768.0, 300};
+            const sp::StreamBytes q9h{24.0 * (32 * 128 * 128 * 2 + 3 * 8192 * 2), 32768.0, 300};
             const sp::StreamBytes q35{30.0 * (32 * 128 * 128 * 4 + 3 * 8192 * 2), 20480.0, 300};
             const auto& d      = full_head_pair(kQ9, "ad104:60sm");
             const auto& m      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
@@ -348,6 +349,18 @@ int main() {
                     ms(*d.round_facts, c4060, 2, q9), 1e3 * q9.per_pass() / c4060.dram_bytes_per_s,
                     ms(*m.round_facts, c4090, 1, q35), ms(*m.round_facts, c4090, 2, q35),
                     1e3 * q35.per_pass() / c4090.dram_bytes_per_s);
+            }
+            {
+                const auto c5070 = sp::card_rates_of_board(0x2C05);
+                const auto ms    = [&](std::int32_t n, const sp::StreamBytes& sb) {
+                    return 1e3 * sp::plain_step_cost(*d.round_facts, c5070.kappa(), n, sb) /
+                           c5070.dram_bytes_per_s;
+                };
+                std::printf(
+                    "9B RTX 5070 Ti model ms: weights only C1 %.3f C2 %.3f; f32 state C1 %.3f "
+                    "C2 %.3f; f16 state C1 %.3f C2 %.3f; ratio f16 %.4f f32 %.4f\n",
+                    ms(1, {}), ms(2, {}), ms(1, q9), ms(2, q9), ms(1, q9h), ms(2, q9h),
+                    ratio(*d.round_facts, k5070, q9h), ratio(*d.round_facts, k5070, q9));
             }
             // A request's bytes only add: the ratio stays above one and below two, the state of
             // one request makes the second request dearer by its own share, and a stream of no
