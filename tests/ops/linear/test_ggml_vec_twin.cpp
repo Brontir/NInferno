@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <algorithm>
 #include <random>
 #include <vector>
 
@@ -122,6 +123,30 @@ LaunchShape describe(const Problem& p, const Device& d, VecInstance which) {
     ScopedVecInstance force(which);
     product(p, d);
     return shape;
+}
+
+// Median time of one launch, microseconds: 15 batches of 10 launches. Only with
+// NINFERNO_VEC_TWIN_TIMING=1 (the measuring board must be idle).
+double time_us(const Problem& p, const Device& d, VecInstance which) {
+    ScopedVecInstance force(which);
+    cudaEvent_t a, b;
+    cuda(cudaEventCreate(&a), "event");
+    cuda(cudaEventCreate(&b), "event");
+    for (int i = 0; i < 5; ++i) product(p, d);
+    std::vector<double> t;
+    for (int rep = 0; rep < 15; ++rep) {
+        cuda(cudaEventRecord(a), "record");
+        for (int i = 0; i < 10; ++i) product(p, d);
+        cuda(cudaEventRecord(b), "record");
+        cuda(cudaEventSynchronize(b), "sync");
+        float ms = 0;
+        cuda(cudaEventElapsedTime(&ms, a, b), "elapsed");
+        t.push_back(1000.0 * ms / 10);
+    }
+    std::sort(t.begin(), t.end());
+    cudaEventDestroy(a);
+    cudaEventDestroy(b);
+    return t[t.size() / 2];
 }
 
 } // namespace
