@@ -43,6 +43,8 @@ struct OutputConventions {
     // where the tokenizer has no such token.
     std::vector<TokenId> call_tokens;
     std::vector<TokenId> reasoning_tokens;
+    // The reasoning close, when it is one token.
+    std::optional<TokenId> reasoning_close_token;
 
     [[nodiscard]] bool structural(TokenId token) const noexcept;
 };

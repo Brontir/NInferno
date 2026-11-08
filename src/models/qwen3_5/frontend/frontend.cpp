@@ -696,6 +696,9 @@ std::shared_ptr<const OutputConventions> output_conventions(const chat::ChatConv
         result->structural_tokens.end());
     result->call_tokens      = marker_tokens(tokenizer, chat.non_answer_markers(), false);
     result->reasoning_tokens = marker_tokens(tokenizer, chat.reasoning_markers(), true);
+    if (!chat.reasoning_markers().empty()) {
+        result->reasoning_close_token = marker_token(tokenizer, chat.reasoning->close, false);
+    }
     for (std::vector<TokenId>* tokens : {&result->call_tokens, &result->reasoning_tokens}) {
         std::sort(tokens->begin(), tokens->end());
         tokens->erase(std::unique(tokens->begin(), tokens->end()), tokens->end());

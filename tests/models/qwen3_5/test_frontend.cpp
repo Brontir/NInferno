@@ -2193,13 +2193,18 @@ int test_none_ends_at_structural_tokens() {
     const auto content = [](const PublishedOutput& output) {
         return channel_text(output, ninferno::OutputChannel::Content);
     };
-    // Thinking declined: a stray close at the start ends the turn at once.
+    // Thinking declined: a first stray close is dropped (Gemma 4 writes one after a tool response
+    // and then answers); a second ends the turn.
     {
         const auto [decision, output] = run(none_input(false), {kClose, kHello});
-        failures += check(decision.accepted_tokens == 1 &&
-                              decision.finish_reason == ninferno::FinishReason::StopToken &&
-                              content(output).empty(),
-                          "a close marker at the start of a declined-thinking answer reached it");
+        failures += check(decision.accepted_tokens == 2 && !decision.finished() &&
+                              content(output) == "helloST",
+                          "a first stray close before the answer was not dropped");
+        const auto [ended, empty] = run(none_input(false), {kClose, kClose, kHello});
+        failures += check(ended.accepted_tokens == 2 &&
+                              ended.finish_reason == ninferno::FinishReason::StopToken &&
+                              content(empty).empty(),
+                          "a second stray close at the start did not end the turn");
     }
     // After text the same tokens are prose: an answer that quotes the tag is kept whole.
     {

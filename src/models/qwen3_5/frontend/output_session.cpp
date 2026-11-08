@@ -191,6 +191,8 @@ struct DecoderState {
     bool awaiting_content_header   = false;
     // Non-whitespace content has been published.
     bool content_started           = false;
+    // A reasoning close was written where no reasoning is open and the answer has not begun.
+    bool stray_close_seen          = false;
     bool in_reasoning              = false;
     bool quoted_close_is_text      = false;
     // The last reasoning byte published before think_marker_pending.
@@ -737,6 +739,16 @@ runtime::OutputDecision OutputSession::preview_model(std::span<const TokenId> to
         const bool stop_token =
             std::find(impl_->policy.token_ids.begin(), impl_->policy.token_ids.end(), token) !=
             impl_->policy.token_ids.end();
+        // The first reasoning close where no reasoning is open and the answer has not begun is
+        // dropped: Gemma 4 writes one after a tool response and then answers. A second ends the
+        // turn below (Qwen3 repeats the close as its way out of a refused call).
+        if (!stop_token && impl_->end_at_structural && conventions.reasoning_close_token &&
+            token == *conventions.reasoning_close_token && !impl_->preview_state.in_reasoning &&
+            !impl_->preview_state.awaiting_open && !impl_->preview_state.content_started &&
+            !impl_->preview_state.stray_close_seen) {
+            impl_->preview_state.stray_close_seen = true;
+            continue;
+        }
         // A marker that is a control token ends the turn wherever it comes; one that is plain
         // vocabulary (Qwen's <think> and <tool_call> are added tokens that are not special) only
         // where it begins the answer: later it may be prose that quotes the tag.

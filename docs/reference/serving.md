@@ -795,8 +795,9 @@ llama.cpp-style base URLs.
   call only when its top-level keys are `name` plus exactly one of `arguments` and `parameters`
   (and optionally `id`, `type`); a tool definition, a router object or a lookup result is text, as
   is a fenced ```` ```json ```` block. An answer that is exactly a call object at its start is thus
-  treated as a call and cut. A stray `</think>` that begins a thinking-off answer ends it, so
-  that answer is empty; a real answer after it is not kept.
+  treated as a call and cut. A first stray reasoning close (`</think>`, `<channel|>`) before the answer is
+  dropped (Gemma 4 writes one after a tool response and then answers); a second ends the turn, so an
+  answer that is only such closes is empty.
 - `strict:true`, whose arguments the same constraint holds to the declared JSON Schema in every
   call syntax ([key order](#key-order-under-an-output-constraint)), and
   `parallel_tool_calls:false`, under which generation stops after the first call.
