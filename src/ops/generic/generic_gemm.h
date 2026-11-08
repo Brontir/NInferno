@@ -706,6 +706,7 @@ struct RmmaFactRead {
     Epilogue epilogue;
     KernelResources facts;
 };
+
 class ScopedRmmaFactsSink {
 public:
     explicit ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexcept;
@@ -716,6 +717,7 @@ public:
 private:
     std::vector<RmmaFactRead>* previous_;
 };
+
 void note_rmma_fact_read(const RmmaFactRead& read);
 
 // What register-MMA schedule `schedule` runs for a `tokens`-token call of `weight` under `epilogue`

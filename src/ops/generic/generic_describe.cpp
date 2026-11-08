@@ -23,11 +23,14 @@ thread_local std::vector<RmmaFactRead>* t_fact_sink = nullptr;
 } // namespace
 
 KernelResources* kernel_describe_target() noexcept { return t_describe; }
+
 ScopedRmmaFactsSink::ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexcept
     : previous_(t_fact_sink) {
     t_fact_sink = &sink;
 }
+
 ScopedRmmaFactsSink::~ScopedRmmaFactsSink() { t_fact_sink = previous_; }
+
 void note_rmma_fact_read(const RmmaFactRead& read) {
     if (t_fact_sink != nullptr) t_fact_sink->push_back(read);
 }

@@ -187,9 +187,9 @@ std::string facts_digest(std::vector<generic::RmmaFactRead> reads) {
         }
     };
     for (const auto& [q, s, e, regs, local, threads, latency] : keys) {
-        for (const std::uint64_t v : {std::uint64_t(q), std::uint64_t(s), std::uint64_t(e),
-                                      std::uint64_t(regs), std::uint64_t(local),
-                                      std::uint64_t(threads), std::uint64_t(latency)}) {
+        for (const std::uint64_t v :
+             {std::uint64_t(q), std::uint64_t(s), std::uint64_t(e), std::uint64_t(regs),
+              std::uint64_t(local), std::uint64_t(threads), std::uint64_t(latency)}) {
             mix(v);
         }
     }
@@ -358,8 +358,8 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
 // The digest line of a dump.
 std::string digest_of(const std::string& dump) {
     constexpr std::string_view tag = "
-# facts ";
-    const auto at                  = dump.find(tag);
+#facts ";
+        const auto at = dump.find(tag);
     return at == std::string::npos ? "" : dump.substr(at + tag.size(), dump.find('
 ', at + 1) - at - tag.size());
 }
