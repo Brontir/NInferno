@@ -202,10 +202,12 @@ std::optional<double> round_cost(const RoundFacts& facts, const SpecConfig& conf
     const auto d           = facts.drafters.find(mode);
     if (d == facts.drafters.end()) { return std::nullopt; }
     const DraftFacts& draft_facts = d->second;
+    // clang-format off
     const double plain            = pass_cost(facts.target, 1, kappa, streams, per_stream);
-    const double verify = pass_cost(facts.target, config.k + 1, kappa, streams, per_stream);
+    const double verify           = pass_cost(facts.target, config.k + 1, kappa, streams, per_stream);
     const double passes           = draft_facts.per_draft ? double(config.k) : 1.0;
     double head                   = 0;
+    // clang-format on
     if (draft_facts.head) {
         const PassFacts read = head_over_rows(*draft_facts.head, head_rows.of(mode));
         head = draft_facts.per_draft ? passes * pass_cost(read, draft_facts.rows, kappa, streams)

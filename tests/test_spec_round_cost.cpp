@@ -312,8 +312,10 @@ int main() {
         // (62.9 MB) and 10 full-attention layers of 2 KV heads x 256 (20 KiB a token). At the
         // measuring prompts' context (about 300 tokens) the KV is under 0.2 % of a step.
         {
-            const sp::StreamBytes q9{24.0 * 32 * 128 * 128 * 4, 32768.0 * 300};
-            const sp::StreamBytes q35{30.0 * 32 * 128 * 128 * 4, 20480.0 * 300};
+            // plan_state_bytes: elements x 4 plus the BF16 convolution window (3 rows x 8192
+            // channels a layer).
+            const sp::StreamBytes q9{24.0 * (32 * 128 * 128 * 4 + 3 * 8192 * 2), 32768.0, 300};
+            const sp::StreamBytes q35{30.0 * (32 * 128 * 128 * 4 + 3 * 8192 * 2), 20480.0, 300};
             const auto& d      = full_head_pair(kQ9, "ad104:60sm");
             const auto& m      = full_head_pair("unsloth/Qwen3.6-35B-A3B-MTP-GGUF", "gb203:70sm");
             const double k5070 = sp::card_rates_of_board(0x2C05).kappa();
@@ -332,11 +334,18 @@ int main() {
             // one request makes the second request dearer by its own share, and a stream of no
             // bytes is the weights-only price.
             expect(near(ratio(*d.round_facts, k5070, {}),
-                        ratio(*d.round_facts, k5070, sp::StreamBytes{0, 0}), 1e-12),
+                        ratio(*d.round_facts, k5070, sp::StreamBytes{}), 1e-12),
                    "no per-stream bytes: the weights-only price");
             expect(ratio(*d.round_facts, k5070, q9) > ratio(*d.round_facts, k5070, {}) &&
                        ratio(*d.round_facts, k5070, q9) < 2,
                    "a request's own bytes raise the step's price at two requests, short of two");
+            // The dense result pinned (reported in the PR): the step at two requests, 9B Q4_K_M,
+            // measured 1.077 (RTX 5070 Ti, per-request rates) and 1.044 (RTX 4060 Ti, graph
+            // durations, 2026-11-04).
+            expect(std::abs(ratio(*d.round_facts, k5070, q9) / 1.077 - 1) < 0.02,
+                   "the 9B step at two requests within 2 % of 1.077 (RTX 5070 Ti)");
+            expect(std::abs(ratio(*d.round_facts, k4060, q9) / 1.044 - 1) < 0.02,
+                   "the 9B step at two requests within 2 % of 1.044 (RTX 4060 Ti)");
             expect(ratio(*m.round_facts, k4090, q35) > ratio(*m.round_facts, k4090, {}) &&
                        ratio(*m.round_facts, k4090, q35) < 2,
                    "the same for an MoE target");

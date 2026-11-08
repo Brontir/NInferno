@@ -79,21 +79,25 @@ struct PassFacts {
 
 // What each request decoded brings that the weights do not (#303): bytes of its own that every pass
 // over its rows moves, which the weights' bytes, read once, do not grow with. From the model's
-// shapes (runtime::plan_state_bytes, plan_kv_bytes_per_token), not the weights' headers: a
-// recurrent layer's state is read and written back once a pass (state_bytes x 2), the
-// full-attention layers' KV at the request's context is read once (kv_bytes). Left out (0): the
-// sliding-window ring, the per-row state snapshots a verify may keep, a drafter's own KV; and the
-// requests' turnover.
-// Checked (2026-11-08, plain decode, per-request rate of two requests at once over one alone):
-// Qwen3.5-9B Q4_K_M on the RTX 5070 Ti, 1.077 measured (three servers, nine prompts each way);
-// the step at two requests 1.046 from the weights alone, 1.065 with these bytes. Qwen3.6-35B-A3B on
-// the RTX 4090 (graph durations, 1.212): 1.210 from the weights alone, 1.256 with them. Not yet a
-// rule: it closes a dense target's gap by two thirds and opens an MoE target's by 3.6 %.
+// shapes, as a caller holds them (runtime::plan_state_bytes, plan_kv_bytes_per_token): a recurrent
+// layer's state is read and written back once a pass (2 x state_bytes), the full-attention layers'
+// KV is read once up to the request's context (kv_bytes_per_token x context). Left out (0): the
+// sliding-window ring, the per-row state snapshots a verify may keep, a drafter's own KV; the
+// requests' turnover; and every cost that is not bytes (kernel launches, the router, attention
+// compute), which a step carries too and which this does not price.
+//
+// Checked in the PR (#570) against the two-request step in absolute time, not as a ratio: a ratio
+// weighs any addend by the share of the step the byte model covers (about half of an MoE's), so
+// a right absolute term looks twice too large in it.
 struct StreamBytes {
-    double state_bytes = 0; // recurrent state, resident per request (as stored: FP32 or BF16)
-    double kv_bytes    = 0; // full-attention KV a pass reads per request, at its context
+    double state_bytes = 0; // one request's recurrent state AND convolution window, as stored
+                            // (plan_state_bytes: elements x 4 or 2, plus recurrent_conv_bytes)
+    double kv_bytes_per_token = 0; // full-attention KV of one token (plan_kv_bytes_per_token)
+    double context            = 0; // tokens of KV a pass reads per request
 
-    [[nodiscard]] double per_pass() const noexcept { return 2.0 * state_bytes + kv_bytes; }
+    [[nodiscard]] double per_pass() const noexcept {
+        return 2.0 * state_bytes + kv_bytes_per_token * context;
+    }
 
     friend bool operator==(const StreamBytes&, const StreamBytes&) = default;
 };
