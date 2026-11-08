@@ -92,8 +92,7 @@ static_assert(alignof(Nvfp4QuantizedK16) == 8);
 // magnitudes {0,.5,1,1.5,2,3,4,6}, nearest wins, a tie takes the even code.
 // cvt with .e2m1x2 / FP8-to-half: Blackwell's architecture- and family-specific targets
 // (sm_100a.., sm_120a, sm_120f: __CUDA_ARCH_FAMILY_SPECIFIC__), not a plain target's PTX.
-#if defined(__CUDA_ARCH__) &&                            \
-    NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
+#if defined(__CUDA_ARCH__) && NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
 #    define NINFERNO_HAS_E2M1_CVT 1
 #else
 #define NINFERNO_HAS_E2M1_CVT 0

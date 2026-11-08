@@ -29,8 +29,7 @@ __device__ __forceinline__ __half2 e2m1x2_to_half2_bits(std::uint32_t byte) {
 
 // The low byte of `byte` as two FP16 values, low nibble first.
 __device__ __forceinline__ __half2 e2m1x2_to_half2(std::uint32_t byte) {
-#if NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000 &&             \
-    NINFERNO_ARCH_FAMILY_SPECIFIC < 1300
+#if NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000 && NINFERNO_ARCH_FAMILY_SPECIFIC < 1300
     // NINFERNO-SPECIAL(arch:sm100,sm110,sm120): the families with the hardware conversion.
     return __half2(
         __nv_cvt_fp4x2_to_halfraw2(static_cast<__nv_fp4x2_storage_t>(byte & 0xffU), __NV_E2M1));

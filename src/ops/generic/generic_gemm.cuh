@@ -235,8 +235,7 @@ struct Nvfp4Decoder {
         const int shift     = (j & 1) * 16;
 // cvt with .e2m1x2 / FP8-to-half: Blackwell's architecture- and family-specific targets
 // (sm_100a.., sm_120a, sm_120f: __CUDA_ARCH_FAMILY_SPECIFIC__), not a plain target's PTX.
-#if defined(__CUDA_ARCH__) &&                            \
-    NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
+#if defined(__CUDA_ARCH__) && NINFERNO_ARCH_FAMILY_SPECIFIC >= 1000
         const __half_raw h =
             __nv_cvt_fp8_to_halfraw(static_cast<__nv_fp8_storage_t>(r.scale & 0xffU), __NV_E4M3);
         const __half s(h);
