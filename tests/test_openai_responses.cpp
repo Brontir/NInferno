@@ -1612,7 +1612,7 @@ int test_input_item_limit() {
                              {"name", "f"},
                              {"arguments", many}});
     }
-    const Json three_calls = Json{{"model", "qwen"}, {"input", calls}};
+    const Json three_calls     = Json{{"model", "qwen"}, {"input", calls}};
     few_values.max_json_values = 120;
     failures += check(api_code([&] {
                           (void)parse_openai_responses_create_request(three_calls, few_values);

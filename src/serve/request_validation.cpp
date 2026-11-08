@@ -144,7 +144,8 @@ void check_history_call_arguments(const std::vector<ChatTurn>& turns, const Requ
                                 " levels",
                             field);
             case JsonTextStatus::Ok:
-            case JsonTextStatus::Invalid: break;
+            case JsonTextStatus::Invalid:
+                break;
             }
             remaining -= std::min(remaining, used);
         }
