@@ -81,7 +81,8 @@ void nvfp4_linear_add_dispatch(const Tensor& x, const Weight& weight, Tensor& re
                                LinearPolicy policy, WorkspaceArena& workspace,
                                cudaStream_t stream) {
     const Nvfp4LinearAddRoute route = resolve_route(weight.n, weight.k, policy, x.ne[1]);
-    generic::record_projection_route("linear_add", route_name(route, policy), x.ne[1], weight.n, weight.k);
+    generic::record_projection_route("linear_add", route_name(route, policy), x.ne[1], weight.n,
+                                     weight.k);
     if (route == Nvfp4LinearAddRoute::A16Exact) {
         nvfp4_linear_add_exact_launch(x, weight, residual, stream);
         return;
