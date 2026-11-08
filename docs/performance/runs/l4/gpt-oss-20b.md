@@ -27,7 +27,7 @@ Tokens per second. **Prefill** and **Decode** follow a long prompt; **C=n** is *
 
 ## Measurement
 
-- NVIDIA L4: driver 615.71.09, CUDA None, power limit 72 W.
+- NVIDIA L4: driver 615.71.09, power limit 72 W.
 - NInferno 0.1.0.
 - How each number is taken: [methodology](../../methodology.md).
 
