@@ -16,6 +16,7 @@ namespace ninferno::connect {
 class StreamBuffer {
 public:
     void append(const char* data, std::size_t size) { bytes_.append(data, size); }
+
     // Replaces the content with `bytes`, all of it unread.
     void assign(std::string bytes) {
         bytes_ = std::move(bytes);
@@ -23,6 +24,7 @@ public:
     }
 
     [[nodiscard]] std::size_t unread() const noexcept { return bytes_.size() - taken_; }
+
     // Bytes held, read or not: what the buffer costs in memory (apart from spare capacity).
     [[nodiscard]] std::size_t stored() const noexcept { return bytes_.size(); }
 
