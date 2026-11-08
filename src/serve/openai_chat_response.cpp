@@ -186,9 +186,7 @@ const char* finish_reason(ninferno::FinishReason reason) {
 const char* chat_finish_reason(const GenerationOutcome& outcome) {
     // Published calls end the turn with tool_calls, unless the output was cut short: then the
     // client must see length, as for a turn whose only call was cut (the complete calls stay).
-    if (!outcome.tool_calls.empty() && !output_was_cut(outcome)) {
-        return "tool_calls";
-    }
+    if (!outcome.tool_calls.empty() && !output_was_cut(outcome)) { return "tool_calls"; }
     return finish_reason(outcome.finish_reason);
 }
 
@@ -303,13 +301,13 @@ std::string make_chat_completion_response(const OpenAIChatResponseIdentity& iden
     }
 
     Json payload       = base_payload(identity, "chat.completion");
-    payload["choices"] = Json::array(
-        {Json{{"index", 0},
-              {"message", std::move(message)},
-              {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
-                                                   {"refusal", nullptr}}
-                                            : Json(nullptr)},
-              {"finish_reason", Json(chat_finish_reason(outcome))}}});
+    payload["choices"] = Json::array({Json{
+        {"index", 0},
+        {"message", std::move(message)},
+        {"logprobs", outcome.logprobs ? Json{{"content", openai_logprob_content(*outcome.logprobs)},
+                                             {"refusal", nullptr}}
+                                      : Json(nullptr)},
+        {"finish_reason", Json(chat_finish_reason(outcome))}}});
     payload["usage"]   = usage_json(usage_from(outcome));
     payload["timings"] = timings_json(outcome_timings(outcome));
     return payload.dump();

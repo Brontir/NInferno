@@ -857,14 +857,15 @@ int test_tool_call_presentation() {
     failures += check(saw_edit_start && saw_arguments && saw_tool_stop,
                       "Anthropic stream did not terminate the recovered Edit as tool_use");
 
-    // A turn the output was cut short in keeps its complete calls but reports the cut, not tool_use.
+    // A turn the output was cut short in keeps its complete calls but reports the cut, not
+    // tool_use.
     const std::pair<ninferno::FinishReason, const char*> cuts[] = {
         {ninferno::FinishReason::OutputLimit, "max_tokens"},
         {ninferno::FinishReason::Repetition, "max_tokens"},
         {ninferno::FinishReason::ContextCapacity, "model_context_window_exceeded"}};
     for (const auto& [reason, expected] : cuts) {
         outcome.finish_reason = reason;
-        const Json cut = Json::parse(make_anthropic_messages_response(identity, outcome));
+        const Json cut        = Json::parse(make_anthropic_messages_response(identity, outcome));
         failures += check(cut.at("stop_reason") == expected && cut.at("content").size() == 2 &&
                               cut.at("content").at(1).at("type") == "tool_use",
                           "a cut Anthropic turn reports the cut and keeps its complete calls");

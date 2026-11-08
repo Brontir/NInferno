@@ -1324,9 +1324,9 @@ int test_aggregate_response() {
 
     // A turn the output was cut short in keeps its complete calls but is not a finished one:
     // length, whether the limit, the context or a repetition loop ended it.
-    for (const auto cut : {ninferno::FinishReason::OutputLimit,
-                           ninferno::FinishReason::ContextCapacity,
-                           ninferno::FinishReason::Repetition}) {
+    for (const auto cut :
+         {ninferno::FinishReason::OutputLimit, ninferno::FinishReason::ContextCapacity,
+          ninferno::FinishReason::Repetition}) {
         outcome.finish_reason = cut;
         response              = Json::parse(make_chat_completion_response(identity(), outcome));
         failures += check(response["choices"][0]["finish_reason"] == "length" &&
@@ -1411,10 +1411,9 @@ int test_stream_response() {
     (void)cut_stream.start();
     tool_outcome.finish_reason                = ninferno::FinishReason::OutputLimit;
     const std::vector<std::string> cut_events = cut_stream.finish(tool_outcome);
-    failures += check(
-        !parse_sse(cut_events[0])["choices"][0]["delta"]["tool_calls"].empty() &&
-            parse_sse(cut_events[1])["choices"][0]["finish_reason"] == "length",
-        "a streamed turn cut by the output limit keeps its calls and reports length");
+    failures += check(!parse_sse(cut_events[0])["choices"][0]["delta"]["tool_calls"].empty() &&
+                          parse_sse(cut_events[1])["choices"][0]["finish_reason"] == "length",
+                      "a streamed turn cut by the output limit keeps its calls and reports length");
     return failures;
 }
 
