@@ -318,7 +318,8 @@ void cancel_contract() {
     OutputConstraintSpec slow;
     slow.kind       = OutputConstraintKind::Regex;
     slow.definition = "^(([a-z]{1,100}){1,100}){1,100}$";
-    check(expect_error(compiler, slow) == "constraint_compile_timeout", "slow compile times out");
+    const std::string first = expect_error(compiler, slow);
+    check(first == "constraint_compile_timeout", "slow compile times out: " + first);
 
     // The same request again starts a new compile (the abandoned one left the table) and times out
     // the same way instead of waiting on the cancelled one.
