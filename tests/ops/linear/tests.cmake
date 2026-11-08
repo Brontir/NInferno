@@ -125,7 +125,8 @@ ninferno_add_op_test(ninferno_selector_golden_test
   SOURCES "${CMAKE_CURRENT_LIST_DIR}/test_selector_golden.cpp"
   LIBRARIES ninferno_linear_test_support)
 target_compile_definitions(ninferno_selector_golden_test PRIVATE
-  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden")
+  NINFERNO_SELECTOR_GOLDEN_DIR="${CMAKE_CURRENT_LIST_DIR}/selector_golden"
+  NINFERNO_NVCC_VERSION="${CMAKE_CUDA_COMPILER_VERSION}")
 
 # The generic path's dense tuner: tuned at the first eager call, within the activation class, R8
 # decode bytes kept, the cache file read back, nothing timed inside a graph capture.

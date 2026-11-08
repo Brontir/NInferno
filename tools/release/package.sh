@@ -45,16 +45,18 @@ NVCC=${CUDACXX:-$(command -v nvcc || echo /usr/local/cuda/bin/nvcc)}
 CUDA=$("$NVCC" --version | sed -n 's/.*release \([0-9.]*\).*/\1/p')
 # The selector's choices on sm_86 and sm_120 follow the registers this nvcc compiles for the register-MMA
 # kernels (#556: deterministic per binary, the release's toolchain fixes them). The toolkit is pinned
-# and tests/ops/linear/selector_golden/release_toolchain.txt names the facts digest of each facts-priced
-# board for that release; the golden files of those digests must exist.
+# to the patch level (nvcc's V13.4.92) in tests/ops/linear/selector_golden/facts_index.txt, which
+# also holds the facts digest of every facts-priced golden board for it.
 GOLDEN=$ROOT/tests/ops/linear/selector_golden
-PINNED=$(sed -n 's/^release \([0-9.]*\)$/\1/p' "$GOLDEN/release_toolchain.txt")
-[ -n "$PINNED" ] || { echo "package.sh: $GOLDEN/release_toolchain.txt names no release" >&2; exit 1; }
-[ "$CUDA" = "$PINNED" ] || { echo "package.sh: nvcc $CUDA, the release is pinned to $PINNED (selector goldens, #556)" >&2; exit 1; }
-while read -r board digest; do
-  [ -f "$GOLDEN/$board.$digest.txt" ] || {
-    echo "package.sh: no selector golden $board.$digest.txt for the pinned toolchain $PINNED" >&2; exit 1; }
-done < <(grep -E '^(base|full)/' "$GOLDEN/release_toolchain.txt")
+NVCC_V=$("$NVCC" --version | sed -n 's/.*V\([0-9][0-9.]*\).*/\1/p' | head -n1)
+PINNED=$(sed -n 's/^release \([0-9.]*\)$/\1/p' "$GOLDEN/facts_index.txt")
+[ -n "$PINNED" ] || { echo "package.sh: $GOLDEN/facts_index.txt names no release" >&2; exit 1; }
+[ "$NVCC_V" = "$PINNED" ] || { echo "package.sh: nvcc $NVCC_V, the release is pinned to $PINNED (selector goldens, #556)" >&2; exit 1; }
+for board in $(awk '$1 ~ /^(base|full)\// {print $1}' "$GOLDEN/facts_index.txt" | sort -u); do
+  file=$(awk -v b="$board" -v v="$PINNED" '$1 == b && $4 == v {print $3}' "$GOLDEN/facts_index.txt")
+  [ -n "$file" ] && [ -f "$GOLDEN/${board%%/*}/${board#*/}.$file.txt" ] || {
+    echo "package.sh: no selector golden entry for $board under the pinned nvcc $PINNED" >&2; exit 1; }
+done
 
 first=""
 engines=""

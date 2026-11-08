@@ -18,7 +18,7 @@
 #   -> ninferno-windows-x86_64.zip (+ .sha256), the name the release manifest lists.
 #
 # Each architecture builds in its own tree (build-windows-<arch>; NINFERNO_BUILD_ROOT moves them).
-# Needs Visual Studio 2022 Build Tools (C++), the CUDA Toolkit 13.x (12.8 for Volta: -Cuda70),
+# Needs Visual Studio 2022 Build Tools (C++), the CUDA Toolkit the release pins (facts_index.txt; 12.8 for Volta: -Cuda70),
 # CMake, Ninja and vcpkg (vcpkg.json; the first build compiles FFmpeg and curl once).
 param(
     [string]$Archs = "120a,100,90,89,86,80,75",
@@ -52,6 +52,12 @@ if (-not (Get-Command cl.exe -ErrorAction SilentlyContinue)) {
     $vars = cmd /c "`"$vs\VC\Auxiliary\Build\vcvars64.bat`" >nul 2>nul && set"
     foreach ($line in $vars) { if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) } }
 }
+
+# The release's nvcc is pinned to the patch level, as on Linux (tests/ops/linear/selector_golden/
+# facts_index.txt, #556): the register-MMA kernels' registers fix the selector's choices on RTX 30 / 50.
+$pinned = ((Get-Content "$Root\tests\ops\linear\selector_golden\facts_index.txt") | Select-String '^release ([0-9.]+)$').Matches[0].Groups[1].Value
+$nvccVersion = (& nvcc --version | Select-String 'V([0-9]+\.[0-9]+\.[0-9]+)').Matches[0].Groups[1].Value
+if ([version]$nvccVersion -ne [version]$pinned) { throw "nvcc $nvccVersion, the release is pinned to $pinned (selector goldens, #556)" }
 
 # CMake, nvcc and cl write warnings to stderr; their exit codes are checked instead.
 $ErrorActionPreference = 'Continue'

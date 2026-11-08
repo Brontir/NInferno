@@ -22,7 +22,9 @@
 #include "ops/generic/route_query.h"
 #include "ops/generic/route_table.h"
 
+#include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -33,6 +35,7 @@
 #include <iterator>
 #include <optional>
 #include <set>
+#include <stdexcept>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -165,8 +168,9 @@ constexpr const char* kBuildSet =
 // move with no change of source or spec. The choices are deterministic for one binary; the
 // release's toolchain fixes them (tools/release/package.sh). Such a board's golden is therefore
 // keyed by the digest of the facts the price read while the board was dumped: the header line
-// "# facts <digest>" and the file <board>.<digest>.txt. A toolchain with other facts and no file
-// fails and names its digest.
+// "# facts <digest>"; selector_golden/facts_index.txt maps (board, digest) to the file holding the
+// choices and records the nvcc each was made with. A toolchain with other facts and no entry fails
+// and names its digest; --update rewrites the entry of its own nvcc.
 bool facts_keyed(const GoldenBoard& b) { return rmma_terms_measured(b.major, b.minor); }
 
 // FNV-1a over the distinct (format, schedule, epilogue, registers, spill, threads, latency form)
@@ -198,9 +202,85 @@ std::string facts_digest(std::vector<generic::RmmaFactRead> reads) {
     return out.str().substr(0, 12);
 }
 
-std::filesystem::path golden_path(const GoldenBoard& b, const std::string& digest) {
-    const auto dir = std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR) / kBuildSet;
-    return dir / (std::string(b.name) + (facts_keyed(b) ? "." + digest : std::string()) + ".txt");
+// facts_index.txt: which file holds the choices for which facts digest and nvcc (see the file).
+struct IndexEntry {
+    std::string board, digest, file, nvcc;
+};
+struct Index {
+    std::vector<std::string> kept; // comment lines and the release line, as they stand
+    std::string release;
+    std::vector<IndexEntry> entries;
+};
+
+std::filesystem::path golden_dir() { return std::filesystem::path(NINFERNO_SELECTOR_GOLDEN_DIR); }
+
+std::string board_key(const GoldenBoard& b) { return std::string(kBuildSet) + "/" + b.name; }
+
+Index load_index() {
+    Index index;
+    std::ifstream in(golden_dir() / "facts_index.txt");
+    for (std::string line; std::getline(in, line);) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') {
+            index.kept.push_back(line);
+        } else if (line.rfind("release ", 0) == 0) {
+            index.kept.push_back(line);
+            index.release = line.substr(8);
+        } else {
+            IndexEntry e;
+            std::istringstream fields(line);
+            if (fields >> e.board >> e.digest >> e.file >> e.nvcc) index.entries.push_back(e);
+        }
+    }
+    return index;
+}
+
+void save_index(Index index) {
+    std::sort(index.entries.begin(), index.entries.end(), [](const auto& a, const auto& b) {
+        return std::tie(a.board, a.nvcc, a.digest) < std::tie(b.board, b.nvcc, b.digest);
+    });
+    std::ofstream out(golden_dir() / "facts_index.txt", std::ios::binary);
+    for (const auto& l : index.kept) out << l << "\n";
+    for (const auto& e : index.entries)
+        out << e.board << " " << e.digest << " " << e.file << " " << e.nvcc << "\n";
+}
+
+// --update of several boards at once (one process each) rewrites one index: a directory is the
+// lock.
+struct IndexLock {
+    std::filesystem::path path = golden_dir() / ".facts_index.lock";
+    IndexLock() {
+        for (int i = 0; i < 600 && !std::filesystem::create_directory(path); ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    ~IndexLock() {
+        std::error_code ignored;
+        std::filesystem::remove(path, ignored);
+    }
+    IndexLock(const IndexLock&)            = delete;
+    IndexLock& operator=(const IndexLock&) = delete;
+};
+
+// A dump without its facts line: two toolkits whose kernels give the same choices share a file.
+std::string without_facts(const std::string& dump) {
+    std::istringstream in(dump);
+    std::string out;
+    for (std::string line; std::getline(in, line);) {
+        if (line.rfind("# facts ", 0) != 0) out += line + "\n";
+    }
+    return out;
+}
+
+std::string read_file(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    std::stringstream text;
+    text << in.rdbuf();
+    return text.str();
+}
+
+std::filesystem::path golden_file(const GoldenBoard& b, const std::string& digest) {
+    return golden_dir() / kBuildSet /
+           (std::string(b.name) + (facts_keyed(b) ? "." + digest : std::string()) + ".txt");
 }
 
 // One board's choices, a line per (format, policy, epilogue, shape, profile) and run of widths
@@ -348,7 +428,11 @@ std::string dump_board(const GoldenBoard& b, double sm_scale = 1.0, double memor
     if (!facts_keyed(b)) return body;
     static std::map<std::string, std::string> digests;
     const auto found = digests.find(b.name);
-    if (found == digests.end() || !reads.empty()) digests[b.name] = facts_digest(reads);
+    if (found == digests.end() && reads.empty()) {
+        throw std::runtime_error(std::string(b.name) +
+                                 ": the dump read no compiled kernel facts (the price took none)");
+    }
+    if (!reads.empty()) digests[b.name] = facts_digest(reads);
     const auto first = body.find('\n') + 1;
     return body.substr(0, first) + "# facts " + digests[b.name] + "\n" + body.substr(first);
 }
@@ -382,37 +466,98 @@ int run_board(const GoldenBoard& b, bool update) {
                   << b.minor << " kernels\n";
         return 0;
     }
-    const std::string now = dump_board(b);
-    const auto path       = golden_path(b, digest_of(now));
+    const std::string now      = dump_board(b);
+    const std::string d        = digest_of(now);
+    std::filesystem::path path = golden_file(b, d);
     if (update) {
         // The directory may not exist yet in a fresh checkout; a write that fails is a failure.
         std::filesystem::create_directories(path.parent_path());
-        std::ofstream file(path, std::ios::binary);
-        file << now;
-        if (!file.good()) {
-            std::cerr << b.name << ": cannot write " << path.string() << '\n';
+        const auto write = [&](const std::filesystem::path& to) {
+            std::ofstream file(to, std::ios::binary);
+            file << now;
+            if (file.good()) return true;
+            std::cerr << b.name << ": cannot write " << to.string() << '\n';
+            return false;
+        };
+        if (!facts_keyed(b)) {
+            if (!write(path)) return 1;
+            std::cout << b.name << ": wrote " << path.string() << '\n';
+            return 0;
+        }
+        const IndexLock lock;
+        Index index = load_index();
+        // The choices another toolkit's file already holds are not stored twice.
+        std::string holder = d;
+        for (const auto& entry : index.entries) {
+            if (entry.board == board_key(b) && entry.digest != d &&
+                without_facts(read_file(golden_file(b, entry.file))) == without_facts(now)) {
+                holder = entry.file;
+                break;
+            }
+        }
+        if (holder == d && !write(path)) return 1;
+        std::erase_if(index.entries, [&](const IndexEntry& e) {
+            return e.board == board_key(b) && e.nvcc == NINFERNO_NVCC_VERSION;
+        });
+        index.entries.push_back({board_key(b), d, holder, NINFERNO_NVCC_VERSION});
+        // The board's files no entry uses any more.
+        const std::string prefix = std::string(b.name) + ".";
+        for (const auto& item : std::filesystem::directory_iterator(path.parent_path())) {
+            const std::string name = item.path().filename().string();
+            if (name.rfind(prefix, 0) != 0 || item.path().extension() != ".txt") continue;
+            const std::string used = name.substr(prefix.size(), name.size() - prefix.size() - 4);
+            const bool kept        = std::any_of(
+                index.entries.begin(), index.entries.end(),
+                [&](const IndexEntry& e) { return e.board == board_key(b) && e.file == used; });
+            if (!kept) std::filesystem::remove(item.path());
+        }
+        save_index(index);
+        std::cout << b.name << ": facts " << d << " for nvcc " << NINFERNO_NVCC_VERSION << ", "
+                  << (holder == d ? "wrote " : "same choices as ")
+                  << golden_file(b, holder).string() << '\n';
+        return 0;
+    }
+    if (facts_keyed(b)) {
+        const Index index       = load_index();
+        const IndexEntry* found = nullptr;
+        for (const auto& entry : index.entries) {
+            if (entry.board == board_key(b) && entry.digest == d &&
+                (found == nullptr || entry.nvcc == NINFERNO_NVCC_VERSION)) {
+                found = &entry;
+            }
+        }
+        if (found == nullptr) {
+            std::cerr << b.name << ": no golden for the compiled kernels' facts " << d << " (nvcc "
+                      << NINFERNO_NVCC_VERSION
+                      << "); run with --update, another toolchain keeps an entry of its own\n";
             return 1;
         }
-        std::cout << b.name << ": wrote " << path.string() << '\n';
-        return 0;
+        // The release's toolkit must give the facts the release entry names.
+        if (NINFERNO_NVCC_VERSION == index.release && found->nvcc != index.release) {
+            std::cerr << b.name << ": nvcc " << NINFERNO_NVCC_VERSION
+                      << " is the release's, but its facts " << d
+                      << " are not the release entry's; run with --update\n";
+            return 1;
+        }
+        path = golden_file(b, found->file);
     }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        std::cerr << b.name << ": no golden file " << path.string() << " (run with --update"
-                  << (facts_keyed(b) ? "; its kernels' compiled facts are set " + digest_of(now) +
-                                           ", another toolchain keeps a file of its own"
-                                     : std::string())
-                  << ")\n";
+        std::cerr << b.name << ": no golden file " << path.string() << " (run with --update)\n";
         return 1;
     }
+    std::stringstream was_text;
+    was_text << in.rdbuf();
+    const std::string was_cmp = facts_keyed(b) ? without_facts(was_text.str()) : was_text.str();
+    const std::string now_cmp = facts_keyed(b) ? without_facts(now) : now;
     std::stringstream was;
-    was << in.rdbuf();
-    if (was.str() == now) {
+    was << was_cmp;
+    if (was_cmp == now_cmp) {
         std::cout << b.name << ": choices as the golden file\n";
         return 0;
     }
     // The first lines that differ, from both sides.
-    std::istringstream a(was.str()), c(now);
+    std::istringstream a(was.str()), c(now_cmp);
     std::string la, lc;
     int shown = 0, line = 0;
     while (shown < 20) {

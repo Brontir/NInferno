@@ -718,7 +718,7 @@ private:
     std::vector<RmmaFactRead>* previous_;
 };
 
-void note_rmma_fact_read(const RmmaFactRead& read);
+void note_rmma_fact_read(const RmmaFactRead& read) noexcept;
 
 // What register-MMA schedule `schedule` runs for a `tokens`-token call of `weight` under `epilogue`
 // on the current device: the same launch path as run_route takes (the codec's decoder, its wide or

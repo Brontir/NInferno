@@ -31,8 +31,11 @@ ScopedRmmaFactsSink::ScopedRmmaFactsSink(std::vector<RmmaFactRead>& sink) noexce
 
 ScopedRmmaFactsSink::~ScopedRmmaFactsSink() { t_fact_sink = previous_; }
 
-void note_rmma_fact_read(const RmmaFactRead& read) {
-    if (t_fact_sink != nullptr) t_fact_sink->push_back(read);
+void note_rmma_fact_read(const RmmaFactRead& read) noexcept {
+    // A sink that cannot grow loses the read (the test then fails on its digest); pricing goes on.
+    try {
+        if (t_fact_sink != nullptr) t_fact_sink->push_back(read);
+    } catch (...) {}
 }
 ScopedKernelDescribe::ScopedKernelDescribe(KernelResources& out) noexcept : previous_(t_describe) {
     t_describe = &out;

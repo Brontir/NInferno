@@ -8,7 +8,7 @@ Decisions are deterministic per binary, and the release toolchain fixes them. Th
 price on sm_86 and sm_120 reads the registers and spill the compiler made of the kernels (nvcc 12.8
 and 13.x differ, #556), so two toolchains can pick other tiles for the same commit and card. The
 release is built with one pinned nvcc (`tools/release/package.sh`,
-`selector_golden/release_toolchain.txt`), and a facts-priced board's selector golden is keyed by
+`selector_golden/facts_index.txt`), and a facts-priced board's selector golden is keyed by
 the digest of the kernel facts it was made on (`<board>.<digest>.txt`).
 
 This page states the rule and its target. The engine does not meet all of it yet. Known gaps:

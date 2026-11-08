@@ -154,13 +154,13 @@ struct RmmaKept {
 
 std::optional<RmmaKept> rmma_kept(int schedule, const Weight& weight, Epilogue epilogue,
                                   std::int32_t tokens, std::int32_t rows) {
+    std::optional<KernelResources> r;
     try {
-        if (const auto r = rmma_resources(schedule, weight, epilogue, tokens, rows)) {
-            note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r});
-            return RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
-        }
+        r = rmma_resources(schedule, weight, epilogue, tokens, rows);
     } catch (const std::exception&) {}
-    return std::nullopt;
+    if (!r) return std::nullopt;
+    note_rmma_fact_read(RmmaFactRead{weight.qtype, schedule, epilogue, *r}); // never throws
+    return RmmaKept{r->registers, static_cast<double>(r->local_bytes)};
 }
 
 } // namespace

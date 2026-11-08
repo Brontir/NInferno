@@ -1,0 +1,19 @@
+# Which golden file answers which compiled-kernel facts (#556). The register-MMA price of sm_86 and
+# sm_120 boards reads the registers and spill nvcc made of the kernels, so a golden is kept per
+# digest of those facts (the "# facts" line of a dump); toolkits whose kernels give the same choices
+# share one file. Lines: <set>/<board> <facts digest> <digest of the file holding the choices> <nvcc>.
+# `ninferno_selector_golden_test --update` rewrites the entry of its own nvcc and removes the files
+# no entry uses. The release is built with the pinned nvcc below (tools/release); the golden test on
+# that nvcc fails unless its digest is the release entry's, and package.sh fails without one.
+release 13.4.92
+base/rtx3090 613e4a31a35a 0ae580162b29 13.4.92
+base/rtx3090 0ae580162b29 0ae580162b29 13.5.37
+base/rtx3090 6c05e0edb3d0 6c05e0edb3d0 12.8.93
+base/a10 c180c3754514 7b7cafcde150 13.4.92
+base/a10 7b7cafcde150 7b7cafcde150 13.5.37
+base/a10 0697b549a22f 0697b549a22f 12.8.93
+full/rtx5090 abb3f9fd8ca5 abb3f9fd8ca5 13.4.92
+full/rtx5080 abb3f9fd8ca5 abb3f9fd8ca5 13.4.92
+full/rtx5070ti 9632b1590253 9632b1590253 13.4.92
+full/rtx5060ti 9632b1590253 9632b1590253 13.4.92
+full/unknown-sm120-48sm b23acbc641b7 b23acbc641b7 13.4.92
