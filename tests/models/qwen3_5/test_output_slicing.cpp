@@ -992,13 +992,13 @@ int test_repetition_concludes_thinking(const Harness& harness) {
 int test_repetition_inside_call(const Harness& harness) {
     std::string loop = "ab";
     for (int i = 0; i < 16; ++i) { loop += "pq"; }
-    Case c{.name   = "loop inside a second call",
-           .tokens = script({Piece{"<tool_call>"}, Piece{"\n<function=search>\n</function>\n"},
-                             Piece{"</tool_call>"}, Piece{"\n"}, Piece{"<tool_call>"},
-                             Piece{"\n<function=search>\n"}, Piece{"<parameter="}, Piece{"q>\n"},
-                             Piece{loop, true}, Piece{kEosPiece}}),
-           .prompt            = PromptKind::Tools,
-           .max_tokens        = 400,
+    Case c{.name       = "loop inside a second call",
+           .tokens     = script({Piece{"<tool_call>"}, Piece{"\n<function=search>\n</function>\n"},
+                                 Piece{"</tool_call>"}, Piece{"\n"}, Piece{"<tool_call>"},
+                                 Piece{"\n<function=search>\n"}, Piece{"<parameter="}, Piece{"q>\n"},
+                                 Piece{loop, true}, Piece{kEosPiece}}),
+           .prompt     = PromptKind::Tools,
+           .max_tokens = 400,
            .repetition_window = 32};
     const Outcome out = harness.run(c, {1});
     if (out.finish != FinishReason::Repetition || out.calls.size() != 1 || !out.content.empty() ||
