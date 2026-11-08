@@ -1428,10 +1428,10 @@ void prices_dense_prefill_tiles() {
                     0.99 * ch::prefill_linears_seconds(gate_up, r5070, q6, 256) &&
                 ch::prefill_linears_seconds(gate_up, r5070, q6, 144) ==
                     ch::prefill_linears_seconds(gate_up, r5070, q6, 192) &&
-                w4a8_tiles::narrow_wins(384, 144, 70, w4a8_tiles::kQ6k) &&
-                !w4a8_tiles::narrow_wins(384, 256, 70, w4a8_tiles::kQ6k) &&
-                !w4a8_tiles::narrow_wins(384, 128, 70, w4a8_tiles::kQ4k) &&
-                w4a8_tiles::narrow_wins(64, 320, 170, w4a8_tiles::kQ4k),
+                ninferno::w4a8_tiles::narrow_wins(384, 144, 70, ninferno::w4a8_tiles::kQ6k) &&
+                !ninferno::w4a8_tiles::narrow_wins(384, 256, 70, ninferno::w4a8_tiles::kQ6k) &&
+                !ninferno::w4a8_tiles::narrow_wins(384, 128, 70, ninferno::w4a8_tiles::kQ4k) &&
+                ninferno::w4a8_tiles::narrow_wins(64, 320, 170, ninferno::w4a8_tiles::kQ4k),
             "the W4A8 estimate takes the 64 x 64 tile where its tiles cost less (129..192 tokens)");
     }
 }
