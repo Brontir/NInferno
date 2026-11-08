@@ -376,12 +376,21 @@ int run_board(const GoldenBoard& b, bool update) {
             std::cerr << b.name << ": cannot write " << path.string() << '\n';
             return 1;
         }
+        if (facts_keyed(b)) {
+            std::error_code ignored; // the unkeyed file of a facts-keyed board is replaced
+            std::filesystem::remove(path.parent_path() / (std::string(b.name) + ".txt"), ignored);
+        }
         std::cout << b.name << ": wrote " << path.string() << '\n';
         return 0;
     }
     std::ifstream in(path, std::ios::binary);
     if (!in) {
-        std::cerr << b.name << ": no golden file " << path.string() << " (run with --update)\n";
+        std::cerr << b.name << ": no golden file " << path.string() << " (run with --update"
+                  << (facts_keyed(b) ? "; this build's compiled kernels are facts set " +
+                                           kernel_facts_digest() +
+                                           ", another toolchain keeps a file of its own"
+                                     : std::string())
+                  << ")\n";
         return 1;
     }
     std::stringstream was;
