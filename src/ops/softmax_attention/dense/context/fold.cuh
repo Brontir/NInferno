@@ -151,9 +151,9 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_fold_partial_kern
     }
 }
 
-// context_window_attention: the window alone over keys cached rotated at their own positions, no far
-// memory. The split bodies are the window branch's; the reduce is the plain one over the window's
-// tile count.
+// context_window_attention: the window alone over keys cached rotated at their own positions, no
+// far memory. The split bodies are the window branch's; the reduce is the plain one over the
+// window's tile count.
 template <class Geo, int Tokens, int WarpsPerCta, int KeyBlock, typename KT = __nv_bfloat16,
           typename VT = __half>
 __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_window_partial_kernel(
@@ -169,7 +169,8 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_window_partial_ke
     const int batch  = static_cast<int>(blockIdx.z);
     const int length = context_length[batch];
     FoldWindowPolicy<Geo, false> policy{};
-    policy.block_table    = block_tables + static_cast<std::int64_t>(logical_pages) * table_rows[batch];
+    policy.block_table =
+        block_tables + static_cast<std::int64_t>(logical_pages) * table_rows[batch];
     policy.physical_pages = physical_pages;
     policy.logical_pages  = logical_pages;
     policy.k_scale        = context_k_scale;
@@ -185,11 +186,14 @@ __launch_bounds__(WarpsPerCta * 32, 2) __global__ void context_window_partial_ke
 }
 
 template <class Geo, int Tokens, int KeyBlock>
-__launch_bounds__(128, 2) __global__ void context_window_reduce_kernel(
-    const __nv_bfloat16* __restrict__ partial_acc, const float* __restrict__ partial_m,
-    const float* __restrict__ partial_l, const std::int32_t* __restrict__ context_length,
-    const std::int32_t* __restrict__ valid_columns, int max_context, int split_capacity, int window,
-    __nv_bfloat16* __restrict__ out) {
+__launch_bounds__(128, 2) __global__
+    void context_window_reduce_kernel(const __nv_bfloat16* __restrict__ partial_acc,
+                                      const float* __restrict__ partial_m,
+                                      const float* __restrict__ partial_l,
+                                      const std::int32_t* __restrict__ context_length,
+                                      const std::int32_t* __restrict__ valid_columns,
+                                      int max_context, int split_capacity, int window,
+                                      __nv_bfloat16* __restrict__ out) {
     const int length = context_length[static_cast<int>(blockIdx.z)];
     // FoldWindowPolicy::context_count: the window's tiles start at a multiple of the tile height.
     const int count = length - (max(length - window, 0) / KeyBlock) * KeyBlock;

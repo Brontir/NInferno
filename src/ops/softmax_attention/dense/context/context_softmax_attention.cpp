@@ -219,9 +219,8 @@ std::size_t context_window_attention_workspace_capacity_bytes(
 
 void context_window_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
                               const Tensor& context_lengths, const Tensor& valid_columns,
-                              const Tensor& table_rows, AttentionHeadGeometry geometry,
-                              float scale, std::int32_t window,
-                              const PagedKVBatchLayerView& context,
+                              const Tensor& table_rows, AttentionHeadGeometry geometry, float scale,
+                              std::int32_t window, const PagedKVBatchLayerView& context,
                               ContextAttentionExecutionEnvelope envelope, WorkspaceArena& workspace,
                               Tensor& out, cudaStream_t stream) {
     const auto profile = validate_call(q, query_k, query_v, context_lengths, valid_columns,

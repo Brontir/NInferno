@@ -219,15 +219,14 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
  */
 void context_window_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,
                               const Tensor& context_lengths, const Tensor& valid_columns,
-                              const Tensor& table_rows, AttentionHeadGeometry geometry,
-                              float scale, std::int32_t window,
-                              const PagedKVBatchLayerView& context,
+                              const Tensor& table_rows, AttentionHeadGeometry geometry, float scale,
+                              std::int32_t window, const PagedKVBatchLayerView& context,
                               ContextAttentionExecutionEnvelope envelope, WorkspaceArena& workspace,
                               Tensor& out, cudaStream_t stream);
 
 [[nodiscard]] std::size_t context_window_attention_workspace_capacity_bytes(
-    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope,
-    std::int32_t window, std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size);
+    AttentionHeadGeometry geometry, ContextAttentionExecutionEnvelope envelope, std::int32_t window,
+    std::int32_t min_tokens, std::int32_t max_tokens, std::int32_t batch_size);
 
 /**
  * FOLD (arXiv 2610.20392) over the inputs of context_softmax_attention, D128 [32, 8] only, with

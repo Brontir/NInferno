@@ -260,9 +260,9 @@ std::size_t DenseExecution::dflash_proposal_bytes(std::uint32_t capacity, std::i
         op = std::max(op, ops::context_softmax_attention_workspace_capacity_bytes(
                               geometry, {0, capacity}, block, block, batch));
         if (experimental_full_window() > 0) {
-            op = std::max(op, ops::context_window_attention_workspace_capacity_bytes(
-                                  geometry, {0, capacity}, experimental_full_window(), block,
-                                  block, batch));
+            op = std::max(
+                op, ops::context_window_attention_workspace_capacity_bytes(
+                        geometry, {0, capacity}, experimental_full_window(), block, block, batch));
         }
     }
     for (const auto& layer : dw.layers) {

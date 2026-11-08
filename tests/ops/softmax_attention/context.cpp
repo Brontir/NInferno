@@ -367,14 +367,14 @@ int run_case(int tokens, int context_length, InputProfile profile = InputProfile
 // plain one with the rows below the window masked.
 int run_window_case(int tokens, int context_length, int window,
                     MappingPattern mapping_pattern = MappingPattern::Fragmented,
-                    int valid_columns = -1) {
+                    int valid_columns              = -1) {
     if (valid_columns < 0) valid_columns = tokens;
-    const int max_context      = std::max(context_length, 1);
-    const int logical_pages    = (max_context + kPage - 1) / kPage;
-    const int logical_capacity = logical_pages * kPage;
-    const int logical_stride   = (max_context + 127) / 128 * 128;
-    const int physical_pages   = 2 * logical_pages + 1;
-    const std::size_t q_count  = static_cast<std::size_t>(kD) * kQHeads * tokens;
+    const int max_context            = std::max(context_length, 1);
+    const int logical_pages          = (max_context + kPage - 1) / kPage;
+    const int logical_capacity       = logical_pages * kPage;
+    const int logical_stride         = (max_context + 127) / 128 * 128;
+    const int physical_pages         = 2 * logical_pages + 1;
+    const std::size_t q_count        = static_cast<std::size_t>(kD) * kQHeads * tokens;
     const std::size_t query_kv_count = static_cast<std::size_t>(kD) * kKVHeads * tokens;
     const std::size_t logical_context_count =
         static_cast<std::size_t>(kD) * logical_stride * kKVHeads;
@@ -415,10 +415,10 @@ int run_window_case(int tokens, int context_length, int window,
         });
 
     const std::vector<std::int32_t> mapping = page_mapping(logical_pages, mapping_pattern);
-    const std::vector<float> physical_k =
-        scatter_context(context_k, logical_stride, logical_capacity, physical_pages, mapping, 6007u + seed);
-    const std::vector<float> physical_v =
-        scatter_context(context_v, logical_stride, logical_capacity, physical_pages, mapping, 7001u + seed);
+    const std::vector<float> physical_k     = scatter_context(
+        context_k, logical_stride, logical_capacity, physical_pages, mapping, 6007u + seed);
+    const std::vector<float> physical_v = scatter_context(
+        context_v, logical_stride, logical_capacity, physical_pages, mapping, 7001u + seed);
     DeviceBuffer d_q         = to_device(bf16_bits(q));
     DeviceBuffer d_query_k   = to_device(bf16_bits(query_k));
     DeviceBuffer d_query_v   = to_device(bf16_bits(query_v));
@@ -439,7 +439,8 @@ int run_window_case(int tokens, int context_length, int window,
     Tensor out_tensor(d_out.data(), DType::BF16, {kD, kQHeads, tokens, 1});
     PagedKVBatchLayerView context =
         make_context_view(d_context_k, d_context_v, d_table, logical_pages, physical_pages);
-    const ops::ContextAttentionExecutionEnvelope envelope{0, static_cast<std::uint32_t>(max_context)};
+    const ops::ContextAttentionExecutionEnvelope envelope{0,
+                                                          static_cast<std::uint32_t>(max_context)};
     const std::size_t workspace_bytes = ops::context_window_attention_workspace_capacity_bytes(
         kGeometry, envelope, window, tokens, tokens, 1);
     DeviceArena workspace(workspace_bytes);
@@ -455,16 +456,17 @@ int run_window_case(int tokens, int context_length, int window,
                                     reference, kContextQueryBf16Criterion);
     failures += d_out.verify_guards((label + " output guards").c_str());
     if (workspace.used() != 0 || workspace.peak_used() > workspace_bytes) {
-        std::cerr << label << ": workspace high-water mismatch
-";
-        ++failures;
+        std::cerr << label
+                  << ": workspace high-water mismatch
+                     ";
+            ++failures;
     }
     return failures;
 }
 
 int run_window_cases() {
     int failures = 0;
-    failures += run_window_case(1, 50, 64);                   // L <= W: the plain op
+    failures += run_window_case(1, 50, 64); // L <= W: the plain op
     failures += run_window_case(4, 64, 64);
     failures += run_window_case(1, 300, 64);
     failures += run_window_case(4, 300, 100, MappingPattern::Offset); // W not a tile multiple
