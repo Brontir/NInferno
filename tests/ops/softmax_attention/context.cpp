@@ -363,119 +363,6 @@ int run_case(int tokens, int context_length, InputProfile profile = InputProfile
     return failures;
 }
 
-// context_window_attention: the plain op over the last `window` context rows. The oracle is the
-// plain one with the rows below the window masked.
-int run_window_case(int tokens, int context_length, int window,
-                    MappingPattern mapping_pattern = MappingPattern::Fragmented,
-                    int valid_columns              = -1) {
-    if (valid_columns < 0) valid_columns = tokens;
-    const int max_context            = std::max(context_length, 1);
-    const int logical_pages          = (max_context + kPage - 1) / kPage;
-    const int logical_capacity       = logical_pages * kPage;
-    const int logical_stride         = (max_context + 127) / 128 * 128;
-    const int physical_pages         = 2 * logical_pages + 1;
-    const std::size_t q_count        = static_cast<std::size_t>(kD) * kQHeads * tokens;
-    const std::size_t query_kv_count = static_cast<std::size_t>(kD) * kKVHeads * tokens;
-    const std::size_t logical_context_count =
-        static_cast<std::size_t>(kD) * logical_stride * kKVHeads;
-    std::vector<float> q(q_count), query_k(query_kv_count), query_v(query_kv_count);
-    std::vector<float> context_k(logical_context_count), context_v(logical_context_count);
-    const auto seed = static_cast<unsigned>(tokens * 131 + context_length * 17 + window);
-    fill_uniform(q, 1001u + seed, -0.35f, 0.35f);
-    fill_uniform(query_k, 2003u + seed, -0.4f, 0.4f);
-    fill_uniform(query_v, 3001u + seed, -0.8f, 0.8f);
-    fill_uniform(context_k, 4001u + seed, -0.4f, 0.4f);
-    fill_uniform(context_v, 5003u + seed, -0.8f, 0.8f);
-    round_to_bf16(q);
-    round_to_bf16(query_k);
-    round_to_bf16(query_v);
-    round_to_bf16(context_k);
-    round_to_bf16(context_v);
-
-    const int first = std::max(context_length - window, 0);
-    std::vector<double> reference(q_count, 0.0);
-    naive_dense_softmax_attention(
-        kGeometry, valid_columns, context_length + valid_columns, static_cast<double>(kScale),
-        [&](int d, int head, int token) { return static_cast<double>(q[q_index(d, head, token)]); },
-        [&](int d, int head, int key) {
-            return key < context_length
-                       ? static_cast<double>(context_k[context_index(d, head, key, logical_stride)])
-                       : static_cast<double>(
-                             query_k[query_kv_index(d, head, key - context_length)]);
-        },
-        [&](int d, int head, int key) {
-            return key < context_length
-                       ? static_cast<double>(context_v[context_index(d, head, key, logical_stride)])
-                       : static_cast<double>(
-                             query_v[query_kv_index(d, head, key - context_length)]);
-        },
-        [&](int, int key) { return key >= first; },
-        [&](int d, int head, int token, double value) {
-            reference[q_index(d, head, token)] = value;
-        });
-
-    const std::vector<std::int32_t> mapping = page_mapping(logical_pages, mapping_pattern);
-    const std::vector<float> physical_k     = scatter_context(
-        context_k, logical_stride, logical_capacity, physical_pages, mapping, 6007u + seed);
-    const std::vector<float> physical_v = scatter_context(
-        context_v, logical_stride, logical_capacity, physical_pages, mapping, 7001u + seed);
-    DeviceBuffer d_q         = to_device(bf16_bits(q));
-    DeviceBuffer d_query_k   = to_device(bf16_bits(query_k));
-    DeviceBuffer d_query_v   = to_device(bf16_bits(query_v));
-    DeviceBuffer d_context_k = to_device(bf16_bits(physical_k));
-    DeviceBuffer d_context_v = to_device(fp16_bits(physical_v));
-    DeviceBuffer d_table     = to_device(mapping);
-    DeviceBuffer d_length    = to_device_i32(std::vector<int>{context_length});
-    DeviceBuffer d_valid     = to_device_i32(std::vector<int>{valid_columns});
-    DeviceBuffer d_table_row = to_device_i32(std::vector<int>{0});
-    GuardedDeviceBuffer d_out(q_count * sizeof(std::uint16_t));
-    d_out.fill(0x7f);
-    Tensor q_tensor(d_q.p, DType::BF16, {kD, kQHeads, tokens, 1});
-    Tensor query_k_tensor(d_query_k.p, DType::BF16, {kD, kKVHeads, tokens, 1});
-    Tensor query_v_tensor(d_query_v.p, DType::BF16, {kD, kKVHeads, tokens, 1});
-    Tensor length_tensor(d_length.p, DType::I32, {1});
-    Tensor valid_tensor(d_valid.p, DType::I32, {1});
-    Tensor table_row_tensor(d_table_row.p, DType::I32, {1});
-    Tensor out_tensor(d_out.data(), DType::BF16, {kD, kQHeads, tokens, 1});
-    PagedKVBatchLayerView context =
-        make_context_view(d_context_k, d_context_v, d_table, logical_pages, physical_pages);
-    const ops::ContextAttentionExecutionEnvelope envelope{0,
-                                                          static_cast<std::uint32_t>(max_context)};
-    const std::size_t workspace_bytes = ops::context_window_attention_workspace_capacity_bytes(
-        kGeometry, envelope, window, tokens, tokens, 1);
-    DeviceArena workspace(workspace_bytes);
-    ops::context_window_attention(q_tensor, query_k_tensor, query_v_tensor, length_tensor,
-                                  valid_tensor, table_row_tensor, kGeometry, kScale, window,
-                                  context, envelope, workspace, out_tensor, nullptr);
-    cuda_synchronize();
-    const std::string label = "context_window_attention T=" + std::to_string(tokens) +
-                              " V=" + std::to_string(valid_columns) +
-                              " L=" + std::to_string(context_length) +
-                              " W=" + std::to_string(window);
-    int failures = verify_reduction(label.c_str(), from_device_bf16(d_out.data(), q_count),
-                                    reference, kContextQueryBf16Criterion);
-    failures += d_out.verify_guards((label + " output guards").c_str());
-    if (workspace.used() != 0 || workspace.peak_used() > workspace_bytes) {
-        std::cerr << label << ": workspace high-water mismatch\n";
-        ++failures;
-    }
-    return failures;
-}
-
-int run_window_cases() {
-    int failures = 0;
-    failures += run_window_case(1, 50, 64); // L <= W: the plain op
-    failures += run_window_case(4, 64, 64);
-    failures += run_window_case(1, 300, 64);
-    failures += run_window_case(4, 300, 100, MappingPattern::Offset); // W not a tile multiple
-    failures += run_window_case(8, 1000, 128);
-    failures += run_window_case(8, 1000, 130, MappingPattern::Fragmented, 5);
-    failures += run_window_case(16, 700, 256);
-    failures += run_window_case(2, 5000, 2048);
-    failures += run_window_case(8, 4097, 1);
-    return failures;
-}
-
 int graph_mapping_replay_case() {
     constexpr int tokens            = 1;
     constexpr int context_length    = 65;
@@ -733,7 +620,6 @@ int run_profile_cases() {
     failures += run_case(8, 65, InputProfile::Random, 65, MappingPattern::Fragmented, 0);
     failures += graph_mapping_replay_case();
     failures += batch_table_case();
-    failures += run_window_cases();
     return failures;
 }
 
@@ -895,6 +781,241 @@ int run_int8_cases() {
 }
 
 // ---------------------------------------------------------------------------------------------
+// context_window_attention: the plain op over the last `window` context rows. The oracle is the
+// plain one with the rows below each row's window masked. Rows of a batch have their own lengths
+// (the first window row is per row), their own table row and their own physical pages.
+struct WindowRow {
+    int length;
+    int valid;
+};
+
+int run_window_case(int tokens, const std::vector<WindowRow>& rows, int window,
+                    MappingPattern mapping_pattern = MappingPattern::Fragmented, bool int8 = false) {
+    const int batch = static_cast<int>(rows.size());
+    int max_length  = 1;
+    bool all_inside = true;
+    for (const WindowRow& row : rows) {
+        max_length = std::max(max_length, row.length);
+        all_inside = all_inside && row.length <= window;
+    }
+    const int logical_pages  = (max_length + kPage - 1) / kPage;
+    const int logical_stride = (logical_pages * kPage + 127) / 128 * 128;
+    const int row_pages      = 2 * logical_pages + 1;
+    const int physical_pages = batch * row_pages;
+    const std::size_t row_q  = static_cast<std::size_t>(kD) * kQHeads * tokens;
+    const std::size_t row_kv = static_cast<std::size_t>(kD) * kKVHeads * tokens;
+    const std::size_t row_ctx = static_cast<std::size_t>(kD) * logical_stride * kKVHeads;
+    const auto seed           = static_cast<unsigned>(tokens * 131 + max_length * 17 + window + batch);
+
+    std::vector<float> q(row_q * batch), query_k(row_kv * batch), query_v(row_kv * batch);
+    std::vector<float> context_k(row_ctx * batch), context_v(row_ctx * batch);
+    fill_uniform(q, 1001u + seed, -0.35f, 0.35f);
+    fill_uniform(query_k, 2003u + seed, -0.4f, 0.4f);
+    fill_uniform(query_v, 3001u + seed, -0.8f, 0.8f);
+    fill_uniform(context_k, 4001u + seed, -0.4f, 0.4f);
+    fill_uniform(context_v, 5003u + seed, -0.8f, 0.8f);
+    round_to_bf16(q);
+    round_to_bf16(query_k);
+    round_to_bf16(query_v);
+    round_to_bf16(context_k);
+    round_to_bf16(context_v);
+
+    // Each row's pages: its mapping shifted into its own range of the physical pool.
+    std::vector<std::int32_t> tables;
+    for (int b = 0; b < batch; ++b) {
+        for (const std::int32_t page : page_mapping(logical_pages, mapping_pattern)) {
+            tables.push_back(page + b * row_pages);
+        }
+    }
+    std::vector<float> physical_k(static_cast<std::size_t>(kD) * kPage * kKVHeads * physical_pages);
+    std::vector<float> physical_v(physical_k.size());
+    fill_uniform(physical_k, 6007u + seed, -0.9f, 0.9f);
+    fill_uniform(physical_v, 7001u + seed, -0.9f, 0.9f);
+    round_to_bf16(physical_k);
+    round_to_bf16(physical_v);
+    for (int b = 0; b < batch; ++b) {
+        const auto slice = [&](const std::vector<float>& all) {
+            return std::vector<float>(all.begin() + static_cast<std::ptrdiff_t>(b * row_ctx),
+                                      all.begin() + static_cast<std::ptrdiff_t>((b + 1) * row_ctx));
+        };
+        const std::vector<std::int32_t> mapping(
+            tables.begin() + static_cast<std::ptrdiff_t>(b * logical_pages),
+            tables.begin() + static_cast<std::ptrdiff_t>((b + 1) * logical_pages));
+        scatter_context_mapping(physical_k, slice(context_k), logical_stride,
+                                logical_pages * kPage, mapping, physical_pages);
+        scatter_context_mapping(physical_v, slice(context_v), logical_stride,
+                                logical_pages * kPage, mapping, physical_pages);
+    }
+
+    // The int8 pool: the codes and scales, and the dequantized values the kernel stages become
+    // the oracle's context.
+    Int8Context k8, v8;
+    if (int8) {
+        k8 = quantize_context_int8(physical_k, physical_pages, false);
+        v8 = quantize_context_int8(physical_v, physical_pages, true);
+        for (int b = 0; b < batch; ++b) {
+            for (int position = 0; position < rows[static_cast<std::size_t>(b)].length;
+                 ++position) {
+                const int page = tables[static_cast<std::size_t>(b * logical_pages +
+                                                                 position / kPage)];
+                for (int kv_head = 0; kv_head < kKVHeads; ++kv_head) {
+                    for (int d = 0; d < kD; ++d) {
+                        const std::size_t from =
+                            physical_context_index(d, kv_head, position, page, physical_pages);
+                        const std::size_t to =
+                            static_cast<std::size_t>(b) * row_ctx +
+                            context_index(d, kv_head, position, logical_stride);
+                        context_k[to] = k8.dequant[from];
+                        context_v[to] = v8.dequant[from];
+                    }
+                }
+            }
+        }
+    }
+
+    std::vector<double> reference(row_q * batch, 0.0);
+    for (int b = 0; b < batch; ++b) {
+        const int length = rows[static_cast<std::size_t>(b)].length;
+        const int valid  = rows[static_cast<std::size_t>(b)].valid;
+        const int first  = std::max(length - window, 0);
+        const std::size_t qb = static_cast<std::size_t>(b) * row_q;
+        const std::size_t kb = static_cast<std::size_t>(b) * row_kv;
+        const std::size_t cb = static_cast<std::size_t>(b) * row_ctx;
+        naive_dense_softmax_attention(
+            kGeometry, valid, length + valid, static_cast<double>(kScale),
+            [&](int d, int head, int token) {
+                return static_cast<double>(q[qb + q_index(d, head, token)]);
+            },
+            [&](int d, int head, int key) {
+                return key < length
+                           ? static_cast<double>(
+                                 context_k[cb + context_index(d, head, key, logical_stride)])
+                           : static_cast<double>(
+                                 query_k[kb + query_kv_index(d, head, key - length)]);
+            },
+            [&](int d, int head, int key) {
+                return key < length
+                           ? static_cast<double>(
+                                 context_v[cb + context_index(d, head, key, logical_stride)])
+                           : static_cast<double>(
+                                 query_v[kb + query_kv_index(d, head, key - length)]);
+            },
+            [&](int, int key) { return key >= first; },
+            [&](int d, int head, int token, double value) {
+                reference[qb + q_index(d, head, token)] = value;
+            });
+    }
+
+    std::vector<std::int32_t> lengths, valids, table_rows;
+    for (int b = 0; b < batch; ++b) {
+        lengths.push_back(rows[static_cast<std::size_t>(b)].length);
+        valids.push_back(rows[static_cast<std::size_t>(b)].valid);
+        table_rows.push_back(b);
+    }
+    DeviceBuffer d_q        = to_device(bf16_bits(q));
+    DeviceBuffer d_query_k  = to_device(bf16_bits(query_k));
+    DeviceBuffer d_query_v  = to_device(bf16_bits(query_v));
+    DeviceBuffer d_tables   = to_device(tables);
+    DeviceBuffer d_length   = to_device_i32(lengths);
+    DeviceBuffer d_valid    = to_device_i32(valids);
+    DeviceBuffer d_row      = to_device_i32(table_rows);
+    DeviceBuffer d_k = int8 ? to_device(k8.codes) : to_device(bf16_bits(physical_k));
+    DeviceBuffer d_v = int8 ? to_device(v8.codes) : to_device(fp16_bits(physical_v));
+    DeviceBuffer d_k_scale = int8 ? to_device(k8.scales) : to_device(tables);
+    DeviceBuffer d_v_scale = int8 ? to_device(v8.scales) : to_device(tables);
+    GuardedDeviceBuffer d_out(row_q * batch * sizeof(std::uint16_t));
+    d_out.fill(0x7f);
+    PagedKVBatchLayerView context =
+        int8 ? PagedKVBatchLayerView{
+                   .k_pages = Tensor(d_k.p, DType::I8, {kD, kPage, physical_pages, kKVHeads}),
+                   .v_pages = Tensor(d_v.p, DType::I8, {kD, kPage, physical_pages, kKVHeads}),
+                   .k_scale_pages = Tensor(d_k_scale.p, DType::FP16,
+                                           {kD / 64, kPage, physical_pages, kKVHeads}),
+                   .v_scale_pages = Tensor(d_v_scale.p, DType::FP16,
+                                           {kD / 64, kPage, physical_pages, kKVHeads}),
+                   .block_tables = Tensor(d_tables.p, DType::I32, {logical_pages, batch}),
+                   .head_dim     = kD,
+                   .num_kv_heads = kKVHeads,
+                   .storage      = KvCacheStorage::Int8Group64,
+               }
+             : make_context_view(d_k, d_v, d_tables, logical_pages, physical_pages, batch);
+    Tensor q_tensor(d_q.p, DType::BF16, {kD, kQHeads, tokens, batch});
+    Tensor query_k_tensor(d_query_k.p, DType::BF16, {kD, kKVHeads, tokens, batch});
+    Tensor query_v_tensor(d_query_v.p, DType::BF16, {kD, kKVHeads, tokens, batch});
+    Tensor length_tensor(d_length.p, DType::I32, {batch});
+    Tensor valid_tensor(d_valid.p, DType::I32, {batch});
+    Tensor row_tensor(d_row.p, DType::I32, {batch});
+    Tensor out_tensor(d_out.data(), DType::BF16, {kD, kQHeads, tokens, batch});
+    const ops::ContextAttentionExecutionEnvelope envelope{0,
+                                                          static_cast<std::uint32_t>(max_length)};
+    const std::size_t workspace_bytes = ops::context_window_attention_workspace_capacity_bytes(
+        kGeometry, envelope, window, tokens, tokens, batch);
+    DeviceArena workspace(workspace_bytes);
+    ops::context_window_attention(q_tensor, query_k_tensor, query_v_tensor, length_tensor,
+                                  valid_tensor, row_tensor, kGeometry, kScale, window, context,
+                                  envelope, workspace, out_tensor, nullptr);
+    cuda_synchronize();
+
+    std::string label = std::string("context_window_attention") + (int8 ? " int8" : "") +
+                        " T=" + std::to_string(tokens) + " W=" + std::to_string(window) + " rows";
+    for (const WindowRow& row : rows) {
+        label += " " + std::to_string(row.length) + "/" + std::to_string(row.valid);
+    }
+    int failures = verify_reduction(label.c_str(), from_device_bf16(d_out.data(), row_q * batch),
+                                    reference, kContextQueryBf16Criterion);
+    failures += d_out.verify_guards((label + " output guards").c_str());
+    if (workspace.used() != 0 || workspace.peak_used() > workspace_bytes) {
+        std::cerr << label << ": workspace high-water mismatch\n";
+        ++failures;
+    }
+    // Every row inside its window: the plain op over the same context (mathematically the same
+    // attention; the splits differ, so the bytes need not be).
+    if (all_inside) {
+        GuardedDeviceBuffer d_plain(row_q * batch * sizeof(std::uint16_t));
+        d_plain.fill(0x7f);
+        Tensor plain_tensor(d_plain.data(), DType::BF16, {kD, kQHeads, tokens, batch});
+        DeviceArena plain_workspace(ops::context_softmax_attention_workspace_capacity_bytes(
+            kGeometry, envelope, tokens, tokens, batch));
+        ops::context_softmax_attention(q_tensor, query_k_tensor, query_v_tensor, length_tensor,
+                                       valid_tensor, row_tensor, kGeometry, kScale, context,
+                                       envelope, plain_workspace, plain_tensor, nullptr);
+        cuda_synchronize();
+        failures += verify_reduction(
+            (label + " against the plain op").c_str(),
+            from_device_bf16(d_out.data(), row_q * batch),
+            [&] {
+                const auto plain = from_device_bf16(d_plain.data(), row_q * batch);
+                return std::vector<double>(plain.begin(), plain.end());
+            }(),
+            kContextQueryBf16Criterion);
+    }
+    return failures;
+}
+
+int run_window_cases() {
+    int failures = 0;
+    failures += run_window_case(1, {{50, 1}}, 64);                   // L <= W: the plain op
+    failures += run_window_case(4, {{64, 4}, {10, 4}}, 64);          // both inside
+    failures += run_window_case(1, {{300, 1}}, 64);
+    failures += run_window_case(4, {{300, 4}}, 100, MappingPattern::Offset); // W not a tile multiple
+    failures += run_window_case(8, {{1000, 8}}, 128);
+    failures += run_window_case(8, {{1000, 5}}, 130);                // inert columns
+    failures += run_window_case(16, {{700, 16}}, 256);
+    failures += run_window_case(2, {{5000, 2}}, 2048);
+    failures += run_window_case(8, {{4097, 8}}, 1);
+    // A batch whose rows straddle the window: the first window row is per row.
+    failures += run_window_case(4, {{300, 4}, {40, 4}, {64, 4}, {65, 3}}, 64);
+    failures += run_window_case(4, {{200, 4}, {128, 4}, {129, 4}}, 128, MappingPattern::Offset);
+    failures += run_window_case(16, {{500, 16}, {70, 16}}, 64);
+    if (kD == 128) {
+        failures += run_window_case(8, {{1000, 8}}, 128, MappingPattern::Fragmented, true);
+        failures += run_window_case(4, {{300, 4}, {40, 4}, {65, 2}}, 64, MappingPattern::Offset,
+                                    true);
+        failures += run_window_case(2, {{50, 2}}, 64, MappingPattern::Fragmented, true);
+    }
+    return failures;
+}
+
 // FOLD (context_fold_attention): the context cache holds UNROTATED keys; the query rows and the
 // query block's own keys arrive rotated at their positions. Window branch: context rows
 // [L-W, L), each key rotated to its position j (NeoX pairs (i, i + 64), angle j f_i), plus the V
@@ -1277,6 +1398,7 @@ int run_softmax_attention_context_tests() {
         std::cout << "context_softmax_attention profile [" << selected.d << ","
                   << selected.q_heads << "," << selected.kv_heads << "]\n";
         failures += run_profile_cases();
+        failures += run_window_cases();
     }
     select_profile({128, 32, 8});
     std::cout << "context_softmax_attention int8 G64 [128,32,8]\n";

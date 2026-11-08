@@ -214,7 +214,8 @@ void context_softmax_attention(const Tensor& q, const Tensor& query_k, const Ten
 /**
  * context_softmax_attention over the last `window` context rows alone, either registered profile:
  * every live query i<V attends context rows [max(L-window,0), L) and the query rows [0,V). The
- * rows below the window are not read. With L <= window it is context_softmax_attention. Keys are
+ * rows below the window are not read. With L <= window it is mathematically context_softmax_attention
+ * (the kernel splits differ, so the bytes may not). Keys are
  * cached rotated at their own positions, as for the plain op. window > 0.
  */
 void context_window_attention(const Tensor& q, const Tensor& query_k, const Tensor& query_v,

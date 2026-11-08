@@ -1582,9 +1582,12 @@ OJson resolved_rope(const OJson& source, std::uint64_t dim, std::uint64_t max_po
     OJson freq               = OJson::array();
     for (const float f : r.inv_freq) { freq.push_back(static_cast<double>(f)); }
     out["inv_freq"] = std::move(freq);
-    // The length a YaRN rope was scaled from: a DFlash drafter reads no further than this
+    // The length a YaRN rope was scaled from, when shorter than the positions the checkpoint
+    // addresses: a DFlash drafter without a sliding layer reads no further than this
     // (DFlashConfig::full_window).
-    if (r.yarn_original != 0) { out["original_max_position_embeddings"] = r.yarn_original; }
+    if (r.yarn_original != 0 && r.yarn_original < max_positions) {
+        out["original_max_position_embeddings"] = r.yarn_original;
+    }
     return out;
 }
 
