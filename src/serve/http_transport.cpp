@@ -32,33 +32,63 @@ void set_socket_option(socket_t socket, int level, int option, const T& value) n
 }
 #endif
 
-// Thrown from the parse callback to stop a document at the value limit.
-class JsonValueLimitExceeded final : public std::exception {};
+// The document builder RequestJson::parse uses, which also counts the values it builds and stops
+// the parse (returns false from the SAX event) at the limit, before the next one is allocated. A
+// callback parser would do the same, but nlohmann's takes quadratic time on a long array. The base
+// class is nlohmann's internal one; a single pass costs no more than parse().
+template <class InputAdapter>
+class BoundedDomBuilder final : public nlohmann::detail::json_sax_dom_parser<RequestJson, InputAdapter> {
+    using Base = nlohmann::detail::json_sax_dom_parser<RequestJson, InputAdapter>;
+
+public:
+    BoundedDomBuilder(RequestJson& root, std::size_t limit) : Base(root), limit_(limit) {}
+
+    [[nodiscard]] bool exceeded() const noexcept { return exceeded_; }
+
+    bool null() { return admit() && Base::null(); }
+    bool boolean(bool value) { return admit() && Base::boolean(value); }
+    bool number_integer(RequestJson::number_integer_t value) {
+        return admit() && Base::number_integer(value);
+    }
+    bool number_unsigned(RequestJson::number_unsigned_t value) {
+        return admit() && Base::number_unsigned(value);
+    }
+    bool number_float(RequestJson::number_float_t value, const std::string& text) {
+        return admit() && Base::number_float(value, text);
+    }
+    bool string(std::string& value) { return admit() && Base::string(value); }
+    bool start_object(std::size_t elements) { return admit() && Base::start_object(elements); }
+    bool start_array(std::size_t elements) { return admit() && Base::start_array(elements); }
+    bool key(std::string& name) { return admit() && Base::key(name); }
+
+private:
+    // One more value (an object key counts: it is a string of its own).
+    bool admit() noexcept {
+        exceeded_ = exceeded_ || ++values_ > limit_;
+        return !exceeded_;
+    }
+
+    std::size_t limit_;
+    std::size_t values_ = 0;
+    bool exceeded_      = false;
+};
 
 } // namespace
 
 RequestJson parse_json_body(const httplib::Request& request, const RequestLimits& limits) {
     RequestJson body;
-    std::size_t values = 0;
+    BoundedDomBuilder<decltype(nlohmann::detail::input_adapter(request.body))> builder(
+        body, limits.max_json_values);
+    bool parsed = false;
     try {
-        // The callback only counts: every value is kept. A container counts when it opens, so a
-        // body of empty objects stops at the limit rather than after it is built.
-        body = RequestJson::parse(request.body,
-                                  [&](int, RequestJson::parse_event_t event, RequestJson&) {
-                                      if (event == RequestJson::parse_event_t::object_end ||
-                                          event == RequestJson::parse_event_t::array_end) {
-                                          return true;
-                                      }
-                                      if (++values > limits.max_json_values) {
-                                          throw JsonValueLimitExceeded();
-                                      }
-                                      return true;
-                                  });
-    } catch (const JsonValueLimitExceeded&) {
+        parsed = RequestJson::sax_parse(request.body, &builder);
+    } catch (const std::exception&) { bad_request("request body is not valid JSON"); }
+    if (builder.exceeded()) {
         bad_request("request JSON holds more than " + std::to_string(limits.max_json_values) +
                         " values (--max-request-json-values)",
                     {}, "request_json_too_large");
-    } catch (const std::exception&) { bad_request("request body is not valid JSON"); }
+    }
+    if (!parsed) { bad_request("request body is not valid JSON"); }
     if (text::json_nests_deeper_than(body, kMaximumRequestJsonDepth)) {
         bad_request("request JSON nests deeper than " + std::to_string(kMaximumRequestJsonDepth) +
                     " levels");
