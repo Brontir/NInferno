@@ -2693,6 +2693,39 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
         }
     };
 
+    // B diverges inside A's decoded answer: only the rows A's prefill wrote are reused (its
+    // decode rows are computed on other routes), so the frontier stays inside A's prompt.
+    {
+        const auto tokens_of = [](std::uint64_t seed, std::uint32_t count) {
+            std::vector<ninferno::TokenId> out;
+            std::uint64_t state = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            for (std::uint32_t index = 0; index < count; ++index) {
+                state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+                out.push_back(static_cast<ninferno::TokenId>(1000U + (state >> 33U) % 19000U));
+            }
+            return out;
+        };
+        const auto run_tokens = [&](std::vector<ninferno::TokenId> tokens, bool reuse) {
+            return engine.generate(engine.prepare_tokens(std::move(tokens)), request(reuse));
+        };
+        const std::vector<ninferno::TokenId> prompt = tokens_of(11, 1500);
+        const ninferno::GenerationResult answered   = run_tokens(prompt, true);
+        std::vector<ninferno::TokenId> diverging    = prompt;
+        diverging.insert(diverging.end(), answered.generated_token_ids.begin(),
+                         answered.generated_token_ids.begin() + 4);
+        const std::vector<ninferno::TokenId> tail = tokens_of(12, 300);
+        diverging.insert(diverging.end(), tail.begin(), tail.end());
+        const ninferno::GenerationResult inside = run_tokens(diverging, true);
+        const ninferno::GenerationResult cold   = run_tokens(diverging, false);
+        std::cout << "  " << label << ": diverging inside the answer reused "
+                  << inside.reused_prompt_tokens << " of a " << prompt.size() << "-token prompt\n";
+        expect(inside.reused_prompt_tokens <= prompt.size() &&
+                   (attention_only ? inside.reused_prompt_tokens >= 256
+                                   : inside.reused_prompt_tokens == 0),
+               "a divergence inside the decoded answer reused rows past the prefill's");
+        expect_same(inside, cold, "the reuse below a decoded answer differs from cold");
+    }
+
     // Cold references (no prefix reuse at all).
     const ninferno::GenerationResult cold_longer = run(longer_text, "", false);
     expect(cold_longer.reused_prompt_tokens == 0, "the cold reference reused a prefix");
@@ -2737,39 +2770,6 @@ int exercise_truncated_endpoint_mode(const char* artifact, ninferno::ActivationM
     expect(own_after.reused_prompt_tokens >= own_before.reused_prompt_tokens,
            "a sessionless request consumed the endpoint of a session");
     expect_same(own_after, cold_longer, "the session's endpoint changed after a sessionless fork");
-
-    // B diverges inside A's decoded answer: only the rows A's prefill wrote are reused (its
-    // decode rows are computed on other routes), so the frontier stays inside A's prompt.
-    {
-        const auto tokens_of = [](std::uint64_t seed, std::uint32_t count) {
-            std::vector<ninferno::TokenId> out;
-            std::uint64_t state = seed * 6364136223846793005ULL + 1442695040888963407ULL;
-            for (std::uint32_t index = 0; index < count; ++index) {
-                state = state * 6364136223846793005ULL + 1442695040888963407ULL;
-                out.push_back(static_cast<ninferno::TokenId>(1000U + (state >> 33U) % 19000U));
-            }
-            return out;
-        };
-        const auto run_tokens = [&](std::vector<ninferno::TokenId> tokens, bool reuse) {
-            return engine.generate(engine.prepare_tokens(std::move(tokens)), request(reuse));
-        };
-        const std::vector<ninferno::TokenId> prompt = tokens_of(11, 1500);
-        const ninferno::GenerationResult answered   = run_tokens(prompt, true);
-        std::vector<ninferno::TokenId> diverging    = prompt;
-        diverging.insert(diverging.end(), answered.generated_token_ids.begin(),
-                         answered.generated_token_ids.begin() + 4);
-        const std::vector<ninferno::TokenId> tail = tokens_of(12, 300);
-        diverging.insert(diverging.end(), tail.begin(), tail.end());
-        const ninferno::GenerationResult inside = run_tokens(diverging, true);
-        const ninferno::GenerationResult cold   = run_tokens(diverging, false);
-        std::cout << "  " << label << ": diverging inside the answer reused "
-                  << inside.reused_prompt_tokens << " of a " << prompt.size() << "-token prompt\n";
-        expect(inside.reused_prompt_tokens <= prompt.size() &&
-                   (attention_only ? inside.reused_prompt_tokens >= 256
-                                   : inside.reused_prompt_tokens == 0),
-               "a divergence inside the decoded answer reused rows past the prefill's");
-        expect_same(inside, cold, "the reuse below a decoded answer differs from cold");
-    }
 
     // A cancellation at each of the first polls of a truncated reuse leaves a source whose summary
     // still describes its rows: the session's next request reuses it and matches a cold prefill.
