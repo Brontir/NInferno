@@ -21,6 +21,25 @@ namespace {
 
 constexpr int kVecWarps = 4;
 
+// The runtime-K plain instance of 4 columns has a twin bounded to 7 resident CTAs per SM
+// (__launch_bounds__' minimum), the registers of 3 columns: unbounded it takes 85 registers where 3
+// take 72 (sm_86 / sm_89, CUDA 13), which is 5 CTAs of 128 threads on a 64K-register SM instead of
+// 7. The grid is sized to the resident CTAs, so the launch takes the twin when that saves a round
+// of row groups (480..512 groups on an 82-SM card: 2 rounds against 1), and the plain instance
+// otherwise. The rule is deliberately conservative: on a 2080 Ti the twin is 11..22 % faster even
+// at shapes it does not take (the plain instance's second round runs 72 CTAs, the twin's 4), but
+// on a 4090 the same bound measured 9 % slower at 1024 groups with 2 rounds either way
+// (route-tune), and no model here explains both, so only the case with a counted saving is taken.
+// The other instances have no twin: a bound makes the compiler spend more registers on every
+// instance it is given to (110 for 3 columns), and the unrolled-K and gated ones spill under 72.
+constexpr bool kVecHasBoundedTwin(int columns, int ks, bool gated) {
+    return columns == 4 && ks == 0 && !gated;
+}
+
+constexpr int kVecBoundedBlocks = 7;
+
+thread_local VecInstance g_vec_instance = VecInstance::Auto;
+
 struct Slice {
     int w[8];
     float f[6];
@@ -622,8 +641,9 @@ __device__ __forceinline__ void store(const VecOut& o, int row, int column, floa
 // KS: the static K the slice loop unrolls over, or 0 for the runtime K. Gated: the SwiGlu pair (gate
 // and up rows, one row per warp), a separate instance as ninfer-all's Fused one: the plain product
 // keeps no gated branches or second-plane state in its loop.
-template <ggml_type type, int T, int KS, bool Gated>
-__launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
+template <ggml_type type, int T, int KS, bool Gated, bool Bounded = false>
+__launch_bounds__(kVecWarps * 32, Bounded ? kVecBoundedBlocks : 0) __global__
+    void vec_kernel(VecArgs p) {
     using D                 = Decoder<type>;
     constexpr int kTable    = D::kTableWords > 0 ? D::kTableWords : 4;
     constexpr int kPerBlock = D::kBlockValues / 32;
@@ -719,28 +739,59 @@ __launch_bounds__(kVecWarps * 32) __global__ void vec_kernel(VecArgs p) {
     }
 }
 
-template <ggml_type type, int T, int KS, bool Gated>
-void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
+// The CTAs one launch fills at once. A bounded twin whose compile spilled (local memory) gives 0:
+// it is never worth its extra traffic, whatever it fits.
+template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
+int vec_slots() {
     // Per device: a process may drive GPUs of different chips.
     static PerDevice<int> per_device;
-    const int resident = per_device.get([](int) {
+    return per_device.get([](int) {
+        const auto kernel = vec_kernel<type, T, KS, Gated, Bounded>;
+        if constexpr (Bounded) {
+            cudaFuncAttributes attributes{};
+            check(cudaFuncGetAttributes(&attributes, kernel), "vector kernel attributes");
+            if (attributes.localSizeBytes != 0) return 0;
+        }
         int blocks = 0;
-        check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, vec_kernel<type, T, KS, Gated>,
-                                                            kVecWarps * 32, 0),
+        check(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, kernel, kVecWarps * 32, 0),
               "vector occupancy");
-        return std::max(blocks, 1);
+        return std::max(blocks, 1) * device_facts().sm_count;
     });
-    const int per_block = kVecWarps * (Gated ? 1 : 2);
-    const int groups    = (args.rows + per_block - 1) / per_block;
-    const int blocks    = std::min(groups, resident * device_facts().sm_count);
+}
+
+template <ggml_type type, int T, int KS, bool Gated, bool Bounded>
+void vec_launch_grid(const VecArgs& args, int groups, int slots, cudaStream_t stream) {
+    const int blocks = std::min(groups, slots);
     if (LaunchShape* described = describe_target()) {
-        describe_launch(*described, reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated>),
+        describe_launch(*described,
+                        reinterpret_cast<const void*>(vec_kernel<type, T, KS, Gated, Bounded>),
                         dim3(blocks), dim3(kVecWarps * 32), 0);
         return;
     }
     check(pdl::launch_dependent({dim3(blocks), dim3(kVecWarps * 32), 0, stream},
-                                vec_kernel<type, T, KS, Gated>, args),
+                                vec_kernel<type, T, KS, Gated, Bounded>, args),
           "vector product launch");
+}
+
+template <ggml_type type, int T, int KS, bool Gated>
+void vec_launch_ks(const VecArgs& args, cudaStream_t stream) {
+    const int per_block = kVecWarps * (Gated ? 1 : 2);
+    const int groups    = (args.rows + per_block - 1) / per_block;
+    const int slots     = vec_slots<type, T, KS, Gated, false>();
+    if constexpr (kVecHasBoundedTwin(T, KS, Gated)) {
+        const int twin_slots = vec_slots<type, T, KS, Gated, true>();
+        const auto rounds    = [&](int n) { return (groups + n - 1) / n; };
+        // Conservative on purpose: see kVecHasBoundedTwin.
+        const bool take = g_vec_instance == VecInstance::Twin ||
+                          (g_vec_instance == VecInstance::Auto && twin_slots > 0 &&
+                           rounds(twin_slots) < rounds(slots));
+        if (take) {
+            // Forced onto a twin that spilled: its grid is the plain one's.
+            return vec_launch_grid<type, T, KS, Gated, true>(
+                args, groups, twin_slots > 0 ? twin_slots : slots, stream);
+        }
+    }
+    vec_launch_grid<type, T, KS, Gated, false>(args, groups, slots, stream);
 }
 
 // The K of the 27B and 35B text matrices are unrolled; any other K runs the loop.
@@ -859,6 +910,13 @@ void vec_quantize_activation(const __nv_bfloat16* x, int ldx, int k, int columns
                                         detail::vec_quantize_kernel, x, ldx, k, qs, ds),
                   "vector activation launch");
 }
+
+ScopedVecInstance::ScopedVecInstance(VecInstance instance) noexcept
+    : previous_(detail::g_vec_instance) {
+    detail::g_vec_instance = instance;
+}
+
+ScopedVecInstance::~ScopedVecInstance() { detail::g_vec_instance = previous_; }
 
 void vec_product(Type type, const Planes& weight, const Planes& up, int blocks_per_row, int rows,
                  int k, const void* activation, int columns, const VecOut& out,
