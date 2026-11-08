@@ -505,7 +505,7 @@ ninferno::RequestOptions to_request_options(const GenerationRequest& request,
     options.output.tool_name_max_length = static_cast<std::uint32_t>(request.tool_name_max_length);
     options.stop.include_model_defaults = !request.ignore_eos;
     options.stop.repetition_window      = server.repetition_stop;
-    if (options.stop.repetition_window == 0 && !effective_tools(request).empty() &&
+    if (options.stop.repetition_window == 0 && !effective_tools(request, false).empty() &&
         !request.uses_tools()) {
         // tool_choice none: a model kept from its call can fall into a filler loop that nothing
         // else ends before max_tokens. An output that repeats a period of up to 12 tokens four
