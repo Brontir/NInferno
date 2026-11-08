@@ -776,7 +776,10 @@ void keeps_given_drafters() {
     cv::AttachOptions again;
     again.drafter_artifacts["mine"] = "/models/other.ninferno";
     (void)cv::attach_drafters(cv::DrafterPlan{}, target.entry, again);
-    expect(names(Json::parse(read_text(manifest_path))).empty(),
+    // The new mapping is this start's (here a file that is not there), never the earlier one.
+    const auto given = Json::parse(read_text(manifest_path));
+    expect(std::none_of(given.at("drafters").begin(), given.at("drafters").end(),
+                        [](const Json& d) { return d.value("artifact_id", std::string()) == "ab"; }),
            "a start that gives the name again does not keep the old mapping");
 }
 
