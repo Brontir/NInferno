@@ -171,6 +171,27 @@ void lineage() {
            "a descendant of another geometry is not the entry's");
 }
 
+// A kept artifact planned again after a registry update takes the base model its manifest
+// recorded: describe_artifact reads no model card, and a fine-tune's drafter is the one its
+// lineage matched.
+void reused_lineage() {
+    cv::ManifestState manifest;
+    manifest.lineage = {"org/muse"};
+    auto bare        = cv::plan_drafters(muse(), registry());
+    expect(bare.source == "none", "an artifact described without its lineage matches no entry");
+    auto t = cv::reused_target(muse(), manifest);
+    expect(t.lineage == manifest.lineage, "the manifest's base models are the target's lineage");
+    auto plan = cv::plan_drafters(t, registry());
+    expect(plan.matched_by == "lineage" && plan.entry == "muse" && plan.drafters.size() == 1,
+           "a fine-tune planned again keeps the drafter its lineage matched");
+    auto described    = muse();
+    described.lineage = {"org/muse", "org/other"};
+    manifest.lineage  = {"org/muse", "org/third"};
+    expect(cv::reused_target(described, manifest).lineage ==
+               std::vector<std::string>({"org/muse", "org/other", "org/third"}),
+           "a base model both name is listed once");
+}
+
 void dense_scope() {
     // A dense model the registry does not know, declaring a DFlash drafter itself.
     auto t        = muse();
@@ -853,6 +874,7 @@ void decide_table() {
 int main() {
     num_target_layers();
     lineage();
+    reused_lineage();
     dense_scope();
     nemotron_geometry();
     nemotron_mapper();

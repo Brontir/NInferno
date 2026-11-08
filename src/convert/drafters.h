@@ -207,6 +207,12 @@ struct ManifestState {
 // The same for `target_artifact`, read from disk.
 [[nodiscard]] bool drafters_incomplete(const std::filesystem::path& target_artifact);
 
+// A kept artifact (its download removed) described for planning again: what the artifact says,
+// with what its manifest recorded of the checkpoint it cannot be read from any more: the base
+// models of the model card (describe_artifact reads none), so that a fine-tune keeps the drafter
+// its lineage matched.
+[[nodiscard]] DrafterTarget reused_target(DrafterTarget described, const ManifestState& manifest);
+
 // The manifest's drafters attached from a file here that was written again since (another
 // conversion of the same drafter at the same path: its id is no longer the recorded one) take the
 // file's new id, as attach_drafters takes a cached one, or are marked incompatible when its

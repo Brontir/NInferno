@@ -834,8 +834,10 @@ AcquiredModel acquire_model(const std::string& spec, AcquireOptions options) {
                 std::string target_error;
                 if (options.drafters != Drafters::Off) {
                     try {
-                        target = describe_artifact(
-                            *kept, options.model_id.empty() ? repo : options.model_id);
+                        target = reused_target(describe_artifact(*kept, options.model_id.empty()
+                                                                            ? repo
+                                                                            : options.model_id),
+                                               state);
                     } catch (const std::exception& error) { target_error = error.what(); }
                 }
                 const auto action = decide_drafters(options.drafters, target && target->gguf_source,

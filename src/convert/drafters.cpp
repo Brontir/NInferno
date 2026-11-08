@@ -1149,4 +1149,14 @@ bool drafters_incomplete(const fs::path& target_artifact) {
     return drafters_incomplete(read_manifest_state(target_artifact));
 }
 
+DrafterTarget reused_target(DrafterTarget described, const ManifestState& manifest) {
+    for (const auto& base : manifest.lineage) {
+        if (std::find(described.lineage.begin(), described.lineage.end(), base) ==
+            described.lineage.end()) {
+            described.lineage.push_back(base);
+        }
+    }
+    return described;
+}
+
 } // namespace ninferno::convert
