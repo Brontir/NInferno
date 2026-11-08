@@ -117,6 +117,15 @@ public:
     [[nodiscard]] std::filesystem::path file_path(std::size_t index) const;
     [[nodiscard]] static std::filesystem::path partial_path(const std::filesystem::path& target);
 
+    // Removes the hidden temporaries ".<name>.XXXXXX.tmp" that interrupted conversions left in
+    // `directory` (killed, out of memory, power loss; a signal or an exception removes its own).
+    // A temporary is removed only when no writer holds it: every writer keeps an exclusive lock
+    // (flock, LockFileEx on Windows) on its temporaries until they are published or removed, so a
+    // conversion still running, in this process or another, is never touched. The constructor does
+    // this for its output directory. A file whose first
+    // bytes are neither an artifact header nor zeros is not ours and stays. Returns the count.
+    static std::size_t remove_stale_temporaries(const std::filesystem::path& directory);
+
 private:
     struct Mapping {
         std::byte* base     = nullptr;
@@ -160,6 +169,7 @@ private:
     artifact::ArtifactId id_{};
     std::vector<std::uint64_t> prefixes_;
     std::vector<int> fds_;
+    std::vector<int> slots_; // the temporaries' places in the signal handler's list
     std::vector<Mapping> mappings_;
     std::vector<std::filesystem::path> temporary_;
     std::vector<std::filesystem::path> published_;

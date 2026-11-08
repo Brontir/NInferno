@@ -581,6 +581,8 @@ The writer receives the already determined component configs, object/binding/use
 7. Verify full coverage of the declared intervals and the actual file lengths, and publish the continuation parts first, then the entry file.
 
 The current writer completes generation in temporary files, cleans up this run's files on failure, and does not overwrite an existing target.
+
+The temporaries are hidden files `.<file>.XXXXXX.tmp` beside the target. Each is locked (flock, `LockFileEx` on Windows) for as long as its writer lives. A failure, an exception, SIGINT and SIGTERM remove them (the writer registers them with a signal handler it installs only where the signal had its default action). SIGKILL, an out-of-memory kill and a power loss cannot, so the next conversion into the same directory (and the free-space check before it) removes every such file whose lock is free and whose first bytes are an artifact header or zeros; a temporary a running conversion holds is skipped, and a file of that name pattern that is not ours stays. `--consume-source` keeps its fixed `<file>.partial` names and is not swept.
 The writer may use trailing JSON whitespace to keep the reserved json_bytes stable. The reservation policy and transfer block size are implementation matters; the reader
 uses only the actual framing and files values. When changing the shard limit, the same logical payload can be copied, keeping the object,
 binding, and use records, and generating a new files table and file-set identifier.

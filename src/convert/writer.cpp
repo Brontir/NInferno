@@ -8,7 +8,9 @@
 #include "core/sys.h"
 
 #include <algorithm>
+#include <cctype>
 #include <condition_variable>
+#include <csignal>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +18,12 @@
 #include <thread>
 
 #include <openssl/evp.h>
+
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <unistd.h>
+#endif
 
 namespace ninferno::convert {
 namespace {
@@ -30,6 +38,95 @@ constexpr std::uint64_t kDirectWriters = 2;
 constexpr std::uint64_t kQueueBytes    = 256ULL << 20;
 
 constexpr std::uint64_t kDirectBlock = 4096;
+
+// Temporary files of the writers alive in this process, so that SIGINT and SIGTERM can remove them
+// (an interrupted conversion otherwise leaves everything it had written in a hidden dotfile). The
+// handler is installed only if the signal had its default action when the first writer
+// registered: an application that handles the signals itself (or ignores them) keeps them. It
+// unlinks every registered file and then re-raises the signal with the default action, so the
+// exit status is the one an unhandled signal gives. Slots hold fixed buffers: a signal handler
+// cannot allocate.
+constexpr std::size_t kSlotCount  = 256;
+constexpr std::size_t kSlotLength = 4096;
+
+struct TemporarySlot {
+    std::atomic<bool> used{false};
+    std::atomic<bool> live{false};
+    std::filesystem::path::value_type name[kSlotLength];
+};
+
+TemporarySlot g_slots[kSlotCount];
+
+void remove_registered(int signal_number) {
+    for (auto& slot : g_slots) {
+        if (slot.live.load(std::memory_order_acquire)) {
+#ifdef _WIN32
+            _wunlink(slot.name);
+#else
+            ::unlink(slot.name);
+#endif
+        }
+    }
+    std::signal(signal_number, SIG_DFL);
+    std::raise(signal_number);
+}
+
+void install_signal_cleanup() {
+    static std::once_flag once;
+    std::call_once(once, [] {
+        for (const int number : {SIGINT, SIGTERM}) {
+            const auto previous = std::signal(number, remove_registered);
+            if (previous != SIG_DFL && previous != SIG_ERR) { std::signal(number, previous); }
+        }
+    });
+}
+
+// The slot holding `path`, or -1 (none free, or the name too long: that file is then removed by
+// the stale sweep of the next run instead).
+int register_temporary(const std::filesystem::path& path) {
+    const auto& native = path.native();
+    if (native.size() >= kSlotLength) { return -1; }
+    install_signal_cleanup();
+    for (std::size_t i = 0; i < kSlotCount; ++i) {
+        bool expected = false;
+        if (!g_slots[i].used.compare_exchange_strong(expected, true)) { continue; }
+        std::copy(native.begin(), native.end(), g_slots[i].name);
+        g_slots[i].name[native.size()] = 0;
+        g_slots[i].live.store(true, std::memory_order_release);
+        return static_cast<int>(i);
+    }
+    return -1;
+}
+
+void unregister_temporary(int slot) noexcept {
+    if (slot < 0) { return; }
+    g_slots[slot].live.store(false, std::memory_order_release);
+    g_slots[slot].used.store(false, std::memory_order_release);
+}
+
+// "." + name + "." + six letters or digits + ".tmp": the name create() draws for a temporary.
+bool temporary_name(const std::string& name) {
+    constexpr std::size_t kTail = 6 + 4; // XXXXXX.tmp
+    if (name.size() < 1 + 1 + 1 + kTail || name[0] != '.') { return false; }
+    if (name.compare(name.size() - 4, 4, ".tmp") != 0) { return false; }
+    if (name[name.size() - kTail - 1] != '.') { return false; }
+    for (std::size_t i = name.size() - kTail; i < name.size() - 4; ++i) {
+        if (!std::isalnum(static_cast<unsigned char>(name[i]))) { return false; }
+    }
+    return true;
+}
+
+// Locks a freshly created temporary for the writer's lifetime, so that the sweep of another
+// conversion can tell a live temporary from a dead one. A sweep that got the lock first removes
+// the file under it: the name is then gone, and the caller draws another. A file system without
+// locks leaves the file unlocked, and such a sweep never removes it either.
+bool lock_temporary(int fd, const std::filesystem::path& name) {
+    while (sys::lock(fd, true) != 0) {
+        if (errno != EINTR) { return true; }
+    }
+    std::error_code ignored;
+    return std::filesystem::exists(name, ignored);
+}
 
 std::string files_json(const std::vector<OutputFile>& files) {
     OJson list = OJson::array();
@@ -138,6 +235,42 @@ std::filesystem::path ArtifactWriter::partial_path(const std::filesystem::path& 
     return target.string() + ".partial";
 }
 
+std::size_t ArtifactWriter::remove_stale_temporaries(const std::filesystem::path& directory) {
+    std::size_t removed = 0;
+    std::error_code error;
+    std::vector<std::filesystem::path> candidates;
+    for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end;
+         it.increment(error)) {
+        if (!temporary_name(it->path().filename().string())) { continue; }
+        std::error_code status;
+        if (it->is_regular_file(status) && !it->is_symlink(status)) {
+            candidates.push_back(it->path());
+        }
+    }
+    for (const auto& path : candidates) {
+        // A live writer holds the lock, so it is refused. A file this code did not write (neither
+        // an artifact header nor zeros where one goes) is left alone.
+        const int fd = sys::open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) { continue; }
+        bool gone = false;
+        if (sys::lock(fd, false) == 0) {
+            std::byte head[8]{};
+            const auto got = sys::pread(fd, head, sizeof(head), 0);
+            const std::byte zeros[8]{};
+            const bool ours = got >= 0 && (artifact::has_magic(artifact::kEntryMagic, head) ||
+                                           artifact::has_magic(artifact::kPartMagic, head) ||
+                                           std::memcmp(head, zeros, sizeof(head)) == 0);
+            // Removed while still locked: a writer that created the file just before waits for
+            // the lock, finds the name gone and draws another.
+            std::error_code ignored;
+            if (ours) { gone = std::filesystem::remove(path, ignored); }
+        }
+        sys::close(fd);
+        if (gone) { ++removed; }
+    }
+    return removed;
+}
+
 ArtifactWriter::ArtifactWriter(std::filesystem::path path, ArtifactLayout layout,
                                WriterOptions options)
     : path_(std::move(path)), layout_(std::move(layout)), options_(std::move(options)) {
@@ -160,6 +293,11 @@ ArtifactWriter::ArtifactWriter(std::filesystem::path path, ArtifactLayout layout
         }
     }
     create_parent_directories(path_);
+    if (!options_.named_partial && !options_.resume) {
+        const auto directory =
+            path_.parent_path().empty() ? std::filesystem::path(".") : path_.parent_path();
+        (void)remove_stale_temporaries(directory);
+    }
     if (options_.direct && options_.resume) {
         throw std::logic_error("direct output cannot resume a partial file");
     }
@@ -206,12 +344,21 @@ void ArtifactWriter::create(std::size_t index) {
         name = partial_path(target).string();
         fd   = sys::open(name, O_RDWR | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
     } else {
-        name = (target.parent_path() / ("." + target.filename().string() + ".XXXXXX.tmp")).string();
-        fd   = sys::create_unique(name, 4);
+        // A name a sweep removed between the create and the lock is drawn again.
+        for (int attempt = 0; attempt < 16; ++attempt) {
+            name = (target.parent_path() / ("." + target.filename().string() + ".XXXXXX.tmp"))
+                       .string();
+            fd = sys::create_unique(name, 4);
+            if (fd < 0 || lock_temporary(fd, name)) { break; }
+            sys::close(fd);
+            fd    = -1;
+            errno = EEXIST;
+        }
     }
     if (fd < 0) { throw std::runtime_error("cannot create " + name + ": " + sys::error_text(errno)); }
     fds_.push_back(fd);
     temporary_.emplace_back(name);
+    if (!options_.named_partial) { slots_.push_back(register_temporary(temporary_.back())); }
     if (sys::truncate(fd, static_cast<std::int64_t>(file_length(index))) != 0) {
         throw std::runtime_error("cannot size " + name);
     }
@@ -647,8 +794,8 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
             if (sys::fdatasync(fd) != 0) { throw std::runtime_error("fdatasync failed"); }
             sys::advise_file(fd, 0, 0, sys::Advice::DontNeed);
         }
-        for (const int fd : fds_) { sys::close(fd); }
-        fds_.clear();
+        // The descriptors stay open (and the temporaries locked) until the files are published:
+        // another conversion's sweep must not take a finished temporary before its link exists.
         for (auto& file : direct_) {
             if (file.fd >= 0) { sys::close(file.fd); }
             file.fd = -1;
@@ -677,6 +824,10 @@ void ArtifactWriter::finish(const std::function<std::string()>& seal) {
         }
         for (const auto& temporary : temporary_) { std::filesystem::remove(temporary); }
         temporary_.clear();
+        for (const int fd : fds_) { sys::close(fd); }
+        fds_.clear();
+        for (const int slot : slots_) { unregister_temporary(slot); }
+        slots_.clear();
         finished_ = true;
     } catch (...) {
         abort();
@@ -706,6 +857,8 @@ void ArtifactWriter::abort() noexcept {
         }
         for (const auto& path : published_) { std::filesystem::remove(path, ignored); }
     }
+    for (const int slot : slots_) { unregister_temporary(slot); }
+    slots_.clear();
     temporary_.clear();
     published_.clear();
 }

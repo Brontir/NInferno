@@ -244,12 +244,16 @@ void for_elements(const WeightJob& job, std::uint64_t begin, std::uint64_t end, 
 // and a commit thread makes each completed prefix durable before its sources are punched.
 class Executor {
 public:
+    // --threads above this is capped: more workers than tasks in flight only cost memory.
+    static constexpr unsigned kMaxThreads = 256;
+
     Executor(std::vector<const Checkpoint*> stores, const Plan& plan, ArtifactWriter& writer,
              std::vector<std::uint32_t> order, unsigned threads, bool keep_cache,
              Committer* committer = nullptr, std::uint64_t window = 0)
         : stores_(std::move(stores)), plan_(plan), writer_(writer), order_(std::move(order)),
           tasks_(make_tasks(plan, order_)),
-          threads_(threads ? threads : std::clamp(std::thread::hardware_concurrency(), 1U, 16U)),
+          threads_(threads ? std::min(threads, kMaxThreads)
+                           : std::clamp(std::thread::hardware_concurrency(), 1U, 16U)),
           keep_cache_(keep_cache), committer_(committer), window_(window),
           remaining_(plan.weights.size()) {
         for (const auto& task : tasks_) { ++remaining_[task.job]; }
@@ -281,12 +285,19 @@ public:
             }
         }
         std::thread committing;
-        if (committer_) {
-            committing = std::thread([this] { commit_loop(); });
-        }
         std::vector<std::thread> workers;
-        for (unsigned t = 0; t < threads_; ++t) {
-            workers.emplace_back([this] { work(); });
+        // A thread that cannot be created (a process or memory limit, an absurd --threads) must
+        // not unwind past joinable threads (std::terminate leaves the temporary behind): the
+        // run goes on with the workers it has, or fails cleanly when it has none.
+        try {
+            if (committer_) {
+                committing = std::thread([this] { commit_loop(); });
+            }
+            for (unsigned t = 0; t < threads_; ++t) {
+                workers.emplace_back([this] { work(); });
+            }
+        } catch (...) {
+            if (workers.empty() || (committer_ && !committing.joinable())) { fail(); }
         }
         for (auto& worker : workers) { worker.join(); }
         {
@@ -2014,6 +2025,15 @@ ConvertResult convert(const ConvertOptions& options) {
     for (const auto& resource : plan.resources) { prologue += resource.bytes->size(); }
     std::vector<std::uint64_t> output_bytes;
     for (const auto& job : plan.weights) { output_bytes.push_back(job.geometry.bytes); }
+    if (!options.consume_source) {
+        // Before the free-space check: what an interrupted run left would be counted against it.
+        const auto directory =
+            options.out.parent_path().empty() ? std::filesystem::path(".") : options.out.parent_path();
+        if (const auto stale = ArtifactWriter::remove_stale_temporaries(directory)) {
+            log("removed " + std::to_string(stale) + " leftover temporary file" +
+                (stale == 1 ? "" : "s") + " of interrupted conversions in " + directory.string());
+        }
+    }
     const auto available    = free_bytes(options.out, options);
     const auto needed       = layout.file_bytes() + kSpaceMargin;
     const auto journal_path = std::filesystem::path(output + ".journal");
