@@ -485,9 +485,11 @@ void automatic_drafter_missing() {
     odd.decl.repo = "google/gemma-4-12B-it-assistant";
     odd.status    = "incompatible: vocabulary differs";
     cv::PlannedDrafter fine;
-    fine.decl.name = "mtp";
-    fine.status    = "embedded";
-    plan.drafters  = {fine, missing, odd};
+    fine.decl.name            = "mtp";
+    fine.status               = "embedded";
+    cv::PlannedDrafter absent = missing; // the same drafter once more, as the artifact lacks it
+    absent.status             = "not in the artifact: convert the target with --components";
+    plan.drafters             = {fine, missing, odd, absent};
 
     std::vector<std::string> lines;
     cv::AcquireOptions options;

@@ -283,6 +283,9 @@ void require_drafters(const DrafterPlan& plan, const AcquireOptions& options) {
                                      " (--with-drafters requires every drafter; without the "
                                      "flag the model is served without it)");
         }
+        // A companion absent from the artifact follows from its fetch having failed, which has
+        // its warning: said once.
+        if (d.status.starts_with("not in the artifact")) { continue; }
         not_attached(options, "drafter " + d.decl.name, d.status, d.status.starts_with("failed"),
                      d.decl.repo);
     }
