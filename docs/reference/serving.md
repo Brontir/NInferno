@@ -628,11 +628,16 @@ line and on every refused request (a 4xx before generation is logged too).
   seconds, including while the request is waiting or prefilling.
 - Every connection holds one HTTP worker while its request is read. The request line and headers
   have a 5-second total deadline. A body must grow by at least `--request-body-min-kib-per-sec`
-  (16 KiB/s) over every 10-second window, otherwise the server answers HTTP 408
-  `request_body_too_slow` and closes the connection. A sender that trickles a body therefore
-  holds a worker for about ten seconds, not for as long as it likes. The worker pool is still
-  finite (49 workers by default): on a network where clients are hostile, put a buffering reverse
-  proxy in front, which sends the body to NInferno only once it has received all of it.
+  (16 KiB/s) over every 10-second window, counting the bytes of chunk framing as well, otherwise
+  the server answers HTTP 408 `request_body_too_slow` and closes the connection. A sender that
+  trickles a body therefore holds a worker for about ten seconds, not for as long as it likes.
+- The worker pool is finite (49 workers by default) and queues at most 16 more connections. A
+  connection past the queue is answered at once on the accepting thread: `GET /health` with the
+  health answer, anything else with HTTP 503, `Retry-After: 5` and code `server_busy`. Senders
+  that fill the pool therefore cannot make the server unreachable to a liveness probe, and nobody
+  waits in an unbounded queue. A connection that is queued waits for a worker to free up, which
+  takes seconds. On a network where clients are hostile, a buffering reverse proxy in front still
+  helps: it sends the body to NInferno only once it has received all of it.
 - A peer whose TCP stack remains connected and acknowledges data cannot be distinguished from a
   reading application. Proxies must close their upstream NInferno connection when the downstream
   client disappears.

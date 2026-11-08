@@ -394,10 +394,30 @@ HttpServer::HttpServer(ServeOptions options, std::shared_ptr<spdlog::logger> log
     server_.set_tcp_nodelay(true);
     server_.set_socket_options(configure_http_server_socket);
     server_.set_payload_max_length(options_.max_request_bytes);
+    server_.set_overload_handler(
+        [this](socket_t socket) { answer_overloaded_connection(socket, [this] { return health_reply(); }); });
     server_.set_request_body_min_rate(
         static_cast<std::size_t>(options_.request_body_min_kib_per_sec) << 10,
         static_cast<time_t>(kRequestBodyRateWindow.count()));
     register_routes();
+}
+
+HealthReply HttpServer::health_reply() const {
+    const bool available = service_ != nullptr && service_->is_available();
+    const char* status   = !available             ? "unavailable"
+                           : draining_.load()     ? "draining"
+                           : stalled_.load()      ? "stalled"
+                                                  : "ok";
+    nlohmann::json body{{"status", status}, {"active_requests", active_requests_.load()}};
+    if (service_ != nullptr) {
+        const ninferno::RuntimeStats stats = service_->runtime_stats();
+        body["running_requests"]           = stats.running_requests;
+        body["waiting_requests"]           = stats.waiting_requests;
+        body["materializing_requests"]     = stats.materializing_requests;
+    }
+    return HealthReply{.status           = std::string_view(status) == "ok" ? 200 : 503,
+                       .body             = body.dump(),
+                       .keeps_connection = std::string_view(status) == "stalled"};
 }
 
 HttpServer::RequestLifecycle::RequestLifecycle(HttpServer& owner, RequestLogContext context)
@@ -670,25 +690,13 @@ void HttpServer::register_routes() {
     // server drains after SIGTERM, and while the executor holds work without progress; the body
     // carries the load gauges.
     server_.Get("/health", [this](const httplib::Request&, httplib::Response& res) {
-        const bool available = service_ != nullptr && service_->is_available();
-        const char* status   = !available                 ? "unavailable"
-                               : draining_.load()         ? "draining"
-                               : stalled_.load()          ? "stalled"
-                                                          : "ok";
-        res.status           = std::string_view(status) == "ok" ? 200 : 503;
-        nlohmann::json body{{"status", status},
-                            {"active_requests", active_requests_.load()}};
-        if (service_ != nullptr) {
-            const ninferno::RuntimeStats stats = service_->runtime_stats();
-            body["running_requests"]         = stats.running_requests;
-            body["waiting_requests"]         = stats.waiting_requests;
-            body["materializing_requests"]   = stats.materializing_requests;
-        }
+        const HealthReply reply = health_reply();
+        res.status              = reply.status;
         if (res.status != 200) { res.set_header("Retry-After", kRetryAfterUnavailableSeconds); }
         // A stalled executor recovers in this process: a load balancer's probe keeps its
         // connection. A failed or draining server goes away.
-        res.keep_alive_after_error = std::string_view(status) == "stalled";
-        res.set_content(body.dump(), "application/json");
+        res.keep_alive_after_error = reply.keeps_connection;
+        res.set_content(reply.body, "application/json");
     });
     server_.Get("/props", [this](const httplib::Request&, httplib::Response& res) {
         res.set_content(make_props(public_model_id_, options_.max_context,

@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -88,10 +89,12 @@ RequestJson parse_json_body(const httplib::Request& request);
 // 429/503. The pool therefore must never close an accepted connection without a response. It keeps
 // a worker for every request the Engine may hold, headroom for requests the Engine rejects at once
 // and for idle keep-alive connections (each holds a worker until its keep-alive timeout), and it
-// queues accepted sockets beyond that instead of dropping them.
+// queues a few accepted sockets beyond that. A socket past the queue is answered 503 by
+// answer_overloaded_connection, never dropped, and never left waiting without bound behind
+// workers that slow senders hold.
 struct HttpWorkerPlan {
     std::size_t threads    = 0;
-    std::size_t max_queued = 0; // 0: unbounded; an accepted socket waits for a free worker
+    std::size_t max_queued = 0; // accepted sockets that wait for a free worker; more are refused
 };
 
 // The window over which a request body must keep arriving at
@@ -99,6 +102,20 @@ struct HttpWorkerPlan {
 // whole and each wait for body bytes, but not a sender that delivers a few bytes every few seconds;
 // without this such a sender holds a worker for as long as it likes.
 inline constexpr std::chrono::milliseconds kRequestBodyRateWindow{10000};
+
+// What /health answers: the status code, the JSON body, and whether the connection may be kept.
+struct HealthReply {
+    int status = 200;
+    std::string body;
+    bool keeps_connection = false;
+};
+
+// The answer to a connection the worker pool refused because every worker is busy and its queue is
+// full (the pool runs on the accepting thread and must not block): a `GET /health` is answered
+// with `health()`, so a liveness probe is not failed by a pool that slow senders have filled, and
+// anything else gets HTTP 503 with Retry-After, server_busy, and the connection closes. The
+// request line is only peeked at (waiting at most a few milliseconds for it), never read.
+void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health);
 
 [[nodiscard]] HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
                                                std::uint32_t max_pending_requests) noexcept;

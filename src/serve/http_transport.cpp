@@ -5,10 +5,12 @@
 
 #if defined(__linux__)
 #    include <netinet/tcp.h>
+#    include <poll.h>
 #    include <sys/socket.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <stdexcept>
 #include <string>
@@ -86,14 +88,54 @@ bool SseTransport::poll(Clock::time_point now) {
     return false;
 }
 
+void answer_overloaded_connection(socket_t socket, const std::function<HealthReply()>& health) {
+#if defined(__linux__)
+    // A client sends its request line at once; a few milliseconds cover a slow first packet, and
+    // a silent connection costs the accepting thread no more than that.
+    constexpr int kRequestLineWaitMilliseconds = 5;
+    std::array<char, 16> head{};
+    pollfd readable{socket, POLLIN, 0};
+    std::size_t peeked = 0;
+    if (::poll(&readable, 1, kRequestLineWaitMilliseconds) > 0) {
+        const ssize_t got = ::recv(socket, head.data(), head.size(), MSG_PEEK | MSG_DONTWAIT);
+        if (got > 0) { peeked = static_cast<std::size_t>(got); }
+    }
+    const std::string_view line(head.data(), peeked);
+    const bool is_health = line.starts_with("GET /health") && line.size() > 11 &&
+                           (line[11] == ' ' || line[11] == '?');
+    std::string status_line;
+    std::string body;
+    if (is_health) {
+        const HealthReply reply = health();
+        status_line             = reply.status == 200 ? "200 OK" : "503 Service Unavailable";
+        body                    = reply.body;
+    } else {
+        status_line = "503 Service Unavailable";
+        body        = R"({"error":{"message":"the server has no free connection worker; retry shortly",)"
+                      R"("type":"server_error","code":"server_busy"}})";
+    }
+    std::string answer = "HTTP/1.1 " + status_line + "\r\nContent-Type: application/json\r\n";
+    if (status_line[0] != '2') { answer += "Retry-After: 5\r\n"; }
+    answer += "Connection: close\r\nContent-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+    // The socket is fresh: the answer fits its send buffer, and a full one drops it.
+    (void)::send(socket, answer.data(), answer.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
+#else
+    (void)socket;
+    (void)health;
+#endif
+}
+
 HttpWorkerPlan plan_http_workers(std::uint32_t max_concurrency,
                                  std::uint32_t max_pending_requests) noexcept {
     // Rejections in flight and idle keep-alive sockets; threads cost only their stacks.
     constexpr std::size_t kMinimumHeadroom = 32;
+    // Connections that wait for a worker. Few enough that a waiter is served within seconds once
+    // the workers turn over, and the rest are refused at once (answer_overloaded_connection).
+    constexpr std::size_t kQueuedConnections = 16;
     const std::size_t engine_held =
         static_cast<std::size_t>(max_concurrency) + static_cast<std::size_t>(max_pending_requests);
     return HttpWorkerPlan{.threads    = engine_held + std::max(kMinimumHeadroom, engine_held),
-                          .max_queued = 0};
+                          .max_queued = kQueuedConnections};
 }
 
 bool ExecutorStallMonitor::update(const ninferno::RuntimeStats& stats,

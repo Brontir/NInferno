@@ -334,8 +334,8 @@ int test_successor_binds_over_time_wait() {
 // occupy every worker of the planned pool and more; one real request must still be answered.
 int test_worker_plan_answers_every_connection() {
     const ninferno::serve::HttpWorkerPlan plan = ninferno::serve::plan_http_workers(1, 1);
-    int failures = check(plan.threads >= 2 && plan.max_queued == 0,
-                         "HTTP worker plan does not queue every accepted connection");
+    int failures = check(plan.threads >= 2 && plan.max_queued >= 8,
+                         "HTTP worker plan does not queue the connections it was sized for");
 
     httplib::Server server;
     server.new_task_queue = [plan] {
@@ -545,7 +545,7 @@ int test_slow_request_body_is_cut_off() {
     };
 
     const auto exchange =
-        [&](std::size_t length,
+        [&](const std::string& framing, const std::string& prefix, char fill,
             const std::vector<std::pair<std::size_t, std::chrono::milliseconds>>& pieces) {
             Outcome outcome;
             const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -561,11 +561,11 @@ int test_slow_request_body_is_cut_off() {
                 return outcome;
             }
             const auto start       = std::chrono::steady_clock::now();
-            const std::string head = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Length: " +
-                                     std::to_string(length) + "\r\n\r\n";
+            const std::string head = "POST /echo HTTP/1.1\r\nHost: 127.0.0.1\r\n" +
+                                     framing + "\r\n\r\n" + prefix;
             (void)::send(fd, head.data(), head.size(), MSG_NOSIGNAL);
             for (const auto& [bytes, pause] : pieces) {
-                const std::string piece(bytes, 'x');
+                const std::string piece(bytes, fill);
                 if (::send(fd, piece.data(), piece.size(), MSG_NOSIGNAL) < 0) { break; }
                 // The pause ends early when the server has already answered.
                 pollfd readable{fd, POLLIN, 0};
@@ -590,20 +590,104 @@ int test_slow_request_body_is_cut_off() {
 
     int failures = 0;
     std::vector<std::pair<std::size_t, std::chrono::milliseconds>> trickle(100, {1, 50ms});
-    const Outcome slow = exchange(100, trickle);
+    const Outcome slow = exchange("Content-Length: 100", "", 'x', trickle);
     failures += check(slow.status.find(" 408 ") != std::string::npos && slow.closed,
                       "a body trickled one byte at a time was not answered 408 and closed");
     failures += check(slow.elapsed < 2500ms, "a trickled body held its worker past the window");
 
     std::vector<std::pair<std::size_t, std::chrono::milliseconds>> steady(12, {200, 100ms});
-    const Outcome fast = exchange(2400, steady);
+    const Outcome fast = exchange("Content-Length: 2400", "", 'x', steady);
     failures += check(fast.status.find(" 200 ") != std::string::npos,
                       "a body arriving above the minimum rate was cut off");
 
-    const Outcome paused = exchange(4100, {{4000, 600ms}, {100, 0ms}});
+    const Outcome paused = exchange("Content-Length: 4100", "", 'x', {{4000, 600ms}, {100, 0ms}});
     failures += check(paused.status.find(" 200 ") != std::string::npos,
                       "a body that paused briefly after a fast start was cut off");
 
+    // The framing counts too: a chunk-size line with an extension sent a byte at a time never
+    // reaches the body, and used to hold the worker for the whole length the line may have.
+    std::vector<std::pair<std::size_t, std::chrono::milliseconds>> extension(100, {1, 50ms});
+    const Outcome framing = exchange("Transfer-Encoding: chunked", "1;", 'a', extension);
+    failures += check(framing.status.find(" 408 ") != std::string::npos && framing.closed &&
+                          framing.elapsed < 2500ms,
+                      "a chunk-size line trickled one byte at a time held its worker");
+
+    server.stop();
+    listener.join();
+    return failures;
+}
+
+// Slow senders that fill the worker pool and its queue must not make the server unreachable
+// (#526): a connection past the queue is answered at once, /health with the health answer and the
+// rest with 503 and Retry-After. Two workers and one queue slot are held by silent connections.
+int test_overloaded_pool_still_answers() {
+    using namespace std::chrono_literals;
+    httplib::Server server;
+    server.new_task_queue = [] { return new httplib::ThreadPool(2, 2, 1); };
+    server.set_read_timeout(5, 0);
+    server.set_overload_handler([](socket_t socket) {
+        ninferno::serve::answer_overloaded_connection(socket, [] {
+            return ninferno::serve::HealthReply{.status = 200, .body = R"({"status":"ok"})"};
+        });
+    });
+    server.Get("/health", [](const httplib::Request&, httplib::Response& response) {
+        response.set_content("from a worker", "text/plain");
+    });
+    const int port = server.bind_to_any_port("127.0.0.1");
+    if (port <= 0) { return check(false, "test HTTP server could not bind"); }
+    std::thread listener([&] { server.listen_after_bind(); });
+    server.wait_until_ready();
+
+    const auto connect_to = [&] {
+        const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+        sockaddr_in address{};
+        address.sin_family      = AF_INET;
+        address.sin_port        = htons(static_cast<std::uint16_t>(port));
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        timeval timeout{3, 0};
+        (void)::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+        if (::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0) {
+            ::close(fd);
+            return -1;
+        }
+        return fd;
+    };
+    const auto get = [&](const std::string& path) {
+        const int fd = connect_to();
+        if (fd < 0) { return std::string(); }
+        const std::string request =
+            "GET " + path + " HTTP/1.1\r\nHost: x\r\n\r\n";
+        (void)::send(fd, request.data(), request.size(), MSG_NOSIGNAL);
+        std::string received;
+        char buffer[512];
+        for (ssize_t got; (got = ::recv(fd, buffer, sizeof(buffer), 0)) > 0;) {
+            received.append(buffer, static_cast<std::size_t>(got));
+        }
+        ::close(fd);
+        return received;
+    };
+
+    std::vector<int> silent;
+    for (int i = 0; i < 3; ++i) {
+        silent.push_back(connect_to());
+        std::this_thread::sleep_for(100ms);
+    }
+    int failures = 0;
+    const auto start = std::chrono::steady_clock::now();
+    const std::string health = get("/health");
+    failures += check(health.find(" 200 ") != std::string::npos &&
+                          health.find(R"({"status":"ok"})") != std::string::npos,
+                      "/health was not answered while every worker and the queue were held");
+    const std::string other = get("/v1/models");
+    failures += check(other.find(" 503 ") != std::string::npos &&
+                          other.find("Retry-After: 5") != std::string::npos &&
+                          other.find("server_busy") != std::string::npos,
+                      "a connection past a full queue was not answered 503 with Retry-After");
+    failures += check(std::chrono::steady_clock::now() - start < 2s,
+                      "answers for an overloaded pool were not immediate");
+    for (const int fd : silent) {
+        if (fd >= 0) { ::close(fd); }
+    }
     server.stop();
     listener.join();
     return failures;
@@ -650,6 +734,8 @@ int main() {
     failures += test_worker_plan_answers_every_connection();
     failures += test_successor_binds_over_time_wait();
     failures += test_error_connection_reuse();
+    failures += test_slow_request_body_is_cut_off();
+    failures += test_overloaded_pool_still_answers();
     failures += test_ambiguous_framing_is_refused("Content-Length: 5\r\nContent-Length: 6\r\n",
                                                   "hello", "two Content-Length fields");
     failures += test_ambiguous_framing_is_refused("Content-Length: 5, 5\r\n", "hello",
