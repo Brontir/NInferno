@@ -20,7 +20,8 @@ namespace ninferno::text {
 // {,n} {m,n} in greedy, lazy (?) and possessive (+) form.
 //
 // Semantics follow Oniguruma with UTF-8 encoding: \s is 0009-000D, 0085 and the Z categories;
-// \d is Nd; \w is L, M, Nd and Pc; categories come from utf8proc. Case-insensitive literals
+// \d is Nd; \w is L, M, Nd and Pc; categories are Unicode 16.0.0, the
+// version of Oniguruma 6.9.x (see onig_unicode.h), through utf8proc. Case-insensitive literals
 // match every code point with the same simple case fold (so (?i:s) also matches U+017F);
 // multi-character folds such as "ss" against U+00DF are not applied.
 //

@@ -2,6 +2,7 @@ add_library(ninferno_text STATIC
   pattern.cpp
   hf_token_codec.cpp
   tokenizer.cpp
+  onig_unicode.cpp
   unicode.cpp
   ${PROJECT_SOURCE_DIR}/third_party/utf8proc/utf8proc.c
 )
